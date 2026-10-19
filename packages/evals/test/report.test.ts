@@ -1,9 +1,9 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { EvalTask } from "../src/plan.ts";
 import { classifyCaseStatus, AMAZME_SESSION_SNAPSHOT_ARTIFACT, readTaskObservation } from "../src/report.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -27,7 +27,7 @@ type ReportAssertion = {
 };
 
 async function writeTaskReport(assertion: ReportAssertion = {}) {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-eval-report-test-"));
+	const directory = createTempDir("amazme-eval-report-test-");
 	temporaryDirectories.push(directory);
 	const reportPath = join(directory, "vitest.json");
 	const status = assertion.status ?? "passed";

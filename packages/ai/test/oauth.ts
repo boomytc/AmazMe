@@ -5,11 +5,12 @@
  * OAuth tokens are automatically refreshed if expired and saved back to auth.json.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { OAuthCredentials } from "../src/auth/types.ts";
 import { builtinProviders } from "../src/providers/all.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const AUTH_PATH = join(homedir(), ".amazme", "agent", "auth.json");
 
@@ -40,7 +41,7 @@ function saveAuthStorage(authPath: string, storage: AuthStorage): void {
 		mkdirSync(configDir, { recursive: true, mode: 0o700 });
 	}
 	// Readers in other Vitest workers must never observe a truncated JSON file.
-	const temporaryDir = mkdtempSync(join(configDir, ".auth-test-"));
+	const temporaryDir = createTempDir(".auth-test-", { baseDirectory: configDir });
 	try {
 		const temporaryPath = join(temporaryDir, "auth.json");
 		writeFileSync(temporaryPath, JSON.stringify(storage, null, 2), { encoding: "utf-8", mode: 0o600 });

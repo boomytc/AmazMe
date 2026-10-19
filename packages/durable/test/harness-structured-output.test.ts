@@ -1,5 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { JsonValue } from "@amazme/chord";
 import {
@@ -29,6 +28,7 @@ import { createBashTool } from "../src/tools/index.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const Count = Type.Object({ count: Type.Number() });
 
@@ -504,7 +504,7 @@ describe("structured output", () => {
 	});
 
 	it("gives callers of bash its retained output and exit code, also for a nonzero exit", async () => {
-		const directory = mkdtempSync(join(tmpdir(), "pi-durable-structured-"));
+		const directory = createTempDir("pi-durable-structured-");
 		try {
 			const setup = chatSetup();
 			addTool(setup.registry, createBashTool());

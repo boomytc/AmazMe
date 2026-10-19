@@ -2,8 +2,7 @@ import { createServerServiceSource } from "../../coding-agent/src/host/services/
 import { SessionManagement } from "../../coding-agent/src/host/services/sessions.ts";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@amazme/coding-agent/client";
@@ -11,6 +10,7 @@ import { describe, expect, test } from "vitest";
 import { createWebSocketTransportFactory } from "../../client/src/websocket.ts";
 import { resolveHostCli } from "../src/launch.ts";
 import { alive, electronBinary, processRows, processTree, smokeEnvironment, waitFor, type ProcessRow } from "./smoke-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const ownedTrees = new WeakMap<ChildProcess, ProcessRow[]>();
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -92,7 +92,7 @@ function processEvidence(tree: readonly ProcessRow[]) {
 
 describe.skipIf(process.platform === "win32")("real Electron owned-process lifecycle (POSIX)", () => {
 	test.each(["SIGTERM", "SIGKILL"] as const)("parent %s releases its owned host port and idle worker", async (signal) => {
-		const scratch = await mkdtemp(join(tmpdir(), "amazme-desktop-parent-"));
+		const scratch = createTempDir("amazme-desktop-parent-");
 		let child: ChildProcess | undefined;
 		let client: Client | undefined;
 		try {
@@ -109,7 +109,7 @@ describe.skipIf(process.platform === "win32")("real Electron owned-process lifec
 	}, 180_000);
 
 	test("host SIGKILL releases its port, closes the shell and retires its idle worker", async () => {
-		const scratch = await mkdtemp(join(tmpdir(), "amazme-desktop-host-"));
+		const scratch = createTempDir("amazme-desktop-host-");
 		let child: ChildProcess | undefined;
 		let client: Client | undefined;
 		try {
@@ -125,7 +125,7 @@ describe.skipIf(process.platform === "win32")("real Electron owned-process lifec
 	}, 180_000);
 
 	test("a killed desktop bridge does not kill an existing shared backend", async () => {
-		const scratch = await mkdtemp(join(tmpdir(), "amazme-desktop-shared-"));
+		const scratch = createTempDir("amazme-desktop-shared-");
 		let child: ChildProcess | undefined;
 		let external: ChildProcess | undefined;
 		let client: Client | undefined;

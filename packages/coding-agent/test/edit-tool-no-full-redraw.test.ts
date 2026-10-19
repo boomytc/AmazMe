@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Container, type Terminal, Text, type TUI, TuiMainScreen } from "@amazme/tui";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -7,6 +6,7 @@ import { createEditToolDefinition } from "../src/core/tools/edit.ts";
 import { computeEditsDiff, type Edit } from "../src/core/tools/edit-diff.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 class FakeTerminal implements Terminal {
 	columns = 80;
@@ -78,7 +78,7 @@ describe("edit tool TUI rendering", () => {
 	});
 
 	it("renders the large diff in the call preview and does not full-redraw when the result settles", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "pi-edit-redraw-"));
+		const dir = createTempDir("pi-edit-redraw-");
 		tempDirs.push(dir);
 		const filePath = join(dir, "large-edit.txt");
 		await writeFile(
@@ -152,7 +152,7 @@ describe("edit tool TUI rendering", () => {
 	});
 
 	it("reconstructs the boxed preview from a settled result without argsComplete", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "pi-edit-replay-"));
+		const dir = createTempDir("pi-edit-replay-");
 		tempDirs.push(dir);
 		const filePath = join(dir, "replay-edit.txt");
 		await writeFile(
@@ -202,7 +202,7 @@ describe("edit tool TUI rendering", () => {
 	});
 
 	it("shows a preflight error without rendering a diff when the edits do not apply", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "pi-edit-preflight-"));
+		const dir = createTempDir("pi-edit-preflight-");
 		tempDirs.push(dir);
 		const filePath = join(dir, "missing-edit.txt");
 		await writeFile(filePath, "line 0\nline 1\n", "utf8");

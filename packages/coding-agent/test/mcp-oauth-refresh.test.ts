@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { type OAuthChallenge, OAuthIssuerMismatchError } from "@amazme/mcp/oauth";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,6 +12,7 @@ import {
 	signInMcpServer,
 } from "../src/extensions/mcp/oauth.ts";
 import { startOAuthMcpServer } from "./suite/mcp-oauth-server.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("MCP OAuth refresh", () => {
 	const cleanups: (() => Promise<void> | void)[] = [];
@@ -24,7 +24,7 @@ describe("MCP OAuth refresh", () => {
 	async function signedIn() {
 		const server = await startOAuthMcpServer();
 		cleanups.push(server.close);
-		const lockDir = mkdtempSync(join(tmpdir(), "pi-mcp-refresh-"));
+		const lockDir = createTempDir("pi-mcp-refresh-");
 		cleanups.push(() => rmSync(lockDir, { recursive: true, force: true }));
 		// Stores sharing the credential file and lock directory stand in for separate pi processes.
 		const backend = new InMemoryAuthStorageBackend();

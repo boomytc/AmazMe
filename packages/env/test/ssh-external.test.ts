@@ -1,5 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { getOrThrow } from "@amazme/durable/env";
@@ -17,13 +16,14 @@ import {
 	scanHostKey,
 } from "../src/ssh.ts";
 import { daemon } from "./daemon.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /**
  * The conformance suite over a real SSH server on this machine, configured by CI: `AMAZME_ENV_SSH_HOST`, `AMAZME_ENV_SSH_USER`
  * `AMAZME_ENV_SSH_KEY` and `AMAZME_ENV_SSH_PROGRAM`. On Windows this covers deployment and the daemon's launch through the server's default shell.
  */
 const host = process.env.AMAZME_ENV_SSH_HOST;
-const root = mkdtempSync(join(tmpdir(), "amazme-env-ssh-external-"));
+const root = createTempDir("amazme-env-ssh-external-");
 let connected: Promise<{ connection: Connection; remote: RemotePlatform }> | undefined;
 
 async function connect(): Promise<{ connection: Connection; remote: RemotePlatform }> {

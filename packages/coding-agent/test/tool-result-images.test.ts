@@ -1,6 +1,5 @@
 import { crc32, deflateSync } from "node:zlib";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@amazme/ai";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
@@ -15,6 +14,7 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createCodingRegistry } from "../src/durable/harness-setup.ts";
 import type { ToolResultContent } from "../src/utils/tool-result-images.ts";
 import { normalizeToolResultImages } from "../src/utils/tool-result-images.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const TINY_PNG_BASE64 =
 	"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
@@ -216,7 +216,7 @@ describe("coding registry tool-result image hook", () => {
 	});
 
 	it("persists resized images and reuses them after SQLite reopen while nested callers receive originals", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-tool-images-"));
+		const directory = createTempDir("amazme-tool-images-");
 		const database = join(directory, "session.sqlite");
 		const settings = SettingsManager.inMemory({ images: { autoResize: true } });
 		const resources = {
@@ -341,7 +341,7 @@ describe("coding registry tool-result image hook", () => {
 	});
 
 	it("keeps structured output when resizing a model-visible image", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-tool-images-"));
+		const directory = createTempDir("amazme-tool-images-");
 		const database = join(directory, "session.sqlite");
 		const settings = SettingsManager.inMemory({ images: { autoResize: true } });
 		const resources = {
@@ -437,7 +437,7 @@ describe("coding registry tool-result image hook", () => {
 	});
 
 	it("keeps a numeric structured output when resizing a model-visible image", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-tool-images-"));
+		const directory = createTempDir("amazme-tool-images-");
 		const settings = SettingsManager.inMemory({ images: { autoResize: true } });
 		const resources = {
 			getSystemPrompt: () => "",

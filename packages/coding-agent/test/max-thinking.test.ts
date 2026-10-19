@@ -1,11 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { isValidThinkingLevel } from "../src/cli/args.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { loadThemeFromPath } from "../src/modes/interactive/theme/theme.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const tempDirs: string[] = [];
 
@@ -26,7 +26,7 @@ describe("max thinking level", () => {
 	});
 
 	it("falls back to thinkingXhigh for legacy themes", () => {
-		const testDir = mkdtempSync(join(tmpdir(), "pi-max-theme-"));
+		const testDir = createTempDir("pi-max-theme-");
 		tempDirs.push(testDir);
 		const currentDir = dirname(fileURLToPath(import.meta.url));
 		const darkTheme = JSON.parse(

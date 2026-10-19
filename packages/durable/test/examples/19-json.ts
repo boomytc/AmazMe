@@ -6,7 +6,6 @@
 // Uses OpenAI when OPENAI_API_KEY is set, and a scripted faux model otherwise.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/19-json.ts --events "What is in this directory?"
-import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -26,6 +25,7 @@ import {
 import { openNodeJsonlStorage } from "../../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
 import { createBashTool, createReadTool } from "../../src/tools/index.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 const args = process.argv.slice(2);
@@ -42,7 +42,7 @@ if (storageKind === "sqlite") {
 	location = join(tmpdir(), `pi-durable-json-${Date.now()}.sqlite`);
 	storage = await openNodeSqliteStorage(location);
 } else if (storageKind === "jsonl") {
-	location = await mkdtemp(join(tmpdir(), "pi-durable-json-"));
+	location = createTempDir("pi-durable-json-");
 	storage = await openNodeJsonlStorage(location, context);
 } else if (storageKind === "memory") {
 	storage = new MemoryStorage();

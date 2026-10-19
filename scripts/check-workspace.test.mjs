@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { checkBuildConfigs, checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts } from "./check-workspace.mjs";
+import { checkBuildConfigs, checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts, checkTempDirUsage } from "./check-workspace.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -330,4 +330,49 @@ test("build configs reject paths in the package config and in configs it extends
 	assert.equal(failures.length, 2, failures.join("\n"));
 	assert.ok(failures.some((failure) => failure.startsWith("packages/agent/tsconfig.build.json:")));
 	assert.ok(failures.some((failure) => failure.startsWith("tsconfig.base.json:")));
+});
+
+test("temp dir checks allow only packages/*/test/temp-dir.ts and reject bare mkdtemp", () => {
+	const root = fixture();
+	const aiTest = join(root, "packages", "ai", "test");
+	mkdirSync(aiTest, { recursive: true });
+	const helper =
+		'import { mkdtempSync } from "node:fs";\nexport const createTempDir = (prefix) => mkdtempSync("/tmp/" + prefix);\n';
+	writeFileSync(join(aiTest, "temp-dir.ts"), helper);
+	writeFileSync(
+		join(aiTest, "leaky.test.ts"),
+		'import { mkdtempSync } from "node:fs";\nconst dir = mkdtempSync("/tmp/x-");\n',
+	);
+	mkdirSync(join(aiTest, "nested"), { recursive: true });
+	writeFileSync(
+		join(aiTest, "nested", "temp-dir.ts"),
+		'import { mkdtempSync } from "node:fs";\nconst dir = mkdtempSync("/tmp/nested-");\n',
+	);
+	const failures = checkTempDirUsage(root);
+	assert.equal(failures.length, 2, failures.join("\n"));
+	assert.ok(failures.some((message) => message.includes("leaky.test.ts:")));
+	assert.ok(failures.some((message) => message.includes("nested/temp-dir.ts:")));
+	assert.equal(
+		failures.filter((message) => message.includes("/test/temp-dir.ts:")).length,
+		0,
+	);
+});
+
+test("temp dir helpers match the ai vitest copy; tui may differ", () => {
+	const root = fixture();
+	const helper =
+		'import { mkdtempSync } from "node:fs";\nexport const createTempDir = (prefix) => mkdtempSync("/tmp/" + prefix);\n';
+	mkdirSync(join(root, "packages", "ai", "test"), { recursive: true });
+	mkdirSync(join(root, "packages", "client", "test"), { recursive: true });
+	mkdirSync(join(root, "packages", "tui", "test"), { recursive: true });
+	writeFileSync(join(root, "packages", "ai", "test", "temp-dir.ts"), helper);
+	writeFileSync(join(root, "packages", "client", "test", "temp-dir.ts"), helper + "// drift\n");
+	writeFileSync(
+		join(root, "packages", "tui", "test", "temp-dir.ts"),
+		'import type { TestContext } from "node:test";\nexport const createTempDir = (t, prefix) => prefix;\n',
+	);
+	const failures = checkTempDirUsage(root);
+	assert.equal(failures.length, 1, failures.join("\n"));
+	assert.ok(failures[0].includes("packages/client/test/temp-dir.ts:"));
+	assert.ok(failures[0].includes("byte-for-byte"));
 });

@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@amazme/chord";
 import { createModels, Type } from "@amazme/ai";
@@ -20,11 +19,12 @@ import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { addTask, addTool } from "./harness-support.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";
 import { aborted, abortedWith, completed, countingReader, deferred, eventually, openTasks } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-tasks-"));
+	const directory = createTempDir("pi-durable-tasks-");
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

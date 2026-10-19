@@ -1,10 +1,10 @@
 import assert from "node:assert";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, it, test } from "node:test";
 import { CombinedAutocompleteProvider } from "../src/autocomplete.ts";
+import { createTempDir, type TempDirContext } from "./temp-dir.ts";
 
 const resolveFdPath = (): string | null => {
 	const command = process.platform === "win32" ? "where" : "which";
@@ -119,8 +119,8 @@ describe("CombinedAutocompleteProvider", () => {
 		let baseDir = "";
 		let outsideDir = "";
 
-		beforeEach(() => {
-			rootDir = mkdtempSync(join(tmpdir(), "pi-autocomplete-root-"));
+		beforeEach((t) => {
+			rootDir = createTempDir(t as TempDirContext, "pi-autocomplete-root-");
 			baseDir = join(rootDir, "cwd");
 			outsideDir = join(rootDir, "outside");
 			mkdirSync(baseDir, { recursive: true });
@@ -555,8 +555,8 @@ describe("CombinedAutocompleteProvider", () => {
 	describe("dot-slash path completion", () => {
 		let baseDir = "";
 
-		beforeEach(() => {
-			baseDir = mkdtempSync(join(tmpdir(), "pi-autocomplete-"));
+		beforeEach((t) => {
+			baseDir = createTempDir(t as TempDirContext, "pi-autocomplete-");
 		});
 
 		afterEach(() => {
@@ -748,8 +748,8 @@ describe("CombinedAutocompleteProvider", () => {
 	describe("quoted path completion", () => {
 		let baseDir = "";
 
-		beforeEach(() => {
-			baseDir = mkdtempSync(join(tmpdir(), "pi-autocomplete-"));
+		beforeEach((t) => {
+			baseDir = createTempDir(t as TempDirContext, "pi-autocomplete-");
 		});
 
 		afterEach(() => {

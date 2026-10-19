@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { shouldRunFirstTimeSetup } from "../src/cli/startup-ui.ts";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("shouldRunFirstTimeSetup", () => {
 	const originalPiExperimental = process.env.AMAZME_EXPERIMENTAL;
@@ -13,7 +14,7 @@ describe("shouldRunFirstTimeSetup", () => {
 	let settingsPath: string;
 
 	beforeEach(() => {
-		tempDir = mkdtempSync(join(tmpdir(), "pi-first-time-setup-"));
+		tempDir = createTempDir("pi-first-time-setup-");
 		settingsPath = join(tempDir, "settings.json");
 		process.env.AMAZME_EXPERIMENTAL = "1";
 		delete process.env[ENV_AGENT_DIR];

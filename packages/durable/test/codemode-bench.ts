@@ -5,8 +5,7 @@
  *
  *   node --conditions=source --experimental-strip-types test/codemode-bench.ts [N,...]
  */
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { createModels } from "@amazme/ai/models";
@@ -16,6 +15,7 @@ import { Type } from "typebox";
 import { createCodemodeTool } from "../src/codemode/codemode.ts";
 import { createRegistry, defineExtension, defineTool, Harness } from "../src/index.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 type Shape = "sequential" | "parallel";
 
@@ -42,7 +42,7 @@ const plain = defineTool({
 });
 
 async function run(mode: "codemode" | "plain", shape: Shape, n: number): Promise<{ ms: number; commits: number }> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-codemode-bench-"));
+	const directory = createTempDir("pi-codemode-bench-");
 	try {
 		const faux = fauxProvider();
 		const models = createModels();

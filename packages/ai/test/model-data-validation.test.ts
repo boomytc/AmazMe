@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { hydrateModelCatalog } from "../scripts/hydrate-model-catalog.ts";
@@ -12,6 +11,7 @@ import {
 	readModelDataStructure,
 	validateModelDataDirectory,
 } from "../scripts/model-data.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const GENERATED_AT = "2026-07-23T10:00:00.000Z";
 const temporaryRoots: string[] = [];
@@ -26,7 +26,7 @@ function createFixture(): {
 	structure: ModelDataStructure;
 	values: Record<string, unknown>;
 } {
-	const packageRoot = mkdtempSync(join(tmpdir(), "pi-model-data-"));
+	const packageRoot = createTempDir("pi-model-data-");
 	temporaryRoots.push(packageRoot);
 	const providersDir = join(packageRoot, "src", "providers");
 	const dataDir = join(providersDir, "data");

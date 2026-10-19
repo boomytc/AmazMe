@@ -1,5 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
@@ -9,6 +8,7 @@ import {
 	loadCommandResources,
 } from "../src/host/services/commands-provider.ts";
 import { expandResourceCommand } from "../src/core/resource-command.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 let root: string;
 let agentDir: string;
@@ -33,7 +33,7 @@ async function writeSkill(name: string, description: string, body: string): Prom
 }
 
 beforeEach(async () => {
-	root = await mkdtemp(join(tmpdir(), "amazme-commands-"));
+	root = createTempDir("amazme-commands-");
 	agentDir = join(root, "agent");
 	cwd = join(root, "project");
 	await mkdir(join(agentDir, "prompts"), { recursive: true });

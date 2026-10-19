@@ -1,13 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { access, cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_SESSION_DIR } from "../src/config.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -28,7 +28,7 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 	let requests: string[];
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-session-select-"));
+		directory = createTempDir("amazme-session-select-");
 		projectA = join(directory, "project-a");
 		projectB = join(directory, "project-b");
 		profile = join(directory, "profile");

@@ -1,20 +1,20 @@
 // Close, reopen, and continue where a task stopped.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/13-recovery.ts
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createModels } from "@amazme/ai/models";
 import { createRegistry, defineExtension, defineTask, Harness } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 
 // Everything a task needs to continue is in storage, so a new Harness over the
 // same storage picks up where the last one stopped. This example keeps its
 // storage in a SQLite file so it survives closing.
-const directory = await mkdtemp(join(tmpdir(), "pi-durable-example-"));
+const directory = createTempDir("pi-durable-example-");
 const databasePath = join(directory, "session.sqlite");
 
 let reachedTick = (_n: number): void => {};

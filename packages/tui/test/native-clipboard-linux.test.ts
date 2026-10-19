@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { type ChildProcessWithoutNullStreams, execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it, type TestContext } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
+import { createTempDir } from "./temp-dir.ts";
 
 const exec = promisify(execFile);
 const fixtures = fileURLToPath(new URL("./fixtures/", import.meta.url));
@@ -69,7 +69,7 @@ async function readClipboard(method: string, env: NodeJS.ProcessEnv): Promise<Re
 }
 
 describe("native Linux clipboard", { skip: !dependenciesAvailable, timeout: 60000 }, () => {
-	let directory: string;
+	const directory = createTempDir("suite", "pi-clipboard-test-");
 
 	async function startX11(t: TestContext) {
 		const { child, ready } = await startServer(
@@ -82,7 +82,6 @@ describe("native Linux clipboard", { skip: !dependenciesAvailable, timeout: 6000
 	}
 
 	before(() => {
-		directory = mkdtempSync(join(tmpdir(), "pi-clipboard-test-"));
 		const flags = ["-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror", "-pthread"];
 		execFileSync("cc", [
 			...flags,

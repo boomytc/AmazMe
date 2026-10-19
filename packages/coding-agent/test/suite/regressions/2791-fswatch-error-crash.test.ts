@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createTempDir } from "../../temp-dir.ts";
 
 /**
  * Regression test for https://github.com/earendil-works/pi/issues/2791
@@ -22,7 +22,7 @@ describe("issue #2791 fs.watch error event crashes process", () => {
 	let tempRoot: string;
 
 	beforeEach(() => {
-		tempRoot = mkdtempSync(join(tmpdir(), "pi-2791-"));
+		tempRoot = createTempDir("pi-2791-");
 		const agentDir = join(tempRoot, "agent");
 		const themesDir = join(agentDir, "themes");
 		mkdirSync(themesDir, { recursive: true });

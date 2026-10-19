@@ -1,9 +1,9 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test, vi } from "vitest";
 import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "../src/locale.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("desktop application language", () => {
 	test("uses saved choices before the page is ready and system languages for auto", () => {
@@ -30,7 +30,7 @@ describe("desktop application language", () => {
 		} finally { vi.useRealTimers(); }
 	});
 	test("uses global-only interface locale and the shared profile path normalization", async () => {
-		const root = await mkdtemp(join(tmpdir(), "desktop-locale-"));
+		const root = createTempDir("desktop-locale-");
 		try {
 			const agent = join(root, "profile with spaces");
 			const project = join(root, ".amazme");

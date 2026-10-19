@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
@@ -17,6 +16,7 @@ import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { Storage } from "../src/types.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const STORAGE_BENCHMARK_BACKENDS = ["memory", "sqlite", "jsonl"] as const;
 type StorageBenchmarkBackend = (typeof STORAGE_BENCHMARK_BACKENDS)[number];
@@ -124,7 +124,7 @@ async function runWorker(backend: StorageBenchmarkBackend, scale: StorageBenchma
 	if (backend === "memory") {
 		storage = new MemoryStorage();
 	} else {
-		directory = await mkdtemp(join(tmpdir(), `pi-durable-${backend}-memory-`));
+		directory = createTempDir(`pi-durable-${backend}-memory-`);
 		path = join(directory, backend === "sqlite" ? "storage.sqlite" : "storage");
 		storage =
 			backend === "sqlite"

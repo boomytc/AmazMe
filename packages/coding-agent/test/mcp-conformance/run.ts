@@ -6,20 +6,11 @@
  */
 
 import { spawn } from "node:child_process";
-import {
-	chmodSync,
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { createTempDir } from "../temp-dir.ts";
 
 /** The pinned upstream suite. Bumping it requires reviewing and regenerating the baseline. */
 const CONFORMANCE_PACKAGE = "@modelcontextprotocol/conformance@0.2.0-alpha.11";
@@ -300,7 +291,7 @@ Options:
 		return 1;
 	}
 
-	const workDir = mkdtempSync(join(tmpdir(), "pi-mcp-conformance-"));
+	const workDir = createTempDir("pi-mcp-conformance-");
 	try {
 		// The upstream runner splits --command on spaces, so use a launcher path without any.
 		const launcher = join(workDir, "pi-client");

@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "@amazme/chord";
 import {
@@ -31,6 +30,7 @@ import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.
 import { addHooks, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred, eventually } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const Parameters = Type.Object({ text: Type.Optional(Type.String()) });
 
@@ -56,7 +56,7 @@ afterEach(async () => {
 });
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-nested-restart-"));
+	const directory = createTempDir("pi-durable-nested-restart-");
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

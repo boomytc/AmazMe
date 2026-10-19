@@ -1,5 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, mkdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { replicatedState } from "@amazme/chord";
@@ -13,11 +12,12 @@ import { applySetting, describeSettings, settingsSnapshot } from "../src/host/se
 import type { SettingsState } from "../src/host/services/settings.ts";
 import { createSkillsService } from "../src/host/services/skills-provider.ts";
 import type { SkillsState } from "../src/host/services/skills.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 
 async function makeDirectory(prefix: string): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	directories.add(directory);
 	return directory;
 }

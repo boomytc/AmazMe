@@ -4,11 +4,12 @@ import * as path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { getShareViewerUrl } from "../src/config.ts";
 import { shareFilesToUrl, type GhResult } from "../src/core/session-share.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const tempDirs: string[] = [];
 
 function tempRoot(): string {
-	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "share-core-"));
+	const dir = createTempDir("share-core-");
 	tempDirs.push(dir);
 	return dir;
 }

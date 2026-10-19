@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Op } from "@amazme/chord/delta";
 import {
@@ -37,6 +36,7 @@ import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from
 import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context, documentChanges, flush } from "./session-support.ts";
 import { aborted, type Deferred, deferred } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 
@@ -444,7 +444,7 @@ describe("inbox", () => {
 	});
 
 	it("keeps queued submissions across reopen and settles them afterwards", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-inbox-"));
+		const directory = createTempDir("pi-durable-inbox-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const setup = chatSetup();
@@ -887,7 +887,7 @@ describe("usage", () => {
 	});
 
 	it("keeps usage totals exact across reopen, counting a partial converted after reopen once", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-usage-"));
+		const directory = createTempDir("pi-durable-usage-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const setup = chatSetup({ tokensPerSecond: 200, tokenSize: { min: 1, max: 1 } });

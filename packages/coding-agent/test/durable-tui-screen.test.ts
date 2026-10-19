@@ -1,12 +1,12 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SHUTDOWN_FORCE_EXIT_MESSAGE } from "../src/utils/shutdown-signals.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -99,7 +99,7 @@ describe.skipIf(process.platform === "win32" || !tmuxAvailable())("durable TUI s
 		if (address === null || typeof address === "string") throw new Error("test server did not bind");
 		const port = (address as AddressInfo).port;
 
-		const directory = await mkdtemp(join(tmpdir(), "am-screen-"));
+		const directory = createTempDir("am-screen-");
 		directories.push(directory);
 		const cwd = join(directory, "project");
 		const profile = join(directory, "profile");

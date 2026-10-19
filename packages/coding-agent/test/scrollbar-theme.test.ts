@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadThemeFromPath, setThemeJsonValidator } from "../src/modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "../src/modes/interactive/theme/theme-schema.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 setThemeJsonValidator(validateThemeJson);
 
@@ -17,7 +17,7 @@ function loadDarkTheme(): { name: string; colors: Record<string, string | number
 }
 
 function writeTheme(theme: { name: string; colors: Record<string, string | number> }): string {
-	const testDir = mkdtempSync(join(tmpdir(), "pi-scrollbar-theme-"));
+	const testDir = createTempDir("pi-scrollbar-theme-");
 	tempDirs.push(testDir);
 	const themePath = join(testDir, `${theme.name}.json`);
 	writeFileSync(themePath, JSON.stringify(theme));

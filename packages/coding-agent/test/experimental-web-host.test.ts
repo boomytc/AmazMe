@@ -1,6 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { request as httpRequest } from "node:http";
 
@@ -16,12 +15,13 @@ import { Script } from "node:vm";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
+import { createTempDir } from "./temp-dir.ts";
 
 const hosts = new Set<WebHost>();
 const directories = new Set<string>();
 
 async function makeDirectory(prefix: string): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	directories.add(directory);
 	return directory;
 }

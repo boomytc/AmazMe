@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import type { Context } from "@amazme/chord";
@@ -7,9 +6,10 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { remoteService } from "@amazme/protocol/services";
 import { createSourcePluginLoader } from "../src/core/plugins/loader.ts";
 import { openPluginRuntime } from "../src/core/plugins/runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 test("loads external TypeScript sources, refreshes relative imports and preserves the previous generation on failure", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-source-plugin-"));
+	const directory = createTempDir("amazme-source-plugin-");
 	const entry = join(directory, "entry.ts");
 	const imported = join(directory, "value.ts");
 	const Probe = remoteService<{ read(context: Context): Promise<string> }>("source.probe", { read: 0 });

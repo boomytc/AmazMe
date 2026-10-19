@@ -1,10 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -27,7 +27,7 @@ describe.skipIf(process.platform === "win32")("server SIGTERM", () => {
 		const getuid = process.getuid;
 		if (getuid === undefined) throw new Error("expected a POSIX user id");
 		const uid = getuid();
-		const scratch = await mkdtemp(join("/tmp", "am-sigterm-"));
+		const scratch = createTempDir("am-sigterm-", { baseDirectory: "/tmp" });
 		directories.push(scratch);
 		const logical = join("/tmp", "d".repeat(80), "srv");
 		directories.push(dirname(logical));

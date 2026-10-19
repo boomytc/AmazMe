@@ -1,15 +1,15 @@
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { acquireServerProfile } from "../src/host/server.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 const FIRST_SERVER_ID = "00000000-0000-4000-8000-000000000001";
 const SECOND_SERVER_ID = "00000000-0000-4000-8000-000000000002";
 
 async function makeDirectory(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "psp-"));
+	const directory = createTempDir("psp-");
 	directories.add(directory);
 	return directory;
 }

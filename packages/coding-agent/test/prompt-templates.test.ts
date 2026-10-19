@@ -8,7 +8,7 @@
  * - Edge cases and integration between parsing and substitution
  */
 
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterAll, describe, expect, test } from "vitest";
@@ -19,6 +19,7 @@ import {
 	parseCommandArgs,
 	substituteArgs,
 } from "../src/core/prompt-templates.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 // ============================================================================
 // substituteArgs
@@ -646,7 +647,7 @@ Analyze GitHub issue(s): $ARGUMENTS`,
 describe("loadPromptTemplates - diagnostics", () => {
 	// Regression test for #9354.
 	test("reports invalid YAML frontmatter and keeps valid siblings", () => {
-		const testDir = mkdtempSync(join(tmpdir(), "pi-test-prompts-invalid-"));
+		const testDir = createTempDir("pi-test-prompts-invalid-");
 		const invalidPromptPath = join(testDir, "invalid.md");
 		try {
 			writeFileSync(invalidPromptPath, "---\ndescription: Broken: unquoted colon\n---\nDo something.\n");
