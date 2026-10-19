@@ -16,12 +16,17 @@ const restored = new WeakSet<TUI>();
  * There is no second sequence. Force exit calls this function, and so does
  * `DurableTui.stop`.
  */
-export function restoreDurableScreen(ui: TUI): void {
+export function restoreDurableScreen(ui: TUI, options: { deferInputRestore?: boolean; onDeferredInput?: (data: string) => void } = {}): void {
 	if (restored.has(ui)) return;
 	restored.add(ui);
 	if (ui instanceof TuiAltScreen) {
-		ui.stop({ preserveScreen: true });
+		ui.stop({ preserveScreen: true, ...options });
 		return;
 	}
-	ui.stop();
+	ui.stop(options);
+}
+
+/** Restore cooked input after the exit transaction finished. Idempotent. */
+export function restoreDurableInput(ui: TUI): void {
+	ui.restoreInput();
 }

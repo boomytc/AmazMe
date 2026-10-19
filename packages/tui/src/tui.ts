@@ -469,6 +469,10 @@ export type TuiMode = "regular" | "fullscreen";
 export interface TuiStopOptions {
 	/** Leave renderer output in place for another TUI taking over the same terminal. */
 	preserveScreen?: boolean;
+	/** Keep stdin raw through the rest of shutdown. See {@link TerminalStopOptions.deferInputRestore}. */
+	deferInputRestore?: boolean;
+	/** Bytes read while input restore is deferred. */
+	onDeferredInput?: (data: string) => void;
 }
 
 export interface TUI extends Component {
@@ -490,6 +494,8 @@ export interface TUI extends Component {
 	hasOverlay(): boolean;
 	start(): void;
 	stop(options?: TuiStopOptions): void;
+	/** Restore cooked input after a stop that deferred it. */
+	restoreInput(): void;
 	renderNow(force?: boolean): void;
 	requestRender(force?: boolean): void;
 	/** Minimum time between throttled frames; user input still renders immediately. */
@@ -1030,9 +1036,17 @@ export abstract class TuiBase extends Container implements TUI {
 		const parts = terminalRestoreParts({ ...terminalRestoreDefaults(), ...modes, ...screen });
 		commitTerminalOutput(this.terminal, parts.beforeModes);
 		commitTerminalOutput(this.terminal, parts.modes);
-		this.terminal.stop({ sequenceWritten: true });
+		this.terminal.stop({
+			sequenceWritten: true,
+			...(options.deferInputRestore === true ? { deferInputRestore: true } : {}),
+			...(options.onDeferredInput === undefined ? {} : { onDeferredInput: options.onDeferredInput }),
+		});
 		commitTerminalOutput(this.terminal, parts.afterModes);
 		this.afterTerminalStop(options);
+	}
+
+	restoreInput(): void {
+		this.terminal.restoreInput?.();
 	}
 
 	renderNow(force = false): void {

@@ -1,4 +1,6 @@
 import {
+	resetCapabilitiesCache,
+	setCapabilities,
 	StdinBuffer,
 	Text,
 	type Terminal,
@@ -9,7 +11,7 @@ import {
 	TuiAltScreen,
 	TuiMainScreen,
 } from "@amazme/tui";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { restoreDurableScreen } from "../src/durable/screen-restore.ts";
 import {
 	installShutdownSignals,
@@ -93,7 +95,14 @@ function captureAlt(mouse: boolean, stop: (ui: TuiAltScreen) => void): string {
 describe("durable screen restore", () => {
 	const cleanups: Array<() => void> = [];
 
+	beforeEach(() => {
+		// The host terminal's image protocol must not decide the expected restore sequence (Warp, for example,
+		// advertises Kitty and would add an image-delete escape).
+		setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+	});
+
 	afterEach(() => {
+		resetCapabilitiesCache();
 		for (const cleanup of cleanups.splice(0)) cleanup();
 		setShutdownTerminalRestore(undefined);
 	});

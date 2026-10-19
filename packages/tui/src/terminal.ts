@@ -97,6 +97,13 @@ export function commitTerminalOutput(terminal: Terminal, data: string): void {
 export interface TerminalStopOptions {
 	/** The caller already wrote {@link terminalRestoreSequence} for this stop. */
 	readonly sequenceWritten?: boolean;
+	/**
+	 * Keep stdin raw after the screen is restored. A shutdown keeps one small consumer so a queued Ctrl-C is read as a
+	 * key instead of being echoed as `^C`, then calls {@link Terminal.restoreInput} just before the process exits.
+	 */
+	readonly deferInputRestore?: boolean;
+	/** Bytes read while input restore is deferred. */
+	readonly onDeferredInput?: (data: string) => void;
 }
 
 /**
@@ -108,6 +115,9 @@ export interface Terminal {
 
 	// Stop the terminal and restore state
 	stop(options?: TerminalStopOptions): void;
+
+	/** Restore cooked input after a stop that deferred it. Idempotent. */
+	restoreInput?(): void;
 
 	/**
 	 * Modes this terminal turned on, consumed so a later stop does not repeat them.
@@ -201,6 +211,8 @@ export class ProcessTerminal implements Terminal {
 	private keyboardProtocolBufferFlushTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
+	/** Input stays raw until restoreInput(): the shutdown consumer that reads a queued Ctrl-C as a key. */
+	private deferredInputHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	/** Latest program status, kept across stop() so start() can report it again. */
 	private programStatus?: ProgramStatus;
@@ -551,6 +563,24 @@ export class ProcessTerminal implements Terminal {
 			this.resizeHandler = undefined;
 		}
 
+		if (options?.deferInputRestore) {
+			// Keep raw mode through cleanup. The kernel has not produced a signal for a Ctrl-C already read as a key;
+			// restoring cooked mode now would let a queued `\x03` be echoed as `^C` while cleanup still runs.
+			const onInput = options.onDeferredInput;
+			this.deferredInputHandler = (data: string) => onInput?.(data);
+			process.stdin.resume();
+			process.stdin.on("data", this.deferredInputHandler);
+			return;
+		}
+		this.restoreInput();
+	}
+
+	/** Pause stdin and hand it back to the shell. Called once, at the end of the exit transaction. */
+	restoreInput(): void {
+		if (this.deferredInputHandler !== undefined) {
+			process.stdin.removeListener("data", this.deferredInputHandler);
+			this.deferredInputHandler = undefined;
+		}
 		// Pause stdin to prevent any buffered input (e.g., Ctrl+D) from being
 		// re-interpreted after raw mode is disabled. This fixes a race condition
 		// where Ctrl+D could close the parent shell over SSH.

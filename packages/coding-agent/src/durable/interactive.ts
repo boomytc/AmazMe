@@ -28,6 +28,7 @@ export async function runDurableInteractive(
 	time("openDurable");
 	const inputs: Promise<boolean>[] = [];
 	let exitTui = (): void => {};
+	let restoreInput = (): void => {};
 	let forced = false;
 	// Listeners stay up for the whole shutdown. `process.once` drops them on the
 	// first signal, and signal-exit (loaded by the session lock) then re-sends
@@ -71,6 +72,18 @@ export async function runDurableInteractive(
 					exitTui();
 				});
 			},
+			bindInputRestore(restore) {
+				restoreInput = restore;
+			},
+			// The screen has stopped but stdin is still raw. A second Ctrl-C is a key, not a
+			// SIGINT the kernel echoes as `^C`; during cleanup it force-exits.
+			shutdownInput(data) {
+				if (!data.includes("\x03")) return;
+				shutdown.key(() => {
+					forced = true;
+					exitTui();
+				});
+			},
 		});
 		returned = true;
 	} catch (error) {
@@ -86,6 +99,8 @@ export async function runDurableInteractive(
 			throw error;
 		} finally {
 			process.off("uncaughtExceptionMonitor", monitor);
+			// The exit transaction: the session is closed, so hand cooked input back and leave at once.
+			restoreInput();
 			// A failed presentation must not exit 0, and must not leave the signal listeners behind.
 			shutdown.finish();
 			if (!forced || !returned) {

@@ -256,6 +256,8 @@ interface Handlers {
 	exit(): void;
 	/** Raw-mode Ctrl-C. Absent uses {@link Handlers.exit}. */
 	clear?(): void;
+	/** Input read after the screen stopped and before cooked mode returns; a shutdown keeps this consumer alive. */
+	deferredInput?(data: string): void;
 	selectModel(): void;
 	cycleModel(direction: "forward" | "backward"): void;
 	cycleThinking(): void;
@@ -307,6 +309,7 @@ class DurableTui {
 	#cacheMisses = new Map<AssistantMessage, CacheMiss>();
 	readonly #markdownTransformers: ReturnType<typeof terminalMarkdownTransformers>;
 	#indicator: StatusIndicator | undefined;
+	readonly #deferredInput: ((data: string) => void) | undefined;
 	#statusText = "";
 	/** Set when the transcript was rebuilt: the next render repaints the screen and shows the end. */
 	#rebuilt = false;
@@ -317,6 +320,7 @@ class DurableTui {
 		this.#cwd = cwd;
 		this.#markdownTransformers = terminalMarkdownTransformers(() => settings.getMermaidRenderingMode());
 		this.#plugins = handlers.plugins;
+		this.#deferredInput = handlers.deferredInput;
 		this.#completeCommand = handlers.completeCommand;
 		this.#stopTurn = handlers.abort;
 		this.#ui = createInteractiveTui({
@@ -432,14 +436,23 @@ class DurableTui {
 		if (this.#screenStopped) return;
 		this.#screenStopped = true;
 		// Restore before dropping cards. A second Ctrl-C exits on this stack, and a
-		// throw while discarding a card must not skip the screen restore.
-		restoreDurableScreen(this.#ui);
+		// throw while discarding a card must not skip the screen restore. Input stays raw:
+		// a Ctrl-C queued behind the first one is read as a key, not echoed by the terminal.
+		restoreDurableScreen(this.#ui, {
+			deferInputRestore: true,
+			...(this.#deferredInput === undefined ? {} : { onDeferredInput: this.#deferredInput }),
+		});
 		this.#disposed = true;
 		++this.#pasteEpoch;
 		this.#editor.onPasteImage = undefined;
 		this.#images = [];
 		this.#discardTools();
 		this.#indicator?.dispose();
+	}
+
+	/** Hand stdin back to the shell in the final exit transaction. */
+	restoreInput(): void {
+		this.#ui.restoreInput();
 	}
 
 	/** Finish every card: a running bash card keeps a timer until it gets a final result. */
@@ -881,6 +894,10 @@ export interface DurableTuiHooks {
 	 * local exit, the same as Ctrl-D.
 	 */
 	clear?(): void;
+	/** Bytes read after the screen stopped, while stdin is still raw. */
+	shutdownInput?(data: string): void;
+	/** Receive the function that restores cooked input; call it only in the final exit transaction. */
+	bindInputRestore?(restore: () => void): void;
 }
 
 export async function runDurableTui(
@@ -1087,6 +1104,7 @@ export async function runDurableTui(
 
 	view = new DurableTui(source.current().session.cwd, {
 		plugins: controller.describePlugins !== undefined,
+		...(hooks?.shutdownInput === undefined ? {} : { deferredInput: hooks.shutdownInput }),
 		completeCommand: (name, prefix) => controller.completeCommand?.(name, prefix) ?? Promise.resolve(null),
 		submit: (text, whenBusy, images) => {
 			const trimmed = text.trim();
@@ -1193,6 +1211,7 @@ export async function runDurableTui(
 	try {
 		// A second Ctrl-C can force-exit before this function's finally runs.
 		setShutdownTerminalRestore(() => view.stop());
+		hooks?.bindInputRestore?.(() => view.restoreInput());
 		view.start();
 		themes.applyFromSettings();
 		view.apply(source.current());

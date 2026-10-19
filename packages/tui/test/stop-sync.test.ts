@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { Text } from "../src/components/text.ts";
 import type { Terminal, TerminalStopOptions } from "../src/terminal.ts";
+import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import { TuiAltScreen } from "../src/tui-alt-screen.ts";
 import {
 	terminalRestoreDefaults,
@@ -77,6 +78,16 @@ function fullscreenRestore(): string {
 
 describe("TUI stop flush", () => {
 	it("writes the shared restore sequence synchronously and does not reprint the frame", () => {
+		// The host terminal's image protocol must not decide the expected sequence.
+		setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+		try {
+			assertRestoreSequence();
+		} finally {
+			resetCapabilitiesCache();
+		}
+	});
+
+	function assertRestoreSequence(): void {
 		const terminal = new SyncTerminal();
 		const tui = new TuiAltScreen(terminal, false);
 		tui.addChild(new Text("FRAME_MARKER", 0, 0));
@@ -91,7 +102,7 @@ describe("TUI stop flush", () => {
 		assert.equal(synced, fullscreenRestore());
 		assert.equal(terminal.asyncWrites.slice(asyncBeforeStop).join("").includes("\x1b[?1049l"), false);
 		assert.equal(synced.includes("FRAME_MARKER"), false);
-	});
+	}
 
 	it("names every mode the start path can enable", () => {
 		const sequence = terminalRestoreSequence({
