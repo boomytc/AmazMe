@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -238,6 +239,57 @@ export function checkBuildConfigs(repoRoot) {
 	return failures;
 }
 
+/** Hand-written text the release-version rule reads. Generated data and binaries are not scanned. */
+const versionLiteralExtensions = /\.(?:[cm]?[jt]sx?|md|ya?ml|sh|html|css|swift|m|rs|txt)$/;
+/** Files that own the version or record history: the version lives in package.json, releases in changelogs. */
+const versionLiteralOwners = /(?:^|\/)(?:package\.json|package-lock\.json|CHANGELOG\.md)$/;
+/**
+ * Third-party products whose own versions may coincide with the release number. A match directly after
+ * one of these words is that product's version, not AmazMe's.
+ */
+const versionLiteralThirdParty = ["Bun"];
+
+function trackedFiles(repoRoot) {
+	return execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
+		.split("\0")
+		.filter(Boolean);
+}
+
+/**
+ * The release version is written only in package.json and changelogs. Code reads it from package.json
+ * (`VERSION` in `@amazme/coding-agent/config`) and docs point to the releases, so a bump never leaves a
+ * stale copy behind. `files` are repo-relative paths; the default is every file git tracks.
+ */
+export function checkVersionLiterals(repoRoot, files) {
+	const failures = [];
+	const manifest = join(repoRoot, "package.json");
+	if (!existsSync(manifest)) return failures;
+	const version = JSON.parse(readFileSync(manifest, "utf8")).version;
+	if (typeof version !== "string" || version === "") return failures;
+	files ??= trackedFiles(repoRoot);
+	const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	const literal = new RegExp(`(?<![\\d.])${escaped}(?!\\.?\\d)`, "g");
+	const thirdParty = new RegExp(`\\b(?:${versionLiteralThirdParty.join("|")})\\s+$`);
+	for (const file of files) {
+		const path = file.replaceAll("\\", "/");
+		if (!versionLiteralExtensions.test(path) || versionLiteralOwners.test(path)) continue;
+		if (path.split("/").some((part) => part === "node_modules" || part === "dist")) continue;
+		const absolute = join(repoRoot, path);
+		if (!existsSync(absolute)) continue;
+		readFileSync(absolute, "utf8")
+			.split("\n")
+			.forEach((line, index) => {
+				for (const match of line.matchAll(literal)) {
+					if (thirdParty.test(line.slice(0, match.index))) continue;
+					failures.push(
+						`${path}:${index + 1}: release version ${version} is hand-written; read it from package.json or link the releases`,
+					);
+				}
+			});
+	}
+	return failures;
+}
+
 /** Package test trees may not call mkdtemp/mkdtempSync except from packages/<pkg>/test/temp-dir.ts at the test root. */
 export function checkTempDirUsage(repoRoot) {
 	const failures = [];
@@ -292,7 +344,13 @@ export function checkTempDirUsage(repoRoot) {
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
-	const failures = [...checkDependencyVersions(root, packages), ...checkChangelogs(root), ...checkBuildConfigs(root), ...checkTempDirUsage(root)];
+	const failures = [
+		...checkDependencyVersions(root, packages),
+		...checkChangelogs(root),
+		...checkBuildConfigs(root),
+		...checkTempDirUsage(root),
+		...checkVersionLiterals(root),
+	];
 	try {
 		runtimePackages(packages, [...packages.keys()]);
 	} catch (error) {
@@ -570,5 +628,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
-	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, and test temp dirs passed.");
+	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, test temp dirs, and version literals passed.");
 }

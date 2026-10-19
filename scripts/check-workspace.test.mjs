@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { checkBuildConfigs, checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts, checkTempDirUsage } from "./check-workspace.mjs";
+import {
+	checkBuildConfigs,
+	checkChangelogs,
+	checkDependencyVersions,
+	checkSourceContracts,
+	checkEntryContracts,
+	checkTempDirUsage,
+	checkVersionLiterals,
+} from "./check-workspace.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -330,6 +339,67 @@ test("build configs reject paths in the package config and in configs it extends
 	assert.equal(failures.length, 2, failures.join("\n"));
 	assert.ok(failures.some((failure) => failure.startsWith("packages/agent/tsconfig.build.json:")));
 	assert.ok(failures.some((failure) => failure.startsWith("tsconfig.base.json:")));
+});
+
+function versionFixture(files) {
+	const root = fixture();
+	writeFileSync(join(root, "package.json"), JSON.stringify({ name: "amazme", version: "9.8.7" }));
+	for (const [path, text] of Object.entries(files)) {
+		mkdirSync(join(root, path, ".."), { recursive: true });
+		writeFileSync(join(root, path), text);
+	}
+	return root;
+}
+
+test("the release version is written only in package.json and changelogs", () => {
+	const files = {
+		"packages/a/src/driver.ts": 'const client = { version: "9.8.7" };\n',
+		"packages/gui/README.md": "intro\n当前 `9.8.7`，tag v9.8.7。\n",
+		".github/workflows/release.yml": "name: release 9.8.7\n",
+		"packages/a/CHANGELOG.md": "## [9.8.7] - 2026-10-19\n",
+		"packages/a/package.json": '{"version":"9.8.7"}',
+		"package-lock.json": '{"version":"9.8.7"}',
+		"packages/a/dist/index.js": 'const v = "9.8.7";\n',
+		"packages/a/src/data.json": '{"model":"9.8.7"}',
+		"packages/a/src/other.ts": 'const near = ["19.8.7", "9.8.71", "9.8.7.1", "9.8.70"];\n',
+		"packages/codemode/README.md": "On Bun 9.8.7 the worker stays alive; a Bun\t9.8.7 build too.\n",
+	};
+	const root = versionFixture(files);
+	const failures = checkVersionLiterals(root, Object.keys(files));
+	assert.deepEqual(
+		failures.map((failure) => failure.slice(0, failure.indexOf(": "))),
+		[
+			"packages/a/src/driver.ts:1",
+			"packages/gui/README.md:2",
+			"packages/gui/README.md:2",
+			".github/workflows/release.yml:1",
+		],
+		failures.join("\n"),
+	);
+	assert.match(failures[0], /release version 9\.8\.7 is hand-written/);
+});
+
+test("the third-party allowance applies only right after the product name", () => {
+	const files = { "docs/a.md": "Bundled 9.8.7\nBun: 9.8.7\nBun 9.8.7 and AmazMe 9.8.7\n" };
+	const root = versionFixture(files);
+	const failures = checkVersionLiterals(root, Object.keys(files));
+	assert.deepEqual(
+		failures.map((failure) => failure.slice(0, failure.indexOf(": "))),
+		["docs/a.md:1", "docs/a.md:2", "docs/a.md:3"],
+		failures.join("\n"),
+	);
+});
+
+test("by default the release-version rule reads only files git tracks", () => {
+	const root = versionFixture({ "src/tracked.ts": 'export const v = "9.8.7";\n', "src/scratch.ts": 'export const v = "9.8.7";\n' });
+	execFileSync("git", ["init", "-q"], { cwd: root });
+	execFileSync("git", ["add", "package.json", "src/tracked.ts"], { cwd: root });
+	const failures = checkVersionLiterals(root);
+	assert.deepEqual(
+		failures.map((failure) => failure.slice(0, failure.indexOf(": "))),
+		["src/tracked.ts:1"],
+		failures.join("\n"),
+	);
 });
 
 test("temp dir checks allow only packages/*/test/temp-dir.ts and reject bare mkdtemp", () => {

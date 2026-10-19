@@ -18,6 +18,7 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { VERSION } from "@amazme/coding-agent/config";
 import type { CallToolResult, Tool } from "@amazme/mcp";
 import { McpClient, StdioTransport } from "@amazme/mcp";
 import { isRecord } from "./config.ts";
@@ -542,7 +543,7 @@ export class DriverClient {
 			this.transport = transport;
 			const client = new McpClient({
 				name: "AmazMe computer-use",
-				version: "1.4.0",
+				version: VERSION,
 				requestTimeoutMs: timeoutMs,
 			});
 			this.client = client;
