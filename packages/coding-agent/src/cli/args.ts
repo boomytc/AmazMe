@@ -26,6 +26,8 @@ export interface Args {
 	name?: string;
 	noSession?: boolean;
 	sessionDir?: string;
+	/** Open one exact existing Durable session by ID or session directory. */
+	session?: string;
 	models?: string[];
 	tools?: string[];
 	excludeTools?: string[];
@@ -131,6 +133,9 @@ export function parseArgs(args: string[]): Args {
 			result.noSession = true;
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
+		} else if (arg === "--session") {
+			if (i + 1 < args.length && !args[i + 1]!.startsWith("-")) result.session = args[++i];
+			else result.diagnostics.push({ type: "error", message: "--session requires an ID or session directory" });
 		} else if (arg === "--models" && i + 1 < args.length) {
 			result.models = args[++i]
 				.split(",")
@@ -305,6 +310,7 @@ ${chalk.bold("Options:")}
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Resume the newest Durable session for this directory
   --resume, -r                   Resume the newest Durable session for this directory
+  --session <id|dir>             Open one exact existing Durable session; never creates one
   --session-dir <dir>            Directory for Durable session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --name, -n <name>              Set session display name

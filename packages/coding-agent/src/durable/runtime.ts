@@ -305,9 +305,10 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	if (options.noSession && options.continueSession) throw new Error("--no-session cannot be combined with --continue or --resume");
 	if (options.provider !== undefined && options.model === undefined) throw new Error("--provider requires --model");
 	if (options.apiKey !== undefined && options.model === undefined) throw new Error("--api-key requires --model");
-	const sessionCwd = options.cwd === undefined && options.sessionDirectory !== undefined
-		? await readDurableSessionCwd(resolve(options.sessionDirectory))
-		: undefined;
+	// An opened session keeps its project context even when the process started in another directory.
+	const sessionCwd = options.sessionDirectory === undefined
+		? undefined
+		: await readDurableSessionCwd(resolve(options.sessionDirectory));
 	const cwd = await realpath(resolve(sessionCwd ?? options.cwd ?? process.cwd()));
 	const settingsManager = options.settingsManager ?? createCodingSettings(cwd);
 	const sources = options.facetLoader === undefined

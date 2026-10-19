@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readdir, realpath } from "node:fs/promises";
+import { access, mkdir, readdir, realpath, stat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { expandTildePath, getAgentDir } from "../config.ts";
@@ -91,6 +91,62 @@ export async function hasDurableSession(
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * Resolve `--session` to exactly one existing session: an ID in this cwd's storage group, or a session directory.
+ * Nothing is created. A missing or ambiguous ID fails instead of opening another session.
+ */
+export async function resolveExplicitSession(
+	cwdInput: string,
+	spec: string,
+	options: { sessionDir?: string } = {},
+): Promise<{ directory: string; cwd: string }> {
+	const cwd = await realpath(resolve(cwdInput));
+	const asPath = resolve(cwd, expandTildePath(spec));
+	try {
+		if ((await stat(asPath)).isDirectory()) {
+			await access(join(asPath, "session.sqlite"));
+			const directory = await realpath(asPath);
+			return { directory, cwd: (await readSessionCwd(directory)) ?? cwd };
+		}
+	} catch (error) {
+		if (!isMissing(error)) throw error;
+	}
+	const root = sessionRoot(cwd, options.sessionDir);
+	let entries;
+	try {
+		entries = await readdir(root, { withFileTypes: true });
+	} catch (error) {
+		if (isMissing(error)) throw new Error(`No durable session matches "${spec}" for ${cwd}`);
+		throw error;
+	}
+	const candidates: string[] = [];
+	for (const entry of entries) {
+		if (!entry.isDirectory() || !matchesSessionId(entry.name, spec)) continue;
+		if (await hasDatabase(join(root, entry.name))) candidates.push(entry.name);
+	}
+	if (candidates.length === 0) throw new Error(`No durable session matches "${spec}" for ${cwd}`);
+	if (candidates.length > 1) {
+		throw new Error(`Session "${spec}" is ambiguous for ${cwd}: ${candidates.sort().join(", ")}`);
+	}
+	const directory = join(root, candidates[0]!);
+	return { directory, cwd: (await readSessionCwd(directory)) ?? cwd };
+}
+
+/** A full session ID, its UUID part, or a unique timestamp prefix. */
+function matchesSessionId(name: string, spec: string): boolean {
+	return name === spec || name.endsWith(`-${spec}`) || name.startsWith(`${spec}-`);
+}
+
+function isMissing(error: unknown): boolean {
+	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+}
+
+/** The recorded cwd, read without importing the Harness module into every session-listing caller. */
+async function readSessionCwd(directory: string): Promise<string | undefined> {
+	const { readDurableSessionCwd } = await import("./session-cwd.ts");
+	return readDurableSessionCwd(directory);
 }
 
 /** A fresh memory session, a new persisted session, or the newest persisted session for `cwd`. */

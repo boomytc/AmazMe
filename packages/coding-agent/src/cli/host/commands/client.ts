@@ -13,7 +13,10 @@ export interface ClientCommand {
 	readonly command: "client";
 	readonly auth?: AuthInput;
 	readonly connect?: TransportAddress;
+	/** Attach to this existing Session; never creates one. */
 	readonly sessionId?: string;
+	/** Create a Session with this ID when none exists. */
+	readonly newSessionId?: string;
 	readonly continue?: boolean;
 	readonly resume?: boolean;
 	readonly provider?: string;
@@ -27,6 +30,7 @@ export interface ClientCommandContext {
 }
 
 const sessionIdOption = stringOption("--session-id");
+const newSessionIdOption = stringOption("--new-session-id");
 const continueOption = flagOption("--continue");
 const continueShortOption = flagOption("-c");
 const resumeOption = flagOption("--resume");
@@ -38,6 +42,7 @@ const pluginPackageOption = stringOption("-e", { repeatable: true });
 export const clientCommand = new Command<ClientCommand, ClientCommandContext>("client")
 	.option(connectOption)
 	.option(sessionIdOption)
+	.option(newSessionIdOption)
 	.option(continueOption)
 	.option(continueShortOption)
 	.option(resumeOption)
@@ -51,6 +56,7 @@ export const clientCommand = new Command<ClientCommand, ClientCommandContext>("c
 		const { auth, errors: authErrors } = parseAuth(input);
 		const connect = input.value(connectOption);
 		const sessionId = input.value(sessionIdOption);
+		const newSessionId = input.value(newSessionIdOption);
 		const shouldContinue = input.value(continueOption) === true || input.value(continueShortOption) === true;
 		const shouldResume = input.value(resumeOption) === true || input.value(resumeShortOption) === true;
 		const provider = input.value(providerOption);
@@ -65,8 +71,8 @@ export const clientCommand = new Command<ClientCommand, ClientCommandContext>("c
 				: undefined;
 		const modelErrors = provider !== undefined && model === undefined ? ["--provider requires --model"] : [];
 		const sessionSelectionErrors =
-			[sessionId !== undefined, shouldContinue, shouldResume].filter(Boolean).length > 1
-				? ["--session-id, --continue, and --resume are mutually exclusive"]
+			[sessionId !== undefined, newSessionId !== undefined, shouldContinue, shouldResume].filter(Boolean).length > 1
+				? ["--session-id, --new-session-id, --continue, and --resume are mutually exclusive"]
 				: [];
 		const unsupportedErrors =
 			input.remainingArgs.length === 0 || prompt !== undefined ? [] : unsupportedOptions("client", input);
@@ -79,6 +85,7 @@ export const clientCommand = new Command<ClientCommand, ClientCommandContext>("c
 				...(auth === undefined ? {} : { auth }),
 				...(connect === undefined ? {} : { connect }),
 				...(sessionId === undefined ? {} : { sessionId }),
+				...(newSessionId === undefined ? {} : { newSessionId }),
 				...(shouldContinue ? { continue: true } : {}),
 				...(shouldResume ? { resume: true } : {}),
 				...(provider === undefined ? {} : { provider }),

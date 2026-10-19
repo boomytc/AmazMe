@@ -23,7 +23,7 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 	try {
 		const discovered = await Promise.all(runtime.servers.map(activateBuiltinClientServices));
 		let sessionId = command.sessionId;
-		if (sessionId === undefined && command.prompt === undefined) {
+		if (sessionId === undefined && command.newSessionId === undefined && command.prompt === undefined) {
 			return {
 				kind: "list",
 				sessions: discovered
@@ -38,7 +38,13 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 		}
 
 		let match: (typeof discovered)[number];
-		if (sessionId === undefined) {
+		if (sessionId === undefined && command.newSessionId !== undefined) {
+			if (discovered.length !== 1) {
+				throw new Error("--new-session-id requires exactly one discovered server");
+			}
+			match = discovered[0]!;
+			sessionId = (await match.management.create({ id: command.newSessionId }, BACKGROUND_CONTEXT)).sessionId;
+		} else if (sessionId === undefined) {
 			if (discovered.length !== 1) {
 				throw new Error("Client prompt requires exactly one discovered server to create a Session");
 			}
@@ -53,15 +59,11 @@ export async function runClient(command: ClientCommand, options: RunClientOption
 				throw new Error(`Session ${selectedSessionId} is available from more than one server`);
 			}
 			const existing = matches[0];
-			if (existing) {
-				match = existing;
-			} else {
-				if (command.connect?.transport === "radius" || command.prompt === undefined || discovered.length !== 1) {
-					throw new Error(`No discovered server contains session ${selectedSessionId}`);
-				}
-				match = discovered[0]!;
-				await match.management.create({ id: selectedSessionId }, BACKGROUND_CONTEXT);
+			if (existing === undefined) {
+				// --session-id is an exact open: a typo must not silently create an empty Session.
+				throw new Error(`No discovered server contains session ${selectedSessionId}`);
 			}
+			match = existing;
 		}
 		await match.plugins.prepareSession(
 			{

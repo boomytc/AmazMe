@@ -42,6 +42,7 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { ProjectTrustStore } from "./core/trust-manager.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
+import { resolveExplicitSession } from "./durable/sessions.ts";
 import { runMigrations } from "./migrations.ts";
 import { setThemeJsonValidator } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
@@ -352,12 +353,32 @@ export async function main(args: string[]) {
 		console.error(chalk.red("Error: --no-session cannot be combined with --continue or --resume"));
 		process.exit(1);
 	}
+	if (parsed.session !== undefined && (parsed.continue || parsed.resume || parsed.noSession)) {
+		console.error(chalk.red("Error: --session cannot be combined with --continue, --resume, or --no-session"));
+		process.exit(1);
+	}
 
 	// Run migrations (pass cwd for project-local migrations)
 	runMigrations(cwd);
 	time("runMigrations");
 
-	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
+	// An explicit session owns the project context: settings, trust, tools, and resources come from its recorded cwd.
+	const sessionDirOption = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
+	let explicitSession: { directory: string; cwd: string } | undefined;
+	if (parsed.session !== undefined) {
+		try {
+			explicitSession = await resolveExplicitSession(
+				cwd,
+				parsed.session,
+				sessionDirOption === undefined ? {} : { sessionDir: sessionDirOption },
+			);
+		} catch (error) {
+			console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+			process.exit(1);
+		}
+	}
+	const effectiveCwd = explicitSession?.cwd ?? cwd;
+	const startupSettingsManager = SettingsManager.create(effectiveCwd, agentDir);
 	const startupSettingsDiagnostics = collectSettingsDiagnostics(startupSettingsManager);
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
@@ -378,20 +399,21 @@ export async function main(args: string[]) {
 	if (nativeInteractive) {
 		const { initialMessage, initialImages } = await prepareInitialMessage(parsed);
 		const projectTrusted = await resolveProjectTrusted({
-			cwd,
+			cwd: effectiveCwd,
 			trustStore: new ProjectTrustStore(agentDir),
 			trustOverride: parsed.projectTrustOverride,
 			defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
-			projectTrustContext: createProjectTrustContext({ cwd, mode: "interactive", settingsManager: startupSettingsManager, hasUI: true }),
+			projectTrustContext: createProjectTrustContext({ cwd: effectiveCwd, mode: "interactive", settingsManager: startupSettingsManager, hasUI: true }),
 		});
 		startupSettingsManager.setProjectTrusted(projectTrusted);
 		const sessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
 		const { runDurableInteractive } = await import("./durable/interactive.ts");
 		await runDurableInteractive({
 			startupBenchmark,
-			cwd,
+			cwd: effectiveCwd,
 			continueSession: parsed.continue === true || parsed.resume === true,
 			noSession: parsed.noSession === true,
+			...(explicitSession === undefined ? {} : { sessionDirectory: explicitSession.directory }),
 			...(sessionDir === undefined ? {} : { sessionDir }),
 			...(sessionName === undefined ? {} : { name: sessionName }),
 			settingsManager: startupSettingsManager,
@@ -439,11 +461,11 @@ export async function main(args: string[]) {
 	}
 
 	const projectTrusted = await resolveProjectTrusted({
-		cwd,
+		cwd: effectiveCwd,
 		trustStore: new ProjectTrustStore(agentDir),
 		trustOverride: parsed.projectTrustOverride,
 		defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
-		projectTrustContext: createProjectTrustContext({ cwd, mode: appMode, settingsManager: startupSettingsManager, hasUI: false }),
+		projectTrustContext: createProjectTrustContext({ cwd: effectiveCwd, mode: appMode, settingsManager: startupSettingsManager, hasUI: false }),
 	});
 	startupSettingsManager.setProjectTrusted(projectTrusted);
 	// --mode json/rpc and --print are not plain metadata, so --help still installs project packages
@@ -472,9 +494,10 @@ export async function main(args: string[]) {
 	const continuing = parsed.continue === true || parsed.resume === true;
 	const durableOptions = {
 		settingsManager: startupSettingsManager,
-		cwd,
+		cwd: effectiveCwd,
 		continueSession: continuing,
 		noSession: parsed.noSession === true,
+		...(explicitSession === undefined ? {} : { sessionDirectory: explicitSession.directory }),
 		...(sessionDir === undefined ? {} : { sessionDir }),
 		...(sessionName === undefined ? {} : { name: sessionName }),
 		...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),

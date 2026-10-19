@@ -126,9 +126,15 @@ describe("parseArgs", () => {
 			expect(result.appendSystemPrompt).toEqual(["Context A", "Context B"]);
 		});
 
+		test("parses --session as an exact existing session", () => {
+			expect(parseArgs(["--session", "1750000000000-00000000-0000-4000-8000-000000000000"]).session).toBe(
+				"1750000000000-00000000-0000-4000-8000-000000000000",
+			);
+			expect(parseArgs(["--session"]).diagnostics).toMatchObject([{ type: "error" }]);
+		});
+
 		test("rejects removed JSONL session flags", () => {
 			for (const args of [
-				["--session", "/path/to/session.jsonl"],
 				["--session-id", "orchestrated-session"],
 				["--fork", "1234abcd"],
 			]) {

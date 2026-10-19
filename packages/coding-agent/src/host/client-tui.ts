@@ -1030,7 +1030,7 @@ export class ExperimentalClientTui implements Component {
 	}
 }
 
-async function prepareClientSession(command: ClientCommand, servers: readonly ClientTuiServer[]): Promise<PreparedClientSession> {
+export async function prepareClientSession(command: ClientCommand, servers: readonly ClientTuiServer[]): Promise<PreparedClientSession> {
 	const opened = servers.map((server) => ({
 		server,
 		services: server.server.open({
@@ -1063,18 +1063,16 @@ async function prepareClientSession(command: ClientCommand, servers: readonly Cl
 						summary })),
 			);
 			if (matches.length > 1) throw new Error(`Session ${command.sessionId} is available from more than one server`);
+			// --session-id is an exact open: a typo must not silently create an empty Session.
+			if (matches[0] === undefined) throw new Error(`No Session ${command.sessionId} exists on the selected server`);
 			selected = matches[0];
-			if (selected === undefined) {
-				if (command.connect?.transport === "radius") {
-					throw new Error(`Remote server does not contain Session ${command.sessionId}`);
-				}
-				const feature = requireSingleServer(features);
-				selected = {
-					server: feature.server,
-					management: feature.management,
-					plugins: feature.plugins,
-					summary: await feature.management.create({ id: command.sessionId }, BACKGROUND_CONTEXT) };
-			}
+		} else if (command.newSessionId !== undefined) {
+			const feature = requireSingleServer(features);
+			selected = {
+				server: feature.server,
+				management: feature.management,
+				plugins: feature.plugins,
+				summary: await feature.management.create({ id: command.newSessionId }, BACKGROUND_CONTEXT) };
 		} else if (command.continue === true || command.resume === true) {
 			selected = features
 				.flatMap((feature) =>
