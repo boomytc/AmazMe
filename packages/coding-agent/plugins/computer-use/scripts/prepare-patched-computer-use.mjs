@@ -13,6 +13,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { preparePermissionPanel } from "../src/permission-panel.ts";
 import { driverPin, prepareComputerUse } from "./prepare-computer-use.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -102,6 +103,7 @@ export async function preparePatchedComputerUse({ source, destination } = {}) {
 			"--strict",
 			join(output, appName),
 		]);
+		await preparePermissionPanel();
 		return installed;
 	}
 	if (!source)

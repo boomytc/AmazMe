@@ -26,6 +26,12 @@ import {
 	FALLBACK_CANDIDATES,
 	visualFallbackReason,
 } from "./native-candidates.ts";
+import type { PermissionStatus } from "./permissions.ts";
+import {
+	PermissionGuide,
+	PermissionRequiredError,
+	permissionStatus,
+} from "./permissions.ts";
 
 export type Action = {
 	action:
@@ -102,12 +108,15 @@ export class ComputerUseController {
 	private closing?: Promise<void>;
 	private readonly subscriptions = new Map<Harness, () => void>();
 	private readonly driverFactory: (conversationId: string) => DriverClient;
+	private readonly permissionGuide: PermissionGuide;
 
 	constructor(
 		driverFactory: (conversationId: string) => DriverClient = (id) =>
 			new DriverClient(id),
+		permissionGuide = new PermissionGuide(),
 	) {
 		this.driverFactory = driverFactory;
+		this.permissionGuide = permissionGuide;
 	}
 	get signal(): AbortSignal {
 		return this.controller.signal;
@@ -142,6 +151,7 @@ export class ComputerUseController {
 			policy: ComputerUseSettings,
 			signal: AbortSignal,
 		) => Promise<T>,
+		requirePermissions = true,
 	): Promise<T> {
 		return this.serial(async () => {
 			const policy = readComputerUseSettings(
@@ -170,6 +180,18 @@ export class ComputerUseController {
 				this.drivers.set(id, driver);
 			}
 			try {
+				if (requirePermissions && process.platform === "darwin") {
+					const report = permissionStatus(
+						await driver.permissions(policy.timeoutMs, signal),
+					);
+					signal.throwIfAborted();
+					this.permissionGuide.ready(report);
+					if (report.status === "permission_required") {
+						this.offerPermissions(report, id, policy.timeoutMs);
+						throw new PermissionRequiredError(report);
+					}
+					if (report.status !== "ready") throw new Error(report.message);
+				}
 				return await work(driver, policy, signal);
 			} catch (error) {
 				// An interrupted native action has an unknown outcome. Retire its session, including all old references.
@@ -182,7 +204,63 @@ export class ComputerUseController {
 		}, context.abortSignal);
 	}
 
+	private offerPermissions(
+		report: PermissionStatus,
+		id: string,
+		timeoutMs: number,
+		force = false,
+	): void {
+		this.permissionGuide.offer(
+			report,
+			async (signal) => {
+				const driver = report.driver_path
+					? new DriverClient(id, { command: report.driver_path })
+					: this.driverFactory(id);
+				try {
+					return permissionStatus(
+						await driver.permissions(
+							timeoutMs,
+							AbortSignal.any([
+								signal,
+								this.signal,
+								AbortSignal.timeout(timeoutMs),
+							]),
+						),
+					);
+				} finally {
+					await driver.dispose();
+				}
+			},
+			force,
+		);
+	}
+
+	async inspectPermissions(
+		id: string,
+		timeoutMs: number,
+		signal: AbortSignal,
+		guide: "none" | "missing" | "always" = "none",
+	): Promise<PermissionStatus> {
+		this.signal.throwIfAborted();
+		signal = AbortSignal.any([this.signal, signal]);
+		signal.throwIfAborted();
+		const driver = this.driverFactory(id);
+		try {
+			const report = permissionStatus(
+				await driver.permissions(timeoutMs, signal),
+			);
+			signal.throwIfAborted();
+			this.permissionGuide.ready(report);
+			if (guide !== "none")
+				this.offerPermissions(report, id, timeoutMs, guide === "always");
+			return report;
+		} finally {
+			await driver.dispose();
+		}
+	}
+
 	async disable(conversationId: string): Promise<void> {
+		await this.permissionGuide.dismiss();
 		const driver = this.drivers.get(conversationId);
 		if (driver) {
 			this.drivers.delete(conversationId);
@@ -194,6 +272,7 @@ export class ComputerUseController {
 		if (this.closing) return this.closing;
 		this.controller.abort(new Error("Computer-use plugin closed"));
 		this.closing = (async () => {
+			await this.permissionGuide.dispose();
 			await this.tail;
 			const results = await Promise.allSettled(
 				[...this.drivers.values()].map((driver) => driver.dispose()),

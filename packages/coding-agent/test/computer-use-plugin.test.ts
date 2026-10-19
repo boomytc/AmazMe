@@ -193,8 +193,8 @@ async function fixture(mode = "native") {
 	return { create, events, directory, binary };
 }
 
-async function setup(install = true) {
-	const native = await fixture();
+async function setup(install = true, mode = "native") {
+	const native = await fixture(mode);
 	const models = createModels(),
 		faux = fauxProvider();
 	models.setProvider(faux.provider);
@@ -288,6 +288,36 @@ async function setup(install = true) {
 }
 
 describe("computer-use policy and plugin lifecycle", () => {
+	it.skipIf(process.platform !== "darwin")(
+		"blocks a missing grant before captures or Jev and requires a new request after granting",
+		async () => {
+			const s = await setup(true, "missing-permissions");
+			await configureComputerUse(s.runtime, "on", context, s.controller);
+			await s.ask("cu_ground_and_act", {
+				target,
+				goal: "Increment",
+				verification: "Counter 1",
+			});
+			expect(s.classify).not.toHaveBeenCalled();
+			expect(s.faux.getPendingResponseCount()).toBe(1);
+			expect(
+				(await s.native.events())
+					.filter((event) => event.event === "call")
+					.map((event) => event.name),
+			).toEqual(["check_permissions", "end_session"]);
+			await writeFile(join(s.native.directory, "mode.txt"), "native");
+			await new Promise((resolve) => setImmediate(resolve));
+			expect(
+				(await s.native.events()).filter((event) => event.name === "click"),
+			).toHaveLength(0);
+			await s.ask("cu_observe", { action: "window", target });
+			expect(
+				(await s.native.events()).filter(
+					(event) => event.name === "get_window_state",
+				),
+			).toHaveLength(1);
+		},
+	);
 	it("pins the command conversation before a queued operation and a selection change", async () => {
 		const s = await setup();
 		await s.root.submit(
@@ -490,10 +520,10 @@ describe("computer-use policy and plugin lifecycle", () => {
 				(await s.native.events()).filter(
 					(event) => event.name === "end_session",
 				),
-			).toHaveLength(1);
+			).toHaveLength(2);
 			expect(
 				(await s.native.events()).filter((event) => event.event === "exited"),
-			).toHaveLength(1);
+			).toHaveLength(2);
 			await s.ask("cu_observe", { action: "window", target });
 		} finally {
 			await plugin.close();
@@ -501,7 +531,48 @@ describe("computer-use policy and plugin lifecycle", () => {
 		expect(s.registry.snapshot().extension("computer-use")).toBeUndefined();
 		expect(
 			(await s.native.events()).filter((event) => event.name === "end_session"),
-		).toHaveLength(2);
+		).toHaveLength(3);
+	});
+	it("offers setup while disabled without enabling control and reports missing grants on enable", async () => {
+		const s = await setup(false, "missing-permissions");
+		vi.stubEnv("AMAZME_CUA_DRIVER_PATH", s.native.binary);
+		const plugin = await openPluginRuntime(
+			[
+				createAgentExtensionsFacet(s.registry),
+				createSlashCommandsRuntimeFacet(),
+				serviceFacet("cu-test-runtime", AgentRuntime, [], () => ({
+					value: s.runtime,
+				})),
+			],
+			createSourcePluginLoader([join(packageRoot, "plugins/computer-use")]),
+		);
+		try {
+			await plugin.services.scope.ready();
+			const command = required(plugin.services.get(SlashCommands).list()[0]);
+			expect(await command.run("setup", context)).toMatchObject({
+				note: expect.stringContaining("Computer-use 未开启"),
+			});
+			expect(
+				await s.harness.snapshot(ComputerUsePolicy, s.root.id, context),
+			).toBeUndefined();
+			const enabled = await command.run("on", context);
+			expect(enabled).toMatchObject({
+				note: expect.stringContaining("等待系统授权"),
+			});
+			expect(s.classify).not.toHaveBeenCalled();
+			expect(
+				(await s.native.events())
+					.filter((event) => event.event === "call")
+					.map((event) => event.name),
+			).toEqual([
+				"check_permissions",
+				"end_session",
+				"check_permissions",
+				"end_session",
+			]);
+		} finally {
+			await plugin.close();
+		}
 	});
 
 	it("off and harness close retire the session; tool calls retain one deterministic session", async () => {

@@ -513,6 +513,7 @@ export class DriverClient {
 				typeof report.screen_recording !== "boolean"
 			)
 				throw new Error("Invalid host permission report");
+			report = { ...report, host_path: bundle.path, driver_path: binary };
 			return {
 				content: [{ type: "text", text: JSON.stringify(report) }],
 				structuredContent: report,

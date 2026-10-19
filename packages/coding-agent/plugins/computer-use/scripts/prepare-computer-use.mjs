@@ -14,6 +14,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { preparePermissionPanel } from "../src/permission-panel.ts";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 export async function driverPin() {
@@ -89,6 +90,7 @@ export async function prepareComputerUse({
 			throw new Error(
 				"Installed component differs from its pinned manifest; select another destination",
 			);
+		if (platform === "darwin") await preparePermissionPanel(signingIdentity);
 		return { directory: output, binary: join(output, executable) };
 	}
 	await mkdir(dirname(output), { recursive: true });
@@ -191,6 +193,7 @@ export async function prepareComputerUse({
 			),
 		);
 		// Never replace a user's installed component or a service that may still be running.
+		if (platform === "darwin") await preparePermissionPanel(signingIdentity);
 		await rename(ready, output);
 		return { directory: output, binary: join(output, executable) };
 	} finally {

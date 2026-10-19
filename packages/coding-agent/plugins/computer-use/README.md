@@ -19,6 +19,7 @@ amazme -e /path/to/AmazMe/packages/coding-agent/plugins/computer-use
 ```text
 /computer-use status
 /computer-use permissions
+/computer-use setup
 /computer-use on
 /computer-use {"minPresence":0.9,"allowForeground":false}
 /computer-use {"allowRiskCategories":["send"]}
@@ -30,6 +31,14 @@ amazme -e /path/to/AmazMe/packages/coding-agent/plugins/computer-use
 只有用户命令可以修改策略，工具参数不提供开关、模型或风险许可。命令与工具共用串行锁，配置写入沿用宿主的可写对话及归档检查。修改策略时释放旧 Driver 会话；`off` 同时结束其子进程。
 
 `permissions` 是用户显式请求的诊断，关闭状态也可运行；模型工具在关闭状态一律拒绝，不启动驱动或访问分类器。AmazMe macOS 宿主通过独立进程只读检查权限，不启动桌面服务或申请授权；其他来源使用 Driver 的 `check_permissions`，首次启动可能出现该运行时自己的权限引导。诊断不代替系统授权。
+
+开启功能时检查权限；macOS 上读取窗口、定位或执行动作前也先只读检查。缺少权限时停止本次操作，返回 `permission_required` 与操作说明，清理旧快照，不调用 Jev 或继续派发动作。对已识别的 AmazMe macOS 组件会弹出原生引导，显示缺少的权限、实际 `.app` 完整路径及新版系统设置名称；远程连接需要在运行 AmazMe 的宿主机完成授权。
+
+原生面板用两个列表项分别展示辅助功能、屏幕录制，绿色勾选和“已授权”、橙色提示和“待授权”同时标识状态；暂时无法读取时显示“待检查”。每项提供“前往设置”或“查看设置”，直接跳转到对应系统设置页。面板保留，返回时自动只读刷新，也可点击“重新检查”；全部就绪后显示“完成”。若列表没有该应用，使用“＋”添加面板显示的实际路径（长路径可悬停查看完整内容）。系统可能要求退出并重新打开应用，按提示操作后重新检查。授权由用户在系统设置中完成。
+
+同一应用不会因模型连续失败反复弹窗；`setup` 可显式重新打开引导，关闭状态也可使用且不自动开启桌面控制。重新检查只做权限诊断，权限就绪后需重新观察并发起新操作，不自动重发原动作。`off`、重载和会话关闭会取消并等待引导进程退出。非 macOS、其他来源的运行时或弹窗不可用时保留文字指导；`permissions` 命令始终不弹窗。
+
+权限面板是独立的 AppKit 应用，仅展示状态、跳转系统设置和请求只读刷新，不拥有桌面控制权限。macOS 可选安装脚本会编译并缓存面板（需要 Xcode Command Line Tools）；已有运行时首次需要面板时也会尝试准备，失败则保留命令和工具中的完整文字指导。缓存位于 `~/Library/Caches/AmazMe/ComputerUse/permissions/`，复用前校验源码、可执行文件摘要与应用签名；更新面板不改变实际 Computer-use 宿主的权限身份。
 
 风险类别为 `destructive`、`send`、`purchase`、`close_unsaved`。AX 标签中的中英文风险短语默认排除；视觉和键盘动作还需 Jev 判断风险，未确定安全时返回 `review`。标签过滤与模型判断都不能保证识别所有风险，应按具体任务配置许可。
 

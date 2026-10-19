@@ -16,7 +16,8 @@ import {
 	editComputerUseSettings,
 	readComputerUseSettings,
 } from "./config.ts";
-import { DriverClient } from "./driver.ts";
+import type { DriverClient } from "./driver.ts";
+import { PermissionRequiredError } from "./permissions.ts";
 import {
 	act,
 	ComputerUseController,
@@ -149,9 +150,19 @@ export function createComputerUseExtension(
 			policy: ComputerUseSettings,
 			signal: AbortSignal,
 		) => Promise<T>,
+		requirePermissions = true,
 	) => {
 		await bind(controller, runtime, context);
-		return controller.run(api, context, work);
+		try {
+			return await controller.run(api, context, work, requirePermissions);
+		} catch (error) {
+			if (!(error instanceof PermissionRequiredError)) throw error;
+			return {
+				...result(error.report),
+				isError: true,
+				control: { terminate: true },
+			};
+		}
 	};
 	return defineExtension({
 		name: "computer-use",
@@ -177,44 +188,49 @@ export function createComputerUseExtension(
 				executionMode: "sequential",
 				replay: "unsafe",
 				async execute(args, api, context) {
-					return run(api, context, async (driver, policy, signal) => {
-						if (["apps", "windows", "permissions"].includes(args.action)) {
-							const tool =
-								args.action === "apps"
-									? "list_apps"
-									: args.action === "windows"
-										? "list_windows"
-										: "check_permissions";
-							const response =
-								args.action === "permissions"
-									? await driver.permissions(policy.timeoutMs, signal)
-									: await driver.call(
-											tool,
-											args.action === "windows" && args.pid
-												? { pid: args.pid }
-												: {},
-											policy.timeoutMs,
-											signal,
-										);
-							return result(response);
-						}
-						if (args.action === "window" && !args.target)
-							throw new Error(
-								"Window observation requires target.pid and target.window_id",
+					return run(
+						api,
+						context,
+						async (driver, policy, signal) => {
+							if (["apps", "windows", "permissions"].includes(args.action)) {
+								const tool =
+									args.action === "apps"
+										? "list_apps"
+										: args.action === "windows"
+											? "list_windows"
+											: "check_permissions";
+								const response =
+									args.action === "permissions"
+										? await driver.permissions(policy.timeoutMs, signal)
+										: await driver.call(
+												tool,
+												args.action === "windows" && args.pid
+													? { pid: args.pid }
+													: {},
+												policy.timeoutMs,
+												signal,
+											);
+								return result(response);
+							}
+							if (args.action === "window" && !args.target)
+								throw new Error(
+									"Window observation requires target.pid and target.window_id",
+								);
+							if (args.action === "desktop" && args.target)
+								throw new Error("Desktop observation cannot specify a window");
+							const snapshot = await driver.observe(
+								args.target,
+								policy.timeoutMs,
+								signal,
 							);
-						if (args.action === "desktop" && args.target)
-							throw new Error("Desktop observation cannot specify a window");
-						const snapshot = await driver.observe(
-							args.target,
-							policy.timeoutMs,
-							signal,
-						);
-						return result(snapshotReport(snapshot, policy), {
-							type: "image",
-							mimeType: "image/png",
-							data: Buffer.from(snapshot.imageBytes).toString("base64"),
-						});
-					});
+							return result(snapshotReport(snapshot, policy), {
+								type: "image",
+								mimeType: "image/png",
+								data: Buffer.from(snapshot.imageBytes).toString("base64"),
+							});
+						},
+						["window", "desktop"].includes(args.action),
+					);
 				},
 			}),
 			defineTool({
@@ -362,19 +378,19 @@ export default activationFacet(
 				services.get(SlashCommands).replace({
 					name: "computer-use",
 					description: "Configure optional native desktop control",
-					argumentHint: "[status|on|off|permissions|JSON]",
+					argumentHint: "[status|on|off|permissions|setup|JSON]",
 					async run(args, context) {
-						if (args.trim() !== "permissions")
-							return {
-								note: JSON.stringify(
-									await configureComputerUse(
-										runtime,
-										args,
-										context,
-										controller,
-									),
-								),
-							};
+						const command = args.trim();
+						if (command !== "permissions" && command !== "setup") {
+							const settings = await configureComputerUse(
+								runtime,
+								args,
+								context,
+								controller,
+							);
+							if (!settings.enabled || !command || command === "status")
+								return { note: JSON.stringify(settings) };
+						}
 						return controller.serial(async () => {
 							const { harness, conversation } = await runtime.current(context);
 							controller.bind(harness);
@@ -385,22 +401,28 @@ export default activationFacet(
 									context,
 								)) ?? DEFAULT_COMPUTER_USE_SETTINGS,
 							);
-							const driver = new DriverClient(String(conversation.id));
 							const timeout = AbortSignal.timeout(settings.timeoutMs);
 							const signal = AbortSignal.any([
 								controller.signal,
 								timeout,
 								...(context.abortSignal ? [context.abortSignal] : []),
 							]);
-							try {
-								return {
-									note: JSON.stringify(
-										await driver.permissions(settings.timeoutMs, signal),
-									),
-								};
-							} finally {
-								await driver.dispose();
-							}
+							const report = await controller.inspectPermissions(
+								String(conversation.id),
+								settings.timeoutMs,
+								signal,
+								command === "setup"
+									? "always"
+									: command === "permissions"
+										? "none"
+										: "missing",
+							);
+							const state = settings.enabled
+								? report.status === "permission_required"
+									? "Computer-use 已开启，等待系统授权。"
+									: "Computer-use 已开启。"
+								: "Computer-use 未开启。";
+							return { note: `${state}\n${report.message}` };
 						}, context.abortSignal);
 					},
 				}),

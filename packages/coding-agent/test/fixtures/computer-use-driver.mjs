@@ -170,7 +170,10 @@ createInterface({ input: process.stdin }).on("line", async (line) => {
 	if (name === "check_permissions")
 		return send(
 			request.id,
-			envelope({ accessibility: true, screen_recording: true }),
+			envelope({
+				accessibility: mode !== "missing-permissions",
+				screen_recording: mode !== "missing-permissions",
+			}),
 		);
 	if (name === "list_apps" || name === "list_windows")
 		return send(request.id, envelope({ items: [] }));
