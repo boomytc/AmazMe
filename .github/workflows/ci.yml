@@ -20,6 +20,8 @@ jobs:
       - run: npm ci
       - run: npm run build:offline
       - run: npm run typecheck
+      - run: npm run check:workspace
+      - run: npm run test:engineering
       - name: Install ripgrep and fd for tool tests
         run: brew install ripgrep fd
       - run: npm test --workspace @amazme/coding-agent

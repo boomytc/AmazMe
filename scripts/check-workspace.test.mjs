@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { checkDependencyVersions, checkSourceContracts, checkEntryContracts } from "./check-workspace.mjs";
+import { checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts } from "./check-workspace.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -265,4 +265,42 @@ test("Durable root and file tools keep the optional Photon processor in its own 
 	writeFileSync(join(durable, "src/index.ts"), "export const value = 1;");
 	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
 	assert.deepEqual((await checkEntryContracts(root)).failures, []);
+});
+
+function changelogFixture(root, name, text) {
+	mkdirSync(join(root, "packages", name), { recursive: true });
+	writeFileSync(join(root, "packages", name, "CHANGELOG.md"), text);
+}
+
+test("changelog checks accept the shared headings in order and leave older sections as written", () => {
+	const root = fixture();
+	changelogFixture(
+		root,
+		"agent",
+		"# Changelog\n\n## [Unreleased]\n\n### Breaking Changes\n\n- a\n\n### Fixed\n\n- b\n\n## [1.1.0] - 2026-10-07\n\n### Added\n\n- c\n\n## [1.0.0] - 2026-10-01\n\n### New Features\n\n- d\n",
+	);
+	changelogFixture(root, "ai", "# Changelog\n\n## [Unreleased]\n");
+	assert.deepEqual(checkChangelogs(root), []);
+});
+
+test("changelog checks reject unknown, repeated, out-of-order, and empty sections and malformed release headings", () => {
+	const root = fixture();
+	changelogFixture(
+		root,
+		"agent",
+		"# Changelog\n\n## [Unreleased]\n\n### 修复\n\n- a\n\n### Fixed\n\n- b\n\n### Added\n\n- c\n\n### Fixed\n\n## [1.1.0]\n\n### Removed\n\n- d\n",
+	);
+	changelogFixture(root, "ai", "Changelog\n\n## [1.0.0] - 2026-10-01\n");
+	const failures = checkChangelogs(root);
+	assert.equal(failures.length, 7, failures.join("\n"));
+	for (const fragment of [
+		'agent/CHANGELOG.md:5: section must be one of',
+		'agent/CHANGELOG.md:13: "Added" is repeated or out of order',
+		'agent/CHANGELOG.md:17: "Fixed" is repeated or out of order',
+		'agent/CHANGELOG.md:17: "Fixed" has no entries',
+		'agent/CHANGELOG.md:19: release heading must read',
+		'ai/CHANGELOG.md: first line must be "# Changelog"',
+		'ai/CHANGELOG.md:3: first section must be "## [Unreleased]"',
+	])
+		assert.ok(failures.some((failure) => failure.includes(fragment)), `missing ${fragment} in\n${failures.join("\n")}`);
 });
