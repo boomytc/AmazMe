@@ -2,6 +2,12 @@
 
 可选原生插件。执行与截图来自外部 `cua-driver`，AX 候选选择和图片定位使用宿主的 TypeSafe `jev-1.14.0` 分类器。不依赖 OmniParser，不把驱动二进制打进默认 npm 包。
 
+**集成状态：首版集成完成（2026-10-19），已通过 macOS 受控场景的真实桌面与线上 Jev 联调。**
+
+已验证后台 AX 点击、赋值，以及使用 `0.34.1-amazme.1` 补丁运行时的 Cocoa 自绘 Canvas 点击；均经过动作后的独立观察与 Jev 核验。复测确认前台应用与鼠标位置不变，既定风险门控保持生效。四个高层工具、策略与生命周期管理已有自动化回归覆盖，相关构建及检查通过。
+
+后续仍需验收 Windows/Linux 真机、Chromium/Electron、完整动作矩阵、瓦片定位成功路径及 TUI/Web/GUI 各入口的实际使用流程。当前完成口径限于首版集成与上述 macOS 场景，详细证据和待办见[集成验收记录](./LIVE-VALIDATION.md)。
+
 ```bash
 amazme -e /path/to/AmazMe/packages/coding-agent/plugins/computer-use
 ```

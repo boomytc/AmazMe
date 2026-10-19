@@ -99,7 +99,7 @@ amazme web -e /path/to/plugin
 | [automation](packages/coding-agent/plugins/automation/README.md) | 宿主定时任务、时区与逐次执行记录 |
 | [verification](packages/coding-agent/plugins/verification/README.md) | 显式命令检查、独立回执与有限修正 |
 | [workflows](packages/coding-agent/plugins/workflows/README.md) | 可复用分阶段任务、有界并发和持久暂停/恢复 |
-| [computer-use](packages/coding-agent/plugins/computer-use/README.md) | 按需开启的原生桌面观测、后台动作与 Jev 视觉定位 |
+| [computer-use](packages/coding-agent/plugins/computer-use/README.md) | 首版集成完成；按需开启的原生桌面观测、后台动作与 Jev 视觉定位，已通过 macOS 受控场景联调 |
 
 例如，使用仓库中的项目记忆插件：
 
