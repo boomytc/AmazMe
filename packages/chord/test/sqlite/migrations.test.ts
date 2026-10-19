@@ -77,7 +77,13 @@ describe("SQLite migrations", () => {
 					statements: ["CREATE TABLE migration_second (value TEXT) STRICT", "THIS IS NOT SQL"],
 				},
 			];
-			await expect(applySqliteMigrations(database, failed, { table: "app_schema" })).rejects.toThrow();
+			await expect(applySqliteMigrations(database, failed, { table: "app_schema" })).rejects.toMatchObject({
+				name: "SqliteSchemaError",
+				kind: "migration-failed",
+				version: 2,
+				supportedVersion: 2,
+				message: expect.stringMatching(/^SQLite migration to version 2 failed: /u),
+			});
 			expect(
 				await database.get(
 					"SELECT count(*) AS count FROM sqlite_schema WHERE name IN ('app_schema', 'migration_first', 'migration_second')",

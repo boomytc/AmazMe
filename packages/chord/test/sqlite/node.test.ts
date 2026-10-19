@@ -1,6 +1,34 @@
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { SqliteExecutor } from "../../src/sqlite/index.ts";
-import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
+import { checkSqliteSchemaVersion, type SqliteExecutor, SqliteSchemaError } from "../../src/sqlite/index.ts";
+import { openNodeSqliteDatabase, preflightNodeSqliteFile } from "../../src/sqlite/node.ts";
+
+function withDirectory(run: (directory: string) => Promise<void>): Promise<void> {
+	const directory = mkdtempSync(join(tmpdir(), "amazme-chord-sqlite-"));
+	return run(directory).finally(() => rmSync(directory, { recursive: true, force: true }));
+}
+
+function snapshot(directory: string): Record<string, string> {
+	return Object.fromEntries(
+		readdirSync(directory)
+			.sort()
+			.map((name) => [name, createHash("sha256").update(readFileSync(join(directory, name))).digest("hex")]),
+	);
+}
+
+/** A rollback-journal database at schema `version`, so enabling WAL would rewrite its header. */
+function writeVersioned(path: string, version: number): void {
+	const database = new DatabaseSync(path);
+	database.exec(`CREATE TABLE app_schema (singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL);
+		INSERT INTO app_schema VALUES (1, ${version})`);
+	database.close();
+}
+
+const checkApp = (reader: SqliteExecutor) => checkSqliteSchemaVersion(reader, { table: "app_schema", currentVersion: 2 });
 
 describe("Node SQLite driver", () => {
 	it("configures connection defaults and accepts explicit settings", async () => {
@@ -166,4 +194,55 @@ describe("Node SQLite driver", () => {
 		expect(await database.get("SELECT value FROM rollback_probe")).toEqual({ value: 1 });
 		await database.close();
 	});
+
+	it("refuses a newer schema in its preflight without touching the file", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			writeVersioned(path, 3);
+			const before = snapshot(directory);
+			const error = await openNodeSqliteDatabase(path, { preflight: checkApp }).catch((caught: unknown) => caught);
+			expect(error).toBeInstanceOf(SqliteSchemaError);
+			expect(error).toMatchObject({ kind: "newer-schema", version: 3, supportedVersion: 2 });
+			expect(snapshot(directory)).toEqual(before);
+			// Without a preflight the open enables WAL first, which rewrites the header.
+			await (await openNodeSqliteDatabase(path)).close();
+			expect(snapshot(directory)).not.toEqual(before);
+		}));
+
+	it("fails a file that is not SQLite in its preflight and leaves no -wal or -shm", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			writeFileSync(path, "not a database ".repeat(100));
+			const before = snapshot(directory);
+			await expect(preflightNodeSqliteFile(path)).rejects.toMatchObject({ errcode: 26 });
+			expect(snapshot(directory)).toEqual(before);
+		}));
+
+	it("reads an uncheckpointed -wal through a private copy, so a newer commit in it is seen", () =>
+		withDirectory(async (directory) => {
+			const source = join(directory, "source");
+			writeVersioned(`${source}.sqlite`, 2);
+			const writer = new DatabaseSync(`${source}.sqlite`);
+			writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; UPDATE app_schema SET version = 3");
+			const crashed = join(directory, "crashed");
+			mkdirSync(crashed);
+			const path = join(crashed, "app.sqlite");
+			copyFileSync(`${source}.sqlite`, path);
+			copyFileSync(`${source}.sqlite-wal`, `${path}-wal`);
+			writer.close();
+			const before = snapshot(crashed);
+			expect(Object.keys(before)).toEqual(["app.sqlite", "app.sqlite-wal"]);
+			await expect(preflightNodeSqliteFile(path, checkApp)).rejects.toMatchObject({ kind: "newer-schema", version: 3 });
+			expect(snapshot(crashed)).toEqual(before);
+		}));
+
+	it("lets a current database through its preflight and opens it", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			writeVersioned(path, 2);
+			const database = await openNodeSqliteDatabase(path, { preflight: checkApp });
+			expect(await database.get("SELECT version FROM app_schema")).toEqual({ version: 2 });
+			await database.close();
+			await expect(preflightNodeSqliteFile(join(directory, "missing.sqlite"), checkApp)).resolves.toBeUndefined();
+		}));
 });
