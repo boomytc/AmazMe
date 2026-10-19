@@ -43,7 +43,7 @@ Run `amazme --continue` from the same working directory to reopen the newest nat
 
 Use `/tree` or `/agents` to focus a conversation or navigate its stored history. `/fork` forks the current conversation and focuses the fork. `/compact [instructions]` requests a summary. Each branch retains its own model, thinking and tool selection. See [Sessions and Context](sessions.md).
 
-To browse multiple hosted sessions, use `amazme client` or `amazme web`. The default terminal does not expose the SDK's Dashboard, `/new`, `/resume` picker, `/settings`, direct `!` shell, copy/share or export menus. Those interfaces belong to the optional SDK terminal. Its `/share` destination follows [`sessionShareDestination`](settings.md#interaction): `auto`, `gist`, or `radius`. Plain `dashboard` is prompt text, and unsupported long options are rejected before session storage.
+To browse multiple hosted sessions, use `amazme client` or `amazme web`. The default terminal does not expose `/new`, `/resume` picker, `/settings`, direct `!` shell, copy/share or export menus. Those interfaces belong to the optional SDK terminal. Its `/share` destination follows [`sessionShareDestination`](settings.md#interaction): `auto`, `gist`, or `radius`. Plain `dashboard` is prompt text, and unsupported long options are rejected before session storage.
 
 ## Use the web client
 

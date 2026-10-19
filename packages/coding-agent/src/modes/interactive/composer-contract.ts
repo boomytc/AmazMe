@@ -99,7 +99,7 @@ export function promptShortcutLine(
 	const trimmed = state.draft.trim();
 	const top = state.queue[0]?.replace(/\s+/g, " ").trim();
 	const chip = (key: string, action: string) => `\x1b[1m${formatKeyText(key, { capitalize: true })}\x1b[22m:${action}`;
-	const parts = [chip(keyDisplayText("app.dashboard.toggle"), "dashboard")];
+	const parts: string[] = [];
 	const enter = decideComposerAction(state, "enter");
 	if (enter.type === "insert-newline") parts.push(chip("Enter", "newline"));
 	else if (enter.type === "queue") parts.push(chip("Enter", "queue"));

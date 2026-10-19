@@ -2,6 +2,7 @@ import type { AssistantMessage } from "@amazme/ai";
 import type { TuiMouseEvent } from "@amazme/tui";
 import { describe, expect, test } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
+import { terminalMarkdownTransformers } from "../src/modes/interactive/components/mermaid.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
@@ -298,5 +299,26 @@ describe("AssistantMessageComponent", () => {
 		const unpaddedComponent = new UserMessageComponent("hello", undefined, 0);
 		const unpaddedLines = unpaddedComponent.render(40).map((line) => stripAnsi(line));
 		expect(unpaddedLines.some((line) => line.startsWith("hello"))).toBe(true);
+	});
+
+	test("renders Mermaid when the transcript installs the terminal transformers", () => {
+		initTheme("dark");
+		const text = "```mermaid\nflowchart LR\n  A[Start] --> B[Done]\n```";
+		const message = createAssistantMessage([{ type: "text", text }]);
+		const bare = stripAnsi(new AssistantMessageComponent(message).render(100).join("\n"));
+		const wired = new AssistantMessageComponent(
+			message,
+			false,
+			undefined,
+			"Thinking...",
+			1,
+			terminalMarkdownTransformers(() => "streaming"),
+		);
+		const rendered = stripAnsi(wired.render(100).join("\n"));
+
+		expect(bare).toContain("```mermaid");
+		expect(rendered).not.toContain("```mermaid");
+		expect(rendered).toContain("Start");
+		expect(rendered).toContain("Done");
 	});
 });

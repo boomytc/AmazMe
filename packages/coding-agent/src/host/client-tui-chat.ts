@@ -4,10 +4,11 @@ import { inboxOf, liveOf } from "./services/transcript.ts";
 import { Container, Spacer, Text, TruncatedText, type TUI } from "@amazme/tui";
 import { createAllToolRenderers } from "../core/tools/renderers/index.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
+import { terminalMarkdownTransformers } from "../modes/interactive/components/mermaid.ts";
 import { type StatusIndicator, WorkingStatusIndicator } from "../modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent, type ToolRenderers } from "../modes/interactive/components/tool-execution.ts";
 import { UserMessageComponent } from "../modes/interactive/components/user-message.ts";
-import { theme } from "../modes/interactive/theme/theme.ts";
+import { getMarkdownTheme, theme } from "../modes/interactive/theme/theme.ts";
 
 function userText(content: UserMessage["content"]): string {
 	if (typeof content === "string") return content;
@@ -34,6 +35,7 @@ export class ExperimentalChatView {
 	readonly #streamingCalls = new Set<string>();
 	#renderedEntryIds: number[] = [];
 	#streaming: AssistantMessageComponent | undefined;
+	readonly #markdownTransformers = terminalMarkdownTransformers(() => "streaming");
 	#indicator: StatusIndicator | undefined;
 	#statusText = "";
 
@@ -165,9 +167,20 @@ export class ExperimentalChatView {
 		const message = entry.model?.[0];
 		if (entry.kind === "amazme.user" && message?.role === "user") {
 			this.transcript.addChild(new Spacer(1));
-			this.transcript.addChild(new UserMessageComponent(userText(message.content)));
+			this.transcript.addChild(
+				new UserMessageComponent(userText(message.content), getMarkdownTheme(), 1, this.#markdownTransformers),
+			);
 		} else if (entry.kind === "amazme.assistant" && message?.role === "assistant") {
-			const component = this.#streaming ?? new AssistantMessageComponent();
+			const component =
+				this.#streaming ??
+				new AssistantMessageComponent(
+					undefined,
+					false,
+					getMarkdownTheme(),
+					"Thinking...",
+					1,
+					this.#markdownTransformers,
+				);
 			if (this.#streaming === undefined) this.transcript.addChild(component);
 			this.#streaming = undefined;
 			component.updateContent(message, false);
@@ -198,7 +211,14 @@ export class ExperimentalChatView {
 
 	#syncStreaming(message: AssistantMessage): void {
 		if (this.#streaming === undefined) {
-			this.#streaming = new AssistantMessageComponent();
+			this.#streaming = new AssistantMessageComponent(
+				undefined,
+				false,
+				getMarkdownTheme(),
+				"Thinking...",
+				1,
+				this.#markdownTransformers,
+			);
 			this.transcript.addChild(this.#streaming);
 		}
 		this.#streaming.updateContent(message, true);

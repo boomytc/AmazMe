@@ -41,6 +41,7 @@ import { codemodeRenderers } from "../core/codemode/renderer.ts";
 import { McpManagerView } from "../core/mcp/view.ts";
 import { manageMcp } from "./mcp-menu.ts";
 import { AssistantMessageComponent } from "../modes/interactive/components/assistant-message.ts";
+import { terminalMarkdownTransformers } from "../modes/interactive/components/mermaid.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { ListSelector } from "../modes/interactive/components/list-selector.ts";
 import { ScopedModelsSelectorComponent } from "../modes/interactive/components/scoped-models-selector.ts";
@@ -294,6 +295,7 @@ class DurableTui {
 	#expanded = false;
 	#renderedEntryIds: number[] = [];
 	#streaming: AssistantMessageComponent | undefined;
+	readonly #markdownTransformers: ReturnType<typeof terminalMarkdownTransformers>;
 	#indicator: StatusIndicator | undefined;
 	#statusText = "";
 	/** Set when the transcript was rebuilt: the next render repaints the screen and shows the end. */
@@ -302,6 +304,7 @@ class DurableTui {
 
 	constructor(cwd: string, handlers: Handlers, settings: SettingsManager) {
 		this.#cwd = cwd;
+		this.#markdownTransformers = terminalMarkdownTransformers(() => settings.getMermaidRenderingMode());
 		this.#plugins = handlers.plugins;
 		this.#completeCommand = handlers.completeCommand;
 		this.#ui = createInteractiveTui({
@@ -678,9 +681,20 @@ class DurableTui {
 		const message = entry.model?.[0];
 		if ((entry.kind === "amazme.user" || (!entry.kind.startsWith("amazme.") && entry.model?.length === 1)) && message?.role === "user") {
 			this.#chat.addChild(new Spacer(1));
-			this.#chat.addChild(new UserMessageComponent(userText(message.content)));
+			this.#chat.addChild(
+				new UserMessageComponent(userText(message.content), getMarkdownTheme(), 1, this.#markdownTransformers),
+			);
 		} else if (entry.kind === "amazme.assistant" && message?.role === "assistant") {
-			const component = this.#streaming ?? new AssistantMessageComponent();
+			const component =
+				this.#streaming ??
+				new AssistantMessageComponent(
+					undefined,
+					false,
+					getMarkdownTheme(),
+					"Thinking...",
+					1,
+					this.#markdownTransformers,
+				);
 			if (this.#streaming === undefined) this.#chat.addChild(component);
 			this.#streaming = undefined;
 			component.updateContent(message, false);
@@ -712,7 +726,14 @@ class DurableTui {
 
 	#syncStreaming(message: AssistantMessage): void {
 		if (this.#streaming === undefined) {
-			this.#streaming = new AssistantMessageComponent();
+			this.#streaming = new AssistantMessageComponent(
+				undefined,
+				false,
+				getMarkdownTheme(),
+				"Thinking...",
+				1,
+				this.#markdownTransformers,
+			);
 			this.#chat.addChild(this.#streaming);
 		}
 		this.#streaming.updateContent(message, true);

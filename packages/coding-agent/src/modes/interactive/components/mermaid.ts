@@ -2,7 +2,7 @@ import { Marked, type Token } from "@amazme/tui";
 import { type MermaidArt, render, type Span } from "grok-mermaid";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
 import type { MermaidRenderingMode } from "../../../core/settings-manager.ts";
-import type { Theme } from "../theme/theme.ts";
+import { type Theme, theme } from "../theme/theme.ts";
 
 const markdownParser = new Marked();
 
@@ -86,4 +86,9 @@ export function createMermaidMarkdownTransformer(options: MermaidTransformerOpti
 			})
 			.join("");
 	};
+}
+
+/** Transformers the terminal transcript installs. Mermaid follows the saved rendering mode. */
+export function terminalMarkdownTransformers(getMode: () => MermaidRenderingMode): readonly MarkdownTransformer[] {
+	return [createMermaidMarkdownTransformer({ getMode, theme })];
 }

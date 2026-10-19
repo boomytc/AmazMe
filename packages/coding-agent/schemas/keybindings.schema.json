@@ -263,10 +263,6 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Show running subagents and background commands"
     },
-    "app.dashboard.toggle": {
-      "$ref": "#/$defs/KeybindingValue",
-      "description": "Open the agent dashboard"
-    },
     "app.clipboard.pasteImage": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Paste files, images, or text from clipboard"

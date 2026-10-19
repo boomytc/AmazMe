@@ -125,10 +125,6 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "shift+n",
 		description: "Select the previous transcript search match",
 	},
-	"app.dashboard.toggle": {
-		defaultKeys: "ctrl+\\",
-		description: "Open the agent dashboard",
-	},
 	"app.clipboard.pasteImage": {
 		defaultKeys: getClipboardPasteKeys(),
 		description: getClipboardPasteDescription(),
