@@ -339,4 +339,100 @@ describe("coding registry tool-result image hook", () => {
 			await rm(directory, { recursive: true, force: true });
 		}
 	});
+
+	it("keeps structured output when resizing a model-visible image", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "amazme-tool-images-"));
+		const database = join(directory, "session.sqlite");
+		const settings = SettingsManager.inMemory({ images: { autoResize: true } });
+		const resources = {
+			getSystemPrompt: () => "",
+			getAppendSystemPrompt: () => [],
+			getAgentsFiles: () => ({ agentsFiles: [] }),
+			getSkills: () => ({ skills: [] }),
+		} as unknown as ResourceLoader;
+		const registry = createCodingRegistry(
+			settings,
+			directory,
+			resources,
+			async () => [directory],
+			join(directory, "artifacts"),
+		);
+		const original = [imageBlock(createPng(2400, 4800), "image/png")];
+		let nested: NestedToolExecutionResult | undefined;
+		registry.install(
+			defineExtension({
+				name: "labeled-image-fixture",
+				tools: [
+					defineTool({
+						name: "capture",
+						description: "Return a large image and a label",
+						parameters: Type.Object({}),
+						structuredOutputSchema: Type.Object({ label: Type.String() }),
+						execute: async () => ({ output: original, structuredOutput: { label: "shot" } }),
+					}),
+					defineTool({
+						name: "forward",
+						description: "Forward a nested image with its own label",
+						parameters: Type.Object({}),
+						structuredOutputSchema: Type.Object({ label: Type.String() }),
+						async execute(_args, api, callContext) {
+							nested = await api.executeTool("capture", {}, callContext);
+							return { output: original, structuredOutput: { label: "forwarded" } };
+						},
+					}),
+				],
+			}),
+		);
+		const faux = fauxProvider({
+			models: [
+				{
+					id: "vision",
+					input: ["text", "image"],
+					inputLimits: { images: { resize: { maxWidth: 800, maxHeight: 800, maxBytes: 5_000_000 } } },
+				},
+			],
+		});
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const reports: string[] = [];
+		let harness: Harness | undefined;
+		try {
+			harness = await Harness.open(
+				await openNodeSqliteStorage(database),
+				{
+					models,
+					registry,
+					env: () => new NodeExecutionEnv({ cwd: directory }),
+					onReport: (error: unknown) => reports.push(error instanceof Error ? error.message : String(error)),
+				},
+				context,
+			);
+			const root = await harness.root(context, {
+				agent: { model: { provider: "faux", modelId: "vision" }, cwd: directory },
+				init: async (tx, id) => {
+					(await tx.doc(AgentDoc, id)).tools = { only: ["capture", "forward"] };
+				},
+			});
+			faux.setResponses([
+				fauxAssistantMessage([fauxToolCall("forward", {}, { id: "parent" })], { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			expect(
+				await (await root.submit({ type: "input", content: "forward the shot" }, context)).wait(context),
+			).toMatchObject({ status: "done" });
+			expect(reports).toEqual([]);
+			expect(nested).toMatchObject({ isError: false, structuredOutput: { label: "shot" } });
+			const persisted = (await root.entries({}, 100, undefined, context)).items.filter(ToolResultEntry.is);
+			expect(persisted).toHaveLength(1);
+			const message = persisted[0]?.model?.[0];
+			if (message?.role !== "toolResult") throw new Error("expected a persisted tool result");
+			expect(message.isError).toBe(false);
+			const image = message.content.find((block) => block.type === "image");
+			if (image?.type !== "image") throw new Error("expected a persisted image");
+			expect(readPngDimensions(image.data)).toEqual({ width: 400, height: 800 });
+		} finally {
+			await harness?.close(context);
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
 });
