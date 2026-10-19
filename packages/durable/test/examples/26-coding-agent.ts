@@ -22,7 +22,7 @@ import { CodingTools } from "../../src/tools/index.ts";
 import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
-const workspace = createTempDir("pi-durable-agent-");
+const workspace = createTempDir("pi-durable-agent-", { scope: "suite" });
 await mkdir(join(workspace, "app"));
 
 // The app's own prompt, next to the coding tools.

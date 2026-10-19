@@ -23,7 +23,7 @@ import { createTempDir } from "./temp-dir.ts";
  * `AMAZME_ENV_SSH_KEY` and `AMAZME_ENV_SSH_PROGRAM`. On Windows this covers deployment and the daemon's launch through the server's default shell.
  */
 const host = process.env.AMAZME_ENV_SSH_HOST;
-const root = createTempDir("amazme-env-ssh-external-");
+const root = createTempDir("amazme-env-ssh-external-", { scope: "suite" });
 let connected: Promise<{ connection: Connection; remote: RemotePlatform }> | undefined;
 
 async function connect(): Promise<{ connection: Connection; remote: RemotePlatform }> {

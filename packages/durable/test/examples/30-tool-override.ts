@@ -52,7 +52,7 @@ const Timing = defineExtension({
 
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
-const project = createTempDir("pi-durable-venv-");
+const project = createTempDir("pi-durable-venv-", { scope: "suite" });
 await mkdir(join(project, ".venv/bin"), { recursive: true });
 await writeFile(join(project, ".venv/bin/activate"), `export VIRTUAL_ENV="${project}/.venv"\n`);
 

@@ -66,7 +66,7 @@ const leavePlanMode = { extensions: null, tools: null };
 
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
-const directory = createTempDir("pi-durable-plan-");
+const directory = createTempDir("pi-durable-plan-", { scope: "suite" });
 await writeFile(join(directory, "server.ts"), "app.listen(3000);\n");
 
 const faux = fauxProvider();

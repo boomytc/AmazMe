@@ -1,14 +1,13 @@
 import {
 	access,
 	mkdir,
-	mkdtemp,
 	readdir,
 	readFile,
 	rm,
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import {
 	fauxAssistantMessage,
 	fauxProvider,
@@ -27,12 +26,13 @@ import {
 	deleteSession,
 	readSession,
 } from "../src/host/session-catalog.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sessions = new Set<OpenDurableResult>();
 const directories = new Set<string>();
 
 async function temp(prefix: string): Promise<string> {
-	const path = await mkdtemp(join(tmpdir(), prefix));
+	const path = createTempDir(prefix);
 	directories.add(path);
 	return path;
 }
@@ -176,17 +176,17 @@ describe("session-scoped code-mode artifacts", () => {
 
 	it("leaves no amazme-session-artifacts residue when an ephemeral lease is never released and never written", async () => {
 		const cwd = await temp("amazme-artifacts-unreleased-cwd-");
-		const before = await listPrefixedTemps("amazme-session-artifacts-");
 		const location = await selectSession(cwd, false, { noSession: true });
 		expect(location.artifactDirectory.includes("amazme-session-artifacts-")).toBe(
 			true,
 		);
+		// Lazy reservation: the path is not on disk, so an unreleased unused lease leaves no residue.
 		await expect(access(location.artifactDirectory)).rejects.toMatchObject({
 			code: "ENOENT",
 		});
-		const after = await listPrefixedTemps("amazme-session-artifacts-");
-		expect(after.filter((name) => !before.includes(name))).toEqual([]);
-		// Intentionally do not call release(): unused lazy paths must not litter TMPDIR.
+		const listed = await listPrefixedTemps("amazme-session-artifacts-");
+		expect(listed).not.toContain(basename(location.artifactDirectory));
+		// Intentionally do not call release().
 	});
 
 	it("gives two sessions in the same cwd distinct artifact directories", async () => {

@@ -2,11 +2,11 @@
  * Shared helpers for durable tests that need an `ExecutionEnv.artifactDirectory`.
  * The directory is removed via Vitest `onTestFinished` so temp dirs do not accumulate.
  */
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { onTestFinished } from "vitest";
 import { NodeExecutionEnv, type NodeExecutionEnvOptions } from "../src/env/node.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 export type ArtifactEnv = {
 	readonly root: string;
@@ -26,14 +26,11 @@ export async function createArtifactEnv(
 	} = {},
 ): Promise<ArtifactEnv> {
 	const { prefix = "amazme-durable-artifact-", cwd: cwdOption, ...rest } = options;
-	const root = await mkdtemp(join(tmpdir(), prefix));
+	const root = createTempDir(prefix);
 	const cwd = cwdOption ?? join(root, "cwd");
 	const artifactDirectory = join(root, "artifacts");
 	await mkdir(cwd, { recursive: true });
 	await mkdir(artifactDirectory, { recursive: true });
-	onTestFinished(async () => {
-		await rm(root, { recursive: true, force: true });
-	});
 	const env = new NodeExecutionEnv({ cwd, artifactDirectory, ...rest });
 	return { root, cwd, artifactDirectory, env };
 }

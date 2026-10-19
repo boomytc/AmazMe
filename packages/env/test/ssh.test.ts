@@ -64,7 +64,7 @@ async function waitForPort(port: number): Promise<void> {
 
 // A disposable sshd on localhost with its own host key, client key and home directory.
 describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
-	const root = createTempDir("amazme-env-ssh-");
+	const root = createTempDir("amazme-env-ssh-", { scope: "suite" });
 	const home = join(root, "home");
 	let server: ChildProcess | undefined;
 	let target: SshTarget;

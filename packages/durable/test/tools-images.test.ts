@@ -26,7 +26,7 @@ import {
 import { createReadTool } from "../src/tools/read.ts";
 import { createTempDir } from "./temp-dir.ts";
 
-const directory = createTempDir("amazme-durable-images-");
+const directory = createTempDir("amazme-durable-images-", { scope: "suite" });
 let processor: ImageProcessor;
 
 beforeAll(async () => {

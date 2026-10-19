@@ -14,7 +14,7 @@ const context = BACKGROUND_CONTEXT;
 // Everything a task needs to continue is in storage, so a new Harness over the
 // same storage picks up where the last one stopped. This example keeps its
 // storage in a SQLite file so it survives closing.
-const directory = createTempDir("pi-durable-example-");
+const directory = createTempDir("pi-durable-example-", { scope: "suite" });
 const databasePath = join(directory, "session.sqlite");
 
 let reachedTick = (_n: number): void => {};

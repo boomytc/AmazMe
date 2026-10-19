@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveSessionDeletionTarget } from "../src/modes/interactive/components/session-selector.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories: string[] = [];
 
@@ -16,7 +16,7 @@ afterEach(async () => {
 
 describe("resolveSessionDeletionTarget", () => {
 	it("deletes the session directory when given session.sqlite so artifacts go with it", async () => {
-		const root = await mkdtemp(join(tmpdir(), "amazme-session-delete-"));
+		const root = createTempDir("amazme-session-delete-");
 		directories.push(root);
 		const sessionDir = join(root, "session-id");
 		await mkdir(sessionDir);
@@ -28,7 +28,7 @@ describe("resolveSessionDeletionTarget", () => {
 	});
 
 	it("keeps legacy JSONL paths as single-file deletes", async () => {
-		const root = await mkdtemp(join(tmpdir(), "amazme-jsonl-delete-"));
+		const root = createTempDir("amazme-jsonl-delete-");
 		directories.push(root);
 		const jsonl = join(root, "session.jsonl");
 		await writeFile(jsonl, "{}\n");

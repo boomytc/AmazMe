@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createPolicyEnv } from "../src/durable/insights/execution-policy.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories: string[] = [];
 
@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 async function temp(prefix: string): Promise<string> {
-	const path = await mkdtemp(join(tmpdir(), prefix));
+	const path = createTempDir(prefix);
 	directories.push(path);
 	return path;
 }
