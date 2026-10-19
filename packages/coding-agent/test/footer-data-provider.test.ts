@@ -1,8 +1,9 @@
 import { execFile, spawnSync } from "child_process";
-import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, type FSWatcher, mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 let resolvedBranch = "main";
 
@@ -120,7 +121,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 	beforeEach(() => {
 		originalCwd = process.cwd();
-		tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
+		tempDir = createTempDir("footer-data-provider-");
 		resolvedBranch = "main";
 		vi.mocked(spawnSync).mockClear();
 		vi.mocked(execFile).mockClear();

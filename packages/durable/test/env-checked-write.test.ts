@@ -1,22 +1,11 @@
 import { execFileSync } from "node:child_process";
-import {
-	chmodSync,
-	mkdtempSync,
-	readFileSync,
-	readdirSync,
-	rmSync,
-	statSync,
-	symlinkSync,
-	unlinkSync,
-	utimesSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getOrThrow } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const hooks = vi.hoisted(() => ({
 	beforeSync: undefined as (() => Promise<void>) | undefined,
@@ -51,7 +40,7 @@ afterEach(() => {
 });
 
 function environment(): NodeExecutionEnv {
-	const cwd = mkdtempSync(join(tmpdir(), "amazme-checked-write-"));
+	const cwd = createTempDir("amazme-checked-write-");
 	dirs.push(cwd);
 	return new NodeExecutionEnv({ cwd });
 }
@@ -213,7 +202,7 @@ describe("Node checked publication", () => {
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
 	"checked publication does not bypass an existing read-only file",
 	async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "amazme-readonly-publish-"));
+		const cwd = createTempDir("amazme-readonly-publish-");
 		try {
 			const env = new NodeExecutionEnv({ cwd });
 			writeFileSync(join(cwd, "file.txt"), "original");

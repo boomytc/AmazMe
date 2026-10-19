@@ -1,6 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, type SimpleStreamOptions } from "@amazme/ai";
 import { getCurrentTools } from "@amazme/ai/utils/transcript";
@@ -10,6 +9,7 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { agentOf, openDurable, type OpenDurableResult } from "../src/durable/runtime.ts";
 import { pendingResponse } from "./experimental-durable-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable startup over SQLite", () => {
 	let directory: string;
@@ -22,7 +22,7 @@ describe("durable startup over SQLite", () => {
 	const sessions = new Set<OpenDurableResult>();
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-startup-"));
+		directory = createTempDir("amazme-durable-startup-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

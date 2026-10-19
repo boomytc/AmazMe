@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@amazme/ai";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
@@ -22,9 +21,10 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { openDurableMcp, type DurableMcp } from "../src/durable/mcp.ts";
 import * as mcpRuntime from "../src/extensions/mcp/runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 it("projects invalid images through the actual Durable MCP connection while preserving nested results", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-durable-mcp-images-"));
+	const directory = createTempDir("amazme-durable-mcp-images-");
 	const pair = createInMemoryTransportPair();
 	const remote: CallToolResult = {
 		content: [

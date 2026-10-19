@@ -2,8 +2,7 @@
 // extension's own document, and switching back restores the full tool set.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/27-plan-mode.ts
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { Type } from "@amazme/ai";
@@ -20,6 +19,7 @@ import {
 	section,
 } from "../../src/index.ts";
 import { CodingTools, createReadTool } from "../../src/tools/index.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -66,7 +66,7 @@ const leavePlanMode = { extensions: null, tools: null };
 
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
-const directory = await mkdtemp(join(tmpdir(), "pi-durable-plan-"));
+const directory = createTempDir("pi-durable-plan-");
 await writeFile(join(directory, "server.ts"), "app.listen(3000);\n");
 
 const faux = fauxProvider();

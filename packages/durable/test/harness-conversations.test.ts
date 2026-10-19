@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createModels } from "@amazme/ai";
 import {
@@ -25,12 +24,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { addTool, openHarness, tool, user } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 const UUID_V7 = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-harness-"));
+	const directory = createTempDir("pi-durable-harness-");
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

@@ -7,13 +7,14 @@ import { discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("Input Event", () => {
 	let tempDir: string;
 	let extensionsDir: string;
 
 	beforeEach(() => {
-		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-input-test-"));
+		tempDir = createTempDir("pi-input-test-");
 		extensionsDir = path.join(tempDir, "extensions");
 		fs.mkdirSync(extensionsDir);
 		// Clean globalThis test vars

@@ -1,10 +1,10 @@
-import { access, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, rm, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { hasDurableSession, lockSession, selectSession, SESSION_LOCK_STALE_MS } from "../src/durable/sessions.ts";
 import type { SessionLocation } from "../src/durable/sessions.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable session selection", () => {
 	let directory: string;
@@ -12,7 +12,7 @@ describe("durable session selection", () => {
 	let sessionDir: string;
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-sessions-"));
+		directory = createTempDir("amazme-durable-sessions-");
 		cwd = join(directory, "project");
 		sessionDir = join(directory, "sessions");
 		await mkdir(cwd);

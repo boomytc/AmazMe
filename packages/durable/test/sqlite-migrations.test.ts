@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
@@ -13,11 +12,12 @@ import {
 import { openNodeSqliteDatabase, openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { SqliteStorage } from "../src/storage/sqlite/index.ts";
 import { type EntryId, ROOT_CONVERSATION_ID } from "../src/types.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 
 async function databasePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-durable-migrations-"));
+	const directory = createTempDir("amazme-durable-migrations-");
 	directories.add(directory);
 	return join(directory, "storage.sqlite");
 }

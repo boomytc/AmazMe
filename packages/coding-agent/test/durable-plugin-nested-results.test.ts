@@ -1,6 +1,5 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, Type } from "@amazme/ai";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { createRegistry, defineExtension, defineTool, Harness, type HarnessOptions, MemoryStorage, NestedCallDoc, type SetTimer, type Storage, type TaskId } from "@amazme/durable";
@@ -12,6 +11,7 @@ import { PolicyDoc, Rounds } from "../plugins/verification/src/state.ts";
 import { Command } from "../plugins/workflows/src/command.ts";
 import { Job } from "../plugins/workflows/src/job.ts";
 import { pendingResponse } from "./experimental-durable-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const harnesses: Harness[] = [];
 const directories: string[] = [];
@@ -126,7 +126,7 @@ describe("plugins read nested results by call key", () => {
 	});
 
 	it.each(["job", "check"] as const)("%s keeps its deadline and does not replay an interrupted unsafe command after reopen", async (kind) => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-plugin-deadline-"));
+		const directory = createTempDir("amazme-plugin-deadline-");
 		directories.push(directory);
 		const path = join(directory, "session.sqlite");
 		const time = clock();

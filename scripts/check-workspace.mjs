@@ -290,6 +290,56 @@ export function checkVersionLiterals(repoRoot, files) {
 	return failures;
 }
 
+/** Package test trees may not call mkdtemp/mkdtempSync except from packages/<pkg>/test/temp-dir.ts at the test root. */
+export function checkTempDirUsage(repoRoot) {
+	const failures = [];
+	const packagesDirectory = join(repoRoot, "packages");
+	if (!existsSync(packagesDirectory)) return failures;
+	const banned = /\bmkdtemp(?:Sync)?\s*\(/;
+	const canonicalPath = join(packagesDirectory, "ai", "test", "temp-dir.ts");
+	const canonical = existsSync(canonicalPath) ? readFileSync(canonicalPath) : undefined;
+	const walk = (testRoot, directory) => {
+		if (!existsSync(directory)) return;
+		const helper = join(testRoot, "temp-dir.ts");
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) {
+				walk(testRoot, path);
+				continue;
+			}
+			if (
+				!entry.name.endsWith(".ts") &&
+				!entry.name.endsWith(".js") &&
+				!entry.name.endsWith(".mjs")
+			)
+				continue;
+			if (path === helper) continue;
+			const source = readFileSync(path, "utf8");
+			for (const [index, line] of source.split("\n").entries()) {
+				if (!banned.test(line)) continue;
+				failures.push(
+					`${relative(repoRoot, path)}:${index + 1}: use createTempDir from temp-dir.ts instead of ${line.includes("mkdtempSync") ? "mkdtempSync" : "mkdtemp"}`,
+				);
+			}
+		}
+	};
+	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		const testRoot = join(packagesDirectory, entry.name, "test");
+		walk(testRoot, testRoot);
+		const helper = join(testRoot, "temp-dir.ts");
+		if (!existsSync(helper)) continue;
+		if (entry.name === "tui") continue;
+		if (canonical === undefined) continue;
+		const content = readFileSync(helper);
+		if (!content.equals(canonical))
+			failures.push(
+				`${relative(repoRoot, helper)}: must match packages/ai/test/temp-dir.ts byte-for-byte (vitest helper); only packages/tui/test/temp-dir.ts may differ`,
+			);
+	}
+	return failures;
+}
+
 /** Syntax-aware checks over source, including development-only host and browser modules. */
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
@@ -298,6 +348,7 @@ export function checkSourceContracts(repoRoot) {
 		...checkDependencyVersions(root, packages),
 		...checkChangelogs(root),
 		...checkBuildConfigs(root),
+		...checkTempDirUsage(root),
 		...checkVersionLiterals(root),
 	];
 	try {
@@ -577,5 +628,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
-	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, and version literals passed.");
+	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, test temp dirs, and version literals passed.");
 }

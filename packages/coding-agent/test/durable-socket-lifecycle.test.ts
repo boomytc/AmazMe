@@ -1,13 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, unlink, writeFile } from "node:fs/promises";
 import { createServer, createConnection, type Server, type Socket } from "node:net";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureCoordinator, type CoordinatorStartupLease } from "../src/host/coordinator.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -103,7 +103,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	}
 
 	it("removes the backend socket after the server is SIGKILLed", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "am-socket-kill-"));
+		const directory = createTempDir("am-socket-kill-");
 		directories.push(directory);
 		await mkdir(join(directory, "agent"), { recursive: true });
 		const running = await startServer(directory);
@@ -121,7 +121,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	});
 
 	it("keeps the live backend of a server until that server closes after replacement", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "am-socket-replace-"));
+		const directory = createTempDir("am-socket-replace-");
 		directories.push(directory);
 		await mkdir(join(directory, "agent"), { recursive: true });
 		const first = await startServer(directory);
@@ -148,7 +148,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	});
 
 	it("leaves the live sockets in place when a client discovers the server", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "am-socket-client-"));
+		const directory = createTempDir("am-socket-client-");
 		directories.push(directory);
 		await mkdir(join(directory, "agent"), { recursive: true });
 		const running = await startServer(directory);
@@ -249,7 +249,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	}
 
 	it("keeps a live backend endpoint when the coordinator replaces its server", async () => {
-		const directory = await mkdtemp(join(shortTmp, "amsp-"));
+		const directory = createTempDir("amsp-", { baseDirectory: shortTmp });
 		directories.push(directory);
 		const controlPath = await startCoordinator(directory);
 		const firstPath = join(directory, `server-${serverId}-aaaaaaaaaaaa.sock`);
@@ -268,7 +268,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	});
 
 	it("removes a refused backend endpoint it registered", async () => {
-		const directory = await mkdtemp(join(shortTmp, "amsp-"));
+		const directory = createTempDir("amsp-", { baseDirectory: shortTmp });
 		directories.push(directory);
 		const controlPath = await startCoordinator(directory);
 		const path = join(directory, `server-${serverId}-cccccccccccc.sock`);
@@ -279,7 +279,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	});
 
 	it("refuses to register a backend endpoint longer than the platform socket path limit", async () => {
-		const directory = await mkdtemp(join(shortTmp, "amsp-"));
+		const directory = createTempDir("amsp-", { baseDirectory: shortTmp });
 		directories.push(directory);
 		const controlPath = await startCoordinator(directory);
 		const endpoint = join(directory, `${"x".repeat(120)}-server-${serverId}-eeeeeeeeeeee.sock`);
@@ -300,7 +300,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	});
 
 	it("does not remove a different socket that reused the registered path", async () => {
-		const directory = await mkdtemp(join(shortTmp, "amsp-"));
+		const directory = createTempDir("amsp-", { baseDirectory: shortTmp });
 		directories.push(directory);
 		const controlPath = await startCoordinator(directory);
 		const path = join(directory, `server-${serverId}-dddddddddddd.sock`);
@@ -316,7 +316,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	});
 
 	it("self-heals after both the server and coordinator are killed", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "am-socket-both-"));
+		const directory = createTempDir("am-socket-both-");
 		directories.push(directory);
 		await mkdir(join(directory, "agent"), { recursive: true });
 		const first = await startServer(directory);

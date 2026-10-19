@@ -1,15 +1,5 @@
 import { execFile } from "node:child_process";
-import {
-	chmod,
-	copyFile,
-	mkdir,
-	mkdtemp,
-	readFile,
-	rm,
-	stat,
-	writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -74,6 +64,7 @@ import {
 	ForkManagementDoc,
 	withConversationAdmission,
 } from "../src/durable/fork-management.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const cleanups: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
@@ -163,7 +154,7 @@ function deterministic(input: ClassifierContext): ClassifierResult {
 }
 
 async function fixture(mode = "native") {
-	const directory = await mkdtemp(join(tmpdir(), "amcu-test-"));
+	const directory = createTempDir("amcu-test-");
 	cleanups.push(() => rm(directory, { recursive: true, force: true }));
 	const binary = join(directory, "driver.mjs");
 	await copyFile(

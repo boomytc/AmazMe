@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "@amazme/chord";
 import {
@@ -20,6 +19,7 @@ import { NodeExecutionEnv } from "../src/env/node.ts";
 import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { context } from "./session-support.ts";
 import { deferred } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 const USAGE = {
@@ -222,7 +222,7 @@ describe("code mode models.*", () => {
 	it("does not start a model call that waited for a slot after the script ended", async () => {
 		const chat = modelsChat();
 		chat.gate.open = deferred();
-		const directory = await mkdtemp(join(tmpdir(), "pi-codemode-models-"));
+		const directory = createTempDir("pi-codemode-models-");
 		// The result spills to a file after the script ended and before the tool returns. Then the running
 		// calls finish and free their slots, which the two waiting calls would take.
 		class SlowTempFiles extends NodeExecutionEnv {

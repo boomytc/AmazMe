@@ -1,5 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { characterEnd } from "@amazme/chord/output";
@@ -10,6 +9,7 @@ import { detectSupportedImageMimeType } from "../src/tools/image.ts";
 import { createReadTool } from "../src/tools/read.ts";
 import { DEFAULT_MAX_BYTES, formatSize, truncateHead } from "../src/truncate.ts";
 import { closeFileToolApis, fileToolApi } from "./file-tool-api.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /**
  * The `read` tool before bounded reads, kept as the reference: it decodes the whole file, splits it into lines, and
@@ -163,7 +163,7 @@ async function outcome<T>(run: () => T | Promise<T>): Promise<T | { error: strin
 
 describe("read tool", () => {
 	it("returns exactly what reading the whole file returned", async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "pi-durable-read-"));
+		const cwd = createTempDir("pi-durable-read-");
 		dirs.push(cwd);
 		const env = new NodeExecutionEnv({ cwd });
 		const tool = createReadTool();
@@ -187,7 +187,7 @@ describe("read tool", () => {
 	}, 120_000);
 
 	it("detects animated PNGs whose acTL chunk lies far beyond the header", async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "pi-durable-read-"));
+		const cwd = createTempDir("pi-durable-read-");
 		dirs.push(cwd);
 		const chunk = (type: string, length: number): number[] => [
 			(length >>> 24) & 0xff,

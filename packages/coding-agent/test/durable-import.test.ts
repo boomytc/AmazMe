@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxProvider } from "@amazme/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +7,7 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { importSessionFile, runImportCommand } from "../src/durable/import.ts";
 import { openDurable, type OpenDurableResult } from "../src/durable/runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable session import", () => {
 	let directory: string;
@@ -19,7 +19,7 @@ describe("durable session import", () => {
 	const sessions = new Set<OpenDurableResult>();
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-import-"));
+		directory = createTempDir("amazme-durable-import-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		sessionDir = join(directory, "sessions");

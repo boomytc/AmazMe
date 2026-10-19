@@ -3,8 +3,7 @@
 // directory is left behind for inspection.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/17-coding-tools.ts
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ToolResultMessage } from "@amazme/ai";
@@ -22,9 +21,10 @@ import {
 } from "../../src/index.ts";
 import { openNodeJsonlStorage } from "../../src/storage/jsonl/node.ts";
 import { type BashToolInput, CodingTools } from "../../src/tools/index.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
-const directory = await mkdtemp(join(tmpdir(), "pi-durable-example-"));
+const directory = createTempDir("pi-durable-example-");
 await writeFile(join(directory, "notes.txt"), "hello world\n");
 
 // The faux provider plays the model: four tool-calling answers, then a final answer.

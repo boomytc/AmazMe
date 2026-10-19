@@ -1,6 +1,6 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -8,6 +8,7 @@ import { Server as RuntimeServer } from "../../server/src/server.ts";
 import { createTestServerServices } from "../../server/src/testing/host.ts";
 import { createUnixListener } from "../../server/src/transports/unix/listener.ts";
 import { discoverUnixServers } from "../src/unix.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const tempDirectories = new Set<string>();
 const servers = new Set<RuntimeServer>();
@@ -16,7 +17,7 @@ const rawSockets = new Set<Socket>();
 const children = new Set<ChildProcess>();
 
 async function makeDirectory(): Promise<string> {
-	const directory = await mkdtemp(join("/tmp", "pc-"));
+	const directory = createTempDir("pc-", { baseDirectory: "/tmp" });
 	tempDirectories.add(directory);
 	return directory;
 }

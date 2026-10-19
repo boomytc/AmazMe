@@ -27,6 +27,7 @@ import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import type { ModelRegistry } from "../src/core/model-registry.ts";
 import type { ScopedModel } from "../src/core/model-resolver.ts";
 import { buildSystemPrompt } from "../src/core/system-prompt.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -35,7 +36,7 @@ describe("ExtensionRunner", () => {
 	const defaultKeybindings = new KeybindingsManager().getEffectiveConfig();
 
 	beforeEach(async () => {
-		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-runner-test-"));
+		tempDir = createTempDir("pi-runner-test-");
 		extensionsDir = path.join(tempDir, "extensions");
 		fs.mkdirSync(extensionsDir);
 		modelRegistry = await createInMemoryModelRegistry(AuthStorage.inMemory());

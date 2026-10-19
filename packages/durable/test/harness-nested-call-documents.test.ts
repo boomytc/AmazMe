@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { JsonRepresentation } from "@amazme/chord";
 import { copyJson } from "@amazme/chord";
@@ -26,6 +25,7 @@ import { chatSetup, openChat } from "./chat-support.ts";
 import { addTask, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const DONE = fauxAssistantMessage([fauxText("done")]);
 const BATCH = fauxAssistantMessage([fauxToolCall("batch", {}, { id: "batch" })], { stopReason: "toolUse" });
@@ -75,7 +75,7 @@ async function legacyLayout(path: string, parent: TaskId, keys: readonly string[
 }
 
 async function database(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-nested-upgrade-"));
+	const directory = createTempDir("amazme-nested-upgrade-");
 	directories.push(directory);
 	return join(directory, "session.sqlite");
 }

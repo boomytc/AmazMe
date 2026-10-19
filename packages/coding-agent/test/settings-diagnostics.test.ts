@@ -1,13 +1,13 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { collectSettingsDiagnostics, deduplicateDiagnostics } from "../src/core/settings-diagnostics.ts";
 import { SettingsManager, type SettingsStorage } from "../src/core/settings-manager.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("settings diagnostics", () => {
 	it("includes the settings file path for file-backed storage", () => {
-		const tempDir = mkdtempSync(join(tmpdir(), "pi-settings-diagnostics-"));
+		const tempDir = createTempDir("pi-settings-diagnostics-");
 		const agentDir = join(tempDir, "agent");
 		const settingsPath = join(agentDir, "settings.json");
 		mkdirSync(agentDir);

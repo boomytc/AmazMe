@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@amazme/ai";
 import {
@@ -26,6 +25,7 @@ import { chatSetup, openChat } from "./chat-support.ts";
 import { addTask, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, openTasks, settled } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /** Outcome a held task commits once its gate opens. */
 type Ending = "completed" | "failed";
@@ -335,7 +335,7 @@ describe("ownership", () => {
 	}, 60_000);
 
 	it("holds an owner for work a commit creates below ended tasks loaded from storage", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-ownership-"));
+		const directory = createTempDir("pi-durable-ownership-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		let opened = await openHarness(await openNodeSqliteStorage(path));
@@ -725,7 +725,7 @@ describe("ownership", () => {
 	});
 
 	it("decides idle after reopen from owner edges it has to load first", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-ownership-"));
+		const directory = createTempDir("pi-durable-ownership-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		let opened = await openHarness(await openNodeSqliteStorage(path));
@@ -763,7 +763,7 @@ describe("ownership", () => {
 		["an abort-marked owner", true, { status: "pending", checkpoint: { phase: "hold" } }],
 	] as const) {
 		it(`derives marks a crash left unapplied below ${label} at open`, async () => {
-			const directory = await mkdtemp(join(tmpdir(), "pi-durable-ownership-"));
+			const directory = createTempDir("pi-durable-ownership-");
 			directories.add(directory);
 			const path = join(directory, "session.sqlite");
 			// Without a Harness, nothing derives marks: a cancelled owner with a live task below it.
@@ -816,7 +816,7 @@ describe("ownership", () => {
 	});
 
 	it("marks work admitted after reopen below a cancelled owner whose edge was not loaded", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-ownership-"));
+		const directory = createTempDir("pi-durable-ownership-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		let opened = await openHarness(await openNodeSqliteStorage(path));
@@ -928,7 +928,7 @@ describe("ownership", () => {
 	});
 
 	it("applies marks found through an edge loaded after reopen once a failed cascade commit is reopened", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-ownership-"));
+		const directory = createTempDir("pi-durable-ownership-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		let opened = await openHarness(await openNodeSqliteStorage(path));
@@ -1249,7 +1249,7 @@ describe("owned conversations from tools and supervisors", () => {
 	});
 
 	it("aborts the children of a tool call that throws or is interrupted, while the run continues", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-tool-children-"));
+		const directory = createTempDir("pi-durable-tool-children-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const children: TaskId[] = [];
@@ -1309,7 +1309,7 @@ describe("owned conversations from tools and supervisors", () => {
 	});
 
 	it("reruns a replay-safe subagent tool after a restart with the same child and submission", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-safe-subagent-"));
+		const directory = createTempDir("pi-durable-safe-subagent-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const children: ConversationId[] = [];
@@ -1364,7 +1364,7 @@ describe("owned conversations from tools and supervisors", () => {
 	});
 
 	it("lets a background supervisor resubmit after a restart without submitting twice", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-supervisor-"));
+		const directory = createTempDir("pi-durable-supervisor-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const Children = defineDoc<{ child?: ConversationId }>({

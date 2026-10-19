@@ -1,11 +1,12 @@
 import { type ChildProcess, fork } from "node:child_process";
 import { once } from "node:events";
-import { lstat, mkdtemp, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { lstat, readdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import type { Server } from "../src/index.ts";
 import { connectUnixTestClient, type ProtocolTestClient, TestServerHost } from "../src/testing/index.ts";
 import { createUnixServer, getUnixSocketPath } from "../src/transports/unix/index.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const servers = new Set<Server>();
 const clients = new Set<ProtocolTestClient>();
@@ -13,7 +14,7 @@ const children = new Set<ChildProcess>();
 const tempDirectories = new Set<string>();
 
 async function makeSocketPath(nested = false): Promise<string> {
-	const directory = await mkdtemp(join("/tmp", "ps-"));
+	const directory = createTempDir("ps-", { baseDirectory: "/tmp" });
 	tempDirectories.add(directory);
 	return nested ? join(directory, "p", "n", "server.sock") : join(directory, "server.sock");
 }
@@ -39,7 +40,7 @@ afterEach(async () => {
 });
 
 test("creates an in-memory server ID and derives its explicit Unix socket path", async () => {
-	const directory = await mkdtemp(join("/tmp", "pi-server-"));
+	const directory = createTempDir("pi-server-", { baseDirectory: "/tmp" });
 	tempDirectories.add(directory);
 	const serverId = "00000000-0000-4000-8000-000000000001";
 	const path = getUnixSocketPath(serverId, directory);

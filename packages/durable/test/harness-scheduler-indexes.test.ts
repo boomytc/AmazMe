@@ -1,13 +1,13 @@
 // The scheduler's in-memory indexes: cases where a wrong index changes behaviour, each against what the committed
 // records imply (spec §5.4, §5.5).
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createSession, defineTask, type Harness, type TaskId, type TaskRuntime } from "@amazme/durable";
 import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually, openTasks, settled } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const gates = new Map<string, Deferred<void>>();
 function gate(name: string): Deferred<void> {
@@ -69,7 +69,7 @@ afterEach(async () => {
 });
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-indexes-"));
+	const directory = createTempDir("pi-durable-indexes-");
 	directories.push(directory);
 	return join(directory, "session.sqlite");
 }

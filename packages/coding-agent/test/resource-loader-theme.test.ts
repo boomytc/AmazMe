@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resetCapabilitiesCache, setCapabilityOverrides } from "@amazme/tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("DefaultResourceLoader theme color mode", () => {
 	let tempDir: string;
@@ -15,7 +15,7 @@ describe("DefaultResourceLoader theme color mode", () => {
 	beforeEach(() => {
 		// The host shell may declare no palette (`TERM=dumb`); these cases test the theme, not the host terminal.
 		vi.stubEnv("TERM", "xterm-256color");
-		tempDir = mkdtempSync(join(tmpdir(), "resource-loader-theme-"));
+		tempDir = createTempDir("resource-loader-theme-");
 		agentDir = join(tempDir, "agent");
 		cwd = join(tempDir, "project");
 		mkdirSync(agentDir, { recursive: true });

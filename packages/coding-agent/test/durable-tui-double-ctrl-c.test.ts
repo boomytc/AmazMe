@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SHUTDOWN_FORCE_EXIT_MESSAGE } from "../src/utils/shutdown-signals.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -137,7 +137,7 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 	}, 45_000);
 
 	async function run(payload: string): Promise<{ stdout: string; ending: string | undefined; restored: boolean }> {
-		const directory = await mkdtemp(join(tmpdir(), "am-double-ctrl-c-"));
+		const directory = createTempDir("am-double-ctrl-c-");
 		directories.push(directory);
 		const cwd = join(directory, "project");
 		const profile = join(directory, "profile");

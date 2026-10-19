@@ -1,8 +1,8 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runMcpCommand } from "../src/extensions/mcp/cli.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const FIXTURE = resolve(import.meta.dirname, "../../mcp/test/fixtures/stdio-server.mjs");
 
@@ -14,7 +14,7 @@ describe("AmazMe mcp", () => {
 	});
 
 	async function run(args: string[], servers: Record<string, unknown> | undefined, dir?: string) {
-		const agentDir = dir ?? mkdtempSync(join(tmpdir(), "pi-mcp-command-"));
+		const agentDir = dir ?? createTempDir("pi-mcp-command-");
 		if (!dir) dirs.push(agentDir);
 		if (servers) writeFileSync(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: servers }));
 		const output: string[] = [];

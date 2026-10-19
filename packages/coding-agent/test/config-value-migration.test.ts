@@ -7,6 +7,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { runMigrations } from "../src/migrations.ts";
 
 import { createModelRegistry } from "./model-runtime-test-utils.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("config value env var syntax migration", () => {
 	const tempDirs: string[] = [];
@@ -19,7 +20,7 @@ describe("config value env var syntax migration", () => {
 	});
 
 	function createAgentDir(): string {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-config-value-migration-test-"));
+		const agentDir = createTempDir("pi-config-value-migration-test-");
 		tempDirs.push(agentDir);
 		return agentDir;
 	}

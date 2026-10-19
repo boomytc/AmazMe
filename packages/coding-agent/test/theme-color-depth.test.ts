@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadThemeFromPath } from "../src/modes/interactive/theme/theme.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const tempDirs: string[] = [];
 
@@ -20,7 +20,7 @@ function loadEditedTheme(edit: (theme: ThemeFile) => void) {
 		readFileSync(new URL("../src/modes/interactive/theme/dark.json", import.meta.url), "utf8"),
 	) as ThemeFile;
 	edit(themeJson);
-	const dir = mkdtempSync(join(tmpdir(), "pi-theme-depth-"));
+	const dir = createTempDir("pi-theme-depth-");
 	tempDirs.push(dir);
 	const path = join(dir, `${themeJson.name}.json`);
 	writeFileSync(path, JSON.stringify(themeJson));

@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@amazme/chord";
 import {
@@ -40,6 +39,7 @@ import { allEntries, chatSetup, openChat, waitFor } from "./chat-support.ts";
 import { addHooks, addTask, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, openTasks, settled } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 // ─── A scriptable task ──────────────────────────────────────────────────────
 
@@ -182,7 +182,7 @@ async function until(check: () => boolean | Promise<boolean>): Promise<void> {
 const directories = new Set<string>();
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-structured-"));
+	const directory = createTempDir("pi-durable-structured-");
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

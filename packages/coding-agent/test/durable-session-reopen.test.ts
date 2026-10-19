@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxProvider } from "@amazme/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +6,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { openDurable } from "../src/durable/runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable session reopen", () => {
 	let directory: string;
@@ -15,7 +15,7 @@ describe("durable session reopen", () => {
 	let settings: SettingsManager;
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-reopen-"));
+		directory = createTempDir("amazme-durable-reopen-");
 		cwd = join(directory, "project");
 		await mkdir(cwd);
 		runtime = await ModelRuntime.create({ credentials: AuthStorage.inMemory(), modelsPath: null, allowModelNetwork: false });

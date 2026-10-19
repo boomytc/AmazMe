@@ -1,6 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,6 +8,7 @@ import { streamSimple } from "../src/api/anthropic-messages.ts";
 import { getSupportedThinkingLevels, hasApi } from "../src/models.ts";
 import type { Api, Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -20,7 +20,7 @@ afterEach(() => {
 function generateFireworksModels(
 	options: Record<string, ModelsDevReasoningOption[] | undefined>,
 ): Record<string, Model<Api>> {
-	const root = mkdtempSync(join(tmpdir(), "pi-fireworks-generation-"));
+	const root = createTempDir("pi-fireworks-generation-");
 	temporaryRoots.push(root);
 	const preloadPath = join(root, "mock-catalog.mjs");
 	const outputPath = join(root, "catalog");

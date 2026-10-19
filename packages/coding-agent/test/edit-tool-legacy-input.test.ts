@@ -1,16 +1,16 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionToolContext } from "../src/core/extensions/types.ts";
 import { createMemoryFileObservations } from "../src/core/file-observations.ts";
 import { createReadTool } from "../src/core/tools/read.ts";
 import { createEditToolDefinition } from "../src/core/tools/edit.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const tempDirs: string[] = [];
 
-async function createTempDir(): Promise<string> {
-	const dir = await mkdtemp(join(tmpdir(), "pi-edit-legacy-input-"));
+async function openTempWorkspace(): Promise<string> {
+	const dir = createTempDir("pi-edit-legacy-input-");
 	tempDirs.push(dir);
 	return dir;
 }
@@ -74,7 +74,7 @@ describe("edit tool prepareArguments", () => {
 	});
 
 	it("prepared args execute correctly", async () => {
-		const dir = await createTempDir();
+		const dir = await openTempWorkspace();
 		const filePath = join(dir, "legacy.txt");
 		await writeFile(filePath, "before\n", "utf8");
 

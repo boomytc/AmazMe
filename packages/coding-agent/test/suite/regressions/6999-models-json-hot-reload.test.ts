@@ -1,5 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { setKeybindings, type TUI } from "@amazme/tui";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -9,6 +8,7 @@ import { ModelSelectorComponent } from "../../../src/modes/interactive/component
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../../src/utils/ansi.ts";
 import { createModelRegistry, getModelRuntime } from "../../model-runtime-test-utils.ts";
+import { createTempDir } from "../../temp-dir.ts";
 
 function observeRefreshRender(): { tui: TUI; renderedAfterRefresh: Promise<void> } {
 	let renderCount = 0;
@@ -57,7 +57,7 @@ describe("issue #6999 models.json hot reload", () => {
 	});
 
 	it("reloads models.json when opening /model", async () => {
-		tempDir = mkdtempSync(join(tmpdir(), "pi-models-json-hot-reload-"));
+		tempDir = createTempDir("pi-models-json-hot-reload-");
 		const modelsPath = join(tempDir, "models.json");
 		writeFileSync(modelsPath, JSON.stringify(modelsJson("old-provider", "old-model")));
 		const modelRuntime = getModelRuntime(await createModelRegistry(AuthStorage.inMemory(), modelsPath));

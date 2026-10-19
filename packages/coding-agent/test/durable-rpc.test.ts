@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -9,6 +8,7 @@ import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createDurableRpcHandler } from "../src/modes/rpc/durable-rpc.ts";
 import { openDurable, type OpenDurableResult } from "../src/durable/runtime.ts";
 import { pendingResponse } from "./experimental-durable-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable RPC handler", () => {
 	let directory: string;
@@ -21,7 +21,7 @@ describe("durable RPC handler", () => {
 	let handle: ReturnType<typeof createDurableRpcHandler>;
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-rpc-"));
+		directory = createTempDir("amazme-durable-rpc-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

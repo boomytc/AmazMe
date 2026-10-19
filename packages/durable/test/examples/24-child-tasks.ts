@@ -2,8 +2,7 @@
 // The task graph view prints the checkout's tree while its payments run.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/24-child-tasks.ts
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createModels } from "@amazme/ai/models";
@@ -18,6 +17,7 @@ import {
 	type TaskId,
 } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -99,7 +99,7 @@ const Checkout = defineTask<{ cards: string[] }, CheckoutState, string>({
 
 const registry = createRegistry();
 registry.install(defineExtension({ name: "checkout", tasks: [Payment, Checkout] }));
-const directory = await mkdtemp(join(tmpdir(), "pi-durable-example-"));
+const directory = createTempDir("pi-durable-example-");
 const databasePath = join(directory, "session.sqlite");
 const open = async () =>
 	Harness.open(await openNodeSqliteStorage(databasePath), { models: createModels(), registry }, context);

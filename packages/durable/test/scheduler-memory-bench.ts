@@ -6,8 +6,7 @@
  *
  *   node --conditions=source --experimental-strip-types test/scheduler-memory-bench.ts [cycles...]
  */
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { createModels } from "@amazme/ai/models";
@@ -22,6 +21,7 @@ import {
 } from "../src/index.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { retainedBytes } from "./heap-retained.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const waiting = new Map<string, () => void>();
 /** Holds until released by name, then completes. */
@@ -48,7 +48,7 @@ async function release(name: string): Promise<void> {
 type Sizes = Record<"live" | "settled" | "edges" | "below" | "roots" | "unloaded" | "dropQueue", number>;
 
 async function run(cycles: number) {
-	const directory = mkdtempSync(join(tmpdir(), "pi-durable-memory-bench-"));
+	const directory = createTempDir("pi-durable-memory-bench-");
 	try {
 		const storage = await openNodeSqliteStorage(join(directory, "session.sqlite"));
 		const reads = { count: 0 };
