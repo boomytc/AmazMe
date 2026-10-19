@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@amazme/ai";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { AgentDoc, defineExtension, defineTool, Harness, ToolResultEntry } from "@amazme/durable";
-import type { HookApi, ToolExecutionResult, ToolHookCall, ToolHooks } from "@amazme/durable";
+import type { HookApi, TaskId, ToolExecutionResult, ToolHookCall, ToolHooks } from "@amazme/durable";
 import type { NestedToolExecutionResult } from "@amazme/durable";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
@@ -204,7 +204,7 @@ describe("coding registry tool-result image hook", () => {
 
 	it("does not rewrite images from a nested tool call", async () => {
 		const content = [imageBlock(createPng(2400, 4800), "image/png")];
-		const nested = { ...call, parent: { taskId: "parent-task", callId: "parent" } } as ToolHookCall;
+		const nested: ToolHookCall = { ...call, parent: { taskId: 1 as TaskId, callId: "parent" } };
 		const changed = await afterTool(
 			true,
 			{ maxWidth: 800, maxHeight: 800, maxBytes: 5_000_000 },
