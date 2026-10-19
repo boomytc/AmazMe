@@ -1,5 +1,5 @@
 import { type ChannelCall, parseChannelFrame, openChannel } from "@amazme/protocol";
-import { createHost } from "@amazme/chord";
+import { ChordError, createHost } from "@amazme/chord";
 import { ServiceScope } from "@amazme/protocol/services";
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -12,8 +12,10 @@ import {
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
 import { type RoutedSessionAttachment, type RoutedSessionHandle, ServerError } from "@amazme/server";
 import { Check } from "typebox/value";
+import { SessionOpenError, type SessionOpenErrorKind } from "../durable/session-database.ts";
 import type { CoordinatorConnection, CoordinatorConnectionEvent } from "./coordinator.ts";
 import { spawnInternalProcess } from "./process.ts";
+import { sessionOpenErrorReason } from "./session-database-error.ts";
 import type { SessionCatalogMetadata } from "./session-catalog.ts";
 import { SessionLifecycle } from "./services/session-lifecycle.ts";
 import {
@@ -90,6 +92,23 @@ interface PendingLaunch {
 	readonly promise: Promise<WorkerRecord>;
 	resolve(worker: WorkerRecord): void;
 	reject(error: Error): void;
+}
+
+/**
+ * A Session whose database cannot be opened, as the server reports it to clients. It is a Chord `unavailable` error so
+ * the reason (`session_database_<kind>`) and the readable message (path, reason, what to do) survive the service
+ * boundary; `kind` and `path` stay available in process. No Session is created in its place.
+ */
+export class SessionDatabaseUnavailableError extends ChordError {
+	readonly kind: SessionOpenErrorKind;
+	readonly path: string;
+
+	constructor(error: SessionOpenError) {
+		super("unavailable", error.message, { cause: error, reason: sessionOpenErrorReason(error.kind) });
+		this.name = "SessionDatabaseUnavailableError";
+		this.kind = error.kind;
+		this.path = error.path;
+	}
 }
 
 /** Session and process bookkeeping owned by one replaceable server process. */
@@ -596,7 +615,12 @@ export class SessionWorkerManager {
 		if (message.type === "worker_failed") {
 			const pending = this.#pending.get(message.sessionKey);
 			if (pending?.peerId === event.from && pending.token === message.token) {
-				this.#failPending(message.sessionKey, new Error(`Session worker failed: ${message.message}`));
+				this.#failPending(
+					message.sessionKey,
+					message.sessionOpenError === undefined
+						? new Error(`Session worker failed: ${message.message}`)
+						: new SessionDatabaseUnavailableError(new SessionOpenError(message.sessionOpenError)),
+				);
 			}
 			return;
 		}

@@ -1,8 +1,14 @@
-import { mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { constants } from "node:fs";
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type { StatementSync } from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "./database.ts";
+import { isSqliteResourceError } from "./migrations.ts";
+
+/** A read-only check of an existing database file, run before anything can write to it. Throw to refuse the open. */
+export type NodeSqlitePreflight = (reader: SqliteExecutor) => void | Promise<void>;
 
 /** Node SQLite connection settings for a database file. */
 export type NodeSqliteDatabaseOptions = {
@@ -10,6 +16,13 @@ export type NodeSqliteDatabaseOptions = {
 	readonly walAutoCheckpointPages?: number;
 	/** Time SQLite waits for a competing file lock. SQLite defaults to 0; this adapter defaults to 5,000 ms. */
 	readonly busyTimeoutMs?: number;
+	/**
+	 * Inspect an existing file before the first write (`journal_mode`, migrations, the closing checkpoint). When set,
+	 * the file is read without modifying, creating, or checkpointing the database, `-wal`, or `-shm`; a file that is not
+	 * SQLite fails here. The preflight may use, and cleans up, `.preflight-*` directories beside the database, so keep
+	 * the database in a directory of its own. Omit it to open without a preflight.
+	 */
+	readonly preflight?: NodeSqlitePreflight;
 };
 
 const DEFAULT_WAL_AUTO_CHECKPOINT_PAGES = 1_000;
@@ -148,7 +161,9 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor implements SqliteData
 			} catch (error) {
 				scope.active = false;
 				try {
-					this.database.exec("ROLLBACK");
+					// After SQLITE_FULL or SQLITE_IOERR, SQLite may already have rolled the transaction back itself; a second
+					// ROLLBACK would fail and hide the real error. Any other missing transaction is an escaped commit.
+					if (this.database.isTransaction || !isSqliteResourceError(error)) this.database.exec("ROLLBACK");
 				} catch (rollbackError) {
 					throw new AggregateError([error, rollbackError], "SQLite transaction failed and rollback failed");
 				}
@@ -175,6 +190,78 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor implements SqliteData
 	}
 }
 
+async function fileSize(path: string): Promise<number | undefined> {
+	try {
+		return (await stat(path)).size;
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+async function inspect(location: string | URL, check: NodeSqlitePreflight | undefined): Promise<void> {
+	const database = new DatabaseSync(location, { readOnly: true });
+	try {
+		const reader = new NodeSqliteDatabase(database);
+		// The first read parses the header, so a file that is not SQLite fails here.
+		await reader.get("SELECT count(*) AS count FROM sqlite_schema");
+		await check?.(reader);
+	} finally {
+		database.close();
+	}
+}
+
+/** Prefix of the private copies a preflight makes next to the database; see `preflightNodeSqliteFile`. */
+export const NODE_SQLITE_PREFLIGHT_PREFIX = ".preflight-";
+
+/** Remove `.preflight-*` copies a killed preflight left next to the database. */
+async function removeStalePreflights(directory: string): Promise<void> {
+	let names: string[];
+	try {
+		names = await readdir(directory);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	await Promise.all(
+		names
+			.filter((name) => name.startsWith(NODE_SQLITE_PREFLIGHT_PREFIX))
+			.map((name) => rm(join(directory, name), { recursive: true, force: true })),
+	);
+}
+
+/**
+ * Read an existing database file without changing it, then run `check` on it. Nothing is read when the file does not
+ * exist. Without a `-wal`, the file is opened `immutable`, which writes no `-wal`/`-shm` and takes no locks. An
+ * immutable open ignores the `-wal`, so when one has content (a crash left it uncheckpointed), the file and its `-wal`
+ * are cloned (`COPYFILE_FICLONE`: a clone on APFS and other copy-on-write file systems, an ordinary copy elsewhere)
+ * into a `.preflight-*` directory beside the database and read there, which sees the committed state without touching
+ * the originals; the copy is removed afterwards. Leftover `.preflight-*` directories in the database's directory, from
+ * a preflight killed before it could clean up, are removed first. The caller must keep other openers out (session locks
+ * do), since the directory is shared with them.
+ */
+export async function preflightNodeSqliteFile(path: string, check?: NodeSqlitePreflight): Promise<void> {
+	if (path === ":memory:" || path === "" || path.startsWith("file:")) return;
+	const parent = dirname(path);
+	await removeStalePreflights(parent);
+	if ((await fileSize(path)) === undefined) return;
+	if (((await fileSize(`${path}-wal`)) ?? 0) === 0) {
+		const url = pathToFileURL(path);
+		url.searchParams.set("immutable", "1");
+		await inspect(url, check);
+		return;
+	}
+	const directory = await mkdtemp(join(parent, NODE_SQLITE_PREFLIGHT_PREFIX));
+	try {
+		const copy = join(directory, "database.sqlite");
+		await copyFile(path, copy, constants.COPYFILE_FICLONE);
+		await copyFile(`${path}-wal`, `${copy}-wal`, constants.COPYFILE_FICLONE);
+		await inspect(copy, check);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
 /** Open and configure a Node-backed SQLite database facade. */
 export async function openNodeSqliteDatabase(
 	path: string,
@@ -182,6 +269,7 @@ export async function openNodeSqliteDatabase(
 ): Promise<NodeSqliteDatabase> {
 	const checkpointPages = options.walAutoCheckpointPages ?? DEFAULT_WAL_AUTO_CHECKPOINT_PAGES;
 	const timeout = options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS;
+	if (options.preflight !== undefined) await preflightNodeSqliteFile(path, options.preflight);
 	if (path !== ":memory:") await mkdir(dirname(path), { recursive: true });
 	const database = new DatabaseSync(path, { timeout });
 	const adapter = new NodeSqliteDatabase(database);

@@ -1,6 +1,44 @@
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import type { SqliteExecutor } from "../../src/sqlite/index.ts";
-import { openNodeSqliteDatabase } from "../../src/sqlite/node.ts";
+import {
+	applySqliteMigrations,
+	checkSqliteSchemaVersion,
+	isSqliteResourceError,
+	type SqliteExecutor,
+	SqliteSchemaError,
+} from "../../src/sqlite/index.ts";
+import { openNodeSqliteDatabase, preflightNodeSqliteFile } from "../../src/sqlite/node.ts";
+import { createTempDir } from "../temp-dir.ts";
+
+function withDirectory(run: (directory: string) => Promise<void>): Promise<void> {
+	return run(createTempDir("amazme-chord-sqlite-"));
+}
+
+function snapshot(directory: string): Record<string, string> {
+	return Object.fromEntries(
+		readdirSync(directory, { withFileTypes: true })
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.map((entry) => [
+				entry.name,
+				entry.isFile()
+					? createHash("sha256").update(readFileSync(join(directory, entry.name))).digest("hex")
+					: "directory",
+			]),
+	);
+}
+
+/** A rollback-journal database at schema `version`, so enabling WAL would rewrite its header. */
+function writeVersioned(path: string, version: number): void {
+	const database = new DatabaseSync(path);
+	database.exec(`CREATE TABLE app_schema (singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL);
+		INSERT INTO app_schema VALUES (1, ${version})`);
+	database.close();
+}
+
+const checkApp = (reader: SqliteExecutor) => checkSqliteSchemaVersion(reader, { table: "app_schema", currentVersion: 2 });
 
 describe("Node SQLite driver", () => {
 	it("configures connection defaults and accepts explicit settings", async () => {
@@ -165,5 +203,101 @@ describe("Node SQLite driver", () => {
 		).rejects.toThrow(AggregateError);
 		expect(await database.get("SELECT value FROM rollback_probe")).toEqual({ value: 1 });
 		await database.close();
+	});
+
+	it("refuses a newer schema in its preflight without touching the file", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			writeVersioned(path, 3);
+			const before = snapshot(directory);
+			const error = await openNodeSqliteDatabase(path, { preflight: checkApp }).catch((caught: unknown) => caught);
+			expect(error).toBeInstanceOf(SqliteSchemaError);
+			expect(error).toMatchObject({ kind: "newer-schema", version: 3, supportedVersion: 2 });
+			expect(snapshot(directory)).toEqual(before);
+			// Without a preflight the open enables WAL first, which rewrites the header.
+			await (await openNodeSqliteDatabase(path)).close();
+			expect(snapshot(directory)).not.toEqual(before);
+		}));
+
+	it("fails a file that is not SQLite in its preflight and leaves no -wal or -shm", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			writeFileSync(path, "not a database ".repeat(100));
+			const before = snapshot(directory);
+			await expect(preflightNodeSqliteFile(path)).rejects.toMatchObject({ errcode: 26 });
+			expect(snapshot(directory)).toEqual(before);
+		}));
+
+	it("reads an uncheckpointed -wal through a private copy, so a newer commit in it is seen", () =>
+		withDirectory(async (directory) => {
+			const source = join(directory, "source");
+			writeVersioned(`${source}.sqlite`, 2);
+			const writer = new DatabaseSync(`${source}.sqlite`);
+			writer.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; UPDATE app_schema SET version = 3");
+			const crashed = join(directory, "crashed");
+			mkdirSync(crashed);
+			const path = join(crashed, "app.sqlite");
+			copyFileSync(`${source}.sqlite`, path);
+			copyFileSync(`${source}.sqlite-wal`, `${path}-wal`);
+			writer.close();
+			const before = snapshot(crashed);
+			expect(Object.keys(before)).toEqual(["app.sqlite", "app.sqlite-wal"]);
+			// A copy a killed preflight left behind is removed; this preflight's own copy is removed after use.
+			mkdirSync(join(crashed, ".preflight-stale"));
+			writeFileSync(join(crashed, ".preflight-stale", "database.sqlite"), "left by SIGKILL");
+			await expect(preflightNodeSqliteFile(path, checkApp)).rejects.toMatchObject({ kind: "newer-schema", version: 3 });
+			expect(snapshot(crashed)).toEqual(before);
+		}));
+
+	it("lets a current database through its preflight and opens it", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			writeVersioned(path, 2);
+			const database = await openNodeSqliteDatabase(path, { preflight: checkApp });
+			expect(await database.get("SELECT version FROM app_schema")).toEqual({ version: 2 });
+			await database.close();
+			await expect(preflightNodeSqliteFile(join(directory, "missing.sqlite"), checkApp)).resolves.toBeUndefined();
+		}));
+
+	it("reports a full disk during a migration as the original SQLite error and leaves the file alone", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			const setup = await openNodeSqliteDatabase(path);
+			await applySqliteMigrations(setup, [{ version: 1, statements: ["CREATE TABLE notes (body TEXT)"] }], {
+				table: "app_schema",
+			});
+			await setup.close();
+			const before = snapshot(directory);
+			const database = await openNodeSqliteDatabase(path, { preflight: checkApp });
+			try {
+				const full = [
+					{ version: 1, statements: ["CREATE TABLE notes (body TEXT)"] },
+					{
+						version: 2,
+						statements: [
+							// The file may not grow, so the next write fails with SQLITE_FULL.
+							"PRAGMA max_page_count = 1",
+							"INSERT INTO notes (body) VALUES (zeroblob(1000000))",
+						],
+					},
+				];
+				const error = await applySqliteMigrations(database, full, { table: "app_schema" }).catch(
+					(caught: unknown) => caught,
+				);
+				expect(error).not.toBeInstanceOf(SqliteSchemaError);
+				expect(error).toMatchObject({ code: "ERR_SQLITE_ERROR", errcode: 13 });
+				expect(isSqliteResourceError(error)).toBe(true);
+			} finally {
+				await database.close();
+			}
+			expect(snapshot(directory)).toEqual(before);
+		}));
+
+	it("recognizes SQLITE_FULL and SQLITE_IOERR, including extended codes", () => {
+		expect(isSqliteResourceError({ errcode: 13 })).toBe(true);
+		expect(isSqliteResourceError({ errcode: 10 })).toBe(true);
+		expect(isSqliteResourceError({ errcode: 10 | (3 << 8) })).toBe(true); // SQLITE_IOERR_WRITE
+		expect(isSqliteResourceError({ errcode: 26 })).toBe(false);
+		expect(isSqliteResourceError(new Error("disk full"))).toBe(false);
 	});
 });

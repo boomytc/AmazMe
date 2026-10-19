@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import { createRegistry, Harness } from "@amazme/durable";
-import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
+import { openSessionStorage } from "../../src/durable/session-database.ts";
 import { consumeInternalProcessRole } from "../../src/host/process.ts";
 import { runSessionWorkerWithHarness } from "../../src/host/session-worker.ts";
 import { KeyedProbe } from "./keyed-service.ts";
@@ -13,7 +13,7 @@ import { KeyedProbe } from "./keyed-service.ts";
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const role = consumeInternalProcessRole();
 	if (role !== "session-worker") throw new Error("Faux Session worker requires a session-worker invocation");
-	void runSessionWorkerWithHarness(process.argv.slice(2), async (databasePath, options) => {
+	void runSessionWorkerWithHarness(process.argv.slice(2), async (lease, options) => {
 		if (options.provider !== "anthropic" || options.model !== "claude-sonnet-4-5") {
 			throw new Error(`Unexpected faux worker model: ${options.provider}/${options.model}`);
 		}
@@ -23,7 +23,7 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 		const models = createModels();
 		models.setProvider(faux.provider);
 		const harness = await Harness.open(
-			await openNodeSqliteStorage(databasePath),
+			await openSessionStorage(lease),
 			{ models, registry: createRegistry() },
 			BACKGROUND_CONTEXT,
 		);

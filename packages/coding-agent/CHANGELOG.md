@@ -14,6 +14,7 @@
 - 内部自动启动的 server 改为先装好信号处理器再绑定和监听 socket；之前启动过程中收到 SIGTERM 会被默认动作直接杀掉，留下陈旧 socket 文件。`closeWhenSignaled` 改为接收启动回调，由它自己先装处理器再启动，`server`、`web` 和内部 server 都改用新写法，旧的传入已监听对象的写法不再能通过类型检查。启动期间收到信号时，启动完成后不打印就绪行，直接关闭并删掉 socket。
 - 关掉终端窗口发出的 SIGHUP 现在和 SIGTERM 走同一个处理器：TUI、`server`、`web` 都会先正常关闭再退出，不再留下 socket 和 `--no-session` 的临时产物目录；TUI 在终端挂断后写屏遇到的 EIO 不再被当成崩溃记录并以 1 退出。
 - `--no-session` 的临时产物目录必须以 0700 权限创建（只有当前用户能读），现在 print、RPC 和 TUI 的退出测试都会检查这一点。
+- 会话库打不开（由更新版本写入、升级迁移失败、不是 SQLite 文件或已损坏）时，CLI、TUI、print、RPC 和网页/桌面端都走同一个打开入口，抛带类型的 `SessionOpenError`（含 `kind`、路径、库里的版本和支持的版本），提示里写明文件路径、原因和该怎么办（升级 AmazMe，或从备份恢复、把会话目录挪开）。CLI/TUI 以非 0 退出；网页和桌面端的 Session worker 在 `worker_failed` 里带上类型和字段，界面直接显示这段提示，不再只剩 `Session worker failed`，server 照常服务。任何情况下都不会新建空会话代替，`session.sqlite`、`-wal`、`-shm` 保持逐字节不变，原本不存在的文件也不会被创建。磁盘满或 I/O 错误（`SQLITE_FULL`、`SQLITE_IOERR*`）原样报出，不当作会话库问题。预检（含 `.preflight-*` 清理）只在拿到会话锁之后运行：`openSessionStorage` 只接受 `lockSessionDatabase` 返回的 `SessionLease`，`--session <dir>` 读工作目录时也先拿锁再读库，两个进程同时打开一个会话时，后到的照常得到“会话已在另一进程打开”。所有入口（`cli.ts`、`rpc-entry.ts`、Bun 入口）最先加载共用的 `quiet-warnings.ts` 压掉运行时警告，能碰到 SQLite 的代码改为在它之后动态加载，`node:sqlite` 的 ExperimentalWarning 不会再漏到 stderr。
 
 ## [1.4.0] - 2026-10-19
 

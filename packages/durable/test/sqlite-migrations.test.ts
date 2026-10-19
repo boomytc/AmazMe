@@ -1,5 +1,5 @@
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, rm } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
@@ -110,7 +110,35 @@ describe("durable SQLite migrations", () => {
 		);
 		await database.close();
 
-		await expect(openNodeSqliteStorage(path)).rejects.toThrow("is newer than supported version");
+		const files = async () => {
+			const names = (await readdir(dirname(path))).sort();
+			return Promise.all(names.map(async (name) => [name, (await readFile(join(dirname(path), name))).toString("base64")]));
+		};
+		const before = await files();
+		await expect(openNodeSqliteStorage(path)).rejects.toMatchObject({
+			name: "SqliteSchemaError",
+			kind: "newer-schema",
+			version: CURRENT_SQLITE_SCHEMA_VERSION + 1,
+			supportedVersion: CURRENT_SQLITE_SCHEMA_VERSION,
+			message: expect.stringContaining("is newer than supported version"),
+		});
+		// The read-only preflight refuses it before WAL setup or migration can write anything.
+		expect(await files()).toEqual(before);
+	});
+
+	it("always runs its schema preflight; callers cannot replace or disable it", async () => {
+		const path = await databasePath();
+		const database = await openNodeSqliteDatabase(path);
+		await applySqliteMigrations(database);
+		await database.run("UPDATE durable_schema SET version = ? WHERE singleton = 1", CURRENT_SQLITE_SCHEMA_VERSION + 1);
+		await database.close();
+
+		// @ts-expect-error NodeSqliteStorageOptions has no preflight: the version check cannot be overridden
+		await expect(openNodeSqliteStorage(path, { preflight: undefined })).rejects.toMatchObject({ kind: "newer-schema" });
+		// @ts-expect-error NodeSqliteStorageOptions has no preflight: the version check cannot be replaced
+		await expect(openNodeSqliteStorage(path, { preflight: async () => {} })).rejects.toMatchObject({
+			kind: "newer-schema",
+		});
 	});
 
 	it("rolls a failed migration back and preserves stored data for a successful retry", async () => {

@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { expandTildePath, getAgentDir } from "../config.ts";
+import { lockSessionDatabase, type SessionLease } from "./session-lease.ts";
 
 /**
  * How long a crashed process's session lock stays reserved.
@@ -36,6 +37,8 @@ export interface SessionLocation {
 	 * exits (see {@link ephemeralArtifactDirectory}).
 	 */
 	artifactDirectory: string;
+	/** The held session lock, for {@link openSessionStorage}; absent for an ephemeral session. */
+	lease?: SessionLease;
 	release(): Promise<void>;
 }
 
@@ -268,15 +271,16 @@ export async function selectSession(
 		await access(database).catch(() => {
 			throw new Error(`Not a Durable session directory: ${directory}`);
 		});
-		const release = await lockSession(directory);
+		const lease = await lockSessionDatabase(directory, database, lockSession);
 		return {
 			id: basename(directory),
 			directory,
 			database,
+			lease,
 			cwd,
 			created: false,
 			artifactDirectory: join(directory, "artifacts"),
-			release,
+			release: lease.release,
 		};
 	}
 	const root = sessionRoot(cwd, options.sessionDir);
@@ -319,14 +323,16 @@ export async function selectSession(
 		created = true;
 	}
 
-	const release = await lockSession(directory);
+	const database = join(directory, "session.sqlite");
+	const lease = await lockSessionDatabase(directory, database, lockSession);
 	return {
 		id: basename(directory),
 		directory,
-		database: join(directory, "session.sqlite"),
+		database,
+		lease,
 		cwd,
 		created,
 		artifactDirectory: join(directory, "artifacts"),
-		release,
+		release: lease.release,
 	};
 }

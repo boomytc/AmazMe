@@ -5,7 +5,6 @@ export function setupCli(): void {
 	process.title = APP_NAME;
 	process.env.AMAZME_CODING_AGENT = "true";
 	process.env.AI_AGENT = "AmazMe";
-	process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 	// Configure undici before provider SDKs issue requests. Settings are applied
 	// once SettingsManager has loaded global/project configuration.

@@ -26,7 +26,6 @@ import {
 	section,
 	ToolTask,
 } from "@amazme/durable";
-import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import {
 	ChannelCallSchema,
 	frameJson,
@@ -55,6 +54,13 @@ import {
 	type DurableMcp,
 	openDurableMcp,
 } from "../durable/mcp.ts";
+import {
+	findSessionOpenError,
+	lockSessionDatabase,
+	openSessionStorage,
+	type SessionLease,
+	SessionOpenErrorDataSchema,
+} from "../durable/session-database.ts";
 import { Subagent } from "../durable/subagent.ts";
 import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
 import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
@@ -207,6 +213,8 @@ export const SessionWorkerEventSchema = Type.Union([
 		token: Type.String(),
 		sessionKey: Type.String(),
 		message: Type.String(),
+		/** Present when the Session database exists but cannot be opened; the server rebuilds the typed error. */
+		sessionOpenError: Type.Optional(SessionOpenErrorDataSchema),
 	}),
 	Type.Object({
 		type: Type.Literal("demand_applied"),
@@ -640,11 +648,11 @@ async function closeResources(resources: {
 }
 
 /**
- * Open the Session's Harness over `databasePath` and return it with its root conversation. Called while the worker
+ * Open the Session's Harness over the database `lease` holds and return it with its root conversation. Called while the worker
  * holds the Session lock; on failure it closes whatever it opened.
  */
 export type CreateSessionWorkerHarness = (
-	databasePath: string,
+	lease: SessionLease,
 	options: SessionWorkerOptions,
 ) => Promise<SessionWorkerRuntime>;
 
@@ -662,23 +670,26 @@ async function run(
 	).toString();
 	failureControl = control;
 	const pluginManifestPaths = options.pluginManifestPaths;
-	const releaseOwnership = await lockfile.lock(metadata.path, {
-		realpath: true,
-		stale: 2_000,
-		update: 1_000,
-		retries: {
-			retries: 320,
-			factor: 1,
-			minTimeout: 25,
-			maxTimeout: 25,
-			maxRetryTime: 8_000,
-		},
-	});
+	const lease = await lockSessionDatabase(metadata.path, sessionStoragePath(metadata), (path) =>
+		lockfile.lock(path, {
+			realpath: true,
+			stale: 2_000,
+			update: 1_000,
+			retries: {
+				retries: 320,
+				factor: 1,
+				minTimeout: 25,
+				maxTimeout: 25,
+				maxRetryTime: 8_000,
+			},
+		}),
+	);
+	const releaseOwnership = lease.release;
 	let runtime: SessionWorkerRuntime | undefined;
 	let services: SessionWorkerServices | undefined;
 	let taskGraph: AttachedReplicatedState<TaskGraph> | undefined;
 	try {
-		runtime = await createHarness(sessionStoragePath(metadata), options);
+		runtime = await createHarness(lease, options);
 		if (
 			(await readSession(options.sessionDir, metadata.id))?.archivedAt !==
 			undefined
@@ -1030,13 +1041,20 @@ export async function runSessionWorkerWithHarness(
 		}
 		await run(options, createHarness);
 	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
+		const openError = findSessionOpenError(error);
+		const message = openError?.message ?? (error instanceof Error ? error.message : String(error));
 		const token = process.env[SESSION_WORKER_CONTROL_TOKEN_ENV];
 		const encodedSessionKey = process.env[SESSION_WORKER_SESSION_KEY_ENV];
 		if (token && encodedSessionKey) {
 			const sessionKey = Buffer.from(encodedSessionKey, "base64url").toString();
 			await failureControl
-				?.send({ type: "worker_failed", token, sessionKey, message })
+				?.send({
+					type: "worker_failed",
+					token,
+					sessionKey,
+					message,
+					...(openError === undefined ? {} : { sessionOpenError: openError.toJSON() }),
+				})
 				.catch(() => {});
 		}
 		throw error;
@@ -1044,7 +1062,7 @@ export async function runSessionWorkerWithHarness(
 }
 
 async function createCodingAgentHarness(
-	databasePath: string,
+	lease: SessionLease,
 	options: SessionWorkerOptions,
 ): Promise<SessionWorkerRuntime> {
 	const { cwd } = options.metadata;
@@ -1154,7 +1172,7 @@ async function createCodingAgentHarness(
 		});
 		mcp = activeMcp;
 		harness = await Harness.open(
-			await openNodeSqliteStorage(databasePath),
+			await openSessionStorage(lease),
 			{
 				models: modelRuntime,
 				registry,
