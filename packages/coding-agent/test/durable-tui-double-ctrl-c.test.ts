@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +9,8 @@ import { SHUTDOWN_FORCE_EXIT_MESSAGE } from "../src/utils/shutdown-signals.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
+const mainSourceUrl = pathToFileURL(resolve(__dirname, "../src/main.ts")).href;
+const settingsManagerSourceUrl = pathToFileURL(resolve(__dirname, "../src/core/settings-manager.ts")).href;
 
 /**
  * Run the CLI on a pty and press Ctrl-C twice: in one write for mode `together`, or separated by mode `gap:<ms>`.
@@ -39,6 +41,7 @@ signal.signal(signal.SIGTERM, stop)
 os.set_blocking(fd, False)
 seen = b""
 pressed = False
+waiting_for_close = False
 status = None
 while status is None:
     readable, _, _ = select.select([fd], [], [], 0.02)
@@ -57,9 +60,16 @@ while status is None:
                     os.write(fd, b"\\x03")
                     time.sleep(int(payload.split(":")[1]) / 1000.0)
                     os.write(fd, b"\\x03")
+                elif payload == "close":
+                    os.write(fd, b"\\x03")
+                    waiting_for_close = True
                 else:
                     os.write(fd, b"\\x03")
                 pressed = True
+    marker = os.environ.get("AMAZME_CLOSE_MARKER")
+    if waiting_for_close and marker and os.path.exists(marker):
+        os.write(fd, b"\\x03")
+        waiting_for_close = False
     waited, waited_status = os.waitpid(pid, os.WNOHANG)
     if waited != 0:
         status = waited_status
@@ -109,6 +119,16 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 		}, 45_000);
 	}
 
+	it("restores input when a second Ctrl-C force-exits a held cleanup", async () => {
+		const { stdout, ending, restored } = await run("close");
+		expect(ending, stdout).toBe("CHILD exited 130");
+		expect(stdout).toContain("\x1b[?1049l");
+		expect(stdout).toContain(SHUTDOWN_FORCE_EXIT_MESSAGE);
+		expect(stdout).toContain("INPUT ECHO=1 ICANON=1");
+		expect(stdout).not.toContain("^C");
+		expect(restored).toBe(true);
+	}, 45_000);
+
 	it("still exits 0 gracefully for a single Ctrl-C", async () => {
 		const { stdout, ending } = await run("single");
 		expect(ending, stdout).toBe("CHILD exited 0");
@@ -116,12 +136,14 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 		expect(stdout).not.toContain("^C");
 	}, 45_000);
 
-	async function run(payload: string): Promise<{ stdout: string; ending: string | undefined }> {
+	async function run(payload: string): Promise<{ stdout: string; ending: string | undefined; restored: boolean }> {
 		const directory = await mkdtemp(join(tmpdir(), "am-double-ctrl-c-"));
 		directories.push(directory);
 		const cwd = join(directory, "project");
 		const profile = join(directory, "profile");
 		const sessionDir = join(directory, "sessions");
+		const marker = join(directory, "close-held");
+		const restoredMarker = join(directory, "input-restored");
 		await mkdir(cwd);
 		await mkdir(profile);
 		await writeFile(
@@ -148,6 +170,31 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 			}),
 		);
 		await writeFile(join(directory, "pty-helper.py"), ptyHelper);
+		let entry = cliPath;
+		if (payload === "close") {
+			entry = join(directory, "hold-close.mjs");
+			await writeFile(
+				entry,
+				`import { writeFileSync } from "node:fs";
+const setRawMode = process.stdin.setRawMode;
+process.stdin.setRawMode = function (mode) {
+	if (!mode) writeFileSync(process.env.AMAZME_RESTORED_MARKER, "restored");
+	return setRawMode.call(process.stdin, mode);
+};
+const { SettingsManager } = await import(${JSON.stringify(settingsManagerSourceUrl)});
+const originalFlush = SettingsManager.prototype.flush;
+let held = false;
+SettingsManager.prototype.flush = async function () {
+	if (held) return originalFlush.call(this);
+	held = true;
+	writeFileSync(process.env.AMAZME_CLOSE_MARKER, "close");
+	await new Promise(() => {});
+};
+const { main } = await import(${JSON.stringify(mainSourceUrl)});
+await main(process.argv.slice(2));
+`,
+			);
+		}
 
 		const stdout: string[] = [];
 		const stderr: string[] = [];
@@ -159,7 +206,7 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 				process.execPath,
 				"--import",
 				sourceResolverUrl,
-				cliPath,
+				entry,
 				"--offline",
 				"--provider",
 				"fixture",
@@ -181,6 +228,8 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 					LINES: "40",
 					AMAZME_CODING_AGENT_DIR: profile,
 					AMAZME_OFFLINE: "1",
+					AMAZME_CLOSE_MARKER: marker,
+					AMAZME_RESTORED_MARKER: restoredMarker,
 				},
 				stdio: ["pipe", "pipe", "pipe"],
 			},
@@ -205,6 +254,10 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 			.join("")
 			.split("\n")
 			.find((line) => line.startsWith("CHILD "));
-		return { stdout: stdout.join(""), ending };
+		const restored = await access(restoredMarker).then(
+			() => true,
+			() => false,
+		);
+		return { stdout: stdout.join(""), ending, restored };
 	}
 });

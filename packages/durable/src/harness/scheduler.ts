@@ -314,8 +314,10 @@ export class TaskScheduler {
 	readonly #blockedListeners = new Set<() => void>();
 	/** A registry snapshot that threw for the task graph was reported; it is read per record, so only once. */
 	#snapshotReported = false;
-	/** Tasks a pass left out as parked; each pass checks them again, as `settings.restartLimit` may have risen. */
+	/** Tasks a pass left out as parked; each pass checks them again, as `settings.restartLimit` may have changed. */
 	readonly #parkedTasks = new Set<TaskId>();
+	/** The restart limit the last pass observed, so a settings-only change still refreshes the task graph. */
+	#lastRestartLimit: number | undefined;
 	#reconcileScheduled = false;
 	/** Reconcile passes underway with work (they may overlap): their commits finalize held outcomes and mark cascades. */
 	#reconcilingWork = 0;
@@ -358,6 +360,7 @@ export class TaskScheduler {
 			this.#kick();
 		});
 		const limit = this.#restartLimit();
+		this.#lastRestartLimit = limit;
 		const parked: AnyTaskRecord[] = [];
 		await this.#session.commitWith(async (tx) => {
 			// Every table read before the first write.
@@ -1387,8 +1390,11 @@ export class TaskScheduler {
 		return { task: reportTask(task), ...optionalExtension(extension) };
 	}
 
-	/** Make parked tasks that a raised `settings.restartLimit` no longer parks candidates again, and tell the graph. */
+	/** Reconcile parked tasks with `settings.restartLimit`, and tell the graph whenever the limit changed. */
 	#unparkRaised(): void {
+		const limit = this.#restartLimit();
+		const limitChanged = limit !== this.#lastRestartLimit;
+		this.#lastRestartLimit = limit;
 		let unparked = false;
 		for (const id of this.#parkedTasks) {
 			const record = this.#live.get(id);
@@ -1398,7 +1404,7 @@ export class TaskScheduler {
 			this.#runnable.add(id);
 			unparked = true;
 		}
-		if (unparked) queueMicrotask(() => this.#notifyBlocked());
+		if (unparked || limitChanged) queueMicrotask(() => this.#notifyBlocked());
 	}
 
 	/** `settings.restartLimit`, or the default when the host's settings throw. */

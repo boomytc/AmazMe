@@ -346,6 +346,57 @@ describe("tasks that cannot run", () => {
 		await opened.harness.close(context);
 	});
 
+	it("refreshes a parked task graph when restartLimit falls without unparking it", async () => {
+		const path = await sqlitePath();
+		const state = { crashing: true, started: 0 };
+		const registry = createRegistry();
+		const Loop = crashLoop(state);
+		registry.install(defineExtension({ name: "loop", tasks: [Loop] }));
+		const settings: { restartLimit?: number } = { restartLimit: 3 };
+		let opened = await openWith(path, registry, settings);
+		const id = await (await opened.harness.root(context)).commit(
+			(tx) => tx.createTask(Loop, null, { ownership: { kind: "conversation" } }),
+			context,
+		);
+		for (let run = 1; run <= 3; run++) {
+			opened.harness.resume();
+			await eventually(() => state.started === run);
+			opened.kill();
+			opened = await openWith(path, registry, settings);
+		}
+		const graph = await opened.harness.taskGraph(context);
+		const watch = await opened.harness.watchTaskGraph(context);
+		let replica = watch.value as unknown as JsonValue;
+		const ops: Op[] = [];
+		watch.start(async (value, frame) => {
+			replica = applyImmutable(replica, frame);
+			expect(replica).toEqual(value);
+			ops.push(...frame);
+		});
+		opened.harness.resume();
+		await eventually(() => graph.value.tasks[String(id)]?.blocked === "restart_limit");
+		// Let the first pass record the task as parked under the original limit.
+		for (let turn = 0; turn < 5; turn++) await flush();
+		expect(state.started).toBe(3);
+		expect(graph.value.restartLimit).toBe(3);
+
+		settings.restartLimit = 2;
+		opened.harness.resume();
+		await eventually(() => graph.value.restartLimit === 2);
+		await flush();
+		expect(graph.value.tasks[String(id)]).toMatchObject({
+			blocked: "restart_limit",
+			restarts: 3,
+		});
+		expect(watch.value).toEqual(graph.value);
+		expect(replica).toEqual(watch.value);
+		expect(ops).toContainEqual(["s", ["restartLimit"], 2]);
+		expect(state.started).toBe(3);
+		await watch.stop();
+		graph.dispose();
+		await opened.harness.close(context);
+	});
+
 	it("still runs the abort handler of a parked task", async () => {
 		const path = await sqlitePath();
 		const state = { crashing: true, started: 0 };

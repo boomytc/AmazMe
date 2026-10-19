@@ -1,7 +1,7 @@
 import { openDurable, type OpenDurableOptions } from "./runtime.ts";
 import { runDurableTui } from "./tui.ts";
 import { printTimings, time } from "../core/timings.ts";
-import { installShutdownSignals } from "../utils/shutdown-signals.ts";
+import { installShutdownSignals, setShutdownTerminalRestore } from "../utils/shutdown-signals.ts";
 import type { ImageContent } from "@amazme/ai";
 import { recordCrash } from "../core/crash-log.ts";
 import { join } from "node:path";
@@ -91,6 +91,9 @@ export async function runDurableInteractive(
 		throw error;
 	} finally {
 		try {
+			// The TUI releases its shutdown restore when it stops. Keep cooked input reachable
+			// through the rest of cleanup, including a second Ctrl-C while close is held.
+			setShutdownTerminalRestore(restoreInput);
 			await durable.close();
 			await Promise.all(inputs);
 		} catch (error) {
@@ -101,6 +104,7 @@ export async function runDurableInteractive(
 			process.off("uncaughtExceptionMonitor", monitor);
 			// The exit transaction: the session is closed, so hand cooked input back and leave at once.
 			restoreInput();
+			setShutdownTerminalRestore(undefined);
 			// A failed presentation must not exit 0, and must not leave the signal listeners behind.
 			shutdown.finish();
 			if (!forced || !returned) {
