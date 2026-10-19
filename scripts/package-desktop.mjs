@@ -8,7 +8,6 @@
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { createHash } from "node:crypto";
 import { constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,6 +17,7 @@ import {
 	createPackageArtifacts,
 	installPackageArtifacts,
 } from "./package-artifacts.mjs";
+import { resolveSigning, signApp, signDiskImage, writeChecksum } from "./macos-signing.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -117,11 +117,6 @@ async function finalizeBundle(appDirectory, manifest, nodeExecutable) {
 	await writeFile(join(resources, MANIFEST_NAME), `${JSON.stringify(manifest, null, "\t")}\n`);
 }
 
-async function signBundle(appDirectory) {
-	// Preview signing only. Public distribution replaces this with Developer ID + notarization.
-	run("codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", appDirectory]);
-}
-
 async function smokeBundle(appDirectory) {
 	const scratch = await mkdtemp(join(tmpdir(), "amazme-standalone-"));
 	const moved = join(scratch, "AmazMe.app");
@@ -155,7 +150,7 @@ async function smokeBundle(appDirectory) {
 	return report;
 }
 
-async function createDmg(appDirectory, out, manifest) {
+async function createDmg(appDirectory, out, manifest, signing) {
 	const staging = await mkdtemp(join(tmpdir(), "amazme-dmg-"));
 	const image = join(out, `AmazMe-${manifest.app.version}-macos-${manifest.arch}.dmg`);
 	try {
@@ -165,8 +160,8 @@ async function createDmg(appDirectory, out, manifest) {
 	} finally {
 		await rm(staging, { recursive: true, force: true });
 	}
-	const digest = createHash("sha256").update(await readFile(image)).digest("hex");
-	await writeFile(`${image}.sha256`, `${digest}  ${basename(image)}\n`);
+	signDiskImage(image, signing);
+	const digest = await writeChecksum(image);
 	const mounted = await mkdtemp(join(tmpdir(), "amazme-mount-"));
 	try {
 		run("hdiutil", ["attach", "-nobrowse", "-readonly", "-mountpoint", mounted, image]);
@@ -188,6 +183,11 @@ async function main() {
 	const out = resolve(argument("--out") ?? join(repoRoot, "dist-desktop"));
 	const verify = process.argv.includes("--verify");
 	const withDmg = process.argv.includes("--dmg");
+	const signing = resolveSigning({
+		keychain: argument("--keychain"),
+		teamId: argument("--team-id"),
+		entitlements: join(repoRoot, "packages/gui/assets/entitlements.mac.plist"),
+	});
 	const nodeArgument = argument("--node");
 	const nodeExecutable = resolve(nodeArgument ?? process.execPath);
 	assertSelfContainedNode(nodeExecutable);
@@ -224,12 +224,13 @@ async function main() {
 		}),
 	), nodeExecutable);
 	await finalizeBundle(appDirectory, manifest, nodeExecutable);
-	await signBundle(appDirectory);
+	await signApp(appDirectory, signing);
 	console.log(`Built ${appDirectory}`);
 	console.log(`Version ${manifest.app.version} · Node ${manifest.node} · Electron ${manifest.electron}`);
+	console.log(signing.kind === "ad-hoc" ? "Signed ad-hoc (no hardened runtime)" : `Signed with Developer ID, team ${signing.teamId}`);
 	if (verify) console.log(`Standalone smoke: ${await smokeBundle(appDirectory)}`);
 	if (withDmg) {
-		const { image, digest } = await createDmg(appDirectory, out, manifest);
+		const { image, digest } = await createDmg(appDirectory, out, manifest, signing);
 		console.log(`DMG ${image}`);
 		console.log(`SHA256 ${digest}`);
 	}
