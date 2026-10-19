@@ -81,8 +81,8 @@ describe("native Linux clipboard", { skip: !dependenciesAvailable, timeout: 6000
 		return { child, env: { ...process.env, DISPLAY: `:${ready}` } };
 	}
 
-	before((t) => {
-		directory = createTempDir(t, "pi-clipboard-test-");
+	before(() => {
+		directory = createTempDir("suite", "pi-clipboard-test-");
 		const flags = ["-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror", "-pthread"];
 		execFileSync("cc", [
 			...flags,

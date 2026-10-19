@@ -289,7 +289,6 @@ export function checkTempDirUsage(repoRoot) {
 }
 
 /** Syntax-aware checks over source, including development-only host and browser modules. */
-
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
