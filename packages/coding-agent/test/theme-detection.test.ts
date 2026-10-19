@@ -1,5 +1,5 @@
 import { resetCapabilitiesCache, setCapabilities } from "@amazme/tui";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	detectColorFgBgTheme,
 	detectTerminalTheme,
@@ -10,6 +10,7 @@ import {
 
 afterEach(() => {
 	resetCapabilitiesCache();
+	vi.unstubAllEnvs();
 });
 
 describe("detectColorFgBgTheme", () => {
@@ -45,13 +46,15 @@ describe("detectTerminalTheme", () => {
 
 describe("theme color mode", () => {
 	it("uses terminal capabilities", () => {
-		setCapabilities({ images: null, trueColor: false, hyperlinks: false });
+		// `TERM=dumb` in a non-interactive shell would otherwise pick the sixteen-color fallback.
+		vi.stubEnv("TERM", "xterm-256color");
+		setCapabilities({ images: null, trueColor: false, ansi256: true, hyperlinks: false });
 		const ansi256Theme = getThemeByName("dark");
 		if (!ansi256Theme) throw new Error("dark theme not found");
 		expect(ansi256Theme.getColorMode()).toBe("256color");
 		expect(ansi256Theme.getFgAnsi("accent")).toMatch(/^\x1b\[38;5;\d+m$/);
 
-		setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+		setCapabilities({ images: null, trueColor: true, ansi256: true, hyperlinks: false });
 		const truecolorTheme = getThemeByName("dark");
 		if (!truecolorTheme) throw new Error("dark theme not found");
 		expect(truecolorTheme.getColorMode()).toBe("truecolor");

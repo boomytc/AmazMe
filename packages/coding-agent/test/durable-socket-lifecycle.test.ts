@@ -110,6 +110,34 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 		}
 	});
 
+	it("leaves the live sockets in place when a client discovers the server", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "am-socket-client-"));
+		directories.push(directory);
+		await mkdir(join(directory, "agent"), { recursive: true });
+		const running = await startServer(directory);
+		const [backend] = await backendSockets(running.socketDirectory);
+		expect(backend).toBeDefined();
+		const client = spawn(
+			process.execPath,
+			["--import", sourceResolverUrl, cliPath, "client", "--connect", `unix://${running.publicPath}`],
+			{
+				cwd: directory,
+				env: {
+					...process.env,
+					AMAZME_CODING_AGENT_DIR: join(directory, "agent"),
+					AMAZME_SERVER_DIR: join(directory, "server"),
+					AMAZME_OFFLINE: "1",
+				},
+				stdio: ["ignore", "pipe", "pipe"],
+			},
+		);
+		children.push(client);
+		const [code] = (await once(client, "exit")) as [number | null, NodeJS.Signals | null];
+		expect(code).toBe(0);
+		expect((await lstat(running.publicPath)).isSocket()).toBe(true);
+		expect((await lstat(backend!)).isSocket()).toBe(true);
+	});
+
 	it("self-heals after both the server and coordinator are killed", async () => {
 		const directory = await mkdtemp(join(tmpdir(), "am-socket-both-"));
 		directories.push(directory);

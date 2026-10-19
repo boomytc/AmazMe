@@ -144,7 +144,7 @@ describe("experimental CLI commands", () => {
 		[["client", "--connect", "unix://relative.sock"], "Unix transport address must not include an authority"],
 		[["client", "--connect", "unix:///tmp/pi.sock?wrong=value"], "Invalid --connect address"],
 		[["client", "--provider", "anthropic"], "--provider requires --model"],
-		[["client", "-c", "-r"], "--session-id, --continue, and --resume are mutually exclusive"],
+		[["client", "-c", "-r"], "--new-session-id, --continue, and --resume are mutually exclusive"],
 		[["client", "--continue=true"], "--continue does not take a value"],
 		[["server", "--provider", "anthropic"], "--provider requires --model"],
 	[["web", "--model", "anthropic/claude-sonnet-4-5"], UNSUPPORTED_WEB_OPTIONS],

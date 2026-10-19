@@ -13,6 +13,8 @@ describe("DefaultResourceLoader theme color mode", () => {
 	let themePath: string;
 
 	beforeEach(() => {
+		// The host shell may declare no palette (`TERM=dumb`); these cases test the theme, not the host terminal.
+		vi.stubEnv("TERM", "xterm-256color");
 		tempDir = mkdtempSync(join(tmpdir(), "resource-loader-theme-"));
 		agentDir = join(tempDir, "agent");
 		cwd = join(tempDir, "project");
