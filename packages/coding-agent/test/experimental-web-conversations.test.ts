@@ -91,6 +91,7 @@ function summaryStream(text: string): StreamFn {
 async function openConversations(
 	existing?: string,
 	branch?: { readonly skipPrompt?: boolean; readonly streamFn?: StreamFn },
+	settings?: { readonly restartLimit?: number },
 ): Promise<{
 	readonly harness: Harness;
 	readonly directory: string;
@@ -109,7 +110,7 @@ async function openConversations(
 	registry.install(Subagent);
 	registry.install(createForkArchiveGate());
 	registry.install(defineExtension({ name: "fork-fixtures", tasks: [Hold, Sleeper] }));
-	const harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")), { models, registry }, TODO_CONTEXT);
+	const harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")), { models, registry, ...(settings === undefined ? {} : { settings }) }, TODO_CONTEXT);
 	await abortArchivedForks(harness);
 	const root = await harness.root(TODO_CONTEXT, {
 		agent: {
@@ -202,6 +203,18 @@ describe("the session's conversation list", () => {
 			await setup.service.service.retryTask(String(id), TODO_CONTEXT);
 			await waitFor(() => setup.state.value.tasks.some((task) => task.id === String(id) && task.status === "running" && task.blocked === undefined), "task retry");
 			expect((await setup.harness.getTask(id, TODO_CONTEXT))?.restarts).toBeUndefined();
+		} finally { await setup.close(); }
+	});
+
+	test("omits an unbounded restart limit instead of sending it as null", async () => {
+		const setup = await openConversations(undefined, undefined, { restartLimit: Number.POSITIVE_INFINITY });
+		try {
+			const root = (await setup.harness.conversation(Number(setup.rootId) as ConversationId, TODO_CONTEXT))!;
+			const id = await root.commit((tx) => tx.createTask(Hold, {}, { ownership: { kind: "conversation" } }), TODO_CONTEXT);
+			await waitFor(() => setup.state.value.tasks.some((task) => task.id === String(id)), "the task in the list");
+			const task = setup.state.value.tasks.find((candidate) => candidate.id === String(id))!;
+			expect(task).not.toHaveProperty("restartLimit");
+			expect(JSON.parse(JSON.stringify(task))).not.toHaveProperty("restartLimit");
 		} finally { await setup.close(); }
 	});
 

@@ -23,6 +23,7 @@ import { createAgentController } from "../../core/plugins/agent-controller-provi
 import { Conversations } from "./conversations.ts";
 import { assertConversationWritable, changeForkMetadata, ForkManagementDoc, ownedConversationIds, parseConversationId, stopArchivedForkWork, ForkArchivedError, withConversationAdmission, withForkMutation } from "../../durable/fork-management.ts";
 import { type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type LeaveResult, type ReturnPoint, type TaskSummary } from "../../durable/conversation-view.ts";
+import { finiteRestartLimit } from "../../durable/restart-count.ts";
 
 /** The gap between two publications while a focused conversation streams. */
 const FOCUS_PUBLISH_MS = 250;
@@ -149,7 +150,7 @@ export function createConversationsService(
 				...(node.state.status === "sleeping" ? { wakeAt: node.state.until } : {}),
 				...(node.blocked === undefined ? {} : { blocked: node.blocked }),
 				...(node.restarts === undefined ? {} : { restarts: node.restarts }),
-				restartLimit: value.restartLimit,
+				...withRestartLimit(value.restartLimit),
 				phase: node.state.status === "completing" ? node.state.outcome : node.state.phase,
 				waitsOn: node.state.status === "waiting" ? node.state.on.map(String) : [],
 				conversations: node.conversations.map(String) }))
@@ -556,4 +557,10 @@ export function createConversationsFacet(options: ConversationsServiceOptions): 
 			throw error;
 		}
 	});
+}
+
+/** `Infinity` turns the bound off and would reach a JSON client as `null`; omit it instead. */
+function withRestartLimit(limit: number): { restartLimit?: number } {
+	const bound = finiteRestartLimit(limit);
+	return bound === undefined ? {} : { restartLimit: bound };
 }

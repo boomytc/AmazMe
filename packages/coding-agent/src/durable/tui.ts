@@ -67,6 +67,7 @@ import { sessionEntriesFor } from "./session-surface.ts";
 import { getRadiusGatewayUrl } from "../core/radius.ts";
 import type { DurableBugReportOptions } from "./bug-report.ts";
 import type { SlashCommandCompletion } from "../core/plugins/slash-commands.ts";
+import { finiteRestartLimit, formatRestartCount } from "./restart-count.ts";
 
 /** Runtime information without sending a local command to the model. */
 class InfoPanel extends Container implements Focusable {
@@ -639,7 +640,7 @@ class DurableTui {
 				parked.map((node) => ({
 					value: String(node.id),
 					label: `Task #${String(node.id)}`,
-					description: `${node.kind} · ${String(node.restarts ?? graph.restartLimit)}/${String(graph.restartLimit)} restarts`,
+					description: `${node.kind} · ${formatRestartCount(node.restarts ?? finiteRestartLimit(graph.restartLimit) ?? 0, graph.restartLimit)} restarts`,
 				})),
 				(value) => {
 					this.restoreEditor();
@@ -864,9 +865,9 @@ class DurableTui {
 	}
 }
 
-export function describeTask(node: TaskGraphNode, restartLimit: number): string {
+export function describeTask(node: TaskGraphNode, restartLimit: number | null): string {
 	const state = node.state;
-	const restarts = node.restarts === undefined ? "" : `, ${String(node.restarts)}/${String(restartLimit)} restarts`;
+	const restarts = node.restarts === undefined ? "" : `, ${formatRestartCount(node.restarts, restartLimit)} restarts`;
 	const status =
 		node.blocked !== undefined
 			? `blocked (${node.blocked}${node.blocked === "restart_limit" ? restarts : ""})`
