@@ -19,6 +19,11 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build:offline
+      - name: Build again from a symlinked checkout
+        run: |
+          ln -s "$GITHUB_WORKSPACE" "$RUNNER_TEMP/linked-checkout"
+          cd "$RUNNER_TEMP/linked-checkout"
+          npm run build:offline
       - run: npm run typecheck
       - run: npm run check:workspace
       - run: npm run test:engineering
