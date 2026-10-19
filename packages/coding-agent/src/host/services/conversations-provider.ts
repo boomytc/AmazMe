@@ -4,7 +4,7 @@ import type { StreamFn } from "@amazme/agent";
 import type { RetryPolicy } from "@amazme/ai";
 import { type Context, type Facet, type MutableReplicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, TODO_CONTEXT } from "@amazme/chord/context";
-import type { AgentState, Conversation, ConversationId, Harness, TaskGraph } from "@amazme/durable";
+import type { AgentState, Conversation, ConversationId, Harness, TaskGraph, TaskId } from "@amazme/durable";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 import type { GenerateBranchSummaryOptions } from "../../core/compaction/branch-summarization.ts";
 import {
@@ -146,6 +146,8 @@ export function createConversationsService(
 				...(node.owner === undefined ? {} : { ownerTaskId: String(node.owner) }),
 				background: node.background,
 				status: node.state.status,
+				...(node.state.status === "sleeping" ? { wakeAt: node.state.until } : {}),
+				...(node.blocked === undefined ? {} : { blocked: node.blocked }),
 				phase: node.state.status === "completing" ? node.state.outcome : node.state.phase,
 				waitsOn: node.state.status === "waiting" ? node.state.on.map(String) : [],
 				conversations: node.conversations.map(String) }))
@@ -453,6 +455,14 @@ export function createConversationsService(
 			returnPoints,
 			leave,
 			refresh,
+			retryTask: (taskId: string, context: Context) => withConversationAdmission(options.harness, context, async () => {
+				const id = Number(taskId);
+				if (!Number.isSafeInteger(id) || id <= 0) throw new Error("Invalid task id");
+				const task = await options.harness.getTask(id as TaskId, context);
+				if (task === undefined) throw new Error(`Unknown task: ${taskId}`);
+				await assertWritable(String(task.conversationId), context);
+				await options.harness.retryTask(task.id, context);
+			}),
 			older,
 			async prompt(conversationId: string, request: AgentPromptRequest, context: Context): Promise<AgentOperationResponse> {
 				const controller = await controllerOf(conversationId);

@@ -8,7 +8,8 @@
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
 		"packages/coding-agent/examples/**/*",
-		"packages/agent/examples/**/*"
+		"packages/agent/examples/**/*",
+		"packages/durable/test-workers/**/*"
 	],
 	"exclude": [
 		"**/dist/**",

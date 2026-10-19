@@ -370,13 +370,14 @@ export async function checkEntryContracts(repoRoot) {
 		// Product branch summaries/search/file contracts and the new Chord host graph are included.
 		{
 			entry: "packages/durable/src/index.ts",
-			maxFiles: 70,
+			// Chord's default telemetry reaches four leaf modules; Durable adds its host timer adapter.
+			maxFiles: 75,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts", "packages/durable/src/images/"],
 		},
 		{
 			entry: "packages/durable/src/tools/index.ts",
 			// File observations and portable search tools add their document and environment helpers.
-			maxFiles: 50,
+			maxFiles: 54,
 			forbid: ["packages/durable/src/images/"],
 		},
 	]) {

@@ -11,6 +11,7 @@ import {
 	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	TASK_RETRY_ACTION,
 	CONVERSATION_RENAME_ACTION,
 	CONVERSATION_ARCHIVE_ACTION,
 	CONVERSATION_RESTORE_ACTION,
@@ -24,7 +25,7 @@ import {
 import type { Locale } from "./locale.ts";
 import type { PanelGroup, PanelNotice, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
-import { taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
+import { taskBlockedCopy, taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
 
 /** The dock's tabs, in the order it shows them. */
 export type DockTabId = "files" | "terminal" | "conversations" | "tasks" | "changes";
@@ -123,6 +124,8 @@ export interface TaskSummaryLike {
 	readonly ownerTaskId?: string;
 	readonly background: boolean;
 	readonly status: string;
+	readonly wakeAt?: number;
+	readonly blocked?: string;
 	readonly phase: string;
 	readonly waitsOn: readonly string[];
 	readonly conversations: readonly string[];
@@ -297,9 +300,13 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 		title: `${taskKindCopy(locale, task.kind)} #${task.id}`,
 		description: `${taskPhaseCopy(locale, task.phase)} · ${conversationName(task.conversationId)}`,
 		badges: [
-			task.status === "waiting" && task.waitsOn.length > 0
-				? translate(locale, "dock.taskWaitsOn", { count: String(task.waitsOn.length) })
-				: taskStatusCopy(locale, task.status),
+			task.blocked !== undefined
+				? taskBlockedCopy(locale, task.blocked)
+				: task.status === "sleeping" && task.wakeAt !== undefined
+					? translate(locale, "dock.taskSleepsUntil", { at: new Date(task.wakeAt).toLocaleString(locale === "zh" ? "zh-CN" : "en-US") })
+					: task.status === "waiting" && task.waitsOn.length > 0
+						? translate(locale, "dock.taskWaitsOn", { count: String(task.waitsOn.length) })
+						: taskStatusCopy(locale, task.status),
 			...(task.background ? [translate(locale, "dock.background")] : []),
 			...(task.conversations.length > 0
 				? [
@@ -309,14 +316,23 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 					]
 				: []),
 		],
-		actions: [...new Set([task.conversationId, ...task.conversations])]
-			.filter((id) => state.conversations.some((conversation) => conversation.id === id))
-			.map((id) => ({
-				id: CONVERSATION_SELECT_ACTION,
-				label: translate(locale, id === task.conversationId ? "dock.viewTaskConversation" : "dock.viewOwnedConversation", { name: conversationName(id) }),
-				data: id,
+		actions: [
+			...(task.blocked === "restart_limit" ? [{
+				id: TASK_RETRY_ACTION,
+				label: translate(locale, "dock.retryTask"),
+				data: task.id,
 				tone: "default" as const,
-			})),
+				disabled: state.conversations.find((item) => item.id === task.conversationId)?.readOnly === true,
+			}] : []),
+			...[...new Set([task.conversationId, ...task.conversations])]
+				.filter((id) => state.conversations.some((conversation) => conversation.id === id))
+				.map((id) => ({
+					id: CONVERSATION_SELECT_ACTION,
+					label: translate(locale, id === task.conversationId ? "dock.viewTaskConversation" : "dock.viewOwnedConversation", { name: conversationName(id) }),
+					data: id,
+					tone: "default" as const,
+				})),
+		],
 	}));
 	return {
 		id: "tasks",

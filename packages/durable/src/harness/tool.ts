@@ -7,6 +7,7 @@ import {
 	type OutputLimits,
 	PROGRESS_BYTES_PER_SECOND,
 	Progress,
+	type ProgressClock,
 } from "@amazme/chord/output";
 import type { ImageContent, TextContent, ToolCall, ToolResultMessage } from "@amazme/ai";
 import { validateToolArguments } from "@amazme/ai/utils/validation";
@@ -31,6 +32,7 @@ import type {
 	Tx,
 	TypedEntry,
 } from "../types.ts";
+import { toolExtension } from "./agent.ts";
 import { assignJson } from "./json.ts";
 import {
 	clearProgress,
@@ -53,7 +55,7 @@ import type {
 	ToolRegistration,
 } from "./types.ts";
 import { recordUsage } from "./usage.ts";
-import { scanAll } from "./util.ts";
+import { optionalExtension, scanAll } from "./util.ts";
 
 /**
  * A model-issued call, read from its assistant entry, or a nested call a running tool made through `executeTool()`,
@@ -147,7 +149,7 @@ const LegacyNestedResultDoc = defineDocFamily<{ result: JsonRepresentation<Neste
 export async function migrateNestedCalls(session: SessionImpl, context: Context): Promise<void> {
 	const tasks = await session.commit(async (tx) => {
 		const live = [];
-		for (const status of ["pending", "running", "waiting", "completing"] as const) {
+		for (const status of ["pending", "running", "waiting", "sleeping", "completing"] as const) {
 			live.push(...await scanAll((cursor) => tx.scanTasks({ status }, 256, cursor)));
 		}
 		return live;
@@ -512,6 +514,7 @@ async function run(
 		get env() {
 			return env;
 		},
+		now: () => runtime.now(),
 		output: (chunk, skipped) => {
 			assertLive();
 			if (reported.output.push(chunk, skipped)) progress.mark();
@@ -651,6 +654,25 @@ async function run(
 }
 
 /**
+ * The Harness clock and timers for progress pacing. After the invocation ends nothing more commits, and the clock
+ * answers with the last time it read.
+ */
+function progressClock(runtime: Runtime): ProgressClock {
+	let last = 0;
+	return {
+		now: () => {
+			try {
+				last = runtime.now();
+			} catch {
+				// The invocation ended.
+			}
+			return last;
+		},
+		setTimer: (callback, delayMs) => runtime.setTimer(callback, delayMs),
+	};
+}
+
+/**
  * Throttled commits of what the tool reported into its slot, in `pi.live.tools` or `pi.live.nestedTools`, each writing
  * only what changed since the last one; none when `enabled` is false.
  */
@@ -705,6 +727,7 @@ function publishProgress(runtime: Runtime, reported: Reported, enabled: boolean,
 			if (!runtime.signal.aborted) runtime.report(error);
 		},
 		runtime.settings.progress.outputIntervalMs,
+		progressClock(runtime),
 	);
 }
 
@@ -755,7 +778,12 @@ async function finalResult(
 		} else {
 			// The model never sees structured output, so its call stands; the host learns of the broken tool.
 			final = rest;
-			runtime.report(new Error(broken));
+			// Only names the extension: a failed resolution leaves the report without the name.
+			const extension = await runtime.agent(context).then(
+				(agent) => toolExtension(agent, tool.name),
+				() => undefined,
+			);
+			runtime.report(new Error(broken), { type: "extension", ...optionalExtension(extension) });
 		}
 	}
 	// Programs get the tool's own value: without a schema, its output. The model reads only `output`, so model-issued

@@ -48,6 +48,8 @@ export interface Conversations {
 	): Promise<LeaveResult>;
 	/** Re-read the conversation list, the task graph, and the focused view. */
 	refresh(context: Context): Promise<void>;
+	/** Retry a task parked by the crash-loop guard, within its writable conversation. */
+	retryTask(taskId: string, context: Context): Promise<void>;
 	/**
 	 * One page of stored history. The first page (`cursor` null) starts below `before`, the oldest
 	 * entry the presentation already shows, so a page never repeats what the transcript carries.
@@ -74,4 +76,4 @@ export interface Conversations {
 	compact(conversationId: string, request: AgentCompactionRequest, context: Context): Promise<AgentOperationResponse>;
 }
 
-export const Conversations = remoteService<Conversations>("amazme.conversations", {"cancelSummaries":0,"select":1,"fork":2,"rename":2,"setArchived":2,"returnPoints":1,"leave":3,"refresh":0,"older":4,"prompt":2,"steer":2,"followUp":2,"abort":1,"cancelQueued":2,"compact":2}, ["state"]);
+export const Conversations = remoteService<Conversations>("amazme.conversations", {"cancelSummaries":0,"select":1,"fork":2,"rename":2,"setArchived":2,"returnPoints":1,"leave":3,"refresh":0,"retryTask":1,"older":4,"prompt":2,"steer":2,"followUp":2,"abort":1,"cancelQueued":2,"compact":2}, ["state"]);

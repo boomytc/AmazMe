@@ -1,7 +1,7 @@
 import { createModels, fauxAssistantMessage, fauxProvider, fauxText, Type } from "@amazme/ai";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
-import { createRegistry, defineExtension, defineTool, Harness, MemoryStorage, NestedCallDoc } from "@amazme/durable";
-import { afterEach, describe, expect, it } from "vitest";
+import { createRegistry, defineExtension, defineTool, Harness, type HarnessOptions, MemoryStorage, NestedCallDoc, type SetTimer, type TaskId } from "@amazme/durable";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Check } from "../plugins/verification/src/check.ts";
 import { Verification } from "../plugins/verification/src/session.ts";
 import { PolicyDoc, Rounds } from "../plugins/verification/src/state.ts";
@@ -13,7 +13,7 @@ afterEach(async () => {
 	await Promise.all(harnesses.splice(0).map((harness) => harness.close(context)));
 });
 
-async function open(exitCode: number) {
+async function open(exitCode: number, options: Pick<HarnessOptions, "setTimer" | "now"> & { readonly hang?: boolean } = {}) {
 	const models = createModels();
 	const faux = fauxProvider();
 	models.setProvider(faux.provider);
@@ -29,8 +29,13 @@ async function open(exitCode: number) {
 					description: "Fake command",
 					parameters: Type.Object({ command: Type.String(), timeout: Type.Optional(Type.Number()) }),
 					structuredOutputSchema: Type.Object({ output: Type.String(), exitCode: Type.Number() }),
-					execute: async () => {
+					execute: async (_arguments, _api, context) => {
 						calls++;
+						if (options.hang) await new Promise<never>((_resolve, reject) => {
+							const signal = context.abortSignal!;
+							if (signal.aborted) reject(signal.reason);
+							else signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+						});
 						return {
 							output: [{ type: "text", text: "command evidence" }],
 							structuredOutput: { output: "command evidence", exitCode },
@@ -46,7 +51,7 @@ async function open(exitCode: number) {
 	const reports: unknown[] = [];
 	const harness = await Harness.open(
 		new MemoryStorage(),
-		{ models, registry, onReport: (error) => reports.push(error) },
+		{ models, registry, now: options.now, setTimer: options.setTimer, onReport: (error) => reports.push(error) },
 		context,
 	);
 	harnesses.push(harness);
@@ -55,6 +60,38 @@ async function open(exitCode: number) {
 }
 
 describe("plugins read nested results by call key", () => {
+	it.each(["job", "check"] as const)("%s deadlines abort owned work and release their phase timers", async (kind) => {
+		let now = 1000;
+		const foreground = new Map<() => void, number>();
+		const setTimer: SetTimer = (callback, delayMs, { background }) => {
+			if (background) return undefined;
+			foreground.set(callback, now + delayMs);
+			return () => { foreground.delete(callback); };
+		};
+		const { harness, root, reports, calls } = await open(0, { hang: true, now: () => now, setTimer });
+		const id = kind === "job"
+			? await root.commit((tx) => tx.createTask(Job, {
+				spec: { kind: "command", name: "timeout", tool: "bash", command: "fake" },
+				stage: 0, job: 0, role: "verify", objective: "test", args: "", evidence: [],
+				timeoutSeconds: 60, model: null, instructions: "", allowed: ["bash"],
+			}, { ownership: { kind: "conversation" } }), context)
+			: await root.commit((tx) => tx.createTask(Check, {
+				candidate: { text: "candidate", limited: false, stopReason: "stop" },
+				checks: [{ name: "check", command: "fake", tool: "bash" as const }], timeoutSeconds: 60,
+			}, { ownership: { kind: "conversation" } }), context);
+		const settled = harness.waitForTask(id as TaskId, context);
+		await vi.waitFor(() => { expect(calls()).toBe(1); expect(foreground.size).toBe(1); });
+		now += 60_000;
+		for (const [callback, at] of foreground) {
+			if (at <= now) { foreground.delete(callback); callback(); }
+		}
+		expect(await settled).toMatchObject({
+			state: { outcome: { status: "completed", result: { status: "timed_out" } } },
+		});
+		expect(foreground.size).toBe(0);
+		expect(reports).toEqual([]);
+	});
+
 	it.each([0, 7])("workflow commands and jobs keep exit evidence (%s)", async (exitCode) => {
 		const { harness, root, reports, calls } = await open(exitCode);
 		const command = await root.commit(

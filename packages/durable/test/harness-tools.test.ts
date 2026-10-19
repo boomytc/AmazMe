@@ -646,8 +646,8 @@ describe("tool results", () => {
 			version: 1,
 			initial: () => ({ phase: "never" }),
 			phases: {
-				never: async (_task, runtime, context) => {
-					await runtime.sleep(runtime.now() + 60_000, context);
+				never: async (task, runtime, context) => {
+					await runtime.sleepUntil(runtime.now() + 60_000, task.state.checkpoint, context);
 				},
 			},
 			abort: async () => {},

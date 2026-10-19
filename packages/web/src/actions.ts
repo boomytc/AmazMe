@@ -52,6 +52,8 @@ export const CONVERSATION_SELECT_ACTION = "conversation:select";
 export const CONVERSATION_FORK_ACTION = "conversation:fork";
 /** Re-read the conversation list, the task graph, and the focused view. */
 export const CONVERSATIONS_REFRESH_ACTION = "conversation:refresh";
+/** Retry a task parked after repeated process interruptions: `data` is the task id. */
+export const TASK_RETRY_ACTION = "task:retry";
 /** Metadata-only management of manual forks, never the main line or task-owned children. */
 export const CONVERSATION_RENAME_ACTION = "conversation:rename";
 export const CONVERSATION_RENAME_MODAL = "conversation:rename-submit";

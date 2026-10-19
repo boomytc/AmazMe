@@ -44,6 +44,7 @@ import {
 	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	TASK_RETRY_ACTION,
 	CONVERSATION_RENAME_ACTION,
 	CONVERSATION_RENAME_MODAL,
 	CONVERSATION_ARCHIVE_ACTION,
@@ -2330,6 +2331,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						settle(painter.conversationsService?.select(id, BACKGROUND_CONTEXT));
 						return;
 					}
+					case TASK_RETRY_ACTION:
+						settle(painter.conversationsService?.retryTask(action.data ?? "", BACKGROUND_CONTEXT));
+						return;
 					case LEAVE_ACTION:
 					case LEAVE_SUMMARY_ACTION: {
 						leaveAt(action.data ?? "", action.id === LEAVE_SUMMARY_ACTION, null);

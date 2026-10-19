@@ -24,6 +24,24 @@ type State =
 	| { phase: "command"; child: TaskId<ToolTaskResult>; deadline: number };
 type Runtime = TaskRuntime<JobInput, State, JobResult, object>;
 
+/** Race owned work against its stored deadline without retaining a timer after it settles. */
+async function waitForDeadline<T>(pending: Promise<T>, deadline: number, runtime: Runtime): Promise<{ record: T } | { expired: true }> {
+	let disarm = () => {};
+	const expired = new Promise<{ expired: true }>((resolve) => {
+		const wake = (): void => {
+			const remaining = deadline - runtime.now();
+			if (remaining <= 0) resolve({ expired: true });
+			else disarm = runtime.setTimer(wake, remaining);
+		};
+		wake();
+	});
+	try {
+		return await Promise.race([pending.then((record) => ({ record })), expired]);
+	} finally {
+		disarm();
+	}
+}
+
 function result(
 	runtime: Runtime,
 	input: JobInput,
@@ -154,10 +172,7 @@ export const Job = defineTask<JobInput, State, JobResult>({
 				context,
 			);
 			const waiting = submission.wait(context);
-			const first = await Promise.race([
-				waiting.then((record) => ({ record })),
-				runtime.sleep(deadline, context).then(() => ({ expired: true as const })),
-			]);
+			const first = await waitForDeadline(waiting, deadline, runtime);
 			if ("expired" in first) await child.abort(context);
 			const settled = "record" in first ? first.record : await waiting;
 			if (settled.type !== "input" || settled.status !== "done")
@@ -200,10 +215,7 @@ export const Job = defineTask<JobInput, State, JobResult>({
 			const { child, deadline } = task.state.checkpoint,
 				input = task.input;
 			const waiting = runtime.waitForTask(child, context);
-			const first = await Promise.race([
-				waiting.then((record) => ({ record })),
-				runtime.sleep(deadline, context).then(() => ({ expired: true as const })),
-			]);
+			const first = await waitForDeadline(waiting, deadline, runtime);
 			if ("expired" in first) await runtime.abortOwned(child, context);
 			const settled = "record" in first ? first.record : await waiting,
 				outcome = settled.state.outcome;

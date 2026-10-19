@@ -1,5 +1,6 @@
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { InboxDoc, type SubmissionId, UserEntry } from "@amazme/durable";
+import { createModels } from "@amazme/ai";
+import { createRegistry, defineTask, Harness, InboxDoc, MemoryStorage, type SubmissionId, UserEntry } from "@amazme/durable";
 import { describe, expect, test, vi } from "vitest";
 import {
 	automaticSessionName,
@@ -61,6 +62,26 @@ describe("session lifecycle", () => {
 			expect(await isSessionEmpty(harness, context)).toBe(false);
 		} finally {
 			await close();
+		}
+	});
+
+	test("a sleeping task prevents an otherwise empty session from being reused", async () => {
+		const sleeper = defineTask<null, { phase: "sleep" }, null>({
+			name: "test.session.sleeper", version: 1, initial: () => ({ phase: "sleep" }),
+			phases: { sleep: (task, runtime, context) => runtime.sleepUntil(1000, task.state.checkpoint, context) },
+			abort: (_task, runtime, context) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
+		});
+		const registry = createRegistry();
+		registry.install({ name: "sleeper", tasks: [sleeper] });
+		const harness = await Harness.open(new MemoryStorage(), { models: createModels(), registry, now: () => 1, onWake: () => {} }, context);
+		try {
+			const root = await harness.root(context);
+			const id = await root.commit((tx) => tx.createTask(sleeper, null, { ownership: { kind: "conversation" } }), context);
+			harness.resume();
+			await vi.waitFor(async () => expect((await harness.getTask(id, context))?.state.status).toBe("sleeping"));
+			expect(await isSessionEmpty(harness, context)).toBe(false);
+		} finally {
+			await harness.close(context);
 		}
 	});
 

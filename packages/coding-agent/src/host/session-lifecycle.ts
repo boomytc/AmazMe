@@ -37,7 +37,7 @@ export async function firstSessionTitle(conversation: Conversation, imageTitle: 
 /** An empty session has no stored entries, queued inputs, or live tasks in any conversation. */
 export function isSessionEmpty(harness: Harness, context: Context): Promise<boolean> {
 	return harness.commit(async (tx) => {
-		for (const status of ["pending", "running", "waiting", "completing"] as const) {
+		for (const status of ["pending", "running", "waiting", "sleeping", "completing"] as const) {
 			if ((await tx.scanTasks({ status }, 1)).items.length > 0) return false;
 		}
 		let cursor: Cursor | undefined;

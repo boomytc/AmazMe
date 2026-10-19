@@ -3,6 +3,7 @@ import {
 	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	TASK_RETRY_ACTION,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
 	WORKSPACE_OPEN_ACTION,
@@ -333,6 +334,26 @@ describe("the session dock", () => {
 		expect(
 			tasksPanel("en", { conversations: [], tasks: [], selected: "1" }).groups[0]?.empty,
 		).toBe("No task is running.");
+	});
+
+	test("shows sleep deadlines and makes only parked tasks retryable", () => {
+		const wakeAt = Date.UTC(2026, 9, 19, 12);
+		const tasks = [
+			{ ...CONVERSATIONS.tasks[0]!, status: "sleeping", wakeAt },
+			{ ...CONVERSATIONS.tasks[1]!, status: "pending", blocked: "restart_limit" },
+		];
+		const rows = tasksPanel("zh", { ...CONVERSATIONS, tasks }).groups[0]!.rows;
+		expect(rows[0]!.badges![0]).toContain("等待至");
+		expect(rows[0]!.badges![0]).toContain("2026");
+		expect(rows[0]!.actions?.some((action) => action.id === TASK_RETRY_ACTION)).toBe(false);
+		expect(rows[1]!.badges![0]).toBe("多次中断后已暂停");
+		expect(rows[1]!.actions?.[0]).toMatchObject({ id: TASK_RETRY_ACTION, data: "9", disabled: false });
+		const archived = tasksPanel("en", {
+			...CONVERSATIONS,
+			tasks,
+			conversations: CONVERSATIONS.conversations.map((conversation) => ({ ...conversation, readOnly: true })),
+		}).groups[0]!.rows;
+		expect(archived[1]!.actions?.[0]).toMatchObject({ id: TASK_RETRY_ACTION, disabled: true });
 	});
 
 	test("sizes a file the way a listing does", () => {

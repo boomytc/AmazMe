@@ -41,6 +41,24 @@ type State =
 	  };
 type Runtime = TaskRuntime<Input, State, CheckResult, object>;
 
+/** Race a child against its stored deadline; these timers end with this invocation. */
+async function waitForDeadline<T>(pending: Promise<T>, deadline: number, runtime: Runtime): Promise<{ record: T } | { expired: true }> {
+	let disarm = () => {};
+	const expired = new Promise<{ expired: true }>((resolve) => {
+		const wake = (): void => {
+			const remaining = deadline - runtime.now();
+			if (remaining <= 0) resolve({ expired: true });
+			else disarm = runtime.setTimer(wake, remaining);
+		};
+		wake();
+	});
+	try {
+		return await Promise.race([pending.then((record) => ({ record })), expired]);
+	} finally {
+		disarm();
+	}
+}
+
 async function finish(
 	runtime: Runtime,
 	candidate: Candidate,
@@ -149,10 +167,7 @@ export const Check = defineTask<Input, State, CheckResult>({
 				!Array.isArray(checkpoint) &&
 				checkpoint.phase === "execute";
 			const completed = runtime.waitForTask(state.child!, context);
-			const first = await Promise.race([
-				completed.then((record) => ({ record })),
-				runtime.sleep(state.deadline, context).then(() => ({ expired: true as const })),
-			]);
+			const first = await waitForDeadline(completed, state.deadline, runtime);
 			if ("expired" in first) await runtime.abortOwned(state.child!, context);
 			const record = "record" in first ? first.record : await completed;
 			const outcome = record.state.outcome;

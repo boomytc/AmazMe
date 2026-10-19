@@ -208,6 +208,7 @@ describe("interactive client resume command", () => {
 		sessionProvider.provide(AgentController, createAgentController(durable.harness, () => durable.conversation));
 		sessionProvider.provide(Transcript, { state: transcriptState });
 		sessionProvider.provide(Conversations, {
+			async retryTask() { throw new Error("Fixture does not retry tasks"); },
 			state: replicatedState({
 				revision: 1,
 				selected: rootConversationId,

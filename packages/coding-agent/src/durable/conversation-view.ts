@@ -1,4 +1,4 @@
-import type { ConversationView, EntryRecord } from "@amazme/durable";
+import type { BlockedReason, ConversationView, EntryRecord } from "@amazme/durable";
 
 /** A compaction summary can lead the projection while its raw record is newer than retained turns. */
 export function oldestPresentedEntryId(entries: readonly EntryRecord[] | undefined): string | null {
@@ -67,8 +67,10 @@ export interface TaskSummary {
 	conversationId: string;
 	ownerTaskId?: string;
 	background: boolean;
-	/** `pending`, `running`, `waiting`, `completing`, or the reason it is not live any more. */
+	/** `pending`, `running`, `waiting`, `sleeping`, or `completing`. */
 	status: string;
+	wakeAt?: number;
+	blocked?: BlockedReason;
 	/** The phase the task reports, such as the step it is in. */
 	phase: string;
 	/** The tasks a `waiting` task waits on. */

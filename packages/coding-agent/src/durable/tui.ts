@@ -768,11 +768,15 @@ class DurableTui {
 function describeTask(node: TaskGraphNode): string {
 	const state = node.state;
 	const status =
-		state.status === "waiting"
-			? `waiting on ${state.on.join(", ")}`
-			: state.status === "completing"
-				? `completing (${state.outcome})`
-				: `${state.status} ${state.phase}`;
+		node.blocked !== undefined
+			? `blocked (${node.blocked})`
+			: state.status === "sleeping"
+				? `sleeping until ${new Date(state.until).toLocaleString()}`
+				: state.status === "waiting"
+					? `waiting on ${state.on.join(", ")}`
+					: state.status === "completing"
+						? `completing (${state.outcome})`
+						: `${state.status} ${state.phase}`;
 	const flags = [node.background ? "background" : "", node.abortRequested ? "aborting" : ""].filter(Boolean);
 	const owned = node.conversations.length > 0 ? ` owns conversation ${node.conversations.join(", ")}` : "";
 	return `${node.kind} #${node.id}: ${status}${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}${owned}`;

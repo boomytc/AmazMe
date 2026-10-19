@@ -439,6 +439,8 @@ export const EN = {
 	"dock.viewTaskConversation": "View conversation",
 	"dock.viewOwnedConversation": "View child conversation · {name}",
 	"dock.taskWaitsOn": "Waiting for tasks: {count}",
+	"dock.taskSleepsUntil": "Waiting until {at}",
+	"dock.retryTask": "Retry task",
 	"dock.taskOwns": "Related conversations: {count}",
 	"dock.background": "background",
 	"task.kind.generation": "Generate response",
@@ -460,6 +462,12 @@ export const EN = {
 	"task.status.pending": "Queued",
 	"task.status.running": "In progress",
 	"task.status.waiting": "Waiting for other tasks",
+	"task.status.sleeping": "Waiting for scheduled time",
+	"task.blocked.restart_limit": "Paused after repeated interruptions",
+	"task.blocked.missing_task": "Waiting for its extension",
+	"task.blocked.task_too_old": "Waiting for a compatible extension",
+	"task.blocked.migration_failed": "Unable to restore task state",
+	"task.blocked.other": "Task is blocked",
 	"task.status.completing": "Finishing up",
 	"task.status.completed": "Completed",
 	"task.status.failed": "Failed",
@@ -1280,6 +1288,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.viewTaskConversation": "查看对话",
 	"dock.viewOwnedConversation": "查看子对话 · {name}",
 	"dock.taskWaitsOn": "等待 {count} 个任务",
+	"dock.taskSleepsUntil": "等待至 {at}",
+	"dock.retryTask": "重试任务",
 	"dock.taskOwns": "关联 {count} 个对话",
 	"dock.background": "后台",
 	"task.kind.generation": "生成回答",
@@ -1301,6 +1311,12 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"task.status.pending": "等待执行",
 	"task.status.running": "执行中",
 	"task.status.waiting": "等待其他任务",
+	"task.status.sleeping": "等待预定时间",
+	"task.blocked.restart_limit": "多次中断后已暂停",
+	"task.blocked.missing_task": "等待扩展加载",
+	"task.blocked.task_too_old": "等待兼容的扩展",
+	"task.blocked.migration_failed": "无法恢复任务状态",
+	"task.blocked.other": "任务受阻",
 	"task.status.completing": "收尾中",
 	"task.status.completed": "已完成",
 	"task.status.failed": "失败",
@@ -2105,7 +2121,7 @@ export function scheduleDueCopy(locale: Locale, nextRunAt: number | null, now: n
 }
 
 /** Runtime codes stay in the protocol; unknown extension codes get neutral page copy. */
-function runtimeCodeCopy(locale: Locale, group: "task.phase" | "task.status" | "compaction" | "activity", code: string): string {
+function runtimeCodeCopy(locale: Locale, group: "task.phase" | "task.status" | "task.blocked" | "compaction" | "activity", code: string): string {
 	const key = `${group}.${code}`;
 	return translate(locale, (Object.hasOwn(EN, key) ? key : `${group}.other`) as MessageKey);
 }
@@ -2119,6 +2135,10 @@ export function taskKindCopy(locale: Locale, kind: string): string {
 
 export function taskStatusCopy(locale: Locale, status: string): string {
 	return runtimeCodeCopy(locale, "task.status", status);
+}
+
+export function taskBlockedCopy(locale: Locale, reason: string): string {
+	return runtimeCodeCopy(locale, "task.blocked", reason);
 }
 
 export function taskPhaseCopy(locale: Locale, phase: string): string {

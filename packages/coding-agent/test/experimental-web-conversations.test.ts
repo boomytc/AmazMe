@@ -32,6 +32,11 @@ const Hold = defineTask<Record<string, never>, { phase: "hold" }, null>({
 	} },
 	abort: async (_task, runtime, context) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
 });
+const Sleeper = defineTask<{ at: number }, { phase: "sleep" }, null>({
+	name: "test.fork.sleeper", version: 1, initial: () => ({ phase: "sleep" }),
+	phases: { sleep: (task, runtime, context) => runtime.sleepUntil(task.input.at, task.state.checkpoint, context) },
+	abort: (_task, runtime, context) => runtime.commit(() => ({ status: "terminal", outcome: { status: "aborted" } }), context),
+});
 
 async function makeDirectory(prefix: string): Promise<string> {
 	const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -103,7 +108,7 @@ async function openConversations(
 	const registry = createRegistry();
 	registry.install(Subagent);
 	registry.install(createForkArchiveGate());
-	registry.install(defineExtension({ name: "fork-fixtures", tasks: [Hold] }));
+	registry.install(defineExtension({ name: "fork-fixtures", tasks: [Hold, Sleeper] }));
 	const harness = await Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")), { models, registry }, TODO_CONTEXT);
 	await abortArchivedForks(harness);
 	const root = await harness.root(TODO_CONTEXT, {
@@ -167,6 +172,39 @@ async function askRoot(
 }
 
 describe("the session's conversation list", () => {
+	test("publishes the deadline of a sleeping task", async () => {
+		const setup = await openConversations();
+		try {
+			const root = (await setup.harness.conversation(Number(setup.rootId) as ConversationId, TODO_CONTEXT))!;
+			const wakeAt = Date.now() + 60_000;
+			const id = await root.commit((tx) => tx.createTask(Sleeper, { at: wakeAt }, { ownership: { kind: "conversation" } }), TODO_CONTEXT);
+			setup.harness.resume();
+			await waitFor(() => setup.state.value.tasks.some((task) => task.id === String(id) && task.status === "sleeping"), "sleeping task projection");
+			expect(setup.state.value.tasks.find((task) => task.id === String(id))).toMatchObject({ wakeAt, phase: "sleep" });
+		} finally { await setup.close(); }
+	});
+
+	test("shows a parked task after reopen and retries it through the conversation service", async () => {
+		let setup = await openConversations();
+		try {
+			const root = (await setup.harness.conversation(Number(setup.rootId) as ConversationId, TODO_CONTEXT))!;
+			const id = await root.commit((tx) => tx.createTask(Hold, {}, { ownership: { kind: "conversation" } }), TODO_CONTEXT);
+			const directory = setup.directory;
+			await setup.close();
+			const storage = await openNodeSqliteStorage(join(directory, "session.sqlite"));
+			try {
+				const record = (await storage.task(id, TODO_CONTEXT))!;
+				await storage.commit([{ type: "task", value: { ...record, restarts: 5 } }], TODO_CONTEXT);
+			} finally { await storage.close(TODO_CONTEXT); }
+			setup = await openConversations(directory);
+			await waitFor(() => setup.state.value.tasks.some((task) => task.id === String(id) && task.blocked === "restart_limit"), "parked task projection");
+			await expect(setup.service.service.retryTask("invalid", TODO_CONTEXT)).rejects.toThrow("Invalid task id");
+			await setup.service.service.retryTask(String(id), TODO_CONTEXT);
+			await waitFor(() => setup.state.value.tasks.some((task) => task.id === String(id) && task.status === "running" && task.blocked === undefined), "task retry");
+			expect((await setup.harness.getTask(id, TODO_CONTEXT))?.restarts).toBeUndefined();
+		} finally { await setup.close(); }
+	});
+
 	test("reports whether a conversation has an entry to fork from", async () => {
 		const setup = await openConversations();
 		try {
