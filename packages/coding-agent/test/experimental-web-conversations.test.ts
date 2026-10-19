@@ -469,6 +469,7 @@ describe("manual fork management", () => {
 			expect(setup.state.value.conversations.find(item => item.id === id)).toMatchObject({ run: "working", queued: 1 });
 			await setup.service.service.setArchived(id, true, BACKGROUND_CONTEXT);
 			expect((await setup.harness.getTask(owned.task, TODO_CONTEXT))?.state).toMatchObject({ status: "terminal", outcome: { status: "aborted" } });
+			await expect(setup.service.service.retryTask(String(owned.task), TODO_CONTEXT)).rejects.toThrow("分叉已归档");
 			expect(await setup.harness.snapshot(InboxDoc, fork.id, TODO_CONTEXT)).toMatchObject({ items: [] });
 			expect((await queuedWrite.wait(TODO_CONTEXT)).status).toBe("unanswered");
 			expect((await childWrite.wait(TODO_CONTEXT)).status).toBe("unanswered");

@@ -417,6 +417,10 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 
 验证限制：首次 Durable 包测试读取本机凭据，触发 Codex 实网缓存用例，其缓存命中率断言失败；后续排除两个实网 E2E 文件，不把它们计入通过，也未修改实网断言。`check:workspace` 的入口图、依赖和浏览器构建均通过，仅保留 HEAD 已存在的 `packages/evals/src/harness.ts:30` 跨包源码导入失败，本轮没有扩展修复该基线问题。
 
+再次审查（2026-10-19）：重新核对上述固定范围及本地消费者，复现并修复 `retryTask()` 对未停放任务也启用调度的问题，避免无效重试启动暂停中的其他任务；真正停放任务仍清除计数并恢复调度。补齐 workflows/verification 定时器提前触发后的复核、取消清理、SQLite 重开后沿用 deadline 且不重放已中断的不安全命令、agent 作业超时回收，以及已归档分叉拒绝任务重试的回归。
+
+复审验证：Durable 显式排除两个实网 E2E 文件，默认缓存与即时淘汰各 1379 项通过、2 项跳过，真实 workerd 29 项通过；coding-agent 全组 2327 项通过、24 项跳过，测试夹具类型收紧后两份受影响用例再跑 37 项通过。Telemetry 32、Chord 557、Web 274、AI 价格目录回归 3、工程测试 30 项通过；相关包构建、全仓类型与差异检查通过，CLI bundle 实际启动正常。`check:workspace` 仍仅报既有 evals 跨包源码导入，已对照吸收前和吸收后的提交确认；实网缓存行为未重新验证。
+
 ## 刻意偏离
 
 - 面向供应商的身份字符串维持 pi：运行时请求头（Codex `originator`/`User-Agent`、OpenRouter、opencode client）和登录默认名（ChatGPT `agent_name_hint`、Codex 登录 `originator`）都保持 pi 身份，避免脱离 pi 与供应商的合作关系。`LoginOptions.agentName` 选项保留，调用方需要时可覆盖。

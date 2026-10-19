@@ -409,14 +409,15 @@ export class TaskScheduler {
 	 * task that is not parked; rejects for an unknown one.
 	 */
 	async retry(id: TaskId, context: Context): Promise<void> {
-		await this.#session.commitWith(async (tx) => {
+		const retried = await this.#session.commitWith(async (tx) => {
 			const current = await tx.task(id);
 			if (current === undefined) throw new Error(`Task ${id} does not exist`);
 			const status = current.state.status;
-			if (status === "terminal" || status === "completing" || !this.#parked(current)) return;
+			if (status === "terminal" || status === "completing" || !this.#parked(current)) return false;
 			tx.setTask(progressed(current));
+			return true;
 		}, context);
-		this.resume();
+		if (retried) this.resume();
 	}
 
 	/**

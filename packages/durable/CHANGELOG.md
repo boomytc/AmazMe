@@ -31,6 +31,7 @@
 
 ### Fixed
 
+- `Harness.retryTask()` leaves scheduling paused when its target is not parked, instead of starting unrelated pending work.
 - In Cloudflare Workers with `nodejs_compat`, the timers that evict idle documents and contexts were armed, since timers there have an `unref()`; a pending one kept a Durable Object from hibernating and blocked its eviction. They are now declined in Workers, and memory is freed at later commits.
 
 - AmazMe preserves read-only reopen and schema-corruption checks in Chord's shared SQLite migration runner. `wake()` also excludes work blocked by an unavailable plugin owner, and loadout preparation reports name the responsible extension.

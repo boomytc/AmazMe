@@ -5,6 +5,7 @@ import {
 	createRegistry,
 	defineExtension,
 	defineTask,
+	MemoryStorage,
 	type Registry,
 	type Storage,
 	type TaskId,
@@ -132,6 +133,36 @@ describe("recovery at open", () => {
 });
 
 describe("tasks that cannot run", () => {
+	it("does not resume unrelated pending work when retryTask has nothing to retry", async () => {
+		let started = 0;
+		const Once = defineTask<null, { phase: "run" }, null>({
+			name: "test.retry-noop",
+			version: 1,
+			initial: () => ({ phase: "run" }),
+			phases: { run: async (_task, runtime, ctx) => {
+				started++;
+				await runtime.commit(() => completed(null), ctx);
+			} },
+			abort: async () => {},
+		});
+		const { harness } = await openTasks(new MemoryStorage(), [Once]);
+		try {
+			const root = await harness.root(context);
+			const id = await root.commit((tx) => tx.createTask(Once, null, { ownership: { kind: "conversation" } }), context);
+			const other = await root.commit((tx) => tx.createTask(Once, null, { ownership: { kind: "conversation" } }), context);
+			await harness.retryTask(id, context);
+			for (let turn = 0; turn < 5; turn++) await flush();
+			expect(started).toBe(0);
+			expect((await harness.inspect(context)).scheduling).toBe("paused");
+			harness.resume();
+			expect((await harness.waitForTask(id, context)).state.outcome.status).toBe("completed");
+			expect((await harness.waitForTask(other, context)).state.outcome.status).toBe("completed");
+			expect(started).toBe(2);
+		} finally {
+			await harness.close(context);
+		}
+	});
+
 	it("parks a task cut off restartLimit times in a row, shows why, and runs it again on retryTask()", async () => {
 		const path = await sqlitePath();
 		const state = { crashing: true, started: 0 };
