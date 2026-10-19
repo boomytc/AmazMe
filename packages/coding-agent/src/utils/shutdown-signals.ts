@@ -145,6 +145,8 @@ export function installShutdownSignals(onFirst: () => void): ShutdownSignals {
 /**
  * Wait until `closed` settles or the first SIGINT/SIGTERM arrives, then run `close`.
  * A SIGINT while `close` is still running force-exits. Listeners stay installed afterward.
+ * `arm` runs synchronously once the listeners are installed: print readiness there, so a
+ * signal sent on that line is never met by the default action.
  */
 export async function closeAfterSignal(
 	closed: Promise<void>,

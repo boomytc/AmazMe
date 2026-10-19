@@ -39,11 +39,13 @@ async function runServerCommand(command: ServerCommand): Promise<void> {
 			else pendingRelayStatus = status;
 		},
 	});
-	console.log(`Server: ${runtime.serverId}`);
-	console.log(`Socket: ${runtime.socketPath}`);
-	relayOutputReady = true;
-	if (pendingRelayStatus !== undefined) reportRelayStatus(pendingRelayStatus);
-	await closeWhenSignaled(runtime.closed, () => runtime.close());
+	// `Socket:` tells a supervisor the server is ready, so it is printed only after the signal listeners are installed.
+	await closeWhenSignaled(runtime.closed, () => runtime.close(), () => {
+		console.log(`Server: ${runtime.serverId}`);
+		console.log(`Socket: ${runtime.socketPath}`);
+		relayOutputReady = true;
+		if (pendingRelayStatus !== undefined) reportRelayStatus(pendingRelayStatus);
+	});
 	process.exit(process.exitCode ?? 0);
 }
 
@@ -85,9 +87,10 @@ async function runWebCommand(command: WebCommand): Promise<void> {
 			finished = true;
 			return;
 		}
-		for (const line of webLaunchLines(running)) console.log(line);
+		// The launch lines tell the desktop app the host is ready, so they follow the signal listeners.
 		await closeWhenSignaled(running.closed, () => running.close(), (finish) => {
 			finishParent = finish;
+			for (const line of webLaunchLines(running)) console.log(line);
 		});
 		finished = true;
 	} finally {
