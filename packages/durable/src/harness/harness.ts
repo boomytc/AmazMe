@@ -256,6 +256,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		this.#taskGraph = new TaskGraphView(this, storage, {
 			blocked: (record) => this.#tasks.blockedReason(record),
 			subscribeBlocked: (listener) => this.#tasks.subscribeBlocked(listener),
+			restartLimit: () => this.#tasks.restartLimit(),
 		});
 		this.#host = {
 			harness: this,

@@ -21,6 +21,7 @@ import {
 	type Submission,
 	type InboxItem,
 	type TaskGraph,
+	type TaskId,
 	type SessionEnd,
 	watchEvents } from "@amazme/durable";
 import { MemoryStorage } from "@amazme/durable/storage/memory";
@@ -221,6 +222,8 @@ export interface DurableController {
 	clearQueue(): Promise<{ steering: string[]; followUp: string[] }>;
 	/** Page one older slice of stored history above the transcript. */
 	loadOlder(): Promise<void>;
+	/** Run a task parked by the restart limit again. */
+	retryTask(taskId: string): Promise<void>;
 }
 
 export interface OpenDurableOptions extends ToolSelectionOptions, CodingResourceOptions {
@@ -770,6 +773,11 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					].join("\n");
 		};
 		const controller: DurableController = {
+			retryTask: async (taskId) => {
+				const id = Number(taskId);
+				if (!Number.isSafeInteger(id) || id <= 0) throw new Error(`Invalid task id: ${taskId}`);
+				await opened.retryTask(id as TaskId, context);
+			},
 			reportBug: (options) => command(async () => {
 				const operation = new AbortController();
 				activeCommand = operation;

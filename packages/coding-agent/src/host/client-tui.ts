@@ -7,6 +7,7 @@ import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable"
 import { CombinedAutocompleteProvider, type Component, Container, isFocusable, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
 import { manageProviderAuth } from "../durable/provider-menu.ts";
 import { ListSelector } from "../modes/interactive/components/list-selector.ts";
+import { keyText } from "../modes/interactive/components/keybinding-hints.ts";
 import { ScopedModelsSelectorComponent } from "../modes/interactive/components/scoped-models-selector.ts";
 import { Models } from "./services/models.ts";
 import type { ClientCommand } from "../cli/host/commands/client.ts";
@@ -14,7 +15,7 @@ import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultResourceLoader } from "../core/resource-loader.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
-import { oldestPresentedEntryId } from "../durable/conversation-view.ts";
+import { oldestPresentedEntryId, type TaskSummary } from "../durable/conversation-view.ts";
 import { createChatViewport } from "../modes/interactive/chat-viewport.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { durablePromptShortcutLine } from "../modes/interactive/composer-contract.ts";
@@ -142,6 +143,7 @@ export class ExperimentalClientTui implements Component {
 		this.#chatInput.onCtrlD = finish;
 		this.#chatInput.onAction("app.clear", finish);
 		this.#chatInput.onAction("app.model.select", () => void this.#executeSlashCommand("model", ""));
+		this.#chatInput.onAction("app.tasks.retry", () => void this.#retryParkedTask());
 		this.#chatInput.onAction("app.thinking.cycle", () => {
 			void this.#models?.cycleThinking(BACKGROUND_CONTEXT).catch((error: unknown) => this.showError(message(error)));
 		});
@@ -410,6 +412,39 @@ export class ExperimentalClientTui implements Component {
 		if (errors.length > 1) throw new AggregateError(errors, "Failed to dispose experimental TUI facets");
 	}
 
+	/** Tasks the restart limit parked: pending, and blocked for that reason. */
+	#parkedTasks(): readonly TaskSummary[] {
+		return (this.#conversations?.state.value?.tasks ?? []).filter(
+			(task) => task.status === "pending" && task.blocked === "restart_limit",
+		);
+	}
+
+	async #retryParkedTask(): Promise<void> {
+		const conversations = this.#conversations;
+		const parked = this.#parkedTasks();
+		if (conversations === undefined || parked.length === 0) return;
+		let target = parked[0]!;
+		if (parked.length > 1) {
+			const value = await this.#select(
+				"Retry which paused task?",
+				parked.map((task) => ({
+					value: task.id,
+					label: `Task #${task.id}`,
+					description: `${task.kind} · ${String(task.restarts ?? task.restartLimit)}/${String(task.restartLimit)} interruptions`,
+				})),
+			);
+			if (value === undefined) return;
+			target = parked.find((task) => task.id === value) ?? target;
+		}
+		try {
+			await conversations.retryTask(target.id, BACKGROUND_CONTEXT);
+			this.#status = `Retried task #${target.id}.`;
+		} catch (error) {
+			this.#status = `Retry failed: ${message(error)}`;
+		}
+		this.#rebuild();
+	}
+
 	#rebuild(): void {
 		const conversation = this.#conversationView();
 		const agent = conversation?.docs["amazme.agent"] as AgentState | undefined;
@@ -426,6 +461,19 @@ export class ExperimentalClientTui implements Component {
 			this.#statusContainer.addChild(new Text(theme.fg("dim", this.#status), 1, 0));
 		}
 		if (this.#chatView !== undefined) this.#statusContainer.addChild(this.#chatView.status);
+		for (const task of this.#parkedTasks()) {
+			const attempts = task.restarts ?? task.restartLimit;
+			this.#statusContainer.addChild(
+				new Text(
+					theme.fg(
+						"warning",
+						`Task #${task.id} paused after ${String(attempts)} consecutive interruptions (limit ${String(task.restartLimit)}); ${keyText("app.tasks.retry")} to retry.`,
+					),
+					1,
+					0,
+				),
+			);
+		}
 		this.#footerComponent.setText(theme.fg("dim", this.#footer()));
 		this.#editorContainer.clear();
 		if (this.#authComponent !== undefined) {

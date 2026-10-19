@@ -148,6 +148,8 @@ export function createConversationsService(
 				status: node.state.status,
 				...(node.state.status === "sleeping" ? { wakeAt: node.state.until } : {}),
 				...(node.blocked === undefined ? {} : { blocked: node.blocked }),
+				...(node.restarts === undefined ? {} : { restarts: node.restarts }),
+				restartLimit: value.restartLimit,
 				phase: node.state.status === "completing" ? node.state.outcome : node.state.phase,
 				waitsOn: node.state.status === "waiting" ? node.state.on.map(String) : [],
 				conversations: node.conversations.map(String) }))

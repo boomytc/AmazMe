@@ -96,7 +96,7 @@ describe("task graph view", () => {
 			return opened;
 		};
 		let graph = await observe();
-		expect(graph.value).toEqual({ tasks: {} });
+		expect(graph.value).toEqual({ tasks: {}, restartLimit: 5 });
 		/** The advanced value equals a fresh build from Storage once the last observer left. */
 		const rebuild = async () => {
 			const advanced = graph.value;
@@ -156,7 +156,7 @@ describe("task graph view", () => {
 		late.resolve();
 		await harness.waitForTask(parent, context);
 		await flush();
-		expect(graph.value).toEqual({ tasks: {} });
+		expect(graph.value).toEqual({ tasks: {}, restartLimit: 5 });
 		// Every revision is one commit that changed a node; none repeats its predecessor.
 		for (let index = 1; index < seen.length; index++) expect(seen[index]).not.toEqual(seen[index - 1]);
 		// The commit that created the two conversations published one revision setting them.

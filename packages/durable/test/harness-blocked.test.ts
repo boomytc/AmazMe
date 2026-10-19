@@ -191,6 +191,8 @@ describe("tasks that cannot run", () => {
 		});
 		const graph = await harness.taskGraph(context);
 		expect(graph.value.tasks[String(id)]?.blocked).toBe("restart_limit");
+		expect(graph.value.tasks[String(id)]?.restarts).toBe(3);
+		expect(graph.value.restartLimit).toBe(3);
 		// Parked work needs no process: nothing is active.
 		await eventually(() => !harness.wake().active);
 		expect(harness.wake()).toEqual({ active: false });

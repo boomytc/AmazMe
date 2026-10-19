@@ -1402,6 +1402,11 @@ export class TaskScheduler {
 	}
 
 	/** `settings.restartLimit`, or the default when the host's settings throw. */
+	restartLimit(): number {
+		return this.#restartLimit();
+	}
+
+	/** `settings.restartLimit`, or the default when the host's settings throw. */
 	#restartLimit(): number {
 		try {
 			return this.#settings().restartLimit;

@@ -11,7 +11,7 @@ import { type ClientTuiServer, ExperimentalClientTui } from "../src/host/client-
 import { createPresentationFacetData } from "../src/host/plugins/bundled.ts";
 import { AgentController } from "../src/core/plugins/agent-controller.ts";
 import { Conversations } from "../src/host/services/conversations.ts";
-import { IDLE_LANE } from "../src/durable/conversation-view.ts";
+import { IDLE_LANE, type ConversationsState } from "../src/durable/conversation-view.ts";
 import { createAgentController } from "../src/core/plugins/agent-controller-provider.ts";
 import type {
 	ServerConnectionState,
@@ -145,7 +145,7 @@ describe("experimental client TUI", () => {
 				},
 			});
 			const rootConversationId = String(durable.conversation.id);
-			const conversationsState = replicatedState({
+			const conversationsState = replicatedState<ConversationsState>({
 				revision: 1,
 				selected: rootConversationId,
 				branchSummarySkipPrompt: false,
@@ -196,8 +196,15 @@ describe("experimental client TUI", () => {
 			});
 			sessionProvider.provide(AgentController, createAgentController(durable.harness, () => durable.conversation));
 			sessionProvider.provide(Transcript, { state: transcriptState });
+			const retryTask = vi.fn(async (taskId: string) => {
+				conversationsState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.tasks = draft.tasks.map(({ blocked: _parked, ...task }) =>
+						task.id === taskId ? { ...task, status: "running", restarts: 0 } : { ...task, blocked: _parked },
+					);
+				});
+			});
 			sessionProvider.provide(Conversations, {
-				async retryTask() { throw new Error("Fixture does not retry tasks"); },
+				retryTask,
 				state: conversationsState,
 				async rename() { throw new Error("Fixture does not rename branches"); },
 				async setArchived() { throw new Error("Fixture does not archive branches"); },
@@ -335,6 +342,56 @@ describe("experimental client TUI", () => {
 				component.handleInput("\r");
 				await vi.waitFor(() => expect(selectThinking).toHaveBeenCalledWith("high", expect.anything()));
 				expect(modelsState.value.configuration.thinkingLevel).toBe("high");
+
+				// A task parked by the configured restart limit is visible and retryable from the host TUI.
+				conversationsState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.tasks = [
+						{
+							id: "12",
+							kind: "amazme.generation",
+							conversationId: rootConversationId,
+							background: false,
+							status: "pending",
+							blocked: "restart_limit",
+							restarts: 3,
+							restartLimit: 3,
+							phase: "generate",
+							waitsOn: [],
+							conversations: [],
+						},
+					];
+				});
+				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("Task #12 paused"));
+				const parkedScreen = component.render(80).join("\n");
+				expect(parkedScreen).toContain("limit 3");
+				expect(parkedScreen).not.toContain("limit 5");
+				component.handleInput("\x1bOS");
+				await vi.waitFor(() => expect(retryTask).toHaveBeenCalledWith("12", expect.anything()));
+				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("Retried task #12."));
+				expect(component.render(80).join("\n")).not.toContain("Task #12 paused");
+
+				// Several parked tasks: the shortcut opens a selector instead of guessing.
+				conversationsState.change(BACKGROUND_CONTEXT, (draft) => {
+					draft.tasks = ["13", "14"].map((id) => ({
+						id,
+						kind: "amazme.generation",
+						conversationId: rootConversationId,
+						background: false,
+						status: "pending",
+						blocked: "restart_limit" as const,
+						restarts: 2,
+						restartLimit: 2,
+						phase: "generate",
+						waitsOn: [],
+						conversations: [],
+					}));
+				});
+				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("Task #13 paused"));
+				component.handleInput("\x1bOS");
+				await vi.waitFor(() => expect(component.render(80).join("\n")).toContain("Retry which paused task?"));
+				component.handleInput("\u001b[B");
+				component.handleInput("\r");
+				await vi.waitFor(() => expect(retryTask).toHaveBeenCalledWith("14", expect.anything()));
 
 				component.handleInput("\u0003");
 				await vi.waitFor(() => expect(finished).toBe(true));

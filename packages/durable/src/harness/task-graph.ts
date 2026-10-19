@@ -44,6 +44,8 @@ export type TaskGraphNode = {
 	 * `migration_failed`), or the restart limit parked it (`restart_limit`). Follows registry changes.
 	 */
 	readonly blocked?: BlockedReason;
+	/** Consecutive times a crash, eviction, or reset cut this task off without progress. Absent while zero. */
+	readonly restarts?: number;
 	/** Conversations this task owns, in ID order. */
 	readonly conversations: readonly ConversationId[];
 };
@@ -52,6 +54,8 @@ export type TaskGraphNode = {
 export type TaskGraph = {
 	/** Every live task, keyed by its decimal ID. */
 	readonly tasks: Readonly<Record<string, TaskGraphNode>>;
+	/** `settings.restartLimit` at the revision this graph was read: the configured bound a parked task reached. */
+	readonly restartLimit: number;
 };
 
 export type TaskGraphWatch = WatchHandle<TaskGraph>;
@@ -69,6 +73,8 @@ type Mount = {
 export type TaskGraphBlocking = {
 	readonly blocked: (record: BlockedSubject) => BlockedReason | undefined;
 	readonly subscribeBlocked: (listener: () => void) => () => void;
+	/** The configured restart bound, so a presentation can show the limit a parked task reached. */
+	readonly restartLimit: () => number;
 };
 
 const LIVE_STATUSES = ["pending", "running", "waiting", "sleeping", "completing"] as const;
@@ -198,7 +204,7 @@ export class TaskGraphView {
 			tasks[String(record.id)] = nodeOf(record, conversations, this.#blocking.blocked(subject));
 			live.set(String(record.id), subject);
 		}
-		return { value: { tasks }, records: live };
+		return { value: { tasks, restartLimit: this.#blocking.restartLimit() }, records: live };
 	}
 }
 
@@ -276,6 +282,7 @@ function nodeOf(
 		state: stateOf(record),
 		conversations,
 		...(blocked === undefined ? {} : { blocked }),
+		...(record.restarts === undefined ? {} : { restarts: record.restarts }),
 	};
 }
 

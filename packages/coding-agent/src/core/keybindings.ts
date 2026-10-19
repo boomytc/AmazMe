@@ -109,6 +109,10 @@ const APP_KEYBINDINGS = {
 		defaultKeys: "f2",
 		description: "Show running subagents and background commands",
 	},
+	"app.tasks.retry": {
+		defaultKeys: "f4",
+		description: "Retry a task paused by the restart limit",
+	},
 	"app.transcript.toggleAll": {
 		defaultKeys: "ctrl+e",
 		description: "Fold or unfold every transcript entry",

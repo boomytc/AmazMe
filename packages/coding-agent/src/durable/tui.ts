@@ -258,6 +258,8 @@ interface Handlers {
 	clear?(): void;
 	/** Input read after the screen stopped and before cooked mode returns; a shutdown keeps this consumer alive. */
 	deferredInput?(data: string): void;
+	/** Run a task parked by the restart limit again. */
+	retryTask?(taskId: string): void;
 	selectModel(): void;
 	cycleModel(direction: "forward" | "backward"): void;
 	cycleThinking(): void;
@@ -310,6 +312,8 @@ class DurableTui {
 	readonly #markdownTransformers: ReturnType<typeof terminalMarkdownTransformers>;
 	#indicator: StatusIndicator | undefined;
 	readonly #deferredInput: ((data: string) => void) | undefined;
+	readonly #retryTask: ((taskId: string) => void) | undefined;
+	#taskGraph: TaskGraph | undefined;
 	#statusText = "";
 	/** Set when the transcript was rebuilt: the next render repaints the screen and shows the end. */
 	#rebuilt = false;
@@ -321,6 +325,7 @@ class DurableTui {
 		this.#markdownTransformers = terminalMarkdownTransformers(() => settings.getMermaidRenderingMode());
 		this.#plugins = handlers.plugins;
 		this.#deferredInput = handlers.deferredInput;
+		this.#retryTask = handlers.retryTask;
 		this.#completeCommand = handlers.completeCommand;
 		this.#stopTurn = handlers.abort;
 		this.#ui = createInteractiveTui({
@@ -383,6 +388,7 @@ class DurableTui {
 		this.#editor.onAction("app.model.cycleForward", () => handlers.cycleModel("forward"));
 		this.#editor.onAction("app.model.cycleBackward", () => handlers.cycleModel("backward"));
 		this.#editor.onAction("app.thinking.cycle", handlers.cycleThinking);
+		this.#editor.onAction("app.tasks.retry", () => this.#retryParkedTask());
 		this.#editor.onAction("app.tools.expand", () => {
 			this.#expanded = !this.#expanded;
 			for (const component of [...this.#cards, ...this.#summaries]) component.setExpanded(this.#expanded);
@@ -595,6 +601,7 @@ class DurableTui {
 
 	#syncTasks(graph: TaskGraph | undefined): void {
 		this.#tasks.clear();
+		this.#taskGraph = graph;
 		if (graph === undefined) return;
 		const nodes = Object.values(graph.tasks);
 		const lines: string[] = [theme.fg("accent", `Tasks (${nodes.length} live, /tasks to hide)`)];
@@ -603,13 +610,44 @@ class DurableTui {
 		const children = (node: TaskGraphNode) =>
 			nodes.filter((candidate) => candidate.owner === node.id || (candidate.owner === undefined && node.conversations.includes(candidate.conversationId)));
 		const visit = (node: TaskGraphNode, depth: number): void => {
-			lines.push(`${"  ".repeat(depth + 1)}${describeTask(node)}`);
+			lines.push(`${"  ".repeat(depth + 1)}${describeTask(node, graph.restartLimit)}`);
 			for (const child of children(node)) visit(child, depth + 1);
 		};
 		for (const node of nodes) {
 			if (node.owner === undefined && !owned.has(node.conversationId)) visit(node, 0);
 		}
 		for (const line of lines) this.#tasks.addChild(new TruncatedText(theme.fg("muted", line), 1, 0));
+	}
+
+	/** Retry the one parked task, or ask which one when several are parked. */
+	#retryParkedTask(): void {
+		const retry = this.#retryTask;
+		const graph = this.#taskGraph;
+		if (retry === undefined || graph === undefined) return;
+		const parked = Object.values(graph.tasks).filter(
+			(node) => node.state.status === "pending" && node.blocked === "restart_limit",
+		);
+		if (parked.length === 0) return;
+		const only = parked[0]!;
+		if (parked.length === 1) {
+			retry(String(only.id));
+			return;
+		}
+		this.mount(
+			new ListSelector(
+				"Retry which paused task?",
+				parked.map((node) => ({
+					value: String(node.id),
+					label: `Task #${String(node.id)}`,
+					description: `${node.kind} · ${String(node.restarts ?? graph.restartLimit)}/${String(graph.restartLimit)} restarts`,
+				})),
+				(value) => {
+					this.restoreEditor();
+					retry(value);
+				},
+				() => this.restoreEditor(),
+			),
+		);
 	}
 
 	#syncQueue(inbox: InboxState): void {
@@ -826,11 +864,12 @@ class DurableTui {
 	}
 }
 
-function describeTask(node: TaskGraphNode): string {
+export function describeTask(node: TaskGraphNode, restartLimit: number): string {
 	const state = node.state;
+	const restarts = node.restarts === undefined ? "" : `, ${String(node.restarts)}/${String(restartLimit)} restarts`;
 	const status =
 		node.blocked !== undefined
-			? `blocked (${node.blocked})`
+			? `blocked (${node.blocked}${node.blocked === "restart_limit" ? restarts : ""})`
 			: state.status === "sleeping"
 				? `sleeping until ${new Date(state.until).toLocaleString()}`
 				: state.status === "waiting"
@@ -840,7 +879,8 @@ function describeTask(node: TaskGraphNode): string {
 						: `${state.status} ${state.phase}`;
 	const flags = [node.background ? "background" : "", node.abortRequested ? "aborting" : ""].filter(Boolean);
 	const owned = node.conversations.length > 0 ? ` owns conversation ${node.conversations.join(", ")}` : "";
-	return `${node.kind} #${node.id}: ${status}${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}${owned}`;
+	const retries = node.restarts !== undefined && node.blocked !== "restart_limit" ? restarts : "";
+	return `${node.kind} #${node.id}: ${status}${retries}${flags.length > 0 ? ` [${flags.join(", ")}]` : ""}${owned}`;
 }
 
 function userText(content: UserMessage["content"]): string {
@@ -1105,6 +1145,11 @@ export async function runDurableTui(
 	view = new DurableTui(source.current().session.cwd, {
 		plugins: controller.describePlugins !== undefined,
 		...(hooks?.shutdownInput === undefined ? {} : { deferredInput: hooks.shutdownInput }),
+		retryTask: (taskId) => {
+			void controller.retryTask(taskId).catch((error: unknown) => {
+				console.error(error instanceof Error ? error.message : String(error));
+			});
+		},
 		completeCommand: (name, prefix) => controller.completeCommand?.(name, prefix) ?? Promise.resolve(null),
 		submit: (text, whenBusy, images) => {
 			const trimmed = text.trim();

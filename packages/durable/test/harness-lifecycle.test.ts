@@ -326,7 +326,7 @@ describe("Harness close", () => {
 		expect(frames).toEqual([]);
 		expect(docState.value).toBe(docValue);
 		expect(viewState.value).toBe(viewValue);
-		expect(graphState.value).toEqual({ tasks: {} });
+		expect(graphState.value).toEqual({ tasks: {}, restartLimit: 5 });
 		expect(await graphWatch.closed).toEqual({ reason: "session_closed" });
 		expect(await docWatch.closed).toEqual({ reason: "session_closed" });
 		expect(await viewWatch.closed).toEqual({ reason: "session_closed" });
