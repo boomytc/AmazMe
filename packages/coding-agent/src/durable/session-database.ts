@@ -1,5 +1,8 @@
 import { isSqliteResourceError, SqliteSchemaError, type SqliteStorage } from "@amazme/durable/storage/sqlite";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
+import { assertSessionLeaseHeld, type SessionLease } from "./session-lease.ts";
+
+export { lockSessionDatabase, type SessionLease } from "./session-lease.ts";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 
@@ -167,47 +170,6 @@ export function classifySessionDatabaseError(error: unknown, path: string): Sess
 	return undefined;
 }
 
-const LEASE: unique symbol = Symbol("SessionLease");
-
-/**
- * Proof that this process holds a session directory's lock. Only {@link lockSessionDatabase} makes one, after its lock
- * call has resolved, so {@link openSessionStorage} cannot run (and its preflight cannot copy or clean up files next to
- * the database) while another process may be opening the same session.
- */
-export interface SessionLease {
-	readonly directory: string;
-	readonly database: string;
-	/** Release the lock; the lease cannot open storage afterwards. */
-	release(): Promise<void>;
-	readonly [LEASE]: true;
-}
-
-/**
- * Take the session directory's lock with `lock` (the host's own lock call and its semantics: fail when held, or wait),
- * then return the lease that lets {@link openSessionStorage} open `database`.
- */
-export async function lockSessionDatabase(
-	directory: string,
-	database: string,
-	lock: (directory: string) => Promise<() => Promise<void>>,
-): Promise<SessionLease> {
-	const unlock = await lock(directory);
-	let released: Promise<void> | undefined;
-	const lease: SessionLease = {
-		directory,
-		database,
-		release: () => {
-			released ??= unlock();
-			return released;
-		},
-		[LEASE]: true,
-	};
-	leases.set(lease, () => released !== undefined);
-	return lease;
-}
-
-const leases = new WeakMap<SessionLease, () => boolean>();
-
 /**
  * The one entry every host (CLI, TUI, print, RPC, import, and the Session worker behind web and desktop) uses to open
  * a session's durable storage. It takes a {@link SessionLease}, so the read-only preflight and its `.preflight-*`
@@ -215,9 +177,7 @@ const leases = new WeakMap<SessionLease, () => boolean>();
  * `SessionOpenError` before anything writes to it; the caller must not fall back to a new session.
  */
 export async function openSessionStorage(lease: SessionLease): Promise<SqliteStorage> {
-	const isReleased = leases.get(lease);
-	if (isReleased === undefined) throw new Error("openSessionStorage requires a lease from lockSessionDatabase");
-	if (isReleased()) throw new Error(`Session lock was already released: ${lease.directory}`);
+	assertSessionLeaseHeld(lease);
 	try {
 		return await openNodeSqliteStorage(lease.database);
 	} catch (error) {

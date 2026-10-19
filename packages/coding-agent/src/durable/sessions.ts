@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { expandTildePath, getAgentDir } from "../config.ts";
-import { lockSessionDatabase, type SessionLease } from "./session-database.ts";
+import { lockSessionDatabase, type SessionLease } from "./session-lease.ts";
 
 /**
  * How long a crashed process's session lock stays reserved.
