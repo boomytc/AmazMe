@@ -290,11 +290,66 @@ export function checkVersionLiterals(repoRoot, files) {
 	return failures;
 }
 
-/** Package test trees may not call mkdtemp/mkdtempSync except from packages/<pkg>/test/temp-dir.ts at the test root. */
-export function checkTempDirUsage(repoRoot) {
+/**
+ * Package sources that may still call `tmpdir()`, with the reason. Session output (truncated tool
+ * output, MCP resources, codemode files) goes to the session's artifact directory instead, so it is
+ * deleted with the session. The one session-scoped exemption is the `--no-session` artifact
+ * directory, removed on release and at process exit. The other entries predate the rule: short-lived
+ * scratch their owner removes, or locations that are not session output. Shrink this list; never
+ * grow it for session output.
+ */
+export const sourceTempDirAllowlist = {
+	"packages/coding-agent/src/durable/sessions.ts":
+		"--no-session artifact directory, removed on release and on process exit",
+	"packages/coding-agent/src/durable/export.ts": "export scratch directory, removed in finally",
+	"packages/coding-agent/src/durable/runtime.ts": "/share upload scratch directory",
+	"packages/coding-agent/src/host/services/share-command.ts": "/share upload scratch directory",
+	"packages/coding-agent/src/modes/interactive/external-editor.ts": "external editor scratch file",
+	"packages/coding-agent/src/utils/clipboard.ts": "WSL clipboard hand-off file",
+	"packages/coding-agent/src/utils/clipboard-image.ts": "WSL clipboard hand-off file",
+	"packages/coding-agent/src/core/plugins/artifact.ts": "plugin build scratch directory",
+	"packages/durable/src/env/node.ts": "ExecutionEnv.createTempDir contract (not used for spills)",
+	"packages/env/src/ssh.ts": "SSH host-key scratch directory",
+	"packages/chord/src/manager.ts": "local IPC socket path",
+	"packages/tui/src/tui-main-screen.ts": "crash log fallback when no log directory is set",
+	"packages/evals/src/harness.ts": "eval workspaces and cache sweep",
+};
+
+/**
+ * Package test trees may not call mkdtemp/mkdtempSync except from packages/<pkg>/test/temp-dir.ts at
+ * the test root. Package sources (`packages/<pkg>/src`) may not call `tmpdir()` / `os.tmpdir()`
+ * outside `allowed` (repo-relative path -> reason), and an allowed file that no longer calls it must
+ * leave the list.
+ */
+export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 	const failures = [];
 	const packagesDirectory = join(repoRoot, "packages");
 	if (!existsSync(packagesDirectory)) return failures;
+	const tmpdirCall = /\btmpdir\s*\(/;
+	const sourceExtensions = /\.(?:[cm]?ts|[cm]?js|tsx|jsx)$/;
+	const walkSource = (directory) => {
+		if (!existsSync(directory)) return;
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) {
+				walkSource(path);
+				continue;
+			}
+			if (!sourceExtensions.test(entry.name) || entry.name.endsWith(".d.ts")) continue;
+			const file = relative(repoRoot, path).replaceAll("\\", "/");
+			const lines = readFileSync(path, "utf8").split("\n");
+			const calls = lines.flatMap((line, index) => (tmpdirCall.test(line) ? [index + 1] : []));
+			if (Object.hasOwn(allowed, file)) {
+				if (calls.length === 0)
+					failures.push(`${file}: no longer calls tmpdir(); remove it from sourceTempDirAllowlist`);
+				continue;
+			}
+			for (const line of calls)
+				failures.push(
+					`${file}:${line}: tmpdir() in package source; write session output under the session's artifactDirectory (ExecutionEnv.artifactDirectory)`,
+				);
+		}
+	};
 	const banned = /\bmkdtemp(?:Sync)?\s*\(/;
 	const canonicalPath = join(packagesDirectory, "ai", "test", "temp-dir.ts");
 	const canonical = existsSync(canonicalPath) ? readFileSync(canonicalPath) : undefined;
@@ -325,6 +380,7 @@ export function checkTempDirUsage(repoRoot) {
 	};
 	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
 		if (!entry.isDirectory()) continue;
+		walkSource(join(packagesDirectory, entry.name, "src"));
 		const testRoot = join(packagesDirectory, entry.name, "test");
 		walk(testRoot, testRoot);
 		const helper = join(testRoot, "temp-dir.ts");
@@ -628,5 +684,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
-	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, test temp dirs, and version literals passed.");
+	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, test and source temp dirs, and version literals passed.");
 }

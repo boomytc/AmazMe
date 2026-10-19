@@ -12,6 +12,7 @@ import {
 	checkEntryContracts,
 	checkTempDirUsage,
 	checkVersionLiterals,
+	sourceTempDirAllowlist,
 } from "./check-workspace.mjs";
 
 const roots = [];
@@ -445,4 +446,47 @@ test("temp dir helpers match the ai vitest copy; tui may differ", () => {
 	assert.equal(failures.length, 1, failures.join("\n"));
 	assert.ok(failures[0].includes("packages/client/test/temp-dir.ts:"));
 	assert.ok(failures[0].includes("byte-for-byte"));
+});
+
+test("package sources may not call tmpdir() outside the allowlist", () => {
+	const root = fixture();
+	const src = join(root, "packages", "coding-agent", "src");
+	mkdirSync(join(src, "utils"), { recursive: true });
+	mkdirSync(join(src, "durable"), { recursive: true });
+	writeFileSync(
+		join(src, "utils", "output-files.ts"),
+		'import { tmpdir } from "node:os";\nexport const path = () => join(tmpdir(), "amazme-mcp-x");\n',
+	);
+	writeFileSync(join(src, "utils", "os-call.ts"), 'import os from "node:os";\nexport const dir = os.tmpdir();\n');
+	// A variable named tmpdir is not a call.
+	writeFileSync(join(src, "utils", "remote.ts"), "export const join = (tmpdir) => tmpdir + '/x';\n");
+	writeFileSync(
+		join(src, "durable", "sessions.ts"),
+		'import { tmpdir } from "node:os";\nexport const dir = join(tmpdir(), "amazme-session-artifacts-x");\n',
+	);
+	const failures = checkTempDirUsage(root, {
+		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+	});
+	assert.equal(failures.length, 2, failures.join("\n"));
+	assert.ok(failures.some((message) => message.startsWith("packages/coding-agent/src/utils/output-files.ts:2:")));
+	assert.ok(failures.some((message) => message.startsWith("packages/coding-agent/src/utils/os-call.ts:2:")));
+	assert.ok(failures.every((message) => message.includes("artifactDirectory")));
+});
+
+test("an allowlisted source that stops calling tmpdir() must leave the allowlist", () => {
+	const root = fixture();
+	const src = join(root, "packages", "coding-agent", "src", "durable");
+	mkdirSync(src, { recursive: true });
+	writeFileSync(join(src, "sessions.ts"), "export const dir = '/var/sessions';\n");
+	const failures = checkTempDirUsage(root, {
+		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+	});
+	assert.equal(failures.length, 1, failures.join("\n"));
+	assert.ok(failures[0].includes("remove it from sourceTempDirAllowlist"));
+});
+
+test("the source allowlist exempts the --no-session directory but not output files", () => {
+	assert.ok(Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/durable/sessions.ts"));
+	assert.ok(!Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/utils/output-files.ts"));
+	assert.ok(!Object.keys(sourceTempDirAllowlist).some((file) => file.includes("/mcp/")));
 });
