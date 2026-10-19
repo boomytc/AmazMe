@@ -7,7 +7,7 @@ import {
 	OPENAI_PROBE_RESPONSE,
 	OPENAI_PROVIDER_ID,
 } from "./acme-server.ts";
-import { inspectProvider, type ProviderRuntimeOutput } from "./configured-runtime.ts";
+import { inspectProvider, loadConfiguredModelRuntime, type ProviderRuntimeOutput } from "./configured-runtime.ts";
 import { createDocumentationEvalHarness } from "../src/harness.ts";
 
 const server = createAcmeServer("openai");
@@ -34,8 +34,8 @@ const expected: ProviderRuntimeOutput = {
 };
 
 const harness = createDocumentationEvalHarness({
-	output: ({ session }) =>
-		inspectProvider(session.modelRuntime, {
+	output: async ({ agentDir }) =>
+		inspectProvider(await loadConfiguredModelRuntime(agentDir), {
 			providerId: OPENAI_PROVIDER_ID,
 			modelId: OPENAI_MODEL_ID,
 			createContext: () => ({

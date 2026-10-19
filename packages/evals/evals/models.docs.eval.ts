@@ -1,5 +1,5 @@
 import { describeEval, StructuredOutputJudge } from "vitest-evals";
-import { inspectAddedModel, type AddedModelOutput } from "./configured-runtime.ts";
+import { inspectAddedModel, loadConfiguredModelRuntime, type AddedModelOutput } from "./configured-runtime.ts";
 import { createDocumentationEvalHarness } from "../src/harness.ts";
 
 const PROVIDER_ID = "openai";
@@ -23,7 +23,7 @@ const expected: AddedModelOutput = {
 };
 
 const harness = createDocumentationEvalHarness({
-	output: ({ session }) => inspectAddedModel(session.modelRuntime, PROVIDER_ID, MODEL_ID),
+	output: async ({ agentDir }) => inspectAddedModel(await loadConfiguredModelRuntime(agentDir), PROVIDER_ID, MODEL_ID),
 });
 const judge = StructuredOutputJudge({ expected, match: "strict", allowExtras: false });
 

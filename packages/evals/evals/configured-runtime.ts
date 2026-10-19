@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { type Api, type Context, contentText, type Model, type ModelsSimpleStreamOptions } from "@amazme/ai";
-import { ModelRuntime } from "@amazme/coding-agent";
+import { discoverAndLoadExtensions, ModelRuntime } from "@amazme/coding-agent";
 
 type ModelFields = {
 	id: string;
@@ -60,6 +60,36 @@ export function loadConfiguredModelRuntime(agentDir: string): Promise<ModelRunti
 		modelsStorePath: join(agentDir, "models-store.json"),
 		allowModelNetwork: false,
 	});
+}
+
+export async function inspectConfiguredProvider(
+	agentDir: string,
+	scenario: ProviderScenario,
+): Promise<ProviderRuntimeOutput> {
+	// Scope both discovery roots to this eval, never the host cwd or personal agent directory.
+	const extensions = await discoverAndLoadExtensions([], agentDir, agentDir);
+	try {
+		if (extensions.errors.length > 0) {
+			return {
+				result: {
+					error: extensions.errors.map(({ path, error }) => `${path}: ${error}`).join("\n"),
+				},
+			};
+		}
+		const runtime = await loadConfiguredModelRuntime(agentDir);
+		// Match ExtensionRunner's registration order when binding its model runtime.
+		for (const { name, config } of extensions.runtime.pendingProviderRegistrations) {
+			runtime.registerProvider(name, config);
+		}
+		for (const { provider } of extensions.runtime.pendingNativeProviderRegistrations) {
+			runtime.registerNativeProvider(provider);
+		}
+		return await inspectProvider(runtime, scenario);
+	} catch (error) {
+		return { result: { error: error instanceof Error ? error.message : String(error) } };
+	} finally {
+		extensions.runtime.invalidate();
+	}
 }
 
 export async function inspectProvider(

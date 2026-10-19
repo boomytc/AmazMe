@@ -7,6 +7,7 @@ import { performance } from "node:perf_hooks";
 import { contentText, InMemoryCredentialStore, type AssistantMessage, type Message } from "@amazme/ai";
 import { getCurrentSystemPrompt } from "@amazme/ai/utils/transcript";
 import {
+	buildSystemPrompt,
 	createDurableSession,
 	type DurableSession,
 	getAgentDir,
@@ -27,7 +28,6 @@ import {
 	type UsageSummary,
 } from "vitest-evals/harness";
 import type { DocumentationVariant } from "./plan.ts";
-import { buildSystemPrompt } from "../../coding-agent/src/core/system-prompt.ts";
 import { AMAZME_SESSION_SNAPSHOT_ARTIFACT } from "./report.ts";
 
 type RunDiagnostics = {

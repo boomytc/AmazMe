@@ -1,7 +1,6 @@
 import { homedir } from "node:os";
-import { getDocsPath, getExamplesPath, getReadmePath } from "@amazme/coding-agent";
+import { buildSystemPrompt, getDocsPath, getExamplesPath, getReadmePath } from "@amazme/coding-agent";
 import { describe, expect, it, vi } from "vitest";
-import { buildSystemPrompt } from "../../coding-agent/src/core/system-prompt.ts";
 import {
 	applyIsolatedEnvironment,
 	createDocumentationEvalHarness,
