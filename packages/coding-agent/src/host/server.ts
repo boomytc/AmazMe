@@ -23,7 +23,7 @@ import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
 import { createCodingSettings } from "../durable/harness-setup.ts";
 import { ProjectTrustStore } from "../core/trust-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
-import { closeAfterSignal } from "../utils/shutdown-signals.ts";
+import { closeWhenSignaled } from "../utils/shutdown-signals.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
 import {
 	assertConnectableUnixSocketPath,
@@ -1027,29 +1027,6 @@ function parseServerModelOptions(value: string | undefined): { provider?: string
 	return provider === undefined ? { model } : { provider, model };
 }
 
-/**
- * Close after SIGINT or SIGTERM.
- *
- * The listener stays installed. `process.once` removes it as soon as the signal
- * arrives, and `signal-exit` (loaded by proper-lockfile) then re-sends SIGTERM
- * and kills the process before socket cleanup. Removing the listener after
- * `close` leaves the same window. Callers exit immediately after this returns:
- * once the loop drains, Node drops the signal watchers and restores the default
- * action, and a SIGTERM in that gap becomes the process's death signal.
- *
- * A second SIGINT while `close` is still running force-exits. A second SIGTERM
- * does not: that is the re-send described above.
- *
- * `arm` is required and runs once the listeners are installed; readiness lines print there.
- */
-export async function closeWhenSignaled(
-	closed: Promise<void>,
-	close: () => Promise<void>,
-	arm: (finish: () => void) => void,
-): Promise<void> {
-	await closeAfterSignal(closed, close, arm);
-}
-
 /** Run an automatically activated server until its client and Session demand disappears. */
 export async function runServerProcess(args: readonly string[]): Promise<void> {
 	const [directory, serverId, sessionDir, serializedModel] = args;
@@ -1060,14 +1037,18 @@ export async function runServerProcess(args: readonly string[]): Promise<void> {
 		throw new Error("Internal server requires an absolute Session directory");
 	const workerModel = parseServerModelOptions(serializedModel);
 
-	const runtime = await startServer({
-		directory,
-		serverId,
-		sessionDir,
-		keepAlive: false,
-		...workerModel });
-	// An activated server prints no readiness line; its clients wait on the socket instead.
-	await closeWhenSignaled(runtime.closed, () => runtime.close(), () => {});
+	// The signal listeners go up before `startServer` binds its socket, so a SIGTERM during startup
+	// still unlinks it. An activated server prints no readiness line; its clients wait on the socket.
+	await closeWhenSignaled(
+		() =>
+			startServer({
+				directory,
+				serverId,
+				sessionDir,
+				keepAlive: false,
+				...workerModel }),
+		() => {},
+	);
 	process.exit(process.exitCode ?? 0);
 }
 
