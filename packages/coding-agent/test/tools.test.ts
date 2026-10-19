@@ -473,7 +473,7 @@ describe("Coding Agent Tools", () => {
 			const testFile = join(testDir, "offline.txt");
 			writeFileSync(testFile, "hello\n");
 			await readTool.execute("observe-offline", { path: testFile });
-			const fileSystem = new NodeExecutionEnv({ cwd: testDir });
+			const fileSystem = new NodeExecutionEnv({ cwd: testDir, artifactDirectory: testDir });
 			vi.spyOn(fileSystem, "writeFileChecked").mockResolvedValue(err(new FileError("unknown", "disk offline")));
 			const tool = createEditTool(testDir, { fileSystem, observations });
 			await expect(tool.execute("offline-edit", { path: testFile, edits: [{ oldText: "hello", newText: "world" }] })).rejects.toThrow("disk offline");

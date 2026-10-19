@@ -1,9 +1,16 @@
-import { copyJson } from "@amazme/chord";
+import { randomBytes } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { JsonValue } from "@amazme/chord";
+import { copyJson } from "@amazme/chord";
 import { withAbortSignal } from "@amazme/chord/context";
-import { CODEMODE_SOURCE_GRAMMAR, MAX_STORE_TOTAL_CHARS } from "@amazme/codemode";
-import { defineDoc, defineExtension, defineTool } from "@amazme/durable";
+import {
+	CODEMODE_SOURCE_GRAMMAR,
+	MAX_STORE_TOTAL_CHARS,
+} from "@amazme/codemode";
 import type { ToolRegistration } from "@amazme/durable";
+import { defineDoc, defineExtension, defineTool } from "@amazme/durable";
+import { createToolSearchTool } from "@amazme/durable/tool-search";
 import { Type } from "typebox";
 import {
 	CODEMODE_TOOL_NAME,
@@ -14,7 +21,6 @@ import {
 } from "../core/codemode/declarations.ts";
 import type { CodemodeHost } from "../core/codemode/types.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
-import { createToolSearchTool } from "@amazme/durable/tool-search";
 
 const ImageOutput = Type.Object({
 	type: Type.Literal("image"),
@@ -24,7 +30,12 @@ const ImageOutput = Type.Object({
 const DefaultOutput = Type.Union([
 	Type.String(),
 	ImageOutput,
-	Type.Array(Type.Union([Type.Object({ type: Type.Literal("text"), text: Type.String() }), ImageOutput])),
+	Type.Array(
+		Type.Union([
+			Type.Object({ type: Type.Literal("text"), text: Type.String() }),
+			ImageOutput,
+		]),
+	),
 ]);
 
 /** Declare the values native nested calls return, without adding a second schema to the registration. */
@@ -78,8 +89,14 @@ export function createDurableCodemode(settings: SettingsManager) {
 					),
 				async execute(input, api, context) {
 					const agent = await api.agent(context);
-					const tools = getCodemodeCallableTools(agent.callable).map(scriptTool);
-					const store = await api.snapshot(CodemodeStoreDoc, api.conversationId, context);
+					const tools = getCodemodeCallableTools(agent.callable).map(
+						scriptTool,
+					);
+					const store = await api.snapshot(
+						CodemodeStoreDoc,
+						api.conversationId,
+						context,
+					);
 					let calls = 0;
 					const host: CodemodeHost = {
 						tools,
@@ -87,11 +104,21 @@ export function createDurableCodemode(settings: SettingsManager) {
 						store: store?.values,
 						executeTool: async (name, args, signal) => {
 							const parameters = copyJson(args);
-							if (parameters === null || typeof parameters !== "object" || Array.isArray(parameters))
+							if (
+								parameters === null ||
+								typeof parameters !== "object" ||
+								Array.isArray(parameters)
+							)
 								throw new TypeError("Tool arguments must be a JSON object");
 							const id = `${api.callId}/${++calls}`;
-							const result = await api.executeTool(name, parameters, withAbortSignal(signal, context));
-							const diagnostics = result.isError ? (result.diagnostics ?? []) : [];
+							const result = await api.executeTool(
+								name,
+								parameters,
+								withAbortSignal(signal, context),
+							);
+							const diagnostics = result.isError
+								? (result.diagnostics ?? [])
+								: [];
 							return {
 								toolCall: { id },
 								result: {
@@ -103,7 +130,8 @@ export function createDurableCodemode(settings: SettingsManager) {
 									],
 									value:
 										result.isError &&
-										agent.callable.find((tool) => tool.name === name)?.structuredOutputSchema === undefined
+										agent.callable.find((tool) => tool.name === name)
+											?.structuredOutputSchema === undefined
 											? undefined
 											: result.structuredOutput,
 								},
@@ -112,10 +140,14 @@ export function createDurableCodemode(settings: SettingsManager) {
 						},
 						saveStore: async (writes) => {
 							await api.commit(async (tx) => {
-								const state = await tx.doc(CodemodeStoreDoc, api.conversationId);
+								const state = await tx.doc(
+									CodemodeStoreDoc,
+									api.conversationId,
+								);
 								const values = new Map(Object.entries(state.values));
 								for (const key of writes.delete) values.delete(key);
-								for (const [key, value] of Object.entries(writes.set)) values.set(key, copyJson(value));
+								for (const [key, value] of Object.entries(writes.set))
+									values.set(key, copyJson(value));
 								const next = Object.fromEntries(values);
 								if (JSON.stringify(next).length > MAX_STORE_TOTAL_CHARS)
 									throw new Error("Codemode store exceeds its size limit");
@@ -123,17 +155,43 @@ export function createDurableCodemode(settings: SettingsManager) {
 							}, context);
 						},
 					};
-					const result = await (await import("../core/codemode/execute.ts")).executeCodemode(
+					const artifactDirectory = api.env?.artifactDirectory;
+					const result = await (
+						await import("../core/codemode/execute.ts")
+					).executeCodemode(
 						api.callId,
 						input,
 						context.abortSignal,
 						(progress) => {
-							void api.details(copyJson(progress.details), context).catch(() => {});
+							void api
+								.details(copyJson(progress.details), context)
+								.catch(() => {});
 						},
 						host,
 						{
-							getToolNamespace: (name) => tools.find((tool) => tool.name === name)?.namespace,
-							getToolGuidelines: () => new Map(tools.map((tool) => [tool.name, tool.promptGuidelines ?? []])),
+							getToolNamespace: (name) =>
+								tools.find((tool) => tool.name === name)?.namespace,
+							getToolGuidelines: () =>
+								new Map(
+									tools.map((tool) => [tool.name, tool.promptGuidelines ?? []]),
+								),
+							...(artifactDirectory === undefined
+								? {}
+								: {
+										writeOutput: async (prefix, extension, data) => {
+											const directory = join(
+												artifactDirectory,
+												`codemode-${api.taskId}`,
+											);
+											await mkdir(directory, { recursive: true, mode: 0o700 });
+											const path = join(
+												directory,
+												`${prefix}-${randomBytes(8).toString("hex")}${extension}`,
+											);
+											await writeFile(path, data, { mode: 0o600, flag: "wx" });
+											return path;
+										},
+									}),
 						},
 					);
 					return {

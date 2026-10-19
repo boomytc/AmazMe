@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { unlink } from "node:fs/promises";
+import { lstat, rm, unlink } from "node:fs/promises";
 import * as os from "node:os";
+import { basename, dirname, join } from "node:path";
 import {
 	type Component,
 	Container,
@@ -13,13 +14,21 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@amazme/tui";
+import type {
+	SessionInfo,
+	SessionListProgress,
+} from "../../../core/jsonl-transcript.ts";
 import { KeybindingsManager } from "../../../core/keybindings.ts";
-import type { SessionInfo, SessionListProgress } from "../../../core/jsonl-transcript.ts";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
-import { filterAndSortSessions, hasSessionName, type NameFilter, type SortMode } from "./session-selector-search.ts";
+import {
+	filterAndSortSessions,
+	hasSessionName,
+	type NameFilter,
+	type SortMode,
+} from "./session-selector-search.ts";
 
 type SessionScope = "current" | "all";
 
@@ -59,14 +68,21 @@ class SessionSelectorHeader implements Component {
 	private nameFilter: NameFilter;
 	private requestRender: () => void;
 	private loading = false;
-	private loadProgress: { loaded: number; total: number | undefined } | null = null;
+	private loadProgress: { loaded: number; total: number | undefined } | null =
+		null;
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
-	private statusMessage: { type: "info" | "error"; message: string } | null = null;
+	private statusMessage: { type: "info" | "error"; message: string } | null =
+		null;
 	private statusTimeout: ReturnType<typeof setTimeout> | null = null;
 	private showRenameHint = false;
 
-	constructor(scope: SessionScope, sortMode: SortMode, nameFilter: NameFilter, requestRender: () => void) {
+	constructor(
+		scope: SessionScope,
+		sortMode: SortMode,
+		nameFilter: NameFilter,
+		requestRender: () => void,
+	) {
 		this.scope = scope;
 		this.sortMode = sortMode;
 		this.nameFilter = nameFilter;
@@ -113,7 +129,10 @@ class SessionSelectorHeader implements Component {
 		this.statusTimeout = null;
 	}
 
-	setStatusMessage(msg: { type: "info" | "error"; message: string } | null, autoHideMs?: number): void {
+	setStatusMessage(
+		msg: { type: "info" | "error"; message: string } | null,
+		autoHideMs?: number,
+	): void {
 		this.clearStatusTimeout();
 		this.statusMessage = msg;
 		if (!msg || !autoHideMs) return;
@@ -128,14 +147,24 @@ class SessionSelectorHeader implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const title = this.scope === "current" ? "Resume Session (Current Folder)" : "Resume Session (All)";
+		const title =
+			this.scope === "current"
+				? "Resume Session (Current Folder)"
+				: "Resume Session (All)";
 		const leftText = theme.bold(title);
 
-		const sortLabel = this.sortMode === "threaded" ? "Threaded" : this.sortMode === "recent" ? "Recent" : "Fuzzy";
-		const sortText = theme.fg("muted", "Sort: ") + theme.fg("accent", sortLabel);
+		const sortLabel =
+			this.sortMode === "threaded"
+				? "Threaded"
+				: this.sortMode === "recent"
+					? "Recent"
+					: "Fuzzy";
+		const sortText =
+			theme.fg("muted", "Sort: ") + theme.fg("accent", sortLabel);
 
 		const nameLabel = this.nameFilter === "all" ? "All" : "Named";
-		const nameText = theme.fg("muted", "Name: ") + theme.fg("accent", nameLabel);
+		const nameText =
+			theme.fg("muted", "Name: ") + theme.fg("accent", nameLabel);
 
 		let scopeText: string;
 		if (this.loading) {
@@ -151,10 +180,17 @@ class SessionSelectorHeader implements Component {
 			scopeText = `${theme.fg("muted", "○ Current Folder | ")}${theme.fg("accent", "◉ All")}`;
 		}
 
-		const rightText = truncateToWidth(`${scopeText}  ${nameText}  ${sortText}`, width, "");
+		const rightText = truncateToWidth(
+			`${scopeText}  ${nameText}  ${sortText}`,
+			width,
+			"",
+		);
 		const availableLeft = Math.max(0, width - visibleWidth(rightText) - 1);
 		const left = truncateToWidth(leftText, availableLeft, "");
-		const spacing = Math.max(0, width - visibleWidth(left) - visibleWidth(rightText));
+		const spacing = Math.max(
+			0,
+			width - visibleWidth(left) - visibleWidth(rightText),
+		);
 
 		// Build hint lines - changes based on state (all branches truncate to width)
 		let hintLine1: string;
@@ -165,13 +201,18 @@ class SessionSelectorHeader implements Component {
 			hintLine2 = "";
 		} else if (this.statusMessage) {
 			const color = this.statusMessage.type === "error" ? "error" : "accent";
-			hintLine1 = theme.fg(color, truncateToWidth(this.statusMessage.message, width, "…"));
+			hintLine1 = theme.fg(
+				color,
+				truncateToWidth(this.statusMessage.message, width, "…"),
+			);
 			hintLine2 = "";
 		} else {
 			const pathState = this.showPath ? "(on)" : "(off)";
 			const sep = theme.fg("muted", " · ");
 			const hint1 =
-				keyHint("tui.input.tab", "scope") + sep + theme.fg("muted", 're:<pattern> regex · "phrase" exact');
+				keyHint("tui.input.tab", "scope") +
+				sep +
+				theme.fg("muted", 're:<pattern> regex · "phrase" exact');
 			const hint2Parts = [
 				keyHint("app.session.toggleSort", "sort"),
 				keyHint("app.session.toggleNamedFilter", "named"),
@@ -215,7 +256,11 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 
 	for (const session of sessions) {
 		const sessionPath = canonicalizePath(session.path) ?? session.path;
-		byPath.set(sessionPath, { session, children: [], latestActivity: session.modified.getTime() });
+		byPath.set(sessionPath, {
+			session,
+			children: [],
+			latestActivity: session.modified.getTime(),
+		});
 	}
 
 	const roots: SessionTreeNode[] = [];
@@ -263,14 +308,24 @@ function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
 function flattenSessionTree(roots: SessionTreeNode[]): FlatSessionNode[] {
 	const result: FlatSessionNode[] = [];
 
-	const walk = (node: SessionTreeNode, depth: number, ancestorContinues: boolean[], isLast: boolean): void => {
+	const walk = (
+		node: SessionTreeNode,
+		depth: number,
+		ancestorContinues: boolean[],
+		isLast: boolean,
+	): void => {
 		result.push({ session: node.session, depth, isLast, ancestorContinues });
 
 		for (let i = 0; i < node.children.length; i++) {
 			const childIsLast = i === node.children.length - 1;
 			// Only show continuation line for non-root ancestors
 			const continues = depth > 0 ? !isLast : false;
-			walk(node.children[i]!, depth + 1, [...ancestorContinues, continues], childIsLast);
+			walk(
+				node.children[i]!,
+				depth + 1,
+				[...ancestorContinues, continues],
+				childIsLast,
+			);
 		}
 	};
 
@@ -364,14 +419,18 @@ class SessionList implements Component, Focusable {
 	}
 
 	setSessions(sessions: SessionInfo[], showCwd: boolean): void {
-		const selectedPath = this.selectionTouched ? this.getSelectedSessionPath() : undefined;
+		const selectedPath = this.selectionTouched
+			? this.getSelectedSessionPath()
+			: undefined;
 		this.allSessions = sessions;
 		this.showCwd = showCwd;
 		this.filterSessions(this.searchInput.getValue());
 		if (!this.selectionTouched) {
 			this.selectedIndex = 0;
 		} else if (selectedPath) {
-			const selectedIndex = this.filteredSessions.findIndex((node) => node.session.path === selectedPath);
+			const selectedIndex = this.filteredSessions.findIndex(
+				(node) => node.session.path === selectedPath,
+			);
 			if (selectedIndex >= 0) this.selectedIndex = selectedIndex;
 		}
 	}
@@ -379,7 +438,9 @@ class SessionList implements Component, Focusable {
 	private filterSessions(query: string): void {
 		const trimmed = query.trim();
 		const nameFiltered =
-			this.nameFilter === "all" ? this.allSessions : this.allSessions.filter((session) => hasSessionName(session));
+			this.nameFilter === "all"
+				? this.allSessions
+				: this.allSessions.filter((session) => hasSessionName(session));
 
 		if (this.sortMode === "threaded" && !trimmed) {
 			// Threaded mode without search: show tree structure
@@ -387,7 +448,12 @@ class SessionList implements Component, Focusable {
 			this.filteredSessions = flattenSessionTree(roots);
 		} else {
 			// Other modes or with search: flat list
-			const filtered = filterAndSortSessions(nameFiltered, query, this.sortMode, "all");
+			const filtered = filterAndSortSessions(
+				nameFiltered,
+				query,
+				this.sortMode,
+				"all",
+			);
 			this.filteredSessions = filtered.map((session) => ({
 				session,
 				depth: 0,
@@ -395,7 +461,10 @@ class SessionList implements Component, Focusable {
 				ancestorContinues: [],
 			}));
 		}
-		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredSessions.length - 1));
+		this.selectedIndex = Math.min(
+			this.selectedIndex,
+			Math.max(0, this.filteredSessions.length - 1),
+		);
 	}
 
 	private setConfirmingDeletePath(path: string | null): void {
@@ -418,7 +487,9 @@ class SessionList implements Component, Focusable {
 
 	private isCurrentSessionPath(path: string): boolean {
 		if (!this.currentSessionCanonicalPath) return false;
-		return (canonicalizePath(path) ?? path) === this.currentSessionCanonicalPath;
+		return (
+			(canonicalizePath(path) ?? path) === this.currentSessionCanonicalPath
+		);
 	}
 
 	invalidate(): void {}
@@ -444,7 +515,8 @@ class SessionList implements Component, Focusable {
 				emptyMessage = "  No sessions found";
 			} else {
 				// "Current folder" scope - hint to try "all"
-				emptyMessage = "  No sessions in current folder. Press Tab to view all.";
+				emptyMessage =
+					"  No sessions in current folder. Press Tab to view all.";
 			}
 			lines.push(theme.fg("muted", truncateToWidth(emptyMessage, width, "…")));
 			return lines;
@@ -453,9 +525,15 @@ class SessionList implements Component, Focusable {
 		// Calculate visible range with scrolling
 		const startIndex = Math.max(
 			0,
-			Math.min(this.selectedIndex - Math.floor(this.maxVisible / 2), this.filteredSessions.length - this.maxVisible),
+			Math.min(
+				this.selectedIndex - Math.floor(this.maxVisible / 2),
+				this.filteredSessions.length - this.maxVisible,
+			),
 		);
-		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredSessions.length);
+		const endIndex = Math.min(
+			startIndex + this.maxVisible,
+			this.filteredSessions.length,
+		);
 
 		// Render visible sessions (one line each with tree structure)
 		for (let i = startIndex; i < endIndex; i++) {
@@ -471,7 +549,9 @@ class SessionList implements Component, Focusable {
 			// Session display text (name or first message)
 			const hasName = !!session.name;
 			const displayText = session.name ?? session.firstMessage;
-			const normalizedMessage = displayText.replace(/[\x00-\x1f\x7f]/g, " ").trim();
+			const normalizedMessage = displayText
+				.replace(/[\x00-\x1f\x7f]/g, " ")
+				.trim();
 
 			// Right side: message count and age
 			const age = formatSessionDate(session.modified);
@@ -492,7 +572,11 @@ class SessionList implements Component, Focusable {
 			const rightWidth = visibleWidth(rightPart) + 2; // +2 for spacing
 			const availableForMsg = width - 2 - prefixWidth - rightWidth; // -2 for cursor
 
-			const truncatedMsg = truncateToWidth(normalizedMessage, Math.max(10, availableForMsg), "…");
+			const truncatedMsg = truncateToWidth(
+				normalizedMessage,
+				Math.max(10, availableForMsg),
+				"…",
+			);
 
 			// Style message
 			let messageColor: "error" | "warning" | "accent" | null = null;
@@ -503,7 +587,9 @@ class SessionList implements Component, Focusable {
 			} else if (hasName) {
 				messageColor = "warning";
 			}
-			let styledMsg = messageColor ? theme.fg(messageColor, truncatedMsg) : truncatedMsg;
+			let styledMsg = messageColor
+				? theme.fg(messageColor, truncatedMsg)
+				: truncatedMsg;
 			if (isSelected) {
 				styledMsg = theme.bold(styledMsg);
 			}
@@ -512,7 +598,10 @@ class SessionList implements Component, Focusable {
 			const leftPart = cursor + theme.fg("dim", prefix) + styledMsg;
 			const leftWidth = visibleWidth(leftPart);
 			const spacing = Math.max(1, width - leftWidth - visibleWidth(rightPart));
-			const styledRight = theme.fg(isConfirmingDelete ? "error" : "dim", rightPart);
+			const styledRight = theme.fg(
+				isConfirmingDelete ? "error" : "dim",
+				rightPart,
+			);
 
 			let line = leftPart + " ".repeat(spacing) + styledRight;
 			if (isSelected) {
@@ -524,7 +613,10 @@ class SessionList implements Component, Focusable {
 		// Add scroll indicator if needed
 		if (startIndex > 0 || endIndex < this.filteredSessions.length) {
 			const scrollText = `  (${this.selectedIndex + 1}/${this.filteredSessions.length})`;
-			const scrollInfo = theme.fg("muted", truncateToWidth(scrollText, width, ""));
+			const scrollInfo = theme.fg(
+				"muted",
+				truncateToWidth(scrollText, width, ""),
+			);
 			lines.push(scrollInfo);
 		}
 
@@ -536,7 +628,9 @@ class SessionList implements Component, Focusable {
 			return "";
 		}
 
-		const parts = node.ancestorContinues.map((continues) => (continues ? "│  " : "   "));
+		const parts = node.ancestorContinues.map((continues) =>
+			continues ? "│  " : "   ",
+		);
 		const branch = node.isLast ? "└─ " : "├─ ";
 		return parts.join("") + branch;
 	}
@@ -619,7 +713,10 @@ class SessionList implements Component, Focusable {
 		}
 		// Down arrow
 		else if (kb.matches(keyData, "tui.select.down")) {
-			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + 1);
+			this.selectedIndex = Math.min(
+				this.filteredSessions.length - 1,
+				this.selectedIndex + 1,
+			);
 		}
 		// Page up - jump up by maxVisible items
 		else if (kb.matches(keyData, "tui.select.pageUp")) {
@@ -627,7 +724,10 @@ class SessionList implements Component, Focusable {
 		}
 		// Page down - jump down by maxVisible items
 		else if (kb.matches(keyData, "tui.select.pageDown")) {
-			this.selectedIndex = Math.min(this.filteredSessions.length - 1, this.selectedIndex + this.maxVisible);
+			this.selectedIndex = Math.min(
+				this.filteredSessions.length - 1,
+				this.selectedIndex + this.maxVisible,
+			);
 		}
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {
@@ -650,16 +750,49 @@ class SessionList implements Component, Focusable {
 	}
 }
 
-type SessionsLoader = (onProgress?: SessionListProgress, signal?: AbortSignal) => Promise<SessionInfo[]>;
+type SessionsLoader = (
+	onProgress?: SessionListProgress,
+	signal?: AbortSignal,
+) => Promise<SessionInfo[]>;
 
 /**
- * Delete a session file, trying the `trash` CLI first, then falling back to unlink
+ * Resolve a listed session path to the unit that must disappear with the session.
+ * Durable sessions store `session.sqlite` next to `artifacts/`; deleting only the
+ * database would leave tool output behind, so the whole session directory goes.
+ * Legacy JSONL transcripts remain single-file deletes.
+ */
+/** @internal Exported for tests: durable session.sqlite paths delete the whole session directory. */
+export async function resolveSessionDeletionTarget(
+	sessionPath: string,
+): Promise<string> {
+	try {
+		const info = await lstat(sessionPath);
+		if (info.isDirectory()) {
+			try {
+				await lstat(join(sessionPath, "session.sqlite"));
+				return sessionPath;
+			} catch {
+				return sessionPath;
+			}
+		}
+		if (info.isFile() && basename(sessionPath) === "session.sqlite") {
+			return dirname(sessionPath);
+		}
+	} catch {
+		// Missing path: still try to trash/unlink the given path.
+	}
+	return sessionPath;
+}
+
+/**
+ * Delete a session file or Durable session directory, trying `trash` first, then a permanent remove.
  */
 async function deleteSessionFile(
 	sessionPath: string,
 ): Promise<{ ok: boolean; method: "trash" | "unlink"; error?: string }> {
+	const target = await resolveSessionDeletionTarget(sessionPath);
 	// Try `trash` first (if installed)
-	const trashArgs = sessionPath.startsWith("-") ? ["--", sessionPath] : [sessionPath];
+	const trashArgs = target.startsWith("-") ? ["--", target] : [target];
 	const trashResult = spawnSync("trash", trashArgs, { encoding: "utf-8" });
 
 	const getTrashErrorHint = (): string | null => {
@@ -675,19 +808,26 @@ async function deleteSessionFile(
 		return `trash: ${parts.join(" · ").slice(0, 200)}`;
 	};
 
-	// If trash reports success, or the file is gone afterwards, treat it as successful
-	if (trashResult.status === 0 || !existsSync(sessionPath)) {
+	// If trash reports success, or the path is gone afterwards, treat it as successful
+	if (trashResult.status === 0 || !existsSync(target)) {
 		return { ok: true, method: "trash" };
 	}
 
 	// Fallback to permanent deletion
 	try {
-		await unlink(sessionPath);
+		const info = await lstat(target).catch(() => undefined);
+		if (info?.isDirectory()) {
+			await rm(target, { recursive: true, force: true });
+		} else {
+			await unlink(target);
+		}
 		return { ok: true, method: "unlink" };
 	} catch (err) {
 		const unlinkError = err instanceof Error ? err.message : String(err);
 		const trashErrorHint = getTrashErrorHint();
-		const error = trashErrorHint ? `${unlinkError} (${trashErrorHint})` : unlinkError;
+		const error = trashErrorHint
+			? `${unlinkError} (${trashErrorHint})`
+			: unlinkError;
 		return { ok: false, method: "unlink", error };
 	}
 }
@@ -722,7 +862,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private currentSessionsLoader: SessionsLoader;
 	private allSessionsLoader: SessionsLoader;
 	private requestRender: () => void;
-	private renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
+	private renameSession?: (
+		sessionPath: string,
+		currentName: string | undefined,
+	) => Promise<void>;
 	private currentLoad: AbortController | null = null;
 	private allLoad: AbortController | null = null;
 
@@ -744,7 +887,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	private buildBaseLayout(content: Component, options?: { showHeader?: boolean }): void {
+	private buildBaseLayout(
+		content: Component,
+		options?: { showHeader?: boolean },
+	): void {
 		this.clear();
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder((s) => theme.fg("accent", s)));
@@ -766,7 +912,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		onExit: () => void,
 		requestRender: () => void,
 		options?: {
-			renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
+			renameSession?: (
+				sessionPath: string,
+				currentName: string | undefined,
+			) => Promise<void>;
 			showRenameHint?: boolean;
 			keybindings?: KeybindingsManager;
 		},
@@ -777,7 +926,12 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.currentSessionsLoader = currentSessionsLoader;
 		this.allSessionsLoader = allSessionsLoader;
 		this.requestRender = requestRender;
-		this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.nameFilter, this.requestRender);
+		this.header = new SessionSelectorHeader(
+			this.scope,
+			this.sortMode,
+			this.nameFilter,
+			this.requestRender,
+		);
 		const renameSession = options?.renameSession;
 		this.renameSession = renameSession;
 		this.canRename = !!renameSession;
@@ -823,7 +977,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			if (!renameSession) return;
 			if (this.scope === "current" ? this.currentLoad : this.allLoad) return;
 
-			const sessions = this.scope === "all" ? (this.allSessions ?? []) : (this.currentSessions ?? []);
+			const sessions =
+				this.scope === "all"
+					? (this.allSessions ?? [])
+					: (this.currentSessions ?? []);
 			const session = sessions.find((s) => s.path === sessionPath);
 			this.enterRenameMode(sessionPath, session?.name);
 		};
@@ -848,22 +1005,35 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 			if (result.ok) {
 				if (this.currentSessions) {
-					this.currentSessions = this.currentSessions.filter((s) => s.path !== sessionPath);
+					this.currentSessions = this.currentSessions.filter(
+						(s) => s.path !== sessionPath,
+					);
 				}
 				if (this.allSessions) {
-					this.allSessions = this.allSessions.filter((s) => s.path !== sessionPath);
+					this.allSessions = this.allSessions.filter(
+						(s) => s.path !== sessionPath,
+					);
 				}
 
-				const sessions = this.scope === "all" ? (this.allSessions ?? []) : (this.currentSessions ?? []);
+				const sessions =
+					this.scope === "all"
+						? (this.allSessions ?? [])
+						: (this.currentSessions ?? []);
 				const showCwd = this.scope === "all";
 				this.sessionList.setSessions(sessions, showCwd);
 
-				const msg = result.method === "trash" ? "Session moved to trash" : "Session deleted";
+				const msg =
+					result.method === "trash"
+						? "Session moved to trash"
+						: "Session deleted";
 				this.header.setStatusMessage({ type: "info", message: msg }, 2000);
 				await this.refreshSessionsAfterMutation();
 			} else {
 				const errorMessage = result.error ?? "Unknown error";
-				this.header.setStatusMessage({ type: "error", message: `Failed to delete: ${errorMessage}` }, 3000);
+				this.header.setStatusMessage(
+					{ type: "error", message: `Failed to delete: ${errorMessage}` },
+					3000,
+				);
 			}
 
 			this.requestRender();
@@ -886,7 +1056,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		}
 	}
 
-	private enterRenameMode(sessionPath: string, currentName: string | undefined): void {
+	private enterRenameMode(
+		sessionPath: string,
+		currentName: string | undefined,
+	): void {
 		this.mode = "rename";
 		this.renameTargetPath = sessionPath;
 		this.renameInput.setValue(currentName ?? "");
@@ -899,7 +1072,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		panel.addChild(new Spacer(1));
 		panel.addChild(
 			new Text(
-				theme.fg("muted", `${keyText("tui.select.confirm")} to save · ${keyText("tui.select.cancel")} to cancel`),
+				theme.fg(
+					"muted",
+					`${keyText("tui.select.confirm")} to save · ${keyText("tui.select.cancel")} to cancel`,
+				),
 				1,
 				0,
 			),
@@ -956,8 +1132,13 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.header.setLoading(true);
 		this.requestRender();
 
-		const isActive = () => (scope === "current" ? this.currentLoad : this.allLoad) === controller;
-		const onProgress: SessionListProgress = (loaded, total, partialSessions) => {
+		const isActive = () =>
+			(scope === "current" ? this.currentLoad : this.allLoad) === controller;
+		const onProgress: SessionListProgress = (
+			loaded,
+			total,
+			partialSessions,
+		) => {
 			if (!isActive()) return;
 			if (partialSessions) {
 				const sessions = [...partialSessions];
@@ -966,7 +1147,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 				} else {
 					this.allSessions = sessions;
 				}
-				if (scope === this.scope) this.sessionList.setSessions(sessions, showCwd);
+				if (scope === this.scope)
+					this.sessionList.setSessions(sessions, showCwd);
 			}
 			if (scope !== this.scope) return;
 			this.header.setProgress(loaded, total);
@@ -1004,7 +1186,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 			const message = err instanceof Error ? err.message : String(err);
 			this.header.setLoading(false);
-			this.header.setStatusMessage({ type: "error", message: `Failed to load sessions: ${message}` }, 4000);
+			this.header.setStatusMessage(
+				{ type: "error", message: `Failed to load sessions: ${message}` },
+				4000,
+			);
 			this.sessionList.setSessions([], showCwd);
 			this.requestRender();
 		}
@@ -1012,7 +1197,12 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 	private toggleSortMode(): void {
 		// Cycle: threaded -> recent -> relevance -> threaded
-		this.sortMode = this.sortMode === "threaded" ? "recent" : this.sortMode === "recent" ? "relevance" : "threaded";
+		this.sortMode =
+			this.sortMode === "threaded"
+				? "recent"
+				: this.sortMode === "recent"
+					? "relevance"
+					: "threaded";
 		this.header.setSortMode(this.sortMode);
 		this.sessionList.setSortMode(this.sortMode);
 		this.requestRender();
@@ -1034,8 +1224,10 @@ export class SessionSelectorComponent extends Container implements Focusable {
 
 	private toggleScope(): void {
 		this.scope = this.scope === "current" ? "all" : "current";
-		const sessions = this.scope === "current" ? this.currentSessions : this.allSessions;
-		const loading = (this.scope === "current" ? this.currentLoad : this.allLoad) !== null;
+		const sessions =
+			this.scope === "current" ? this.currentSessions : this.allSessions;
+		const loading =
+			(this.scope === "current" ? this.currentLoad : this.allLoad) !== null;
 		this.header.setScope(this.scope);
 		this.header.setLoading(loading);
 		this.sessionList.setSessions(sessions ?? [], this.scope === "all");

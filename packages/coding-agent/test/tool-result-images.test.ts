@@ -277,7 +277,7 @@ describe("coding registry tool-result image hook", () => {
 				),
 			);
 		};
-		const options = { models, registry, env: () => new NodeExecutionEnv({ cwd: directory }) };
+		const options = { models, registry, env: () => new NodeExecutionEnv({ cwd: directory, artifactDirectory: directory }) };
 		let harness: Harness | undefined;
 		try {
 			harness = await Harness.open(await openNodeSqliteStorage(database), options, context);
@@ -402,7 +402,7 @@ describe("coding registry tool-result image hook", () => {
 				{
 					models,
 					registry,
-					env: () => new NodeExecutionEnv({ cwd: directory }),
+					env: () => new NodeExecutionEnv({ cwd: directory, artifactDirectory: directory }),
 					onReport: (error: unknown) => reports.push(error instanceof Error ? error.message : String(error)),
 				},
 				context,
@@ -491,7 +491,7 @@ describe("coding registry tool-result image hook", () => {
 				{
 					models,
 					registry,
-					env: () => new NodeExecutionEnv({ cwd: directory }),
+					env: () => new NodeExecutionEnv({ cwd: directory, artifactDirectory: directory }),
 					onReport: (error: unknown) => reports.push(error instanceof Error ? error.message : String(error)),
 				},
 				context,

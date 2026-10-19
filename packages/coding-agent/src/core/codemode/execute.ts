@@ -2,7 +2,6 @@
  * Runs one codemode script in the sandbox. Shared by SDK and Durable; loaded when a script runs.
  */
 
-import { assertClassifierContext } from "@amazme/ai/utils/classifier-context";
 import type {
 	AnyModel,
 	ClassifierContext,
@@ -13,6 +12,7 @@ import type {
 	TextContent,
 	Usage,
 } from "@amazme/ai";
+import { assertClassifierContext } from "@amazme/ai/utils/classifier-context";
 import {
 	type CodemodeOutputItem,
 	type CodemodeResult,
@@ -23,22 +23,29 @@ import {
 	renderToolSample,
 	toCodemodeIdentifier,
 } from "@amazme/codemode";
-import { getCodemodeWorkerSpecifier, getQuickJSWasmPath } from "../../config.ts";
+import {
+	Bm25Ranker,
+	createToolSearchDocument,
+	DEFAULT_TOOL_SEARCH_LIMIT,
+} from "@amazme/durable/tool-search/search";
+import {
+	getCodemodeWorkerSpecifier,
+	getQuickJSWasmPath,
+} from "../../config.ts";
+import { writeOutputFile } from "../../utils/output-files.ts";
 import { formatSize } from "../tools/truncate.ts";
 import { combineUsage } from "../usage-totals.ts";
-import { writeOutputFile } from "../../utils/output-files.ts";
-import { Bm25Ranker, createToolSearchDocument, DEFAULT_TOOL_SEARCH_LIMIT } from "@amazme/durable/tool-search/search";
 import { CODEMODE_DOCS_PATH, toCodemodeDeclaration } from "./declarations.ts";
 import type {
-	CodemodeModelRuntime,
-	CodemodeNestedCall,
-	CodemodeToolDetails,
-	CodemodeToolInfo,
-	CodemodeNestedOutcome,
-	CodemodeHost,
 	CodemodeExecutionOptions,
 	CodemodeResult as CodemodeExecutionResult,
+	CodemodeHost,
+	CodemodeModelRuntime,
 	CodemodeNamespace,
+	CodemodeNestedCall,
+	CodemodeNestedOutcome,
+	CodemodeToolDetails,
+	CodemodeToolInfo,
 } from "./types.ts";
 
 const ARGS_PREVIEW_CHARS = 200;
@@ -54,7 +61,11 @@ const CODEMODE_MEMORY_LIMIT_BYTES = 256 * 1024 * 1024;
 // SDK and native sessions share capacity until each actual worker exits, including cancelled workers.
 const MAX_CONCURRENT_CODEMODE_WORKERS = 2;
 let activeCodemodeWorkers = 0;
-const MODEL_TYPES: ReadonlySet<string> = new Set<ModelType>(["chat", "image", "classifier"]);
+const MODEL_TYPES: ReadonlySet<string> = new Set<ModelType>([
+	"chat",
+	"image",
+	"classifier",
+]);
 
 function truncateText(text: string, maxChars: number): string {
 	return text.length > maxChars ? `${text.slice(0, maxChars - 3)}...` : text;
@@ -77,8 +88,11 @@ function textOf(result: CodemodeNestedOutcome["result"]): string {
 }
 
 function toModelType(value: unknown): ModelType {
-	if (typeof value === "string" && MODEL_TYPES.has(value)) return value as ModelType;
-	throw new Error(`Unknown model type ${JSON.stringify(value)}. Use "chat", "image", or "classifier".`);
+	if (typeof value === "string" && MODEL_TYPES.has(value))
+		return value as ModelType;
+	throw new Error(
+		`Unknown model type ${JSON.stringify(value)}. Use "chat", "image", or "classifier".`,
+	);
 }
 
 function toProvider(value: unknown): string | undefined {
@@ -105,7 +119,8 @@ type ScriptValue = { readonly [key: string]: unknown } | null | undefined;
 /** A script value in an error message: `undefined`, `a string`, `an array`, or its keys (`{ prompt }`). */
 function describeValue(value: unknown): string {
 	if (value === undefined || value === null) return String(value);
-	if (Array.isArray(value)) return value.length === 0 ? "an empty array" : "an array";
+	if (Array.isArray(value))
+		return value.length === 0 ? "an empty array" : "an array";
 	if (typeof value === "object") {
 		const keys = Object.keys(value);
 		if (keys.length === 0) return "{}";
@@ -123,18 +138,33 @@ function checkClassifierContext(context: unknown): ClassifierContext {
 		new Error(
 			`models.classify() ${problem}. Expected context: ${CLASSIFIER_CONTEXT_SHAPE}. See "Classify" in ${CODEMODE_DOCS_PATH}.`,
 		);
-	if (typeof context !== "object" || context === null || Array.isArray(context)) {
-		throw fail(`expects a context object as its second argument, got ${describeValue(context)}`);
+	if (
+		typeof context !== "object" ||
+		context === null ||
+		Array.isArray(context)
+	) {
+		throw fail(
+			`expects a context object as its second argument, got ${describeValue(context)}`,
+		);
 	}
 	const { state, images, questions } = context as Record<string, unknown>;
 	if (typeof state !== "object" || state === null || Array.isArray(state)) {
 		throw fail(`context.state must be an object, got ${describeValue(state)}`);
 	}
 	if (images !== undefined) {
-		if (!Array.isArray(images)) throw fail(`context.images must be an array, got ${describeValue(images)}`);
+		if (!Array.isArray(images))
+			throw fail(
+				`context.images must be an array, got ${describeValue(images)}`,
+			);
 		images.forEach((image: ScriptValue, index) => {
-			if (image?.type !== "image" || typeof image.data !== "string" || typeof image.mimeType !== "string") {
-				throw fail(`context.images[${index}] must be an image block, got ${describeValue(image)}`);
+			if (
+				image?.type !== "image" ||
+				typeof image.data !== "string" ||
+				typeof image.mimeType !== "string"
+			) {
+				throw fail(
+					`context.images[${index}] must be an image block, got ${describeValue(image)}`,
+				);
 			}
 		});
 	}
@@ -144,7 +174,9 @@ function checkClassifierContext(context: unknown): ClassifierContext {
 		Array.isArray(questions) ||
 		Object.keys(questions).length === 0
 	) {
-		throw fail(`context.questions must map question IDs to questions, got ${describeValue(questions)}`);
+		throw fail(
+			`context.questions must map question IDs to questions, got ${describeValue(questions)}`,
+		);
 	}
 	try {
 		assertClassifierContext(context);
@@ -160,17 +192,32 @@ function checkImagesContext(context: unknown): ImagesContext {
 		new Error(
 			`models.generateImages() ${problem}. Expected context: { input: [{ type: "text", text: <prompt> }, ...optional { type: "image", data: <base64>, mimeType } references] }. See "Generate images" in ${CODEMODE_DOCS_PATH}.`,
 		);
-	if (typeof context !== "object" || context === null || Array.isArray(context)) {
-		throw fail(`expects a context object as its second argument, got ${describeValue(context)}`);
+	if (
+		typeof context !== "object" ||
+		context === null ||
+		Array.isArray(context)
+	) {
+		throw fail(
+			`expects a context object as its second argument, got ${describeValue(context)}`,
+		);
 	}
 	const { input } = context as Record<string, unknown>;
 	if (!Array.isArray(input) || input.length === 0) {
-		throw fail(`context.input must be a non-empty array of blocks, got ${describeValue(input)}`);
+		throw fail(
+			`context.input must be a non-empty array of blocks, got ${describeValue(input)}`,
+		);
 	}
 	input.forEach((block: ScriptValue, index) => {
 		if (block?.type === "text" && typeof block.text === "string") return;
-		if (block?.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") return;
-		throw fail(`context.input[${index}] must be a text or image block, got ${describeValue(block)}`);
+		if (
+			block?.type === "image" &&
+			typeof block.data === "string" &&
+			typeof block.mimeType === "string"
+		)
+			return;
+		throw fail(
+			`context.input[${index}] must be a text or image block, got ${describeValue(block)}`,
+		);
 	});
 	return context as unknown as ImagesContext;
 }
@@ -183,11 +230,14 @@ interface ModelCallResult {
 }
 
 /** Runs at most `limit` calls at once, in call order. */
-function createLimiter(limit: number): <T>(run: () => Promise<T>) => Promise<T> {
+function createLimiter(
+	limit: number,
+): <T>(run: () => Promise<T>) => Promise<T> {
 	let active = 0;
 	const waiting: (() => void)[] = [];
 	return async (run) => {
-		if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve));
+		if (active >= limit)
+			await new Promise<void>((resolve) => waiting.push(resolve));
 		active++;
 		try {
 			return await run();
@@ -215,8 +265,12 @@ function valueText(value: unknown): string {
  * value), each starts with a `==> text N/M <==` line. `console.*` lines follow all other output in
  * one `<console_output>` block.
  */
-function formatOutput(output: readonly CodemodeOutputItem[]): (TextContent | ImageContent)[] {
-	const total = output.filter((item) => item.type === "text" && !item.console).length;
+function formatOutput(
+	output: readonly CodemodeOutputItem[],
+): (TextContent | ImageContent)[] {
+	const total = output.filter(
+		(item) => item.type === "text" && !item.console,
+	).length;
 	const items: (TextContent | ImageContent)[] = [];
 	const consoleLines: string[] = [];
 	let index = 0;
@@ -229,7 +283,10 @@ function formatOutput(output: readonly CodemodeOutputItem[]): (TextContent | Ima
 			index++;
 			items.push({
 				type: "text",
-				text: total > 1 ? `==> text ${index}/${total} <==\n${item.text}` : item.text,
+				text:
+					total > 1
+						? `==> text ${index}/${total} <==\n${item.text}`
+						: item.text,
 			});
 		}
 	}
@@ -247,7 +304,9 @@ function formatOutput(output: readonly CodemodeOutputItem[]): (TextContent | Ima
  * at the last non-empty part, not the joined text: reading the end of a growing concatenation makes
  * V8 copy it on every item, which is quadratic (#10678).
  */
-function joinAdjacentText(items: (TextContent | ImageContent)[]): (TextContent | ImageContent)[] {
+function joinAdjacentText(
+	items: (TextContent | ImageContent)[],
+): (TextContent | ImageContent)[] {
 	const joined: (TextContent | ImageContent)[] = [];
 	let parts: string[] = [];
 	let lastPart = "";
@@ -278,7 +337,10 @@ function formatCallSummary(calls: readonly CodemodeNestedCall[]): string {
 	return `Tool calls made before the failure (they are not undone): ${calls.map((call) => `${call.name} (${call.status})`).join(", ")}`;
 }
 
-function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: readonly CodemodeNestedCall[]): string {
+function formatError(
+	result: Extract<CodemodeResult, { ok: false }>,
+	calls: readonly CodemodeNestedCall[],
+): string {
 	const { error } = result;
 	const head =
 		error.kind === "script"
@@ -291,10 +353,19 @@ function formatError(result: Extract<CodemodeResult, { ok: false }>, calls: read
 	return `${head}\n\n${formatCallSummary(calls)}`;
 }
 
-/** Write the full text output to a temp file, like bash does for truncated output. */
-async function spillOutput(text: string): Promise<{ path: string } | { error: string }> {
+type OutputWriter = (
+	prefix: string,
+	extension: string,
+	data: string | Uint8Array,
+) => Promise<string>;
+
+/** Write the full text output to a file, like bash does for truncated output. */
+async function spillOutput(
+	text: string,
+	write: OutputWriter,
+): Promise<{ path: string } | { error: string }> {
 	try {
-		return { path: await writeOutputFile("pi-codemode", ".txt", text) };
+		return { path: await write("pi-codemode", ".txt", text) };
 	} catch (error) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -313,17 +384,21 @@ const IMAGE_EXTENSIONS: Record<string, string> = {
  * image but has no other way to reach its bytes: scripts cannot write files, and `write` only takes
  * text. Images shown more than once are saved once.
  */
-async function saveImages(items: (TextContent | ImageContent)[]): Promise<(TextContent | ImageContent)[]> {
+async function saveImages(
+	items: (TextContent | ImageContent)[],
+	write: OutputWriter,
+): Promise<(TextContent | ImageContent)[]> {
 	const labels = new Map<string, Promise<string>>();
 	const label = async ({ data, mimeType }: ImageContent): Promise<string> => {
 		const bytes = Buffer.from(data, "base64");
 		const kind = `${mimeType}, ${formatSize(bytes.length)}`;
 		const extension = IMAGE_EXTENSIONS[mimeType];
-		if (!extension) throw new Error(`No file extension for image type ${mimeType}`);
+		if (!extension)
+			throw new Error(`No file extension for image type ${mimeType}`);
 		// A failed write (disk full, unwritable temp dir) must not discard the result of a script whose
 		// tool calls already ran, so it becomes part of the label.
 		try {
-			const path = await writeOutputFile("pi-codemode", extension, bytes);
+			const path = await write("pi-codemode", extension, bytes);
 			return `[Image saved to ${path} (${kind})]`;
 		} catch (error) {
 			return `[Image (${kind}) could not be saved: ${error instanceof Error ? error.message : String(error)}]`;
@@ -351,8 +426,11 @@ async function saveImages(items: (TextContent | ImageContent)[]): Promise<(TextC
 async function truncateOutput(
 	items: (TextContent | ImageContent)[],
 	maxTokens: number,
+	write: OutputWriter,
 ): Promise<{ items: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
-	const texts = items.filter((item): item is TextContent => item.type === "text").map((item) => item.text);
+	const texts = items
+		.filter((item): item is TextContent => item.type === "text")
+		.map((item) => item.text);
 	const combined = texts.join("\n");
 	const budget = maxTokens * CHARS_PER_TOKEN;
 	if (texts.length === 0 || combined.length <= budget) return { items };
@@ -362,13 +440,16 @@ async function truncateOutput(
 	const head = combined.slice(0, headChars);
 	const tail = tailChars > 0 ? combined.slice(-tailChars) : "";
 	let text = `Warning: truncated output (original token count: ${Math.ceil(combined.length / CHARS_PER_TOKEN)})\nTotal output lines: ${combined.split("\n").length}\n\n${head}…${Math.ceil(removed / CHARS_PER_TOKEN)} tokens truncated…${tail}`;
-	const spilled = await spillOutput(combined);
+	const spilled = await spillOutput(combined, write);
 	text +=
 		"path" in spilled
 			? `\n\n[Full output: ${spilled.path} (read with offset/limit)]`
 			: `\n\n[Could not save the full output: ${spilled.error}]`;
 	return {
-		items: [{ type: "text", text }, ...items.filter((item) => item.type === "image")],
+		items: [
+			{ type: "text", text },
+			...items.filter((item) => item.type === "image"),
+		],
 		...("path" in spilled ? { fullOutputPath: spilled.path } : {}),
 	};
 }
@@ -379,9 +460,13 @@ async function truncateOutput(
  * as MCP results with `isError`); any other tool resolves to its text content. Other failures
  * reject with the tool's error text.
  */
-function toScriptValue(tool: CodemodeToolInfo, outcome: CodemodeNestedOutcome): unknown {
+function toScriptValue(
+	tool: CodemodeToolInfo,
+	outcome: CodemodeNestedOutcome,
+): unknown {
 	const { result } = outcome;
-	if (result.value !== undefined && (tool.outputSchema || !outcome.isError)) return result.value;
+	if (result.value !== undefined && (tool.outputSchema || !outcome.isError))
+		return result.value;
 	const text = textOf(result);
 	if (outcome.isError) throw new Error(text || `Tool "${tool.name}" failed`);
 	return text;
@@ -423,7 +508,10 @@ export async function executeCodemode(
 	// ALL_TOOLS entries carry the declaration.
 	const guidelines = options.getToolGuidelines?.();
 	const samples = new Map(
-		callable.map((tool) => [tool.name, renderToolSample(toCodemodeDeclaration(tool, guidelines?.get(tool.name)))]),
+		callable.map((tool) => [
+			tool.name,
+			renderToolSample(toCodemodeDeclaration(tool, guidelines?.get(tool.name))),
+		]),
 	);
 	const sandboxTools: CodemodeTool[] = callable.map((tool) => ({
 		name: tool.name,
@@ -444,7 +532,10 @@ export async function executeCodemode(
 			} catch (error) {
 				record.durationMs = performance.now() - callStartedAt;
 				record.status = callSignal.aborted ? "cancelled" : "error";
-				record.error = truncateText(error instanceof Error ? error.message : String(error), ERROR_PREVIEW_CHARS);
+				record.error = truncateText(
+					error instanceof Error ? error.message : String(error),
+					ERROR_PREVIEW_CHARS,
+				);
 				publish();
 				throw error;
 			}
@@ -452,7 +543,10 @@ export async function executeCodemode(
 			record.durationMs = performance.now() - callStartedAt;
 			if (outcome.isError) {
 				record.status = callSignal.aborted ? "cancelled" : "error";
-				record.error = truncateText(textOf(outcome.result) || `Tool "${tool.name}" failed`, ERROR_PREVIEW_CHARS);
+				record.error = truncateText(
+					textOf(outcome.result) || `Tool "${tool.name}" failed`,
+					ERROR_PREVIEW_CHARS,
+				);
 			} else {
 				record.status = "ok";
 			}
@@ -466,7 +560,14 @@ export async function executeCodemode(
 		globals: [
 			...createDiscoveryGlobals(callable, samples, options),
 			...(host.models
-				? createModelGlobals(host.models, toolCallId, calls, publish, addModelUsage, addGeneratedImages)
+				? createModelGlobals(
+						host.models,
+						toolCallId,
+						calls,
+						publish,
+						addModelUsage,
+						addGeneratedImages,
+					)
 				: []),
 		],
 		timeoutMs: sourceOptions.timeoutMs ?? Number.POSITIVE_INFINITY,
@@ -475,9 +576,13 @@ export async function executeCodemode(
 		workerUrl: getCodemodeWorkerSpecifier(),
 		acquireWorker: () => {
 			if (activeCodemodeWorkers >= MAX_CONCURRENT_CODEMODE_WORKERS)
-				throw new Error(`Codemode worker limit reached (${MAX_CONCURRENT_CODEMODE_WORKERS} workers are still running or shutting down). Retry after they exit.`);
+				throw new Error(
+					`Codemode worker limit reached (${MAX_CONCURRENT_CODEMODE_WORKERS} workers are still running or shutting down). Retry after they exit.`,
+				);
 			activeCodemodeWorkers++;
-			return () => { activeCodemodeWorkers--; };
+			return () => {
+				activeCodemodeWorkers--;
+			};
 		},
 	});
 
@@ -500,7 +605,8 @@ export async function executeCodemode(
 			await host.saveStore?.({ set, delete: deleted });
 		}
 		// pi extension: a returned value is appended like text().
-		if (result.value !== undefined) scriptOutput.push({ type: "text", text: valueText(result.value) });
+		if (result.value !== undefined)
+			scriptOutput.push({ type: "text", text: valueText(result.value) });
 	}
 	const items = formatOutput(scriptOutput);
 	if (!result.ok)
@@ -515,17 +621,20 @@ export async function executeCodemode(
 		});
 	}
 
+	const write: OutputWriter = options.writeOutput ?? writeOutputFile;
 	const truncated = await truncateOutput(
 		joinAdjacentText(items),
 		sourceOptions.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+		write,
 	);
 	// After truncation, which joins the text items and moves images after them, so each path stays
 	// next to its image and is never cut.
-	const output = joinAdjacentText(await saveImages(truncated.items));
+	const output = joinAdjacentText(await saveImages(truncated.items, write));
 	const wallTime = ((performance.now() - startedAt) / 1000).toFixed(1);
 	const header = `${result.ok ? "Script completed" : "Script failed"}\nWall time ${wallTime} seconds\nOutput:\n`;
 	const details = snapshot();
-	if (truncated.fullOutputPath) details.fullOutputPath = truncated.fullOutputPath;
+	if (truncated.fullOutputPath)
+		details.fullOutputPath = truncated.fullOutputPath;
 	return {
 		content: [{ type: "text", text: header }, ...output],
 		details,
@@ -564,22 +673,40 @@ function createDiscoveryGlobals(
 			name: "searchTools",
 			spread: true,
 			execute: (args) => {
-				const [query, searchOptions] = args as [unknown, { limit?: unknown; namespace?: unknown } | undefined];
-				if (typeof query !== "string") throw new Error("searchTools() expects a query string");
+				const [query, searchOptions] = args as [
+					unknown,
+					{ limit?: unknown; namespace?: unknown } | undefined,
+				];
+				if (typeof query !== "string")
+					throw new Error("searchTools() expects a query string");
 				const limit = searchOptions?.limit ?? DEFAULT_TOOL_SEARCH_LIMIT;
-				if (typeof limit !== "number" || !Number.isInteger(limit) || limit <= 0) {
+				if (
+					typeof limit !== "number" ||
+					!Number.isInteger(limit) ||
+					limit <= 0
+				) {
 					throw new Error("searchTools() limit must be a positive integer");
 				}
 				const namespace = searchOptions?.namespace;
-				if (namespace !== undefined && namespace !== null && typeof namespace !== "string") {
+				if (
+					namespace !== undefined &&
+					namespace !== null &&
+					typeof namespace !== "string"
+				) {
 					throw new Error("searchTools() namespace must be a string");
 				}
 				const documents = tools.flatMap((tool) => {
 					const toolNamespace = options.getToolNamespace?.(tool.name);
-					if (namespace && (!toolNamespace || !isNamespaceName(toolNamespace, namespace))) return [];
+					if (
+						namespace &&
+						(!toolNamespace || !isNamespaceName(toolNamespace, namespace))
+					)
+						return [];
 					return [createToolSearchDocument(tool, toolNamespace)];
 				});
-				return ranker.rank(query, documents, limit).map((match) => entry(match.name));
+				return ranker
+					.rank(query, documents, limit)
+					.map((match) => entry(match.name));
 			},
 		},
 		{
@@ -587,9 +714,12 @@ function createDiscoveryGlobals(
 			spread: true,
 			execute: (args) => {
 				const [name] = args as unknown[];
-				if (typeof name !== "string") throw new Error("describeTool() expects a tool name");
+				if (typeof name !== "string")
+					throw new Error("describeTool() expects a tool name");
 				const tool = tools.find(
-					(candidate) => candidate.name === name || toCodemodeIdentifier(candidate.name) === name,
+					(candidate) =>
+						candidate.name === name ||
+						toCodemodeIdentifier(candidate.name) === name,
 				);
 				return tool ? samples.get(tool.name) : undefined;
 			},
@@ -599,7 +729,8 @@ function createDiscoveryGlobals(
 			spread: true,
 			execute: (args) => {
 				const [name] = args as unknown[];
-				if (typeof name !== "string") throw new Error("describeNamespace() expects a namespace name");
+				if (typeof name !== "string")
+					throw new Error("describeNamespace() expects a namespace name");
 				let namespace: CodemodeNamespace | undefined;
 				const names: string[] = [];
 				for (const tool of tools) {
@@ -611,8 +742,12 @@ function createDiscoveryGlobals(
 				if (!namespace) return undefined;
 				return {
 					name: namespace.name,
-					...(namespace.description ? { description: namespace.description } : {}),
-					...(namespace.instructions ? { instructions: namespace.instructions } : {}),
+					...(namespace.description
+						? { description: namespace.description }
+						: {}),
+					...(namespace.instructions
+						? { instructions: namespace.instructions }
+						: {}),
 					tools: names,
 				};
 			},
@@ -640,7 +775,11 @@ function createModelGlobals(
 	 * Resolve the script's model by provider and id only, check the context, then run the call as a
 	 * nested call row. A script-supplied baseUrl or headers must never receive the credentials.
 	 */
-	const runModelCall = async <TType extends "classifier" | "image", TContext, TResult extends ModelCallResult>(
+	const runModelCall = async <
+		TType extends "classifier" | "image",
+		TContext,
+		TResult extends ModelCallResult,
+	>(
 		name: string,
 		type: TType,
 		[model, context]: unknown[],
@@ -665,7 +804,9 @@ function createModelGlobals(
 		const resolved = models.getModelOfType(type, provider, id);
 		if (!resolved) {
 			const actualType = [...MODEL_TYPES].find(
-				(other) => other !== type && models.getModelOfType(other as ModelType, provider, id) !== undefined,
+				(other) =>
+					other !== type &&
+					models.getModelOfType(other as ModelType, provider, id) !== undefined,
 			);
 			throw new Error(
 				actualType
@@ -686,8 +827,14 @@ function createModelGlobals(
 		const startedAt = performance.now();
 		const result = await limit(() => run(resolved, checked));
 		record.durationMs = performance.now() - startedAt;
-		record.status = result.stopReason === "stop" ? "ok" : result.stopReason === "aborted" ? "cancelled" : "error";
-		if (result.errorMessage) record.error = truncateText(result.errorMessage, ERROR_PREVIEW_CHARS);
+		record.status =
+			result.stopReason === "stop"
+				? "ok"
+				: result.stopReason === "aborted"
+					? "cancelled"
+					: "error";
+		if (result.errorMessage)
+			record.error = truncateText(result.errorMessage, ERROR_PREVIEW_CHARS);
 		if (result.usage) {
 			record.cost = result.usage.cost.total;
 			addUsage(result.usage);
@@ -698,11 +845,17 @@ function createModelGlobals(
 	const implementations: Record<string, CodemodeTool["execute"]> = {
 		"models.getModelsOfType": (args) => {
 			const [type, provider] = args as unknown[];
-			return models.getModelsOfType(toModelType(type), toProvider(provider)).map(toModelInfo);
+			return models
+				.getModelsOfType(toModelType(type), toProvider(provider))
+				.map(toModelInfo);
 		},
 		"models.getAvailableOfType": async (args, { signal }) => {
 			const [type, provider] = args as unknown[];
-			const available = await models.getAvailableOfType(toModelType(type), toProvider(provider), { signal });
+			const available = await models.getAvailableOfType(
+				toModelType(type),
+				toProvider(provider),
+				{ signal },
+			);
 			return available.map(toModelInfo);
 		},
 		"models.getModelOfType": (args) => {
@@ -716,8 +869,12 @@ function createModelGlobals(
 			return model === undefined ? undefined : toModelInfo(model);
 		},
 		"models.classify": (args, { signal }) =>
-			runModelCall("models.classify", "classifier", args as unknown[], checkClassifierContext, (resolved, context) =>
-				models.classify(resolved, context, { signal }),
+			runModelCall(
+				"models.classify",
+				"classifier",
+				args as unknown[],
+				checkClassifierContext,
+				(resolved, context) => models.classify(resolved, context, { signal }),
 			),
 		"models.generateImages": (args, { signal }) =>
 			runModelCall(
@@ -729,7 +886,9 @@ function createModelGlobals(
 					const result = await models.generateImages(resolved, context, {
 						signal,
 					});
-					addGeneratedImages(result.output.filter((block) => block.type === "image").length);
+					addGeneratedImages(
+						result.output.filter((block) => block.type === "image").length,
+					);
 					return result;
 				},
 			),

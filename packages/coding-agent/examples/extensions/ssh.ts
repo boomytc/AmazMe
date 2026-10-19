@@ -111,10 +111,13 @@ export default function (amazme: ExtensionAPI) {
 			const info = await connected.connection.info();
 			const remoteCwd = amazme.getFlag("ssh-cwd");
 			files?.connection.close();
+			const remoteRoot = typeof remoteCwd === "string" ? remoteCwd : info.cwd;
 			files = new RemoteExecutionEnv({
 				connection: connected.connection,
 				id: `ssh:${user ?? ""}@${host}`,
-				cwd: typeof remoteCwd === "string" ? remoteCwd : info.cwd,
+				cwd: remoteRoot,
+				// Remote-side session artifacts; the host supplies the path, the daemon resolves it on the remote machine.
+				artifactDirectory: `${remoteRoot}/.amazme-artifacts`,
 			});
 			ctx.ui.setStatus("ssh", `SSH: ${host}:${files.cwd}`);
 		} catch (error) {

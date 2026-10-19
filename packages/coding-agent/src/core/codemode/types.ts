@@ -1,4 +1,10 @@
-import type { ImageContent, Models, TextContent, TSchema, Usage } from "@amazme/ai";
+import type {
+	ImageContent,
+	Models,
+	TextContent,
+	TSchema,
+	Usage,
+} from "@amazme/ai";
 
 export interface CodemodeToolInfo {
 	readonly name: string;
@@ -16,7 +22,11 @@ export interface CodemodeNamespace {
 
 export type CodemodeModelRuntime = Pick<
 	Models,
-	"getModelsOfType" | "getAvailableOfType" | "getModelOfType" | "classify" | "generateImages"
+	| "getModelsOfType"
+	| "getAvailableOfType"
+	| "getModelOfType"
+	| "classify"
+	| "generateImages"
 >;
 
 export interface CodemodeStoreWrites {
@@ -37,7 +47,11 @@ export interface CodemodeHost {
 	readonly tools: readonly CodemodeToolInfo[];
 	readonly models?: CodemodeModelRuntime;
 	readonly store?: Readonly<Record<string, unknown>>;
-	executeTool(name: string, args: unknown, signal: AbortSignal): Promise<CodemodeNestedOutcome>;
+	executeTool(
+		name: string,
+		args: unknown,
+		signal: AbortSignal,
+	): Promise<CodemodeNestedOutcome>;
 	saveStore?(writes: CodemodeStoreWrites): void | Promise<void>;
 }
 
@@ -66,12 +80,23 @@ export interface CodemodeResult {
 export interface CodemodeExecutionOptions {
 	getToolNamespace?: (name: string) => CodemodeNamespace | undefined;
 	getToolGuidelines?: () => ReadonlyMap<string, readonly string[]>;
+	/**
+	 * Where truncated text and saved images are written. Durable sessions pass a writer under
+	 * `ExecutionEnv.artifactDirectory`; without one, output still goes to the OS temp directory.
+	 */
+	writeOutput?: (
+		prefix: string,
+		extension: string,
+		data: string | Uint8Array,
+	) => Promise<string>;
 }
 
 export interface CodemodeLoadout {
 	readonly declared: readonly CodemodeToolInfo[];
 	readonly callable: readonly CodemodeToolInfo[];
-	getExposure(name: string): "direct" | "model-only" | "codemode" | "deferred" | "hidden";
+	getExposure(
+		name: string,
+	): "direct" | "model-only" | "codemode" | "deferred" | "hidden";
 	getNamespace(name: string): CodemodeNamespace | undefined;
 	getPromptGuidelines(name: string): readonly string[];
 }

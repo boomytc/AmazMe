@@ -377,7 +377,7 @@ afterEach(async () => {
 
 describe("web terminal output retention", () => {
 	test.each(["done", "cancelled", "failed"] as const)("keeps a bounded UTF-8 tail through %s settlement", async (ending) => {
-		const env = new NodeExecutionEnv({ cwd: process.cwd() });
+		const env = new NodeExecutionEnv({ cwd: process.cwd(), artifactDirectory: process.cwd() });
 		const terminal = createTerminalService({ env, cwd: process.cwd(), settings: SettingsManager.inMemory() }, replicatedState).service;
 		const started = Promise.withResolvers<void>();
 		const finish = Promise.withResolvers<void>();

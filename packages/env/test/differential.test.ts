@@ -26,8 +26,8 @@ function pair(): { local: ExecutionEnv; remote: ExecutionEnv; roots: [string, st
 	const remoteRoot = mkdtempSync(join(tmpdir(), "amazme-env-remote-"));
 	dirs.push(localRoot, remoteRoot);
 	return {
-		local: new NodeExecutionEnv({ cwd: localRoot }),
-		remote: new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: remoteRoot }),
+		local: new NodeExecutionEnv({ cwd: localRoot, artifactDirectory: localRoot }),
+		remote: new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: remoteRoot, artifactDirectory: remoteRoot }),
 		roots: [localRoot, remoteRoot],
 	};
 }

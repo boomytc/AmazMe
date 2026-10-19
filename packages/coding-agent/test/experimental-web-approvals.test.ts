@@ -66,7 +66,7 @@ async function openGate(mode: ToolApprovalMode): Promise<{
 	registry.install(gate.extension);
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(join(directory, "session.sqlite")),
-		{ models, registry, env: () => new NodeExecutionEnv({ cwd: directory }) },
+		{ models, registry, env: () => new NodeExecutionEnv({ cwd: directory, artifactDirectory: directory }) },
 		TODO_CONTEXT,
 	);
 	const state = replicatedState<ApprovalsState>({ revision: 0, pending: [] });

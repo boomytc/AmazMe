@@ -45,7 +45,7 @@ async function open(options: { cwd?: string; storage?: Storage; settings?: Setti
 	registry.install(CodingTools);
 	registry.install(createDurableCodemode(options.settings ?? SettingsManager.inMemory()));
 	if (options.tools) registry.install(defineExtension({ name: "fixture", tools: options.tools }));
-	const harness = await Harness.open(options.storage ?? new MemoryStorage(), { models, registry, env: () => new NodeExecutionEnv({ cwd }) }, context);
+	const harness = await Harness.open(options.storage ?? new MemoryStorage(), { models, registry, env: () => new NodeExecutionEnv({ cwd, artifactDirectory: cwd }) }, context);
 	harnesses.add(harness);
 	const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" }, cwd }, init: async (tx, id) => {
 		(await tx.doc(AgentDoc, id)).tools = { add: ["codemode", "tool_search"] };

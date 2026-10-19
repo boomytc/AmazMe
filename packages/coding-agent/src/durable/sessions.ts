@@ -1,5 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
-import { access, mkdir, readdir, realpath, stat } from "node:fs/promises";
+import {
+	access,
+	mkdir,
+	mkdtemp,
+	readdir,
+	realpath,
+	rm,
+	stat,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import lockfile from "proper-lockfile";
 import { expandTildePath, getAgentDir } from "../config.ts";
@@ -18,14 +27,25 @@ export interface SessionLocation {
 	database?: string;
 	cwd: string;
 	created: boolean;
+	/**
+	 * Host-owned directory for session-scoped tool artifacts (code-mode output, review snapshots).
+	 * Persistent sessions use `<directory>/artifacts` (deleted with the session directory).
+	 * Ephemeral / `--no-session` sessions get a private `amazme-session-artifacts-` temp directory
+	 * removed in {@link SessionLocation.release}.
+	 */
+	artifactDirectory: string;
 	release(): Promise<void>;
 }
 
 function sessionRoot(cwd: string, sessionDir: string | undefined): string {
-	const base = sessionDir === undefined
-		? join(getAgentDir(), "experimental", "durable-sessions")
-		: resolve(cwd, expandTildePath(sessionDir));
-	return join(base, createHash("sha256").update(cwd).digest("hex").slice(0, 24));
+	const base =
+		sessionDir === undefined
+			? join(getAgentDir(), "experimental", "durable-sessions")
+			: resolve(cwd, expandTildePath(sessionDir));
+	return join(
+		base,
+		createHash("sha256").update(cwd).digest("hex").slice(0, 24),
+	);
 }
 
 /** JSONL transcripts written by the removed session kernel, under the default sessions directory. */
@@ -58,13 +78,16 @@ function sessionAlreadyOpenError(directory: string, cause: unknown): Error {
 }
 
 function errorCode(error: unknown): string | undefined {
-	if (typeof error !== "object" || error === null || !("code" in error)) return undefined;
+	if (typeof error !== "object" || error === null || !("code" in error))
+		return undefined;
 	const code = error.code;
 	return typeof code === "string" ? code : undefined;
 }
 
 /** Fail at once when a live process holds `directory`. A lock older than {@link SESSION_LOCK_STALE_MS} is taken over by proper-lockfile. */
-export async function lockSession(directory: string): Promise<() => Promise<void>> {
+export async function lockSession(
+	directory: string,
+): Promise<() => Promise<void>> {
 	try {
 		return await lockfile.lock(directory, {
 			realpath: false,
@@ -86,8 +109,15 @@ export async function hasDurableSession(
 	try {
 		const root = sessionRoot(await realpath(resolve(cwd)), options.sessionDir);
 		const entries = await readdir(root, { withFileTypes: true });
-		const candidates = entries.filter((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name));
-		return (await Promise.all(candidates.map((entry) => hasDatabase(join(root, entry.name))))).some(Boolean);
+		const candidates = entries.filter(
+			(entry) =>
+				entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name),
+		);
+		return (
+			await Promise.all(
+				candidates.map((entry) => hasDatabase(join(root, entry.name))),
+			)
+		).some(Boolean);
 	} catch {
 		return false;
 	}
@@ -118,7 +148,8 @@ export async function resolveExplicitSession(
 	try {
 		entries = await readdir(root, { withFileTypes: true });
 	} catch (error) {
-		if (isMissing(error)) throw new Error(`No durable session matches "${spec}" for ${cwd}`);
+		if (isMissing(error))
+			throw new Error(`No durable session matches "${spec}" for ${cwd}`);
 		throw error;
 	}
 	const candidates: string[] = [];
@@ -126,9 +157,12 @@ export async function resolveExplicitSession(
 		if (!entry.isDirectory() || !matchesSessionId(entry.name, spec)) continue;
 		if (await hasDatabase(join(root, entry.name))) candidates.push(entry.name);
 	}
-	if (candidates.length === 0) throw new Error(`No durable session matches "${spec}" for ${cwd}`);
+	if (candidates.length === 0)
+		throw new Error(`No durable session matches "${spec}" for ${cwd}`);
 	if (candidates.length > 1) {
-		throw new Error(`Session "${spec}" is ambiguous for ${cwd}: ${candidates.sort().join(", ")}`);
+		throw new Error(
+			`Session "${spec}" is ambiguous for ${cwd}: ${candidates.sort().join(", ")}`,
+		);
 	}
 	const directory = join(root, candidates[0]!);
 	return { directory, cwd: (await readSessionCwd(directory)) ?? cwd };
@@ -136,11 +170,18 @@ export async function resolveExplicitSession(
 
 /** A full session ID, its UUID part, or a unique timestamp prefix. */
 function matchesSessionId(name: string, spec: string): boolean {
-	return name === spec || name.endsWith(`-${spec}`) || name.startsWith(`${spec}-`);
+	return (
+		name === spec || name.endsWith(`-${spec}`) || name.startsWith(`${spec}-`)
+	);
 }
 
 function isMissing(error: unknown): boolean {
-	return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
+	return (
+		typeof error === "object" &&
+		error !== null &&
+		"code" in error &&
+		error.code === "ENOENT"
+	);
 }
 
 /** The recorded cwd, read without importing the Harness module into every session-listing caller. */
@@ -153,13 +194,35 @@ async function readSessionCwd(directory: string): Promise<string | undefined> {
 export async function selectSession(
 	cwdInput: string,
 	continueSession: boolean,
-	options: { sessionDir?: string; noSession?: boolean; sessionDirectory?: string } = {},
+	options: {
+		sessionDir?: string;
+		noSession?: boolean;
+		sessionDirectory?: string;
+	} = {},
 ): Promise<SessionLocation> {
-	if (options.noSession && (continueSession || options.sessionDirectory !== undefined)) {
-		throw new Error("--no-session cannot be combined with --continue or an explicit session");
+	if (
+		options.noSession &&
+		(continueSession || options.sessionDirectory !== undefined)
+	) {
+		throw new Error(
+			"--no-session cannot be combined with --continue or an explicit session",
+		);
 	}
 	const cwd = await realpath(resolve(cwdInput));
-	if (options.noSession) return { id: randomUUID(), cwd, created: true, release: async () => {} };
+	if (options.noSession) {
+		const artifactDirectory = await mkdtemp(
+			join(tmpdir(), "amazme-session-artifacts-"),
+		);
+		return {
+			id: randomUUID(),
+			cwd,
+			created: true,
+			artifactDirectory,
+			release: async () => {
+				await rm(artifactDirectory, { recursive: true, force: true });
+			},
+		};
+	}
 	if (options.sessionDirectory !== undefined) {
 		const directory = await realpath(resolve(options.sessionDirectory));
 		const database = join(directory, "session.sqlite");
@@ -167,7 +230,15 @@ export async function selectSession(
 			throw new Error(`Not a Durable session directory: ${directory}`);
 		});
 		const release = await lockSession(directory);
-		return { id: basename(directory), directory, database, cwd, created: false, release };
+		return {
+			id: basename(directory),
+			directory,
+			database,
+			cwd,
+			created: false,
+			artifactDirectory: join(directory, "artifacts"),
+			release,
+		};
 	}
 	const root = sessionRoot(cwd, options.sessionDir);
 	await mkdir(root, { recursive: true });
@@ -177,7 +248,10 @@ export async function selectSession(
 	if (continueSession) {
 		const entries = await readdir(root, { withFileTypes: true });
 		const candidates = entries
-			.filter((entry) => entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name))
+			.filter(
+				(entry) =>
+					entry.isDirectory() && /^\d{13}-[0-9a-f-]{36}$/u.test(entry.name),
+			)
 			.map((entry) => entry.name)
 			.sort()
 			.reverse();
@@ -198,11 +272,22 @@ export async function selectSession(
 		}
 		directory = join(root, newest);
 	} else {
-		directory = join(root, `${String(Date.now()).padStart(13, "0")}-${randomUUID()}`);
+		directory = join(
+			root,
+			`${String(Date.now()).padStart(13, "0")}-${randomUUID()}`,
+		);
 		await mkdir(directory);
 		created = true;
 	}
 
 	const release = await lockSession(directory);
-	return { id: basename(directory), directory, database: join(directory, "session.sqlite"), cwd, created, release };
+	return {
+		id: basename(directory),
+		directory,
+		database: join(directory, "session.sqlite"),
+		cwd,
+		created,
+		artifactDirectory: join(directory, "artifacts"),
+		release,
+	};
 }

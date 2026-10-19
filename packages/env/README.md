@@ -20,12 +20,12 @@ await acceptHostKey(target, lines);
 // Detects the remote system, deploys the daemon if missing (named by its SHA-256 and verified before every start),
 // and returns a connection that starts it over ssh.
 const { connection } = await connectSsh(target);
-const env = new RemoteExecutionEnv({ connection, id: "amazme-env:gpu", cwd: "/home/me/project" });
+const env = new RemoteExecutionEnv({ connection, id: "amazme-env:gpu", cwd: "/home/me/project", artifactDirectory: "/home/me/project/.amazme-artifacts" });
 
 // Or lazily: nothing happens until the first operation, which detects, deploys and connects. A failure (no network,
 // untrusted host key) is that operation's error, and the next operation tries again.
 const lazy = sshConnection(target);
-const lazyEnv = new RemoteExecutionEnv({ connection: lazy.connection, id: "amazme-env:gpu", cwd: "/home/me/project" });
+const lazyEnv = new RemoteExecutionEnv({ connection: lazy.connection, id: "amazme-env:gpu", cwd: "/home/me/project", artifactDirectory: "/home/me/project/.amazme-artifacts" });
 ```
 
 The release package ships Linux and macOS daemons for x86-64 and arm64 in `bin/`. Linux builds use musl so deployment
@@ -43,7 +43,7 @@ the context. It is Durable's optional `ExecutionEnv.listFiles`. A daemon release
 
 ```ts
 const local = new Connection({ command: [localDaemon()] }); // owned by the caller; close() it at shutdown
-const env = new LocalExecutionEnv({ cwd: "/home/me/project", connection: local });
+const env = new LocalExecutionEnv({ cwd: "/home/me/project", artifactDirectory: "/home/me/project/.amazme-artifacts", connection: local });
 const listing = await env.listFiles(".", { exclude: ["node_modules"] }, context);
 // { ok: true, value: { entries: [{ path: "src", kind: "directory" }, { path: "src/a.ts", kind: "file" }], truncated } }
 ```

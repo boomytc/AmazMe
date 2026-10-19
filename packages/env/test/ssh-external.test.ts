@@ -77,11 +77,11 @@ if (host !== undefined) {
 		async (use) => {
 			const { connection } = await connect();
 			const info = await connection.info();
-			const home = new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd: info.home });
+			const home = new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd: info.home, artifactDirectory: info.home });
 			const cwd = getOrThrow(await home.createTempDir("amazme-env-conformance-", BACKGROUND_CONTEXT));
 			try {
 				await use(
-					new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd, watch: { pollIntervalMs: 100 } }),
+					new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd, artifactDirectory: cwd, watch: { pollIntervalMs: 100 } }),
 				);
 			} finally {
 				await home.remove(cwd, { recursive: true, force: true }, BACKGROUND_CONTEXT);

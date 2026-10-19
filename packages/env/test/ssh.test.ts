@@ -138,7 +138,7 @@ describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
 			expect(readdirSync(join(home, ".amazme/mobile/tools")).filter((name) => name.startsWith("amazme-env-"))).toEqual([
 				deployedName,
 			]);
-			const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: home });
+			const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: home, artifactDirectory: home });
 			getOrThrow(await env.writeFile("over-ssh.txt", "hello", context));
 			expect(getOrThrow(await env.readTextFile("over-ssh.txt", context))).toBe("hello");
 			const output: string[] = [];
@@ -196,7 +196,7 @@ describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
 		const { connection } = await connectSsh({ ...target, binary: daemon });
 		const local = new Connection({ command: [daemon] });
 		try {
-			const remote = new RemoteExecutionEnv({ connection, id: "pi-env:test", cwd: home });
+			const remote = new RemoteExecutionEnv({ connection, id: "pi-env:test", cwd: home, artifactDirectory: home });
 			const listing = getOrThrow(await remote.listFiles("tree", { exclude: ["skip"] }, context));
 			expect(listing).toEqual({
 				entries: [
@@ -210,7 +210,7 @@ describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
 				],
 				truncated: false,
 			});
-			const env = new LocalExecutionEnv({ connection: local, cwd: home });
+			const env = new LocalExecutionEnv({ connection: local, cwd: home, artifactDirectory: home });
 			expect(getOrThrow(await env.listFiles("tree", { exclude: ["skip"] }, context))).toEqual(listing);
 		} finally {
 			connection.close();
@@ -225,7 +225,7 @@ describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
 		const login = async (loginShell: boolean) => {
 			const { connection } = await connectSsh({ ...target, binary: daemon, loginShell });
 			try {
-				const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: home });
+				const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: home, artifactDirectory: home });
 				const output: string[] = [];
 				getOrThrow(
 					await env.exec(
@@ -248,7 +248,7 @@ describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
 		const { connection, remote } = sshConnection({ ...lazyTarget, binary: daemon });
 		try {
 			expect(remote()).toBeUndefined();
-			const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: home });
+			const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd: home, artifactDirectory: home });
 			// Nothing is trusted yet: each operation fails with the reason and tries again.
 			const read = await env.readTextFile("missing.txt", context);
 			expect(read.ok ? "ok" : read.error.message).toMatch(/not trusted/);

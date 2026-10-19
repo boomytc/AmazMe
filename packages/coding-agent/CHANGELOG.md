@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp directory cleaned up on release.
+
 ## [1.4.0] - 2026-10-19
 
 ### Breaking Changes
