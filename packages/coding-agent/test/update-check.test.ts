@@ -13,9 +13,9 @@ import {
 import { createTempDir } from "./temp-dir.ts";
 
 const SHA = "a".repeat(64);
-const DMG = "AmazMe-1.6.0-macos-arm64.dmg";
-const DMG_URL = `https://github.com/boomytc/AmazMe/releases/download/v1.6.0/${DMG}`;
-const manifest = { version: "1.6.0", tag: "v1.6.0", assets: [{ name: DMG, url: DMG_URL, sha256: SHA }] };
+const DMG = "AmazMe-8.6.0-macos-arm64.dmg";
+const DMG_URL = `https://github.com/boomytc/AmazMe/releases/download/v8.6.0/${DMG}`;
+const manifest = { version: "8.6.0", tag: "v8.6.0", assets: [{ name: DMG, url: DMG_URL, sha256: SHA }] };
 
 function server(body: unknown = manifest) {
 	return vi.fn(async (input: string | URL | Request) =>
@@ -25,7 +25,7 @@ function server(body: unknown = manifest) {
 
 function options(fetchMock: ReturnType<typeof vi.fn>, extra: Partial<UpdateCheckOptions> = {}): UpdateCheckOptions {
 	return {
-		currentVersion: "1.5.0",
+		currentVersion: "8.5.0",
 		statePath: join(createTempDir("amazme-update-"), "state", "update-check.json"),
 		sourceCheckout: false,
 		assetSuffix: "-macos-arm64.dmg",
@@ -44,7 +44,7 @@ describe("checkForUpdate", () => {
 	it("offers the installer for a release install with one request", async () => {
 		const fetchMock = server();
 		const notice = await checkForUpdate(options(fetchMock));
-		expect(notice).toEqual({ install: "release", version: "1.6.0", currentVersion: "1.5.0", download: manifest.assets[0] });
+		expect(notice).toEqual({ install: "release", version: "8.6.0", currentVersion: "8.5.0", download: manifest.assets[0] });
 		expect(formatUpdateNotice(notice!)).toContain(DMG_URL);
 		expect(fetchMock.mock.calls.map(([url]) => String(url))).toEqual([UPDATE_MANIFEST_URL]);
 	});
@@ -79,7 +79,7 @@ describe("checkForUpdate", () => {
 
 	it("gives a source checkout a notice without any download URL", async () => {
 		const notice = await checkForUpdate(options(server(), { sourceCheckout: true }));
-		expect(notice).toEqual({ install: "source", version: "1.6.0", currentVersion: "1.5.0" });
+		expect(notice).toEqual({ install: "source", version: "8.6.0", currentVersion: "8.5.0" });
 		expect(formatUpdateNotice(notice!)).not.toMatch(/https?:/);
 	});
 
@@ -89,7 +89,7 @@ describe("checkForUpdate", () => {
 	});
 
 	it("silently ignores asset URLs outside this repository's v<version> release downloads", async () => {
-		for (const url of [`https://example.com/${DMG}`, DMG_URL.replace("v1.6.0", "v1.5.9"), DMG_URL.replace("boomytc", "evil"), `${DMG_URL}?x`])
+		for (const url of [`https://example.com/${DMG}`, DMG_URL.replace("v8.6.0", "v8.5.9"), DMG_URL.replace("boomytc", "evil"), `${DMG_URL}?x`])
 			expect(await checkForUpdate(options(server(withAsset({ url }))))).toBeUndefined();
 		// A bad entry for another machine still drops the whole manifest.
 		const other = { ...manifest, assets: [...manifest.assets, { name: "x.dmg", url: "https://example.com/x.dmg", sha256: SHA }] };
@@ -97,23 +97,23 @@ describe("checkForUpdate", () => {
 	});
 
 	it("silently ignores invalid versions, mismatched tags and versions that are not newer", async () => {
-		expect(await checkForUpdate(options(server({ version: "1.6.0" })))).toBeUndefined();
+		expect(await checkForUpdate(options(server({ version: "8.6.0" })))).toBeUndefined();
 		expect(await checkForUpdate(options(server({ ...manifest, tag: "v9.9.9" })))).toBeUndefined();
 		// Everything else consistent, so only the version itself is wrong.
-		for (const version of ["1.6", "1.6.0.1", "latest", "01.6.0"]) {
+		for (const version of ["8.6", "8.6.0.1", "latest", "08.6.0"]) {
 			const url = `https://github.com/boomytc/AmazMe/releases/download/v${version}/${DMG}`;
 			expect(await checkForUpdate(options(server({ version, tag: `v${version}`, assets: [{ name: DMG, url, sha256: SHA }] })))).toBeUndefined();
 		}
-		expect(await checkForUpdate(options(server(), { currentVersion: "1.6.0" }))).toBeUndefined();
+		expect(await checkForUpdate(options(server(), { currentVersion: "8.6.0" }))).toBeUndefined();
 	});
 
 	it("notifies without a download when no installer matches this machine", async () => {
 		const notice = await checkForUpdate(options(server(), { assetSuffix: undefined }));
-		expect(notice).toEqual({ install: "release", version: "1.6.0", currentVersion: "1.5.0" });
+		expect(notice).toEqual({ install: "release", version: "8.6.0", currentVersion: "8.5.0" });
 	});
 
 	it("accepts the manifest the release workflow writes", async () => {
-		const written = buildManifest({ tag: "v1.6.0", repository: "boomytc/AmazMe", installers: [{ name: DMG, digest: SHA, published: `${SHA}  ${DMG}\n` }] });
+		const written = buildManifest({ tag: "v8.6.0", repository: "boomytc/AmazMe", installers: [{ name: DMG, digest: SHA, published: `${SHA}  ${DMG}\n` }] });
 		expect(written).toEqual(manifest);
 		expect((await checkForUpdate(options(server(written))))?.install).toBe("release");
 	});

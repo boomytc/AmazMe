@@ -107,7 +107,7 @@ jobs:
             "${CHANNEL[@]}"
 
   # Clients read releases/latest/download/latest.json for the update notice (packages/coding-agent/src/update-check.ts).
-  # Prerelease tags (v1.5.0-rc.1) publish no manifest, so clients never get pointed at them.
+  # Prerelease tags (v<x.y.z>-rc.N) publish no manifest, so clients never get pointed at them.
   manifest:
     needs: release
     if: ${{ !contains(github.ref_name, '-') }}
