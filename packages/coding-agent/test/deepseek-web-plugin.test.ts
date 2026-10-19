@@ -17,6 +17,9 @@ import { openPluginRuntime } from "../src/core/plugins/runtime.ts";
 import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import { durableToolSelection } from "../src/core/tool-selection.ts";
 import { ForkManagementDoc, withConversationAdmission } from "../src/durable/fork-management.ts";
+import { Commands } from "../src/host/services/commands.ts";
+import { Conversations } from "../src/host/services/conversations.ts";
+import { openWorkerTestServices } from "./native-host-support.ts";
 
 const harnesses: Harness[] = [];
 const directories: string[] = [];
@@ -431,5 +434,69 @@ describe("optional DeepSeek web plugin", () => {
 		await gate;
 		await rejected;
 		expect(await setup.harness.snapshot(WebPolicy, fork.id, context)).toBeUndefined();
+	});
+
+	it("does not write settings when reload starts during the asynchronous archive check", async () => {
+		const setup = await open();
+		const snapshot = setup.harness.snapshot.bind(setup.harness);
+		let release!: () => void;
+		vi.spyOn(setup.harness, "snapshot").mockImplementation(async (...args) => {
+			if (args[0].definition.kind === ForkManagementDoc.definition.kind)
+				await new Promise<void>((resolve) => {
+					release = resolve;
+				});
+			return snapshot(...args);
+		});
+		const update = configureWeb(setup.runtime, "on", context);
+		const rejected = expect(update).rejects.toThrow("unavailable");
+		await vi.waitFor(() => expect(release).toBeTypeOf("function"));
+		setup.unavailable(true);
+		release();
+		await rejected;
+		expect(await snapshot(WebPolicy, setup.root.id, context)).toBeUndefined();
+	});
+
+	it("routes the real worker command to its selected conversation across reload and archive", async () => {
+		const setup = await open(undefined, false);
+		const worker = await openWorkerTestServices({
+			cwd: process.cwd(),
+			harness: setup.harness,
+			conversation: setup.root,
+			registry: setup.registry,
+			modelRuntime: undefined,
+			facetLoader: createSourcePluginLoader([resolve("plugins/web")]),
+		});
+		try {
+			const commands = worker.services.get(Commands);
+			const conversations = worker.services.get(Conversations);
+			await worker.services.ready();
+			expect(commands.state.value?.commands.filter((command) => command.name === "web")).toMatchObject([
+				{ source: "plugin" },
+			]);
+			expect(await commands.run("web", "on", context)).toMatchObject({
+				ok: true,
+				note: expect.stringContaining('"enabled":true'),
+			});
+			await setup.root.submit({ type: "write", entry: { kind: "marker", data: {} } }, context);
+			const fork = await conversations.fork(String(setup.root.id), null, context);
+			if (fork.conversationId === null) throw new Error("Fork was not created");
+			expect(await commands.run("web", "off", context)).toMatchObject({
+				ok: true,
+				note: expect.stringContaining('"enabled":false'),
+			});
+			expect(await setup.harness.snapshot(WebPolicy, setup.root.id, context)).toMatchObject({ enabled: true });
+			expect(await commands.run("reload", "", context)).toMatchObject({ ok: true });
+			expect(commands.state.value?.commands.filter((command) => command.name === "web")).toHaveLength(1);
+			await conversations.setArchived(fork.conversationId, true, context);
+			await expect(commands.run("web", "on", context)).rejects.toThrow("归档");
+			expect(await commands.run("web", "status", context)).toMatchObject({
+				ok: true,
+				note: expect.stringContaining('"enabled":false'),
+			});
+			expect(setup.authCalls()).toBe(0);
+		} finally {
+			await worker.close();
+		}
+		expect(setup.registry.snapshot().extension("web-retrieval")).toBeUndefined();
 	});
 });

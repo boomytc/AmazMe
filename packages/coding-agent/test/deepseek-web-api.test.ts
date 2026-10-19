@@ -82,6 +82,36 @@ describe("DeepSeek web transport", () => {
 		expect(fetch).not.toHaveBeenCalled();
 	});
 
+	it.each(["credentials", "fetch"] as const)(
+		"observes late rejection when %s synchronously cancels its caller",
+		async (stage) => {
+			const controller = new AbortController();
+			let reject!: (error: Error) => void;
+			const cancelled = new Promise<never>((_resolve, fail) => {
+				reject = fail;
+			});
+			const cancel = () => {
+				controller.abort(new Error("stop"));
+				return cancelled;
+			};
+			const fetch = vi.fn<typeof globalThis.fetch>().mockImplementation(cancel);
+			vi.stubGlobal("fetch", fetch);
+			await expect(
+				requestWeb(
+					settings,
+					"search",
+					{},
+					stage === "credentials" ? cancel : key,
+					identity,
+					withAbortSignal(controller.signal, context),
+				),
+			).rejects.toThrow("stop");
+			reject(new Error("late private failure"));
+			await new Promise((resolve) => setImmediate(resolve));
+			expect(fetch).toHaveBeenCalledTimes(stage === "credentials" ? 0 : 1);
+		},
+	);
+
 	it("cancels the body of a response arriving after an uncooperative fetch was abandoned", async () => {
 		let deliver!: (response: Response) => void;
 		const fetch = vi.fn<typeof globalThis.fetch>(

@@ -31,6 +31,8 @@ export function createAgentRuntime(
 			return withConversationAdmission(harness, context, async () => {
 				if (unavailable()) throw new Error("Plugins are unavailable; finish reloading or restart the session");
 				await assertConversationWritable(harness, conversation.id, context);
+				context.abortSignal?.throwIfAborted();
+				if (unavailable()) throw new Error("Plugins are unavailable; finish reloading or restart the session");
 				return change(conversation);
 			});
 		},

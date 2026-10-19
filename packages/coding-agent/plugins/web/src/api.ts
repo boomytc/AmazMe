@@ -5,6 +5,13 @@ import type { WebSettings } from "./config.ts";
 
 class WebFailure extends Error {}
 
+/** A resolver or fetch implementation can synchronously cancel before returning its promise. */
+function waitForWeb<T>(operation: Promise<T>, context: Context): Promise<T> {
+	// awaitWithContext rejects immediately when already cancelled, without subscribing to operation.
+	if (context.abortSignal?.aborted) void operation.catch(() => {});
+	return awaitWithContext(operation, context);
+}
+
 type SearchSource = {
 	url: string;
 	title?: string;
@@ -93,7 +100,7 @@ async function readJSON(response: Response, maxBytes: number, context: Context):
 		done = false;
 	try {
 		for (;;) {
-			const chunk = await awaitWithContext(reader.read(), context);
+			const chunk = await waitForWeb(reader.read(), context);
 			if (chunk.done) {
 				done = true;
 				break;
@@ -133,7 +140,7 @@ export async function requestWeb<T>(
 	let received: Response | undefined;
 	try {
 		bounded.abortSignal?.throwIfAborted();
-		const key = await awaitWithContext(resolveKey(bounded), bounded);
+		const key = await waitForWeb(resolveKey(bounded), bounded);
 		bounded.abortSignal?.throwIfAborted();
 		if (!key)
 			throw new WebFailure(
@@ -157,7 +164,7 @@ export async function requestWeb<T>(
 			}
 			return response;
 		});
-		const response = await awaitWithContext(pending, bounded);
+		const response = await waitForWeb(pending, bounded);
 		if (!response.ok) {
 			void response.body?.cancel().catch(() => {});
 			throw new WebFailure(`DeepSeek ${operation} API returned HTTP ${response.status}`);
