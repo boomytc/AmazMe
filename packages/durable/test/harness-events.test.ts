@@ -674,12 +674,24 @@ describe("agent events", () => {
 
 	it("settles once when the run task faults, not before the fault commit", async () => {
 		const base = chatSetup();
-		const setup: ChatSetup = { ...base, models: withStream(base.models, invalidFinalStream()) };
+		const setup: ChatSetup = { ...base, models: withStream(base.models, invalidFinalStream) };
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		const { stream, batches, events } = await listen(harness, root);
 		const submission = await root.submit({ type: "input", content: "hi" }, context);
 		expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "faulted" });
 		await drained();
+		// The stream committed a partial before its invalid final message faulted the task; the transcript keeps it.
+		const partialStarts = events().filter(
+			(event) => event.type === "message_start" && event.message.role === "assistant",
+		);
+		expect(partialStarts).toHaveLength(1);
+		expect(partialStarts[0]!.type === "message_start" && textOf(partialStarts[0]!.message)).toBe("partial");
+		const assistantEnd = events().find(
+			(event) => event.type === "message_end" && event.entry.kind === "amazme.assistant",
+		);
+		expect(assistantEnd).toMatchObject({ entry: { model: [{ role: "assistant", stopReason: "aborted" }] } });
+		const settledAt = events().findIndex((event) => event.type === "agent_settled");
+		expect(events().indexOf(partialStarts[0]!)).toBeLessThan(settledAt);
 		const settlements = events().filter((event) => event.type === "agent_settled");
 		expect(settlements).toEqual([{ type: "agent_settled", aborted: false }]);
 		expect(batches.filter((batch) => batch.some((event) => event.type === "agent_settled"))).toHaveLength(1);

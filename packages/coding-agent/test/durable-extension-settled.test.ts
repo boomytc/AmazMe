@@ -102,6 +102,42 @@ describe("durable extension settlement", () => {
 		expect(events).toEqual(["agent_start", "agent_end", "agent_settled:false"]);
 	});
 
+	it("does not replay an earlier settlement to a runner attached after the run", async () => {
+		const sessionDir = join(directory, "sessions");
+		faux.setResponses([fauxAssistantMessage("first answer"), fauxAssistantMessage("second answer")]);
+		const first = await openDurable({
+			cwd,
+			modelRuntime: runtime,
+			settingsManager: settings,
+			sessionDir,
+			noExtensions: true,
+			noMcp: true,
+		});
+		sessions.add(first);
+		await first.controller.submitAndWait("first", "steer");
+		await first.close();
+		sessions.delete(first);
+
+		const events: string[] = [];
+		const reopened = await openDurable({
+			cwd,
+			modelRuntime: runtime,
+			settingsManager: settings,
+			sessionDir,
+			continueSession: true,
+			noExtensions: true,
+			noMcp: true,
+			extensionRunner: await runner(events),
+		});
+		sessions.add(reopened);
+		// The snapshot is the only history a late attachment gets; settlement is a boundary event.
+		await new Promise((wait) => setTimeout(wait, 250));
+		expect(events).toEqual([]);
+		await reopened.controller.submitAndWait("second", "steer");
+		await waitFor(() => events.includes("agent_settled:false"));
+		expect(events).toEqual(["agent_start", "agent_end", "agent_settled:false"]);
+	});
+
 	it("reports an aborted run to the same handler", async () => {
 		const pending = new Promise<AssistantMessage>(() => {});
 		faux.setResponses([async (_context, options) => new Promise<AssistantMessage>((_resolve, reject) => {
