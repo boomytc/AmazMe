@@ -82,12 +82,21 @@ export interface ShutdownSignals {
 }
 
 /**
- * Persistent SIGINT and SIGTERM listeners.
+ * Signals that end the process like SIGTERM: a repeat is ignored, never a force exit.
+ * SIGHUP is what the terminal sends when its window closes; it gets the same graceful close, so
+ * a closed window leaves no stale socket or `--no-session` artifact directory behind. Node also
+ * raises SIGHUP on Windows when the console window closes, and Windows ends the process about
+ * ten seconds later, so the listener is useful there too.
+ */
+const TERMINATION_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGHUP"];
+
+/**
+ * Persistent SIGINT, SIGTERM and SIGHUP listeners.
  *
- * The first of either calls `onFirst` once. A later SIGINT, while cleanup has not finished,
- * force-exits. Later SIGTERMs stay ignored: `signal-exit` (loaded by proper-lockfile) re-sends
- * SIGTERM during shutdown, and dropping the listener lets that signal kill the process before
- * sockets and the session lock are released.
+ * The first of any calls `onFirst` once. A later SIGINT, while cleanup has not finished,
+ * force-exits. Later SIGTERMs and SIGHUPs stay ignored: `signal-exit` (loaded by proper-lockfile)
+ * re-sends the signal it caught during shutdown, and dropping the listener lets that signal kill the
+ * process before sockets and the session lock are released.
  *
  * Listeners stay until {@link ShutdownSignals.dispose}.
  */
@@ -110,14 +119,14 @@ export function installShutdownSignals(onFirst: () => void): ShutdownSignals {
 		begin();
 	};
 
-	const onSigterm = (): void => {
-		// A repeat SIGTERM must not force-exit and must not take the default action.
+	const onTermination = (): void => {
+		// A repeat SIGTERM/SIGHUP must not force-exit and must not take the default action.
 		if (finished || cleaning) return;
 		begin();
 	};
 
 	process.on("SIGINT", onSigint);
-	process.on("SIGTERM", onSigterm);
+	for (const signal of TERMINATION_SIGNALS) process.on(signal, onTermination);
 
 	return {
 		get cleaning() {
@@ -137,22 +146,43 @@ export function installShutdownSignals(onFirst: () => void): ShutdownSignals {
 		},
 		dispose() {
 			process.off("SIGINT", onSigint);
-			process.off("SIGTERM", onSigterm);
+			for (const signal of TERMINATION_SIGNALS) process.off(signal, onTermination);
 		},
 	};
 }
 
+/** A started resource that reports when it stops on its own and can be closed. */
+export interface SignalClosable {
+	readonly closed: Promise<void>;
+	close(): Promise<void>;
+}
+
 /**
- * Wait until `closed` settles or the first SIGINT/SIGTERM arrives, then run `close`.
- * A SIGINT while `close` is still running force-exits. Listeners stay installed afterward.
- * `arm` runs synchronously once the listeners are installed: print readiness there, so a
- * signal sent on that line is never met by the default action. It is required, so every caller
- * decides where its readiness goes; a caller that prints nothing passes a no-op.
+ * Start a resource and run it until `closed` settles or the first SIGINT/SIGTERM/SIGHUP arrives,
+ * then run its `close`.
+ *
+ * This function owns the order: the signal listeners are installed first, and only then does
+ * `start` bind and listen. There is no shape that takes an already-listening resource, so a caller
+ * cannot open a socket in the window where a signal still takes the default action and leaves the
+ * socket file behind. A signal that arrives while `start` is still running is remembered: once
+ * `start` resolves, `arm` is skipped and `close` runs at once, so the socket is unlinked either way.
+ * If `start` rejects, it has cleaned up after itself; the listeners are dropped and the error
+ * propagates.
+ *
+ * `arm` is required and runs synchronously after `start` resolved, with the started resource, when
+ * no signal has arrived yet: print readiness there (a `Socket:` line, launch lines). It is the only
+ * point where the resource exists and the listeners are known to be up, so every caller decides
+ * where its readiness goes; a caller that prints nothing passes a no-op. `finish` ends the wait
+ * early, as a signal would.
+ *
+ * A SIGINT while `start` or `close` is still running force-exits. A repeat SIGTERM/SIGHUP does not:
+ * `signal-exit` (loaded by proper-lockfile) re-sends it. Listeners stay installed after a signal-driven
+ * close; callers exit immediately after this returns, because once the loop drains Node drops the
+ * signal watchers and a SIGTERM in that gap would become the process's death signal.
  */
-export async function closeAfterSignal(
-	closed: Promise<void>,
-	close: () => Promise<void>,
-	arm: (finish: () => void) => void,
+export async function closeWhenSignaled<T extends SignalClosable>(
+	start: () => Promise<T>,
+	arm: (running: T, finish: () => void) => void,
 ): Promise<void> {
 	let settled = false;
 	let resolveWait!: () => void;
@@ -172,13 +202,24 @@ export async function closeAfterSignal(
 		rejectWait(error);
 	};
 	const shutdown = installShutdownSignals(finish);
-	arm(finish);
-	void closed.then(finish, fail);
+	let running: T;
 	try {
+		running = await start();
+	} catch (error) {
+		shutdown.finish();
+		shutdown.dispose();
+		// A signal during a failed start already settled `done`; nothing awaits it.
+		done.catch(() => {});
+		throw error;
+	}
+	void running.closed.then(finish, fail);
+	try {
+		// A throwing `arm` still closes what `start` opened.
+		if (!settled) arm(running, finish);
 		await done;
 	} finally {
 		try {
-			await close();
+			await running.close();
 		} finally {
 			shutdown.finish();
 		}
