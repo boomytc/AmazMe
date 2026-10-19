@@ -330,6 +330,12 @@ export interface ExtensionContext {
 	hasUI: boolean;
 	/** Current working directory */
 	cwd: string;
+	/**
+	 * Directory for session-scoped tool artifacts (code-mode spill files, etc.).
+	 * Required: there is no OS-temp fallback. Durable sessions pass
+	 * {@link SessionLocation.artifactDirectory}; other hosts pass their session artifact root.
+	 */
+	artifactDirectory: string;
 	/** File observations owned by this session; omitted only by standalone callers. */
 	fileObservations?: FileObservationStore;
 	/** Model registry for API key resolution */

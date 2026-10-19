@@ -3870,11 +3870,13 @@ failure the error with the calls already made. Text past `max_output_tokens`
 (`details.fullOutputPath`); images are saved to files, their paths next to them.
 The Harness cuts a result past the tool's `outputLimits` (4 MiB, 100,000 lines)
 without such a file, so the text is also cut when it exceeds 1 Mi characters or
-the line limit, whatever `max_output_tokens` says. The files go to a temp
-directory of the environment that the run creates once and records in its run
-document (`outputDir`) before writing to it, under fixed names (`output.txt`,
-`image-<n>.<ext>`): a rerun after a crash overwrites them instead of adding new
-ones.
+the line limit, whatever `max_output_tokens` says. The files go to a per-run
+subdirectory of the host-injected `ExecutionEnv.artifactDirectory` that the run
+creates once and records in its run document (`outputDir`) before writing to it,
+under fixed names (`output.txt`, `image-<n>.<ext>`): a rerun after a crash
+overwrites them instead of adding new ones. There is no temporary-directory
+fallback; the host must supply `artifactDirectory` and owns its lifetime
+(typically next to the session database, deleted with the session).
 
 With `models` (default on), scripts get the model catalog
 (`models.getModelsOfType`, `getAvailableOfType`, `getModelOfType`; journaled

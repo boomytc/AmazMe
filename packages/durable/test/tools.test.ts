@@ -56,7 +56,8 @@ function createTempDir(): string {
 }
 
 function createEnv(): NodeExecutionEnv {
-	return new NodeExecutionEnv({ cwd: createTempDir() });
+	const dir = createTempDir();
+	return new NodeExecutionEnv({ cwd: dir, artifactDirectory: dir });
 }
 
 /** A unit execution API with real conversation documents and collected output and diagnostics. */
@@ -333,7 +334,8 @@ describe("durable tools", () => {
 		});
 
 		it("keeps the mutation queue locked until an aborted write settles", async () => {
-			const env = new BlockingWriteExecutionEnv({ cwd: createTempDir() });
+			const dir = createTempDir();
+			const env = new BlockingWriteExecutionEnv({ cwd: dir, artifactDirectory: dir });
 			const tool = createWriteTool();
 			const controller = new AbortController();
 			const firstWrite = run(
@@ -428,7 +430,8 @@ describe("durable tools", () => {
 		});
 
 		it("keeps the mutation queue locked until an aborted edit write settles", async () => {
-			const env = new BlockingEditExecutionEnv({ cwd: createTempDir() });
+			const dir = createTempDir();
+			const env = new BlockingEditExecutionEnv({ cwd: dir, artifactDirectory: dir });
 			getOrThrow(await env.writeFile("file.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
 			await run(createReadTool(), { path: "file.txt" }, env);
 			const tool = createEditTool();
@@ -453,7 +456,8 @@ describe("durable tools", () => {
 		});
 
 		it("serializes concurrent edits through canonical and symlink paths", async () => {
-			const env = new SlowReadExecutionEnv({ cwd: createTempDir() });
+			const dir = createTempDir();
+			const env = new SlowReadExecutionEnv({ cwd: dir, artifactDirectory: dir });
 			getOrThrow(await env.writeFile("target.txt", "alpha\nbeta\ngamma\n", BACKGROUND_CONTEXT));
 			await run(createReadTool(), { path: "target.txt" }, env);
 			await symlink("target.txt", `${env.cwd}/link.txt`);
@@ -467,8 +471,8 @@ describe("durable tools", () => {
 
 		it("serializes edits of one file across environment objects of one file system", async () => {
 			const dir = createTempDir();
-			const first = new SlowReadExecutionEnv({ cwd: dir });
-			const second = new SlowReadExecutionEnv({ cwd: dir });
+			const first = new SlowReadExecutionEnv({ artifactDirectory: dir, cwd: dir });
+			const second = new SlowReadExecutionEnv({ artifactDirectory: dir, cwd: dir });
 			getOrThrow(await first.writeFile("file.txt", "alpha\nbeta\n", BACKGROUND_CONTEXT));
 			await run(createReadTool(), { path: "file.txt" }, first);
 			const tool = createEditTool();
@@ -480,7 +484,8 @@ describe("durable tools", () => {
 		});
 
 		it("serializes a new file created through a symlinked directory with its canonical path", async () => {
-			const env = new BlockingWriteExecutionEnv({ cwd: createTempDir() });
+			const dir = createTempDir();
+			const env = new BlockingWriteExecutionEnv({ cwd: dir, artifactDirectory: dir });
 			mkdirSync(`${env.cwd}/real`);
 			await symlink(`${env.cwd}/real`, `${env.cwd}/link`);
 			const tool = createWriteTool();
@@ -533,8 +538,8 @@ describe("durable tools", () => {
 				override readonly id = "other";
 			}
 			const dir = createTempDir();
-			const local = new BlockingWriteExecutionEnv({ cwd: dir });
-			const other = new OtherFileSystem({ cwd: dir });
+			const local = new BlockingWriteExecutionEnv({ artifactDirectory: dir, cwd: dir });
+			const other = new OtherFileSystem({ cwd: dir, artifactDirectory: dir });
 			const tool = createWriteTool();
 			const blocked = run(tool, { path: "file.txt", content: "first\n" }, local);
 			await local.firstWriteStarted.promise;
@@ -580,7 +585,8 @@ describe("durable tools", () => {
 					return { ok: true, value: { exitCode } };
 				}
 			}
-			return { env: new ProgramsEnv({ cwd: createTempDir() }), commands };
+			const dir = createTempDir();
+			return { env: new ProgramsEnv({ cwd: dir, artifactDirectory: dir }), commands };
 		}
 
 		it("runs the command with pwsh as one argument, forcing UTF-8 output", async () => {
@@ -661,7 +667,7 @@ describe("durable tools", () => {
 			}
 			const calls: [string, ShellOutputSkip | undefined][] = [];
 			const api = {
-				...(await fakeApi(new SkippingEnv({ cwd: createTempDir() }))).api,
+				...(await fakeApi((dir => new SkippingEnv({ cwd: dir, artifactDirectory: dir }))(createTempDir()))).api,
 				outputWindow: window,
 				output: (chunk: string | Uint8Array, skip?: ShellOutputSkip) => calls.push([String(chunk), skip]),
 			} as ToolExecutionApi;
@@ -697,7 +703,8 @@ describe("durable tools", () => {
 		});
 
 		it("reports the spill of a command that times out", async () => {
-			const env = new TimeoutOutputExecutionEnv({ cwd: createTempDir() });
+			const dir = createTempDir();
+			const env = new TimeoutOutputExecutionEnv({ cwd: dir, artifactDirectory: dir });
 			const failed = await runFailing(
 				createBashTool(),
 				{ command: "emit-output-then-time-out", timeout: 0.05 },
@@ -712,8 +719,10 @@ describe("durable tools", () => {
 		});
 
 		it("prepares command, cwd, and an explicit environment with the call's api", async () => {
+			const dir = createTempDir();
 			const env = new NodeExecutionEnv({
-				cwd: createTempDir(),
+				cwd: dir,
+				artifactDirectory: dir,
 				shellEnv: { AMAZME_BASH_PREPARE_INHERITED: "inherited" },
 			});
 			getOrThrow(await env.createDir("workspace", undefined, BACKGROUND_CONTEXT));

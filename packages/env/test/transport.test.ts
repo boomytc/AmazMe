@@ -27,7 +27,7 @@ describe("daemon process transports", () => {
 		const env = new RemoteExecutionEnv({
 			connection,
 			id: "transport:test",
-			cwd,
+			cwd, artifactDirectory: cwd,
 		});
 		const first = getOrThrow(
 			await env.writeFileChecked("file.txt", "one", { kind: "createIfAbsent" }, BACKGROUND_CONTEXT),

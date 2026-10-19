@@ -60,6 +60,13 @@ export type {
 } from "../../core/codemode/types.ts";
 
 export interface CodemodeToolOptions {
+	/**
+	 * Directory for truncated text and saved images when the tool runs without an
+	 * {@link ExtensionToolContext} (standalone {@link createCodemodeTool}). Session-backed
+	 * registration obtains the directory from {@link ExtensionContext.artifactDirectory} instead.
+	 * There is no OS-temp fallback.
+	 */
+	artifactDirectory?: string;
 	/** Namespace of a tool, for `searchTools()` ranking and its `namespace` filter. */
 	getToolNamespace?: (toolName: string) => ToolNamespace | undefined;
 	/** Prompt guidelines of every tool, by tool name, shown with declarations by `describeTool()` and `ALL_TOOLS`. */
@@ -129,8 +136,19 @@ export function createCodemodeToolDefinition(
 			variants: { openai_lark: CODEMODE_SOURCE_GRAMMAR },
 		},
 		// The sandbox (worker, QuickJS wasm) loads on the first call, not at startup.
-		execute: async (toolCallId, params, signal, onUpdate, ctx) =>
-			(await import("../../core/codemode/execute.ts")).executeCodemode(
+		execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+			// Session tools always receive ExtensionToolContext with artifactDirectory by type.
+			// Standalone createCodemodeTool requires options.artifactDirectory.
+			const artifactDirectory =
+				ctx !== undefined
+					? ctx.artifactDirectory
+					: options.artifactDirectory;
+			if (artifactDirectory === undefined) {
+				throw new Error(
+					"codemode requires artifactDirectory; pass it to createCodemodeTool or run inside a session",
+				);
+			}
+			return (await import("../../core/codemode/execute.ts")).executeCodemode(
 				toolCallId,
 				params,
 				signal,
@@ -153,8 +171,13 @@ export function createCodemodeToolDefinition(
 					},
 					saveStore: appendEntry ? (writes) => appendEntry("codemode-store", writes) : undefined,
 				} satisfies CodemodeHost,
-				options,
-			),
+				{
+					getToolNamespace: options.getToolNamespace,
+					getToolGuidelines: options.getToolGuidelines,
+					artifactDirectory,
+				},
+			);
+		},
 		...codemodeRenderers,
 	};
 }
@@ -165,7 +188,7 @@ export function createCodemodeToolDefinition(
  */
 export function createCodemodeTool(
 	tools: readonly CodemodeToolInfo[] = [],
-	options: CodemodeToolOptions = {},
+	options: CodemodeToolOptions & { artifactDirectory: string },
 ): AgentTool<typeof codemodeSchema> {
 	const definition = createCodemodeToolDefinition(options);
 	const tool = wrapToolDefinition(definition);

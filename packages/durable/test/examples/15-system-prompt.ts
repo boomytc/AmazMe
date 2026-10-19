@@ -55,7 +55,7 @@ registry.install(Coding);
 registry.install(AgentsMd);
 registry.install(Terse);
 // The environment follows each conversation's agent `cwd`.
-const env = ({ cwd = "/" }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd });
+const env = ({ cwd = "/" }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 const harness = await Harness.open(new MemoryStorage(), { models, registry, env }, context);
 const model = { provider: "faux", modelId: "faux-1" };
 const root = await harness.root(context, { agent: { model, cwd: "/repo" } });

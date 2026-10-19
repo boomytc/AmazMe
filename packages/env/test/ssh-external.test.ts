@@ -23,7 +23,7 @@ import { createTempDir } from "./temp-dir.ts";
  * `AMAZME_ENV_SSH_KEY` and `AMAZME_ENV_SSH_PROGRAM`. On Windows this covers deployment and the daemon's launch through the server's default shell.
  */
 const host = process.env.AMAZME_ENV_SSH_HOST;
-const root = createTempDir("amazme-env-ssh-external-");
+const root = createTempDir("amazme-env-ssh-external-", { scope: "suite" });
 let connected: Promise<{ connection: Connection; remote: RemotePlatform }> | undefined;
 
 async function connect(): Promise<{ connection: Connection; remote: RemotePlatform }> {
@@ -77,11 +77,11 @@ if (host !== undefined) {
 		async (use) => {
 			const { connection } = await connect();
 			const info = await connection.info();
-			const home = new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd: info.home });
+			const home = new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd: info.home, artifactDirectory: info.home });
 			const cwd = getOrThrow(await home.createTempDir("amazme-env-conformance-", BACKGROUND_CONTEXT));
 			try {
 				await use(
-					new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd, watch: { pollIntervalMs: 100 } }),
+					new RemoteExecutionEnv({ connection, id: "amazme-env:external", cwd, artifactDirectory: cwd, watch: { pollIntervalMs: 100 } }),
 				);
 			} finally {
 				await home.remove(cwd, { recursive: true, force: true }, BACKGROUND_CONTEXT);

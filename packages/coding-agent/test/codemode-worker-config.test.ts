@@ -15,7 +15,7 @@ describe("resolveCodemodeWorkerSpecifier", () => {
 		);
 	});
 
-	test("uses the pi-codemode worker when unbundled", () => {
+	test("uses the package worker when unbundled", () => {
 		expect(resolveCodemodeWorkerSpecifier("unbundled", import.meta.url)).toBeUndefined();
 	});
 });

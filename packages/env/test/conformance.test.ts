@@ -20,7 +20,7 @@ registerEnvConformance(
 	async (use) => {
 		const cwd = createTempDir("amazme-env-conformance-");
 		try {
-			await use(new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd, watch: { pollIntervalMs: 100 } }));
+			await use(new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd, artifactDirectory: cwd, watch: { pollIntervalMs: 100 } }));
 		} finally {
 			// On Windows a killed command's processes can hold the directory for a moment.
 			rmSync(cwd, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
@@ -36,7 +36,7 @@ registerEnvConformance(
 	async (use) => {
 		const cwd = createTempDir("amazme-env-local-conformance-");
 		try {
-			await use(new LocalExecutionEnv({ connection, cwd, watch: { pollIntervalMs: 100 } }));
+			await use(new LocalExecutionEnv({ connection, cwd, artifactDirectory: cwd, watch: { pollIntervalMs: 100 } }));
 		} finally {
 			rmSync(cwd, { recursive: true, force: true, maxRetries: 50, retryDelay: 100 });
 		}

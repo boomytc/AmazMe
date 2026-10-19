@@ -1,28 +1,45 @@
-import { ChannelCallSchema, parseChannelFrame, frameJson } from "@amazme/protocol";
-import { createConnection, type Socket } from "node:net";
 import { realpath } from "node:fs/promises";
+import { createConnection, type Socket } from "node:net";
 import { isAbsolute, join } from "node:path";
 import {
 	type AttachedReplicatedState,
-	isJsonValue,
-	type JsonValue,
 	ChordError,
 	type ChordErrorCode,
 	type Frame,
+	isJsonValue,
+	type JsonValue,
 } from "@amazme/chord";
-import { BACKGROUND_CONTEXT, TODO_CONTEXT, withCancel } from "@amazme/chord/context";
-import { AgentDoc, CompactionTask, defineExtension, GenerationTask, Harness, hook, ROOT_CONVERSATION_ID, section, ToolTask } from "@amazme/durable";
-import type { AgentOperationError } from "../core/plugins/agent-controller.ts";
-import { abortArchivedForks } from "../durable/fork-management.ts";
+import {
+	BACKGROUND_CONTEXT,
+	TODO_CONTEXT,
+	withCancel,
+} from "@amazme/chord/context";
 import type { TaskGraph } from "@amazme/durable";
+import {
+	AgentDoc,
+	CompactionTask,
+	defineExtension,
+	GenerationTask,
+	Harness,
+	hook,
+	ROOT_CONVERSATION_ID,
+	section,
+	ToolTask,
+} from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
+import {
+	ChannelCallSchema,
+	frameJson,
+	parseChannelFrame,
+} from "@amazme/protocol";
 import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 import { ModelRuntime } from "../core/model-runtime.ts";
+import type { AgentOperationError } from "../core/plugins/agent-controller.ts";
 import { describePluginManifests } from "../core/plugins/info.ts";
 import { durableToolSelection } from "../core/tool-selection.ts";
-import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
+import { abortArchivedForks } from "../durable/fork-management.ts";
 import {
 	configureHarnessHttp,
 	createCodingRegistry,
@@ -33,16 +50,23 @@ import {
 	loadCodingResources,
 	refreshCodingProjectTrust,
 } from "../durable/harness-setup.ts";
-import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
-import { createApprovalGate } from "./services/approvals-provider.ts";
+import {
+	applyDurableMcpSelection,
+	type DurableMcp,
+	openDurableMcp,
+} from "../durable/mcp.ts";
 import { Subagent } from "../durable/subagent.ts";
-import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "../durable/mcp.ts";
+import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
+import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
 import {
 	consumeInternalProcessRole,
 	encodeControlLine,
 	isDirectInternalProcessEntry,
 	MAX_CONTROL_LINE_BYTES,
 } from "./process.ts";
+import { ProjectCatalog } from "./project-catalog.ts";
+import { createApprovalGate } from "./services/approvals-provider.ts";
+import { SessionLifecycle } from "./services/session-lifecycle.ts";
 import {
 	createSessionWorkerServices,
 	type SessionWorkerRuntime,
@@ -50,22 +74,46 @@ import {
 	type WorkerServiceScope,
 } from "./services/worker.ts";
 import { readSession, sessionStoragePath } from "./session-catalog.ts";
-import { ProjectCatalog } from "./project-catalog.ts";
-import { abortSessionWork, firstSessionTitle, isSessionEmpty, watchSessionTitle } from "./session-lifecycle.ts";
-import { SessionLifecycle } from "./services/session-lifecycle.ts";
+import {
+	abortSessionWork,
+	firstSessionTitle,
+	isSessionEmpty,
+	watchSessionTitle,
+} from "./session-lifecycle.ts";
 
 export const SESSION_INSPECTION_ATTACHMENT_ID = "@amazme/session-inspection";
 
 export type { SessionWorkerRuntime } from "./services/worker.ts";
 
-const StrictObject = <const T extends Parameters<typeof Type.Object>[0]>(properties: T) =>
-	Type.Object(properties, { additionalProperties: false });
+const StrictObject = <const T extends Parameters<typeof Type.Object>[0]>(
+	properties: T,
+) => Type.Object(properties, { additionalProperties: false });
 const OpaqueJsonValueSchema = Type.Unsafe<JsonValue>(Type.Unknown());
-const ChordErrorCodeSchema = Type.Unsafe<ChordErrorCode>(Type.Union(["aborted", "contract_mismatch", "forbidden", "gone", "invalid", "not_in_variant", "not_ready", "released", "superseded", "unavailable", "upgrade_conflict", "upgrade_required"].map(code => Type.Literal(code))));
+const ChordErrorCodeSchema = Type.Unsafe<ChordErrorCode>(
+	Type.Union(
+		[
+			"aborted",
+			"contract_mismatch",
+			"forbidden",
+			"gone",
+			"invalid",
+			"not_in_variant",
+			"not_ready",
+			"released",
+			"superseded",
+			"unavailable",
+			"upgrade_conflict",
+			"upgrade_required",
+		].map((code) => Type.Literal(code)),
+	),
+);
 
-export const SESSION_WORKER_CONTROL_ADDRESS_ENV = "AMAZME_SESSION_WORKER_CONTROL_ADDRESS";
-export const SESSION_WORKER_CONTROL_TOKEN_ENV = "AMAZME_SESSION_WORKER_CONTROL_TOKEN";
-export const SESSION_WORKER_SESSION_KEY_ENV = "AMAZME_SESSION_WORKER_SESSION_KEY_BASE64";
+export const SESSION_WORKER_CONTROL_ADDRESS_ENV =
+	"AMAZME_SESSION_WORKER_CONTROL_ADDRESS";
+export const SESSION_WORKER_CONTROL_TOKEN_ENV =
+	"AMAZME_SESSION_WORKER_CONTROL_TOKEN";
+export const SESSION_WORKER_SESSION_KEY_ENV =
+	"AMAZME_SESSION_WORKER_SESSION_KEY_BASE64";
 export const SESSION_WORKER_PEER_ID_ENV = "AMAZME_SESSION_WORKER_PEER_ID";
 
 export const SessionWorkerMetadataSchema = StrictObject({
@@ -96,7 +144,9 @@ export const WorkerOperationRequestSchema = StrictObject({
 	scope: WorkerOperationScopeSchema,
 	call: ChannelCallSchema,
 });
-export type WorkerOperationRequest = Static<typeof WorkerOperationRequestSchema>;
+export type WorkerOperationRequest = Static<
+	typeof WorkerOperationRequestSchema
+>;
 
 export const WorkerOperationResponseSchema = Type.Union([
 	StrictObject({
@@ -113,7 +163,9 @@ export const WorkerOperationResponseSchema = Type.Union([
 		message: Type.String(),
 	}),
 ]);
-export type WorkerOperationResponse = Static<typeof WorkerOperationResponseSchema>;
+export type WorkerOperationResponse = Static<
+	typeof WorkerOperationResponseSchema
+>;
 
 export const SessionWorkerCommandSchema = Type.Union([
 	Type.Object({ type: Type.Literal("shutdown") }),
@@ -185,7 +237,13 @@ export const SessionWorkerEventSchema = Type.Union([
 		channelId: Type.String({ minLength: 1 }),
 		update: Type.Unknown(),
 	}),
- StrictObject({ type: Type.Literal("channel_closed"), token: Type.String(), sessionKey: Type.String(), scope: WorkerOperationScopeSchema, channelId: Type.String({ minLength: 1 }) }),
+	StrictObject({
+		type: Type.Literal("channel_closed"),
+		token: Type.String(),
+		sessionKey: Type.String(),
+		scope: WorkerOperationScopeSchema,
+		channelId: Type.String({ minLength: 1 }),
+	}),
 ]);
 export type SessionWorkerEvent = Static<typeof SessionWorkerEventSchema>;
 
@@ -194,7 +252,10 @@ export class WorkerLifecycle {
 	readonly #initialDemandGraceMs: number;
 	readonly #orphanDemandGraceMs: number;
 	readonly #onRetire: () => void;
-	readonly #demands = new Map<string, { serverConnectionId: string; attachmentId: string; timer?: NodeJS.Timeout }>();
+	readonly #demands = new Map<
+		string,
+		{ serverConnectionId: string; attachmentId: string; timer?: NodeJS.Timeout }
+	>();
 	#harnessActive = false;
 	#currentServerConnectionId: string | undefined;
 	#initialTimer: NodeJS.Timeout | undefined;
@@ -224,16 +285,19 @@ export class WorkerLifecycle {
 	serverConnected(serverConnectionId: string): void {
 		this.#currentServerConnectionId = serverConnectionId;
 		for (const demand of this.#demands.values()) {
-			if (demand.serverConnectionId !== serverConnectionId || !demand.timer) continue;
+			if (demand.serverConnectionId !== serverConnectionId || !demand.timer)
+				continue;
 			clearTimeout(demand.timer);
 			delete demand.timer;
 		}
 	}
 
 	serverDisconnected(serverConnectionId: string): void {
-		if (this.#currentServerConnectionId === serverConnectionId) this.#currentServerConnectionId = undefined;
+		if (this.#currentServerConnectionId === serverConnectionId)
+			this.#currentServerConnectionId = undefined;
 		for (const [key, demand] of this.#demands) {
-			if (demand.serverConnectionId !== serverConnectionId || demand.timer) continue;
+			if (demand.serverConnectionId !== serverConnectionId || demand.timer)
+				continue;
 			demand.timer = setTimeout(() => {
 				if (this.#demands.get(key) !== demand) return;
 				this.#demands.delete(key);
@@ -246,7 +310,9 @@ export class WorkerLifecycle {
 	beginServerRequest(serverConnectionId: string): () => void {
 		if (this.#retiring) throw new Error("Session worker is retiring");
 		if (serverConnectionId !== this.#currentServerConnectionId) {
-			throw new Error("Session worker received a request from a stale server generation");
+			throw new Error(
+				"Session worker received a request from a stale server generation",
+			);
 		}
 		return this.holdRetirement();
 	}
@@ -254,11 +320,17 @@ export class WorkerLifecycle {
 	beginRequest(serverConnectionId: string, attachmentId: string): () => void {
 		if (this.#retiring) throw new Error("Session worker is retiring");
 		if (serverConnectionId !== this.#currentServerConnectionId) {
-			throw new Error("Session worker received a request from a stale server generation");
+			throw new Error(
+				"Session worker received a request from a stale server generation",
+			);
 		}
-		const demand = this.#demands.get(demandKey(serverConnectionId, attachmentId));
+		const demand = this.#demands.get(
+			demandKey(serverConnectionId, attachmentId),
+		);
 		if (!demand || demand.timer) {
-			throw new Error("Session worker request does not match the active attachment");
+			throw new Error(
+				"Session worker request does not match the active attachment",
+			);
 		}
 		return this.holdRetirement();
 	}
@@ -274,10 +346,16 @@ export class WorkerLifecycle {
 		};
 	}
 
-	setDemand(serverConnectionId: string, attachmentId: string, attached: boolean): void {
+	setDemand(
+		serverConnectionId: string,
+		attachmentId: string,
+		attached: boolean,
+	): void {
 		if (this.#retiring) throw new Error("Session worker is retiring");
 		if (serverConnectionId !== this.#currentServerConnectionId) {
-			throw new Error("Session worker received demand from a stale server generation");
+			throw new Error(
+				"Session worker received demand from a stale server generation",
+			);
 		}
 		this.#demandInitialized = true;
 		if (this.#initialTimer) {
@@ -323,8 +401,10 @@ export class WorkerLifecycle {
 
 const DEFAULT_INITIAL_DEMAND_GRACE_MS = 10_000;
 const DEFAULT_ORPHAN_DEMAND_GRACE_MS = 30_000;
-export const SESSION_WORKER_INITIAL_DEMAND_GRACE_ENV = "__AMAZME_SESSION_WORKER_INITIAL_DEMAND_GRACE_MS";
-export const SESSION_WORKER_ORPHAN_DEMAND_GRACE_ENV = "__AMAZME_SESSION_WORKER_ORPHAN_DEMAND_GRACE_MS";
+export const SESSION_WORKER_INITIAL_DEMAND_GRACE_ENV =
+	"__AMAZME_SESSION_WORKER_INITIAL_DEMAND_GRACE_MS";
+export const SESSION_WORKER_ORPHAN_DEMAND_GRACE_ENV =
+	"__AMAZME_SESSION_WORKER_ORPHAN_DEMAND_GRACE_MS";
 
 const CoordinatorInputSchema = Type.Union([
 	Type.Object({
@@ -332,9 +412,19 @@ const CoordinatorInputSchema = Type.Union([
 		peerId: Type.String(),
 		serverConnectionId: Type.Optional(Type.String()),
 	}),
-	Type.Object({ type: Type.Literal("server_connected"), serverConnectionId: Type.String() }),
-	Type.Object({ type: Type.Literal("server_disconnected"), serverConnectionId: Type.String() }),
-	Type.Object({ type: Type.Literal("message"), from: Type.Literal("server"), payload: Type.Unknown() }),
+	Type.Object({
+		type: Type.Literal("server_connected"),
+		serverConnectionId: Type.String(),
+	}),
+	Type.Object({
+		type: Type.Literal("server_disconnected"),
+		serverConnectionId: Type.String(),
+	}),
+	Type.Object({
+		type: Type.Literal("message"),
+		from: Type.Literal("server"),
+		payload: Type.Unknown(),
+	}),
 ]);
 type CoordinatorInput = Static<typeof CoordinatorInputSchema>;
 
@@ -351,7 +441,8 @@ async function connectControl(): Promise<WorkerControl> {
 	const address = process.env[SESSION_WORKER_CONTROL_ADDRESS_ENV];
 	const token = process.env[SESSION_WORKER_CONTROL_TOKEN_ENV];
 	const encodedSessionKey = process.env[SESSION_WORKER_SESSION_KEY_ENV];
-	if (!address || !token || !encodedSessionKey) throw new Error("Session worker requires a control address");
+	if (!address || !token || !encodedSessionKey)
+		throw new Error("Session worker requires a control address");
 	const peerId = process.env[SESSION_WORKER_PEER_ID_ENV];
 	if (!peerId) throw new Error("Session worker requires a peer ID");
 	const socket = createConnection(address);
@@ -360,7 +451,11 @@ async function connectControl(): Promise<WorkerControl> {
 		socket.once("error", reject);
 	});
 	const messages = createJsonLineMessages(socket);
-	await writeJsonLine(socket, { type: "register_peer", protocol: COORDINATOR_PROTOCOL_VERSION, peerId });
+	await writeJsonLine(socket, {
+		type: "register_peer",
+		protocol: COORDINATOR_PROTOCOL_VERSION,
+		peerId,
+	});
 	const registered = await messages[Symbol.asyncIterator]().next();
 	if (
 		registered.done ||
@@ -375,7 +470,8 @@ async function connectControl(): Promise<WorkerControl> {
 			: { initialServerConnectionId: registered.value.serverConnectionId }),
 		messages,
 		socket,
-		send: (event) => writeJsonLine(socket, { type: "send", to: "server", payload: event }),
+		send: (event) =>
+			writeJsonLine(socket, { type: "send", to: "server", payload: event }),
 	};
 }
 
@@ -384,16 +480,22 @@ async function readCommands(
 	handlers: {
 		onShutdown(): void;
 		onDiscovery(): void;
-		onDemand(command: Extract<SessionWorkerCommand, { type: "session_demand" }>): Promise<void>;
+		onDemand(
+			command: Extract<SessionWorkerCommand, { type: "session_demand" }>,
+		): Promise<void>;
 		onOperation(command: WorkerOperationRequest): void;
-		onOperationCancel(command: Extract<SessionWorkerCommand, { type: "operation_cancel" }>): void;
+		onOperationCancel(
+			command: Extract<SessionWorkerCommand, { type: "operation_cancel" }>,
+		): void;
 		onServerConnected(serverConnectionId: string): void;
 		onServerDisconnected(serverConnectionId: string): void;
 	},
 ): Promise<void> {
 	for await (const value of control.messages) {
 		if (!Check(CoordinatorInputSchema, value)) {
-			control.socket.destroy(new Error("Coordinator sent an invalid worker message"));
+			control.socket.destroy(
+				new Error("Coordinator sent an invalid worker message"),
+			);
 			return;
 		}
 		const message: CoordinatorInput = value;
@@ -405,12 +507,18 @@ async function readCommands(
 			handlers.onServerDisconnected(message.serverConnectionId);
 			continue;
 		}
-		if (message.type !== "message" || !Check(SessionWorkerCommandSchema, message.payload)) continue;
+		if (
+			message.type !== "message" ||
+			!Check(SessionWorkerCommandSchema, message.payload)
+		)
+			continue;
 		const command: SessionWorkerCommand = message.payload;
 		if (command.type === "shutdown") handlers.onShutdown();
 		else if (command.type === "discover_workers") handlers.onDiscovery();
-		else if (command.type === "session_demand") await handlers.onDemand(command);
-		else if (command.type === "operation_cancel") handlers.onOperationCancel(command);
+		else if (command.type === "session_demand")
+			await handlers.onDemand(command);
+		else if (command.type === "operation_cancel")
+			handlers.onOperationCancel(command);
 		else handlers.onOperation(command);
 	}
 }
@@ -437,7 +545,9 @@ function createJsonLineMessages(socket: Socket): AsyncIterable<unknown> {
 				if (waiter) waiter(value);
 				else queued.push(value);
 			} catch {
-				socket.destroy(new Error("Session worker received invalid control JSON"));
+				socket.destroy(
+					new Error("Session worker received invalid control JSON"),
+				);
 				return;
 			}
 		}
@@ -446,7 +556,9 @@ function createJsonLineMessages(socket: Socket): AsyncIterable<unknown> {
 		[Symbol.asyncIterator]() {
 			return {
 				next: async () => {
-					const value = queued.shift() ?? (await new Promise<unknown>((resolve) => waiters.push(resolve)));
+					const value =
+						queued.shift() ??
+						(await new Promise<unknown>((resolve) => waiters.push(resolve)));
 					return { done: false as const, value };
 				},
 			};
@@ -471,15 +583,22 @@ function demandKey(serverConnectionId: string, attachmentId: string): string {
 	return `${serverConnectionId}\0${attachmentId}`;
 }
 
-function sameScope(left: WorkerOperationScope, right: WorkerOperationScope): boolean {
-	return left.serverConnectionId === right.serverConnectionId && left.attachmentId === right.attachmentId;
+function sameScope(
+	left: WorkerOperationScope,
+	right: WorkerOperationScope,
+): boolean {
+	return (
+		left.serverConnectionId === right.serverConnectionId &&
+		left.attachmentId === right.attachmentId
+	);
 }
 
 function lifecycleDelay(name: string, fallback: number): number {
 	const value = process.env[name];
 	if (value === undefined) return fallback;
 	const parsed = Number(value);
-	if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error(`${name} must be a non-negative safe integer`);
+	if (!Number.isSafeInteger(parsed) || parsed < 0)
+		throw new Error(`${name} must be a non-negative safe integer`);
 	return parsed;
 }
 
@@ -489,8 +608,11 @@ async function closeResources(resources: {
 	releaseOwnership: () => Promise<void>;
 }): Promise<void> {
 	const errors: unknown[] = [];
- try { await resources.services?.closeChannels(() => true); }
- catch (error) { errors.push(error); }
+	try {
+		await resources.services?.closeChannels(() => true);
+	} catch (error) {
+		errors.push(error);
+	}
 	try {
 		// Tool invocations release their work before plugin-owned resources are retired.
 		await resources.runtime?.harness.close(TODO_CONTEXT);
@@ -513,7 +635,8 @@ async function closeResources(resources: {
 		errors.push(error);
 	}
 	if (errors.length === 1) throw errors[0];
-	if (errors.length > 1) throw new AggregateError(errors, "Session worker cleanup failed");
+	if (errors.length > 1)
+		throw new AggregateError(errors, "Session worker cleanup failed");
 }
 
 /**
@@ -525,26 +648,42 @@ export type CreateSessionWorkerHarness = (
 	options: SessionWorkerOptions,
 ) => Promise<SessionWorkerRuntime>;
 
-async function run(options: SessionWorkerOptions, createHarness: CreateSessionWorkerHarness): Promise<void> {
+async function run(
+	options: SessionWorkerOptions,
+	createHarness: CreateSessionWorkerHarness,
+): Promise<void> {
 	const { metadata } = options;
 	const sessionId = metadata.id;
 	const control = await connectControl();
 	const token = process.env[SESSION_WORKER_CONTROL_TOKEN_ENV]!;
-	const sessionKey = Buffer.from(process.env[SESSION_WORKER_SESSION_KEY_ENV]!, "base64url").toString();
+	const sessionKey = Buffer.from(
+		process.env[SESSION_WORKER_SESSION_KEY_ENV]!,
+		"base64url",
+	).toString();
 	failureControl = control;
 	const pluginManifestPaths = options.pluginManifestPaths;
 	const releaseOwnership = await lockfile.lock(metadata.path, {
 		realpath: true,
 		stale: 2_000,
 		update: 1_000,
-		retries: { retries: 320, factor: 1, minTimeout: 25, maxTimeout: 25, maxRetryTime: 8_000 },
+		retries: {
+			retries: 320,
+			factor: 1,
+			minTimeout: 25,
+			maxTimeout: 25,
+			maxRetryTime: 8_000,
+		},
 	});
 	let runtime: SessionWorkerRuntime | undefined;
 	let services: SessionWorkerServices | undefined;
 	let taskGraph: AttachedReplicatedState<TaskGraph> | undefined;
 	try {
 		runtime = await createHarness(sessionStoragePath(metadata), options);
-		if ((await readSession(options.sessionDir, metadata.id))?.archivedAt !== undefined) await abortSessionWork(runtime.harness, BACKGROUND_CONTEXT);
+		if (
+			(await readSession(options.sessionDir, metadata.id))?.archivedAt !==
+			undefined
+		)
+			await abortSessionWork(runtime.harness, BACKGROUND_CONTEXT);
 		else await abortArchivedForks(runtime.harness);
 		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
@@ -564,31 +703,50 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
 			publish: (scope, channelId, update) =>
-				control.send(update === undefined
-     ? { type: "channel_closed", token, sessionKey, scope, channelId }
-     : { type: "channel_frame", token, sessionKey, scope, channelId, update: toWorkerFrame(update) }),
+				control.send(
+					update === undefined
+						? { type: "channel_closed", token, sessionKey, scope, channelId }
+						: {
+								type: "channel_frame",
+								token,
+								sessionKey,
+								scope,
+								channelId,
+								update: toWorkerFrame(update),
+							},
+				),
 		});
 	} catch (error) {
 		taskGraph?.dispose();
 		try {
 			await closeResources({ runtime, services, releaseOwnership });
 		} catch (cleanupError) {
-			throw new AggregateError([error, cleanupError], "Session worker startup and cleanup failed");
+			throw new AggregateError(
+				[error, cleanupError],
+				"Session worker startup and cleanup failed",
+			);
 		}
 		throw error;
 	}
 
 	const activeRequests = new Map<
 		string,
-		{ readonly scope: WorkerOperationScope; readonly cancel: (reason?: unknown) => void }
+		{
+			readonly scope: WorkerOperationScope;
+			readonly cancel: (reason?: unknown) => void;
+		}
 	>();
 	const harness = runtime.harness;
 	const activity = taskGraph;
 	let lifecycle: WorkerLifecycle | undefined;
 	let stopActivity = (): void => {};
 	let stopTitle = (): void => {};
-	const imageTitle = runtime.settingsManager?.getLocalePreference() === "zh" ? "图片会话" : "Image conversation";
-	const publishTitle = (title: string): Promise<void> => control.send({ type: "session_title", token, sessionKey, title });
+	const imageTitle =
+		runtime.settingsManager?.getLocalePreference() === "zh"
+			? "图片会话"
+			: "Image conversation";
+	const publishTitle = (title: string): Promise<void> =>
+		control.send({ type: "session_title", token, sessionKey, title });
 	let closing: Promise<void> | undefined;
 	const close = (): Promise<void> => {
 		if (closing) return closing;
@@ -596,7 +754,8 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		stopActivity();
 		stopTitle();
 		activity.dispose();
-		for (const request of activeRequests.values()) request.cancel(new Error("Session worker is closing"));
+		for (const request of activeRequests.values())
+			request.cancel(new Error("Session worker is closing"));
 		activeRequests.clear();
 		closing = closeResources({ runtime, services, releaseOwnership });
 		return closing;
@@ -618,7 +777,8 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 					type: "worker_failed",
 					token,
 					sessionKey,
-					message: end.error instanceof Error ? end.error.message : String(end.error),
+					message:
+						end.error instanceof Error ? end.error.message : String(end.error),
 				});
 			} finally {
 				closeAndExit();
@@ -628,16 +788,25 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 
 	lifecycle = new WorkerLifecycle({
 		initialServerConnectionId: control.initialServerConnectionId,
-		initialDemandGraceMs: lifecycleDelay(SESSION_WORKER_INITIAL_DEMAND_GRACE_ENV, DEFAULT_INITIAL_DEMAND_GRACE_MS),
-		orphanDemandGraceMs: lifecycleDelay(SESSION_WORKER_ORPHAN_DEMAND_GRACE_ENV, DEFAULT_ORPHAN_DEMAND_GRACE_MS),
+		initialDemandGraceMs: lifecycleDelay(
+			SESSION_WORKER_INITIAL_DEMAND_GRACE_ENV,
+			DEFAULT_INITIAL_DEMAND_GRACE_MS,
+		),
+		orphanDemandGraceMs: lifecycleDelay(
+			SESSION_WORKER_ORPHAN_DEMAND_GRACE_ENV,
+			DEFAULT_ORPHAN_DEMAND_GRACE_MS,
+		),
 		onRetire: closeAndExit,
 	});
 	// Every live task, background work included, keeps the worker and its Session open.
-	const syncActivity = () => lifecycle?.setHarnessActive(
-		Object.keys(activity.value.tasks).length > 0 ||
-		services?.authenticationActive() === true ||
-		["preparing", "awaiting", "finishing"].includes(runtime?.mcp?.snapshot().login?.status ?? ""),
-	);
+	const syncActivity = () =>
+		lifecycle?.setHarnessActive(
+			Object.keys(activity.value.tasks).length > 0 ||
+				services?.authenticationActive() === true ||
+				["preparing", "awaiting", "finishing"].includes(
+					runtime?.mcp?.snapshot().login?.status ?? "",
+				),
+		);
 	const stopTasks = activity.subscribe(syncActivity);
 	const stopMcp = runtime.mcp?.subscribe(syncActivity);
 	const stopAuthentication = services.subscribeAuthentication(syncActivity);
@@ -649,15 +818,31 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 	// Recovered work from an interrupted turn continues now.
 	harness.resume();
 
-	const handleOperation = async (request: WorkerOperationRequest): Promise<void> => {
+	const handleOperation = async (
+		request: WorkerOperationRequest,
+	): Promise<void> => {
 		let releaseRequest = (): void => {};
 		const cancellable = withCancel(BACKGROUND_CONTEXT);
 		try {
-			const inspection = request.scope.attachmentId === SESSION_INSPECTION_ATTACHMENT_ID;
-   releaseRequest = inspection ? lifecycle!.beginServerRequest(request.scope.serverConnectionId) : lifecycle!.beginRequest(request.scope.serverConnectionId, request.scope.attachmentId);
-   activeRequests.set(request.requestId, { scope: request.scope, cancel: cancellable.cancel });
-   const result = await services.invoke(request.call, request.scope, cancellable.context);
-			if (result !== undefined && !isJsonValue(result)) throw new Error("Service produced a non-JSON result");
+			const inspection =
+				request.scope.attachmentId === SESSION_INSPECTION_ATTACHMENT_ID;
+			releaseRequest = inspection
+				? lifecycle!.beginServerRequest(request.scope.serverConnectionId)
+				: lifecycle!.beginRequest(
+						request.scope.serverConnectionId,
+						request.scope.attachmentId,
+					);
+			activeRequests.set(request.requestId, {
+				scope: request.scope,
+				cancel: cancellable.cancel,
+			});
+			const result = await services.invoke(
+				request.call,
+				request.scope,
+				cancellable.context,
+			);
+			if (result !== undefined && !isJsonValue(result))
+				throw new Error("Service produced a non-JSON result");
 			await control.send({
 				type: "operation_response",
 				token,
@@ -690,7 +875,9 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 				},
 			});
 		} finally {
-			if (activeRequests.get(request.requestId)?.cancel === cancellable.cancel) {
+			if (
+				activeRequests.get(request.requestId)?.cancel === cancellable.cancel
+			) {
 				activeRequests.delete(request.requestId);
 			}
 			releaseRequest();
@@ -710,14 +897,13 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 				metadata,
 				pluginManifestPaths: [...pluginManifestPaths],
 			})
-			.then(
-				() => {
-					void firstSessionTitle(runtime.conversation, imageTitle)
-						.then((title) => title === undefined ? undefined : publishTitle(title))
-						.catch((error: unknown) => console.error("Session title:", error));
-				},
-				closeAndExit,
-			);
+			.then(() => {
+				void firstSessionTitle(runtime.conversation, imageTitle)
+					.then((title) =>
+						title === undefined ? undefined : publishTitle(title),
+					)
+					.catch((error: unknown) => console.error("Session title:", error));
+			}, closeAndExit);
 	};
 	void readCommands(control, {
 		onShutdown: closeAndExit,
@@ -732,7 +918,11 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 							scope.attachmentId === command.attachmentId;
 						await services.closeChannels(matches);
 					}
-					lifecycle?.setDemand(command.serverConnectionId, command.attachmentId, command.attached);
+					lifecycle?.setDemand(
+						command.serverConnectionId,
+						command.attachmentId,
+						command.attached,
+					);
 				} catch (error) {
 					await control.send({
 						type: "demand_rejected",
@@ -761,15 +951,20 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 		onOperationCancel: (command) => {
 			const active = activeRequests.get(command.requestId);
 			if (active !== undefined && sameScope(active.scope, command.scope)) {
-				active.cancel(new DOMException("Service operation cancelled", "AbortError"));
+				active.cancel(
+					new DOMException("Service operation cancelled", "AbortError"),
+				);
 			}
 		},
-		onServerConnected: (serverConnectionId) => lifecycle?.serverConnected(serverConnectionId),
+		onServerConnected: (serverConnectionId) =>
+			lifecycle?.serverConnected(serverConnectionId),
 		onServerDisconnected: (serverConnectionId) => {
-			const matches = (scope: WorkerOperationScope): boolean => scope.serverConnectionId === serverConnectionId;
+			const matches = (scope: WorkerOperationScope): boolean =>
+				scope.serverConnectionId === serverConnectionId;
 			void services.closeChannels(matches).catch(() => closeAndExit());
 			for (const request of activeRequests.values()) {
-				if (matches(request.scope)) request.cancel(new Error("Server disconnected"));
+				if (matches(request.scope))
+					request.cancel(new Error("Server disconnected"));
 			}
 			lifecycle?.serverDisconnected(serverConnectionId);
 		},
@@ -790,12 +985,20 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			metadata,
 			pluginManifestPaths: [...pluginManifestPaths],
 		});
-		stopTitle = watchSessionTitle(harness, runtime.conversation, imageTitle, publishTitle);
+		stopTitle = watchSessionTitle(
+			harness,
+			runtime.conversation,
+			imageTitle,
+			publishTitle,
+		);
 	} catch (error) {
 		try {
 			await close();
 		} catch (cleanupError) {
-			throw new AggregateError([error, cleanupError], "Session worker readiness and cleanup failed");
+			throw new AggregateError(
+				[error, cleanupError],
+				"Session worker readiness and cleanup failed",
+			);
 		}
 		throw error;
 	}
@@ -806,12 +1009,15 @@ export async function runSessionWorkerWithHarness(
 	createHarness: CreateSessionWorkerHarness,
 ): Promise<void> {
 	try {
-		if (args.length !== 1) throw new Error("Session worker requires one options argument");
+		if (args.length !== 1)
+			throw new Error("Session worker requires one options argument");
 		let options: unknown;
 		try {
 			options = JSON.parse(args[0]!);
 		} catch (error) {
-			throw new Error("Session worker received invalid options", { cause: error });
+			throw new Error("Session worker received invalid options", {
+				cause: error,
+			});
 		}
 		if (
 			!Check(SessionWorkerOptionsSchema, options) ||
@@ -829,7 +1035,9 @@ export async function runSessionWorkerWithHarness(
 		const encodedSessionKey = process.env[SESSION_WORKER_SESSION_KEY_ENV];
 		if (token && encodedSessionKey) {
 			const sessionKey = Buffer.from(encodedSessionKey, "base64url").toString();
-			await failureControl?.send({ type: "worker_failed", token, sessionKey, message }).catch(() => {});
+			await failureControl
+				?.send({ type: "worker_failed", token, sessionKey, message })
+				.catch(() => {});
 		}
 		throw error;
 	}
@@ -849,50 +1057,101 @@ async function createCodingAgentHarness(
 		const metadata = await readSession(options.sessionDir, options.metadata.id);
 		const projects = await projectCatalog.list();
 		const path = await realpath(cwd).catch(() => cwd);
-		const project = metadata?.projectId === undefined
-			? projects.find(project => !project.removed && (project.workspaces ?? [project.cwd]).includes(path))
-				?? projects.find(project => (project.workspaces ?? [project.cwd]).includes(path))
-			: projects.find(project => project.id === metadata.projectId);
-		if (project?.removed || (metadata?.projectId !== undefined && project === undefined)) return [];
+		const project =
+			metadata?.projectId === undefined
+				? (projects.find(
+						(project) =>
+							!project.removed &&
+							(project.workspaces ?? [project.cwd]).includes(path),
+					) ??
+					projects.find((project) =>
+						(project.workspaces ?? [project.cwd]).includes(path),
+					))
+				: projects.find((project) => project.id === metadata.projectId);
+		if (
+			project?.removed ||
+			(metadata?.projectId !== undefined && project === undefined)
+		)
+			return [];
 		return project?.workspaces ?? [cwd];
 	};
-	const envs = new ExecutionEnvs(cwd, settingsManager, workspaceDirectories);
-	const registry = createCodingRegistry(settingsManager, cwd, resources, workspaceDirectories, join(options.metadata.path, "artifacts", "review"));
+	const envs = new ExecutionEnvs(
+		cwd,
+		join(options.metadata.path, "artifacts"),
+		settingsManager,
+		workspaceDirectories,
+	);
+	const registry = createCodingRegistry(
+		settingsManager,
+		cwd,
+		resources,
+		workspaceDirectories,
+		join(options.metadata.path, "artifacts", "review"),
+	);
 	const admission = async (): Promise<AgentOperationError | undefined> => {
 		const metadata = await readSession(options.sessionDir, options.metadata.id);
-		if (!metadata) return { code: "session_unavailable", message: "会话状态不可用，请重新连接宿主。" };
-		return metadata.archivedAt === undefined ? undefined : { code: "session_ended", message: "会话已归档；请恢复后再开始工作。" };
+		if (!metadata)
+			return {
+				code: "session_unavailable",
+				message: "会话状态不可用，请重新连接宿主。",
+			};
+		return metadata.archivedAt === undefined
+			? undefined
+			: { code: "session_ended", message: "会话已归档；请恢复后再开始工作。" };
 	};
 	const beforeModel = async () => {
-		try { const refusal = await admission(); return refusal ? { block: refusal.message } : undefined; }
-		catch { return { block: "无法确认会话状态，请恢复宿主连接后重试。" }; }
+		try {
+			const refusal = await admission();
+			return refusal ? { block: refusal.message } : undefined;
+		} catch {
+			return { block: "无法确认会话状态，请恢复宿主连接后重试。" };
+		}
 	};
-	registry.install(defineExtension({ name: "ended-session-gate", hooks: [
-		hook(GenerationTask, { beforeModel }),
-		hook(CompactionTask, { beforeModel }),
-		hook(ToolTask, { beforeTool: beforeModel, beforeExecute: beforeModel }),
-	] }));
+	registry.install(
+		defineExtension({
+			name: "ended-session-gate",
+			hooks: [
+				hook(GenerationTask, { beforeModel }),
+				hook(CompactionTask, { beforeModel }),
+				hook(ToolTask, { beforeTool: beforeModel, beforeExecute: beforeModel }),
+			],
+		}),
+	);
 	if (options.pluginManifestPaths.length > 0) {
-		registry.install(defineExtension({
-			name: "plugin-development",
-			sections: [section("plugin_development", () => describePluginManifests(options.pluginManifestPaths))],
-		}));
+		registry.install(
+			defineExtension({
+				name: "plugin-development",
+				sections: [
+					section("plugin_development", () =>
+						describePluginManifests(options.pluginManifestPaths),
+					),
+				],
+			}),
+		);
 	}
 	// The durable runtime installs this tool beside its registry; the Session worker is the same
 	// agent, so a session opened here can delegate to a subagent the way the TUI's does.
 	registry.install(Subagent);
 	// The approval gate is a tool hook, so it belongs to the registry the Harness takes.
-	const approvalGate = createApprovalGate({ mode: async () => {
-		// A running task may have no attached client to reload its configuration.
-		await settingsManager.reload();
-		refreshCodingProjectTrust(settingsManager, cwd);
-		return settingsManager.getToolApprovalMode();
-	} });
+	const approvalGate = createApprovalGate({
+		mode: async () => {
+			// A running task may have no attached client to reload its configuration.
+			await settingsManager.reload();
+			refreshCodingProjectTrust(settingsManager, cwd);
+			return settingsManager.getToolApprovalMode();
+		},
+	});
 	registry.install(approvalGate.extension);
 	let harness: Harness | undefined;
 	let mcp: DurableMcp | undefined;
 	try {
-		const activeMcp = await openDurableMcp({ registry, cwd, settings: settingsManager, models: modelRuntime, report: error => console.error(error) });
+		const activeMcp = await openDurableMcp({
+			registry,
+			cwd,
+			settings: settingsManager,
+			models: modelRuntime,
+			report: (error) => console.error(error),
+		});
 		mcp = activeMcp;
 		harness = await Harness.open(
 			await openNodeSqliteStorage(databasePath),
@@ -906,30 +1165,46 @@ async function createCodingAgentHarness(
 			TODO_CONTEXT,
 		);
 		// The initial model applies only when the root conversation is created; later starts keep its durable model.
-		const created = (await harness.conversation(ROOT_CONVERSATION_ID, TODO_CONTEXT)) === undefined;
+		const created =
+			(await harness.conversation(ROOT_CONVERSATION_ID, TODO_CONTEXT)) ===
+			undefined;
 		const initial = created
 			? await findInitialAgentModel(
 					settingsManager,
 					modelRuntime,
-					options.model === undefined ? undefined : { provider: options.provider, model: options.model },
+					options.model === undefined
+						? undefined
+						: { provider: options.provider, model: options.model },
 				)
 			: undefined;
 		const conversation = await harness.root(TODO_CONTEXT, {
 			agent: {
 				cwd,
 				...(initial?.model === undefined ? {} : { model: initial.model }),
-				...(initial?.thinkingLevel === undefined ? {} : { thinkingLevel: initial.thinkingLevel }),
+				...(initial?.thinkingLevel === undefined
+					? {}
+					: { thinkingLevel: initial.thinkingLevel }),
 			},
 			init: async (tx, id) => {
 				const agent = await tx.doc(AgentDoc, id);
-				agent.tools = activeMcp.selection(durableToolSelection({}, settingsManager.getDefaultTools(), settingsManager.getSettings().defaultTools));
+				agent.tools = activeMcp.selection(
+					durableToolSelection(
+						{},
+						settingsManager.getDefaultTools(),
+						settingsManager.getSettings().defaultTools,
+					),
+				);
 			},
 		});
 		await applyDurableMcpSelection(mcp, conversation, TODO_CONTEXT);
 		return {
 			admission,
-			executionEnv: envs.env({ cwd, conversationId: conversation.id, read: harness }),
-			stopExecution: context => envs.cleanup(context),
+			executionEnv: envs.env({
+				cwd,
+				conversationId: conversation.id,
+				read: harness,
+			}),
+			stopExecution: (context) => envs.cleanup(context),
 			cwd,
 			workspaceDirectories,
 			approvalGate,
@@ -940,7 +1215,8 @@ async function createCodingAgentHarness(
 			settingsManager,
 			resources,
 			mcp: activeMcp.management,
-			alignConversation: (conversation, reloadContext) => applyDurableMcpSelection(activeMcp, conversation, reloadContext),
+			alignConversation: (conversation, reloadContext) =>
+				applyDurableMcpSelection(activeMcp, conversation, reloadContext),
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
 			cleanup: async (context) => {
 				try {
@@ -962,20 +1238,29 @@ async function createCodingAgentHarness(
 				}
 			}
 		} catch (cleanupError) {
-			throw new AggregateError([error, cleanupError], "Session worker Harness startup and cleanup failed");
+			throw new AggregateError(
+				[error, cleanupError],
+				"Session worker Harness startup and cleanup failed",
+			);
 		}
 		throw error;
 	}
 }
 
-export function runSessionWorkerProcess(args: readonly string[]): Promise<void> {
+export function runSessionWorkerProcess(
+	args: readonly string[],
+): Promise<void> {
 	return runSessionWorkerWithHarness(args, createCodingAgentHarness);
 }
 
 if (isDirectInternalProcessEntry(import.meta.url)) {
 	const role = consumeInternalProcessRole();
 	if (role !== "session-worker") {
-		throw new Error("Session worker entrypoint requires an internal session-worker invocation");
+		throw new Error(
+			"Session worker entrypoint requires an internal session-worker invocation",
+		);
 	}
-	void runSessionWorkerProcess(process.argv.slice(2)).catch(() => process.exit(1));
+	void runSessionWorkerProcess(process.argv.slice(2)).catch(() =>
+		process.exit(1),
+	);
 }

@@ -255,7 +255,7 @@ if (process.env.OPENAI_API_KEY !== undefined) {
 }
 const registry = createRegistry();
 registry.install(SubagentTools);
-const directory = createTempDir("pi-durable-subagents-");
+const directory = createTempDir("pi-durable-subagents-", { scope: "suite" });
 const open = async () => {
 	const harness = await Harness.open(
 		await openNodeSqliteStorage(join(directory, "session.sqlite")),

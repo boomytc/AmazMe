@@ -46,7 +46,7 @@ const Reviewer = defineExtension({
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
 // The reviewer works in its own checkout, in practice a `git worktree add`.
-const worktree = createTempDir("pi-durable-review-");
+const worktree = createTempDir("pi-durable-review-", { scope: "suite" });
 await writeFile(join(worktree, "user.ts"), "export const name = (user) => user.name;\n");
 
 const faux = fauxProvider({ models: [{ id: "big" }, { id: "small" }] });
@@ -68,7 +68,7 @@ const harness = await Harness.open(
 		models,
 		registry,
 		settings: { extensions: [CodingTools] },
-		env: ({ cwd = process.cwd() }) => new NodeExecutionEnv({ cwd }),
+		env: ({ cwd = process.cwd() }) => new NodeExecutionEnv({ cwd, artifactDirectory: cwd }),
 	},
 	context,
 );

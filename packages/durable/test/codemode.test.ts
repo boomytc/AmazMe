@@ -12,7 +12,7 @@ import {
 	ToolTask,
 	type ToolTaskInput,
 } from "@amazme/durable";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
 	type CodemodeGlobal,
 	CodemodeJournalDoc,
@@ -22,6 +22,7 @@ import {
 } from "../src/codemode/codemode.ts";
 import type { CodemodeNamespace } from "../src/codemode/describe.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
+import { createArtifactEnv, listAmazmeCodemodeTemps } from "./artifact-env.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
@@ -942,15 +943,22 @@ describe("durable code mode", () => {
 });
 
 describe("durable code mode output and tool search", () => {
+	const tempsBefore = { value: [] as string[] };
+	beforeAll(async () => {
+		tempsBefore.value = await listAmazmeCodemodeTemps();
+	});
+	afterAll(async () => {
+		const after = await listAmazmeCodemodeTemps();
+		const created = after.filter((name) => !tempsBefore.value.includes(name));
+		expect(created).toEqual([]);
+	});
+
 	/** Run `code` once in a chat with a Node environment; the result's content and details. */
 	async function runScript(code: string, chat = codemodeChat()) {
 		chat.holds.block = false;
-		const cwd = createTempDir("pi-codemode-env-");
-		directories.add(cwd);
+		const { env, artifactDirectory } = await createArtifactEnv({ prefix: "amazme-codemode-out-" });
 		chat.setup.faux.setResponses([script(code), DONE]);
-		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup, {
-			env: new NodeExecutionEnv({ cwd }),
-		});
+		const { harness, root } = await openChat(await openNodeSqliteStorage(await sqlitePath()), chat.setup, { env });
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		const entry = (await allEntries(root)).find((candidate) => ToolResultEntry.is(candidate))!;
 		const message = entry.model![0] as {
@@ -959,7 +967,7 @@ describe("durable code mode output and tool search", () => {
 			details?: CodemodeToolDetails;
 		};
 		await harness.close(context);
-		return { text: message.content.map((item) => item.text ?? `<${item.type}>`).join(""), message };
+		return { text: message.content.map((item) => item.text ?? `<${item.type}>`).join(""), message, artifactDirectory };
 	}
 
 	it("lays out text items, console lines, and the returned value under a header", async () => {
@@ -970,7 +978,7 @@ describe("durable code mode output and tool search", () => {
 	});
 
 	it("cuts text past the token budget to its start and end, with the full text in a file", async () => {
-		const { text, message } = await runScript(
+		const { text, message, artifactDirectory } = await runScript(
 			`// @options: {"max_output_tokens": 20}
 			text("BEGIN" + "x".repeat(1000) + "END");`,
 		);
@@ -979,6 +987,7 @@ describe("durable code mode output and tool search", () => {
 		expect(text).toContain("END");
 		const path = message.details?.fullOutputPath;
 		expect(text).toContain(`[Full output: ${path}`);
+		expect(path!.startsWith(artifactDirectory + "/")).toBe(true);
 		expect(await readFile(path!, "utf8")).toBe(`BEGIN${"x".repeat(1000)}END`);
 	});
 
@@ -1004,8 +1013,7 @@ describe("durable code mode output and tool search", () => {
 	it("writes the result's files to the same paths when it reruns after a crash", async () => {
 		const chat = codemodeChat();
 		chat.holds.block = false;
-		const cwd = createTempDir("pi-codemode-env-");
-		directories.add(cwd);
+		const { cwd, artifactDirectory } = await createArtifactEnv({ prefix: "amazme-codemode-crash-" });
 		const written = deferred<string>();
 		// The process dies after the full output was written and before the result was committed.
 		class CrashAfterWrite extends NodeExecutionEnv {
@@ -1019,18 +1027,20 @@ describe("durable code mode output and tool search", () => {
 		const storage = await sqlitePath();
 		chat.setup.faux.setResponses([script(`// @options: {"max_output_tokens": 20}\nreturn "x".repeat(1000);`), DONE]);
 		let opened = await openChat(await openNodeSqliteStorage(storage), chat.setup, {
-			env: new CrashAfterWrite({ cwd }),
+			env: new CrashAfterWrite({ cwd, artifactDirectory }),
 		});
 		const id = (await opened.root.submit({ type: "input", content: "go" }, context)).id;
 		const first = await written.promise;
+		expect(first.startsWith(artifactDirectory + "/")).toBe(true);
 		await opened.harness.close(context);
-		opened = await openChat(await openNodeSqliteStorage(storage), chat.setup, { env: new NodeExecutionEnv({ cwd }) });
+		opened = await openChat(await openNodeSqliteStorage(storage), chat.setup, {
+			env: new NodeExecutionEnv({ cwd, artifactDirectory }),
+		});
 		opened.harness.resume();
 		expect((await (await opened.harness.submission(id, context))!.wait(context)).status).toBe("done");
 		const entry = (await allEntries(opened.root)).find((candidate) => ToolResultEntry.is(candidate))!;
 		const details = (entry.model![0] as { details?: CodemodeToolDetails }).details;
 		expect(details?.fullOutputPath).toBe(first);
-		directories.add(dirname(first));
 		expect(await readdir(dirname(first))).toEqual(["output.txt"]);
 		await opened.harness.close(context);
 	});

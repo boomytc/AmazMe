@@ -87,7 +87,7 @@ it("projects invalid images through the actual Durable MCP connection while pres
 		const chatModels = createModels();
 		chatModels.setProvider(faux.provider);
 		harness = await Harness.open(new MemoryStorage(), {
-			models: chatModels, registry, env: () => new NodeExecutionEnv({ cwd: directory }),
+			models: chatModels, registry, env: () => new NodeExecutionEnv({ cwd: directory, artifactDirectory: directory }),
 		}, context);
 		const root = await harness.root(context, {
 			agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: directory },

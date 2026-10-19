@@ -1,16 +1,20 @@
+import {
+	clampThinkingLevel,
+	type Model,
+	type ModelThinkingLevel,
+} from "@amazme/ai";
 import type { Context } from "@amazme/chord";
-import { clampThinkingLevel, type Model, type ModelThinkingLevel } from "@amazme/ai";
 import {
 	createRegistry,
 	defineExtension,
-	section,
 	type EnvTarget,
 	type HarnessSettings,
 	type ModelRef,
 	type Registry,
+	section,
 } from "@amazme/durable";
-import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import type { ExecutionEnv } from "@amazme/durable/env";
+import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import {
 	createCodingTools,
 	createFindTool,
@@ -19,36 +23,56 @@ import {
 	createPowerShellTool,
 	type SearchProgramOptions,
 } from "@amazme/durable/tools";
-import { ensureTool } from "../utils/tools-manager.ts";
-import { applyHttpProxySettings, configureHttpDispatcher } from "../core/http-dispatcher.ts";
-import { DEFAULT_THINKING_LEVEL } from "../core/defaults.ts";
-import { findInitialModel, resolveCliModel, type ScopedModel } from "../core/model-resolver.ts";
-import type { ModelRuntime } from "../core/model-runtime.ts";
-import { SettingsManager } from "../core/settings-manager.ts";
-import { DefaultResourceLoader, type ResourceLoader } from "../core/resource-loader.ts";
 import { getAgentDir } from "../config.ts";
-import { hasTrustRequiringProjectResources, ProjectTrustStore } from "../core/trust-manager.ts";
-import { createPiPrompt, type CodingResourceOptions } from "./prompt.ts";
+import { DEFAULT_THINKING_LEVEL } from "../core/defaults.ts";
+import {
+	applyHttpProxySettings,
+	configureHttpDispatcher,
+} from "../core/http-dispatcher.ts";
+import {
+	findInitialModel,
+	resolveCliModel,
+	type ScopedModel,
+} from "../core/model-resolver.ts";
+import type { ModelRuntime } from "../core/model-runtime.ts";
+import {
+	DefaultResourceLoader,
+	type ResourceLoader,
+} from "../core/resource-loader.ts";
+import { SettingsManager } from "../core/settings-manager.ts";
+import {
+	hasTrustRequiringProjectResources,
+	ProjectTrustStore,
+} from "../core/trust-manager.ts";
+import { ensureTool } from "../utils/tools-manager.ts";
 import { createDurableCodemode } from "./codemode.ts";
-import { createRunPolicy } from "./insights/run-policy.ts";
-import { createToolResultImages } from "./tool-result-images.ts";
-import { createContextCleanup } from "./insights/context-cleanup.ts";
-import { createWorkspaceReview } from "./insights/workspace-review.ts";
-import { createPolicyEnv } from "./insights/execution-policy.ts";
 import { createForkArchiveGate } from "./fork-management.ts";
+import { createContextCleanup } from "./insights/context-cleanup.ts";
+import { createPolicyEnv } from "./insights/execution-policy.ts";
+import { createRunPolicy } from "./insights/run-policy.ts";
+import { createWorkspaceReview } from "./insights/workspace-review.ts";
+import { type CodingResourceOptions, createPiPrompt } from "./prompt.ts";
+import { createToolResultImages } from "./tool-result-images.ts";
 
 /** A headless host uses saved project trust and the global policy; it cannot prompt for trust. */
 export function createCodingSettings(cwd: string): SettingsManager {
 	const agentDir = getAgentDir();
-	const settings = SettingsManager.create(cwd, agentDir, { projectTrusted: false });
+	const settings = SettingsManager.create(cwd, agentDir, {
+		projectTrusted: false,
+	});
 	refreshCodingProjectTrust(settings, cwd);
 	return settings;
 }
 
 /** Re-read saved consent when an already opened hosted session reloads its configuration. */
-export function refreshCodingProjectTrust(settings: SettingsManager, cwd: string): boolean {
-	const trusted = !hasTrustRequiringProjectResources(cwd) ||
-		(new ProjectTrustStore(getAgentDir()).get(cwd) ?? settings.getDefaultProjectTrust() === "always");
+export function refreshCodingProjectTrust(
+	settings: SettingsManager,
+	cwd: string,
+): boolean {
+	const trusted =
+		!hasTrustRequiringProjectResources(cwd) ||
+		(new ProjectTrustStore(getAgentDir()).get(cwd) ??
+			settings.getDefaultProjectTrust() === "always");
 	const changed = settings.isProjectTrusted() !== trusted;
 	settings.setProjectTrusted(trusted);
 	return changed;
@@ -61,7 +85,9 @@ export function configureHarnessHttp(settingsManager: SettingsManager): void {
 }
 
 /** Harness settings read at every use from pi's settings as loaded at startup. */
-export function createHarnessSettings(settingsManager: SettingsManager): HarnessSettings {
+export function createHarnessSettings(
+	settingsManager: SettingsManager,
+): HarnessSettings {
 	return {
 		get stream() {
 			const provider = settingsManager.getProviderRetrySettings();
@@ -71,7 +97,9 @@ export function createHarnessSettings(settingsManager: SettingsManager): Harness
 				timeoutMs: provider.timeoutMs ?? (idle === 0 ? 2147483647 : idle),
 				idleTimeoutMs: idle,
 				maxRetryDelayMs: provider.maxRetryDelayMs,
-				...(provider.maxRetries === undefined ? {} : { maxRetries: provider.maxRetries }),
+				...(provider.maxRetries === undefined
+					? {}
+					: { maxRetries: provider.maxRetries }),
 			};
 		},
 		get compaction() {
@@ -115,8 +143,13 @@ export async function loadCodingResources(
 }
 
 /** A registry with Pi's coding tools and one resource-backed system prompt. */
-export function createCodingRegistry(settingsManager: SettingsManager, cwd: string, resources: ResourceLoader,
-	workspaces: () => Promise<readonly string[]> = async () => [cwd], artifactDirectory?: string): Registry {
+export function createCodingRegistry(
+	settingsManager: SettingsManager,
+	cwd: string,
+	resources: ResourceLoader,
+	workspaces: () => Promise<readonly string[]> = async () => [cwd],
+	artifactDirectory?: string,
+): Registry {
 	const registry = createRegistry();
 	registry.install(
 		createCodingTools({
@@ -137,13 +170,16 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 	registry.install(createToolResultImages(settingsManager));
 	registry.install(createRunPolicy(settingsManager));
 	registry.install(createContextCleanup(settingsManager));
-	registry.install(createWorkspaceReview(settingsManager, workspaces, artifactDirectory));
+	registry.install(
+		createWorkspaceReview(settingsManager, workspaces, artifactDirectory),
+	);
 	const program =
 		(name: "rg" | "fd"): SearchProgramOptions["program"] =>
 		async (api) => {
 			if (api.env?.id !== "node:local") return name;
 			const path = await ensureTool(name);
-			if (path === undefined) throw new Error(`${name} is unavailable in the execution environment`);
+			if (path === undefined)
+				throw new Error(`${name} is unavailable in the execution environment`);
 			return path;
 		};
 	registry.install(
@@ -157,32 +193,71 @@ export function createCodingRegistry(settingsManager: SettingsManager, cwd: stri
 		}),
 	);
 	registry.install(
-		defineExtension({ name: "powershell", tools: [{ ...createPowerShellTool(), defaultActive: false }] }),
+		defineExtension({
+			name: "powershell",
+			tools: [{ ...createPowerShellTool(), defaultActive: false }],
+		}),
 	);
 	registry.install(createPiPrompt(resources, cwd));
-	registry.install(defineExtension({ name: "project-workspaces", sections: [section("project_workspaces", async () =>
-		`Authorized project workspace folders:\n${(await workspaces()).map(path => `- ${path}`).join("\n")}\n`
-		+ `The session's execution directory is ${cwd}. Use absolute paths for other workspace folders. Before working in another folder, read its AGENTS.md. Tool approvals follow the configured policy.`)] }));
+	registry.install(
+		defineExtension({
+			name: "project-workspaces",
+			sections: [
+				section(
+					"project_workspaces",
+					async () =>
+						`Authorized project workspace folders:\n${(await workspaces()).map((path) => `- ${path}`).join("\n")}\n` +
+						`The session's execution directory is ${cwd}. Use absolute paths for other workspace folders. Before working in another folder, read its AGENTS.md. Tool approvals follow the configured policy.`,
+				),
+			],
+		}),
+	);
 	return registry;
 }
 
-/** One execution environment per directory, shared by every conversation in it. */
+/**
+ * One execution environment per working directory within a single session.
+ * Each session constructs its own {@link ExecutionEnvs} with that session's `artifactDirectory`,
+ * so two sessions that share a cwd never share an artifact directory.
+ */
 export class ExecutionEnvs {
 	readonly #defaultCwd: string;
+	readonly #artifactDirectory: string;
 	readonly #envs = new Map<string, ExecutionEnv>();
 	readonly #settings: SettingsManager | undefined;
 	readonly #workspaces: () => Promise<readonly string[]>;
 
-	constructor(defaultCwd: string, settings?: SettingsManager, workspaces: () => Promise<readonly string[]> = async () => [defaultCwd]) {
+	constructor(
+		defaultCwd: string,
+		artifactDirectory: string,
+		settings?: SettingsManager,
+		workspaces: () => Promise<readonly string[]> = async () => [defaultCwd],
+	) {
 		this.#defaultCwd = defaultCwd;
+		this.#artifactDirectory = artifactDirectory;
 		this.#settings = settings;
 		this.#workspaces = workspaces;
+	}
+
+	/** The session-scoped artifact directory injected into every env this instance creates. */
+	get artifactDirectory(): string {
+		return this.#artifactDirectory;
 	}
 
 	readonly env = ({ cwd = this.#defaultCwd }: EnvTarget): ExecutionEnv => {
 		let env = this.#envs.get(cwd);
 		if (env === undefined) {
-			env = this.#settings ? createPolicyEnv(cwd, this.#settings, this.#workspaces) : new NodeExecutionEnv({ cwd });
+			env = this.#settings
+				? createPolicyEnv(
+						cwd,
+						this.#artifactDirectory,
+						this.#settings,
+						this.#workspaces,
+					)
+				: new NodeExecutionEnv({
+						cwd,
+						artifactDirectory: this.#artifactDirectory,
+					});
 			this.#envs.set(cwd, env);
 		}
 		return env;
@@ -222,7 +297,12 @@ export function initialThinkingLevel(
 export async function findInitialAgentModel(
 	settingsManager: SettingsManager,
 	modelRuntime: ModelRuntime,
-	cli?: { readonly provider?: string; readonly model: string; readonly thinkingLevel?: ModelThinkingLevel; readonly inlineApiKey?: boolean },
+	cli?: {
+		readonly provider?: string;
+		readonly model: string;
+		readonly thinkingLevel?: ModelThinkingLevel;
+		readonly inlineApiKey?: boolean;
+	},
 	scopedModels: readonly ScopedModel[] = [],
 ): Promise<InitialModel> {
 	if (cli !== undefined) {
@@ -234,21 +314,32 @@ export async function findInitialAgentModel(
 			modelRuntime,
 		});
 		if (resolved.error !== undefined || resolved.model === undefined) {
-			throw new Error(`Could not resolve model: ${resolved.error ?? cli.model}`);
+			throw new Error(
+				`Could not resolve model: ${resolved.error ?? cli.model}`,
+			);
 		}
 		const thinkingLevel = cli.thinkingLevel ?? resolved.thinkingLevel;
 		return {
 			model: { provider: resolved.model.provider, modelId: resolved.model.id },
-			...(thinkingLevel === undefined ? {} : { thinkingLevel: clampThinkingLevel(resolved.model, thinkingLevel) }),
+			...(thinkingLevel === undefined
+				? {}
+				: { thinkingLevel: clampThinkingLevel(resolved.model, thinkingLevel) }),
 		};
 	}
 	if (scopedModels.length > 0) {
-		const selected = scopedModels.find(({ model }) =>
-			model.provider === settingsManager.getDefaultProvider() && model.id === settingsManager.getDefaultModel(),
-		) ?? scopedModels[0]!;
+		const selected =
+			scopedModels.find(
+				({ model }) =>
+					model.provider === settingsManager.getDefaultProvider() &&
+					model.id === settingsManager.getDefaultModel(),
+			) ?? scopedModels[0]!;
 		return {
 			model: { provider: selected.model.provider, modelId: selected.model.id },
-			thinkingLevel: initialThinkingLevel(settingsManager, selected.model, selected.thinkingLevel),
+			thinkingLevel: initialThinkingLevel(
+				settingsManager,
+				selected.model,
+				selected.thinkingLevel,
+			),
 		};
 	}
 	const initial = await findInitialModel({
@@ -264,9 +355,14 @@ export async function findInitialAgentModel(
 		...(initial.model === undefined
 			? {}
 			: {
-					model: { provider: initial.model.provider, modelId: initial.model.id },
+					model: {
+						provider: initial.model.provider,
+						modelId: initial.model.id,
+					},
 					thinkingLevel: initialThinkingLevel(settingsManager, initial.model),
 				}),
-		...(initial.fallbackMessage === undefined ? {} : { fallbackMessage: initial.fallbackMessage }),
+		...(initial.fallbackMessage === undefined
+			? {}
+			: { fallbackMessage: initial.fallbackMessage }),
 	};
 }

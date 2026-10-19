@@ -523,7 +523,7 @@ describe("structured output", () => {
 				}),
 			);
 			setup.faux.setResponses([call("probe"), DONE]);
-			const env = new NodeExecutionEnv({ cwd: directory });
+			const env = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory });
 			const { harness, root } = await openChat(new MemoryStorage(), setup, { env });
 			await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 			await harness.close(context);

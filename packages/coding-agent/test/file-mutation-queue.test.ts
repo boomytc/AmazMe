@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAllTools } from "../src/core/tools/index.ts";
 import { createTempDir } from "./temp-dir.ts";
 
-const env = new NodeExecutionEnv({ cwd: process.cwd() });
+const env = new NodeExecutionEnv({ cwd: process.cwd(), artifactDirectory: process.cwd() });
 const queued = <T>(path: string, fn: () => Promise<T>) => withFileMutationQueue(env, path, fn, BACKGROUND_CONTEXT);
 
 function delay(ms: number): Promise<void> {
@@ -137,7 +137,7 @@ describe("built-in edit and write tools", () => {
 
 	it("shares the queue and refreshed observation between edit and write", async () => {
 		const dir = await openTempWorkspace();
-		const files = new NodeExecutionEnv({ cwd: dir });
+		const files = new NodeExecutionEnv({ cwd: dir, artifactDirectory: dir });
 		const tools = createAllTools(dir, { fileSystem: files });
 		await writeFile(join(dir, "file.txt"), "original\n");
 		await tools.read.execute("read", { path: "file.txt" });
@@ -164,7 +164,7 @@ describe("built-in edit and write tools", () => {
 	for (const kind of ["write", "edit"] as const) {
 		it(`keeps the ${kind} barrier until cancelled IO actually publishes, then reports completion`, async () => {
 			const dir = await openTempWorkspace();
-			const files = new NodeExecutionEnv({ cwd: dir });
+			const files = new NodeExecutionEnv({ cwd: dir, artifactDirectory: dir });
 			const tools = createAllTools(dir, { fileSystem: files });
 			await writeFile(join(dir, "file.txt"), "alpha\nbeta\n");
 			await tools.read.execute("read", { path: "file.txt" });

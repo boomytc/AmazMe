@@ -24,7 +24,7 @@ import { type BashToolInput, CodingTools } from "../../src/tools/index.ts";
 import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
-const directory = createTempDir("pi-durable-example-");
+const directory = createTempDir("pi-durable-example-", { scope: "suite" });
 await writeFile(join(directory, "notes.txt"), "hello world\n");
 
 // The faux provider plays the model: four tool-calling answers, then a final answer.
@@ -70,7 +70,7 @@ registry.install(Timing);
 const storage = await openNodeJsonlStorage(directory, context);
 const harness = await Harness.open(
 	storage,
-	{ models, registry, env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? process.cwd() }) },
+	{ models, registry, env: (target) => new NodeExecutionEnv({ artifactDirectory: target.cwd ?? process.cwd(), cwd: target.cwd ?? process.cwd() }) },
 	context,
 );
 const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: directory } });

@@ -22,7 +22,7 @@ import { CodingTools } from "../../src/tools/index.ts";
 import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
-const workspace = createTempDir("pi-durable-agent-");
+const workspace = createTempDir("pi-durable-agent-", { scope: "suite" });
 await mkdir(join(workspace, "app"));
 
 // The app's own prompt, next to the coding tools.
@@ -51,7 +51,7 @@ const settings: HarnessSettings = {
 
 // The Harness calls this for every tool call and request with the conversation's `cwd`, so changing a conversation's
 // directory needs no restart.
-const env = ({ cwd = workspace }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd });
+const env = ({ cwd = workspace }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 
 const faux = fauxProvider();
 const models = createModels();

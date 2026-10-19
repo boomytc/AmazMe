@@ -99,7 +99,7 @@ const Checkout = defineTask<{ cards: string[] }, CheckoutState, string>({
 
 const registry = createRegistry();
 registry.install(defineExtension({ name: "checkout", tasks: [Payment, Checkout] }));
-const directory = createTempDir("pi-durable-example-");
+const directory = createTempDir("pi-durable-example-", { scope: "suite" });
 const databasePath = join(directory, "session.sqlite");
 const open = async () =>
 	Harness.open(await openNodeSqliteStorage(databasePath), { models: createModels(), registry }, context);

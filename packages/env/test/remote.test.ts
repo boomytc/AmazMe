@@ -21,7 +21,7 @@ function environment(): { env: RemoteExecutionEnv; connection: Connection } {
 	dirs.push(cwd);
 	const connection = new Connection({ command: [daemon] });
 	connections.push(connection);
-	return { env: new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd }), connection };
+	return { env: new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd, artifactDirectory: cwd }), connection };
 }
 
 describe("RemoteExecutionEnv", () => {
@@ -153,7 +153,7 @@ describe("RemoteExecutionEnv", () => {
 			},
 		});
 		connections.push(connection);
-		const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd });
+		const env = new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd, artifactDirectory: cwd });
 		const offline = await env.readTextFile("missing.txt", context);
 		expect(offline.ok ? "ok" : [offline.error.code, offline.error.message]).toEqual([
 			"unknown",

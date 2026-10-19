@@ -188,7 +188,7 @@ async function runScenario(scenario: Scenario): Promise<Metrics> {
 			fauxAssistantMessage(call, { stopReason: "toolUse" }),
 			fauxAssistantMessage([fauxText("done")]),
 		]);
-		const nodeEnv = new NodeExecutionEnv({ cwd: directory });
+		const nodeEnv = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory });
 		const env = () => nodeEnv;
 		let harness = await Harness.open(await openTimed(), { models, registry, env }, context);
 		const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });

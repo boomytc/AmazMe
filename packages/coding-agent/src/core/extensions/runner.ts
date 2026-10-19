@@ -2,6 +2,7 @@
  * Extension runner - executes extensions and manages their lifecycle.
  */
 
+import { join } from "node:path";
 import type { AgentMessage, AgentTool } from "@amazme/agent";
 import {
 	getCurrentSystemMessage,
@@ -365,6 +366,7 @@ export class ExtensionRunner {
 	private uiContext: ExtensionUIContext;
 	private mode: ExtensionMode = "print";
 	private cwd: string;
+	private artifactDirectory: string;
 	private modelRegistry: ModelRegistry;
 	private errorListeners: Set<ExtensionErrorListener> = new Set();
 	private getModel: () => Model<any> | undefined = () => undefined;
@@ -401,12 +403,19 @@ export class ExtensionRunner {
 		runtime: ExtensionRuntime,
 		cwd: string,
 		modelRegistry: ModelRegistry,
+		artifactDirectory: string = join(cwd, "artifacts"),
 	) {
 		this.extensions = extensions;
 		this.runtime = runtime;
 		this.uiContext = noOpUIContext;
 		this.cwd = cwd;
 		this.modelRegistry = modelRegistry;
+		this.artifactDirectory = artifactDirectory;
+	}
+
+	/** Bind the session's artifact directory (Durable calls this after {@code selectSession}). */
+	setArtifactDirectory(artifactDirectory: string): void {
+		this.artifactDirectory = artifactDirectory;
 	}
 
 	bindCore(
@@ -896,6 +905,10 @@ export class ExtensionRunner {
 			get cwd() {
 				runner.assertActive();
 				return runner.cwd;
+			},
+			get artifactDirectory() {
+				runner.assertActive();
+				return runner.artifactDirectory;
 			},
 			get modelRegistry() {
 				runner.assertActive();

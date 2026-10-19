@@ -2,6 +2,7 @@ import { createModels, createProvider, type ClassifierModel } from "@amazme/ai";
 import { classify } from "@amazme/ai/api/typesafe-system-one";
 import { describe, expect, it, vi } from "vitest";
 import { executeCodemode } from "../src/core/codemode/execute.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const model: ClassifierModel<"typesafe-system-one"> = {
 	type: "classifier",
@@ -17,6 +18,8 @@ const model: ClassifierModel<"typesafe-system-one"> = {
 const box = { left: 0.1, top: 0.2, right: 0.8, bottom: 0.9 };
 
 function setup() {
+	const artifactDirectory = createTempDir("amazme-test-artifact-");
+
 	const fetch = vi.fn(async (_url: string | URL | Request, _options?: RequestInit) =>
 		Response.json({
 			answers: { present: { type: "noul", noul: 0.98 }, target: { type: "box", box, confidence: 0.91 } },
@@ -56,6 +59,7 @@ function setup() {
 					throw new Error("No tools");
 				},
 			},
+			{ artifactDirectory },
 		);
 	return { run, fetch };
 }

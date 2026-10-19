@@ -36,7 +36,7 @@ registerEnvConformance(
 	async (use) => {
 		const cwd = createTempDir("pi-durable-env-conformance-");
 		try {
-			await use(new NodeExecutionEnv({ cwd }));
+			await use(new NodeExecutionEnv({ cwd, artifactDirectory: cwd }));
 		} finally {
 			await removeTempDir(cwd);
 		}
@@ -51,7 +51,7 @@ registerEnvConformance(
 	async (use) => {
 		const cwd = createTempDir("pi-durable-env-conformance-");
 		try {
-			await use(new NodeExecutionEnv({ cwd, watch: { mode: "polling", pollIntervalMs: 100 } }));
+			await use(new NodeExecutionEnv({ artifactDirectory: cwd, cwd, watch: { mode: "polling", pollIntervalMs: 100 } }));
 		} finally {
 			await removeTempDir(cwd);
 		}
@@ -63,7 +63,7 @@ describe("NodeExecutionEnv watch limits", () => {
 	it("refuses a tree over the directory budget and stops with an error when one grows past it", async () => {
 		const cwd = createTempDir("pi-durable-env-watch-");
 		try {
-			const env = new NodeExecutionEnv({ cwd, watch: { maxDirectories: 3 } });
+			const env = new NodeExecutionEnv({ artifactDirectory: cwd, cwd, watch: { maxDirectories: 3 } });
 			getOrThrow(await env.createDir("tree/a/b", undefined, context));
 			getOrThrow(await env.createDir("tree/c", undefined, context));
 			expect(await env.watch([{ path: "tree", recursive: true }], () => {}, context)).toMatchObject({
@@ -105,7 +105,7 @@ describe("NodeExecutionEnv readers", () => {
 		const bytes = new Uint8Array(2.5 * 1024 * 1024);
 		for (let index = 0; index < bytes.length; index++) bytes[index] = (index * 31) % 251;
 		writeFileSync(join(cwd, "big.bin"), bytes);
-		const reader = getOrThrow(await new NodeExecutionEnv({ cwd }).openBinaryReader("big.bin", undefined, context));
+		const reader = getOrThrow(await new NodeExecutionEnv({ cwd, artifactDirectory: cwd }).openBinaryReader("big.bin", undefined, context));
 		try {
 			const all = getOrThrow(await reader.read(0, bytes.length + 10, context));
 			expect(all.length).toBe(bytes.length);
@@ -120,7 +120,7 @@ describe("NodeExecutionEnv readers", () => {
 	it.skipIf(windows)("refuses a FIFO without waiting for a writer", async () => {
 		const cwd = tempDir();
 		execFileSync("mkfifo", [join(cwd, "pipe")]);
-		const result = await new NodeExecutionEnv({ cwd }).openBinaryReader("pipe", undefined, context);
+		const result = await new NodeExecutionEnv({ cwd, artifactDirectory: cwd }).openBinaryReader("pipe", undefined, context);
 		expect(result).toMatchObject({ ok: false, error: { code: "invalid" } });
 	});
 });

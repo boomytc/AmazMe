@@ -26,7 +26,7 @@ import {
 import { createReadTool } from "../src/tools/read.ts";
 import { createTempDir } from "./temp-dir.ts";
 
-const directory = createTempDir("amazme-durable-images-");
+const directory = createTempDir("amazme-durable-images-", { scope: "suite" });
 let processor: ImageProcessor;
 
 beforeAll(async () => {
@@ -238,7 +238,7 @@ function decodedImage(data: string): {
  * read so far in `reads.largest`.
  */
 function readEnv(onRead?: (offset: number, length: number) => void) {
-	const env = new NodeExecutionEnv({ cwd: directory });
+	const env = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory });
 	const reads = { largest: 0 };
 	const open = env.openBinaryReader.bind(env);
 	env.openBinaryReader = async (path, options, ctx) => {
@@ -287,7 +287,7 @@ async function read(
 	} as unknown as Model<never>;
 	const api = {
 		...(await fileToolApi(
-			options.env ?? new NodeExecutionEnv({ cwd: directory }),
+			options.env ?? new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }),
 		)),
 		output: () => {},
 		diagnostic: () => {},

@@ -66,7 +66,7 @@ const leavePlanMode = { extensions: null, tools: null };
 
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
-const directory = createTempDir("pi-durable-plan-");
+const directory = createTempDir("pi-durable-plan-", { scope: "suite" });
 await writeFile(join(directory, "server.ts"), "app.listen(3000);\n");
 
 const faux = fauxProvider();
@@ -86,7 +86,7 @@ registry.install(Plan);
 const harness = await Harness.open(
 	new MemoryStorage(),
 	// Installed, but only CodingTools is selected by default: conversations opt into plan mode.
-	{ models, registry, settings: { extensions: [CodingTools] }, env: () => new NodeExecutionEnv({ cwd: directory }) },
+	{ models, registry, settings: { extensions: [CodingTools] }, env: () => new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }) },
 	context,
 );
 const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });

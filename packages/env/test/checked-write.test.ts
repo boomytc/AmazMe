@@ -22,7 +22,7 @@ function environment(): { env: RemoteExecutionEnv; connection: Connection } {
 	dirs.push(cwd);
 	const connection = new Connection({ command: [daemon] });
 	connections.push(connection);
-	return { env: new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd }), connection };
+	return { env: new RemoteExecutionEnv({ connection, id: "amazme-env:test", cwd, artifactDirectory: cwd }), connection };
 }
 
 describe("Remote checked publication through the actual daemon", () => {

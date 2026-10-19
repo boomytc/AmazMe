@@ -44,7 +44,7 @@ async function tempDirectory(prefix = "pi-durable-jsonl-"): Promise<string> {
 
 async function openStorage(
 	directory: string,
-	fs: FileSystem = new NodeExecutionEnv({ cwd: directory }),
+	fs: FileSystem = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }),
 	options: { readonly fsync?: boolean } = {},
 ): Promise<JsonlStorage> {
 	const storage = await JsonlStorage.open(directory, fs, context, options);
@@ -72,7 +72,7 @@ class ReopeningStorage implements Storage {
 			return await this.current.commit(writes, commitContext);
 		} finally {
 			await this.current.close(context);
-			this.current = await JsonlStorage.open(this.directory, new NodeExecutionEnv({ cwd: this.directory }), context);
+			this.current = await JsonlStorage.open(this.directory, new NodeExecutionEnv({ artifactDirectory: this.directory, cwd: this.directory }), context);
 		}
 	}
 
@@ -124,7 +124,7 @@ registerStorageConformance({ describe, expect, it }, "JsonlStorage", async (use)
 
 registerStorageConformance({ describe, expect, it }, "JsonlStorage across reopen", async (use) => {
 	const directory = await tempDirectory("pi-durable-jsonl-conformance-");
-	const current = await JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context);
+	const current = await JsonlStorage.open(directory, new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }), context);
 	const storage = new ReopeningStorage(current, directory);
 	try {
 		await use(storage);
@@ -389,7 +389,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 
 	it("removes a complete-plus-torn unconfirmed multi-record sidecar append", async () => {
 		const directory = await tempDirectory();
-		const env = new InstrumentedEnv({ cwd: directory });
+		const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 		const storage = await openStorage(directory, env);
 		await createRoot(storage);
 		const taskId = await storage.mintId<TaskId<JsonValue>>();
@@ -414,7 +414,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 
 	it("serializes the complete candidate before I/O and leaves preparation failures usable", async () => {
 		const directory = await tempDirectory();
-		const env = new InstrumentedEnv({ cwd: directory });
+		const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 		const storage = await openStorage(directory, env);
 		await createRoot(storage);
 		env.clear();
@@ -457,7 +457,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	] as const satisfies readonly Failure[]) {
 		it(`poisons after ${failure.mode} failure at append ${failure.call} and recovers only confirmed state`, async () => {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
 			const firstId = await storage.mintId<DocumentId>();
@@ -501,7 +501,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	] as const satisfies readonly Failure[]) {
 		it(`poisons after ${failure.mode} failure at flush ${failure.call} and never writes a marker`, async () => {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
 			const firstId = await storage.mintId<DocumentId>();
@@ -533,7 +533,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	it("orders publication flushes exactly and flushes main only to authorize reclamation", async () => {
 		for (const fsync of [false, true]) {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env, { fsync });
 			await createRoot(storage);
 			const firstId = await storage.mintId<DocumentId>();
@@ -620,7 +620,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	] as const satisfies readonly Failure[]) {
 		it(`recovers a committed base across reclaim ${failure.operation} ${failure.mode}`, async () => {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
 			const id = await storage.mintId<DocumentId>();
@@ -671,7 +671,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	for (const mode of ["before", "after"] as const) {
 		it(`recovers document-retirement reclamation across remove ${mode}`, async () => {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
 			const taskId = await storage.mintId<TaskId<JsonValue>>();
@@ -703,7 +703,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	for (const mode of ["before", "after"] as const) {
 		it(`defers reclamation after authorizing-main flush ${mode} failure`, async () => {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
 			const id = await storage.mintId<DocumentId>();
@@ -740,7 +740,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			expect(await readLines(join(directory, `doc-${id}.jsonl`))).toHaveLength(2);
 			await storage.close(context);
 
-			const recoveryEnv = new InstrumentedEnv({ cwd: directory });
+			const recoveryEnv = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			recoveryEnv.fail({ operation: "flush", call: 1, mode });
 			const deferred = await openStorage(directory, recoveryEnv, { fsync: true });
 			expect((await deferred.document(id, "current", context))?.value).toEqual({ count: 2 });
@@ -748,7 +748,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			expect(await readLines(join(directory, `doc-${id}.jsonl`))).toHaveLength(2);
 			await deferred.close(context);
 
-			const reclaimed = await openStorage(directory, new NodeExecutionEnv({ cwd: directory }), { fsync: true });
+			const reclaimed = await openStorage(directory, new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }), { fsync: true });
 			expect((await reclaimed.document(id, "current", context))?.value).toEqual({ count: 2 });
 			expect(await readLines(join(directory, `doc-${id}.jsonl`))).toHaveLength(1);
 		});
@@ -757,7 +757,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	for (const mode of ["before", "after"] as const) {
 		it(`keeps a committed base usable after reclaim-temp flush ${mode} failure`, async () => {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env, { fsync: true });
 			await createRoot(storage);
 			const id = await storage.mintId<DocumentId>();
@@ -797,7 +797,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			);
 			await storage.close(context);
 
-			const reopened = await openStorage(directory, new NodeExecutionEnv({ cwd: directory }), { fsync: true });
+			const reopened = await openStorage(directory, new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }), { fsync: true });
 			expect((await reopened.document(id, "current", context))?.value).toEqual({ count: 3 });
 			expect(await readLines(join(directory, `doc-${id}.jsonl`))).toHaveLength(2);
 		});
@@ -806,7 +806,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 	for (const mode of ["before", "after"] as const) {
 		it(`recovers terminal-task reclamation across remove ${mode}`, async () => {
 			const directory = await tempDirectory();
-			const env = new InstrumentedEnv({ cwd: directory });
+			const env = new InstrumentedEnv({ artifactDirectory: directory, cwd: directory });
 			const storage = await openStorage(directory, env);
 			await createRoot(storage);
 			const id = await storage.mintId<TaskId<JsonValue>>();
@@ -1052,7 +1052,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			context,
 		);
 		await writeFile(join(directory, `doc-${documentId}.jsonl`), "");
-		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context)).rejects.toThrow(
+		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }), context)).rejects.toThrow(
 			"Missing confirmed sidecar record",
 		);
 	});
@@ -1092,7 +1092,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 			payload: { type: "document", id: documentId, content: { kind: "delta", version: 1, ops: [] } },
 		});
 		await writeFile(path, `${first}\n${unconfirmed}\n${second}\n`);
-		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context)).rejects.toThrow(
+		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }), context)).rejects.toThrow(
 			"Confirmed record follows an unconfirmed tail",
 		);
 	});
@@ -1104,7 +1104,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		const path = join(directory, "main.jsonl");
 		await writeFile(path, await readFile(path), { flag: "a" });
 
-		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context)).rejects.toThrow(
+		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }), context)).rejects.toThrow(
 			"Commit sequence does not strictly increase",
 		);
 	});
@@ -1131,7 +1131,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		delete record.payload.content.value;
 		await writeFile(path, `${JSON.stringify(record)}\n`);
 
-		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ cwd: directory }), context)).rejects.toThrow(
+		await expect(JsonlStorage.open(directory, new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }), context)).rejects.toThrow(
 			"Invalid document content",
 		);
 	});
@@ -1142,7 +1142,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		await createRoot(mainStorage);
 		await writeFile(join(mainDirectory, "main.jsonl"), "{bad}\n", { flag: "a" });
 		await expect(
-			JsonlStorage.open(mainDirectory, new NodeExecutionEnv({ cwd: mainDirectory }), context),
+			JsonlStorage.open(mainDirectory, new NodeExecutionEnv({ artifactDirectory: mainDirectory, cwd: mainDirectory }), context),
 		).rejects.toThrow("Malformed complete main.jsonl");
 
 		const sidecarDirectory = await tempDirectory();
@@ -1150,7 +1150,7 @@ describe("Pico JsonlStorage publication and recovery", () => {
 		await createRoot(sidecarStorage);
 		await writeFile(join(sidecarDirectory, "doc-99.jsonl"), "{bad}\n");
 		await expect(
-			JsonlStorage.open(sidecarDirectory, new NodeExecutionEnv({ cwd: sidecarDirectory }), context),
+			JsonlStorage.open(sidecarDirectory, new NodeExecutionEnv({ artifactDirectory: sidecarDirectory, cwd: sidecarDirectory }), context),
 		).rejects.toThrow("Malformed complete doc-99.jsonl");
 	});
 });

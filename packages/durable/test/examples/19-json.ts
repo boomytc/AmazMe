@@ -73,7 +73,7 @@ registry.install(
 		sections: [section("preamble", () => "You are a concise coding assistant.", { tag: false })],
 	}),
 );
-const env = new NodeExecutionEnv({ cwd: process.cwd() });
+const env = new NodeExecutionEnv({ artifactDirectory: process.cwd(), cwd: process.cwd() });
 const harness = await Harness.open(storage, { models, registry, env: () => env }, context);
 const root = await harness.root(context, { agent: { model } });
 
