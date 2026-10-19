@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { rmSync } from "node:fs";
 import {
 	access,
 	mkdir,
@@ -27,13 +28,54 @@ export interface SessionLocation {
 	cwd: string;
 	created: boolean;
 	/**
-	 * Host-owned directory for session-scoped tool artifacts (code-mode output, review snapshots).
+	 * Host-owned directory for session-scoped tool artifacts (code-mode output, review snapshots,
+	 * full output of truncated tool results, saved MCP resources).
 	 * Persistent sessions use `<directory>/artifacts` (deleted with the session directory).
 	 * Ephemeral / `--no-session` sessions get a private `amazme-session-artifacts-` temp directory
-	 * removed in {@link SessionLocation.release}.
+	 * removed in {@link SessionLocation.release} and, whatever path the process leaves by, when it
+	 * exits (see {@link ephemeralArtifactDirectory}).
 	 */
 	artifactDirectory: string;
 	release(): Promise<void>;
+}
+
+/** Ephemeral artifact directories of this process, removed again when it exits. */
+const ephemeralArtifactDirectories = new Set<string>();
+
+function removeEphemeralArtifactDirectories(): void {
+	for (const directory of ephemeralArtifactDirectories) {
+		try {
+			rmSync(directory, { recursive: true, force: true });
+		} catch {
+			// Exit must not fail on cleanup; the next directory still gets removed.
+		}
+	}
+}
+
+/**
+ * The `--no-session` artifact directory and its release. The release does not depend on every exit
+ * path remembering to call it: the directory is also removed synchronously on the process `exit`
+ * event, which runs after a normal return, after any `process.exit` (a forced second Ctrl-C, a
+ * signal handler that exits with 128 + signal), and after an uncaught exception. It stays registered
+ * after release, so a write that lands after the release is still removed at exit. Only a kill that
+ * runs no JavaScript (SIGKILL, a crash of the runtime) can leave it behind.
+ *
+ * The path is only reserved here: the first writer creates it (the output-file writers and shell
+ * spills with owner-only permissions), so a session that writes nothing never touches the disk.
+ */
+function ephemeralArtifactDirectory(): { artifactDirectory: string; release(): Promise<void> } {
+	if (ephemeralArtifactDirectories.size === 0) process.on("exit", removeEphemeralArtifactDirectories);
+	// The only session-scoped OS temp-directory use `sourceTempDirAllowlist` (scripts/check-workspace.mjs) allows.
+	const artifactDirectory = join(tmpdir(), `amazme-session-artifacts-${randomUUID()}`);
+	ephemeralArtifactDirectories.add(artifactDirectory);
+	let released: Promise<void> | undefined;
+	return {
+		artifactDirectory,
+		release: () => {
+			released ??= rm(artifactDirectory, { recursive: true, force: true });
+			return released;
+		},
+	};
 }
 
 function sessionRoot(cwd: string, sessionDir: string | undefined): string {
@@ -209,20 +251,15 @@ export async function selectSession(
 	}
 	const cwd = await realpath(resolve(cwdInput));
 	if (options.noSession) {
-		// Lazy path only: do not mkdtemp here. An unused lease that never releases must leave no
-		// empty directory behind; writers create the directory on first use (recursive mkdir).
-		const artifactDirectory = join(
-			tmpdir(),
-			`amazme-session-artifacts-${randomUUID()}`,
-		);
+		// Lazy path only: do not mkdtemp here. An unused lease must leave no empty directory behind;
+		// writers create the directory on first use (recursive mkdir).
+		const { artifactDirectory, release } = ephemeralArtifactDirectory();
 		return {
 			id: randomUUID(),
 			cwd,
 			created: true,
 			artifactDirectory,
-			release: async () => {
-				await rm(artifactDirectory, { recursive: true, force: true });
-			},
+			release,
 		};
 	}
 	if (options.sessionDirectory !== undefined) {
