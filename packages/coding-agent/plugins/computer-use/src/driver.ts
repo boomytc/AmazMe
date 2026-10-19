@@ -542,7 +542,7 @@ export class DriverClient {
 			this.transport = transport;
 			const client = new McpClient({
 				name: "AmazMe computer-use",
-				version: "1.2.2",
+				version: "1.3.0",
 				requestTimeoutMs: timeoutMs,
 			});
 			this.client = client;

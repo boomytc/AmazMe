@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-10-19
+
 ### Breaking Changes
 
 - Custom `Context` implementations must provide `telemetry: TelemetryContext`; use `NOOP_TELEMETRY_CONTEXT` when disabled.
