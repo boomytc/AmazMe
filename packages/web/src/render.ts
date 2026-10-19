@@ -4,7 +4,7 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
 import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
@@ -168,6 +168,8 @@ export interface PageRenderer {
 	insertDraft(text: string, focus?: boolean): void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
+	/** Search the blocks now mounted. The page calls this after unloaded history arrives. */
+	refreshTranscriptSearch(): void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
 	readonly view: WebView | undefined;
 }
@@ -2258,6 +2260,7 @@ export function createRenderer(
 	/** Assistant reasoning: the Thinking row, collapsed until the reader opens it. */
 	const reasoningElement = (block: TranscriptBlock): HTMLElement => {
 		const details = disclosure(block, "", false);
+		details.dataset.blockId = String(block.id);
 		const body = element("div", "reasoning-body", block.text);
 		body.dataset.textKey = "reasoning";
 		details.append(disclosureSummary(icon("sparkles"), block.title, ""), body);
@@ -2839,17 +2842,23 @@ export function createRenderer(
 			const key = `block:${block.id}`;
 			if (block.kind === "user") flow.push(flowCache.get(key, [lastView?.locale, block], () => {
 				const turn = wrap("turn-user", userBubble(block));
+				turn.dataset.blockId = String(block.id);
 				if (block.text.length > 0) turn.append(answerActions(block));
 				return turn;
 			}));
 			else if (block.kind === "assistant") {
 				const answer = flowCache.get(key, [lastView?.locale, block], () => {
 					const answer = wrap("turn-response", markdownElement(block.text, markdownFor(String(block.id))));
+					answer.dataset.blockId = String(block.id);
 					answer.append(answerActions(block));
 					return answer;
 				});
 				flow.push(answer);
-			} else if (block.kind === "notice") flow.push(flowCache.get(key, [lastView?.locale, block], () => block.tone === "error" ? errorElement(block) : noticeElement(block)));
+			} else if (block.kind === "notice") flow.push(flowCache.get(key, [lastView?.locale, block], () => {
+				const notice = block.tone === "error" ? errorElement(block) : noticeElement(block);
+				notice.dataset.blockId = String(block.id);
+				return notice;
+			}));
 		}
 		return flow;
 	};
@@ -2958,6 +2967,7 @@ export function createRenderer(
 	};
 
 
+	let rescanTranscriptSearch = (): void => {};
 	const renderer: PageRenderer = {
 		onSelect,
 		onCreateSession: () => {},
@@ -2973,6 +2983,9 @@ export function createRenderer(
 		onDismissSuggestion: () => {},
 		onCommandPick: () => {},
 		onPanelAction: () => {},
+		refreshTranscriptSearch(): void {
+			rescanTranscriptSearch();
+		},
 		get view(): WebView | undefined {
 			return lastView;
 		},
@@ -3419,8 +3432,8 @@ export function createRenderer(
 		const hit = settingsHits[settingsHighlight] ?? settingsHits[0];
 		if (hit !== undefined && lastView?.panel.panel !== undefined) openSection(lastView.panel.panel.id, hit.groupId, hit.rowId);
 	});
-	// In-conversation search reads the mounted blocks' text, so folded tool groups and
-	// closed details are searchable where the browser's own find cannot see them.
+	// In-conversation search reads mounted block text, including folded tools. A query while
+	// older history is still unloaded asks the page to page it in, then searches that text too.
 	let transcriptHits: HTMLElement[] = [];
 	let transcriptHitIndex = -1;
 	let transcriptSearchReturnFocus: HTMLElement | undefined;
@@ -3453,7 +3466,7 @@ export function createRenderer(
 		node.classList.add("search-hit");
 		node.scrollIntoView({ block: "center" });
 	};
-	const runTranscriptSearch = (): void => {
+	const runTranscriptSearch = (loadHistory = false): void => {
 		const query = elements.transcriptSearchInput.value;
 		const nodes = [...elements.transcript.querySelectorAll<HTMLElement>("[data-block-id]")];
 		const hits = transcriptSearchHits(
@@ -3473,6 +3486,13 @@ export function createRenderer(
 					: copy("transcript.searchNone")
 				: `${transcriptHitIndex + 1}/${transcriptHits.length}`;
 		if (transcriptHitIndex >= 0) revealTranscriptHit();
+		if (loadHistory && query.trim().length > 0 && lastView?.history.more === true && lastView.history.loading !== true) {
+			report({ kind: "command", id: TRANSCRIPT_SEARCH_ACTION, data: query });
+		}
+	};
+	rescanTranscriptSearch = (): void => {
+		if (elements.transcriptSearch.hidden) return;
+		runTranscriptSearch(false);
 	};
 	const stepTranscriptSearch = (delta: number): void => {
 		if (transcriptHits.length === 0) return;
@@ -3492,7 +3512,7 @@ export function createRenderer(
 		elements.transcriptSearchInput.focus();
 		elements.transcriptSearchInput.select();
 	};
-	elements.transcriptSearchInput.addEventListener("input", runTranscriptSearch);
+	elements.transcriptSearchInput.addEventListener("input", () => runTranscriptSearch(true));
 	elements.transcriptSearchInput.addEventListener("keydown", (event) => {
 		if (event.isComposing) return;
 		if (event.key === "Escape") {

@@ -820,11 +820,10 @@ export function windowTitle(input: {
 }
 
 /**
- * Ids of rendered blocks whose text contains the query, case-insensitively.
+ * Ids of blocks whose text contains the query, case-insensitively, in the given order.
  *
- * Search runs over the DOM text of blocks that are already mounted, so folded
- * details and collapsed process groups are still searchable, while history that
- * has not been paged in is not claimed.
+ * Folded details stay searchable because the caller passes their text. Stored history
+ * that is not in this list is not searched here; the page loads it and searches again.
  */
 export function transcriptSearchHits(
 	entries: readonly { readonly id: string; readonly text: string }[],

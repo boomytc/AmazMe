@@ -3,7 +3,7 @@ import { type ConversationId, type EntryId, type EntryRecord, UserEntry } from "
 import { describe, expect, test, vi } from "vitest";
 import type { HistoryPage } from "../src/durable/conversation-view.ts";
 import type { Conversations } from "../src/host/services/conversations.ts";
-import { HistoryAvailability } from "../src/host/web/history-availability.ts";
+import { HistoryAvailability, loadRemainingHistory } from "../src/host/web/history-availability.ts";
 
 const ENTRY: EntryRecord = {
 	id: 1 as EntryId,
@@ -99,6 +99,23 @@ describe("the page confirms earlier history before offering to load it", () => {
 		expect(onChange).not.toHaveBeenCalled();
 		expect(availability.update(scope)).toBe(false);
 		expect(older).toHaveBeenCalledTimes(1);
+	});
+
+	test("search loads every older page, oldest first, and stops on a repeated cursor", async () => {
+		const near = { ...ENTRY, id: 8 as EntryId };
+		const far = { ...ENTRY, id: 2 as EntryId, model: [{ role: "user" as const, content: "Older secret", timestamp: 1 }] };
+		const older = vi.fn<Conversations["older"]>()
+			.mockResolvedValueOnce({ entries: [near], cursor: "page-2" })
+			.mockResolvedValueOnce({ entries: [far] });
+		const loaded = await loadRemainingHistory(older, "1", "10", null, BACKGROUND_CONTEXT);
+		expect(older).toHaveBeenNthCalledWith(1, "1", "10", null, 100, BACKGROUND_CONTEXT);
+		expect(older).toHaveBeenNthCalledWith(2, "1", null, "page-2", 100, BACKGROUND_CONTEXT);
+		expect(loaded.entries.map((entry) => entry.id)).toEqual([far.id, near.id]);
+
+		const stuck = vi.fn<Conversations["older"]>().mockResolvedValue({ entries: [near], cursor: "page-2" });
+		const stopped = await loadRemainingHistory(stuck, "1", "10", null, BACKGROUND_CONTEXT);
+		expect(stuck).toHaveBeenCalledTimes(2);
+		expect(stopped.entries.map((entry) => entry.id)).toEqual([near.id]);
 	});
 
 	test("a stale probe error does not interrupt the new conversation", async () => {

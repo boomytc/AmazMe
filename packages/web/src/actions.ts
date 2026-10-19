@@ -78,6 +78,8 @@ export const FEEDBACK_DOWN_ACTION = "feedback:down";
 
 /** Page in older stored history above the transcript. */
 export const HISTORY_MORE_ACTION = "history:more";
+/** Load every unloaded history page so an in-conversation search can hit it. `data` is the query. */
+export const TRANSCRIPT_SEARCH_ACTION = "transcript:search";
 
 /** Plan a prompt for the attached session: the page opens the add modal under `SCHEDULE_ADD_MODAL`. */
 export const SCHEDULE_ADD_ACTION = "schedule:add";

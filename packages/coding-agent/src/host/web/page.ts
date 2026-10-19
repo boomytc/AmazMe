@@ -66,6 +66,7 @@ import {
 	failureView,
 	followSystemTheme,
 	HISTORY_MORE_ACTION,
+	TRANSCRIPT_SEARCH_ACTION,
 	importSkillModal,
 	isBusy,
 	type Locale,
@@ -171,7 +172,7 @@ import {
 } from "@amazme/web";
 import { oldestPresentedEntryId } from "../../durable/conversation-view.ts";
 import { sessionDeepLink } from "./deep-link.ts";
-import { HistoryAvailability } from "./history-availability.ts";
+import { HistoryAvailability, loadRemainingHistory } from "./history-availability.ts";
 import { perfRequest, runPerfCase } from "./perf.ts";
 import { AgentController, type AgentPromptImage } from "../../core/plugins/agent-controller.ts";
 import { Approvals, type Approvals as ApprovalsService, type ApprovalsState } from "../services/approvals.ts";
@@ -2362,6 +2363,51 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case CONVERSATIONS_REFRESH_ACTION:
 						settle(painter.conversationsService?.refresh(BACKGROUND_CONTEXT));
 						return;
+					case TRANSCRIPT_SEARCH_ACTION: {
+						const query = action.data?.trim() ?? "";
+						const attached = client.connected && painter.ready && painter.sessionId === desiredSessionId;
+						if (query.length === 0 || historyLoading || !attached) return;
+						if (historyLoaded && historyCursor === null) return;
+						const target = targetConversation();
+						const sessionId = painter.sessionId;
+						const service = painter.conversationsService;
+						if (target === undefined || service === undefined) return;
+						const shown = shownTranscript();
+						const before = historyLoaded ? null : oldestPresentedEntryId(shown?.entries);
+						const cursor = historyLoaded ? historyCursor : null;
+						const request = ++historyRequest;
+						historyLoading = true;
+						paint();
+						const sameSearch = (): boolean => request === historyRequest
+							&& painter.sessionId === sessionId
+							&& painter.conversationsService === service
+							&& targetConversation() === target;
+						void loadRemainingHistory(
+							(conversationId, pageBefore, pageCursor, limit, pageContext) =>
+								service.older(conversationId, pageBefore, pageCursor, limit, pageContext),
+							target,
+							before,
+							cursor,
+							BACKGROUND_CONTEXT,
+						).then(
+							(loaded) => {
+								if (!sameSearch()) return;
+								historyLoading = false;
+								historyLoaded = true;
+								history = [...loaded.entries, ...history];
+								historyCursor = null;
+								paint();
+								renderer.refreshTranscriptSearch();
+							},
+							(error: unknown) => {
+								if (!sameSearch()) return;
+								historyLoading = false;
+								paint();
+								renderer.setConnection(copy("page.panelFailed", { error: message(error) }), "error");
+							},
+						);
+						return;
+					}
 					case HISTORY_MORE_ACTION: {
 						if (historyLoading || !client.connected || !painter.ready || painter.sessionId !== desiredSessionId) return;
 						const target = targetConversation();
