@@ -1,7 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@amazme/ai";
@@ -10,6 +9,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runDurablePrint } from "../src/durable/print.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 
@@ -31,7 +31,7 @@ describe("durable turn_end stream", () => {
 	const children: ChildProcess[] = [];
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-turn-end-"));
+		directory = createTempDir("amazme-turn-end-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

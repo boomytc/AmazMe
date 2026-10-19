@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, test } from "vitest";
 import { createFeedbackService } from "../src/host/services/feedback-provider.ts";
 import type { FeedbackState } from "../src/host/services/feedback.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /**
  * The ratings store, over its real file: a rating lands in `feedback.json`, re-rating replaces it,
@@ -14,7 +14,7 @@ import type { FeedbackState } from "../src/host/services/feedback.ts";
 const directories = new Set<string>();
 
 async function makeDirectory(prefix: string): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	directories.add(directory);
 	return directory;
 }

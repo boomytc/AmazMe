@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { runMigrations } from "../src/migrations.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("keybindings migration", () => {
 	const tempDirs: string[] = [];
@@ -16,7 +17,7 @@ describe("keybindings migration", () => {
 	});
 
 	function createAgentDir(config: Record<string, unknown>): string {
-		const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-keybindings-test-"));
+		const agentDir = createTempDir("pi-keybindings-test-");
 		tempDirs.push(agentDir);
 		fs.writeFileSync(path.join(agentDir, "keybindings.json"), `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 		return agentDir;

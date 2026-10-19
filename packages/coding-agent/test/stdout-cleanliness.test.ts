@@ -1,11 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
 import { allowNetwork } from "./test-network-env.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 // --import takes a module specifier, not a filesystem path.
@@ -23,14 +23,14 @@ afterEach(() => {
 	}
 });
 
-function createTempDir(): string {
-	const dir = mkdtempSync(join(tmpdir(), "pi-stdout-clean-"));
+function openTempWorkspace(): string {
+	const dir = createTempDir("pi-stdout-clean-");
 	tempDirs.push(dir);
 	return dir;
 }
 
 async function runCli(args: string[]): Promise<{ stdout: string; stderr: string; code: number | null }> {
-	const tempRoot = createTempDir();
+	const tempRoot = openTempWorkspace();
 	const agentDir = join(tempRoot, "agent");
 	const projectDir = join(tempRoot, "project");
 	const projectConfigDir = join(projectDir, ".amazme");

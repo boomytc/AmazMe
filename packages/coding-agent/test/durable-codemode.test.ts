@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { createModels, fauxProvider, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@amazme/ai";
@@ -24,6 +23,7 @@ import { openDurable, type OpenDurableResult } from "../src/durable/runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const harnesses = new Set<HarnessType>();
 const sessions = new Set<OpenDurableResult>();
@@ -31,7 +31,7 @@ const directories = new Set<string>();
 const done = () => fauxAssistantMessage([fauxText("done")]);
 
 async function directory() {
-	const path = await mkdtemp(join(tmpdir(), "amazme-durable-codemode-"));
+	const path = createTempDir("amazme-durable-codemode-");
 	directories.add(path);
 	return path;
 }

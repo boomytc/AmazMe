@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 vi.mock("../src/modes/rpc/durable-rpc.ts", () => ({
 	runDurableRpc: vi.fn(async () => undefined),
@@ -16,7 +16,7 @@ describe("durable RPC entry wiring", () => {
 	let profile: string;
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-rpc-main-"));
+		directory = createTempDir("amazme-durable-rpc-main-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

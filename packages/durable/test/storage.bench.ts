@@ -1,6 +1,5 @@
 import { strictEqual } from "node:assert/strict";
-import { copyFile, cp, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, cp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import {
@@ -14,6 +13,7 @@ import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { MemoryStorage } from "../src/storage/memory.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import type { EntryId, Storage } from "../src/types.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const STORAGE_BENCHMARK_BACKENDS = ["memory", "sqlite", "jsonl"] as const;
 type StorageBenchmarkBackend = (typeof STORAGE_BENCHMARK_BACKENDS)[number];
@@ -36,7 +36,7 @@ async function createFixture(backend: StorageBenchmarkBackend): Promise<Fixture>
 		fixtures.push(fixture);
 		return fixture;
 	}
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-benchmark-"));
+	const directory = createTempDir("pi-durable-benchmark-");
 	directories.push(directory);
 	if (backend === "sqlite") {
 		const path = join(directory, "storage.sqlite");
@@ -134,7 +134,7 @@ async function copyPersistentStorage(backend: PersistentBackend, source: string,
 const reopenFixtures: ReopenFixture[] = [];
 for (const backend of STORAGE_BENCHMARK_BACKENDS) {
 	if (backend === "memory") continue;
-	const seedDirectory = await mkdtemp(join(tmpdir(), `pi-durable-${backend}-reopen-benchmark-`));
+	const seedDirectory = createTempDir(`pi-durable-${backend}-reopen-benchmark-`);
 	directories.push(seedDirectory);
 	const seedPath = join(seedDirectory, backend === "sqlite" ? "storage.sqlite" : "storage");
 	const seed = await openPersistentStorage(backend, seedPath);
@@ -142,7 +142,7 @@ for (const backend of STORAGE_BENCHMARK_BACKENDS) {
 	await seed.close(BACKGROUND_CONTEXT);
 	const samples = await Promise.all(
 		Array.from({ length: REOPEN_OPTIONS.iterations + REOPEN_OPTIONS.warmupIterations }, async () => {
-			const directory = await mkdtemp(join(tmpdir(), `pi-durable-${backend}-reopen-sample-`));
+			const directory = createTempDir(`pi-durable-${backend}-reopen-sample-`);
 			directories.push(directory);
 			const path = join(directory, backend === "sqlite" ? "storage.sqlite" : "storage");
 			await copyPersistentStorage(backend, seedPath, path);

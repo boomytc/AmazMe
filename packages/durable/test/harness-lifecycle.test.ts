@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@amazme/chord";
 import { createModels, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@amazme/ai";
@@ -23,6 +22,7 @@ import { chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTask, addTool } from "./harness-support.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";
 import { completed, countingReader, deferred, eventually, openTasks, settled } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 type Step = { phase: "run" };
 
@@ -196,7 +196,7 @@ describe("Harness close", () => {
 	});
 
 	it("lets a new Harness open the same Storage once close resolved: no old invocation code runs", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-lifecycle-"));
+		const directory = createTempDir("pi-durable-lifecycle-");
 		try {
 			const path = join(directory, "session.sqlite");
 			const log: string[] = [];

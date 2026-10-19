@@ -1,5 +1,4 @@
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Context, JsonValue } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -23,6 +22,7 @@ import type {
 	TaskRecord,
 } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 async function tempDirectory(prefix = "pi-durable-jsonl-"): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	tempDirectories.add(directory);
 	return directory;
 }

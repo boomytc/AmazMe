@@ -1,7 +1,6 @@
 // Scheduler memory is bounded by live work: an ended task or a conversation edge is kept only while live work is
 // below it, and a chain dropped that way is loaded again from storage when work appears below it.
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	type Conversation,
@@ -16,6 +15,7 @@ import { SCHEDULER_INDEX_SIZES } from "../src/harness/harness.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually, openTasks, settled } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const gates = new Map<string, Deferred<void>>();
 function gate(name: string): Deferred<void> {
@@ -119,7 +119,7 @@ afterEach(async () => {
 });
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-retention-"));
+	const directory = createTempDir("pi-durable-retention-");
 	directories.push(directory);
 	return join(directory, "session.sqlite");
 }

@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -7,9 +6,10 @@ import { remoteService } from "@amazme/protocol/services";
 import { expect, test } from "vitest";
 import { createSourcePluginLoader } from "../src/core/plugins/loader.ts";
 import { openPluginRuntime } from "../src/core/plugins/runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 test("native plugin artifacts resolve host MCP ESM and Photon WASM dependencies outside the temporary bundle", async () => {
-	const directory = await mkdtemp(join(tmpdir(), "am-plugin-external-"));
+	const directory = createTempDir("am-plugin-external-");
 	const Probe = remoteService<{ read(context: Context): Promise<string> }>(
 		"test.host-externals",
 		{ read: 0 },

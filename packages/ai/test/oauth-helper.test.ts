@@ -1,9 +1,9 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OAuthCredentials } from "../src/auth/types.ts";
 import { resolveApiKey } from "./oauth.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const oauth = vi.hoisted(() => ({ refresh: vi.fn(), toAuth: vi.fn() }));
 vi.mock("../src/providers/all.ts", () => ({
@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function createAuthFile(content: string) {
-	const root = mkdtempSync(join(tmpdir(), "amazme-test-auth-"));
+	const root = createTempDir("amazme-test-auth-");
 	temporaryRoots.push(root);
 	const path = join(root, "auth.json");
 	writeFileSync(path, content);

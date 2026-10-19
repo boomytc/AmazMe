@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -11,6 +11,7 @@ import {
 	normalizeWindowsShellPath,
 	resolvePath,
 } from "../src/utils/paths.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 let tempDir: string;
 
@@ -21,21 +22,21 @@ afterEach(() => {
 	}
 });
 
-function createTempDir(): string {
-	tempDir = mkdtempSync(join(tmpdir(), "pi-paths-"));
+function openTempWorkspace(): string {
+	tempDir = createTempDir("pi-paths-");
 	return tempDir;
 }
 
 describe("canonicalizePath", () => {
 	it("returns the real path for a regular file", () => {
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		const file = join(dir, "file.txt");
 		writeFileSync(file, "hello");
 		expect(canonicalizePath(file)).toBe(realpathSync(file));
 	});
 
 	it("resolves symlinks to their targets", () => {
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		const target = join(dir, "target.txt");
 		const link = join(dir, "link.txt");
 		writeFileSync(target, "hello");
@@ -44,7 +45,7 @@ describe("canonicalizePath", () => {
 	});
 
 	it("resolves directory symlinks", () => {
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		const targetDir = join(dir, "target-dir");
 		const linkDir = join(dir, "link-dir");
 		mkdirSync(targetDir);
@@ -53,13 +54,13 @@ describe("canonicalizePath", () => {
 	});
 
 	it("falls back to the raw path when the target does not exist", () => {
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		const nonexistent = join(dir, "no-such-file");
 		expect(canonicalizePath(nonexistent)).toBe(nonexistent);
 	});
 
 	it("falls back to the raw path for a dangling symlink", () => {
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		const target = join(dir, "target.txt");
 		const link = join(dir, "link.txt");
 		// Create a symlink whose target does not exist.
@@ -97,7 +98,7 @@ describe("resolvePath", () => {
 	});
 
 	it("accepts file URLs", () => {
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		const filePath = join(dir, "file with spaces.txt");
 		expect(resolvePath(pathToFileURL(filePath).href, join(dir, "base"))).toBe(resolve(filePath));
 	});
@@ -111,7 +112,7 @@ describe("resolvePath", () => {
 			return;
 		}
 
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		for (const filePath of [join(dir, "report%2026.md"), join(dir, "foo%2Fbar"), join(dir, "malformed%A.md")]) {
 			expect(resolvePath(filePath, join(dir, "base"))).toBe(resolve(filePath));
 		}
@@ -122,7 +123,7 @@ describe("resolvePath", () => {
 			return;
 		}
 
-		const dir = createTempDir();
+		const dir = openTempWorkspace();
 		const filePath = join(dir, "dir", "SKILL.md");
 		const pathname = pathToFileURL(filePath).pathname;
 		expect(pathname).toMatch(/^\/[A-Za-z]:/);

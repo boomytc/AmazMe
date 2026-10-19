@@ -1,10 +1,11 @@
 import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createConnection } from "node:net";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { spawnInternalProcess, terminateInternalProcess } from "../src/host/process.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const children = new Set<ChildProcess>();
 const directories = new Set<string>();
@@ -26,7 +27,7 @@ describe.skipIf(process.platform === "win32")("experimental internal process lau
 	test("starts the coordinator through the current runtime", async () => {
 		// os.tmpdir() follows TMPDIR. A deep TMPDIR makes these explicit paths longer
 		// than sun_path, and the coordinator refuses the truncated listen.
-		const directory = await mkdtemp(join("/tmp", "pi-ip-"));
+		const directory = createTempDir("pi-ip-", { baseDirectory: "/tmp" });
 		directories.add(directory);
 		const publicPath = join(directory, "p.sock");
 		const controlPath = join(directory, "c.sock");
@@ -38,7 +39,7 @@ describe.skipIf(process.platform === "win32")("experimental internal process lau
 	});
 
 	test("waits for a failed activation child to terminate", async () => {
-		const directory = await mkdtemp(join("/tmp", "pi-ip-stop-"));
+		const directory = createTempDir("pi-ip-stop-", { baseDirectory: "/tmp" });
 		directories.add(directory);
 		const child = spawnInternalProcess("coordinator", [join(directory, "p.sock"), join(directory, "c.sock")]);
 		children.add(child);

@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import type { Model } from "@amazme/ai";
@@ -25,8 +24,9 @@ import {
 	toBase64,
 } from "../src/tools/image-processor.ts";
 import { createReadTool } from "../src/tools/read.ts";
+import { createTempDir } from "./temp-dir.ts";
 
-const directory = mkdtempSync(join(tmpdir(), "amazme-durable-images-"));
+const directory = createTempDir("amazme-durable-images-");
 let processor: ImageProcessor;
 
 beforeAll(async () => {

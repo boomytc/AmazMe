@@ -1,5 +1,4 @@
-import { appendFile, link, mkdtemp, mkdir, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { appendFile, link, mkdir, readFile, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { fauxAssistantMessage, fauxToolCall } from "@amazme/ai";
@@ -28,6 +27,7 @@ import {
 } from "../src/tools/index.ts";
 import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { closeFileToolApis, fileToolApi } from "./file-tool-api.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const fault = vi.hoisted(() => ({ patch: false }));
 vi.mock("../src/tools/edit-diff.ts", async (original) => {
@@ -51,7 +51,7 @@ describe("conversation-owned file observations", () => {
 	let cwd: string;
 	const harnesses: Harness[] = [];
 	beforeEach(async () => {
-		cwd = await mkdtemp(join(tmpdir(), "amazme-observed-tools-"));
+		cwd = createTempDir("amazme-observed-tools-");
 		env = new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 		await writeFile(join(cwd, "file.txt"), "one\ntwo\n");
 	});

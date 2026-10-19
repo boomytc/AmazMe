@@ -1,6 +1,5 @@
 import assert from "node:assert";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
@@ -11,6 +10,7 @@ import { TuiMainScreen } from "../src/tui-main-screen.ts";
 import { stripTerminalSequences, visibleWidth } from "../src/utils.ts";
 import { defaultEditorTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /** Create a TUI with a virtual terminal for testing */
 function createTestTUI(cols = 80, rows = 24): TUI {
@@ -2240,8 +2240,7 @@ describe("Editor component", () => {
 		});
 
 		it("completes Chinese path prefixes after whitespace or CJK punctuation with Tab", async (t) => {
-			const baseDir = mkdtempSync(join(tmpdir(), "pi-editor-autocomplete-"));
-			t.after(() => rmSync(baseDir, { recursive: true, force: true }));
+			const baseDir = createTempDir(t, "pi-editor-autocomplete-");
 			mkdirSync(join(baseDir, "文档"));
 			writeFileSync(join(baseDir, "文档", "说明.md"), "text");
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);

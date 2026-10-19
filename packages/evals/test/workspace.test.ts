@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { assertWorkspace } from "../docker/workspace.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories: string[] = [];
 
@@ -18,7 +18,7 @@ function write(root: string, path: string): void {
 }
 
 function workspace(withDocs = false): string {
-	const root = mkdtempSync(join(tmpdir(), "amazme-eval-workspace-"));
+	const root = createTempDir("amazme-eval-workspace-");
 	directories.push(root);
 	for (const path of [
 		"package.json",

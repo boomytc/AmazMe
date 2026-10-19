@@ -3,8 +3,7 @@
 // an ExecutionEnv that runs inside the conversation's container.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/29-sandbox-per-conversation.ts
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createModels } from "@amazme/ai/models";
@@ -12,6 +11,7 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@amazme/ai/pro
 import { NodeExecutionEnv } from "../../src/env/node.ts";
 import { createRegistry, defineDoc, Harness, MemoryStorage } from "../../src/index.ts";
 import { CodingTools } from "../../src/tools/index.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -56,7 +56,7 @@ const harness = await Harness.open(
 // Each user's conversation gets a fresh sandbox in the creating commit.
 const model = { provider: "faux", modelId: "faux-1" };
 async function conversationFor(user: string) {
-	const path = await mkdtemp(join(tmpdir(), `pi-durable-sandbox-${user}-`));
+	const path = createTempDir(`pi-durable-sandbox-${user}-`);
 	const conversation = await harness.createConversation(
 		{
 			ownership: { kind: "ownerless" },

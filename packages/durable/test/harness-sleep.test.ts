@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	defineExtension,
@@ -14,6 +13,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { context, flush } from "./session-support.ts";
 import { aborted, abortedWith, completed, eventually, openTasks } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 
@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-durable-sleep-"));
+	const directory = createTempDir("amazme-durable-sleep-");
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

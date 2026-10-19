@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -8,6 +7,7 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { runDurablePrint } from "../src/durable/print.ts";
 import { openDurable, type OpenDurableResult } from "../src/durable/runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable print", () => {
 	let directory: string;
@@ -21,7 +21,7 @@ describe("durable print", () => {
 	const originalWrite = process.stdout.write;
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-print-"));
+		directory = createTempDir("amazme-durable-print-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

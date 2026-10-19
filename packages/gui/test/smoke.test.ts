@@ -1,11 +1,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { electronBinary, smokeEnvironment } from "./smoke-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 interface SmokeReport {
 	readonly title: string;
@@ -106,7 +106,7 @@ describe("electron window", () => {
 	}
 
 	test("a cancelled native directory picker returns no paths through the real preload IPC", async () => {
-		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-picker-"));
+		scratch = createTempDir("amazme-gui-picker-");
 		const fixture = join(scratch, "picker-fixture.mjs");
 		await writeFile(fixture, `
 import { app, dialog } from "electron";
@@ -142,7 +142,7 @@ await import(${JSON.stringify(new URL("../dist/main.js", import.meta.url).href)}
 	}, 180_000);
 
 	test("desktop font shortcuts preserve rapid increments and reset sizes without changing fonts or page zoom", async () => {
-		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-fonts-"));
+		scratch = createTempDir("amazme-gui-fonts-");
 		await mkdir(join(scratch, "agent"));
 		await writeFile(join(scratch, "agent", "settings.json"), JSON.stringify({
 			locale: "en",
@@ -239,7 +239,7 @@ await import(${JSON.stringify(new URL("../dist/main.js", import.meta.url).href)}
 	}, 180_000);
 
 	test.each(["en", "zh", "auto"] as const)("opens the shared web host with application language %s", async (locale) => {
-		scratch = await mkdtemp(join(tmpdir(), "amazme-gui-"));
+		scratch = createTempDir("amazme-gui-");
 		await mkdir(join(scratch, "agent"));
 		await writeFile(join(scratch, "agent", "settings.json"), JSON.stringify({ locale }));
 		const stdout = await launch();

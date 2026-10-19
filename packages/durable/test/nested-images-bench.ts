@@ -11,8 +11,7 @@
  *   node --conditions=source --experimental-strip-types --expose-gc test/nested-images-bench.ts [count]
  */
 import { randomBytes } from "node:crypto";
-import { mkdtemp, readdir, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import type { ImageContent } from "@amazme/ai";
@@ -35,6 +34,7 @@ import {
 } from "../src/index.ts";
 import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 type Backend = "sqlite" | "jsonl";
 type Variant = "inline" | "reference";
@@ -168,7 +168,7 @@ function registryFor(scenario: Scenario, probe: Probe) {
 }
 
 async function runScenario(scenario: Scenario): Promise<Result> {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-durable-images-bench-"));
+	const directory = createTempDir("amazme-durable-images-bench-");
 	try {
 		const faux = fauxProvider();
 		const models = createModels();

@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, createModels } from "@amazme/ai";
 import { replicatedState } from "@amazme/chord";
@@ -12,6 +11,7 @@ import { afterEach, describe, expect, test } from "vitest";
 import type { ToolApprovalMode } from "../src/core/settings-manager.ts";
 import { createApprovalGate, toolNeedsApproval } from "../src/host/services/approvals-provider.ts";
 import type { ApprovalsState } from "../src/host/services/approvals.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /**
  * The approval gate at the tool boundary, over a real Harness: the scripted model asks for a `read`,
@@ -21,7 +21,7 @@ import type { ApprovalsState } from "../src/host/services/approvals.ts";
 const directories = new Set<string>();
 
 async function makeDirectory(prefix: string): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	directories.add(directory);
 	return directory;
 }

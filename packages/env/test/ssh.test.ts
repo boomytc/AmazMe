@@ -1,17 +1,8 @@
 import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-	existsSync,
-	mkdirSync,
-	mkdtempSync,
-	readdirSync,
-	readFileSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer, Socket } from "node:net";
-import { tmpdir, userInfo } from "node:os";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { getOrThrow } from "@amazme/durable/env";
@@ -30,6 +21,7 @@ import {
 	sshConnection,
 } from "../src/ssh.ts";
 import { daemon } from "./daemon.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /** The deployed daemon is named by its content. */
 const deployedName = `amazme-env-${createHash("sha256").update(readFileSync(daemon)).digest("hex").slice(0, 32)}`;
@@ -72,7 +64,7 @@ async function waitForPort(port: number): Promise<void> {
 
 // A disposable sshd on localhost with its own host key, client key and home directory.
 describe.skipIf(sshd === undefined)("SSH bootstrap", () => {
-	const root = mkdtempSync(join(tmpdir(), "amazme-env-ssh-"));
+	const root = createTempDir("amazme-env-ssh-");
 	const home = join(root, "home");
 	let server: ChildProcess | undefined;
 	let target: SshTarget;

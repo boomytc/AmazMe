@@ -2,8 +2,7 @@
 // virtualenv, and a wrapper that times every bash call.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/30-tool-override.ts
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ToolResultMessage } from "@amazme/ai";
@@ -20,6 +19,7 @@ import {
 	wrapTool,
 } from "../../src/index.ts";
 import { CodingTools, createBashTool } from "../../src/tools/index.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -52,7 +52,7 @@ const Timing = defineExtension({
 
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
-const project = await mkdtemp(join(tmpdir(), "pi-durable-venv-"));
+const project = createTempDir("pi-durable-venv-");
 await mkdir(join(project, ".venv/bin"), { recursive: true });
 await writeFile(join(project, ".venv/bin/activate"), `export VIRTUAL_ENV="${project}/.venv"\n`);
 

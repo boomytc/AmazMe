@@ -1,9 +1,9 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 interface CodingAgentPackageJson {
 	bin: { amazme: string };
@@ -42,7 +42,7 @@ describe("package distribution entrypoints", () => {
 	});
 
 	test("publishes the default interactive runtime reached by SDK main", () => {
-		const directory = mkdtempSync(join(tmpdir(), "amazme-distribution-"));
+		const directory = createTempDir("amazme-distribution-");
 		try {
 			const npmCli = process.env.npm_execpath;
 			if (!npmCli) throw new Error("Run distribution checks through npm test");

@@ -1,6 +1,5 @@
 // Inputs placed as application entries, and data-only writes appended at once (#10407).
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	type AssistantMessage,
@@ -30,6 +29,7 @@ import { allEntries, type ChatSetup, chatSetup, openChat, textOf, waitFor } from
 import { addSection, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, type Deferred, deferred } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 function answer(text: string): AssistantMessage {
 	return fauxAssistantMessage([fauxText(text)]);
@@ -389,7 +389,7 @@ describe("data-only writes", () => {
 	});
 
 	it("keeps a queued input's entry across reopen and places it as that entry", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-input-entries-"));
+		const directory = createTempDir("pi-durable-input-entries-");
 		const path = join(directory, "session.sqlite");
 		try {
 			const setup = chatSetup();

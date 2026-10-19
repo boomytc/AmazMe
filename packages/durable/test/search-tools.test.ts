@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Context, JsonValue } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
@@ -13,12 +12,13 @@ import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { createFindTool, createGrepTool, createLsTool, FileSearchTools } from "../src/tools/index.ts";
 import { DEFAULT_MAX_BYTES } from "../src/truncate.ts";
 import { allEntries, chatSetup, openChat, textOf } from "./chat-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("portable search tools", () => {
 	let directory: string;
 	let env: NodeExecutionEnv;
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-search-tools-"));
+		directory = createTempDir("amazme-search-tools-");
 		env = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory });
 		await mkdir(join(directory, "src"));
 		await writeFile(join(directory, "src", "a.test.ts"), "before\nAlpha a.b\naXb\nafter\n");

@@ -1,11 +1,11 @@
-import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import { withFileMutationQueue } from "@amazme/durable/file-operations";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAllTools } from "../src/core/tools/index.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const env = new NodeExecutionEnv({ cwd: process.cwd(), artifactDirectory: process.cwd() });
 const queued = <T>(path: string, fn: () => Promise<T>) => withFileMutationQueue(env, path, fn, BACKGROUND_CONTEXT);
@@ -28,8 +28,8 @@ async function resolvesWithin(promise: Promise<unknown>, ms: number): Promise<bo
 
 const tempDirs: string[] = [];
 
-async function createTempDir(): Promise<string> {
-	const dir = await mkdtemp(join(tmpdir(), "pi-file-mutation-queue-"));
+async function openTempWorkspace(): Promise<string> {
+	const dir = createTempDir("pi-file-mutation-queue-");
 	tempDirs.push(dir);
 	return dir;
 }
@@ -90,7 +90,7 @@ describe("withFileMutationQueue", () => {
 	});
 
 	it("uses the same queue for symlink aliases", async () => {
-		const dir = await createTempDir();
+		const dir = await openTempWorkspace();
 		const targetPath = join(dir, "target.txt");
 		const symlinkPath = join(dir, "alias.txt");
 		await writeFile(targetPath, "hello\n", "utf8");
@@ -118,7 +118,7 @@ describe("withFileMutationQueue", () => {
 
 describe("built-in edit and write tools", () => {
 	it("preserves both parallel edits after one read", async () => {
-		const dir = await createTempDir();
+		const dir = await openTempWorkspace();
 		const tools = createAllTools(dir);
 		await writeFile(join(dir, "file.txt"), "alpha\nbeta\ngamma\n");
 		await tools.read.execute("read", { path: "file.txt" });
@@ -136,7 +136,7 @@ describe("built-in edit and write tools", () => {
 	});
 
 	it("shares the queue and refreshed observation between edit and write", async () => {
-		const dir = await createTempDir();
+		const dir = await openTempWorkspace();
 		const files = new NodeExecutionEnv({ cwd: dir, artifactDirectory: dir });
 		const tools = createAllTools(dir, { fileSystem: files });
 		await writeFile(join(dir, "file.txt"), "original\n");
@@ -163,7 +163,7 @@ describe("built-in edit and write tools", () => {
 
 	for (const kind of ["write", "edit"] as const) {
 		it(`keeps the ${kind} barrier until cancelled IO actually publishes, then reports completion`, async () => {
-			const dir = await createTempDir();
+			const dir = await openTempWorkspace();
 			const files = new NodeExecutionEnv({ cwd: dir, artifactDirectory: dir });
 			const tools = createAllTools(dir, { fileSystem: files });
 			await writeFile(join(dir, "file.txt"), "alpha\nbeta\n");

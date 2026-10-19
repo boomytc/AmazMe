@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { StreamFn } from "@amazme/agent";
 import { createAssistantMessageEventStream, createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, getCurrentTools, type AssistantMessage, type FauxResponseStep, type Model } from "@amazme/ai";
@@ -18,6 +17,7 @@ import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/se
 import { abortArchivedForks, createForkArchiveGate, ForkManagementDoc, parseConversationId } from "../src/durable/fork-management.ts";
 import { pendingResponse } from "./experimental-durable-support.ts";
 import { formatRestartCount } from "../src/durable/restart-count.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /**
  * The conversation list, the live task graph, and stored history, over a real Harness driven by the
@@ -40,7 +40,7 @@ const Sleeper = defineTask<{ at: number }, { phase: "sleep" }, null>({
 });
 
 async function makeDirectory(prefix: string): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	directories.add(directory);
 	return directory;
 }

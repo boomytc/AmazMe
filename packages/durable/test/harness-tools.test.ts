@@ -1,5 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { JsonValue } from "@amazme/chord";
 import {
@@ -39,6 +38,7 @@ import { allEntries, type ChatSetup, chatSetup, openChat, textOf } from "./chat-
 import { addHooks, addTask, addTool, type Installed } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const EchoParameters = Type.Object({ text: Type.Optional(Type.String()) });
 type Echo = ToolRegistration<typeof EchoParameters>;
@@ -932,7 +932,7 @@ describe("tool execution api", () => {
 
 describe("coding tools", () => {
 	it("answers a failing command with its retained tail and diagnostics in order", async () => {
-		const directory = mkdtempSync(join(tmpdir(), "pi-durable-coding-"));
+		const directory = createTempDir("pi-durable-coding-");
 		try {
 			const setup = chatSetup();
 			addTool(setup.registry, createBashTool());
@@ -962,7 +962,7 @@ describe("coding tools", () => {
 	});
 
 	it("reads, edits, and runs a command in one run, then answers", async () => {
-		const directory = mkdtempSync(join(tmpdir(), "pi-durable-coding-"));
+		const directory = createTempDir("pi-durable-coding-");
 		try {
 			writeFileSync(join(directory, "notes.txt"), "hello world\n");
 			const setup = chatSetup();

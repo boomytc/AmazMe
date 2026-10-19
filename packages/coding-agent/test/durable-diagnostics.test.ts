@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { inflateRawSync } from "node:zlib";
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider } from "@amazme/ai";
@@ -15,6 +14,7 @@ import { runDurableInteractive } from "../src/durable/interactive.ts";
 import { runDurableTui } from "../src/durable/tui.ts";
 import { sessionEntriesFor } from "../src/durable/session-surface.ts";
 import { pendingResponse } from "./experimental-durable-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 vi.mock("../src/durable/tui.ts", () => ({ runDurableTui: vi.fn() }));
 
@@ -43,7 +43,7 @@ describe("durable diagnostic commands", () => {
 	const sessions: OpenDurableResult[] = [];
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-diagnostics-"));
+		directory = createTempDir("amazme-diagnostics-");
 		cwd = join(directory, "project");
 		await mkdir(cwd);
 		vi.stubEnv("AMAZME_CODING_AGENT_DIR", join(directory, "profile"));

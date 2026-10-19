@@ -1,10 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 // --import takes a module specifier, not a filesystem path.
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 function runEntry(experimental: boolean, version = false) {
-	const directory = mkdtempSync(join(tmpdir(), "pi-cli-boundary-"));
+	const directory = createTempDir("pi-cli-boundary-");
 	tempDirs.push(directory);
 	return spawnSync(
 		process.execPath,

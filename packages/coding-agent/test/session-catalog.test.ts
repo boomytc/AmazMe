@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createSession, listSessions } from "../src/host/session-catalog.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 vi.mock("node:fs/promises", async importOriginal => {
 	const original = await importOriginal<typeof import("node:fs/promises")>();
@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 async function directory(): Promise<string> {
-	const folder = await mkdtemp(join(tmpdir(), "amazme-session-catalog-"));
+	const folder = createTempDir("amazme-session-catalog-");
 	folders.push(folder);
 	return folder;
 }

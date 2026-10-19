@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { getOrThrow } from "@amazme/durable/env";
@@ -8,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { Connection } from "../src/connection.ts";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import { daemon } from "./daemon.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const connections: Connection[] = [];
 const dirs: string[] = [];
@@ -18,7 +18,7 @@ afterEach(() => {
 
 describe("daemon process transports", () => {
 	it("uses supplied pipes for actual checked publication without a shell translation", async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "amazme-transport-"));
+		const cwd = createTempDir("amazme-transport-");
 		dirs.push(cwd);
 		const connection = new Connection({
 			start: (args) => spawn(daemon, [...args], { stdio: ["pipe", "pipe", "pipe"] }),

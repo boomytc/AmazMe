@@ -1,16 +1,4 @@
-import {
-	chmodSync,
-	mkdtempSync,
-	readFileSync,
-	readdirSync,
-	rmSync,
-	statSync,
-	symlinkSync,
-	unlinkSync,
-	utimesSync,
-	writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { chmodSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import { getOrThrow } from "@amazme/durable/env";
@@ -18,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { Connection } from "../src/connection.ts";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import { daemon } from "./daemon.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 const connections: Connection[] = [];
@@ -29,7 +18,7 @@ afterEach(() => {
 });
 
 function environment(): { env: RemoteExecutionEnv; connection: Connection } {
-	const cwd = mkdtempSync(join(tmpdir(), "amazme-remote-checked-write-"));
+	const cwd = createTempDir("amazme-remote-checked-write-");
 	dirs.push(cwd);
 	const connection = new Connection({ command: [daemon] });
 	connections.push(connection);

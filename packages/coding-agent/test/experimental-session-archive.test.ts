@@ -1,8 +1,8 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { createSession, readSession, sessionStoragePath, writeSessionArchive } from "../src/host/session-catalog.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories: string[] = [];
 
@@ -11,7 +11,7 @@ afterEach(async () => {
 });
 
 async function setup() {
-	const directory = await mkdtemp(join(tmpdir(), "session-archive-"));
+	const directory = createTempDir("session-archive-");
 	directories.push(directory);
 	const session = await createSession(directory, { id: "archive-test", cwd: directory, name: "Retained history" });
 	return { directory, session };

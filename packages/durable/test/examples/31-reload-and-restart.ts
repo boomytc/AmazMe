@@ -2,8 +2,7 @@
 // with; stored choices are names, so they survive a restart and bind to whatever code the new process installs.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/31-reload-and-restart.ts
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { type ToolResultMessage, Type } from "@amazme/ai";
@@ -11,6 +10,7 @@ import { createModels } from "@amazme/ai/models";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from "@amazme/ai/providers/faux";
 import { createRegistry, defineExtension, defineTool, Harness, ToolResultEntry } from "../../src/index.ts";
 import { openNodeSqliteStorage } from "../../src/storage/sqlite/node.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -41,7 +41,7 @@ models.setProvider(faux.provider);
 const callVersion = () => fauxAssistantMessage(fauxToolCall("version", {}), { stopReason: "toolUse" });
 faux.setResponses([callVersion(), fauxAssistantMessage("Done."), callVersion(), fauxAssistantMessage("Done.")]);
 
-const directory = await mkdtemp(join(tmpdir(), "pi-durable-reload-"));
+const directory = createTempDir("pi-durable-reload-");
 const open = async (registry: ReturnType<typeof createRegistry>) =>
 	Harness.open(await openNodeSqliteStorage(join(directory, "session.sqlite")), { models, registry }, context);
 

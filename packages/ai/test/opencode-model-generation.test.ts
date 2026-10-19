@@ -1,14 +1,14 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import { getSupportedThinkingLevels } from "../src/models.ts";
 import type { Api, Model } from "../src/types.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 it("preserves historical DeepSeek V4 fallback and current V4.1 catalog reasoning metadata", () => {
-	const root = mkdtempSync(join(tmpdir(), "amazme-opencode-generation-"));
+	const root = createTempDir("amazme-opencode-generation-");
 	try {
 		const preloadPath = join(root, "mock-catalog.mjs");
 		const outputPath = join(root, "catalog");

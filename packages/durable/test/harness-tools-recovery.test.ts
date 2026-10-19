@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { JsonValue } from "@amazme/chord";
 import {
@@ -30,6 +29,7 @@ import { allEntries, type ChatSetup, chatSetup, openChat, waitFor } from "./chat
 import { addHooks, addTool, type Installed } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const directories = new Set<string>();
 
@@ -39,7 +39,7 @@ afterEach(async () => {
 });
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-tools-"));
+	const directory = createTempDir("pi-durable-tools-");
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

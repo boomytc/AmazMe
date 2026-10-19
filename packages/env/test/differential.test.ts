@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Context } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -12,6 +11,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { Connection } from "../src/connection.ts";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import { daemon } from "./daemon.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const connection = new Connection({ command: [daemon] });
 const context: Context = BACKGROUND_CONTEXT;
@@ -22,8 +22,8 @@ afterAll(() => {
 });
 
 function pair(): { local: ExecutionEnv; remote: ExecutionEnv; roots: [string, string] } {
-	const localRoot = mkdtempSync(join(tmpdir(), "amazme-env-local-"));
-	const remoteRoot = mkdtempSync(join(tmpdir(), "amazme-env-remote-"));
+	const localRoot = createTempDir("amazme-env-local-");
+	const remoteRoot = createTempDir("amazme-env-remote-");
 	dirs.push(localRoot, remoteRoot);
 	return {
 		local: new NodeExecutionEnv({ cwd: localRoot, artifactDirectory: localRoot }),

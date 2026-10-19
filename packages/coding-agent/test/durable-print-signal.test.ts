@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -31,7 +31,7 @@ describe.skipIf(process.platform === "win32")("durable print signal shutdown", (
 	const children: ChildProcess[] = [];
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-print-signal-"));
+		directory = createTempDir("amazme-print-signal-");
 		profile = join(directory, "profile");
 		await mkdir(profile);
 		response = "x".repeat(PADDING);

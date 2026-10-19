@@ -2,8 +2,7 @@
 // checkout of the project.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/28-reviewer.ts
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { AssistantMessage } from "@amazme/ai";
@@ -21,6 +20,7 @@ import {
 	section,
 } from "../../src/index.ts";
 import { CodingTools, createReadTool } from "../../src/tools/index.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 const textOf = (message: AssistantMessage) =>
@@ -46,7 +46,7 @@ const Reviewer = defineExtension({
 // ─── Host setup ─────────────────────────────────────────────────────────────
 
 // The reviewer works in its own checkout, in practice a `git worktree add`.
-const worktree = await mkdtemp(join(tmpdir(), "pi-durable-review-"));
+const worktree = createTempDir("pi-durable-review-");
 await writeFile(join(worktree, "user.ts"), "export const name = (user) => user.name;\n");
 
 const faux = fauxProvider({ models: [{ id: "big" }, { id: "small" }] });

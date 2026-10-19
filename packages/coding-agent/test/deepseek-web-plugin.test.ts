@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall } from "@amazme/ai";
 import { BACKGROUND_CONTEXT as context, withAbortSignal } from "@amazme/chord/context";
@@ -20,6 +19,7 @@ import { ForkManagementDoc, withConversationAdmission } from "../src/durable/for
 import { Commands } from "../src/host/services/commands.ts";
 import { Conversations } from "../src/host/services/conversations.ts";
 import { openWorkerTestServices } from "./native-host-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const harnesses: Harness[] = [];
 const directories: string[] = [];
@@ -269,7 +269,7 @@ describe("optional DeepSeek web plugin", () => {
 	});
 
 	it("persists per-conversation settings, forks their historical value and leaves invalid updates unchanged", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-web-policy-"));
+		const directory = createTempDir("amazme-web-policy-");
 		directories.push(directory);
 		const path = join(directory, "session.sqlite");
 		const first = await open(await openNodeSqliteStorage(path));
@@ -338,7 +338,7 @@ describe("optional DeepSeek web plugin", () => {
 	});
 
 	it("does not repeat a billable interrupted HTTP tool after SQLite reopen", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-web-recovery-"));
+		const directory = createTempDir("amazme-web-recovery-");
 		directories.push(directory);
 		const path = join(directory, "session.sqlite");
 		const first = await open(await openNodeSqliteStorage(path));

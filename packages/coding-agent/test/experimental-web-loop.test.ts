@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -68,6 +68,7 @@ import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
 import { listSessions, readSession, writeSessionName } from "../src/host/session-catalog.ts";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 import { startPage } from "../src/host/web/page.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 interface Presentation {
 	readonly client: Client;
@@ -169,7 +170,7 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 }
 
 async function makeDirectory(prefix: string): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	directories.add(directory);
 	return directory;
 }

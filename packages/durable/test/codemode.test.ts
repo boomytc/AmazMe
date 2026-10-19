@@ -1,5 +1,4 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { Context } from "@amazme/chord";
 import { type AssistantMessage, fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@amazme/ai";
@@ -29,6 +28,7 @@ import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.
 import { addHooks, addTool } from "./harness-support.ts";
 import { ControlledStorage, context } from "./session-support.ts";
 import { aborted, type Deferred, deferred, eventually } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const Parameters = Type.Object({ text: Type.Optional(Type.String()), id: Type.Optional(Type.Number()) });
 
@@ -53,7 +53,7 @@ afterEach(async () => {
 });
 
 async function sqlitePath(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-codemode-"));
+	const directory = createTempDir("pi-durable-codemode-");
 	directories.add(directory);
 	return join(directory, "session.sqlite");
 }

@@ -8,7 +8,7 @@
  * finish the run to measure the stored size after the round's base and reclamation. Throughput scenarios push 1 GiB.
  */
 import { execFile } from "node:child_process";
-import { mkdtemp, open, readdir, rm, stat } from "node:fs/promises";
+import { open, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ import { openNodeJsonlStorage } from "../src/storage/jsonl/node.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { createBashTool } from "../src/tools/index.ts";
 import { addTool } from "./harness-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 type Backend = "memory" | "sqlite" | "jsonl";
 type Rate = "low" | "normal" | "high";
@@ -125,7 +126,7 @@ type Metrics = {
 };
 
 async function runScenario(scenario: Scenario): Promise<Metrics> {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-tool-bench-"));
+	const directory = createTempDir("pi-durable-tool-bench-");
 	try {
 		const path = join(directory, scenario.backend === "sqlite" ? "session.sqlite" : "session");
 		const latencies: number[] = [];
