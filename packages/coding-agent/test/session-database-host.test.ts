@@ -5,7 +5,7 @@ import { Client } from "@amazme/client";
 import { createUnixTransportFactory } from "@amazme/client/unix";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { listSessions, sessionStoragePath, type SessionCatalogMetadata } from "../src/host/session-catalog.ts";
-import { sessionDatabaseErrorText } from "../src/host/session-database-error.ts";
+import { sessionOpenErrorText } from "../src/host/session-database-error.ts";
 import { type RunningServer, startServer } from "../src/host/server.ts";
 import { SessionManagement } from "../src/host/services/sessions.ts";
 import { createServerServiceBinding } from "./experimental-service-binding.ts";
@@ -74,7 +74,7 @@ describe.skipIf(process.platform === "win32")("server host with a Session databa
 		);
 		expect(error).toMatchObject({ code: "unavailable", reason: "session_database_newer_schema" });
 		// The text the web page and the desktop window show after "attach failed:".
-		const shown = sessionDatabaseErrorText(error);
+		const shown = sessionOpenErrorText(error);
 		expect(shown?.split("\n")).toEqual([
 			`Cannot open session database ${path}`,
 			"Reason: it was written by a newer version of AmazMe (schema version 99; this version supports up to 2).",

@@ -6,7 +6,7 @@
 export const SESSION_DATABASE_ERROR_REASON_PREFIX = "session_database_";
 
 /** The Chord reason for a `SessionOpenError` kind: `newer-schema` becomes `session_database_newer_schema`. */
-export function sessionDatabaseErrorReason(kind: string): string {
+export function sessionOpenErrorReason(kind: string): string {
 	return `${SESSION_DATABASE_ERROR_REASON_PREFIX}${kind.replaceAll("-", "_")}`;
 }
 
@@ -14,7 +14,7 @@ export function sessionDatabaseErrorReason(kind: string): string {
  * The readable text of a Session database error received from the server, without the Chord `code/reason: ` prefix;
  * `undefined` for any other error.
  */
-export function sessionDatabaseErrorText(error: unknown): string | undefined {
+export function sessionOpenErrorText(error: unknown): string | undefined {
 	if (!(error instanceof Error) || !("reason" in error)) return undefined;
 	const { reason } = error;
 	if (typeof reason !== "string" || !reason.startsWith(SESSION_DATABASE_ERROR_REASON_PREFIX)) return undefined;

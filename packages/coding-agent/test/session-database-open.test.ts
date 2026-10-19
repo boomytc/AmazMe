@@ -13,7 +13,7 @@ import {
 	openSessionStorage,
 	SessionOpenError,
 } from "../src/durable/session-database.ts";
-import { sessionDatabaseErrorText } from "../src/host/session-database-error.ts";
+import { sessionOpenErrorText } from "../src/host/session-database-error.ts";
 import { SessionDatabaseUnavailableError } from "../src/host/session-worker-manager.ts";
 import { SessionWorkerEventSchema } from "../src/host/session-worker.ts";
 import { BROKEN_SESSION_DATABASES, snapshotDirectory, writeBrokenSessionDatabase } from "./session-database-fixtures.ts";
@@ -83,11 +83,11 @@ describe("opening a session database that cannot be used", () => {
 				token: "token",
 				sessionKey: "/sessions/demo",
 				message: original.message,
-				sessionDatabaseError: original,
+				sessionOpenError: original,
 			}),
 		);
 		expect(Check(SessionWorkerEventSchema, event)).toBe(true);
-		const rebuilt = SessionOpenError.fromJSON(event.sessionDatabaseError);
+		const rebuilt = SessionOpenError.fromJSON(event.sessionOpenError);
 		expect(rebuilt?.toJSON()).toEqual(original.toJSON());
 		expect(rebuilt?.message).toBe(original.message);
 		expect(SessionOpenError.fromJSON({ kind: "unknown", path: "/x", detail: "" })).toBeUndefined();
@@ -100,8 +100,8 @@ describe("opening a session database that cannot be used", () => {
 			kind: "newer-schema",
 			path: "/sessions/demo/session.sqlite",
 		});
-		expect(sessionDatabaseErrorText(reported)).toBe(original.message);
-		expect(sessionDatabaseErrorText(new Error("other"))).toBeUndefined();
+		expect(sessionOpenErrorText(reported)).toBe(original.message);
+		expect(sessionOpenErrorText(new Error("other"))).toBeUndefined();
 	});
 
 	test("finds the typed error behind startup cleanup failures and leaves unrelated errors alone", () => {

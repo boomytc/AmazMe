@@ -15,7 +15,7 @@ import { Check } from "typebox/value";
 import { SessionOpenError, type SessionOpenErrorKind } from "../durable/session-database.ts";
 import type { CoordinatorConnection, CoordinatorConnectionEvent } from "./coordinator.ts";
 import { spawnInternalProcess } from "./process.ts";
-import { sessionDatabaseErrorReason } from "./session-database-error.ts";
+import { sessionOpenErrorReason } from "./session-database-error.ts";
 import type { SessionCatalogMetadata } from "./session-catalog.ts";
 import { SessionLifecycle } from "./services/session-lifecycle.ts";
 import {
@@ -104,7 +104,7 @@ export class SessionDatabaseUnavailableError extends ChordError {
 	readonly path: string;
 
 	constructor(error: SessionOpenError) {
-		super("unavailable", error.message, { cause: error, reason: sessionDatabaseErrorReason(error.kind) });
+		super("unavailable", error.message, { cause: error, reason: sessionOpenErrorReason(error.kind) });
 		this.name = "SessionDatabaseUnavailableError";
 		this.kind = error.kind;
 		this.path = error.path;
@@ -617,9 +617,9 @@ export class SessionWorkerManager {
 			if (pending?.peerId === event.from && pending.token === message.token) {
 				this.#failPending(
 					message.sessionKey,
-					message.sessionDatabaseError === undefined
+					message.sessionOpenError === undefined
 						? new Error(`Session worker failed: ${message.message}`)
-						: new SessionDatabaseUnavailableError(new SessionOpenError(message.sessionDatabaseError)),
+						: new SessionDatabaseUnavailableError(new SessionOpenError(message.sessionOpenError)),
 				);
 			}
 			return;
