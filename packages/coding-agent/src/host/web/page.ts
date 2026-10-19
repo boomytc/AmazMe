@@ -2428,6 +2428,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								history = [...page.entries, ...history];
 								historyCursor = page.cursor ?? null;
 								paint();
+									renderer.refreshTranscriptSearch({ loadHistory: true });
 							},
 							(error: unknown) => {
 								if (request !== historyRequest || painter.sessionId !== sessionId || painter.conversationsService !== service || targetConversation() !== target) return;

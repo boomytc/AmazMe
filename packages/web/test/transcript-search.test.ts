@@ -68,3 +68,47 @@ test("a query asks for unloaded history and highlights it once that history is m
 	expect(document.querySelector("[data-block-id='older']")?.classList.contains("search-hit")).toBe(true);
 	expect(actions).toEqual([{ id: TRANSCRIPT_SEARCH_ACTION, data: "Older secret" }]);
 });
+
+test("a query typed while history is loading searches the arrived page and asks for the rest", () => {
+	const elements = collectPageElements();
+	const renderer = createRenderer(elements);
+	elements.transcriptSearch.hidden = false;
+	const actions: { id: string; data: string | undefined }[] = [];
+	renderer.onPanelAction = (action) => {
+		if (action.kind === "command") actions.push({ id: action.id, data: action.data });
+	};
+	const view = {
+		...failureView("zh", ""),
+		attachedId: "session",
+		blocks: [CURRENT],
+	};
+	renderer.render({ ...view, history: { blocks: [], more: true, loading: true } });
+	search("Older secret");
+	expect(actions).toEqual([]);
+	expect(document.querySelector("#transcript-search-count")?.textContent).toBe("没有匹配");
+
+	renderer.render({ ...view, history: { blocks: [OLDER], more: true, loading: false } });
+	renderer.refreshTranscriptSearch({ loadHistory: true });
+	expect(document.querySelector("#transcript-search-count")?.textContent).toBe("1/1");
+	expect(document.querySelector("[data-block-id='older']")?.classList.contains("search-hit")).toBe(true);
+	expect(actions).toEqual([{ id: TRANSCRIPT_SEARCH_ACTION, data: "Older secret" }]);
+});
+
+test("a failed history load does not automatically submit the query again", () => {
+	const elements = collectPageElements();
+	const renderer = createRenderer(elements);
+	elements.transcriptSearch.hidden = false;
+	const actions: string[] = [];
+	renderer.onPanelAction = (action) => {
+		if (action.kind === "command") actions.push(action.id);
+	};
+	const view = {
+		...failureView("zh", ""),
+		attachedId: "session",
+		blocks: [CURRENT],
+	};
+	renderer.render({ ...view, history: { blocks: [], more: true, loading: true } });
+	search("Older secret");
+	renderer.render({ ...view, history: { blocks: [], more: true, loading: false } });
+	expect(actions).toEqual([]);
+});

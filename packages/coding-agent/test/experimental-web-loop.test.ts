@@ -128,6 +128,7 @@ async function openPage(host: WebHost, storage = new Map<string, string>()) {
 		onSelectModel: noop, onSelectThinking: noop, onAttachFiles: noop,
 		onFilterRoster: noop, onShortcut: noop, onPaletteSelection: noop,
 		onDraftChange: noop, onDismissSuggestion: noop, onCommandPick: noop, onPanelAction: noop,
+		refreshTranscriptSearch: noop,
 		setDraft: text => renderer.onDraftChange(text), insertDraft: noop,
 	};
 	const releases = new Set<Promise<void>>();

@@ -168,8 +168,8 @@ export interface PageRenderer {
 	insertDraft(text: string, focus?: boolean): void;
 	/** Every navigation, control, and modal report from the management surface. */
 	onPanelAction: (action: PanelAction) => void;
-	/** Search the blocks now mounted. The page calls this after unloaded history arrives. */
-	refreshTranscriptSearch(): void;
+	/** Search newly mounted history; only a successful page load may request the remaining pages. */
+	refreshTranscriptSearch(options?: { readonly loadHistory?: boolean }): void;
 	/** The view the composer's enabled state and placeholder were last rendered from. */
 	readonly view: WebView | undefined;
 }
@@ -2967,7 +2967,7 @@ export function createRenderer(
 	};
 
 
-	let rescanTranscriptSearch = (): void => {};
+	let rescanTranscriptSearch: (loadHistory: boolean) => void = () => {};
 	const renderer: PageRenderer = {
 		onSelect,
 		onCreateSession: () => {},
@@ -2983,8 +2983,8 @@ export function createRenderer(
 		onDismissSuggestion: () => {},
 		onCommandPick: () => {},
 		onPanelAction: () => {},
-		refreshTranscriptSearch(): void {
-			rescanTranscriptSearch();
+		refreshTranscriptSearch(options): void {
+			rescanTranscriptSearch(options?.loadHistory === true);
 		},
 		get view(): WebView | undefined {
 			return lastView;
@@ -3490,9 +3490,9 @@ export function createRenderer(
 			report({ kind: "command", id: TRANSCRIPT_SEARCH_ACTION, data: query });
 		}
 	};
-	rescanTranscriptSearch = (): void => {
+	rescanTranscriptSearch = (loadHistory): void => {
 		if (elements.transcriptSearch.hidden) return;
-		runTranscriptSearch(false);
+		runTranscriptSearch(loadHistory);
 	};
 	const stepTranscriptSearch = (delta: number): void => {
 		if (transcriptHits.length === 0) return;
