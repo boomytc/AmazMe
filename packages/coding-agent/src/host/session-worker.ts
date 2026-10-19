@@ -560,6 +560,7 @@ async function run(options: SessionWorkerOptions, createHarness: CreateSessionWo
 			settingsManager: runtime.settingsManager,
 			resources: runtime.resources,
 			mcp: runtime.mcp,
+			alignConversation: runtime.alignConversation,
 			approvalGate: runtime.approvalGate,
 			facetLoader: runtime.facetLoader,
 			publish: (scope, channelId, update) =>
@@ -939,6 +940,7 @@ async function createCodingAgentHarness(
 			settingsManager,
 			resources,
 			mcp: activeMcp.management,
+			alignConversation: (conversation, reloadContext) => applyDurableMcpSelection(activeMcp, conversation, reloadContext),
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
 			cleanup: async (context) => {
 				try {

@@ -75,6 +75,7 @@ import type { ResourceLoader } from "../core/resource-loader.ts";
 import { readDurableSessionCwd } from "./session-cwd.ts";
 import { selectSession } from "./sessions.ts";
 import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
+import { createToolReloadTracker } from "./tool-activation.ts";
 import { Subagent } from "./subagent.ts";
 import type { McpManagement } from "../core/mcp/management.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
@@ -272,38 +273,6 @@ function isProviderAuthFailure(message: string, providerId: string): boolean {
 	return /oauth|refresh|unauthorized|credential|api key|not configured/i.test(message);
 }
 
-function intendedToolNames(selection: NonNullable<AgentState["tools"]>): readonly string[] {
-	if (Array.isArray(selection)) return selection;
-	return selection.allow ?? selection.only ?? selection.add ?? [];
-}
-
-/** Enable names added to the saved tool selection. Names the conversation already turned off stay off. */
-async function enableNamedTools(conversation: Conversation, names: readonly string[]): Promise<void> {
-	if (names.length === 0) return;
-	await conversation.commit(async (tx) => {
-		const state = await tx.doc(AgentDoc, conversation.id);
-		const tools = state.tools;
-		const append = (selected: string[]): void => {
-			for (const name of names) if (!selected.includes(name)) selected.push(name);
-		};
-		if (tools === undefined) {
-			state.tools = { add: [...names] };
-			return;
-		}
-		if (Array.isArray(tools)) {
-			append(tools);
-			return;
-		}
-		if (tools.only !== undefined) append(tools.only);
-		else if (tools.allow !== undefined) append(tools.allow);
-		else {
-			if (tools.add === undefined) tools.add = [];
-			append(tools.add);
-		}
-		if (tools.remove !== undefined) tools.remove = tools.remove.filter((name) => !names.includes(name));
-	}, context);
-}
-
 function inputText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -490,17 +459,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 		await reportPausedRun();
 		let scopeDiagnostics = scope.diagnostics;
-		const baselineToolNames = new Set(intendedToolNames(toolSelection));
-		const appliedToolNames = new Map<string, Set<string>>();
-		const appliedToolsFor = (id: ConversationId): Set<string> => {
-			const key = String(id);
-			let applied = appliedToolNames.get(key);
-			if (applied === undefined) {
-				applied = new Set(baselineToolNames);
-				appliedToolNames.set(key, applied);
-			}
-			return applied;
-		};
+		const toolReload = createToolReloadTracker(toolSelection);
 		const publishSessionDiagnostics = (): void => {
 			clearNotices((item) => sessionDiagnostics.has(item.message));
 			sessionDiagnostics.clear();
@@ -923,12 +882,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					settingsManager.getDefaultTools(),
 					settingsManager.getSettings().defaultTools,
 				);
-				const nextNames = intendedToolNames(nextTools);
-				const applied = appliedToolsFor(current.id);
-				const added = nextNames.filter((name) => !applied.has(name));
-				if (added.length > 0) await enableNamedTools(current, added);
-				applied.clear();
-				for (const name of nextNames) applied.add(name);
+				await toolReload.apply(current, nextTools, context);
 				await applyDurableMcpSelection(activeMcp, current, context);
 				publishCommands();
 				update({ models: models() });

@@ -21,7 +21,7 @@ import { SlashCommands } from "../../core/plugins/slash-commands.ts";
 /** Shared task operations; presentations call Models for model and account configuration. */
 const BUILTIN_COMMANDS: readonly Omit<CommandSummary, "source">[] = [
 	{ name: "compact", description: "Summarize the conversation so far", argumentHint: "[instructions]" },
-	{ name: "reload", description: "Rebuild this session's plugin generation" },
+	{ name: "reload", description: "Reload skills, tools, plugins, and MCP connections" },
 ];
 
 /** One command a plugin registered with this session, as the catalogue lists it. */
@@ -50,6 +50,8 @@ export interface CommandsServiceOptions {
 	readonly settings?: CommandResourceSettings;
 	/** The default worker's prompt and command resources share this owner. */
 	readonly resourceLoader?: ResourceLoader;
+	/** Runs after plugins and skill files are re-read: reconnect MCP and enable newly saved tools. */
+	readonly onReloaded?: (context: Context) => Promise<void>;
 }
 
 /**
@@ -170,9 +172,10 @@ export function createCommandsFacet(options: CommandsServiceOptions): Facet {
 							}
 							case "reload": {
 								await sessionPlugins.reload(callContext);
-								// A template or skill added since startup becomes a command with the reload.
+								// Skill files and templates are already re-read; publish them before MCP or tools can fail.
 								await republish(callContext, true);
-								return { ok: true, note: "Reloaded this session's plugins and command resources." };
+								await options.onReloaded?.(callContext);
+								return { ok: true, note: "Reloaded skills, tools, plugins, and MCP connections." };
 							}
 							default: {
 								// A plugin's command runs here, with the same call the client TUI makes.

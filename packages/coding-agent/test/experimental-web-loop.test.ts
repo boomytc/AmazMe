@@ -1613,11 +1613,10 @@ describe("web client interactive loop", () => {
 				ok: true,
 				note: "Compacting the conversation.",
 			});
-			// /reload rebuilds this session's plugin generation and re-reads its command resources,
-			// and an unknown name is a problem.
+			// /reload re-reads skills, enables newly saved tools, and reconnects MCP.
 			expect(await attached.commands.run("reload", "", BACKGROUND_CONTEXT)).toEqual({
 				ok: true,
-				note: "Reloaded this session's plugins and command resources.",
+				note: "Reloaded skills, tools, plugins, and MCP connections.",
 			});
 			expect(await attached.commands.run("nope", "", BACKGROUND_CONTEXT)).toMatchObject({ ok: false });
 

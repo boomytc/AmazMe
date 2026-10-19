@@ -982,7 +982,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/**
 	 * The host read the session's command resources when it attached. A skill written, removed, or
 	 * imported in the panel, or the skill-command switch, must reach the palette without a worker
-	 * restart, so the host re-reads them whenever those inputs move. The reload-resources button picks up new templates from their files.
+	 * restart, so the host re-reads them whenever those inputs move. Reload session resources also
+	 * picks up skill files, enables newly saved tools, and reconnects MCP.
 	 */
 	const catalogInputs = (): string => `${skills.state.value?.revision ?? 0}:${settingValue("enableSkillCommands") ?? ""}`;
 	let catalogRead = catalogInputs();
@@ -2158,7 +2159,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						if (!sessionId || !client.connected || desiredSessionId !== sessionId) return;
 						runPanelCall({ id: action.id, sessionId, retry: false, call: async () => {
 							const result = await painter.runCommand("reload", "");
-							return result.ok ? { ok: true, note: result.message } : { ok: false, problem: result.message };
+							if (!result.ok) return { ok: false as const, problem: result.message };
+							await skills.reload(BACKGROUND_CONTEXT);
+							return { ok: true as const, note: result.message };
 						} });
 						return;
 					}

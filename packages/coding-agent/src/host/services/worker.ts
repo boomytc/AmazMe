@@ -24,6 +24,8 @@ import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../../
 import { AgentController } from "../../core/plugins/agent-controller.ts";
 import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
 import { createCommandsFacet } from "./commands-provider.ts";
+import { createToolReloadTracker, reloadConversationResources } from "../../durable/tool-activation.ts";
+import { durableToolSelection } from "../../core/tool-selection.ts";
 import { createApprovalsFacet, type ApprovalGate } from "./approvals-provider.ts";
 import { createConversationsFacet, summaryModelFromRuntime } from "./conversations-provider.ts";
 import { createModelsServiceFacet } from "./models-provider.ts";
@@ -60,6 +62,8 @@ export interface SessionWorkerRuntime {
 	readonly settingsManager?: SettingsManager;
 	readonly resources?: ResourceLoader;
 	readonly mcp?: McpManagement;
+	/** Widen the focused conversation's tool allow-list after MCP connections reload. */
+	alignConversation?(conversation: Conversation, context: Context): Promise<void>;
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
@@ -98,12 +102,19 @@ export async function createSessionWorkerServices(options: {
 	readonly settingsManager?: SettingsManager;
 	readonly resources?: ResourceLoader;
 	readonly mcp?: McpManagement;
+	/** Widen the focused conversation's tool allow-list after MCP connections reload. */
+	readonly alignConversation?: (conversation: Conversation, context: Context) => Promise<void>;
 	/** The tool boundary's approval gate, when the worker installed one. */
 	readonly approvalGate?: ApprovalGate;
 	readonly facetLoader?: FacetLoader;
 	publish(scope: WorkerServiceScope, subscriptionId: string, update: Frame | undefined): Promise<void>;
 }): Promise<SessionWorkerServices> {
 	let pluginRuntime: PluginRuntime | undefined;
+	const settingsManager = options.settingsManager;
+	const toolReload = settingsManager === undefined
+		? undefined
+		: createToolReloadTracker(durableToolSelection({}, settingsManager.getDefaultTools(), settingsManager.getSettings().defaultTools));
+	let focusedConversation = (_context: Context): Promise<Conversation> => Promise.resolve(options.conversation);
 	const authentication = options.modelRuntime === undefined ? undefined : new ProviderLogin(options.modelRuntime,
 		options.settingsManager === undefined ? {} : { getDeviceId: () => options.settingsManager!.getOrCreateDeviceId() });
 	const agentControllerRuntimeFacet = serviceSetFacet(
@@ -121,6 +132,7 @@ export async function createSessionWorkerServices(options: {
 					() => Number(conversations.state.value?.selected ?? options.conversation.id) as ConversationId,
 					() => pluginRuntime?.changing === true,
 				);
+				focusedConversation = (context) => runtime.current(context).then((value) => value.conversation);
 				const provided0: ServiceValue<typeof AgentRuntime> = runtime;
 				values.set(AgentRuntime, provided0);
 				const provided1: ServiceValue<typeof AgentController> = createAgentController(
@@ -162,7 +174,6 @@ export async function createSessionWorkerServices(options: {
 	});
 	// A settings change made by another process (the web client, another CLI) reaches this Session
 	// through a reload; the worker otherwise keeps the copy it loaded when it started.
-	const settingsManager = options.settingsManager;
 	const settingsRuntimeFacet =
 		settingsManager === undefined
 			? undefined
@@ -216,7 +227,21 @@ export async function createSessionWorkerServices(options: {
 		await createModelsServiceFacet({ ...options, authentication, context: BACKGROUND_CONTEXT }),
 		...(options.mcp === undefined ? [] : [createMcpFacet(options.mcp)]),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
-		createCommandsFacet({ cwd: options.cwd, settings: options.settingsManager, resourceLoader: options.resources }),
+		createCommandsFacet({
+			cwd: options.cwd,
+			settings: options.settingsManager,
+			resourceLoader: options.resources,
+			onReloaded: async (context) => {
+				await reloadConversationResources({
+					context,
+					settings: settingsManager,
+					mcp: options.mcp,
+					conversation: await focusedConversation(context),
+					tracker: toolReload,
+					align: options.alignConversation,
+				});
+			},
+		}),
 		createConversationsFacet({
 			admission: options.admission,
 			harness: options.harness,

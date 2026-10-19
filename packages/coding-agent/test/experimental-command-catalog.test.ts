@@ -17,7 +17,7 @@ import {
  * A session's command surface as a client reads it: the plugin registry, the three services the
  * catalogue's own commands use, and the catalogue facet, all behind the real service boundary.
  */
-async function openCommands(registry: SlashCommandRegistry) {
+async function openCommands(registry: SlashCommandRegistry, onReloaded?: () => Promise<void>) {
 	const host = await openTestHost({
 		facets: [
 			createSlashCommandsRuntimeFacet(registry),
@@ -58,7 +58,7 @@ async function openCommands(registry: SlashCommandRegistry) {
 
 				return { value: implementation };
 			}),
-			createCommandsFacet({ cwd: process.cwd() }),
+			createCommandsFacet({ cwd: process.cwd(), ...(onReloaded === undefined ? {} : { onReloaded }) }),
 		] });
 	const peer = connectTestHost(host.host);
  const binding = peer.scope;
@@ -110,6 +110,19 @@ describe("the session's command catalogue at the service boundary", () => {
 		expect(await session.commands.run("nope", "", BACKGROUND_CONTEXT)).toEqual({
 			ok: false,
 			problem: "Unknown command: /nope" });
+		await session.dispose();
+	});
+
+	test("reloads skills and tools after the plugin generation", async () => {
+		let reloaded = 0;
+		const session = await openCommands(new SlashCommandRegistry(), async () => {
+			reloaded += 1;
+		});
+		expect(await session.commands.run("reload", "", BACKGROUND_CONTEXT)).toEqual({
+			ok: true,
+			note: "Reloaded skills, tools, plugins, and MCP connections.",
+		});
+		expect(reloaded).toBe(1);
 		await session.dispose();
 	});
 

@@ -662,7 +662,7 @@ export const EN = {
 	"panel.skills.empty":
 		"No skills yet. Create or import a skill to reuse a familiar workflow.",
 	"panel.skills.footnote":
-		"Skills load when a session starts. Saved in {directory}.",
+		"Reload session resources to use skill files in the current session. Saved in {directory}.",
 
 	"panel.plugins.title": "Plugins",
 	"panel.plugins.description":
@@ -792,7 +792,7 @@ export const EN = {
 	"page.commandUnknown": "no such command: /{name}",
 	"page.commandTargetChanged": "The conversation changed while expanding the command. Run it again in the current conversation.",
 	"page.reloadTargetChanged": "The session changed during reload. Run /reload in the current session.",
-	"page.pluginsReloaded": "Reloaded this session's plugins and command resources.",
+	"page.pluginsReloaded": "Reloaded skills, tools, plugins, and MCP connections.",
 	"page.pluginBuildFailed": "Could not rebuild the plugins. The current version remains active; check the plugin source and retry /reload.",
 	"page.pluginActivationFailed": "Could not activate the plugins. Finish or abort active tasks, check plugin setup, then retry /reload.",
 	"page.removeFailed": "remove failed: {error}",
@@ -1506,7 +1506,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.skills.remove": "删除",
 	"panel.skills.commandOnly": "仅命令",
 	"panel.skills.empty": "还没有技能。新建一个技能，或导入已有技能，复用常用的工作方法。",
-	"panel.skills.footnote": "会话启动时加载技能。保存位置：{directory}。",
+	"panel.skills.footnote": "重新加载会话资源后，当前会话会用上技能文件。保存位置：{directory}。",
 
 	"panel.plugins.title": "插件",
 	"panel.plugins.description": "管理会话插件与 MCP 服务。",
@@ -1622,7 +1622,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"page.commandUnknown": "没有这个命令：/{name}",
 	"page.commandTargetChanged": "命令展开时对话已切换，请在当前对话重试。",
 	"page.reloadTargetChanged": "重载期间会话已切换，请在当前会话重新执行 /reload。",
-	"page.pluginsReloaded": "已重载当前会话的插件与命令资源。",
+	"page.pluginsReloaded": "已重载技能、工具、插件和 MCP 连接。",
 	"page.pluginBuildFailed": "无法重新构建插件，当前版本继续可用。请检查插件源码后重试 /reload。",
 	"page.pluginActivationFailed": "无法激活插件。请先完成或取消活动任务，检查插件初始化后重试 /reload。",
 	"page.removeFailed": "删除失败：{error}",

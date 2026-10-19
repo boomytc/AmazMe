@@ -64,7 +64,7 @@ The sidebar session menu provides rename, delete and copy ID; New session create
 
 Templates and enabled `/skill:<name>` entries come from the attached worker's resource loader, so a client in another directory uses the session's selected files. The hosted terminal and Web expand these before submitting through the focused conversation's existing prompt path. Session plugin commands execute through the same command service. On the Web page, model, login, session, task, plugin, attachment, compact, and reload names are refused and the page points to the control in the table. `/changes`, `/limits`, `/execution`, and `/resume-run` open that control or continue the paused turn, as the table describes.
 
-Use Reload session resources after adding or changing resource files. Skill changes made in the Web management panel also refresh the attached session's command resources. See [Usage](usage.md) for the hosted interfaces.
+Use Reload session resources after adding or changing resource files. It re-reads skills, enables tools newly added to `defaultTools`, and reconnects MCP. Skill changes made in the Web management panel also refresh the attached session's command resources. See [Usage](usage.md) for the hosted interfaces.
 
 ## SDK interactive mode
 
