@@ -83,6 +83,27 @@ describe("principals", () => {
 		await host.close();
 	});
 
+	it("`ctx.get` with `principal: undefined` keeps the root's principal, not the host's", async () => {
+		const host = createHost<Principal>({ self: { kind: "host" }, principalKey });
+		const created: string[] = [];
+		host.serve(Who, (_input, principal) => {
+			created.push(principalKey(principal));
+			return { who: () => principalKey(principal) };
+		});
+		const guest = { kind: "guest", id: "g1" } as const;
+		const seen = await host.root(
+			async (ctx) => [
+				await (await ctx.get(Who, {})).who(ctx),
+				await (await ctx.get(Who, {}, { principal: undefined })).who(ctx),
+				await (await ctx.get(Who, {}, { principal: undefined, state: false })).who(ctx),
+			],
+			{ principal: guest },
+		);
+		assert.deepEqual(seen, ["guest:g1", "guest:g1", "guest:g1"]);
+		assert.deepEqual(created, ["guest:g1"]);
+		await host.close();
+	});
+
 	it("a child's parent acts as the principal the child gave `connect`; relayed callers keep theirs", async () => {
 		const Echo = remote("t.echo", {
 			version: 1,
