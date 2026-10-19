@@ -33,6 +33,7 @@ import {
 	type FileKind,
 	type FileRemoveOutcome,
 	type FileRevision,
+	type FileSystem,
 	type FileWriteIntent,
 	type FileWriteOutcome,
 	type FileWatcher,
@@ -617,30 +618,20 @@ function symlinkRefused(path: string, cause?: Error): FileError {
 	return new FileError("invalid", "Refusing to follow a symbolic link", path, cause);
 }
 
-export type NodeExecutionEnvOptions = {
+export type NodeFileSystemOptions = {
 	cwd: string;
-	/** See `ExecutionEnv.artifactDirectory`. Required; no temporary-directory fallback. */
-	artifactDirectory: string;
-	shellPath?: string;
-	shellEnv?: NodeJS.ProcessEnv;
 	watch?: NodeWatchOptions;
 };
 
-export class NodeExecutionEnv implements ExecutionEnv {
+/** The local file system alone: for callers that only read and write files and have no session artifacts or shell. */
+export class NodeFileSystem implements FileSystem {
 	/** Every local environment sees the same files. */
 	readonly id: string = "node:local";
 	cwd: string;
-	readonly artifactDirectory: string;
-	private shellPath?: string;
-	private shellEnv?: NodeJS.ProcessEnv;
 	private watchOptions: NodeWatchOptions;
-	private activeChildPids = new Set<number>();
 
-	constructor(options: NodeExecutionEnvOptions) {
+	constructor(options: NodeFileSystemOptions) {
 		this.cwd = options.cwd;
-		this.artifactDirectory = options.artifactDirectory;
-		this.shellPath = options.shellPath;
-		this.shellEnv = options.shellEnv;
 		this.watchOptions = options.watch ?? {};
 	}
 
@@ -675,250 +666,6 @@ export class NodeExecutionEnv implements ExecutionEnv {
 
 	async joinPath(parts: string[], _context: Context): Promise<Result<string, FileError>> {
 		return ok(join(...parts));
-	}
-
-	async exec(
-		command: string | readonly string[],
-		options: ShellExecOptions | undefined,
-		context: Context,
-	): Promise<Result<ShellExecResult, ExecutionError>> {
-		const signal = context.abortSignal;
-		if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
-		const timeoutMsResult = resolveTimeoutMs(options?.timeout);
-		if (!timeoutMsResult.ok) return err(timeoutMsResult.error);
-		const timeoutMs = timeoutMsResult.value;
-
-		const cwd = options?.cwd ? resolvePath(this.cwd, options.cwd) : this.cwd;
-		// A string runs through the shell; an argv array runs its program directly, without shell parsing.
-		let program: string;
-		let args: readonly string[];
-		let stdinCommand: string | undefined;
-		if (typeof command === "string") {
-			const shellConfig = await getShellConfig(this.shellPath);
-			if (!shellConfig.ok) return shellConfig;
-			const commandFromStdin = shellConfig.value.commandTransport === "stdin";
-			program = shellConfig.value.shell;
-			args = commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, command];
-			stdinCommand = commandFromStdin ? command : undefined;
-		} else {
-			const [first, ...rest] = command;
-			if (first === undefined) return err(new ExecutionError("spawn_error", "Empty argv: no program to run"));
-			program = first;
-			args = rest;
-		}
-		try {
-			await access(cwd, constants.F_OK);
-		} catch (error) {
-			const cause = toError(error);
-			return err(
-				new ExecutionError(
-					"spawn_error",
-					`Working directory does not exist: ${cwd}\nCannot execute bash commands.`,
-					cause,
-				),
-			);
-		}
-
-		return await new Promise((resolvePromise) => {
-			let settled = false;
-			let timedOut = false;
-			let callbackError: ExecutionError | undefined;
-			let spillError: ExecutionError | undefined;
-			let child: ReturnType<typeof spawn> | undefined;
-			let timeoutId: ReturnType<typeof setTimeout> | undefined;
-			const spillPrefix: SpillChunk[] = [];
-			let spillPath: string | undefined;
-			const spillQueue: SpillChunk[] = [];
-			let spillStart: Promise<void> | undefined;
-			let spillStream: WriteStream | undefined;
-			let spillBackpressured = false;
-
-			const onAbort = () => {
-				if (child?.pid) killProcessTree(child.pid);
-			};
-			const failCallback = (error: unknown) => {
-				if (callbackError !== undefined) return;
-				const cause = toError(error);
-				callbackError = new ExecutionError("callback_error", cause.message, cause);
-				onAbort();
-			};
-			// One decoder per stream, so a character split across chunks of one stream survives interleaving.
-			const stdoutDecoder = new StreamDecoder();
-			const stderrDecoder = new StreamDecoder();
-			// No output reaches the caller after exec() settled, for example from a descendant holding stdio open.
-			const emit = (text: string, stream: ShellOutputInfo["stream"]): void => {
-				if (settled || text === "" || options?.onOutput === undefined || callbackError !== undefined) return;
-				try {
-					options.onOutput(text, context, { stream });
-				} catch (error) {
-					failCallback(error);
-				}
-			};
-			// Output seen before the spill starts: counted against the thresholds and kept for the spill's prefix.
-			let seenBytes = 0;
-			let seenNewlines = 0;
-
-			const settle = (result: Result<ShellExecResult, ExecutionError>) => {
-				if (settled) return;
-				settled = true;
-				if (timeoutId) clearTimeout(timeoutId);
-				if (signal) signal.removeEventListener("abort", onAbort);
-				if (child?.pid) this.activeChildPids.delete(child.pid);
-				resolvePromise(result);
-			};
-			const pauseOutput = () => {
-				child?.stdout?.pause();
-				child?.stderr?.pause();
-			};
-			const resumeOutput = () => {
-				if (callbackError || spillError || timedOut || signal?.aborted || spillBackpressured) return;
-				child?.stdout?.resume();
-				child?.stderr?.resume();
-			};
-			const failSpill = (error: unknown) => {
-				if (spillError !== undefined) return;
-				const cause = toError(error);
-				spillError = new ExecutionError(
-					"unknown",
-					`Failed to preserve complete shell output: ${cause.message}`,
-					cause,
-				);
-				spillBackpressured = false;
-				onAbort();
-			};
-			const writeSpill = (chunk: SpillChunk): void => {
-				if (spillStream === undefined || chunk.length === 0) return;
-				if (spillStream.write(chunk) || spillBackpressured) return;
-				spillBackpressured = true;
-				pauseOutput();
-				spillStream.once("drain", () => {
-					spillBackpressured = false;
-					resumeOutput();
-				});
-			};
-			const startSpill = (chunk: SpillChunk): void => {
-				if (spillStream !== undefined) {
-					writeSpill(chunk);
-					return;
-				}
-				spillQueue.push(chunk);
-				if (spillStart !== undefined) return;
-				pauseOutput();
-				spillStart = (async () => {
-					const created = await this.createTempFile({ prefix: "pi-output-", suffix: ".log" }, context);
-					if (!created.ok) throw created.error;
-					spillPath = created.value;
-					spillStream = createWriteStream(spillPath, { flags: "a", highWaterMark: SPILL_HIGH_WATER_MARK });
-					spillStream.on("error", failSpill);
-					for (const queued of spillQueue) writeSpill(queued);
-					spillQueue.length = 0;
-				})()
-					.catch(failSpill)
-					.finally(resumeOutput);
-			};
-			const finishSpill = async (): Promise<void> => {
-				await spillStart;
-				const stream = spillStream;
-				if (stream === undefined || spillError !== undefined || stream.destroyed) return;
-				await new Promise<void>((resolveFinish) => {
-					stream.once("error", () => resolveFinish());
-					stream.once("finish", resolveFinish);
-					stream.end();
-				});
-			};
-
-			try {
-				child = spawn(program, args, {
-					cwd,
-					detached: process.platform !== "win32",
-					env: getShellEnv(this.shellEnv, options?.env, options?.inheritEnv),
-					stdio: [stdinCommand === undefined ? "ignore" : "pipe", "pipe", "pipe"],
-					windowsHide: true,
-				});
-				if (child.pid) this.activeChildPids.add(child.pid);
-				if (stdinCommand !== undefined) {
-					child.stdin?.on("error", () => {});
-					child.stdin?.end(stdinCommand);
-				}
-			} catch (error) {
-				const cause = toError(error);
-				settle(err(new ExecutionError("spawn_error", cause.message, cause)));
-				return;
-			}
-
-			timeoutId =
-				timeoutMs === undefined
-					? undefined
-					: setTimeout(() => {
-							timedOut = true;
-							onAbort();
-						}, timeoutMs);
-
-			if (signal) {
-				if (signal.aborted) onAbort();
-				else signal.addEventListener("abort", onAbort, { once: true });
-			}
-
-			const feed = (source: ShellOutputInfo["stream"], decoder: StreamDecoder) => (chunk: Uint8Array) => {
-				emit(decoder.decode(chunk), source);
-				const spill = options?.spill;
-				if (spill === undefined || chunk.length === 0) return;
-				if (spillStart !== undefined) {
-					startSpill(chunk);
-					return;
-				}
-				seenBytes += chunk.length;
-				for (let index = chunk.indexOf(0x0a); index !== -1; index = chunk.indexOf(0x0a, index + 1)) seenNewlines++;
-				const lines = seenNewlines + (chunk[chunk.length - 1] === 0x0a ? 0 : 1);
-				if (seenBytes <= spill.afterBytes && lines <= spill.afterLines) {
-					spillPrefix.push(chunk);
-					return;
-				}
-				for (const prefix of spillPrefix) startSpill(prefix);
-				spillPrefix.length = 0;
-				startSpill(chunk);
-			};
-			child.stdout?.on("data", feed("stdout", stdoutDecoder));
-			child.stderr?.on("data", feed("stderr", stderrDecoder));
-
-			void waitForChildProcess(
-				child,
-				() =>
-					spillError === undefined &&
-					spillStart !== undefined &&
-					(spillStream === undefined || spillBackpressured),
-			).then(
-				async ({ code, signal: exitSignal }) => {
-					await finishSpill();
-					emit(stdoutDecoder.decode(), "stdout");
-					emit(stderrDecoder.decode(), "stderr");
-					if (callbackError) {
-						settle(err(callbackError));
-						return;
-					}
-					const interrupted = timedOut
-						? new ExecutionError("timeout", `timeout:${options?.timeout}`)
-						: signal?.aborted
-							? new ExecutionError("aborted", "aborted")
-							: undefined;
-					if (interrupted !== undefined) {
-						if (spillPath !== undefined) interrupted.spillPath = spillPath;
-						settle(err(interrupted));
-						return;
-					}
-					if (spillError) {
-						settle(err(spillError));
-						return;
-					}
-					// A process killed by a signal (e.g. OOM killer) has no exit code; map it
-					// to the conventional 128 + signal number so callers do not mistake it
-					// for a successful exit.
-					const exitCode = code ?? (exitSignal ? 128 + (osConstants.signals[exitSignal] ?? 0) : 1);
-					settle(ok({ exitCode, ...(spillPath === undefined ? {} : { spillPath }) }));
-				},
-				(error: Error) => settle(err(new ExecutionError("spawn_error", error.message, error))),
-			);
-		});
 	}
 
 	async openTextLineReader(path: string, context: Context): Promise<Result<TextLineReader, FileError>> {
@@ -1279,7 +1026,274 @@ export class NodeExecutionEnv implements ExecutionEnv {
 		}
 	}
 
-	async cleanup(_context: Context): Promise<void> {
+	async cleanup(_context: Context): Promise<void> {}
+}
+
+export type NodeExecutionEnvOptions = NodeFileSystemOptions & {
+	/** See `ExecutionEnv.artifactDirectory`. Required; no temporary-directory fallback. */
+	artifactDirectory: string;
+	shellPath?: string;
+	shellEnv?: NodeJS.ProcessEnv;
+};
+
+export class NodeExecutionEnv extends NodeFileSystem implements ExecutionEnv {
+	readonly artifactDirectory: string;
+	private shellPath?: string;
+	private shellEnv?: NodeJS.ProcessEnv;
+	private activeChildPids = new Set<number>();
+
+	constructor(options: NodeExecutionEnvOptions) {
+		super(options);
+		this.artifactDirectory = options.artifactDirectory;
+		this.shellPath = options.shellPath;
+		this.shellEnv = options.shellEnv;
+	}
+
+	async exec(
+		command: string | readonly string[],
+		options: ShellExecOptions | undefined,
+		context: Context,
+	): Promise<Result<ShellExecResult, ExecutionError>> {
+		const signal = context.abortSignal;
+		if (signal?.aborted) return err(new ExecutionError("aborted", "aborted"));
+		const timeoutMsResult = resolveTimeoutMs(options?.timeout);
+		if (!timeoutMsResult.ok) return err(timeoutMsResult.error);
+		const timeoutMs = timeoutMsResult.value;
+
+		const cwd = options?.cwd ? resolvePath(this.cwd, options.cwd) : this.cwd;
+		// A string runs through the shell; an argv array runs its program directly, without shell parsing.
+		let program: string;
+		let args: readonly string[];
+		let stdinCommand: string | undefined;
+		if (typeof command === "string") {
+			const shellConfig = await getShellConfig(this.shellPath);
+			if (!shellConfig.ok) return shellConfig;
+			const commandFromStdin = shellConfig.value.commandTransport === "stdin";
+			program = shellConfig.value.shell;
+			args = commandFromStdin ? shellConfig.value.args : [...shellConfig.value.args, command];
+			stdinCommand = commandFromStdin ? command : undefined;
+		} else {
+			const [first, ...rest] = command;
+			if (first === undefined) return err(new ExecutionError("spawn_error", "Empty argv: no program to run"));
+			program = first;
+			args = rest;
+		}
+		try {
+			await access(cwd, constants.F_OK);
+		} catch (error) {
+			const cause = toError(error);
+			return err(
+				new ExecutionError(
+					"spawn_error",
+					`Working directory does not exist: ${cwd}\nCannot execute bash commands.`,
+					cause,
+				),
+			);
+		}
+
+		return await new Promise((resolvePromise) => {
+			let settled = false;
+			let timedOut = false;
+			let callbackError: ExecutionError | undefined;
+			let spillError: ExecutionError | undefined;
+			let child: ReturnType<typeof spawn> | undefined;
+			let timeoutId: ReturnType<typeof setTimeout> | undefined;
+			const spillPrefix: SpillChunk[] = [];
+			let spillPath: string | undefined;
+			const spillQueue: SpillChunk[] = [];
+			let spillStart: Promise<void> | undefined;
+			let spillStream: WriteStream | undefined;
+			let spillBackpressured = false;
+
+			const onAbort = () => {
+				if (child?.pid) killProcessTree(child.pid);
+			};
+			const failCallback = (error: unknown) => {
+				if (callbackError !== undefined) return;
+				const cause = toError(error);
+				callbackError = new ExecutionError("callback_error", cause.message, cause);
+				onAbort();
+			};
+			// One decoder per stream, so a character split across chunks of one stream survives interleaving.
+			const stdoutDecoder = new StreamDecoder();
+			const stderrDecoder = new StreamDecoder();
+			// No output reaches the caller after exec() settled, for example from a descendant holding stdio open.
+			const emit = (text: string, stream: ShellOutputInfo["stream"]): void => {
+				if (settled || text === "" || options?.onOutput === undefined || callbackError !== undefined) return;
+				try {
+					options.onOutput(text, context, { stream });
+				} catch (error) {
+					failCallback(error);
+				}
+			};
+			// Output seen before the spill starts: counted against the thresholds and kept for the spill's prefix.
+			let seenBytes = 0;
+			let seenNewlines = 0;
+
+			const settle = (result: Result<ShellExecResult, ExecutionError>) => {
+				if (settled) return;
+				settled = true;
+				if (timeoutId) clearTimeout(timeoutId);
+				if (signal) signal.removeEventListener("abort", onAbort);
+				if (child?.pid) this.activeChildPids.delete(child.pid);
+				resolvePromise(result);
+			};
+			const pauseOutput = () => {
+				child?.stdout?.pause();
+				child?.stderr?.pause();
+			};
+			const resumeOutput = () => {
+				if (callbackError || spillError || timedOut || signal?.aborted || spillBackpressured) return;
+				child?.stdout?.resume();
+				child?.stderr?.resume();
+			};
+			const failSpill = (error: unknown) => {
+				if (spillError !== undefined) return;
+				const cause = toError(error);
+				spillError = new ExecutionError(
+					"unknown",
+					`Failed to preserve complete shell output: ${cause.message}`,
+					cause,
+				);
+				spillBackpressured = false;
+				onAbort();
+			};
+			const writeSpill = (chunk: SpillChunk): void => {
+				if (spillStream === undefined || chunk.length === 0) return;
+				if (spillStream.write(chunk) || spillBackpressured) return;
+				spillBackpressured = true;
+				pauseOutput();
+				spillStream.once("drain", () => {
+					spillBackpressured = false;
+					resumeOutput();
+				});
+			};
+			const startSpill = (chunk: SpillChunk): void => {
+				if (spillStream !== undefined) {
+					writeSpill(chunk);
+					return;
+				}
+				spillQueue.push(chunk);
+				if (spillStart !== undefined) return;
+				pauseOutput();
+				spillStart = (async () => {
+					const created = await this.createTempFile({ prefix: "pi-output-", suffix: ".log" }, context);
+					if (!created.ok) throw created.error;
+					spillPath = created.value;
+					spillStream = createWriteStream(spillPath, { flags: "a", highWaterMark: SPILL_HIGH_WATER_MARK });
+					spillStream.on("error", failSpill);
+					for (const queued of spillQueue) writeSpill(queued);
+					spillQueue.length = 0;
+				})()
+					.catch(failSpill)
+					.finally(resumeOutput);
+			};
+			const finishSpill = async (): Promise<void> => {
+				await spillStart;
+				const stream = spillStream;
+				if (stream === undefined || spillError !== undefined || stream.destroyed) return;
+				await new Promise<void>((resolveFinish) => {
+					stream.once("error", () => resolveFinish());
+					stream.once("finish", resolveFinish);
+					stream.end();
+				});
+			};
+
+			try {
+				child = spawn(program, args, {
+					cwd,
+					detached: process.platform !== "win32",
+					env: getShellEnv(this.shellEnv, options?.env, options?.inheritEnv),
+					stdio: [stdinCommand === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+					windowsHide: true,
+				});
+				if (child.pid) this.activeChildPids.add(child.pid);
+				if (stdinCommand !== undefined) {
+					child.stdin?.on("error", () => {});
+					child.stdin?.end(stdinCommand);
+				}
+			} catch (error) {
+				const cause = toError(error);
+				settle(err(new ExecutionError("spawn_error", cause.message, cause)));
+				return;
+			}
+
+			timeoutId =
+				timeoutMs === undefined
+					? undefined
+					: setTimeout(() => {
+							timedOut = true;
+							onAbort();
+						}, timeoutMs);
+
+			if (signal) {
+				if (signal.aborted) onAbort();
+				else signal.addEventListener("abort", onAbort, { once: true });
+			}
+
+			const feed = (source: ShellOutputInfo["stream"], decoder: StreamDecoder) => (chunk: Uint8Array) => {
+				emit(decoder.decode(chunk), source);
+				const spill = options?.spill;
+				if (spill === undefined || chunk.length === 0) return;
+				if (spillStart !== undefined) {
+					startSpill(chunk);
+					return;
+				}
+				seenBytes += chunk.length;
+				for (let index = chunk.indexOf(0x0a); index !== -1; index = chunk.indexOf(0x0a, index + 1)) seenNewlines++;
+				const lines = seenNewlines + (chunk[chunk.length - 1] === 0x0a ? 0 : 1);
+				if (seenBytes <= spill.afterBytes && lines <= spill.afterLines) {
+					spillPrefix.push(chunk);
+					return;
+				}
+				for (const prefix of spillPrefix) startSpill(prefix);
+				spillPrefix.length = 0;
+				startSpill(chunk);
+			};
+			child.stdout?.on("data", feed("stdout", stdoutDecoder));
+			child.stderr?.on("data", feed("stderr", stderrDecoder));
+
+			void waitForChildProcess(
+				child,
+				() =>
+					spillError === undefined &&
+					spillStart !== undefined &&
+					(spillStream === undefined || spillBackpressured),
+			).then(
+				async ({ code, signal: exitSignal }) => {
+					await finishSpill();
+					emit(stdoutDecoder.decode(), "stdout");
+					emit(stderrDecoder.decode(), "stderr");
+					if (callbackError) {
+						settle(err(callbackError));
+						return;
+					}
+					const interrupted = timedOut
+						? new ExecutionError("timeout", `timeout:${options?.timeout}`)
+						: signal?.aborted
+							? new ExecutionError("aborted", "aborted")
+							: undefined;
+					if (interrupted !== undefined) {
+						if (spillPath !== undefined) interrupted.spillPath = spillPath;
+						settle(err(interrupted));
+						return;
+					}
+					if (spillError) {
+						settle(err(spillError));
+						return;
+					}
+					// A process killed by a signal (e.g. OOM killer) has no exit code; map it
+					// to the conventional 128 + signal number so callers do not mistake it
+					// for a successful exit.
+					const exitCode = code ?? (exitSignal ? 128 + (osConstants.signals[exitSignal] ?? 0) : 1);
+					settle(ok({ exitCode, ...(spillPath === undefined ? {} : { spillPath }) }));
+				},
+				(error: Error) => settle(err(new ExecutionError("spawn_error", error.message, error))),
+			);
+		});
+	}
+
+	override async cleanup(_context: Context): Promise<void> {
 		for (const pid of this.activeChildPids) killProcessTree(pid);
 		this.activeChildPids.clear();
 	}

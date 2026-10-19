@@ -1,5 +1,5 @@
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { NodeFileSystem } from "@amazme/durable/env/node";
 /**
  * Tool Override Example - Demonstrates overriding built-in tools
  *
@@ -57,7 +57,7 @@ async function logAccess(path: string, allowed: boolean, reason?: string) {
 
 	try {
 		await withFileMutationQueue(
-			new NodeExecutionEnv({ cwd: process.cwd() }),
+			new NodeFileSystem({ cwd: process.cwd() }),
 			LOG_FILE,
 			async () => {
 				await appendFile(LOG_FILE, line);

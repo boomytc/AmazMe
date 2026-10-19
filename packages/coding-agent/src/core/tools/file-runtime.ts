@@ -6,7 +6,7 @@ import {
 } from "@amazme/chord/context";
 import type { FileSystem, FileWriteOutcome } from "@amazme/durable/env";
 import { FileError, getOrThrow } from "@amazme/durable/env";
-import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { NodeFileSystem } from "@amazme/durable/env/node";
 import { canonicalFilePath } from "@amazme/durable/file-operations";
 import type { ExtensionContext } from "../extensions/types.ts";
 import type {
@@ -44,7 +44,7 @@ export function createFileRuntime(
 	const observations = options?.observations ?? createMemoryFileObservations();
 	// Needs FileSystem only. Durable does not yet export a file-only Node class; construction below is
 	// incomplete until that lands (do not invent a fake artifactDirectory here).
-	const local: FileSystem = new NodeExecutionEnv({ cwd });
+	const local: FileSystem = new NodeFileSystem({ cwd });
 	const fileSystem = options?.fileSystem;
 	return (signal?: AbortSignal, ctx?: ExtensionContext) => {
 		const executionCwd = ctx?.cwd ?? cwd;
@@ -56,7 +56,7 @@ export function createFileRuntime(
 			files:
 				fileSystem ??
 				(executionCwd !== cwd
-					? new NodeExecutionEnv({ cwd: executionCwd })
+					? new NodeFileSystem({ cwd: executionCwd })
 					: local),
 			context: signal ? withAbortSignal(signal, parent) : parent,
 			observations: (ctx?.fileObservations ?? observations).capture(),

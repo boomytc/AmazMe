@@ -13,7 +13,7 @@ import {
 import { basename, dirname, join, resolve, sep } from "node:path";
 import type { Context, MutableReplicatedState } from "@amazme/chord";
 import type { FileSystem } from "@amazme/durable/env";
-import { NodeExecutionEnv } from "@amazme/durable/env/node";
+import { NodeFileSystem } from "@amazme/durable/env/node";
 import { withFileMutationQueue } from "@amazme/durable/file-operations";
 import type { ResourceLoader } from "../../core/resource-loader.ts";
 import type { Skill, SkillFrontmatter } from "../../core/skills.ts";
@@ -86,7 +86,7 @@ export function createSkillsService(
 	const userDirectory = join(options.agentDir, "skills");
 	// Needs FileSystem only. Durable does not yet export a file-only Node class; leave construction incomplete
 	// until that lands (do not invent a fake artifactDirectory here).
-	const files: FileSystem = new NodeExecutionEnv({ cwd: options.cwd });
+	const files: FileSystem = new NodeFileSystem({ cwd: options.cwd });
 	// Share the canonical-directory barrier across service instances and path aliases. Reload must
 	// see a completed mutation, and cancelling a waiter must not release its predecessor's slot.
 	const mutate = <T>(
