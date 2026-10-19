@@ -7,6 +7,7 @@ import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_SESSION_DIR } from "../src/config.ts";
+import { childProcessEnv } from "./child-process-env.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
@@ -110,11 +111,10 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 		args: readonly string[],
 		options: { readonly cliSessionDir?: boolean } = {},
 	): Promise<Run> {
-		const env: NodeJS.ProcessEnv = {
-			...process.env,
+		const env = childProcessEnv({
 			AMAZME_CODING_AGENT_DIR: profile,
 			AMAZME_OFFLINE: "1",
-		};
+		});
 		if (options.cliSessionDir === false) delete env[ENV_SESSION_DIR];
 		const child: ChildProcess = spawn(
 			process.execPath,

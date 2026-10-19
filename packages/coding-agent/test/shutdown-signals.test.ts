@@ -6,6 +6,7 @@ import type { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { createTempDir } from "./temp-dir.ts";
+import { childProcessEnv } from "./child-process-env.ts";
 import {
 	closeWhenSignaled,
 	forceShutdownExitLine,
@@ -194,6 +195,7 @@ describe.skipIf(process.platform === "win32")("shutdown signals", () => {
 
 	function spawnFixture(mode: string, stdin = false, extra: readonly string[] = []): ChildProcess {
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, fixturePath, mode, ...extra], {
+			env: childProcessEnv(),
 			stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
 		});
 		children.push(child);

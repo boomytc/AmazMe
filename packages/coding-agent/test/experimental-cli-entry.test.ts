@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { VERSION } from "../src/config.ts";
+import { childProcessEnv } from "./child-process-env.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 // --import takes a module specifier, not a filesystem path.
@@ -29,14 +30,13 @@ function runEntry(experimental: boolean, version = false) {
 			cwd: directory,
 			encoding: "utf8",
 			timeout: 15_000,
-			env: {
-				...process.env,
+			env: childProcessEnv({
 				HOME: directory,
 				USERPROFILE: directory,
 				AMAZME_CODING_AGENT_DIR: join(directory, "agent"),
 				AMAZME_OFFLINE: "1",
 				AMAZME_EXPERIMENTAL: experimental ? "1" : "0",
-			},
+			}),
 		},
 	);
 }

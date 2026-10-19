@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { describe, expect, test } from "vitest";
+import { childProcessEnv } from "./child-process-env.ts";
 
 const execFileAsync = promisify(execFile);
 
@@ -29,7 +30,7 @@ describe("source resolver", () => {
 		const { stdout, stderr } = await execFileAsync(
 			process.execPath,
 			["--import", sourceResolverUrl, "--input-type=module", "--eval", sourceResolverProbe],
-			{ encoding: "utf8", timeout: 20_000 },
+			{ encoding: "utf8", timeout: 20_000, env: childProcessEnv() },
 		);
 		expect(stderr).not.toMatch(/error/i);
 		expect(stdout).toBe(`${webEntryUrl}\n${webAssetsUrl}\n`);

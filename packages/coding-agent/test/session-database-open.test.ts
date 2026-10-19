@@ -27,6 +27,7 @@ import {
 	writeCrashedCurrentSessionDatabase,
 	writeCurrentSessionDatabase,
 } from "./session-database-fixtures.ts";
+import { childProcessEnv } from "./child-process-env.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
@@ -191,7 +192,7 @@ describe.skipIf(process.platform === "win32")("two processes opening one session
 
 	async function opener(directory: string, mode: "open" | "cwd", holdMs: number) {
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, openerPath, directory, mode, String(holdMs)], {
-			env: { ...process.env, NODE_NO_WARNINGS: "1" },
+			env: childProcessEnv(),
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";
@@ -231,7 +232,7 @@ describe.skipIf(process.platform === "win32")("CLI with a session database that 
 	async function runCli(cwd: string, agentDir: string, args: readonly string[]) {
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd,
-			env: { ...process.env, AMAZME_CODING_AGENT_DIR: agentDir, AMAZME_OFFLINE: "1", NO_COLOR: "1" },
+			env: childProcessEnv({ AMAZME_CODING_AGENT_DIR: agentDir, AMAZME_OFFLINE: "1", NO_COLOR: "1" }),
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";
@@ -272,6 +273,7 @@ describe.skipIf(process.platform === "win32")("CLI with a session database that 
 				expect(result.stderr).toMatch(/Reason: .+/u);
 				expect(result.stderr).toMatch(/What to do: .+/u);
 				expect(result.stderr).not.toMatch(/^\s+at /mu);
+				expect(result.stderr).not.toContain("ExperimentalWarning");
 				// No new session directory, and every file byte-identical (no new `-wal`/`-shm`).
 				expect(await snapshotDirectory(sessionsDir)).toEqual(before);
 				expect(await readdir(root)).toEqual([SESSION_NAME]);

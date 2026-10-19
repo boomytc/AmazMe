@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { childProcessEnv } from "./child-process-env.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -28,11 +29,10 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 	const code = await new Promise<number | null>((resolvePromise, reject) => {
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd,
-			env: {
-				...process.env,
+			env: childProcessEnv({
 				[ENV_AGENT_DIR]: agentDir,
 				AMAZME_OFFLINE: "1",
-			},
+			}),
 			stdio: ["ignore", "ignore", "pipe"],
 		});
 		child.stderr.on("data", (chunk) => {
