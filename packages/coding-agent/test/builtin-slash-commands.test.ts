@@ -206,6 +206,7 @@ describe("builtin slash commands", () => {
 			async current() {
 				throw new Error("unused");
 			},
+			async withWritableConversation() { throw new Error("unused"); },
 		});
 		const facets = [
 			createSlashCommandsRuntimeFacet(registry),

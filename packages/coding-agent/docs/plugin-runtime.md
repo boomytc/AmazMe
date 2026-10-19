@@ -56,6 +56,8 @@ export default activationFacet("example/commands", [SlashCommands, AgentControll
 
 需要准入自定义持久任务的进程内插件可使用 `AgentRuntime.current(context)`，取得当前选中对话与现有 Harness。原生与 session worker 都提供该服务；后台任务准入后保持自己的对话归属，焦点切换不会迁移它。该服务使用 Chord 的 local opaque 成员，不发布到 RPC，也不创建另一套执行器。插件应通过普通所属任务、对话、提交和工具边界执行，并传递取消上下文。
 
+修改对话级插件设置时使用 `AgentRuntime.withWritableConversation(change, context)`：Host 捕获一次当前对话，将短写入与归档准入串行处理，并检查加载状态和取消信号。`change` 接收该对话，只应提交短事务，不持有长网络请求或等待任务结束；不要从插件单独导入宿主的准入锁实现。
+
 宿主的 `Models` 服务同样使用当前选中对话。模型与推理强度存于该对话的 `AgentDoc`，其他分叉保持各自配置；读取可用推理强度、循环和显式选择都以实际目标文档为准。选择模型同时沿用 Pi 的新会话默认设置保存行为，重启已有会话时仍恢复其持久配置。
 
 自定义 Chord 服务使用 `remote()` / `local()` 契约、同步 `defineFacet(api => ...)` 和 `api.serve()`。工厂通过 `self.get()` 声明依赖，通过 `self.resource(name, declaration)`、`self.on(name, source, handler)` 管理资源和监听器，通过 `self.state(name, schema, initial, options)` 声明各自带版本及迁移函数的状态单元；调用取消与代际上下文由 `host.root()` 传递。远程契约必须用 `hostNamed()` 或 `hostFamily()` 声明位置；应用创建 Host 时提供 `self`，连接父宿主时提供 `principal`。`host.get()` 和 `ctx.get()` 等待状态就绪，界面需要同步引用时使用 `host.hold()`；`self.get()` 仍为同步声明，Chord 会在激活前等待其依赖。`self.state()` 也可用 `{ init(ctx) }` 从资源或依赖初始化首值。详见 [Chord 文档](../../chord/README.md)。
@@ -98,6 +100,8 @@ export default activationFacet("example/commands", [SlashCommands, AgentControll
 [verification](../plugins/verification/README.md) 通过完成钩子运行用户显式配置的命令检查，沿用普通工具任务与审批，保存独立结果并有限地请求修正。默认不启用；恢复复用原回答与检查，不自动重跑已中断的不安全命令。
 
 [workflows](../plugins/workflows/README.md) 提供 JSON 阶段计划、独立上下文、有界后台并发、持久暂停/恢复和独立命令检查证据。`/workflows` 在原生和 Web 都调用同一工具任务；命令目录订阅实际注册与退役变化，插件命令直接执行，只有提示词模板和技能转换为模型输入。
+
+[web](../plugins/web/README.md) 提供直连 DeepSeek 的 `web_search`、`web_fetch` 和 `/web`。默认不加载且 API 关闭；设置按对话保存，凭据来自现有 DeepSeek 配置。调用传递取消上下文、限制响应大小，重开后不自动重复已中断的付费请求。
 
 直接加载源码的原生入口通过 `/plugins` 和模型提示提供已选源码、当前安装中的 API 类型位置与本指南。宿主会话的模型提示使用同一 API 与指南，并列出该会话实际选中的 manifest；构建文件 `plugin.json` 按角色保存 ESM 代码，代码带内联 source map，可据其中的 `sources` 与 `sourceRoot` 定位原文件。修改原源码，不修改生成的 bundle；没有源码映射的产物需使用其配置的包源码位置。
 

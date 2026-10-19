@@ -4,7 +4,9 @@
 
 ## DeepSeek Harness 行为增量
 
-本批次参照本地 DeepSeek Harness 的两个固定区间：`5badb15009ae1756c3afe0ae0cef1faafc290ccc..571902028a75c64c1d767f4ae5fd099485f0ddf0`（1537 个提交）和 `571902028a75c64c1d767f4ae5fd099485f0ddf0..1517a4dbca0a2789ff1d41ba439600f8547d23fa`（109 个提交，30 个合并提交、79 个非合并提交）。按当前 AmazMe 载体吸收行为改进，沿用 Pi/Chord/Durable 的包依赖与持久状态，不合并 DSH 的框架、产品账号或旧接口。第二轮只吸收“未知退出码不显示为 0”和“包源码禁止模块级 await”的工程门禁，其余改动属于 DSH 的载体能力或已有等价实现。具体模块、提交清单、仅参考能力差异和验证见 [增量吸收记录](docs/deepseek-harness-absorption.md)。Pi 的供应商 OAuth 身份继续保持原配置。
+前两轮参照本地 DeepSeek Harness 的两个固定区间：`5badb15009ae1756c3afe0ae0cef1faafc290ccc..571902028a75c64c1d767f4ae5fd099485f0ddf0`（1537 个提交）和 `571902028a75c64c1d767f4ae5fd099485f0ddf0..1517a4dbca0a2789ff1d41ba439600f8547d23fa`（109 个提交，30 个合并提交、79 个非合并提交）。按当前 AmazMe 载体吸收行为改进，沿用 Pi/Chord/Durable 的包依赖与持久状态，不合并 DSH 的框架、产品账号或旧接口。第二轮只吸收“未知退出码不显示为 0”和“包源码禁止模块级 await”的工程门禁，其余改动属于 DSH 的载体能力或已有等价实现。具体模块、提交清单、仅参考能力差异和验证见 [增量吸收记录](docs/deepseek-harness-absorption.md)。Pi 的供应商 OAuth 身份继续保持原配置。
+
+第三轮固定区间为 `1517a4dbca0a2789ff1d41ba439600f8547d23fa..687f282e8625c6b8d11ff58211a90524be2e4317`（13 个提交，6 个合并、7 个非合并）。新增可选原生 web 插件，直连 DeepSeek Search/Fetch，默认关闭，以会话级 `/web` 命令适配 DSH 的设置开关；沿用当前 DeepSeek 凭据和 Durable 工具边界，不引入辅助模型请求。发布、vendor 版本及临时模型徽标保留为参照差异，完整处置见同一增量吸收记录。
 
 ## 当前基线
 

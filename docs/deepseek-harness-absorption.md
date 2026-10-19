@@ -152,8 +152,49 @@
 - `feat(workspace)`：工作区检查新增模块级 await 规则，覆盖 await、for await、await using，只豁免 shebang 与 bin 入口；三个入口改为显式启动函数。新增 3 项工程测试（共 30 项通过），`check:workspace` 在真实仓库通过，并用临时违规文件确认门禁以退出码 1 失败。
 - 验证方式：受影响包先构建再测试。Coding Agent 构建通过，3296 项通过、50 项条件跳过；GUI 构建通过，60 项通过；Evals 构建通过，61 项通过；根 typecheck 通过。文档 runner 以缺参数启动，确认输出错误消息并以退出码 1 结束。没有调用远程模型。
 
+## 第三轮：直连 DeepSeek Web API（2026-10-19）
+
+重新抓取 `upstream` 后固定对比 `1517a4dbca0a2789ff1d41ba439600f8547d23fa..687f282e8625c6b8d11ff58211a90524be2e4317`，13 个提交（6 个合并、7 个非合并），净变化 465 个文件、4930 行增加、854 行删除。多数文件属于发布版本同步；逐项读取下列行为改动及其请求、设置、凭据和生命周期消费者。
+
+| 提交 | 内容 | 本地处置 |
+| --- | --- | --- |
+| `d9c04d6cc6` | Cordis 等九个 vendor 发布 | 跳过。净改动只有各自 package.json 版本；AmazMe 使用 Chord，无对应 vendor。 |
+| `ca912356fb` | 合并 vendor 发布 | 随前项审查，无独立行为。 |
+| `c6e89e6755` | DSH 0.2.1-rc.1 | 跳过 DSH 产品发布及包版本，AmazMe 保持 1.2.2。 |
+| `1600d8a1e1` | 合并 rc.1 | 随前项审查。 |
+| `7d844abc87` | 内置 Flash 名称追加 1017 | 已被下列 revert 撤回，不迁入过渡名称。 |
+| `9404cd1790` | master 合入徽标开发分支 | 合并历史，无额外净行为。 |
+| `c6acc07232` | 合并 Flash 临时改名 | 按最终树处理，不保留已撤回的改名。 |
+| `32efe36a4e` | 恢复原模型名称 | 保持 AmazMe 当前生成目录名称，无需修改。 |
+| `3c937cd0ba` | Web 临时 1017 徽标 | 跳过。仅命中 DSH 的 deepseek-account/deepseek-official 路由和特定名称，属于临时展示策略；不改写本地官方目录或引入 DSH 模型标签插槽。 |
+| `ca15fe4f17` | 合并临时徽标 | 随前项审查。 |
+| `fda98dadd2` | Search/Fetch API、设置切换、Messages 搜索禁用 thinking | 吸收直连 API、独立端点、逐调用设置、用户选择和取消边界。AmazMe 无 Messages 辅助搜索链路，该链路的 thinking 修正无对应消费者，不新增回退服务。 |
+| `d1b9c04067` | DSH 0.2.1-rc.2 | 跳过 DSH 发布版本。 |
+| `687f282e86` | 合并 rc.2 | 本轮固定终点。 |
+
+### 本地适配与偏离
+
+- 新增 `packages/coding-agent/plugins/web` 可选 session facet，声明 `web_search`、`web_fetch` 与 `/web`。不选包时没有新增工具或服务；选包后 API 仍默认关闭。DSH 的全局设置 UI 在本地映射为用户命令，按当前对话持久化，分叉采用历史位置的策略。关闭后不再调度新 API 请求，不新增 Messages 搜索或本地 HTTP 抓取回退。
+- 只从现有 `Models.getAuth("deepseek")` 逐调用取得 API Key，不缓存、不保存到插件文档，不转发聊天端点、额外请求头或 DSH 账号令牌。API base 包括用户选择的路径前缀，分别追加 `/search`、`/fetch`；聊天配置不隐式决定检索端点。错误提示指向实际检索端点和 `/web`，不回显供应商错误正文、凭据解析错误或内部 cause。
+- Search 直接发送 query、count、`need_content:false`。原始问题只来自本次已放置的实际输入，合并空白、按 Unicode 字符截至 128；排队跟进和注入上下文不冒充原始问题，可用 `sendOriginalQuestion:false` 关闭。保留有序来源及可空日期，不把 summary 混入结果。
+- Fetch 保留 Markdown 和可选标题。参照实现把成功映射为目标站点 HTTP 200，本地保留接口实际信息，不推断目标状态码或最终 URL。两种工具对模型文本和结构化值使用同一有界结果，显式报告截断。
+- 用户配置与工具参数均校验，禁用、非法输入或缺少凭据在网络副作用之前失败；拒绝重定向。超时和取消覆盖凭据解析、响应头及分块正文，限制真实响应字节数与返回文本长度。取消后观察晚到失败，并关闭晚到响应流，不等待不配合的网络实现。
+- API 可能计费，两种工具均标记不安全重放；关闭并重开 SQLite 后不自动重复已中断的请求。沿用普通工具任务、嵌套结果、权限选择、归档和所属任务规则，不创建第二套执行器。
+- Host 的本机 `AgentRuntime.withWritableConversation` 捕获一次目标对话，将短设置写入与现有归档准入串行，并在等待后复查归档、重载和取消。插件调用 Host 闭包，避免源码或安装产物加载另一份锁状态。新增接口不发布到 RPC。
+- 参考实现的 MIT 声明随插件交付；未引入 Cordis、React 页面、产品账号或 DSH 发布链。
+
+### 验证
+
+- Coding Agent 包构建通过；新增 41 项针对性测试通过，全包 2368 项通过、24 项条件跳过。
+- 针对性验证包含真实本地 HTTP 的 301/302/303/307/308 重定向、凭据/响应超时与取消、晚到响应清理、响应字节上限、输入来源、工具白名单、设置历史分叉与 SQLite 重开。归档、重载、取消在等待准入期间发生时，设置保持未写入；在途请求保留一次设置快照，后续请求遵守新开关。
+- 真实源码包加载与重载测试通过；另用构建后的 JS 入口加载源码插件，确认 `/web` 持久化、重载不重复注册、关闭释放工具租约。`npm pack --dry-run --ignore-scripts` 确认插件源码、说明、许可和运行时类型随包交付。
+- 根 typecheck 通过，工程测试 30 项通过，`git diff --check` 通过。`check:workspace` 的入口预算与浏览器构建均通过，仅仍报告基线问题 `packages/evals/src/harness.ts:30` 直接导入 Coding Agent 源码；当前变更前的 `63934ce` 已包含该导入，本轮未改 Evals。
+- 只使用本地 HTTP、模拟凭据/供应商及 SQLite，没有发送真实 DeepSeek 请求；不宣称已验证供应商可用性、计费或真实检索质量。
+
+第三轮固定快进目标为 `687f282e8625c6b8d11ff58211a90524be2e4317`，AmazMe 原子提交完成后执行 `git merge --ff-only`，再核对 master 与固定上游终点和工作树；不推送。
+
 ## 仓库收尾
 
-`/Users/boom/workspace/deepseek-harness` 先后用 `git merge --ff-only` 从固定基线前进至 `571902028a75c64c1d767f4ae5fd099485f0ddf0`，再前进至本轮的 `1517a4dbca0a2789ff1d41ba439600f8547d23fa`，分别接纳 1537 个和 109 个提交；master 与当前 upstream/master 的左右差为 0/0，工作树干净。未重新抓取移动目标，也未改写参照历史。
+前两轮的 `/Users/boom/workspace/deepseek-harness` 先后用 `git merge --ff-only` 从固定基线前进至 `571902028a75c64c1d767f4ae5fd099485f0ddf0`，再前进至本轮的 `1517a4dbca0a2789ff1d41ba439600f8547d23fa`，分别接纳 1537 个和 109 个提交；master 与当前 upstream/master 的左右差为 0/0，工作树干净。未重新抓取移动目标，也未改写参照历史。
 
 AmazMe 的实现、审查修正和本记录按阶段使用中文结构化提交；临时 TODO 与任务卡已删除，只保留本记录及 UPSTREAM 索引。不新增旧接口兼容层，不复制另一套产品账号、状态注册表或发布系统。本轮两个仓库均未推送。
