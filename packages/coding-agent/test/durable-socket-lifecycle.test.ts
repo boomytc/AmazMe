@@ -12,6 +12,8 @@ import { ensureCoordinator, type CoordinatorStartupLease } from "../src/host/coo
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const serverId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+// macOS sun_path holds 103 bytes and the runner TMPDIR is deep; tests that bind sockets themselves use /tmp.
+const shortTmp = "/tmp";
 
 describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => {
 	const children: ChildProcess[] = [];
@@ -247,7 +249,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	}
 
 	it("keeps a live backend endpoint when the coordinator replaces its server", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amsp-"));
+		const directory = await mkdtemp(join(shortTmp, "amsp-"));
 		directories.push(directory);
 		const controlPath = await startCoordinator(directory);
 		const firstPath = join(directory, `server-${serverId}-aaaaaaaaaaaa.sock`);
@@ -266,7 +268,7 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 	});
 
 	it("removes a refused backend endpoint it registered", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amsp-"));
+		const directory = await mkdtemp(join(shortTmp, "amsp-"));
 		directories.push(directory);
 		const controlPath = await startCoordinator(directory);
 		const path = join(directory, `server-${serverId}-cccccccccccc.sock`);
@@ -276,8 +278,29 @@ describe.skipIf(process.platform === "win32")("backend socket lifecycle", () => 
 		await eventually(() => missing(path));
 	});
 
+	it("refuses to register a backend endpoint longer than the platform socket path limit", async () => {
+		const directory = await mkdtemp(join(shortTmp, "amsp-"));
+		directories.push(directory);
+		const controlPath = await startCoordinator(directory);
+		const endpoint = join(directory, `${"x".repeat(120)}-server-${serverId}-eeeeeeeeeeee.sock`);
+		const socket = createConnection(controlPath);
+		registrations.push(socket);
+		await once(socket, "connect");
+		socket.setEncoding("utf8");
+		let received = "";
+		socket.on("data", (chunk: string) => {
+			received += chunk;
+		});
+		socket.on("error", () => {});
+		socket.write(
+			`${JSON.stringify({ type: "register_server", protocol: 5, serverConnectionId: crypto.randomUUID(), endpoint })}\n`,
+		);
+		await once(socket, "close");
+		expect(received).not.toContain("server_registered");
+	});
+
 	it("does not remove a different socket that reused the registered path", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amsp-"));
+		const directory = await mkdtemp(join(shortTmp, "amsp-"));
 		directories.push(directory);
 		const controlPath = await startCoordinator(directory);
 		const path = join(directory, `server-${serverId}-dddddddddddd.sock`);
