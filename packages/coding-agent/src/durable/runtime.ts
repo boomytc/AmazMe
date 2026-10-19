@@ -264,6 +264,14 @@ export function agentOf(view: ConversationView): AgentState {
 	return (view.docs["amazme.agent"] ?? {}) as AgentState;
 }
 
+/** A logged-out or freshly signed-in provider no longer owns this auth failure. */
+function isProviderAuthFailure(message: string, providerId: string): boolean {
+	if (providerId.length === 0) return false;
+	const token = providerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	if (!new RegExp(`(?:^|[^A-Za-z0-9_-])${token}(?:$|[^A-Za-z0-9_-])`).test(message)) return false;
+	return /oauth|refresh|unauthorized|credential|api key|not configured/i.test(message);
+}
+
 function inputText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -434,6 +442,9 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			const next = state.notices.filter((item) => !predicate(item));
 			if (next.length !== state.notices.length) update({ notices: next });
 		};
+		const clearProviderAuthNotices = (providerId: string): void => {
+			clearNotices((item) => item.level === "error" && isProviderAuthFailure(item.message, providerId));
+		};
 		const fail = (error: unknown): void => notice("error", error instanceof Error ? error.message : String(error));
 		const reportPausedRun = async (): Promise<void> => {
 			const id = current.id;
@@ -448,12 +459,26 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		};
 		const auth = new ProviderLogin(modelRuntime, { getDeviceId: () => settingsManager.getOrCreateDeviceId() });
 		providerLogin = auth;
+		// Logout goes through this surface. A resolved logout drops that provider's stale auth failure;
+		// the credential delete itself does not, and the notice would stay above the prompt.
+		const sessionAuth: ProviderAuthManagement = {
+			snapshot: () => auth.snapshot(),
+			subscribe: (listener) => auth.subscribe(listener),
+			startLogin: (provider, method, signal) => auth.startLogin(provider, method, signal),
+			submitPrompt: (id, promptId, value) => auth.submitPrompt(id, promptId, value),
+			cancelLogin: (id) => auth.cancelLogin(id),
+			logout: async (provider, signal) => {
+				await auth.logout(provider, signal);
+				clearProviderAuthNotices(provider);
+			},
+		};
 		let lastLogin: string | undefined;
 		const stopAuth = auth.subscribe(() => {
 			update({ models: models() });
 			const login = auth.snapshot().login;
 			if (!login || !["done", "error", "cancelled"].includes(login.status) || lastLogin === login.id) return;
 			lastLogin = login.id;
+			if (login.status === "done") clearProviderAuthNotices(login.provider);
 			notice(login.status === "error" ? "error" : "info", login.error ?? (login.status === "done"
 				? `Signed in to ${login.provider}; select a model with /model.` : "Provider sign-in cancelled."));
 		});
@@ -750,7 +775,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				}, context);
 				update({ session: { ...state.session, name: trimmed } });
 			}),
-			auth,
+			auth: sessionAuth,
 			...(plugins === undefined ? {} : {
 				describePlugins: () => sources.length === 0 ? "Plugins use the application-provided facet loader" : describePluginSources(sources) }),
 			describeChanges: async (args = "") => {

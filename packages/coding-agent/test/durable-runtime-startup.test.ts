@@ -362,4 +362,38 @@ describe("durable startup over SQLite", () => {
 		await answer(session);
 		expect(session.view.current().notices).toEqual([]);
 	});
+
+	it("drops a provider's auth failure notice after logout and leaves other failures", async () => {
+		settings = SettingsManager.inMemory({
+			defaultProvider: "faux",
+			defaultModel: "reason",
+			retry: { enabled: false },
+		});
+		const session = await open();
+		faux.setResponses([
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "OAuth refresh failed for faux: token refresh unauthorized (status 400)",
+			}),
+			fauxAssistantMessage("", {
+				stopReason: "error",
+				errorMessage: "OAuth refresh failed for other: token refresh unauthorized (status 400)",
+			}),
+		]);
+		await session.controller.submit("question", "steer");
+		await vi.waitFor(() =>
+			expect(session.view.current().notices.some((item) => item.message.includes("failed for faux"))).toBe(true),
+		);
+		await session.controller.submit("again", "steer");
+		await vi.waitFor(() =>
+			expect(session.view.current().notices.some((item) => item.message.includes("failed for other"))).toBe(true),
+		);
+
+		await session.controller.auth?.logout("faux");
+		await vi.waitFor(() => {
+			const messages = session.view.current().notices.map((item) => item.message);
+			expect(messages.some((message) => message.includes("failed for faux"))).toBe(false);
+			expect(messages.some((message) => message.includes("failed for other"))).toBe(true);
+		});
+	});
 });
