@@ -227,7 +227,7 @@ async function main() {
 	await signApp(appDirectory, signing);
 	console.log(`Built ${appDirectory}`);
 	console.log(`Version ${manifest.app.version} · Node ${manifest.node} · Electron ${manifest.electron}`);
-	console.log(signing.kind === "ad-hoc" ? "Signed ad-hoc (hardened runtime)" : `Signed with Developer ID, team ${signing.teamId}`);
+	console.log(signing.kind === "ad-hoc" ? "Signed ad-hoc (no hardened runtime)" : `Signed with Developer ID, team ${signing.teamId}`);
 	if (verify) console.log(`Standalone smoke: ${await smokeBundle(appDirectory)}`);
 	if (withDmg) {
 		const { image, digest } = await createDmg(appDirectory, out, manifest, signing);

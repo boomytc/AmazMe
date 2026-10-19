@@ -99,6 +99,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           DMG="$(ls "$RUNNER_TEMP"/AmazMe/*.dmg)"
+          CHANNEL=(--latest)
+          if [[ "$GITHUB_REF_NAME" == *-* ]]; then CHANNEL=(--prerelease --latest=false); fi
           gh release create "$GITHUB_REF_NAME" "$DMG" "$DMG.sha256" \
             --title "AmazMe ${GITHUB_REF_NAME#v}" \
-            --notes-file "$RUNNER_TEMP/notes.md"
+            --notes-file "$RUNNER_TEMP/notes.md" \
+            "${CHANNEL[@]}"

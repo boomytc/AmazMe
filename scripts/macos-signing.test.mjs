@@ -59,9 +59,9 @@ test("nested code is found inside-out and symlinks are skipped", (t) => {
 	});
 });
 
-test("both signing kinds use the hardened runtime; only releases timestamp and use the keychain identity", () => {
-	const adHoc = codesignArguments({ kind: "ad-hoc", entitlements: "e.plist" }, "/x");
-	assert.deepEqual(adHoc, ["--force", "--options", "runtime", "--entitlements", "e.plist", "--timestamp=none", "--sign", "-", "/x"]);
+test("only releases use the hardened runtime, entitlements, a timestamp, and the keychain identity", () => {
+	const adHoc = codesignArguments({ kind: "ad-hoc" }, "/x");
+	assert.deepEqual(adHoc, ["--force", "--timestamp=none", "--sign", "-", "/x"]);
 	const release = codesignArguments({ kind: "developer-id", entitlements: "e.plist", keychain: "/k", identity: "ABC", teamId: "T" }, "/x");
 	assert.deepEqual(release, ["--force", "--options", "runtime", "--entitlements", "e.plist", "--timestamp", "--keychain", "/k", "--sign", "ABC", "/x"]);
 });
@@ -85,7 +85,7 @@ test("TeamIdentifier is read from codesign output and ad-hoc reports none", () =
 });
 
 test("Developer ID signing needs both the keychain and the team", () => {
-	assert.deepEqual(resolveSigning({ entitlements: "e.plist" }), { kind: "ad-hoc", entitlements: "e.plist" });
+	assert.deepEqual(resolveSigning({ entitlements: "e.plist" }), { kind: "ad-hoc" });
 	assert.throws(() => resolveSigning({ keychain: "/k", entitlements: "e.plist" }), /both --keychain and --team-id/);
 	assert.throws(() => resolveSigning({ teamId: "T", entitlements: "e.plist" }), /both --keychain and --team-id/);
 	assert.throws(() => resolveSigning({ keychain: "/k", teamId: "", entitlements: "e.plist" }), /both --keychain and --team-id/);

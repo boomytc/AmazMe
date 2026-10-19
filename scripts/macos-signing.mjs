@@ -1,17 +1,18 @@
 /**
  * macOS code signing for the desktop bundle.
  *
- * Preview builds and releases go through the same inside-out signing with the hardened runtime,
- * so the packaged smoke test exercises the entitlements a notarized release depends on. The only
- * difference is the identity: ad-hoc for previews, a Developer ID from a dedicated keychain for
- * releases, checked against the expected team.
+ * Preview builds and releases go through the same inside-out signing. Releases sign with a
+ * Developer ID from a dedicated keychain, checked against the expected team, and with the hardened
+ * runtime and its entitlements, which notarization requires. Ad-hoc previews have no team, so
+ * library validation under the hardened runtime would refuse their own Electron framework; they
+ * sign without the runtime instead of weakening the release entitlements.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { open, readFile, readdir, writeFile } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
 
-/** @typedef {{ kind: "ad-hoc", entitlements: string }} AdHocSigning */
+/** @typedef {{ kind: "ad-hoc" }} AdHocSigning */
 /** @typedef {{ kind: "developer-id", entitlements: string, keychain: string, identity: string, teamId: string }} DeveloperIdSigning */
 /** @typedef {AdHocSigning | DeveloperIdSigning} Signing */
 
@@ -80,9 +81,20 @@ export function signingOrder(relativePaths) {
 }
 
 export function codesignArguments(signing, path) {
-	const runtime = ["--force", "--options", "runtime", "--entitlements", signing.entitlements];
-	if (signing.kind === "ad-hoc") return [...runtime, "--timestamp=none", "--sign", "-", path];
-	return [...runtime, "--timestamp", "--keychain", signing.keychain, "--sign", signing.identity, path];
+	if (signing.kind === "ad-hoc") return ["--force", "--timestamp=none", "--sign", "-", path];
+	return [
+		"--force",
+		"--options",
+		"runtime",
+		"--entitlements",
+		signing.entitlements,
+		"--timestamp",
+		"--keychain",
+		signing.keychain,
+		"--sign",
+		signing.identity,
+		path,
+	];
 }
 
 /** Picks the one Developer ID Application identity of the expected team from `security find-identity`. */
@@ -108,7 +120,7 @@ export function assertTeam(path, teamId) {
 
 /** Resolves --keychain/--team-id: both select a Developer ID release, neither an ad-hoc preview. */
 export function resolveSigning({ keychain, teamId, entitlements }) {
-	if (keychain === undefined && teamId === undefined) return { kind: "ad-hoc", entitlements };
+	if (keychain === undefined && teamId === undefined) return { kind: "ad-hoc" };
 	if (keychain === undefined || teamId === undefined || teamId.length === 0) {
 		throw new Error("Developer ID signing needs both --keychain and --team-id");
 	}

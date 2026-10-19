@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -51,4 +53,31 @@ test("the DMG is signed for the expected team before notarization", () => {
 	assert.match(build, /--keychain "\$RUNNER_TEMP\/amazme-signing\.keychain-db" --team-id "\$APPLE_TEAM_ID"/);
 	const notarize = job.steps.find((step) => step.name === "Notarize and staple the DMG").run;
 	assert.match(notarize, /--team-id "\$APPLE_TEAM_ID"/);
+});
+
+test("pre-release tags publish as prereleases and never become latest", () => {
+	const step = job.steps.find((candidate) => candidate.name === "Publish GitHub Release");
+	const publish = (tag) => {
+		const temp = mkdtempSync(join(tmpdir(), "amazme-release-publish-"));
+		try {
+			mkdirSync(join(temp, "AmazMe"));
+			writeFileSync(join(temp, "AmazMe", "AmazMe.dmg"), "");
+			mkdirSync(join(temp, "bin"));
+			writeFileSync(join(temp, "bin", "gh"), '#!/bin/sh\nprintf "%s\\n" "$@"\n', { mode: 0o755 });
+			const result = spawnSync("bash", ["-e", "-c", step.run], {
+				encoding: "utf8",
+				env: { PATH: `${join(temp, "bin")}:${process.env.PATH}`, RUNNER_TEMP: temp, GITHUB_REF_NAME: tag },
+			});
+			assert.equal(result.status, 0, result.stderr);
+			return result.stdout.trim().split("\n");
+		} finally {
+			rmSync(temp, { recursive: true, force: true });
+		}
+	};
+	const rc = publish("v1.5.0-rc.1");
+	assert.ok(rc.includes("--prerelease"));
+	assert.ok(rc.includes("--latest=false"));
+	const stable = publish("v1.5.0");
+	assert.ok(stable.includes("--latest"));
+	assert.ok(!stable.includes("--prerelease"));
 });

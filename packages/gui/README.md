@@ -38,10 +38,10 @@ npm run dev:desktop
 
 在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。推送 `v<version>` 标签触发 `.github/workflows/release.yml`，在 macOS runner 上构建、验证并创建 GitHub Release；标签必须与 `packages/gui/package.json` 的版本一致。
 
-签名分两种，走同一套由内向外的签名流程和 hardened runtime（权限见 `packages/gui/assets/entitlements.mac.plist`），只差身份：
+签名分两种，都走同一套由内向外的签名流程：
 
-- 本地和 CI 预览不带参数，用 ad-hoc 签名；其他机器首次打开会被 Gatekeeper 拦截。
-- 发布同时传 `--keychain <钥匙串> --team-id <团队 ID>`，从该钥匙串里选出这个团队唯一的 Developer ID Application 身份签应用和 DMG，签完核对 TeamIdentifier。随后 `scripts/notarize-macos.mjs` 提交公证、staple，并用 `codesign --verify --deep --strict` 和 `spctl` 复核后重写 `.sha256`。
+- 本地和 CI 预览不带参数，用 ad-hoc 签名，不开 hardened runtime：ad-hoc 没有团队 ID，开了库校验会拒绝加载自带的 Electron 框架。其他机器首次打开会被 Gatekeeper 拦截。
+- 发布同时传 `--keychain <钥匙串> --team-id <团队 ID>`，从该钥匙串里选出这个团队唯一的 Developer ID Application 身份，带 hardened runtime 和 `packages/gui/assets/entitlements.mac.plist` 里的权限签应用和 DMG，签完核对 TeamIdentifier。随后 `scripts/notarize-macos.mjs` 提交公证、staple，并用 `codesign --verify --deep --strict` 和 `spctl` 复核后重写 `.sha256`。
 
 release 工作流在 `release` 环境里运行：证书只给导入证书那一步，App Store Connect 密钥只给公证那一步；临时钥匙串和密钥文件放在 `$RUNNER_TEMP`，最后一步无论成败都会删掉。团队 ID 取仓库变量 `APPLE_TEAM_ID`。
 
