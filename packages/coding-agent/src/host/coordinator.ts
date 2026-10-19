@@ -429,6 +429,8 @@ function registerServer(socket: Socket, message: ControlMessage): ServerPeer {
 	if (typeof message.endpoint !== "string" || message.endpoint.length === 0) {
 		throw new Error("Coordinator endpoint must be a string");
 	}
+	// A truncated endpoint is a different file: identity and cleanup would act on a path nothing listens on.
+	assertConnectableUnixSocketPath(message.endpoint);
 	const { serverConnectionId, endpoint } = message;
 	const server: ServerPeer = {
 		serverConnectionId,
@@ -612,6 +614,7 @@ function attachRoutedLineReader(socket: Socket, onMessage: (message: ControlMess
 }
 
 function listen(server: Server, path: string): Promise<void> {
+	assertConnectableUnixSocketPath(path);
 	return new Promise((resolve, reject) => {
 		const onError = (error: Error): void => {
 			server.off("listening", onListening);

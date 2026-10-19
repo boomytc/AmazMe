@@ -25,6 +25,9 @@ describe.skipIf(process.platform === "win32")("durable print signal shutdown", (
 	let profile: string;
 	let server: Server;
 	let response: string;
+	/** Settles once the fixture has handed the whole answer, marker included, to the child's socket. */
+	let streamed: Promise<void>;
+	let markStreamed: () => void;
 	const children: ChildProcess[] = [];
 
 	beforeEach(async () => {
@@ -32,6 +35,9 @@ describe.skipIf(process.platform === "win32")("durable print signal shutdown", (
 		profile = join(directory, "profile");
 		await mkdir(profile);
 		response = "x".repeat(PADDING);
+		streamed = new Promise<void>((resolveStreamed) => {
+			markStreamed = resolveStreamed;
+		});
 		server = createServer((request, httpResponse) => {
 			if (request.url !== "/v1/chat/completions") {
 				httpResponse.writeHead(404).end();
@@ -60,7 +66,7 @@ describe.skipIf(process.platform === "win32")("durable print signal shutdown", (
 						choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
 					})}\n\n`,
 				);
-				httpResponse.end("data: [DONE]\n\n");
+				httpResponse.end("data: [DONE]\n\n", () => markStreamed());
 			});
 		});
 		await new Promise<void>((resolveListen, reject) => {
@@ -140,6 +146,9 @@ describe.skipIf(process.platform === "win32")("durable print signal shutdown", (
 		it(`drains the complete final JSON line before exiting ${String(code)} on ${signal}`, async () => {
 			for (let run = 0; run < 2; run++) {
 				response = `${"x".repeat(PADDING)} ${TAIL}`;
+				streamed = new Promise<void>((resolveStreamed) => {
+					markStreamed = resolveStreamed;
+				});
 				const child = start();
 				const output: string[] = [];
 				const stderr: string[] = [];
@@ -150,7 +159,8 @@ describe.skipIf(process.platform === "win32")("durable print signal shutdown", (
 				const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolveExit) => {
 					child.once("exit", (exitCode, exitSignal) => resolveExit({ code: exitCode, signal: exitSignal }));
 				});
-				await new Promise((resolveWait) => setTimeout(resolveWait, 3_000));
+				// Signal only after the marker left the fixture; a fixed delay raced CLI startup on slow runners.
+				await streamed;
 				child.kill(signal);
 				await new Promise((resolveWait) => setTimeout(resolveWait, 200));
 				child.stdout?.resume();

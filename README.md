@@ -22,10 +22,10 @@
 
 ```bash
 npm install --ignore-scripts
-npm run build
+npm run build:offline
 ```
 
-首次构建需要联网获取模型目录数据。已有完整本地数据时，可以用 `npm run build:offline` 跳过刷新；该命令会先检查数据是否齐全。
+模型目录数据已提交在 `packages/ai/src/providers/data/`，`build:offline` 直接使用仓库里的数据，CI 和发版也用这一份。`npm run build` 会先联网刷新数据再构建。更新模型目录时运行 `npm run hydrate:model-data`，把数据变化和受影响的测试放在同一个 PR 里提交。
 
 ### 2. 在项目目录启动
 

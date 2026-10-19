@@ -1761,7 +1761,14 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
-		const model = getModel("openrouter", "deepseek/deepseek-r1")!;
+		// Fixed fixture: the OpenRouter catalog is fetched live at build time, so a real model ID can disappear.
+		const model = {
+			...localOpenAICompletionsModel,
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			id: "test/openrouter-reasoning-model",
+			name: "OpenRouter reasoning fixture",
+		} satisfies Model<"openai-completions">;
 		let payload: unknown;
 
 		await streamSimple(
