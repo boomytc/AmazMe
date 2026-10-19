@@ -7,7 +7,8 @@
 ### 破坏性变更
 
 - Durable 的 SQLite 会话库打开时自动升级到 schema v2。升级后的库 1.2.2 及更早版本打不开，所以装了 1.3.0 就不能再降回去。JSONL 存储不用迁移，但 1.2.2 及更早版本不会恢复处于休眠中的任务，对应对话会一直显示忙。
-- 同一个任务连续 5 次被崩溃打断、又没提交新状态时，不再自动重跑，而是停放（`inspect()` 里阻塞原因为 `restart_limit`）。任务面板会显示停放原因，可以手动重试。设置 `settings.restartLimit` 为 `Infinity` 可恢复旧行为。
+- 同一个任务连续 5 次被崩溃打断、又没提交新状态时，不再自动重跑，而是停放（`inspect()` 里阻塞原因为 `restart_limit`）。任务面板会显示停放原因，可以手动重试（`Harness.retryTask()`）。设置 `settings.restartLimit` 为 `Infinity` 可恢复旧行为。
+- 自己写宿主或扩展的要注意：Durable 删除了 `TaskRuntime.sleep()`，阶段内等待改用 `runtime.sleepUntil()` 结束阶段进入休眠；任务新增 `sleeping` 状态，穷举 `TaskState` 的代码要补这个分支。`onReport` 多了第二个参数 `info`，只写一个参数的旧回调照常可用。细节见 `packages/durable/CHANGELOG.md`。
 
 ### 新增
 
