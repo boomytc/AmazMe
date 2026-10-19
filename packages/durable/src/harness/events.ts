@@ -61,7 +61,13 @@ export type SnapshotEvent = {
 export type AgentEvent =
 	| SnapshotEvent
 	| { type: "run_start"; inputs: readonly SubmissionId[] }
-	| { type: "run_end"; inputs: readonly SubmissionId[] }
+	/** `willRetry` is true when this commit starts a successor run, as in the coding agent's `agent_end`. */
+	| { type: "run_end"; inputs: readonly SubmissionId[]; willRetry: boolean }
+	/**
+	 * The session-level run is over and nothing queued will continue it. Absent after `run_end` when a successor run
+	 * starts in the same commit. Not part of the snapshot: an idle attachment sees no historical settlement.
+	 */
+	| { type: "agent_settled"; aborted: boolean }
 	| { type: "turn_start" }
 	| { type: "turn_end" }
 	| { type: "message_start"; message: Message }
@@ -402,7 +408,14 @@ function translate(
 	const run = now.live.run;
 	const runBefore = was.live.run;
 	const runChanged = run?.inputs[0] !== runBefore?.inputs[0];
-	if (runBefore !== undefined && runChanged) events.push({ type: "run_end", inputs: runBefore.inputs });
+	// A successor run in this commit keeps the session busy: the run ends, and no settlement follows.
+	const successor = run !== undefined && runChanged;
+	if (runBefore !== undefined && runChanged) {
+		events.push({ type: "run_end", inputs: runBefore.inputs, willRetry: successor });
+		if (run === undefined) {
+			events.push({ type: "agent_settled", aborted: abortedRun(submissions, runBefore.inputs) });
+		}
+	}
 
 	// Submissions, document state, then what began.
 	for (const record of submissions) events.push({ type: "submission", record });
@@ -423,6 +436,18 @@ function translate(
 		events.push({ type: "turn_start" });
 	}
 	return events;
+}
+
+/**
+ * Whether this commit settled an input of the ended run as aborted. The run's settlement is the authority, so a
+ * provider message's `stopReason` never decides it.
+ */
+function abortedRun(submissions: readonly SubmissionRecord[], inputs: readonly SubmissionId[]): boolean {
+	const ended = new Set(inputs);
+	return submissions.some(
+		(record) =>
+			ended.has(record.id) && record.status === "unanswered" && record.reason === "aborted",
+	);
 }
 
 const PARTIAL_PATH = ["docs", "amazme.live", "generation", "message"];

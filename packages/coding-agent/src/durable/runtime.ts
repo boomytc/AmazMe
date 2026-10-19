@@ -40,6 +40,7 @@ import type { SlashCommandCompletion, SlashCommandContribution } from "../core/p
 import { describePluginSources } from "../core/plugins/info.ts";
 import { discoverPluginSources } from "../core/plugins/sources.ts";
 import { assertPluginsIdle, openPluginRuntime, type PluginRuntime } from "../core/plugins/runtime.ts";
+import type { ExtensionRunner } from "../core/extensions/runner.ts";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { durableToolSelection, getToolSelectionError, type ToolSelectionOptions } from "../core/tool-selection.ts";
 import { IDLE_LANE, oldestPresentedEntryId, type ConversationSummary, type LaneStatus, type ReturnPoint } from "./conversation-view.ts";
@@ -72,6 +73,7 @@ import { resumeRun } from "./insights/run-policy.ts";
 import { RunStateDoc } from "./insights/state.ts";
 import { expandResourceCommand } from "../core/resource-command.ts";
 import type { ResourceLoader } from "../core/resource-loader.ts";
+import { bridgeExtensionEvents } from "./extension-events.ts";
 import { readDurableSessionCwd } from "./session-cwd.ts";
 import { selectSession } from "./sessions.ts";
 import { applyDurableMcpSelection, openDurableMcp, type DurableMcp } from "./mcp.ts";
@@ -243,6 +245,11 @@ export interface OpenDurableOptions extends ToolSelectionOptions, CodingResource
 	readonly noMcp?: boolean;
 	readonly settingsManager?: SettingsManager;
 	readonly modelRuntime?: ModelRuntime;
+	/**
+	 * Extension runtime to notify of the Durable run lifecycle. The Durable path loads no extensions by itself;
+	 * a host that has one bridges it here so `agent_settled` means the same thing on both surfaces.
+	 */
+	readonly extensionRunner?: ExtensionRunner;
 }
 
 export interface OpenDurableResult {
@@ -1189,6 +1196,14 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		// Recovered work from an interrupted turn continues now.
 		harness.resume();
 
+		const extensionRunner = options.extensionRunner;
+		const extensionStream: AgentEventStream | undefined = extensionRunner === undefined
+			? undefined
+			: await watchEvents(opened, root.id, context);
+		if (extensionRunner !== undefined && extensionStream !== undefined) {
+			bridgeExtensionEvents(extensionStream, extensionRunner);
+		}
+
 		const result: OpenDurableResult = {
 			closed: opened.closed,
 			view: {
@@ -1206,6 +1221,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				closing ??= (async () => {
 					activeCommand?.abort(new Error("Session closing"));
 					disposeView();
+					await extensionStream?.stop().catch(() => undefined);
 					try {
 						await auth.close();
 						await modelScope.flush();

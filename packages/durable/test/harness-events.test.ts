@@ -24,7 +24,7 @@ import {
 	watchEvents,
 } from "@amazme/durable";
 import { describe, expect, it } from "vitest";
-import { type ChatSetup, chatSetup, openChat, textOf, waitFor } from "./chat-support.ts";
+import { type ChatSetup, chatSetup, openChat, textOf, unanswered, waitFor } from "./chat-support.ts";
 import { addTool } from "./harness-support.ts";
 import { context, documentChanges } from "./session-support.ts";
 import { aborted, deferred } from "./task-support.ts";
@@ -126,6 +126,7 @@ describe("agent events", () => {
 			"message_end",
 			"turn_end",
 			"run_end",
+			"agent_settled",
 			"submission",
 			"usage_changed",
 		]);
@@ -397,6 +398,12 @@ describe("agent events", () => {
 			input.id,
 			followUp.id,
 		]);
+		expect(boundary.find((event) => event.type === "run_end")).toMatchObject({ willRetry: true });
+		expect(boundary.some((event) => event.type === "agent_settled")).toBe(false);
+		expect(batches.at(-1)!.find((event) => event.type === "run_end")).toMatchObject({ willRetry: false });
+		expect(batches.at(-1)!.filter((event) => event.type === "agent_settled")).toEqual([
+			{ type: "agent_settled", aborted: false },
+		]);
 		await stream.stop();
 		await harness.close(context);
 	});
@@ -585,6 +592,107 @@ describe("agent events", () => {
 			[{ type: "usage_changed", usage: { models: {}, tools: {} } }],
 			[{ type: "agent_changed", agent: {} }],
 		]);
+		await stream.stop();
+		await harness.close(context);
+	});
+
+	it("does not replay a settlement to a later attachment of the idle conversation", async () => {
+		const setup = chatSetup();
+		setup.faux.setResponses([fauxAssistantMessage([fauxText("done")])]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
+		await drained();
+		const later = await listen(harness, root);
+		await drained();
+		expect(later.stream.snapshot.type).toBe("snapshot");
+		expect(later.stream.snapshot.run).toBeUndefined();
+		expect(later.events()).toEqual([]);
+		await later.stream.stop();
+		await harness.close(context);
+	});
+
+	it("settles once after an automatic retry, not between attempts", async () => {
+		const setup = chatSetup();
+		setup.faux.setResponses([
+			fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" }),
+			fauxAssistantMessage([fauxText("recovered")]),
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		setup.settings.retry = { enabled: true, maxRetries: 1, baseDelayMs: 1 };
+		const { stream, events } = await listen(harness, root);
+		await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
+		await drained();
+		const settlements = events().filter((event) => event.type === "agent_settled");
+		expect(settlements).toEqual([{ type: "agent_settled", aborted: false }]);
+		// The end of the failed attempt still ends the run, and the retry keeps that run alive.
+		const [end] = events().filter((event) => event.type === "run_end");
+		expect(end).toMatchObject({ type: "run_end", willRetry: false });
+		await stream.stop();
+		await harness.close(context);
+	});
+
+	it("settles after a failed run without calling it aborted", async () => {
+		const setup = chatSetup();
+		setup.faux.setResponses([
+			fauxAssistantMessage([], { stopReason: "error", errorMessage: "503 Service Unavailable" }),
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		setup.settings.retry = { enabled: false };
+		const { stream, events } = await listen(harness, root);
+		await (await root.submit({ type: "input", content: "hi" }, context)).wait(context);
+		await drained();
+		expect(events().filter((event) => event.type === "agent_settled")).toEqual([
+			{ type: "agent_settled", aborted: false },
+		]);
+		await stream.stop();
+		await harness.close(context);
+	});
+
+	it("derives aborted from the run's submission settlement", async () => {
+		const setup = chatSetup();
+		const pending = unanswered();
+		setup.faux.setResponses([pending.step]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const { stream, events } = await listen(harness, root);
+		const submission = await root.submit({ type: "input", content: "hi" }, context);
+		await pending.reached;
+		const live = await harness.snapshot(LiveDoc, root.id, context);
+		await harness.abortTask(live!.run!.taskId, context);
+		const record = await submission.wait(context);
+		expect(record.status).toBe("unanswered");
+		await drained();
+		expect(events().filter((event) => event.type === "agent_settled")).toEqual([
+			{ type: "agent_settled", aborted: true },
+		]);
+		await stream.stop();
+		await harness.close(context);
+	});
+
+	it("settles once after a blocking compaction continues the same run", async () => {
+		const setup = chatSetup({ models: [{ id: "faux-1", contextWindow: 1000, maxTokens: 900 }] });
+		const long = (label: string) => fauxAssistantMessage([fauxText(`${label} ${"x".repeat(1800)}`)]);
+		setup.faux.setResponses([
+			long("one"),
+			long("two"),
+			long("three"),
+			// The blocking compaction summarizes before the continued generation requests its answer.
+			fauxAssistantMessage([fauxText("SUMMARY")]),
+			fauxAssistantMessage([fauxText("compacted answer")]),
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		for (const label of ["one", "two", "three"]) {
+			await (await root.submit({ type: "input", content: `${label} question` }, context)).wait(context);
+		}
+		// Attach after the earlier runs settled: the snapshot is the only history a late client gets.
+		setup.settings.compaction = { enabled: true, reserveTokens: 300, keepRecentTokens: 150, backgroundTokens: 0 };
+		const { stream, events } = await listen(harness, root);
+		await (await root.submit({ type: "input", content: "fourth question ".repeat(20) }, context)).wait(context);
+		await drained();
+		expect(events().some((event) => event.type === "compaction_start")).toBe(true);
+		expect(events().filter((event) => event.type === "agent_settled")).toEqual([
+			{ type: "agent_settled", aborted: false },
+		]);
+		expect(events().filter((event) => event.type === "run_end")).toMatchObject([{ willRetry: false }]);
 		await stream.stop();
 		await harness.close(context);
 	});

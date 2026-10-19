@@ -29,8 +29,10 @@ export class DurableJsonEvents {
 			case "run_end": {
 				const messages = this.runMessages.slice();
 				this.runMessages.length = 0;
-				return [{ type: "agent_end", messages, willRetry: false }];
+				return [{ type: "agent_end", messages, willRetry: event.willRetry }];
 			}
+			case "agent_settled":
+				return [{ type: "agent_settled", aborted: event.aborted }];
 			case "turn_start":
 				this.resetTurn();
 				return [{ type: "turn_start" }];
