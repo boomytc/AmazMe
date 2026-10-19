@@ -52,7 +52,7 @@ describe("conversation-owned file observations", () => {
 	const harnesses: Harness[] = [];
 	beforeEach(async () => {
 		cwd = await mkdtemp(join(tmpdir(), "amazme-observed-tools-"));
-		env = new NodeExecutionEnv({ cwd });
+		env = new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 		await writeFile(join(cwd, "file.txt"), "one\ntwo\n");
 	});
 	afterEach(async () => {
@@ -128,7 +128,7 @@ describe("conversation-owned file observations", () => {
 		}
 		const api = await fileToolApi(env);
 		await read.execute({ path: "file.txt" }, api, context);
-		const other = new OtherNamespace({ cwd });
+		const other = new OtherNamespace({ cwd, artifactDirectory: cwd });
 		await expect(edit.execute(editArgs, { ...api, env: other }, context)).rejects.toMatchObject({
 			code: "not_observed",
 		});
@@ -302,7 +302,7 @@ describe("conversation-owned file observations", () => {
 				return super.writeFileChecked(path, content, intent, writeContext);
 			}
 		}
-		const finishing = new FinishingWriteEnv({ cwd });
+		const finishing = new FinishingWriteEnv({ artifactDirectory: cwd, cwd });
 		const setup = chatSetup();
 		setup.registry.install(CodingTools);
 		const database = join(cwd, "cancel.sqlite");

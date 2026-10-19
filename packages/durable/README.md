@@ -433,14 +433,22 @@ const harness = await Harness.open(storage, {
 `env` builds the execution environment for each tool call, section rendering, and `runtime.env()`. It receives the conversation's ID, its agent `cwd`, and committed reads, so one function serves a directory per conversation or a container per conversation:
 
 ```typescript
+import { join } from "node:path";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 
 const harness = await Harness.open(storage, {
 	models,
 	registry,
-	env: ({ cwd }) => new NodeExecutionEnv({ cwd: cwd ?? process.cwd() }),
+	env: ({ cwd, conversationId }) =>
+		new NodeExecutionEnv({
+			cwd: cwd ?? process.cwd(),
+			// Required: host-owned session artifact directory (no /tmp fallback). Typically next to the session DB.
+			artifactDirectory: join(sessionArtifactsRoot, conversationId),
+		}),
 }, context);
 ```
+
+`ExecutionEnv.artifactDirectory` is required. Code mode writes truncated output and images under a per-run subdirectory of it and records that path in its run document so a crash rerun overwrites the same files. The host owns the directory's lifetime (delete it with the session).
 
 A throw from `env` becomes the call's error result. Without an environment, the built-in tools fail with an error result. A fresh environment object per call is fine: `edit` and `write` serialize changes to one file by the environment's `id` and path. A custom `ExecutionEnv` sets `id` so that equal ids see the same files at the same paths, for example one id per container.
 

@@ -76,7 +76,7 @@ const harness = await Harness.open(
 		registry,
 		// Venv is installed but not selected by default.
 		settings: { extensions: [CodingTools, Timing] },
-		env: () => new NodeExecutionEnv({ cwd: project }),
+		env: () => new NodeExecutionEnv({ artifactDirectory: project, cwd: project }),
 	},
 	context,
 );

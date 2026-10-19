@@ -182,7 +182,7 @@ describe("tool recovery", () => {
 			);
 			addTool(setup.registry, work);
 			setup.faux.setResponses([call("work"), DONE]);
-			const env = ({ cwd = "/" }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd });
+			const env = ({ cwd = "/" }: { readonly cwd?: string }) => new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 			const reopen = async () => {
 				const opened = await openChat(await openNodeSqliteStorage(path), setup, { env });
 				opened.harness.resume();
@@ -340,7 +340,7 @@ describe("tool recovery", () => {
 
 	it("answers a real bash command interrupted by close and reopen, then finishes the run", async () => {
 		const path = await sqlitePath();
-		const env = new NodeExecutionEnv({ cwd: dirname(path) });
+		const env = new NodeExecutionEnv({ artifactDirectory: dirname(path), cwd: dirname(path) });
 		const setup = chatSetup();
 		addTool(setup.registry, createBashTool());
 		setup.faux.setResponses([

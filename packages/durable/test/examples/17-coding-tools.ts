@@ -70,7 +70,7 @@ registry.install(Timing);
 const storage = await openNodeJsonlStorage(directory, context);
 const harness = await Harness.open(
 	storage,
-	{ models, registry, env: (target) => new NodeExecutionEnv({ cwd: target.cwd ?? process.cwd() }) },
+	{ models, registry, env: (target) => new NodeExecutionEnv({ artifactDirectory: target.cwd ?? process.cwd(), cwd: target.cwd ?? process.cwd() }) },
 	context,
 );
 const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" }, cwd: directory } });

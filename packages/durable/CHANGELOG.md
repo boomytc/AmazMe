@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- `ExecutionEnv` requires `artifactDirectory: string`: a host-injected directory for session-scoped tool artifacts. Code mode writes truncated output and images under a per-run subdirectory of it (recorded in `CodemodeRunDoc.outputDir`) instead of `createTempDir("amazme-codemode-")`. There is no `/tmp` fallback; every `ExecutionEnv` construction (including `NodeExecutionEnv`, `MemoryStorage`/test hosts, and coding-agent) must pass a directory. The host owns its lifetime (typically next to the session database, deleted with the session).
+
 ## [1.3.0] - 2026-10-19
 
 ### Breaking Changes

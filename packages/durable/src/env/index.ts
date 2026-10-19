@@ -389,7 +389,14 @@ export interface Shell {
 	cleanup(context: Context): Promise<void>;
 }
 
-export interface ExecutionEnv extends FileSystem, Shell {}
+export interface ExecutionEnv extends FileSystem, Shell {
+	/**
+	 * Host-injected directory for session-scoped tool artifacts (code mode output files, and anything else that must
+	 * outlive a single call but die with the session). Required: there is no temporary-directory fallback. The host
+	 * owns its lifetime (typically next to the session database, deleted with the session).
+	 */
+	readonly artifactDirectory: string;
+}
 
 export { rangeDecoder, StreamDecoder, startsWithBom } from "./decode.ts";
 export { LineScanner } from "./line-scan.ts";

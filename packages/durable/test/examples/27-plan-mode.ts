@@ -86,7 +86,7 @@ registry.install(Plan);
 const harness = await Harness.open(
 	new MemoryStorage(),
 	// Installed, but only CodingTools is selected by default: conversations opt into plan mode.
-	{ models, registry, settings: { extensions: [CodingTools] }, env: () => new NodeExecutionEnv({ cwd: directory }) },
+	{ models, registry, settings: { extensions: [CodingTools] }, env: () => new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory }) },
 	context,
 );
 const root = await harness.root(context, { agent: { model: { provider: "faux", modelId: "faux-1" } } });

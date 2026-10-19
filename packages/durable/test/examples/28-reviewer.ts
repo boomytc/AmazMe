@@ -68,7 +68,7 @@ const harness = await Harness.open(
 		models,
 		registry,
 		settings: { extensions: [CodingTools] },
-		env: ({ cwd = process.cwd() }) => new NodeExecutionEnv({ cwd }),
+		env: ({ cwd = process.cwd() }) => new NodeExecutionEnv({ cwd, artifactDirectory: cwd }),
 	},
 	context,
 );

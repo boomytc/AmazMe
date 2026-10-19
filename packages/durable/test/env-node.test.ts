@@ -149,7 +149,7 @@ afterEach(async () => {
 describe("NodeExecutionEnv filesystem", () => {
 	it("reads, writes, lists, and removes files and directories", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		expect(getOrThrow(await env.absolutePath("nested/child", BACKGROUND_CONTEXT))).toBe(join(root, "nested/child"));
 		expect(getOrThrow(await env.joinPath([root, "nested", "child"], BACKGROUND_CONTEXT))).toBe(
 			join(root, "nested", "child"),
@@ -184,7 +184,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("expands home-relative paths and file URLs", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		expect(getOrThrow(await env.absolutePath("~/pi-node-env-test", BACKGROUND_CONTEXT))).toBe(
 			join(homedir(), "pi-node-env-test"),
 		);
@@ -194,7 +194,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("returns fileInfo for files, directories, and symlinks without following symlinks", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.createDir("dir", { recursive: true }, BACKGROUND_CONTEXT));
 		getOrThrow(await env.writeFile("dir/file.txt", "hello", BACKGROUND_CONTEXT));
 		await symlink(join(root, "dir/file.txt"), join(root, "file-link"));
@@ -228,7 +228,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("lists symlinks as symlinks", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("target.txt", "hello", BACKGROUND_CONTEXT));
 		await symlink(join(root, "target.txt"), join(root, "link.txt"));
 
@@ -243,14 +243,14 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("stops reading text lines at the requested limit", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("file.txt", "one\ntwo\nthree", BACKGROUND_CONTEXT));
 		expect(getOrThrow(await env.readTextLines("file.txt", { maxLines: 1 }, BACKGROUND_CONTEXT))).toEqual(["one"]);
 	});
 
 	it("returns FileError for missing paths and keeps exists false for missing paths", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const info = await env.fileInfo("missing.txt", BACKGROUND_CONTEXT);
 		expect(info.ok).toBe(false);
 		if (!info.ok) {
@@ -266,7 +266,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("returns FileError for listing non-directories", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("file.txt", "hello", BACKGROUND_CONTEXT));
 		const result = await env.listDir("file.txt", BACKGROUND_CONTEXT);
 		expect(result.ok).toBe(false);
@@ -278,7 +278,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("appends to new files and creates parent directories", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.appendFile("new/nested/file.txt", "a", BACKGROUND_CONTEXT));
 		getOrThrow(await env.appendFile("new/nested/file.txt", "b", BACKGROUND_CONTEXT));
 		expect(getOrThrow(await env.readTextFile("new/nested/file.txt", BACKGROUND_CONTEXT))).toBe("ab");
@@ -286,7 +286,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("atomically renames a file and replaces the destination", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("source.txt", "new", BACKGROUND_CONTEXT));
 		getOrThrow(await env.writeFile("destination.txt", "old", BACKGROUND_CONTEXT));
 
@@ -298,7 +298,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("reports the source path when rename fails because the source is missing", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("destination.txt", "unchanged", BACKGROUND_CONTEXT));
 
 		const result = await env.renameFile("missing-source.txt", "destination.txt", BACKGROUND_CONTEXT);
@@ -315,7 +315,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("creates temporary directories and files", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const tempDir = getOrThrow(await env.createTempDir("node-env-test-", BACKGROUND_CONTEXT));
 		tempDirs.push(tempDir);
 		await expect(access(tempDir)).resolves.toBeUndefined();
@@ -328,7 +328,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("honors createDir recursive false and remove recursive/force options", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const createResult = await env.createDir("missing/child", { recursive: false }, BACKGROUND_CONTEXT);
 		expect(createResult.ok).toBe(false);
 		if (!createResult.ok) expect(createResult.error).toMatchObject({ code: "not_found" });
@@ -346,7 +346,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("returns aborted results without side effects for pre-aborted file operations", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("file.txt", "hello", BACKGROUND_CONTEXT));
 		const context = abortedContext();
 
@@ -378,7 +378,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("truncates and extends files to exact byte sizes", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const bytes = new Uint8Array([0x61, 0xc3, 0xa9, 0x0a, 0x62, 0x0a]);
 		getOrThrow(await env.writeFile("file.bin", bytes, BACKGROUND_CONTEXT));
 
@@ -395,7 +395,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("rejects invalid truncation sizes and never creates missing files", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("file.txt", "hello", BACKGROUND_CONTEXT));
 		for (const size of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
 			expect(await env.truncateFile("file.txt", size, BACKGROUND_CONTEXT)).toMatchObject({
@@ -414,7 +414,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("flushes existing files without changing content and reports missing paths", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("file.txt", "durable", BACKGROUND_CONTEXT));
 		getOrThrow(await env.flushFile("file.txt", BACKGROUND_CONTEXT));
 		expect(getOrThrow(await env.readTextFile("file.txt", BACKGROUND_CONTEXT))).toBe("durable");
@@ -434,7 +434,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("syncs through an opened handle, returns sync failures, and always closes the handle", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("file.txt", "durable", BACKGROUND_CONTEXT));
 		const prototype = await fileHandlePrototype(join(root, "file.txt"));
 		const originalSync = prototype.sync;
@@ -462,7 +462,7 @@ describe("NodeExecutionEnv filesystem", () => {
 
 	it("cleanup is best-effort", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		await expect(env.cleanup(BACKGROUND_CONTEXT)).resolves.toBeUndefined();
 	});
 });
@@ -470,7 +470,7 @@ describe("NodeExecutionEnv filesystem", () => {
 describe("NodeExecutionEnv text line reader", () => {
 	it("reports whether each line was newline-terminated and preserves carriage returns", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("lines.txt", "one\r\n\ntwo\npartial", BACKGROUND_CONTEXT));
 		const reader = getOrThrow(await env.openTextLineReader("lines.txt", BACKGROUND_CONTEXT));
 		try {
@@ -493,7 +493,7 @@ describe("NodeExecutionEnv text line reader", () => {
 
 	it("returns no lines for an empty file and one terminated empty line for a lone newline", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("empty.txt", "", BACKGROUND_CONTEXT));
 		getOrThrow(await env.writeFile("newline.txt", "\n", BACKGROUND_CONTEXT));
 
@@ -509,7 +509,7 @@ describe("NodeExecutionEnv text line reader", () => {
 
 	it("decodes multi-byte characters split across read chunks and lines longer than one chunk", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		// The reader uses 64 KiB chunks; place a four-byte character across the first boundary.
 		const first = `${"a".repeat(64 * 1024 - 2)}😀tail`;
 		const second = "é".repeat(100_000);
@@ -526,7 +526,7 @@ describe("NodeExecutionEnv text line reader", () => {
 
 	it("rejects a read cancelled while pending without consuming its bytes", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("lines.txt", "one\ntwo\n", BACKGROUND_CONTEXT));
 		const prototype = await fileHandlePrototype(join(root, "lines.txt"));
 		const read = prototype.read;
@@ -562,7 +562,7 @@ describe("NodeExecutionEnv text line reader", () => {
 
 	it("rejects reads after close and closes idempotently", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile("lines.txt", "one\n", BACKGROUND_CONTEXT));
 		const reader = getOrThrow(await env.openTextLineReader("lines.txt", BACKGROUND_CONTEXT));
 		await reader.close(BACKGROUND_CONTEXT);
@@ -575,7 +575,7 @@ describe("NodeExecutionEnv text line reader", () => {
 
 	it("reports missing files when opening a reader", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		expect(await env.openTextLineReader("missing.txt", BACKGROUND_CONTEXT)).toMatchObject({
 			ok: false,
 			error: { code: "not_found", path: join(root, "missing.txt") },
@@ -586,7 +586,7 @@ describe("NodeExecutionEnv text line reader", () => {
 describe("NodeExecutionEnv shell", () => {
 	it("executes commands in cwd with env overrides", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const collected = await collectShellOutput(
 			env,
 			'printf \'%s\' "$NODE_ENV_TEST" > cwd-marker.txt; printf \'%s:%s\' "$PWD" "$NODE_ENV_TEST"',
@@ -613,6 +613,7 @@ describe("NodeExecutionEnv shell", () => {
 		async (_description, overrides, expectedSessionFile) => {
 			const root = createTempDir();
 			const env = new NodeExecutionEnv({
+				artifactDirectory: root,
 				cwd: root,
 				shellEnv: {
 					AMAZME_SESSION_FILE: "/stale/parent.jsonl",
@@ -639,7 +640,7 @@ describe("NodeExecutionEnv shell", () => {
 		const previousInherited = process.env[inheritedKey];
 		process.env[inheritedKey] = "host";
 		try {
-			const env = new NodeExecutionEnv({ cwd: root, shellEnv: { [configuredKey]: "configured" } });
+			const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root, shellEnv: { [configuredKey]: "configured" } });
 			const collected = await collectShellOutput(
 				env,
 				`printf '%s:%s:%s' "\${${inheritedKey}-}" "\${${configuredKey}-}" "\${${explicitKey}-}"`,
@@ -658,7 +659,7 @@ describe("NodeExecutionEnv shell", () => {
 		if (process.platform === "win32") return;
 		const root = createTempDir();
 		const shellPath = "C:\\Windows\\System32\\bash.exe";
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(
 			await env.writeFile(
 				shellPath,
@@ -679,7 +680,7 @@ describe("NodeExecutionEnv shell", () => {
 				value: "win32",
 			});
 
-			const wslEnv = new NodeExecutionEnv({ cwd: root, shellPath });
+			const wslEnv = new NodeExecutionEnv({ artifactDirectory: root, cwd: root, shellPath });
 			const nameExpansion = "$" + "{name}";
 			const collected = await collectShellOutput(
 				wslEnv,
@@ -705,7 +706,7 @@ describe("NodeExecutionEnv shell", () => {
 		async () => {
 			const root = createTempDir();
 			const pidFile = join(root, "grandchild.pid");
-			const env = new NodeExecutionEnv({ cwd: root });
+			const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 			const controller = new AbortController();
 			try {
 				const collected = await withTimeout(
@@ -729,7 +730,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("cleanup terminates active shell processes", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const execution = env.exec("touch started; sleep 60", undefined, BACKGROUND_CONTEXT);
 		try {
 			await waitFor(async () => getOrThrow(await env.exists("started", BACKGROUND_CONTEXT)), 10_000);
@@ -741,7 +742,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("streams combined stdout and stderr", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const collected = await collectShellOutput(env, "printf out; printf err >&2", undefined, BACKGROUND_CONTEXT);
 		expect(getOrThrow(collected.result)).toEqual({ exitCode: 0 });
 		expect(collected.output).toContain("out");
@@ -750,7 +751,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("decodes UTF-8 split across raw process chunks", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const script =
 			"const b=Buffer.from('😀');process.stdout.write(b.subarray(0,2));setTimeout(()=>process.stdout.write(b.subarray(2)),50)";
 		const collected = await collectShellOutput(
@@ -764,7 +765,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("reports a missing working directory before spawning", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: join(root, "missing") });
+		const env = new NodeExecutionEnv({ artifactDirectory: join(root, "missing"), cwd: join(root, "missing") });
 		const result = await env.exec("printf ok", undefined, BACKGROUND_CONTEXT);
 
 		expect(result).toMatchObject({
@@ -775,7 +776,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("returns non-zero command exit codes as successful execution results", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const result = getOrThrow(await env.exec("exit 7", undefined, BACKGROUND_CONTEXT));
 		expect(result).toEqual({ exitCode: 7 });
 	});
@@ -783,14 +784,14 @@ describe("NodeExecutionEnv shell", () => {
 	// Regression test for https://github.com/earendil-works/pi/issues/8992
 	it.skipIf(process.platform === "win32")("maps signal-killed processes to a non-zero exit code", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const result = getOrThrow(await env.exec("kill -9 $$", undefined, BACKGROUND_CONTEXT));
 		expect(result.exitCode).toBe(128 + 9);
 	});
 
 	it("returns timeout errors for commands exceeding the timeout", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const result = await env.exec("sleep 5", { timeout: 0.01 }, BACKGROUND_CONTEXT);
 		expect(result.ok).toBe(false);
 		if (!result.ok) expect(result.error).toMatchObject({ code: "timeout" });
@@ -798,7 +799,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("rejects invalid timeouts before spawning", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		for (const timeout of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2_147_484]) {
 			expect(await env.exec("touch spawned", { timeout }, BACKGROUND_CONTEXT)).toMatchObject({
 				ok: false,
@@ -810,7 +811,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("returns callback errors from exec stream handlers", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const result = await env.exec(
 			"printf out",
 			{
@@ -826,15 +827,15 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("returns shell unavailable and spawn errors", async () => {
 		const root = createTempDir();
-		const missingShellEnv = new NodeExecutionEnv({ cwd: root, shellPath: join(root, "missing-shell") });
+		const missingShellEnv = new NodeExecutionEnv({ artifactDirectory: root, cwd: root, shellPath: join(root, "missing-shell") });
 		const missingShell = await missingShellEnv.exec("printf ok", undefined, BACKGROUND_CONTEXT);
 		expect(missingShell.ok).toBe(false);
 		if (!missingShell.ok) expect(missingShell.error).toMatchObject({ code: "shell_unavailable" });
 
 		const shellPath = join(root, "not-executable-shell");
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		getOrThrow(await env.writeFile(shellPath, "not executable", BACKGROUND_CONTEXT));
-		const spawnErrorEnv = new NodeExecutionEnv({ cwd: root, shellPath });
+		const spawnErrorEnv = new NodeExecutionEnv({ artifactDirectory: root, cwd: root, shellPath });
 		const spawnError = await spawnErrorEnv.exec("printf ok", undefined, BACKGROUND_CONTEXT);
 		expect(spawnError.ok).toBe(false);
 		if (!spawnError.ok) expect(spawnError.error).toMatchObject({ code: "spawn_error" });
@@ -842,7 +843,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("returns an aborted result for pre-aborted and aborted commands", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		expect(await env.exec("touch spawned", undefined, abortedContext())).toMatchObject({
 			ok: false,
 			error: { code: "aborted" },
@@ -861,7 +862,7 @@ describe("NodeExecutionEnv shell", () => {
 		const root = createTempDir();
 		const pidFile = join(root, "shell.pid");
 		const controller = new AbortController();
-		const env = new NodeExecutionEnv({ cwd: root, shellPath: "/bin/bash" });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root, shellPath: "/bin/bash" });
 		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
 		const previousSystemRoot = process.env.SystemRoot;
 		process.env.SystemRoot = "/definitely/missing/windows";
@@ -903,7 +904,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("does not create a spill before output crosses its thresholds", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const result = getOrThrow(
 			await env.exec(
 				"printf short",
@@ -918,7 +919,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("preserves exact raw bytes in the spill while streaming decoded text", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const expected = [0x66, 0x80, 0x00, 0x6f];
 		const result = getOrThrow(
 			await env.exec(
@@ -936,7 +937,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("reports the spill of a command that times out", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const result = await env.exec(
 			"printf 12345678901234567890; sleep 5",
 			{ timeout: 0.3, spill: { afterBytes: 10, afterLines: 10 } },
@@ -950,7 +951,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("fails rather than silently losing a requested spill", async () => {
 		const root = createTempDir();
-		const env = new FailingSpillExecutionEnv({ cwd: root });
+		const env = new FailingSpillExecutionEnv({ artifactDirectory: root, cwd: root });
 		const result = await env.exec(
 			"printf 12345678901234567890",
 			{
@@ -966,7 +967,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("preserves complete large output in the spill", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const size = 500_000;
 		const result = getOrThrow(
 			await env.exec(
@@ -984,7 +985,7 @@ describe("NodeExecutionEnv shell", () => {
 
 	it("streams every line and spills them all once output crosses its line threshold", async () => {
 		const root = createTempDir();
-		const env = new NodeExecutionEnv({ cwd: root });
+		const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 		const collected = await collectShellOutput(
 			env,
 			"i=1; while [ $i -le 15000 ]; do echo line-$i; i=$((i+1)); done",

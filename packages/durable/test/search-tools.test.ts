@@ -19,7 +19,7 @@ describe("portable search tools", () => {
 	let env: NodeExecutionEnv;
 	beforeEach(async () => {
 		directory = await mkdtemp(join(tmpdir(), "amazme-search-tools-"));
-		env = new NodeExecutionEnv({ cwd: directory });
+		env = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory });
 		await mkdir(join(directory, "src"));
 		await writeFile(join(directory, "src", "a.test.ts"), "before\nAlpha a.b\naXb\nafter\n");
 		await writeFile(join(directory, ".hidden.ts"), "Alpha\n");

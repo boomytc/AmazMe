@@ -47,7 +47,7 @@ const harness = await Harness.open(
 		// Committed reads only; a conversation without a sandbox gets no environment, so its tools fail cleanly.
 		env: async ({ conversationId, read }, envContext) => {
 			const sandbox = await read.snapshot(Sandbox, conversationId, envContext);
-			return sandbox?.path === undefined ? undefined : new NodeExecutionEnv({ cwd: sandbox.path });
+			return sandbox?.path === undefined ? undefined : new NodeExecutionEnv({ artifactDirectory: sandbox.path, cwd: sandbox.path });
 		},
 	},
 	context,

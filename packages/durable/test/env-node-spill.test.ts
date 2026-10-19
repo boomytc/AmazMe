@@ -56,7 +56,7 @@ describe("NodeExecutionEnv spill backpressure", () => {
 			const root = join(tmpdir(), `pi-durable-env-spill-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 			mkdirSync(root, { recursive: true });
 			tempDirs.push(root);
-			const env = new NodeExecutionEnv({ cwd: root });
+			const env = new NodeExecutionEnv({ artifactDirectory: root, cwd: root });
 			// The shell exits after the first chunk crosses the spill threshold and backpressures the spill. A background
 			// descendant retains stdout and writes after the post-exit grace period. Without the pending-spill guard,
 			// settlement destroys stdout before that descendant output is read.

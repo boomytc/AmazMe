@@ -617,17 +617,28 @@ function symlinkRefused(path: string, cause?: Error): FileError {
 	return new FileError("invalid", "Refusing to follow a symbolic link", path, cause);
 }
 
+export type NodeExecutionEnvOptions = {
+	cwd: string;
+	/** See `ExecutionEnv.artifactDirectory`. Required; no temporary-directory fallback. */
+	artifactDirectory: string;
+	shellPath?: string;
+	shellEnv?: NodeJS.ProcessEnv;
+	watch?: NodeWatchOptions;
+};
+
 export class NodeExecutionEnv implements ExecutionEnv {
 	/** Every local environment sees the same files. */
 	readonly id: string = "node:local";
 	cwd: string;
+	readonly artifactDirectory: string;
 	private shellPath?: string;
 	private shellEnv?: NodeJS.ProcessEnv;
 	private watchOptions: NodeWatchOptions;
 	private activeChildPids = new Set<number>();
 
-	constructor(options: { cwd: string; shellPath?: string; shellEnv?: NodeJS.ProcessEnv; watch?: NodeWatchOptions }) {
+	constructor(options: NodeExecutionEnvOptions) {
 		this.cwd = options.cwd;
+		this.artifactDirectory = options.artifactDirectory;
 		this.shellPath = options.shellPath;
 		this.shellEnv = options.shellEnv;
 		this.watchOptions = options.watch ?? {};

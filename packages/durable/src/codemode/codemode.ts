@@ -115,7 +115,7 @@ type Start = {
 
 type RunState = {
 	start?: Start;
-	/** Directory of the result's files (the full output, images), created once: a rerun writes the same files again. */
+	/** Directory of the result's files (the full output, images), under the host artifact directory, created once: a rerun writes the same files again. */
 	outputDir?: string;
 	/** The outcome, decided once. */
 	result?: JsonObject;
@@ -588,18 +588,23 @@ class CodemodeCall {
 		};
 	}
 
-	/** The run's output directory: the recorded one, else a new temp directory, recorded before any file is written. */
+	/**
+	 * The run's output directory: the recorded one, else a per-run subdirectory of the host-injected
+	 * `ExecutionEnv.artifactDirectory`, recorded before any file is written so a crash rerun overwrites the same paths.
+	 */
 	private async outputDir(env: ExecutionEnv): Promise<string> {
 		const recorded = await this.api.commit(
 			async (tx) => (await tx.doc(CodemodeRunDoc, this.api.taskId)).outputDir,
 			this.context,
 		);
 		if (recorded !== undefined) return recorded;
-		const created = await env.createTempDir("amazme-codemode-", this.context);
+		const joined = await env.joinPath([env.artifactDirectory, `codemode-${this.api.taskId}`], this.context);
+		if (!joined.ok) throw new Error(joined.error.message);
+		const created = await env.createDir(joined.value, { recursive: true }, this.context);
 		if (!created.ok) throw new Error(created.error.message);
 		return this.api.commit(async (tx) => {
 			const run = await tx.doc(CodemodeRunDoc, this.api.taskId);
-			run.outputDir ??= created.value;
+			run.outputDir ??= joined.value;
 			return run.outputDir!;
 		}, this.context);
 	}

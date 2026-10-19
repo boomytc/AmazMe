@@ -53,7 +53,7 @@ afterEach(() => {
 function environment(): NodeExecutionEnv {
 	const cwd = mkdtempSync(join(tmpdir(), "amazme-checked-write-"));
 	dirs.push(cwd);
-	return new NodeExecutionEnv({ cwd });
+	return new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 }
 
 describe("Node checked publication", () => {
@@ -134,7 +134,7 @@ describe("Node checked publication", () => {
 
 	it("keeps the preceding writer's barrier when a queued waiter is cancelled", async () => {
 		const env = environment();
-		const sibling = new NodeExecutionEnv({ cwd: env.cwd });
+		const sibling = new NodeExecutionEnv({ artifactDirectory: env.cwd, cwd: env.cwd });
 		writeFileSync(join(env.cwd, "file.txt"), "before");
 		const observed = getOrThrow(await env.fileRevision("file.txt", context));
 		const entered = Promise.withResolvers<void>();
@@ -215,7 +215,7 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
 	async () => {
 		const cwd = mkdtempSync(join(tmpdir(), "amazme-readonly-publish-"));
 		try {
-			const env = new NodeExecutionEnv({ cwd });
+			const env = new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 			writeFileSync(join(cwd, "file.txt"), "original");
 			chmodSync(join(cwd, "file.txt"), 0o444);
 			const revision = getOrThrow(await env.fileRevision("file.txt", BACKGROUND_CONTEXT));

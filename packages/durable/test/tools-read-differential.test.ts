@@ -165,7 +165,7 @@ describe("read tool", () => {
 	it("returns exactly what reading the whole file returned", async () => {
 		const cwd = mkdtempSync(join(tmpdir(), "pi-durable-read-"));
 		dirs.push(cwd);
-		const env = new NodeExecutionEnv({ cwd });
+		const env = new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 		const tool = createReadTool();
 		for (let seed = 1; seed <= 400; seed++) {
 			const next = random(seed);
@@ -212,7 +212,7 @@ describe("read tool", () => {
 			...chunk("IDAT", 10),
 		]);
 		writeFileSync(join(cwd, "a.png"), png);
-		const env = new NodeExecutionEnv({ cwd });
+		const env = new NodeExecutionEnv({ cwd, artifactDirectory: cwd });
 		const actual = await outcome(async () => createReadTool().execute({ path: "a.png" }, await apiFor(env), BACKGROUND_CONTEXT));
 		expect(actual).toEqual(await outcome(() => referenceRead(png, "a.png", undefined, undefined)));
 	});

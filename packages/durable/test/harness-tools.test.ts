@@ -897,7 +897,7 @@ describe("tool execution api", () => {
 		const { harness, root } = await openChat(new MemoryStorage(), setup, {
 			env: ({ conversationId, cwd }) => {
 				targets.push([conversationId, cwd]);
-				return new NodeExecutionEnv({ cwd: cwd ?? "/tmp" });
+				return new NodeExecutionEnv({ artifactDirectory: cwd ?? "/tmp", cwd: cwd ?? "/tmp" });
 			},
 		});
 		await root.configure({ cwd: "/tmp" }, context);
@@ -938,7 +938,7 @@ describe("coding tools", () => {
 			addTool(setup.registry, createBashTool());
 			const command = "i=1; while [ $i -le 3000 ]; do echo line-$i; i=$((i + 1)); done; exit 7";
 			setup.faux.setResponses([calls(["bash", { command }, "b"]), DONE]);
-			const env = new NodeExecutionEnv({ cwd: directory });
+			const env = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory });
 			const { harness, root } = await openChat(new MemoryStorage(), setup, { env });
 			await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 			const entry = (await allEntries(root)).find((candidate) => ToolResultEntry.is(candidate))!;
@@ -975,7 +975,7 @@ describe("coding tools", () => {
 				calls(["bash", { command: "cat notes.txt" }, "b"]),
 				DONE,
 			]);
-			const env = new NodeExecutionEnv({ cwd: directory });
+			const env = new NodeExecutionEnv({ artifactDirectory: directory, cwd: directory });
 			const { harness, root } = await openChat(new MemoryStorage(), setup, { env });
 			const settled = await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 			expect(settled.status).toBe("done");

@@ -1,6 +1,3 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { Context } from "@amazme/chord";
 import {
 	type AssistantImages,
@@ -17,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { createCodemodeExtension } from "../src/codemode/codemode.ts";
 import type { ExecutionEnv } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
+import { createArtifactEnv } from "./artifact-env.ts";
 import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { context } from "./session-support.ts";
 import { deferred } from "./task-support.ts";
@@ -222,32 +220,32 @@ describe("code mode models.*", () => {
 	it("does not start a model call that waited for a slot after the script ended", async () => {
 		const chat = modelsChat();
 		chat.gate.open = deferred();
-		const directory = await mkdtemp(join(tmpdir(), "pi-codemode-models-"));
+		const { cwd, artifactDirectory } = await createArtifactEnv({ prefix: "amazme-codemode-models-" });
 		// The result spills to a file after the script ended and before the tool returns. Then the running
 		// calls finish and free their slots, which the two waiting calls would take.
-		class SlowTempFiles extends NodeExecutionEnv {
-			override async createTempDir(prefix: string | undefined, ctx: Context) {
+		class SlowArtifactDir extends NodeExecutionEnv {
+			override async createDir(
+				path: string,
+				options: { recursive?: boolean } | undefined,
+				ctx: Context,
+			) {
 				chat.gate.open.resolve();
 				await new Promise((resolve) => setTimeout(resolve, 100));
-				return super.createTempDir(prefix, ctx);
+				return super.createDir(path, options, ctx);
 			}
 		}
-		try {
-			const { text } = await run(
-				chat,
-				`const model = await models.getModelOfType("classifier", "test", "judge");
+		const { text } = await run(
+			chat,
+			`const model = await models.getModelOfType("classifier", "test", "judge");
 				const context = { state: {}, questions: { good: { type: "bool", instructions: "?", criteria: { true: "y", false: "n" } } } };
 				for (let i = 0; i < 6; i++) models.classify(model, context).catch(() => {});
 				// A journaled call after them: by its result, the first four have been launched.
 				await models.getModelsOfType("image");
 				return "x".repeat(60000);`,
-				new SlowTempFiles({ cwd: directory }),
-			);
-			expect(text).toContain("[Full output: ");
-			expect(chat.calls.classify).toBe(4);
-		} finally {
-			await rm(directory, { recursive: true, force: true });
-		}
+			new SlowArtifactDir({ cwd, artifactDirectory }),
+		);
+		expect(text).toContain("[Full output: ");
+		expect(chat.calls.classify).toBe(4);
 	});
 
 	it("notes generated images the script did not show", async () => {
