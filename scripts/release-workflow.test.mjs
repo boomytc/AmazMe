@@ -74,10 +74,10 @@ test("pre-release tags publish as prereleases and never become latest", () => {
 			rmSync(temp, { recursive: true, force: true });
 		}
 	};
-	const rc = publish("v1.5.0-rc.1");
+	const rc = publish("v9.9.9-rc.1");
 	assert.ok(rc.includes("--prerelease"));
 	assert.ok(rc.includes("--latest=false"));
-	const stable = publish("v1.5.0");
+	const stable = publish("v9.9.9");
 	assert.ok(stable.includes("--latest"));
 	assert.ok(!stable.includes("--prerelease"));
 });
