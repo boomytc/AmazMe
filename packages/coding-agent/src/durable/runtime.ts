@@ -307,6 +307,8 @@ export interface OpenDurableOptions
 	/** Application-selected Chord facets; no plugin owner is started when absent. */
 	readonly facetLoader?: FacetLoader;
 	readonly cwd?: string;
+	/** Shown as an info notice once it resolves to text, e.g. the startup update check. */
+	readonly startupNotice?: Promise<string | undefined>;
 	readonly continueSession?: boolean;
 	readonly noSession?: boolean;
 	readonly sessionDir?: string;
@@ -687,6 +689,12 @@ export async function openDurable(
 				);
 		};
 		await reportPausedRun();
+		void options.startupNotice?.then(
+			(message) => {
+				if (message) notice("info", message);
+			},
+			() => {},
+		);
 		let scopeDiagnostics = scope.diagnostics;
 		const toolReload = createToolReloadTracker(toolSelection);
 		const publishSessionDiagnostics = (): void => {

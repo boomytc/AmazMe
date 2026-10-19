@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- 启动时检查新版本：TUI 显示一条提示，`-p` 文本模式在 stderr 是终端时于结束后提示。来源是 GitHub Releases 的 `latest.json`（发版工作流新增独立的 `manifest` job 生成），24 小时内最多查一次；`--offline`、`AMAZME_OFFLINE=1` 或 `AMAZME_SKIP_VERSION_CHECK=1` 时不发任何请求。源码 checkout 只提示版本、不给下载地址；`latest.json` 里版本号不是合法 semver、产物地址不在本仓 `releases/download/v<版本>/` 下或 sha256 不是 64 位十六进制时整份忽略。网页和桌面端可从包入口导入同一个 `checkForUpdate`。
+
 ### Fixed
 
 - Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp path created lazily on first write and cleaned up on release. `executeCodemode` and `ExtensionContext.artifactDirectory` require a directory by type (no `pi-codemode-*` OS-temp fallback); the built-in codemode extension reads it from the session context.
