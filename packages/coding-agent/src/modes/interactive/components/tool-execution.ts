@@ -19,7 +19,7 @@ import { formatToolCallWithArgs, getTextOutput as getRenderedTextOutput } from "
 import { ensurePngTranscoder } from "../../../utils/image-convert.ts";
 import { theme } from "../theme/theme.ts";
 import { keyHint } from "./keybinding-hints.ts";
-import { MeasuredContainer, ToolBlockFrame, type ToolBlockTone } from "./tool-block-frame.ts";
+import { MeasuredContainer, ToolBlockFrame } from "./tool-block-frame.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
 
@@ -27,6 +27,16 @@ export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
 	outputPad?: number;
+}
+
+/** Folding facts for one card. `pending` includes a call that has not settled. */
+export interface ToolTraceState {
+	readonly name: string;
+	readonly pending: boolean;
+	readonly failed: boolean;
+	readonly args: unknown;
+	readonly details: unknown;
+	readonly outputPad: number;
 }
 
 export class ToolExecutionComponent extends Container {
@@ -77,6 +87,19 @@ export class ToolExecutionComponent extends Container {
 	};
 	readonly transcriptRowExpanded = (): boolean => this.expanded;
 
+	/** What a trace run needs to fold this card. Pending and failed cards stay on their own row. */
+	get traceState(): ToolTraceState {
+		const settled = this.result !== undefined && !this.isPartial;
+		return {
+			name: this.toolName,
+			pending: !settled,
+			failed: settled && this.result?.isError === true,
+			args: this.args,
+			details: this.result?.details,
+			outputPad: this.outputPad,
+		};
+	}
+
 	constructor(
 		toolName: string,
 		toolCallId: string,
@@ -97,15 +120,14 @@ export class ToolExecutionComponent extends Container {
 		this.ui = ui;
 		this.cwd = cwd;
 
-		// Every tool block shares one border shell; the body keeps its own background and renderers.
-		this.frame = new ToolBlockFrame({ tone: () => this.blockTone() });
+		this.frame = new ToolBlockFrame();
 		this.addChild(this.frame);
 
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
-		this.contentBox = new Box(1, 1);
-		this.contentText = new Text("", 1, 1);
+		this.contentBox = new Box(1, 0);
+		this.contentText = new Text("", 1, 0);
 		this.contentTextRegion = this.createResultRegion(this.contentText);
 		this.selfRenderContainer = new MeasuredContainer();
 
@@ -225,11 +247,6 @@ export class ToolExecutionComponent extends Container {
 		this.frame.setSelected(selected);
 	}
 
-	private blockTone(): ToolBlockTone {
-		if (this.isPartial) return "pending";
-		return this.result?.isError ? "error" : "success";
-	}
-
 	setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
 		this.updateDisplay();
@@ -342,7 +359,7 @@ export class ToolExecutionComponent extends Container {
 		}
 		this.imageSpacers = [];
 
-		if (this.result) {
+		if (this.result && this.expanded) {
 			const imageBlocks = this.result.content.filter((c) => c.type === "image");
 			const caps = getCapabilities();
 			for (const img of imageBlocks) {

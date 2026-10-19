@@ -13,7 +13,7 @@ import { renderDiff } from "../../../modes/interactive/components/diff.ts";
 import { keyHint } from "../../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
-import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "../render-utils.ts";
+import { normalizeDisplayText, renderToolPath, replaceTabs, rowStatusSuffix, str } from "../render-utils.ts";
 
 type WriteHighlightCache = {
 	rawPath: string | null;
@@ -107,6 +107,14 @@ function formatWriteCall(
 	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
 	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
+	if (!options.expanded) {
+		if (fileContent === null) text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
+		else if (fileContent) {
+			const added = trimTrailingEmptyLines(normalizeDisplayText(fileContent).split("\n")).length;
+			text += theme.fg("muted", ` +${added} -0`);
+		}
+		return text;
+	}
 
 	if (fileContent === null) {
 		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
@@ -167,15 +175,14 @@ export const writeRenderers: Pick<ToolDefinition<TSchema, WriteToolDetails>, "re
 		} else {
 			component.cache = undefined;
 		}
-		component.setText(
-			formatWriteCall(
-				renderArgs,
-				{ expanded: context.expanded, isPartial: context.isPartial },
-				theme,
-				component.cache,
-				context.cwd,
-			),
+		const call = formatWriteCall(
+			renderArgs,
+			{ expanded: context.expanded, isPartial: context.isPartial },
+			theme,
+			component.cache,
+			context.cwd,
 		);
+		component.setText(context.expanded ? call : call + rowStatusSuffix(theme, context.isPartial, context.isError));
 		return component;
 	},
 	renderResult(result, _options, theme, context) {

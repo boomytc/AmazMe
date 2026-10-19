@@ -53,6 +53,7 @@ import { formatTokens } from "../modes/interactive/components/footer.ts";
 import { keyHint, keyText } from "../modes/interactive/components/keybinding-hints.ts";
 import { type StatusIndicator, WorkingStatusIndicator } from "../modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent, type ToolRenderers } from "../modes/interactive/components/tool-execution.ts";
+import { ToolTracePlacement } from "../modes/interactive/components/tool-trace.ts";
 import { UserMessageComponent } from "../modes/interactive/components/user-message.ts";
 import { VisualLinePreview } from "../modes/interactive/components/visual-truncate.ts";
 import { getEditorTheme, getMarkdownTheme, initTheme, onThemeChange, setRegisteredThemes, type Theme, theme } from "../modes/interactive/theme/theme.ts";
@@ -269,6 +270,7 @@ class DurableTui {
 	readonly #ui: TuiAltScreen | TuiMainScreen;
 	readonly #header = new Container();
 	readonly #chat = new Container();
+	readonly #trace = new ToolTracePlacement(this.#chat);
 	readonly #tasks = new Container();
 	readonly #queue = new Container();
 	readonly #notices = new Container();
@@ -687,6 +689,7 @@ class DurableTui {
 
 	#rebuild(entries: readonly EntryRecord[]): void {
 		this.#chat.clear();
+		this.#trace.reset();
 		this.#discardTools();
 		this.#summaries.length = 0;
 		this.#rebuilt = true;
@@ -701,11 +704,13 @@ class DurableTui {
 	#addEntry(entry: EntryRecord): void {
 		const message = entry.model?.[0];
 		if ((entry.kind === "amazme.user" || (!entry.kind.startsWith("amazme.") && entry.model?.length === 1)) && message?.role === "user") {
+			this.#trace.close();
 			this.#chat.addChild(new Spacer(1));
 			this.#chat.addChild(
 				new UserMessageComponent(userText(message.content), getMarkdownTheme(), 1, this.#markdownTransformers),
 			);
 		} else if (entry.kind === "amazme.assistant" && message?.role === "assistant") {
+			if (this.#streaming === undefined) this.#trace.close();
 			const component =
 				this.#streaming ??
 				new AssistantMessageComponent(
@@ -745,6 +750,7 @@ class DurableTui {
 			const result = message as ToolResultMessage;
 			this.#tool(result.toolName, result.toolCallId).updateResult(result);
 		} else if (entry.kind === "amazme.compaction") {
+			this.#trace.close();
 			const summary = new CompactionComponent(message?.role === "user" ? userText(message.content) : "", this.#expanded);
 			this.#summaries.push(summary);
 			this.#chat.addChild(new Spacer(1));
@@ -754,6 +760,7 @@ class DurableTui {
 
 	#syncStreaming(message: AssistantMessage): void {
 		if (this.#streaming === undefined) {
+			this.#trace.close();
 			this.#streaming = new AssistantMessageComponent(
 				undefined,
 				false,
@@ -773,6 +780,7 @@ class DurableTui {
 	}
 
 	#addText(text: string): void {
+		this.#trace.close();
 		this.#chat.addChild(new Spacer(1));
 		this.#chat.addChild(new Text(theme.fg("muted", text), 1, 0));
 	}
@@ -786,7 +794,7 @@ class DurableTui {
 		}
 		const component = new ToolExecutionComponent(name, callId, args ?? {}, {}, DurableTui.#renderers[name] ?? {}, this.#ui, this.#cwd);
 		component.setExpanded(this.#expanded);
-		this.#chat.addChild(component);
+		this.#trace.add(component);
 		this.#cards.push(component);
 		this.#tools.set(key, component);
 		return component;

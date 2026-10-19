@@ -116,6 +116,7 @@ describe("edit tool TUI rendering", () => {
 		await waitForRender();
 
 		component.setArgsComplete();
+		component.setExpanded(true);
 		tui.requestRender();
 		await waitForRender();
 		await waitForRender();
@@ -182,6 +183,7 @@ describe("edit tool TUI rendering", () => {
 		tui.addChild(component);
 		tui.start();
 		await waitForRender();
+		component.setExpanded(true);
 
 		component.updateResult(
 			{

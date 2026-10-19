@@ -7,6 +7,7 @@ import { AssistantMessageComponent } from "../modes/interactive/components/assis
 import { terminalMarkdownTransformers } from "../modes/interactive/components/mermaid.ts";
 import { type StatusIndicator, WorkingStatusIndicator } from "../modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent, type ToolRenderers } from "../modes/interactive/components/tool-execution.ts";
+import { ToolTracePlacement } from "../modes/interactive/components/tool-trace.ts";
 import { UserMessageComponent } from "../modes/interactive/components/user-message.ts";
 import { getMarkdownTheme, theme } from "../modes/interactive/theme/theme.ts";
 
@@ -23,6 +24,7 @@ export class ExperimentalChatView {
 	static readonly #renderers: Record<string, ToolRenderers> = createAllToolRenderers();
 
 	readonly transcript = new Container();
+	readonly #trace = new ToolTracePlacement(this.transcript);
 	readonly pendingMessages = new Container();
 	readonly status = new Container();
 	readonly #ui: TUI;
@@ -154,6 +156,7 @@ export class ExperimentalChatView {
 
 	#rebuild(entries: readonly EntryRecord[]): void {
 		this.transcript.clear();
+		this.#trace.reset();
 		this.#discardTools();
 		this.#renderedEntryIds = [];
 		this.#streaming = undefined;
@@ -166,11 +169,13 @@ export class ExperimentalChatView {
 	#addEntry(entry: EntryRecord): void {
 		const message = entry.model?.[0];
 		if (entry.kind === "amazme.user" && message?.role === "user") {
+			this.#trace.close();
 			this.transcript.addChild(new Spacer(1));
 			this.transcript.addChild(
 				new UserMessageComponent(userText(message.content), getMarkdownTheme(), 1, this.#markdownTransformers),
 			);
 		} else if (entry.kind === "amazme.assistant" && message?.role === "assistant") {
+			if (this.#streaming === undefined) this.#trace.close();
 			const component =
 				this.#streaming ??
 				new AssistantMessageComponent(
@@ -202,6 +207,7 @@ export class ExperimentalChatView {
 			const result = message as ToolResultMessage;
 			this.#tool(result.toolName, result.toolCallId).updateResult(result);
 		} else if (entry.kind === "amazme.compaction") {
+			this.#trace.close();
 			this.#addText(theme.fg("muted", "[compaction]"));
 			if (message?.role === "user") this.#addText(userText(message.content));
 		} else if (entry.kind === "amazme.reset") {
@@ -211,6 +217,7 @@ export class ExperimentalChatView {
 
 	#syncStreaming(message: AssistantMessage): void {
 		if (this.#streaming === undefined) {
+			this.#trace.close();
 			this.#streaming = new AssistantMessageComponent(
 				undefined,
 				false,
@@ -245,13 +252,14 @@ export class ExperimentalChatView {
 			this.#ui,
 			this.#cwd,
 		);
-		this.transcript.addChild(component);
+		this.#trace.add(component);
 		this.#cards.push(component);
 		this.#tools.set(key, component);
 		return component;
 	}
 
 	#addText(text: string): void {
+		this.#trace.close();
 		this.transcript.addChild(new Spacer(1));
 		this.transcript.addChild(new Text(text, 1, 0));
 	}

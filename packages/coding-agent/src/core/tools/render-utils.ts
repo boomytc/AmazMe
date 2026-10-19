@@ -1,7 +1,7 @@
 import * as os from "node:os";
 import { pathToFileURL } from "node:url";
 import type { ImageContent, TextContent } from "@amazme/ai";
-import { getCapabilities, getImageDimensions, hyperlink, imageFallback } from "@amazme/tui";
+import { type Component, Container, getCapabilities, getImageDimensions, hyperlink, imageFallback, Text } from "@amazme/tui";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../../utils/ansi.ts";
 import { resolvePath } from "../../utils/paths.ts";
@@ -112,6 +112,33 @@ export function formatToolCallWithArgs(title: string, args: unknown, theme: Them
 	const pairs = entries.map(([key, value]) => `${key}=${JSON.stringify(value) ?? String(value)}`).join(" ");
 	const preview = pairs.length > COLLAPSED_ARGS_CHARS ? `${pairs.slice(0, COLLAPSED_ARGS_CHARS - 3)}...` : pairs;
 	return `${header} ${theme.fg("muted", preview)}`;
+}
+
+/** Same-line status for a collapsed row. Success adds nothing. */
+export function rowStatusSuffix(theme: Theme, partial: boolean, failed: boolean): string {
+	if (failed) return theme.fg("error", " failed");
+	if (partial) return theme.fg("muted", " …");
+	return "";
+}
+
+/** A collapsed success result takes no lines. Reuses a container so the next expand can replace it. */
+export function hiddenResult(last: Component | undefined): Component {
+	if (last instanceof Container && !(last instanceof Text)) {
+		last.clear();
+		return last;
+	}
+	return new Container();
+}
+
+/** Added and removed lines in a display diff (`+12 content` / `-3 content`). */
+export function countDiffLines(diff: string): { added: number; removed: number } {
+	let added = 0;
+	let removed = 0;
+	for (const line of diff.split("\n")) {
+		if (line.startsWith("+")) added += 1;
+		else if (line.startsWith("-")) removed += 1;
+	}
+	return { added, removed };
 }
 
 /** Duration as `4.2s` below a minute, then `1m 30s` and `2h 3m 4s`. */

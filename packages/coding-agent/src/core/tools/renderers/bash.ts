@@ -12,7 +12,7 @@ import { VisualLinePreview } from "../../../modes/interactive/components/visual-
 import { theme } from "../../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../../extensions/types.ts";
 import type { BashToolDetails } from "../bash.ts";
-import { getTextOutput, invalidArgText, startToolTimer, str, toolTimerText } from "../render-utils.ts";
+import { getTextOutput, invalidArgText, rowStatusSuffix, startToolTimer, str, toolTimerText } from "../render-utils.ts";
 import { DEFAULT_MAX_BYTES, formatSize } from "../truncate.ts";
 
 const BASH_PREVIEW_LINES = 5;
@@ -95,12 +95,23 @@ export function createShellRenderers(prompt: string): Pick<ToolDefinition<any, a
 		renderCall(args, _theme, context) {
 			startToolTimer(context);
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatShellCall(args as { command?: string; timeout?: number } | undefined, prompt));
+			let line = formatShellCall(args as { command?: string; timeout?: number } | undefined, prompt);
+			if (!context.expanded) {
+				const timer = toolTimerText(context, context.isPartial);
+				if (timer) line += theme.fg("muted", `  ${timer}`);
+				if (context.isError) line += rowStatusSuffix(theme, false, true);
+				else if (!timer) line += rowStatusSuffix(theme, context.isPartial, false);
+			}
+			text.setText(line);
 			return text;
 		},
 		renderResult(result, options, _theme, context) {
 			const timerText = toolTimerText(context, options.isPartial);
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
+			if (!options.expanded) {
+				component.clear();
+				return component;
+			}
 			rebuildBashResultRenderComponent(component, result as any, options, context.showImages, timerText);
 			component.invalidate();
 			return component;
