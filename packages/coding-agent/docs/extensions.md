@@ -31,11 +31,7 @@ export default function (pi: ExtensionAPI) {
 }
 ```
 
-An AgentSession-based interactive presentation can run `/hello`. The RPC runtime can load the same module directly:
-
-```bash
-amazme --mode rpc --extension ./hello.ts
-```
+An AgentSession-based interactive presentation can run `/hello`. CLI, SDK, print, JSON, and RPC do not load this factory. Pass a native facet with `-e` instead; see [Plugins](plugin-runtime.md).
 
 Pi uses `jiti`, so local TypeScript extensions do not need a separate compilation step. Use [Pi packages](packages.md) for distributed extensions and dependencies.
 

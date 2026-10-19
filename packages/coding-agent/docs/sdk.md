@@ -88,7 +88,7 @@ Use `DefaultResourceLoader` when you want standard discovery with selected overr
 
 <a id="inlineextension"></a>
 
-Inline extension factories can be supplied through `DefaultResourceLoader`. Give one an `InlineExtension` name only when it needs a stable name in diagnostics and startup output. A named inline extension with `replaceable: true` is left out when another extension registers a tool, command, or flag with a name it registers during loading, instead of both loading with a conflict. The CLI's built-in codemode, tool search, and MCP extensions are replaceable. A named entry with `builtin: true` is not an inline extension: it supplies the code of the `builtin:<name>` extension, which loads like a configured extension file. It loads by default, is listed in `amazme config`, and is disabled by `-builtin:<name>` in the `extensions` setting or by `noExtensions`; `additionalExtensionPaths: ["builtin:<name>"]` loads it explicitly. It loads after project trust is resolved, so it cannot handle `project_trust`. The CLI's built-in extensions use it.
+`extensions` on `createDurableSession` takes native facet paths: a source file, a plugin package, or the same sources `-e` accepts. Inline extension factories are not accepted, and supplying them through `DefaultResourceLoader` does not install them on a Durable session. Print, JSON, and RPC use that same native path. See [native plugins](plugin-runtime.md) and the [extensions example](../examples/sdk/06-extensions.ts).
 
 <a id="codemode-mcp"></a>
 

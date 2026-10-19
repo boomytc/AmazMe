@@ -109,7 +109,7 @@ amazme -e /path/to/AmazMe/packages/coding-agent/plugins/memory
 
 通过 `/plugins` 查看所选来源，修改原源码后，在任务结束或取消时运行 `/reload`。应用壳和内核修改需要构建与重启。自动化使用宿主的 `server` 角色，详见对应插件说明。
 
-原生包通过 `chord.facets` 声明角色，API 为 `@amazme/coding-agent/plugin`。SDK 与 print/RPC 使用独立的扩展工厂契约，包资源声明沿用 `pi` 字段。开发前查看 [插件执行与重载](packages/coding-agent/docs/plugin-runtime.md)、[原生示例](packages/coding-agent/examples/plugins/)或 [SDK 扩展](packages/coding-agent/docs/extensions.md)。
+原生包通过 `chord.facets` 声明角色，API 为 `@amazme/coding-agent/plugin`。CLI、SDK、print 与 RPC 都加载这些原生 facet，不接受内联扩展工厂。包资源声明沿用 `pi` 字段。开发前查看 [插件执行与重载](packages/coding-agent/docs/plugin-runtime.md)、[原生示例](packages/coding-agent/examples/plugins/)或 [SDK 示例](packages/coding-agent/examples/sdk/06-extensions.ts)。
 
 ## 配置与文档
 
