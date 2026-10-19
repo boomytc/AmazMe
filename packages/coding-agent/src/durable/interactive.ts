@@ -3,6 +3,8 @@ import { runDurableTui } from "./tui.ts";
 import { printTimings, time } from "../core/timings.ts";
 import { installShutdownSignals } from "../utils/shutdown-signals.ts";
 import type { ImageContent } from "@amazme/ai";
+import { recordCrash } from "../core/crash-log.ts";
+import { join } from "node:path";
 
 /** The default interactive session: one durable sqlite conversation, the same path the web host drives. */
 export async function runDurableInteractive(
@@ -14,6 +16,15 @@ export async function runDurableInteractive(
 	},
 ): Promise<void> {
 	const durable = await openDurable(options);
+	let crashRecorded = false;
+	const crash = (error: unknown, kind: "fatal_error" | "uncaught_exception"): void => {
+		if (crashRecorded) return;
+		crashRecorded = true;
+		const session = durable.view.current().session;
+		recordCrash({ kind, error, cwd: session.cwd, sessionFile: session.directory === undefined ? undefined : join(session.directory, "session.sqlite") });
+	};
+	const monitor = (error: Error): void => crash(error, "uncaught_exception");
+	process.on("uncaughtExceptionMonitor", monitor);
 	time("openDurable");
 	const inputs: Promise<boolean>[] = [];
 	let exitTui = (): void => {};
@@ -62,14 +73,19 @@ export async function runDurableInteractive(
 			},
 		});
 		returned = true;
+	} catch (error) {
+		crash(error, "fatal_error");
+		throw error;
 	} finally {
 		try {
 			await durable.close();
 			await Promise.all(inputs);
 		} catch (error) {
+			crash(error, "fatal_error");
 			forced = false;
 			throw error;
 		} finally {
+			process.off("uncaughtExceptionMonitor", monitor);
 			// A failed presentation must not exit 0, and must not leave the signal listeners behind.
 			shutdown.finish();
 			if (!forced || !returned) {

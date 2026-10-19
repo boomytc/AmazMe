@@ -61,6 +61,10 @@ import { InteractiveThemeController } from "../modes/interactive/theme/theme-con
 import { agentOf, type DurableController, type DurableView, type DurableViewSource, formatLane } from "./runtime.ts";
 import { restoreDurableScreen } from "./screen-restore.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
+import { CACHE_TTL_MS, collectCacheMisses, type CacheMiss } from "../core/cache-stats.ts";
+import { sessionEntriesFor } from "./session-surface.ts";
+import { getRadiusGatewayUrl } from "../core/radius.ts";
+import type { DurableBugReportOptions } from "./bug-report.ts";
 import type { SlashCommandCompletion } from "../core/plugins/slash-commands.ts";
 
 /** Runtime information without sending a local command to the model. */
@@ -295,6 +299,9 @@ class DurableTui {
 	#expanded = false;
 	#renderedEntryIds: number[] = [];
 	#streaming: AssistantMessageComponent | undefined;
+	readonly #settings: SettingsManager;
+	#showCacheMisses = false;
+	#cacheMisses = new Map<AssistantMessage, CacheMiss>();
 	readonly #markdownTransformers: ReturnType<typeof terminalMarkdownTransformers>;
 	#indicator: StatusIndicator | undefined;
 	#statusText = "";
@@ -303,6 +310,7 @@ class DurableTui {
 	#transcript: ScrollView | undefined;
 
 	constructor(cwd: string, handlers: Handlers, settings: SettingsManager) {
+		this.#settings = settings;
 		this.#cwd = cwd;
 		this.#markdownTransformers = terminalMarkdownTransformers(() => settings.getMermaidRenderingMode());
 		this.#plugins = handlers.plugins;
@@ -482,6 +490,19 @@ class DurableTui {
 		}
 		const live = (view.conversation.docs["amazme.live"] ?? {}) as LiveState;
 		const shown = [...view.history, ...view.conversation.entries];
+		const showCacheMisses = this.#settings.getShowCacheMissNotices();
+		this.#cacheMisses = showCacheMisses
+			? collectCacheMisses(sessionEntriesFor([...shown].sort((left, right) => left.id - right.id)), {
+				getModel: (provider, modelId) => {
+					const model = view.models.find(model => model.provider === provider && model.modelId === modelId);
+					return model === undefined ? undefined : { cost: { cacheRead: model.cacheReadCost ?? 0 } };
+				},
+			})
+			: new Map();
+		if (showCacheMisses !== this.#showCacheMisses) {
+			this.#showCacheMisses = showCacheMisses;
+			this.#rebuild(shown);
+		}
 		this.#syncTranscript(shown);
 		const message = live.generation?.message as AssistantMessage | undefined;
 		// A partial without its entry was dropped, for example by a retry: render the transcript again.
@@ -698,6 +719,13 @@ class DurableTui {
 			if (this.#streaming === undefined) this.#chat.addChild(component);
 			this.#streaming = undefined;
 			component.updateContent(message, false);
+			const miss = this.#cacheMisses.get(message);
+			if (miss && (miss.missedTokens >= 20_000 || miss.missedCost >= 0.1)) {
+				const label = miss.modelChanged ? "Cache miss after model switch"
+					: miss.idleMs >= CACHE_TTL_MS ? `Cache miss after ${Math.round(miss.idleMs / 60_000)}m idle` : "Cache miss";
+				const cost = miss.missedCost >= 0.01 ? ` (~$${miss.missedCost.toFixed(2)})` : "";
+				this.#chat.addChild(new Text(theme.fg("warning", `${label}: ${formatTokens(miss.missedTokens)} tokens re-billed${cost}`), 1, 0));
+			}
 			// Only a tool-calling answer runs its calls; an aborted, failed, or truncated one never does.
 			const ran = message.stopReason === "toolUse";
 			for (const content of message.content) {
@@ -1073,6 +1101,27 @@ export async function runDurableTui(
 			if (trimmed === "/fork") return void controller.fork();
 			if (trimmed === "/older") return void controller.loadOlder();
 			if (trimmed === "/share") return void controller.share();
+			if (trimmed === "/bug" || trimmed.startsWith("/bug ")) {
+				const hint = trimmed.slice("/bug".length).trim() || undefined;
+				const chooseDelivery = (content: DurableBugReportOptions["content"]): void => {
+					const selector = new ListSelector("Bug report delivery", [
+						{ value: "zip", label: "Export ZIP to the session working directory" },
+						{ value: "upload", label: `Upload to ${new URL(getRadiusGatewayUrl()).host} (Pi developers / Earendil)` },
+					], (delivery) => {
+						view.restoreEditor();
+						if (delivery === "zip" || delivery === "upload") void controller.reportBug({ hint, content, delivery });
+					}, () => view.restoreEditor());
+					view.mount(selector);
+				};
+				view.mount(new ListSelector("Bug report contents (includes settings, model/provider metadata and error diagnostics)", [
+					{ value: "diagnostics", label: "Diagnostics only" },
+					{ value: "summary", label: "Diagnostics + summary (sends conversation to the current model; uses tokens)" },
+					{ value: "session", label: "Diagnostics + full transcript (messages, file contents, tool output)" },
+				], content => {
+					if (content === "diagnostics" || content === "summary" || content === "session") chooseDelivery(content);
+				}, () => view.restoreEditor()));
+				return;
+			}
 			if (trimmed === "/compact" || trimmed.startsWith("/compact ")) {
 				const instructions = trimmed.slice("/compact".length).trim();
 				return void controller.compact(instructions || undefined);
@@ -1088,7 +1137,7 @@ export async function runDurableTui(
 				return;
 			}
 			const nativeName = /^\/([^\s]+)/u.exec(trimmed)?.[1];
-			if (["changes", "limits", "resume-run", "execution"].includes(nativeName ?? "")) return void controller.runCommand(nativeName!, trimmed.slice(nativeName!.length + 1).trim());
+			if (["changes", "limits", "resume-run", "execution", "session"].includes(nativeName ?? "")) return void controller.runCommand(nativeName!, trimmed.slice(nativeName!.length + 1).trim());
 			if (NATIVE_COMMANDS.some(({ name }) => name === nativeName)) {
 				view.mount(new InfoPanel("Command", `Unsupported arguments for /${nativeName}. Type / to inspect the command.`, () => view.restoreEditor()));
 				return;

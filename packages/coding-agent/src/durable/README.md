@@ -32,6 +32,8 @@ SDK 与 Durable 将现有 `httpIdleTimeoutMs` 同时用于 Models 的流空闲�
 | `/fork` | 从当前会话最新记录创建分支并聚焦 |
 | `/older` | 分页读取持久历史 |
 | `/tasks` | 显示或隐藏当前任务图 |
+| `/session` | 当前分支的消息数量与累计缓存重复计费统计，包含继承历史 |
+| `/bug [description]` | 选择诊断、模型摘要或完整会话，再选择本地 ZIP 或上传；Esc 取消 |
 | Ctrl+O | 展开工具结果和压缩摘要 |
 | Ctrl+C、Ctrl+D | 退出；未完成执行在重开时恢复 |
 
@@ -46,8 +48,13 @@ SDK 与 Durable 将现有 `httpIdleTimeoutMs` 同时用于 Models 的流空闲�
 | `tui.ts` | TUI 呈现与键盘交互 |
 | `conversation-view.ts` | TUI、Web、服务共享的会话视图和结果类型 |
 | `session-surface.ts` | 会话导航、分叉、历史分页与焦点持久化 |
+| `bug-report.ts` | 将当前分支与崩溃记录打包，按用户选择导出或上传 |
 
 该目录只承载默认 TUI 及共享会话逻辑。常驻宿主服务在 `src/host/`；统一宿主、客户端及安装产物的交付要求见 `docs/product-improvements.md`。
+
+`showCacheMissNotices` 开启时，TUI 从已加载历史重新计算显著缓存未命中提示；恢复、分页和压缩重绘沿用同一计算。`/session` 扫描当前分支的全部持久历史，统计不受界面分页限制。压缩、分支摘要和上下文重置会中断前后请求的缓存比较。
+
+`/bug` 默认选择仅诊断和本地 ZIP，不附带对话正文。模型摘要会使用当前供应商凭据和 token；完整会话会附带消息、工具结果和已读取的文件内容。上传选项显示 Radius 网关地址及 Pi 开发者接收方，离线模式只能导出。上传失败保留崩溃记录，可重新选择 ZIP；成功交付只清除报告中包含且期间未变化的崩溃日志。交互运行时记录致命异常，下次启动提示使用 `/bug`。
 
 `subagent` 使用统一的 `action: "run" | "list"`：run 提供 `task`，可用返回的 `conversationId` 继续空闲孩子的同一段历史；list 仅列出当前父对话创建的子代理，并用 `beforeConversationId` 分页。新孩子继承工具选择，不继承父对话历史，不能再次委派。父模型从工具正文收到孩子编号和答案，TUI/Web 沿用同一 `details.conversationId`。
 

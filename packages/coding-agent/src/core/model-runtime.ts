@@ -70,6 +70,8 @@ import { getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { ModelConfig } from "./model-config.ts";
+import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { SettingsManager } from "./settings-manager.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
 import {
 	type AuthStatus,
@@ -107,6 +109,8 @@ interface ModelRuntimeSnapshot {
 }
 
 export interface CreateModelRuntimeOptions {
+	/** Live settings consulted when preparing provider requests. */
+	settingsManager?: SettingsManager;
 	/** Credential storage. Defaults to the file at authPath. */
 	credentials?: CredentialStore;
 	authPath?: string;
@@ -171,6 +175,7 @@ function mergeHeaders(
 
 /** Configured pi-ai Models collection used by coding-agent and SDK consumers. */
 export class ModelRuntime implements Models {
+	private readonly requestSettings: SettingsManager;
 	private readonly models: MutableModels;
 	private readonly credentials: RuntimeCredentials;
 	private readonly defaultBuiltins: ReadonlyMap<string, Provider>;
@@ -203,7 +208,9 @@ export class ModelRuntime implements Models {
 		modelsStore: ModelsStore,
 		providers: readonly Provider[],
 		modelNetworkEnabled: boolean,
+		settingsManager: SettingsManager,
 	) {
+		this.requestSettings = settingsManager;
 		this.credentials = credentials;
 		this.config = config;
 		this.modelsPath = modelsPath;
@@ -212,6 +219,13 @@ export class ModelRuntime implements Models {
 		for (const [providerId, provider] of this.defaultBuiltins) this.builtins.set(providerId, provider);
 		this.models = createModels({ credentials, modelsStore });
 		this.rebuildProviders();
+	}
+
+	/** Share catalogs and credentials while keeping each session's request preference independent. */
+	withRequestSettings(settings: SettingsManager): ModelRuntime {
+		return new Proxy(this, {
+			get: (runtime, key, receiver) => key === "requestSettings" ? settings : Reflect.get(runtime, key, receiver),
+		});
 	}
 
 	static async create(options: CreateModelRuntimeOptions = {}): Promise<ModelRuntime> {
@@ -245,6 +259,7 @@ export class ModelRuntime implements Models {
 			modelsStore,
 			providers,
 			process.env.AMAZME_OFFLINE === undefined,
+			options.settingsManager ?? SettingsManager.create(process.cwd(), getAgentDir(), { projectTrusted: false }),
 		);
 		runtime.configureRadiusProviders();
 		runtime.rebuildProviders();
@@ -677,13 +692,18 @@ export class ModelRuntime implements Models {
 
 		const { transformHeaders, ...rawProviderOptions } = options ?? {};
 		const providerOptions = rawProviderOptions as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
-		let headers = mergeHeaders(resolution.auth.headers, providerOptions.headers);
+		const requestModel: TModel = resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model;
+		let headers = mergeProviderAttributionHeaders(
+			requestModel,
+			this.requestSettings,
+			"sessionId" in providerOptions && typeof providerOptions.sessionId === "string" ? providerOptions.sessionId : undefined,
+			mergeHeaders(resolution.auth.headers, providerOptions.headers),
+		);
 		if (transformHeaders) headers = await transformHeaders(headers ?? {});
 		const env =
 			resolution.env || providerOptions.env
 				? { ...(resolution.env ?? {}), ...(providerOptions.env ?? {}) }
 				: undefined;
-		const requestModel: TModel = resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model;
 		return {
 			provider,
 			model: requestModel,

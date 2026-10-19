@@ -7,6 +7,7 @@ import {
 	BranchSummaryEntry,
 	type BranchSummaryInput,
 	CompactionEntry,
+	ResetEntry,
 	UserEntry,
 	type Conversation,
 	type ConversationId,
@@ -407,7 +408,7 @@ export async function navigateTree(
 	return { conversation: continued, created: true, summarized: true, cancelled: false };
 }
 
-async function visibleEntries(conversation: Conversation, context: Context): Promise<EntryRecord[]> {
+export async function visibleEntries(conversation: Conversation, context: Context): Promise<EntryRecord[]> {
 	const collected: EntryRecord[] = [];
 	let cursor: Cursor | undefined;
 	do {
@@ -420,7 +421,7 @@ async function visibleEntries(conversation: Conversation, context: Context): Pro
 }
 
 /** Durable entries in the shape `generateBranchSummary` already walks. No second summarizer. */
-function sessionEntriesFor(entries: readonly EntryRecord[]): SessionEntry[] {
+export function sessionEntriesFor(entries: readonly EntryRecord[]): SessionEntry[] {
 	const sessionEntries: SessionEntry[] = [];
 	let parentId: string | null = null;
 	for (const entry of entries) {
@@ -446,7 +447,7 @@ function sessionEntryFor(entry: EntryRecord, id: string, parentId: string | null
 			...("details" in entry.data ? { details: entry.data.details } : {}),
 		};
 	}
-	if (CompactionEntry.is(entry)) {
+	if (CompactionEntry.is(entry) || ResetEntry.is(entry)) {
 		return {
 			type: "compaction",
 			id,

@@ -839,8 +839,8 @@ async function createCodingAgentHarness(
 	options: SessionWorkerOptions,
 ): Promise<SessionWorkerRuntime> {
 	const { cwd } = options.metadata;
-	const modelRuntime = await ModelRuntime.create();
 	const settingsManager = createCodingSettings(cwd);
+	const modelRuntime = await ModelRuntime.create({ settingsManager });
 	configureHarnessHttp(settingsManager);
 	const resources = await loadCodingResources(settingsManager, cwd);
 	const projectCatalog = new ProjectCatalog(options.sessionDir);

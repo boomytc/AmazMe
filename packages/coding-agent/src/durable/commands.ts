@@ -20,6 +20,8 @@ export const NATIVE_COMMANDS = [
 	{ name: "older", description: "Load older history" },
 	{ name: "compact", description: "Compact the conversation", argumentHint: "[instructions]" },
 	{ name: "share", description: "Share this session (Radius or private gist)" },
+	{ name: "session", description: "Show session usage and cache waste" },
+	{ name: "bug", description: "Export or upload a bug report", argumentHint: "[description]" },
 	{ name: "plugins", description: "Show selected plugin sources and API" },
 	{ name: "reload", description: "Reload prompt resources and selected plugins" },
 	{ name: "quit", description: `Quit ${APP_NAME}` },

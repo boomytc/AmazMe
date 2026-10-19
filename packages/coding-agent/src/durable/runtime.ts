@@ -52,6 +52,8 @@ import {
 	readFocus,
 	readReturnPoints,
 	readSummaries,
+	visibleEntries,
+	sessionEntriesFor,
 	SessionViewDoc,
 	type TreeNavigationDeps } from "./session-surface.ts";
 import { abortArchivedForks } from "./fork-management.ts";
@@ -82,12 +84,17 @@ import { collectSettingsDiagnostics } from "../core/settings-diagnostics.ts";
 import { writeDurableExport } from "./export.ts";
 import { normalizePromptImages } from "../utils/prompt-images.ts";
 import { estimateContextTokens } from "../core/compaction/index.ts";
+import { computeCacheWaste } from "../core/cache-stats.ts";
+import { BUG_REPORT_CUSTOM_ENTRY_TYPE } from "../core/bug-report.ts";
+import { takeUnnotifiedCrash } from "../core/crash-log.ts";
+import { deliverDurableBugReport, type DurableBugReportOptions } from "./bug-report.ts";
 
 const context = BACKGROUND_CONTEXT;
 
 export interface ModelSummary extends ModelRef {
 	readonly name: string;
 	readonly contextWindow: number;
+	readonly cacheReadCost?: number;
 }
 
 export interface Notice {
@@ -171,6 +178,7 @@ export interface DurableController {
 	compact(instructions: string | undefined): Promise<void>;
 	/** Export the shown conversation and publish the HTML share URL. */
 	share(): Promise<void>;
+	reportBug(options: DurableBugReportOptions): Promise<void>;
 	abort(): Promise<void>;
 	cycleThinking(): Promise<void>;
 	setThinkingLevel(level: ModelThinkingLevel): Promise<void>;
@@ -290,7 +298,7 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 	const facetLoader = options.facetLoader ?? (sources.length === 0
 		? undefined
 		: (await import("../core/plugins/loader.ts")).createSourcePluginLoader(sources));
-	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create());
+	const modelRuntime = (options.modelRuntime ?? (await ModelRuntime.create({ settingsManager }))).withRequestSettings(settingsManager);
 	// Resolve explicit arguments before creating or locking persistent session storage.
 	const selected = options.model === undefined
 		? undefined
@@ -381,7 +389,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				provider: model.provider,
 				modelId: model.id,
 				name: model.name,
-				contextWindow: model.contextWindow }));
+				contextWindow: model.contextWindow,
+				cacheReadCost: model.cost.cacheRead }));
 
 		const laneNow = (value: ConversationView = conversation.value): LaneStatus =>
 			laneFrom(
@@ -706,6 +715,33 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					].join("\n");
 		};
 		const controller: DurableController = {
+			reportBug: (options) => command(async () => {
+				const operation = new AbortController();
+				activeCommand = operation;
+				try {
+					notice("info", "Preparing bug report; Escape cancels summary generation or upload.");
+					const ref = agentOf(state.conversation).model;
+					const result = await deliverDurableBugReport({
+						...options,
+						entries: await visibleEntries(current, context),
+						sessionId: location.id,
+						cwd: location.cwd,
+						model: ref === undefined ? undefined : modelRuntime.getModel(ref.provider, ref.modelId),
+						thinkingLevel: agentOf(state.conversation).thinkingLevel ?? "off",
+						models: modelRuntime,
+						settings: settingsManager,
+						pluginSources: sources,
+						signal: operation.signal,
+					});
+					notice("info", result.note);
+					await opened.commit(tx => tx.appendEntry(current.id, {
+						kind: BUG_REPORT_CUSTOM_ENTRY_TYPE,
+						data: { ...result.record },
+					}), context);
+				} finally {
+					if (activeCommand === operation) activeCommand = undefined;
+				}
+			}),
 			setSessionName: (sessionName) => commandResult(async () => {
 				const trimmed = sessionName.trim();
 				if (!trimmed) throw new Error("Session name cannot be empty");
@@ -734,6 +770,16 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 				return plugins?.changing ? null : await pluginCommands?.list().find((entry) => entry.name === name)?.getArgumentCompletions?.(prefix) ?? null;
 			},
 			runCommand: (name, args) => command(async () => {
+				if (name === "session") {
+					const entries = sessionEntriesFor(await visibleEntries(current, context));
+					const waste = computeCacheWaste(entries, modelRuntime);
+					notice("info", `Session: ${location.id}\nMessages: ${entries.filter(entry => entry.type === "message").length}\nCache misses: ${waste.missCount}; ${waste.missedTokens} tokens re-billed (~$${waste.missedCost.toFixed(3)})`);
+					return;
+				}
+				if (name === "bug") {
+					notice("info", "Use /bug in the interactive terminal to choose report contents and export or upload.");
+					return;
+				}
 				if (name === "model") {
 					const query = args.trim().toLowerCase();
 					const matches = modelRuntime.getAvailableSnapshot().filter((model) =>
@@ -1080,6 +1126,8 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
 		}
 		for (const diagnostic of scope.diagnostics) notice("warning", diagnostic.message);
+		const previousCrash = takeUnnotifiedCrash();
+		if (previousCrash) notice("warning", `A previous session crashed: ${previousCrash.message}. Use /bug to export diagnostics.`);
 		reportResources();
 		// The task panel starts open; /tasks hides it.
 		await controller.toggleTasks();

@@ -1,4 +1,4 @@
-import type { Api, Model, ProviderHeaders } from "@amazme/ai";
+import type { AnyModel, ProviderHeaders } from "@amazme/ai";
 import type { SettingsManager } from "./settings-manager.ts";
 import { isInstallTelemetryEnabled } from "./telemetry.ts";
 
@@ -7,6 +7,7 @@ const NVIDIA_NIM_HOST = "integrate.api.nvidia.com";
 const CLOUDFLARE_API_HOST = "api.cloudflare.com";
 const CLOUDFLARE_AI_GATEWAY_HOST = "gateway.ai.cloudflare.com";
 const OPENCODE_HOST = "opencode.ai";
+type AttributionModel = Pick<AnyModel, "provider" | "baseUrl">;
 
 function matchesHost(baseUrl: string, expectedHost: string): boolean {
 	try {
@@ -16,15 +17,15 @@ function matchesHost(baseUrl: string, expectedHost: string): boolean {
 	}
 }
 
-function isOpenRouterModel(model: Model<Api>): boolean {
-	return model.provider === "openrouter" || model.baseUrl.includes(OPENROUTER_HOST);
+function isOpenRouterModel(model: AttributionModel): boolean {
+	return model.provider === "openrouter" || matchesHost(model.baseUrl, OPENROUTER_HOST);
 }
 
-function isNvidiaNimModel(model: Model<Api>): boolean {
+function isNvidiaNimModel(model: AttributionModel): boolean {
 	return model.provider === "nvidia" || matchesHost(model.baseUrl, NVIDIA_NIM_HOST);
 }
 
-function isCloudflareModel(model: Model<Api>): boolean {
+function isCloudflareModel(model: AttributionModel): boolean {
 	return (
 		model.provider === "cloudflare-workers-ai" ||
 		model.provider === "cloudflare-ai-gateway" ||
@@ -34,7 +35,7 @@ function isCloudflareModel(model: Model<Api>): boolean {
 }
 
 function getDefaultAttributionHeaders(
-	model: Model<Api>,
+	model: AttributionModel,
 	settingsManager: SettingsManager,
 ): Record<string, string> | undefined {
 	if (!isInstallTelemetryEnabled(settingsManager)) {
@@ -64,7 +65,7 @@ function getDefaultAttributionHeaders(
 	return undefined;
 }
 
-function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Record<string, string> | undefined {
+function getSessionHeaders(model: AttributionModel, sessionId: string | undefined): Record<string, string> | undefined {
 	if (!sessionId) return undefined;
 	if (
 		model.provider !== "opencode" &&
@@ -77,7 +78,7 @@ function getSessionHeaders(model: Model<Api>, sessionId: string | undefined): Re
 }
 
 export function mergeProviderAttributionHeaders(
-	model: Model<Api>,
+	model: AttributionModel,
 	settingsManager: SettingsManager,
 	sessionId: string | undefined,
 	...headerSources: Array<ProviderHeaders | undefined>
@@ -89,7 +90,12 @@ export function mergeProviderAttributionHeaders(
 
 	for (const headers of headerSources) {
 		if (headers) {
-			Object.assign(merged, headers);
+			for (const [name, value] of Object.entries(headers)) {
+				for (const existing of Object.keys(merged)) {
+					if (existing.toLowerCase() === name.toLowerCase()) delete merged[existing];
+				}
+				merged[name] = value;
+			}
 		}
 	}
 
