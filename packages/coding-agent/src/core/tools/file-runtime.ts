@@ -42,8 +42,6 @@ export function createFileRuntime(
 			throw new Error(`Unsupported file tool option: ${key}`);
 	}
 	const observations = options?.observations ?? createMemoryFileObservations();
-	// Needs FileSystem only. Durable does not yet export a file-only Node class; construction below is
-	// incomplete until that lands (do not invent a fake artifactDirectory here).
 	const local: FileSystem = new NodeFileSystem({ cwd });
 	const fileSystem = options?.fileSystem;
 	return (signal?: AbortSignal, ctx?: ExtensionContext) => {

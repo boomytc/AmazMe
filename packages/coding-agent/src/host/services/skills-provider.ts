@@ -84,8 +84,6 @@ export function createSkillsService(
 	createState: (initial: SkillsState) => MutableReplicatedState<SkillsState>,
 ) {
 	const userDirectory = join(options.agentDir, "skills");
-	// Needs FileSystem only. Durable does not yet export a file-only Node class; leave construction incomplete
-	// until that lands (do not invent a fake artifactDirectory here).
 	const files: FileSystem = new NodeFileSystem({ cwd: options.cwd });
 	// Share the canonical-directory barrier across service instances and path aliases. Reload must
 	// see a completed mutation, and cancelling a waiter must not release its predecessor's slot.
