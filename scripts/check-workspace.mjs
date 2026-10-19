@@ -154,11 +154,58 @@ export function checkDependencyVersions(
 	return failures;
 }
 
+const changelogSections = ["Breaking Changes", "Added", "Changed", "Fixed", "Removed"];
+
+/**
+ * Package changelogs open with `# Changelog` and `## [Unreleased]`, date every release, and keep the
+ * unreleased and newest release sections to the shared `###` headings in their fixed order.
+ * Older sections are history and stay as written.
+ */
+export function checkChangelogs(repoRoot) {
+	const failures = [];
+	const packagesDirectory = join(repoRoot, "packages");
+	if (!existsSync(packagesDirectory)) return failures;
+	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
+		const file = join(packagesDirectory, entry.name, "CHANGELOG.md");
+		if (!entry.isDirectory() || !existsSync(file)) continue;
+		const location = relative(repoRoot, file);
+		const lines = readFileSync(file, "utf8").split("\n");
+		if (lines[0] !== "# Changelog") failures.push(`${location}: first line must be "# Changelog"`);
+		const releases = [];
+		lines.forEach((line, index) => {
+			if (!line.startsWith("## ")) return;
+			if (releases.length === 0 && line !== "## [Unreleased]")
+				failures.push(`${location}:${index + 1}: first section must be "## [Unreleased]", found "${line}"`);
+			else if (releases.length > 0 && !/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/.test(line))
+				failures.push(`${location}:${index + 1}: release heading must read "## [x.y.z] - YYYY-MM-DD", found "${line}"`);
+			releases.push(index);
+		});
+		for (const start of releases.slice(0, 2)) {
+			const end = releases.find((index) => index > start) ?? lines.length;
+			let previous = -1;
+			for (let index = start + 1; index < end; index++) {
+				if (!lines[index].startsWith("### ")) continue;
+				const name = lines[index].slice(4);
+				const order = changelogSections.indexOf(name);
+				if (order === -1)
+					failures.push(`${location}:${index + 1}: section must be one of ${changelogSections.join(", ")}, found "${name}"`);
+				else if (order <= previous)
+					failures.push(`${location}:${index + 1}: "${name}" is repeated or out of order (${changelogSections.join(", ")})`);
+				else previous = order;
+				const next = lines.slice(index + 1, end).find((line) => line.trim() !== "");
+				if (next === undefined || next.startsWith("#"))
+					failures.push(`${location}:${index + 1}: "${name}" has no entries`);
+			}
+		}
+	}
+	return failures;
+}
+
 /** Syntax-aware checks over source, including development-only host and browser modules. */
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
-	const failures = checkDependencyVersions(root, packages);
+	const failures = [...checkDependencyVersions(root, packages), ...checkChangelogs(root)];
 	try {
 		runtimePackages(packages, [...packages.keys()]);
 	} catch (error) {
@@ -436,5 +483,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
-	else console.log("Workspace imports, runtime dependencies, direction, and browser entries passed.");
+	else console.log("Workspace imports, runtime dependencies, direction, browser entries, and changelogs passed.");
 }

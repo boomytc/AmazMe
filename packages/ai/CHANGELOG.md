@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-19
+
+### Changed
+
+- Provider model catalogs under `src/providers/data/` are committed and checked by `check:model-data`. CI and releases use `build:offline`, so builds no longer fetch live provider catalogs. To pick up new models, run `npm run hydrate:model-data` and commit the refreshed data (plus any affected tests) in the same PR.
+
 ## [1.2.0] - 2026-10-18
 
 ### Fixed
