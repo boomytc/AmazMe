@@ -1049,6 +1049,24 @@ export class NodeExecutionEnv extends NodeFileSystem implements ExecutionEnv {
 		this.shellEnv = options.shellEnv;
 	}
 
+	/**
+	 * A new, empty file for output beyond `ShellExecOptions.spill`, under `artifactDirectory`: spilled output is a
+	 * session artifact, deleted with the session, never a file left in the OS temp directory.
+	 */
+	protected async createSpillFile(context: Context): Promise<Result<string, FileError>> {
+		const aborted = abortResult<string>(context.abortSignal);
+		if (aborted) return aborted;
+		const filePath = join(this.artifactDirectory, `pi-output-${randomUUID()}.log`);
+		try {
+			// Output can carry private data: only the user may read it. `wx` never follows a planted link.
+			await mkdir(this.artifactDirectory, { recursive: true, mode: 0o700 });
+			await writeFile(filePath, "", { mode: 0o600, flag: "wx" });
+			return ok(filePath);
+		} catch (error) {
+			return err(toFileError(error, filePath));
+		}
+	}
+
 	async exec(
 		command: string | readonly string[],
 		options: ShellExecOptions | undefined,
@@ -1177,7 +1195,7 @@ export class NodeExecutionEnv extends NodeFileSystem implements ExecutionEnv {
 				if (spillStart !== undefined) return;
 				pauseOutput();
 				spillStart = (async () => {
-					const created = await this.createTempFile({ prefix: "pi-output-", suffix: ".log" }, context);
+					const created = await this.createSpillFile(context);
 					if (!created.ok) throw created.error;
 					spillPath = created.value;
 					spillStream = createWriteStream(spillPath, { flags: "a", highWaterMark: SPILL_HIGH_WATER_MARK });
