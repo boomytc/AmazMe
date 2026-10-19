@@ -1039,11 +1039,13 @@ function parseServerModelOptions(value: string | undefined): { provider?: string
  *
  * A second SIGINT while `close` is still running force-exits. A second SIGTERM
  * does not: that is the re-send described above.
+ *
+ * `arm` is required and runs once the listeners are installed; readiness lines print there.
  */
 export async function closeWhenSignaled(
 	closed: Promise<void>,
 	close: () => Promise<void>,
-	arm?: (finish: () => void) => void,
+	arm: (finish: () => void) => void,
 ): Promise<void> {
 	await closeAfterSignal(closed, close, arm);
 }
@@ -1064,7 +1066,8 @@ export async function runServerProcess(args: readonly string[]): Promise<void> {
 		sessionDir,
 		keepAlive: false,
 		...workerModel });
-	await closeWhenSignaled(runtime.closed, () => runtime.close());
+	// An activated server prints no readiness line; its clients wait on the socket instead.
+	await closeWhenSignaled(runtime.closed, () => runtime.close(), () => {});
 	process.exit(process.exitCode ?? 0);
 }
 
