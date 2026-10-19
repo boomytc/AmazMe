@@ -45,8 +45,8 @@ if (mode === "key") {
 			}, 150);
 		});
 	};
-	out("ready\n");
-	void closeAfterSignal(new Promise<void>(() => {}), close)
+	// `arm` runs after the listeners are installed, so a signal sent on "ready" is always handled.
+	void closeAfterSignal(new Promise<void>(() => {}), close, () => out("ready\n"))
 		.then(() => {
 			clearInterval(keepAlive);
 			process.exit(0);
