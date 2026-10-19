@@ -38,7 +38,12 @@ npm run dev:desktop
 
 在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。推送 `v<version>` 标签触发 `.github/workflows/release.yml`，在 macOS runner 上构建、验证并创建 GitHub Release；标签必须与 `packages/gui/package.json` 的版本一致。
 
-预览包为 ad-hoc 签名，其他机器首次打开会被 Gatekeeper 拦截，需右键“打开”或移除 quarantine；公开分发前仍需 Developer ID 签名与公证。
+签名分两种，走同一套由内向外的签名流程和 hardened runtime（权限见 `packages/gui/assets/entitlements.mac.plist`），只差身份：
+
+- 本地和 CI 预览不带参数，用 ad-hoc 签名；其他机器首次打开会被 Gatekeeper 拦截。
+- 发布同时传 `--keychain <钥匙串> --team-id <团队 ID>`，从该钥匙串里选出这个团队唯一的 Developer ID Application 身份签应用和 DMG，签完核对 TeamIdentifier。随后 `scripts/notarize-macos.mjs` 提交公证、staple，并用 `codesign --verify --deep --strict` 和 `spctl` 复核后重写 `.sha256`。
+
+release 工作流在 `release` 环境里运行：证书只给导入证书那一步，App Store Connect 密钥只给公证那一步；临时钥匙串和密钥文件放在 `$RUNNER_TEMP`，最后一步无论成败都会删掉。团队 ID 取仓库变量 `APPLE_TEAM_ID`。
 
 ## 独立预览包
 
@@ -51,6 +56,6 @@ node scripts/package-desktop.mjs --node /path/to/node-v22.23.3-darwin-arm64/bin/
 
 `--verify` 会把应用复制到临时目录，清掉 `AMAZME_GUI_NODE` 和 PATH 里的 Node，再跑一次 smoke；只有宿主用包内 Node 启动并回报 `desktop smoke:` 才算通过。产物内的 `Contents/Resources/release-manifest.json` 记录应用版本、Electron、Node 与各内部包版本，发布说明以应用版本为准。
 
-当前限制：未签名产物只适合内部预览；公开分发前仍需 Developer ID 签名与公证。产品包统一使用同一个发布版本（以根目录 `package.json` 为准，发布记录见 [GitHub Releases](https://github.com/boomytc/AmazMe/releases)），应用显示、安装包与发布清单一致；`release-manifest.json` 记录实际组合，便于回查。
+当前限制：ad-hoc 预览包只适合内部使用，对外分发以 GitHub Release 上公证过的 DMG 为准。产品包统一使用同一个发布版本（以根目录 `package.json` 为准，发布记录见 [GitHub Releases](https://github.com/boomytc/AmazMe/releases)），应用显示、安装包与发布清单一致；`release-manifest.json` 记录实际组合，便于回查。
 
 已通过独立安装产物的真实窗口启动、同宿主状态查询和 Web 同步验证；`AMAZME_GUI_CWD` 指定实际项目，`INIT_CWD` 保留 npm 的原启动位置。开发目录和源码解析器不参与已安装桌面的宿主启动。
