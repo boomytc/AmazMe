@@ -349,27 +349,27 @@ function planAction(
 		args.keys = action.keys;
 	}
 	if (tool === "drag" || tool === "scroll") {
-		const p = point(action.x, action.y, snapshot);
-		// Portable drag/scroll accept logical window coordinates, unlike the capture-bound click API.
-		if (!snapshot.windowBounds)
-			throw new Error("Pixel drag/scroll requires window bounds");
-		const sx = snapshot.windowBounds.width / snapshot.width,
-			sy = snapshot.windowBounds.height / snapshot.height;
 		if (tool === "scroll") {
 			if (!action.direction) throw new Error("scroll requires direction");
 			Object.assign(args, {
-				x: p.x * sx,
-				y: p.y * sy,
 				direction: action.direction,
 				amount: action.amount ?? 3,
 			});
+			if (
+				!action.element_token ||
+				action.x !== undefined ||
+				action.y !== undefined
+			)
+				Object.assign(args, point(action.x, action.y, snapshot));
 		} else {
+			const p = point(action.x, action.y, snapshot);
 			const to = point(action.to_x, action.to_y, snapshot);
+			// Driver converts screenshot pixels into screen coordinates, including Retina scale.
 			Object.assign(args, {
-				from_x: p.x * sx,
-				from_y: p.y * sy,
-				to_x: to.x * sx,
-				to_y: to.y * sy,
+				from_x: p.x,
+				from_y: p.y,
+				to_x: to.x,
+				to_y: to.y,
 			});
 		}
 	}
@@ -418,6 +418,7 @@ export async function act(
 		action,
 		...planAction(action, driver, initial, policy, target),
 	}));
+	const calls: ClassifierResult[] = [];
 	let applied = 0;
 	try {
 		for (const [index, planned] of plans.entries()) {
@@ -438,11 +439,25 @@ export async function act(
 			// Labels are a deterministic filter. Unbound pixels and keys also require a semantic risk check.
 			if (classify && Object.keys(riskQuestions(policy)).length) {
 				const observation = imageContext(current.imageBytes, 640);
+				const candidate = extractCandidates(current, policy).find(
+					(entry) => entry.id === stableId,
+				);
 				const risk = await classify(
 					{
 						state: {
 							target: intent,
-							action: plan.args as JsonValue,
+							action: {
+								tool: plan.tool,
+								parameters: plan.args as JsonValue,
+								...(candidate
+									? {
+											candidate: {
+												role: candidate.role,
+												label: candidate.label,
+											},
+										}
+									: {}),
+							},
 							observation: observation.state,
 						},
 						assets: observation.assets,
@@ -450,11 +465,13 @@ export async function act(
 					},
 					signal,
 				);
+				calls.push(risk);
 				if (!risksAccepted(risk, policy))
 					return {
 						status: "review",
 						reason: "Action risk is not confidently within user policy",
 						applied,
+						calls,
 					};
 			} else if (
 				!classify &&
@@ -471,6 +488,7 @@ export async function act(
 					status: "review",
 					reason: "Jev is required to assess coordinate and keyboard actions",
 					applied,
+					calls,
 				};
 			}
 			current = driver.current(current.captureId, target);
@@ -481,7 +499,7 @@ export async function act(
 			if (index < actions.length - 1)
 				await driver.observe(target, policy.timeoutMs, signal);
 		}
-		return { status: "acted", applied };
+		return { status: "acted", applied, calls };
 	} catch (error) {
 		driver.snapshot = undefined;
 		signal.throwIfAborted();
@@ -490,6 +508,7 @@ export async function act(
 			reason: error instanceof Error ? error.message : String(error),
 			applied,
 			outcome_unknown: true,
+			calls,
 		};
 	}
 }
@@ -579,6 +598,7 @@ export async function groundAndAct(
 		policy,
 		signal,
 	);
+	calls.push(...(result.calls ?? []));
 	if (result.status !== "acted") return { ...result, calls };
 	try {
 		const after = await driver.observe(target, policy.timeoutMs, signal);

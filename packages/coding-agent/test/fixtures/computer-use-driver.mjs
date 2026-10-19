@@ -54,9 +54,22 @@ const definitions = {
 	type_text: ["target", "element_token", "text", "delivery_mode"],
 	press_key: ["target", "key", "delivery_mode"],
 	hotkey: ["target", "keys", "delivery_mode"],
-	scroll: ["target", "x", "y", "direction", "amount", "delivery_mode"],
+	scroll: [
+		"target",
+		"element_token",
+		"x",
+		"y",
+		"direction",
+		"amount",
+		"delivery_mode",
+	],
 	drag: ["target", "from_x", "from_y", "to_x", "to_y", "delivery_mode"],
 };
+// The pinned 0.34.1 runtime always returns both tree forms and has no tree_format argument.
+if (mode === "pinned")
+	definitions.get_window_state = definitions.get_window_state.filter(
+		(field) => field !== "tree_format",
+	);
 let observation = 0;
 const tools = Object.entries(definitions).map(([name, fields]) => ({
 	name,

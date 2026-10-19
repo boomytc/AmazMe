@@ -1,14 +1,18 @@
 import type { ChildProcess } from "node:child_process";
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import {
 	access,
 	chmod,
 	mkdtemp,
+	open,
 	readdir,
 	readFile,
+	realpath,
 	rm,
 	stat,
+	writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
@@ -25,7 +29,7 @@ const execute = promisify(execFile);
 async function hostBundle(
 	binary: string,
 	signal: AbortSignal,
-): Promise<{ executable: string; bundleId: string } | undefined> {
+): Promise<{ executable: string; bundleId: string; path: string } | undefined> {
 	if (process.platform !== "darwin" || !binary.includes(".app/Contents/MacOS/"))
 		return;
 	const contents = dirname(dirname(binary)),
@@ -55,7 +59,109 @@ async function hostBundle(
 		!(await executable(join(dirname(binary), name)))
 	)
 		throw new Error("Invalid computer-use host bundle");
-	return { executable: join(dirname(binary), name), bundleId };
+	return {
+		executable: await realpath(join(dirname(binary), name)),
+		bundleId,
+		path: dirname(contents),
+	};
+}
+
+function applicationArguments(
+	path: string,
+	env: Record<string, string>,
+): string[] {
+	return [
+		"-n",
+		"-g",
+		"-W",
+		"-a",
+		path,
+		...Object.entries(env).flatMap(([key, value]) => [
+			"--env",
+			`${key}=${value}`,
+		]),
+	];
+}
+
+async function terminateMatchingProcesses(
+	executable: string,
+	args: string,
+	pids?: number[],
+	allowArguments = false,
+): Promise<void> {
+	if (pids?.length === 0) return;
+	const { stdout } = await execute("/bin/ps", ["-axo", "pid=,command="], {
+		timeout: 2000,
+		env: driverEnvironment(),
+	});
+	for (const line of stdout.split("\n")) {
+		const match = /^\s*(\d+)\s+(.+)$/u.exec(line);
+		if (!match?.[2]) continue;
+		const pid = Number(match[1]);
+		if (pids && !pids.includes(pid)) continue;
+		const offset = match[2].lastIndexOf(` ${args}`);
+		if (offset < 0) continue;
+		const actualArgs = match[2].slice(offset + 1);
+		if (
+			actualArgs !== args &&
+			!(allowArguments && actualArgs.startsWith(`${args} `))
+		)
+			continue;
+		const actualExecutable = match[2].slice(0, offset);
+		// LaunchServices and NSTask can spell the same executable using /private/var and /var.
+		if (
+			actualExecutable !== executable &&
+			(await realpath(actualExecutable)) !== executable
+		)
+			continue;
+		const alive = (): boolean => {
+			try {
+				process.kill(pid, 0);
+				return true;
+			} catch (error) {
+				if (isRecord(error) && error.code === "ESRCH") return false;
+				throw error;
+			}
+		};
+		try {
+			process.kill(pid, "SIGKILL");
+		} catch (error) {
+			if (!isRecord(error) || error.code !== "ESRCH") throw error;
+		}
+		const deadline = Date.now() + 2000;
+		while (alive()) {
+			if (Date.now() >= deadline)
+				throw new Error("Computer-use host did not exit after termination");
+			await delay(25);
+		}
+	}
+}
+
+async function stopPermissionProbe(
+	executable: string,
+	output: string,
+): Promise<void> {
+	let stdout: string;
+	try {
+		({ stdout } = await execute(
+			"/usr/sbin/lsof",
+			["-t", "-a", "-d", "1", output],
+			{
+				timeout: 2000,
+				env: driverEnvironment(),
+			},
+		));
+	} catch (error) {
+		if (isRecord(error) && error.code === 1) return;
+		throw error;
+	}
+	// The private stdout file identifies this probe, even when another conversation probes the same app.
+	const pids = stdout
+		.trim()
+		.split(/\s+/u)
+		.map(Number)
+		.filter((pid) => Number.isSafeInteger(pid) && pid > 0);
+	await terminateMatchingProcesses(executable, "check-permissions", pids);
 }
 
 export type WindowTarget = { pid: number; window_id: number };
@@ -269,6 +375,12 @@ export class DriverClient {
 	private client?: McpClient;
 	private transport?: StdioTransport;
 	private host?: ChildProcess;
+	private hostLifetime?: FileHandle;
+	private hostIdentity?: {
+		executable: string;
+		socket: string;
+		serviceExecutable: string;
+	};
 	private socketDirectory?: string;
 	private tools = new Map<string, Tool>();
 	private opening?: Promise<void>;
@@ -294,11 +406,39 @@ export class DriverClient {
 		);
 		await chmod(this.socketDirectory, 0o700);
 		const socket = join(this.socketDirectory, "driver.sock");
+		const lifetime = join(this.socketDirectory, "lifetime");
+		await execute("/usr/bin/mkfifo", ["-m", "600", lifetime], { env, signal });
+		// O_RDWR lets LaunchServices open its read end without blocking startup. Only this caller holds a writer.
+		this.hostLifetime = await open(
+			lifetime,
+			constants.O_RDWR | constants.O_NOFOLLOW,
+		);
 		signal.throwIfAborted();
-		const host = spawn(bundle.executable, ["serve", "--socket", socket], {
-			env,
-			stdio: ["pipe", "ignore", "pipe"],
-		});
+		this.hostIdentity = {
+			executable: bundle.executable,
+			socket,
+			serviceExecutable: await realpath(binary),
+		};
+		const host = spawn(
+			"/usr/bin/open",
+			[
+				...applicationArguments(bundle.path, env),
+				"--stdin",
+				lifetime,
+				"--stdout",
+				"/dev/null",
+				"--stderr",
+				"/dev/null",
+				"--args",
+				"serve",
+				"--socket",
+				socket,
+			],
+			{
+				env,
+				stdio: ["ignore", "ignore", "pipe"],
+			},
+		);
 		this.host = host;
 		let failure: Error | undefined;
 		host.on("error", (error) => {
@@ -340,17 +480,33 @@ export class DriverClient {
 		const binary = this.options.command ?? (await resolveDriverBinary());
 		const bundle = await hostBundle(binary, signal);
 		if (bundle?.bundleId === "com.amazme.computer-use") {
-			const { stdout } = await execute(
-				bundle.executable,
-				["check-permissions"],
-				{
-					signal,
-					timeout: timeoutMs,
-					maxBuffer: 8192,
-					env: driverEnvironment(),
-				},
-			);
-			const report: unknown = JSON.parse(stdout);
+			const directory = await mkdtemp(join(tmpdir(), "amcu-permissions-"));
+			const output = join(directory, "result.json");
+			let report: unknown;
+			try {
+				const env = driverEnvironment();
+				await writeFile(output, "", { mode: 0o600 });
+				await execute(
+					"/usr/bin/open",
+					[
+						...applicationArguments(bundle.path, env),
+						"--stdout",
+						output,
+						"--stderr",
+						"/dev/null",
+						"--args",
+						"check-permissions",
+					],
+					{ signal, timeout: timeoutMs, env },
+				);
+				report = JSON.parse(await readFile(output, "utf8"));
+			} finally {
+				try {
+					await stopPermissionProbe(bundle.executable, output);
+				} finally {
+					await rm(directory, { recursive: true, force: true });
+				}
+			}
 			if (
 				!isRecord(report) ||
 				typeof report.accessibility !== "boolean" ||
@@ -457,6 +613,7 @@ export class DriverClient {
 		signal: AbortSignal,
 	): Promise<Snapshot> {
 		this.snapshot = undefined;
+		await this.connect(timeoutMs, signal);
 		const result = await this.call(
 			target ? "get_window_state" : "get_desktop_state",
 			target
@@ -464,7 +621,9 @@ export class DriverClient {
 						...target,
 						include_accessibility_tree: true,
 						include_screenshot: true,
-						tree_format: "both",
+						...(this.supports("get_window_state", "tree_format")
+							? { tree_format: "both" }
+							: {}),
 						max_elements: 500,
 						max_image_dimension: 0,
 					}
@@ -514,25 +673,62 @@ export class DriverClient {
 			} catch (error) {
 				failures.push(error);
 			}
-			if (this.host) {
-				const host = this.host;
+			try {
+				await this.hostLifetime?.close();
+			} catch (error) {
+				failures.push(error);
+			}
+			const host = this.host;
+			const exited =
+				host &&
+				host.exitCode === null &&
+				host.signalCode === null &&
+				host.pid !== undefined
+					? new Promise<void>((resolve) => host.once("close", resolve))
+					: undefined;
+			if (exited) {
 				await new Promise<void>((resolve) => {
-					if (
-						host.exitCode !== null ||
-						host.signalCode !== null ||
-						host.pid === undefined
-					)
-						return resolve();
-					const kill = setTimeout(() => host.kill("SIGKILL"), 2000);
-					host.once("close", () => {
-						clearTimeout(kill);
+					const timer = setTimeout(resolve, 2000);
+					void exited.then(() => {
+						clearTimeout(timer);
 						resolve();
 					});
-					host.stdin?.end();
 				});
 			}
-			if (this.socketDirectory)
-				await rm(this.socketDirectory, { recursive: true, force: true });
+			// LaunchServices owns these processes; neither killing open nor killing its app kills a stuck service.
+			// Check both even when the launcher already exited, using only this session's private endpoint.
+			if (this.hostIdentity) {
+				const identity = this.hostIdentity;
+				for (const [executable, args, allowArguments] of [
+					[
+						identity.serviceExecutable,
+						`serve --embedded --socket ${identity.socket}`,
+						true,
+					],
+					[identity.executable, `serve --socket ${identity.socket}`, false],
+				] as const) {
+					try {
+						await terminateMatchingProcesses(
+							executable,
+							args,
+							undefined,
+							allowArguments,
+						);
+					} catch (error) {
+						failures.push(error);
+					}
+				}
+			}
+			if (exited) {
+				host?.kill("SIGKILL");
+				await exited;
+			}
+			try {
+				if (this.socketDirectory)
+					await rm(this.socketDirectory, { recursive: true, force: true });
+			} catch (error) {
+				failures.push(error);
+			}
 			if (failures.length)
 				throw new AggregateError(failures, "Driver transport cleanup failed");
 		})();

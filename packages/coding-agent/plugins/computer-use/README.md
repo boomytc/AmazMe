@@ -35,7 +35,7 @@ amazme -e /path/to/AmazMe/packages/coding-agent/plugins/computer-use
 2. 同结构的 PilotDeck 组件、`/Applications/CuaDriver.app/Contents/MacOS/cua-driver` 和 PilotDeck 应用内组件。
 3. `~/.local/bin/cua-driver`（Windows 为 `.exe`），以及 `PATH`。
 
-已有 `.app` 使用它自身的身份；AmazMe/PilotDeck 的宿主可通过 `.app/Contents/Info.plist` 中的入口识别，以私有 socket 和 stdin 生命周期管道启动 embedded Driver，再用 stdio MCP 代理连接。普通独立驱动执行 `cua-driver mcp`。进程只接收必要的系统/桌面会话环境，不转发模型密钥，并关闭 Driver 遥测。
+已有 `.app` 使用它自身的身份；AmazMe/PilotDeck 的宿主可通过 `.app/Contents/Info.plist` 中的入口识别，经 LaunchServices 在后台启动，以私有 socket 和权限为 `0600` 的 stdin FIFO 管理 embedded Driver，再用 stdio MCP 代理连接。调用方关闭或退出后，FIFO 的 EOF 通知宿主结束；卡住时只终止匹配当前私有 socket 的宿主和服务进程，并等待退出。直接执行 bundle 内入口会继承终端的权限归属，因此服务和只读权限诊断都通过 LaunchServices 启动。普通独立驱动执行 `cua-driver mcp`。进程只接收必要的系统/桌面会话环境，不转发模型密钥，并关闭 Driver 遥测。
 
 可选的一键准备脚本固定下载 `0.34.1`，验证对应平台的 SHA-256 后安装，不参与常规构建：
 
@@ -45,7 +45,7 @@ node scripts/prepare-computer-use.mjs
 node /path/to/coding-agent/plugins/computer-use/scripts/prepare-computer-use.mjs
 ```
 
-脚本输出安装目录和二进制绝对路径。macOS 安装到上述共享组件的版本子目录，编译通用宿主 `AmazMe Computer Use.app`，需要 Xcode Command Line Tools。默认使用本地 ad-hoc 签名；可通过 `AMAZME_CUA_SIGNING_IDENTITY` 指定签名身份。生产交付需使用稳定的签名身份。TUI、Web 和 GUI 使用同一个安装组件时共享该宿主的 TCC 身份，系统仍决定权限归属及是否需要重新授权。请在系统设置中为实际宿主授予辅助功能、屏幕录制权限；Linux/Windows 需要已登录且可访问的桌面会话。
+脚本输出安装目录和二进制绝对路径。macOS 安装到上述共享组件的版本子目录，编译通用宿主 `AmazMe Computer Use.app`，需要 Xcode Command Line Tools。默认使用本地 ad-hoc 签名；可通过 `AMAZME_CUA_SIGNING_IDENTITY` 指定签名身份。生产交付需使用稳定的签名身份。TUI、Web 和 GUI 使用同一个安装组件时共享该宿主的 TCC 身份，系统仍决定权限归属及是否需要重新授权。请在系统设置中为实际宿主授予辅助功能、屏幕录制权限；新版 macOS 可能分别显示为“设备控制和数据访问”“录屏与系统录音”。Linux/Windows 需要已登录且可访问的桌面会话。
 
 Linux/Windows 脚本安装到 `~/.local/share/AmazMe/ComputerUse/0.34.1/`；使用输出路径设置 `AMAZME_CUA_DRIVER_PATH`。已有组件通过 manifest 与二进制哈希核验后复用，内容不同则拒绝覆盖。未安装驱动不影响包构建或插件注册。
 
@@ -78,7 +78,7 @@ TypeSafe 使用宿主现有的模型目录与认证流程，支持 `TYPESAFE_API
 }
 ```
 
-`click/double_click/right_click` 优先使用 `element_token`；否则用截图内的 `x/y`，Driver 在同一点击请求中校验 `capture_id`。`set_value` 用 `value`，`type_text` 用 `text`，均要求当前 AX token；`press_key` 用 `key`，`hotkey` 用 `keys`；`scroll` 用 `x/y/direction/amount`，`drag` 用 `x/y/to_x/to_y`。滚动与拖动按窗口 bounds 换算为 Driver 的逻辑坐标，本地检查 capture 归属；Driver 的原子 capture 检查适用于点击。
+`click/double_click/right_click` 优先使用 `element_token`；否则用截图内的 `x/y`，Driver 在同一点击请求中校验 `capture_id`。`set_value` 用 `value`，`type_text` 用 `text`，均要求当前 AX token；`press_key` 用 `key`，`hotkey` 用 `keys`；`scroll` 用 `element_token` 或 `x/y`，并提供 `direction/amount`；`drag` 用 `x/y/to_x/to_y`。所有坐标保持截图像素，由 Driver 换算屏幕位置和 Retina 比例。滚动与拖动在本地检查 capture 归属；Driver 的原子 capture 检查适用于点击。
 
 动作默认 `delivery_mode: background`，前台必须由用户策略放行并在动作中显式选择。桌面动作只支持前台，当前默认策略会拒绝。`set_value` 使用 Driver 的后台 AX 语义，不传它不接受的 delivery 字段；其他动作缺少请求模式支持时直接拒绝。后台拒绝不会自动升级前台或重试。
 
@@ -96,4 +96,6 @@ npx vitest run test/computer-use-plugin.test.ts
 npm test
 ```
 
-自动化测试使用真实 stdio MCP 伪驱动和确定性分类器，覆盖插件重载、关闭、策略隔离、风险过滤、快照绑定和真实图片裁剪。它们不能证明实际桌面权限、后台投递效果或线上 Jev 识别质量。手工验证时先 `status/permissions/on`，选择计算器等测试窗口，观察后执行可逆操作，再检查独立观察与后置条件。
+自动化测试使用真实 stdio MCP 伪驱动和确定性分类器，覆盖插件重载、关闭、策略隔离、风险过滤、快照绑定和真实图片裁剪；macOS 宿主生命周期测试会用 Xcode Command Line Tools 编译临时 Cocoa 应用，验证 LaunchServices、FIFO 和卡住时的清理。固定的 `0.34.1` 不声明 `tree_format`，测试也覆盖省略该参数的协议路径。它们不能证明实际桌面权限、后台投递效果或线上 Jev 识别质量。手工验证时先 `status/permissions/on`，选择计算器等测试窗口，观察后执行可逆操作，再检查独立观察与后置条件。
+
+已执行的本机权限、线上 Jev 和后台动作结果见[联调记录](./LIVE-VALIDATION.md)，其中包含 Canvas 未生效和低置信度拒绝的边界。

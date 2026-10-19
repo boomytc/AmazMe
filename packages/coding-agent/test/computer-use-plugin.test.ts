@@ -1,3 +1,4 @@
+import { execFile } from "node:child_process";
 import {
 	chmod,
 	copyFile,
@@ -9,7 +10,9 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import type {
 	ClassifierContext,
 	ClassifierModel,
@@ -79,6 +82,7 @@ afterEach(async () => {
 	vi.restoreAllMocks();
 });
 const signal = new AbortController().signal;
+const packageRoot = fileURLToPath(new URL("../", import.meta.url));
 const target = { pid: 7, window_id: 9 };
 const policy = readComputerUseSettings({ ...defaults, enabled: true });
 const coarse = { left: 0.1, top: 0.2, right: 0.8, bottom: 0.5 };
@@ -162,7 +166,10 @@ async function fixture(mode = "native") {
 	const directory = await mkdtemp(join(tmpdir(), "amcu-test-"));
 	cleanups.push(() => rm(directory, { recursive: true, force: true }));
 	const binary = join(directory, "driver.mjs");
-	await copyFile(resolve("test/fixtures/computer-use-driver.mjs"), binary);
+	await copyFile(
+		join(packageRoot, "test/fixtures/computer-use-driver.mjs"),
+		binary,
+	);
 	await chmod(binary, 0o755);
 	await writeFile(join(directory, "mode.txt"), mode);
 	await writeFile(join(directory, "capture.png"), picture(800, 600));
@@ -467,7 +474,7 @@ describe("computer-use policy and plugin lifecycle", () => {
 					value: s.runtime,
 				})),
 			],
-			createSourcePluginLoader([resolve("plugins/computer-use")]),
+			createSourcePluginLoader([join(packageRoot, "plugins/computer-use")]),
 		);
 		try {
 			await plugin.services.scope.ready();
@@ -522,9 +529,17 @@ describe("computer-use policy and plugin lifecycle", () => {
 });
 
 describe("driver observations and policy-bound actions", () => {
-	it.skipIf(process.platform !== "darwin")(
-		"owns an embedded host, private socket and permission probe without starting a service for diagnostics",
-		async () => {
+	it
+		.skipIf(process.platform !== "darwin")
+		.each([
+			"native",
+			"hung-host",
+			"hung-service",
+			"hung-probe-cancel",
+			"hung-probe-timeout",
+		])(
+		"owns an embedded host and joins its shutdown in %s mode without starting a service for diagnostics",
+		async (mode) => {
 			const native = await fixture();
 			const contents = join(
 					native.directory,
@@ -539,40 +554,86 @@ describe("driver observations and policy-bound actions", () => {
 			);
 			for (const [from, to] of [
 				["test/fixtures/computer-use-driver.mjs", "cua-driver"],
-				["test/fixtures/computer-use-host.mjs", "amazme-computer-use"],
 			]) {
-				await copyFile(resolve(from), join(bin, to));
+				await copyFile(join(packageRoot, from), join(bin, to));
 				await chmod(join(bin, to), 0o755);
+			}
+			await promisify(execFile)("/usr/bin/clang", [
+				"-fobjc-arc",
+				"-fblocks",
+				"-framework",
+				"Cocoa",
+				join(packageRoot, "test/fixtures/computer-use-host.m"),
+				"-o",
+				join(bin, "amazme-computer-use"),
+			]);
+			if (mode === "hung-service") {
+				await copyFile(
+					join(bin, "cua-driver"),
+					join(bin, "driver-fixture.mjs"),
+				);
+				await copyFile(
+					join(bin, "amazme-computer-use"),
+					join(bin, "cua-driver"),
+				);
+				await writeFile(join(bin, "node-path.txt"), process.execPath);
 			}
 			await copyFile(
 				join(native.directory, "capture.png"),
 				join(bin, "capture.png"),
 			);
-			await writeFile(join(bin, "mode.txt"), "native");
+			await writeFile(join(bin, "mode.txt"), mode);
 			const driver = new DriverClient("embedded", {
 				command: join(bin, "cua-driver"),
 			});
 			cleanups.push(() => driver.dispose());
-			expect(
-				(await driver.permissions(3000, signal)).structuredContent,
-			).toMatchObject({ accessibility: false });
 			const events = async (): Promise<
 				Array<{
 					event: string;
 					socket?: string;
 					argv?: string[];
 					directoryMode?: number;
+					pid?: number;
 				}>
 			> =>
-				(await readFile(join(bin, "events.jsonl"), "utf8"))
+				(await readFile(join(bin, "events.jsonl"), "utf8").catch(() => ""))
 					.trim()
 					.split("\n")
+					.filter(Boolean)
 					.map((line) => JSON.parse(line));
+			if (mode.startsWith("hung-probe")) {
+				const controller = new AbortController();
+				const probe = driver.permissions(
+					mode.endsWith("timeout") ? 1500 : 5000,
+					controller.signal,
+				);
+				const rejected = expect(probe).rejects.toThrow();
+				await vi.waitFor(async () =>
+					expect(
+						(await events()).find((event) => event.event === "probe"),
+					).toBeDefined(),
+				);
+				if (mode.endsWith("cancel")) controller.abort();
+				await rejected;
+				const diagnostic = required(
+					(await events()).find((event) => event.event === "probe"),
+				);
+				expect(() => process.kill(required(diagnostic.pid), 0)).toThrow();
+				expect((await events()).map((event) => event.event)).toEqual(["probe"]);
+				return;
+			}
+			expect(
+				(await driver.permissions(3000, signal)).structuredContent,
+			).toMatchObject({ accessibility: false });
 			expect((await events()).map((event) => event.event)).toEqual(["probe"]);
 			await driver.observe(target, 3000, signal);
 			const host = required(
 				(await events()).find((event) => event.event === "host-started"),
 			);
+			const service = (await events()).find(
+				(event) => event.event === "service-started",
+			);
+			if (mode === "hung-service") expect(service).toBeDefined();
 			expect(host.directoryMode).toBe(0o700);
 			expect(
 				(await events()).find((event) => event.event === "started")?.argv,
@@ -585,11 +646,16 @@ describe("driver observations and policy-bound actions", () => {
 				"com.amazme.computer-use",
 			]);
 			await driver.dispose();
-			expect((await events()).map((event) => event.event)).toContain(
-				"host-exited",
-			);
+			if (mode === "native")
+				expect((await events()).map((event) => event.event)).toContain(
+					"host-exited",
+				);
+			expect(() => process.kill(required(host.pid), 0)).toThrow();
+			if (service)
+				expect(() => process.kill(required(service.pid), 0)).toThrow();
 			await expect(stat(required(host.socket))).rejects.toThrow();
 		},
+		15_000,
 	);
 
 	it("cancels a pending native action without retry and joins child shutdown", async () => {
@@ -731,6 +797,110 @@ describe("driver observations and policy-bound actions", () => {
 		);
 	});
 
+	it.each(["window", "desktop"])(
+		"preserves screenshot pixels for %s scroll and drag",
+		async (scope) => {
+			const native = await fixture();
+			const driver = native.create(`pixels-${scope}`);
+			cleanups.push(() => driver.dispose());
+			const window = scope === "window" ? target : undefined;
+			const settings = { ...policy, allowForeground: scope === "desktop" };
+			const delivery_mode =
+				scope === "desktop" ? ("foreground" as const) : ("background" as const);
+			const classify: Classify = async (input) => deterministic(input);
+			for (const action of [
+				{
+					action: "scroll" as const,
+					x: 600,
+					y: 450,
+					direction: "down" as const,
+					amount: 2,
+					delivery_mode,
+				},
+				{
+					action: "drag" as const,
+					x: 600,
+					y: 450,
+					to_x: 700,
+					to_y: 500,
+					delivery_mode,
+				},
+			]) {
+				const snapshot = await driver.observe(window, 3000, signal);
+				if (window)
+					expect(snapshot.windowBounds?.width).toBe(snapshot.width / 2);
+				else expect(snapshot.windowBounds).toBeUndefined();
+				expect(
+					await act(
+						driver,
+						snapshot.captureId,
+						snapshot.snapshotId,
+						window,
+						"Move within the test surface",
+						[action],
+						classify,
+						settings,
+						signal,
+					),
+				).toMatchObject({ status: "acted", applied: 1 });
+			}
+			const events = (await native.events()).filter((event) =>
+				["scroll", "drag"].includes(event.name ?? ""),
+			);
+			expect(events[0].args).toMatchObject({
+				x: 600,
+				y: 450,
+				direction: "down",
+				amount: 2,
+				delivery_mode,
+			});
+			expect(events[1].args).toMatchObject({
+				from_x: 600,
+				from_y: 450,
+				to_x: 700,
+				to_y: 500,
+				delivery_mode,
+			});
+		},
+	);
+
+	it("scrolls using a fresh AX token without requiring pixel coordinates", async () => {
+		const native = await fixture();
+		const driver = native.create("token-scroll");
+		cleanups.push(() => driver.dispose());
+		const snapshot = await driver.observe(target, 3000, signal);
+		expect(
+			await act(
+				driver,
+				snapshot.captureId,
+				snapshot.snapshotId,
+				target,
+				"Scroll the text field",
+				[
+					{
+						action: "scroll",
+						element_token: "s1:4",
+						direction: "down",
+						amount: 2,
+					},
+				],
+				async (input) => deterministic(input),
+				policy,
+				signal,
+			),
+		).toMatchObject({ status: "acted", applied: 1 });
+		const args = required(
+			(await native.events()).find((event) => event.name === "scroll")?.args,
+		);
+		expect(args).toMatchObject({
+			element_token: "s1:4",
+			direction: "down",
+			delivery_mode: "background",
+		});
+		expect(args).not.toHaveProperty("x");
+		expect(args).not.toHaveProperty("y");
+	});
+
 	it("rejects cross-window, expired, disallowed-token and foreground actions before dispatch", async () => {
 		const native = await fixture();
 		const driver = native.create("actions");
@@ -870,7 +1040,7 @@ describe("driver observations and policy-bound actions", () => {
 	});
 
 	it("takes the AX and empty-tree visual paths and independently verifies the resulting observation", async () => {
-		for (const mode of ["native", "noax"]) {
+		for (const mode of ["native", "noax", "pinned"]) {
 			const native = await fixture(mode);
 			const driver = native.create(mode);
 			cleanups.push(() => driver.dispose());
@@ -891,6 +1061,7 @@ describe("driver observations and policy-bound actions", () => {
 				acted: true,
 				capture_id: "capture-2",
 			});
+			expect(completed.calls).toHaveLength(classify.mock.calls.length);
 			const events = (await native.events()).filter(
 				(event) => event.event === "call",
 			);
@@ -900,13 +1071,24 @@ describe("driver observations and policy-bound actions", () => {
 				"get_window_state",
 			]);
 			expect(events[1].args).toMatchObject(
-				mode === "native"
+				mode !== "noax"
 					? { element_token: "s1:1" }
 					: { capture_id: "capture-1" },
 			);
 			expect(classify.mock.calls.at(-1)?.[0].questions).toHaveProperty(
 				"verified",
 			);
+			const riskContext = required(
+				classify.mock.calls.find(
+					([input]) =>
+						Object.hasOwn(input.questions, "risk_destructive") &&
+						!Object.hasOwn(input.questions, "candidate"),
+				),
+			)[0];
+			const { session: _session, ...parameters } = required(events[1].args);
+			expect(riskContext.state).toMatchObject({
+				action: { tool: "click", parameters },
+			});
 		}
 	});
 
