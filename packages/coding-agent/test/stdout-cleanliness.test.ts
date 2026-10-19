@@ -4,7 +4,6 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
-import { childProcessEnv } from "./child-process-env.ts";
 import { allowNetwork } from "./test-network-env.ts";
 import { createTempDir } from "./temp-dir.ts";
 
@@ -65,9 +64,10 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 	return await new Promise((resolvePromise, reject) => {
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd: projectDir,
-			env: childProcessEnv({
+			env: {
+				...process.env,
 				[ENV_AGENT_DIR]: agentDir,
-			}),
+			},
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 

@@ -15,7 +15,6 @@ import { Script } from "node:vm";
 import { startWebHost, type WebHost } from "../src/host/web/host.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { DEFAULT_TYPOGRAPHY } from "@amazme/web/typography";
-import { childProcessEnv } from "./child-process-env.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const hosts = new Set<WebHost>();
@@ -30,7 +29,7 @@ async function makeDirectory(prefix: string): Promise<string> {
 const execFileAsync = promisify(execFile);
 
 async function runNode(args: readonly string[]): Promise<{ stdout: string; stderr: string }> {
-	const result = await execFileAsync(process.execPath, [...args], { encoding: "utf8", env: childProcessEnv() }).catch(
+	const result = await execFileAsync(process.execPath, [...args], { encoding: "utf8" }).catch(
 		(error: { stdout?: string; stderr?: string }) => ({
 			stdout: error.stdout ?? "",
 			stderr: error.stderr ?? String(error),
