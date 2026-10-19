@@ -79,5 +79,6 @@ test("pre-release tags publish as prereleases and never become latest", () => {
 	assert.ok(rc.includes("--latest=false"));
 	const stable = publish("v9.9.9");
 	assert.ok(stable.includes("--latest"));
+	assert.ok(!stable.includes("--latest=false"));
 	assert.ok(!stable.includes("--prerelease"));
 });
