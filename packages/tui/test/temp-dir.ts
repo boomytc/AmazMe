@@ -7,7 +7,10 @@ export type CreateTempDirOptions = {
 	baseDirectory?: string;
 };
 
-/** Schedules cleanup after the current test (`t.after`) or after the suite (`"suite"` → module `after`). */
+/**
+ * `"suite"` registers module `after` on the current suite — call it in the describe body,
+ * not inside `before`/`beforeEach` (those finish before `after` would run and wipe the dir early).
+ */
 export type TempDirContext = Pick<TestContext, "after"> | "suite";
 
 /** Create a temp directory removed when this node:test context finishes. */

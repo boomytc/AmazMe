@@ -69,7 +69,7 @@ async function readClipboard(method: string, env: NodeJS.ProcessEnv): Promise<Re
 }
 
 describe("native Linux clipboard", { skip: !dependenciesAvailable, timeout: 60000 }, () => {
-	let directory: string;
+	const directory = createTempDir("suite", "pi-clipboard-test-");
 
 	async function startX11(t: TestContext) {
 		const { child, ready } = await startServer(
@@ -82,7 +82,6 @@ describe("native Linux clipboard", { skip: !dependenciesAvailable, timeout: 6000
 	}
 
 	before(() => {
-		directory = createTempDir("suite", "pi-clipboard-test-");
 		const flags = ["-std=c11", "-D_POSIX_C_SOURCE=200809L", "-Wall", "-Wextra", "-Werror", "-pthread"];
 		execFileSync("cc", [
 			...flags,
