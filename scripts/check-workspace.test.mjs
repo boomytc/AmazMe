@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts, checkTempDirUsage } from "./check-workspace.mjs";
+import { checkBuildConfigs, checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts, checkTempDirUsage } from "./check-workspace.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -303,6 +303,33 @@ test("changelog checks reject unknown, repeated, out-of-order, and empty section
 		'ai/CHANGELOG.md:3: first section must be "## [Unreleased]"',
 	])
 		assert.ok(failures.some((failure) => failure.includes(fragment)), `missing ${fragment} in\n${failures.join("\n")}`);
+});
+
+function buildConfigFixture(root, name, config) {
+	mkdirSync(join(root, "packages", name), { recursive: true });
+	writeFileSync(join(root, "packages", name, "tsconfig.build.json"), JSON.stringify(config));
+}
+
+test("build configs resolve workspace packages through node_modules, not paths", () => {
+	const root = fixture();
+	writeFileSync(join(root, "tsconfig.base.json"), JSON.stringify({ compilerOptions: { strict: true } }));
+	buildConfigFixture(root, "agent", { extends: "../../tsconfig.base.json", compilerOptions: { outDir: "./dist" } });
+	assert.deepEqual(checkBuildConfigs(root), []);
+});
+
+test("build configs reject paths in the package config and in configs it extends", () => {
+	const root = fixture();
+	writeFileSync(join(root, "tsconfig.base.json"), JSON.stringify({ compilerOptions: { paths: { "@amazme/ai": ["x"] } } }));
+	buildConfigFixture(root, "agent", {
+		extends: "../../tsconfig.base.json",
+		compilerOptions: { paths: { "@amazme/ai": ["../ai/dist/index.d.ts"] } },
+	});
+	buildConfigFixture(root, "client", { extends: "../../tsconfig.base.json" });
+	buildConfigFixture(root, "web", { compilerOptions: { outDir: "./dist" } });
+	const failures = checkBuildConfigs(root);
+	assert.equal(failures.length, 2, failures.join("\n"));
+	assert.ok(failures.some((failure) => failure.startsWith("packages/agent/tsconfig.build.json:")));
+	assert.ok(failures.some((failure) => failure.startsWith("tsconfig.base.json:")));
 });
 
 test("temp dir checks allow temp-dir.ts and reject bare mkdtemp in packages/*/test", () => {

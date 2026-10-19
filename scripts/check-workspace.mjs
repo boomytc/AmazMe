@@ -201,6 +201,42 @@ export function checkChangelogs(repoRoot) {
 	return failures;
 }
 
+/**
+ * Package build configs resolve sibling packages through the workspace links in node_modules, never
+ * through `paths`. A `paths` entry is expanded against the logical working directory while the links
+ * resolve to the real one, so on a symlinked checkout (macOS /tmp is /private/tmp) the same
+ * declaration file loads twice and branded types stop matching. The rule covers each build config and
+ * every relative config it extends.
+ */
+export function checkBuildConfigs(repoRoot) {
+	const failures = [];
+	const packagesDirectory = join(repoRoot, "packages");
+	if (!existsSync(packagesDirectory)) return failures;
+	const seen = new Set();
+	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
+		let file = join(packagesDirectory, entry.name, "tsconfig.build.json");
+		if (!entry.isDirectory() || !existsSync(file)) continue;
+		while (file !== undefined && !seen.has(file)) {
+			seen.add(file);
+			const location = relative(repoRoot, file);
+			let config;
+			try {
+				config = JSON.parse(readFileSync(file, "utf8"));
+			} catch (error) {
+				failures.push(`${location}: cannot parse build config: ${error.message}`);
+				break;
+			}
+			if (config.compilerOptions?.paths !== undefined)
+				failures.push(
+					`${location}: build configs must not set compilerOptions.paths; resolve workspace packages through node_modules`,
+				);
+			const parent = typeof config.extends === "string" && config.extends.startsWith(".") ? config.extends : undefined;
+			file = parent === undefined ? undefined : resolve(dirname(file), parent);
+			if (file !== undefined && !existsSync(file)) file = undefined;
+		}
+	}
+	return failures;
+}
 
 /** Package test trees may not call mkdtemp/mkdtempSync except from a file named temp-dir.ts. */
 export function checkTempDirUsage(repoRoot) {
@@ -240,10 +276,11 @@ export function checkTempDirUsage(repoRoot) {
 }
 
 /** Syntax-aware checks over source, including development-only host and browser modules. */
+
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
-	const failures = [...checkDependencyVersions(root, packages), ...checkChangelogs(root), ...checkTempDirUsage(root)];
+	const failures = [...checkDependencyVersions(root, packages), ...checkChangelogs(root), ...checkBuildConfigs(root), ...checkTempDirUsage(root)];
 	try {
 		runtimePackages(packages, [...packages.keys()]);
 	} catch (error) {
@@ -521,5 +558,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
-	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, and test temp dirs passed.");
+	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, and test temp dirs passed.");
 }
