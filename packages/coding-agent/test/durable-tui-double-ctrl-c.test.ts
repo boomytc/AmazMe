@@ -15,7 +15,7 @@ const cliPath = resolve(__dirname, "../src/cli.ts");
  * The helper reports every byte the child wrote and how it ended (`CHILD exited <code>`).
  */
 const ptyHelper = `
-import os, pty, select, signal, sys, time
+import fcntl, os, pty, select, signal, struct, sys, termios, time
 
 payload = sys.argv[1]
 argv = sys.argv[2:]
@@ -23,7 +23,6 @@ argv = sys.argv[2:]
 pid, fd = pty.fork()
 if pid == 0:
     try:
-        import fcntl, struct, termios
         fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", 40, 120, 0, 0))
     except Exception:
         pass
@@ -72,6 +71,14 @@ while True:
     if not data:
         break
     os.write(sys.stdout.fileno(), data)
+try:
+    attrs = termios.tcgetattr(fd)
+    echo = 1 if attrs[3] & termios.ECHO else 0
+    canonical = 1 if attrs[3] & termios.ICANON else 0
+    sys.stdout.write("INPUT ECHO=%d ICANON=%d\\n" % (echo, canonical))
+except Exception as error:
+    sys.stdout.write("INPUT ERROR=%s\\n" % type(error).__name__)
+os.close(fd)
 if os.WIFSIGNALED(status):
     sys.stderr.write("CHILD signaled %d\\n" % os.WTERMSIG(status))
 else:
@@ -97,6 +104,7 @@ describe.skipIf(process.platform === "win32")("durable TUI double Ctrl-C", () =>
 			expect(ending, stdout).toBe("CHILD exited 130");
 			expect(stdout).toContain("\x1b[?1049l");
 			expect(stdout).toContain(SHUTDOWN_FORCE_EXIT_MESSAGE);
+			expect(stdout).toContain("INPUT ECHO=1 ICANON=1");
 			expect(stdout).not.toContain("^C");
 		}, 45_000);
 	}

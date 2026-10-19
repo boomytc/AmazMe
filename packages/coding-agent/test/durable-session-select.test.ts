@@ -1,12 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { ENV_SESSION_DIR } from "../src/config.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -104,7 +105,17 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 		await rm(directory, { recursive: true, force: true });
 	});
 
-	async function run(cwd: string, args: readonly string[]): Promise<Run> {
+	async function run(
+		cwd: string,
+		args: readonly string[],
+		options: { readonly cliSessionDir?: boolean } = {},
+	): Promise<Run> {
+		const env: NodeJS.ProcessEnv = {
+			...process.env,
+			AMAZME_CODING_AGENT_DIR: profile,
+			AMAZME_OFFLINE: "1",
+		};
+		if (options.cliSessionDir === false) delete env[ENV_SESSION_DIR];
 		const child: ChildProcess = spawn(
 			process.execPath,
 			[
@@ -118,15 +129,14 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 				"scripted",
 				"--api-key",
 				"fixture-key",
-				"--session-dir",
-				sessionDir,
+				...(options.cliSessionDir === false ? [] : ["--session-dir", sessionDir]),
 				"--no-extensions",
 				"--no-mcp",
 				...args,
 			],
 			{
 				cwd,
-				env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_OFFLINE: "1" },
+				env,
 				stdio: ["ignore", "pipe", "pipe"],
 			},
 		);
@@ -147,6 +157,15 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 		return join(sessionDir, roots[0]!.name);
 	}
 
+	async function exists(path: string): Promise<boolean> {
+		try {
+			await access(path);
+			return true;
+		} catch {
+			return false;
+		}
+	}
+
 	async function ids(): Promise<string[]> {
 		const root = await group();
 		return (await readdir(root, { withFileTypes: true }))
@@ -160,6 +179,20 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 		expect(created.code, created.stderr).toBe(0);
 		const [id] = await ids();
 		const opened = await run(projectA, ["--session", id!, "--print", "second"]);
+		expect(opened.code, opened.stderr).toBe(0);
+		expect(opened.stdout).toContain("fixture answer");
+		expect(await ids()).toEqual([id]);
+	});
+
+	it("finds an explicit ID through the sessionDir setting", async () => {
+		await mkdir(join(projectA, ".amazme"), { recursive: true });
+		await writeFile(join(projectA, ".amazme", "settings.json"), JSON.stringify({ sessionDir }));
+		const created = await run(projectA, ["--approve", "--print", "create"], { cliSessionDir: false });
+		expect(created.code, created.stderr).toBe(0);
+		const [id] = await ids();
+		const opened = await run(projectA, ["--approve", "--session", id!, "--print", "second"], {
+			cliSessionDir: false,
+		});
 		expect(opened.code, opened.stderr).toBe(0);
 		expect(opened.stdout).toContain("fixture answer");
 		expect(await ids()).toEqual([id]);
@@ -192,13 +225,22 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 		const root = await group();
 		const [id] = await ids();
 		expect(requests.at(-1)).toContain("PROJECT_A_AGENTS");
+
+		await mkdir(join(projectA, ".amazme", "commands"), { recursive: true });
+		await mkdir(join(projectB, ".amazme", "commands"), { recursive: true });
+		await writeFile(join(projectA, ".amazme", "commands", "legacy.md"), "PROJECT_A_COMMAND\n");
+		await writeFile(join(projectB, ".amazme", "commands", "legacy.md"), "PROJECT_B_COMMAND\n");
 		requests.length = 0;
-		const opened = await run(projectB, ["--session", join(root, id!), "--print", "from elsewhere"]);
+		const opened = await run(projectB, ["--approve", "--session", join(root, id!), "--print", "from elsewhere"]);
 		expect(opened.code, opened.stderr).toBe(0);
 		expect(opened.stdout).toContain("fixture answer");
 		expect(requests.at(-1)).toContain("PROJECT_A_AGENTS");
 		expect(requests.at(-1)).not.toContain("PROJECT_B_AGENTS");
 		expect(await ids()).toEqual([id]);
+		expect(await exists(join(projectA, ".amazme", "prompts", "legacy.md"))).toBe(true);
+		expect(await exists(join(projectA, ".amazme", "commands"))).toBe(false);
+		expect(await exists(join(projectB, ".amazme", "commands", "legacy.md"))).toBe(true);
+		expect(await exists(join(projectB, ".amazme", "prompts"))).toBe(false);
 	});
 
 	it("rejects --session combined with --continue", async () => {

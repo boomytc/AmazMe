@@ -5,7 +5,7 @@
 ## 当前产品策略
 
 - Durable 是唯一运行时。原生终端、Web/宿主、`--print`、`--mode json`、`--mode rpc` 和进程内 SDK 都打开 Durable 会话。
-- 没有 `AMAZME_RUNTIME`，也没有 JSONL 内核回退。`--session`、`--session-id`、`--fork` 是未知选项。分叉使用 Durable 已有的 `/tree` 和 `/fork`。
+- 没有 `AMAZME_RUNTIME`，也没有 JSONL 内核回退。原生 `--session <id|dir>` 只打开已有 Durable 会话，不创建；宿主 `client --session-id` 只打开已有会话，`--new-session-id` 用指定 ID 创建。`--fork` 仍是未知选项，分叉使用 Durable 已有的 `/tree` 和 `/fork`。
 - `--continue` 和 `--resume` 只恢复当前目录下最新的 Durable 会话。磁盘上若只剩旧 JSONL，命令打印明确提示，要求先运行 `amazme import <session.jsonl>`。这是诊断扫描，不是第二套运行时。
 - SDK 只导出 `createDurableSession`。插件只走原生 facet。`createAgentSession`、`SessionManager` 和内联 SDK 扩展工厂已删除。
 - RPC 不再有 `abort_retry`。旧客户端会收到未知命令错误。Durable 包里没有新增只取消退避的 API。

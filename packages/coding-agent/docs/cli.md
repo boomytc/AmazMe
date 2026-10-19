@@ -103,8 +103,10 @@ See [Sessions and Context](sessions.md) for resuming, forking, naming, and stori
   Continues the newest Durable session for the current project. If only a JSONL history remains, the command tells you to run `amazme import` first.
 - `-r`, `--resume`<br>
   Same as `--continue`.
+- `--session <id|dir>`<br>
+  Opens exactly one existing Durable session without creating another. An ID selects a session in the current working directory's storage group; a directory opens that session directly. The session's recorded working directory supplies its settings, trust, tools, and resources. This option cannot be combined with `--continue`, `--resume`, or `--no-session`.
 - `--session-dir <dir>`<br>
-  Overrides Durable session storage and lookup. It takes precedence over `AMAZME_CODING_AGENT_SESSION_DIR`. The settings `sessionDir` is not used as Durable storage.
+  Selects the Durable storage root for creation, explicit-session lookup, and continuation. It takes precedence over `AMAZME_CODING_AGENT_SESSION_DIR` and the `sessionDir` setting.
 - `--no-session`<br>
   Uses the existing runtime with in-memory storage. No conversation database or session lock is created, and the conversation cannot be resumed after exit. Configuration and authentication still use their normal files.
 - `-n`, `--name <name>`<br>
@@ -112,7 +114,7 @@ See [Sessions and Context](sessions.md) for resuming, forking, naming, and stori
 
 The default terminal stores SQLite sessions under `<agent-dir>/experimental/durable-sessions/<cwd-hash>/<session-id>/session.sqlite`. The directory name is retained for existing histories. A custom session root replaces `experimental/durable-sessions`; it still groups sessions by canonical working directory. Relative roots resolve against the working directory and `~` expands to the home directory. CLI root selection takes precedence over the environment, then settings, then the default. Web/server session roots belong to their shared host; these native terminal options do not select a hosted session.
 
-Interactive, print, JSON, and RPC sessions all use the Durable Harness and the same SQLite session, tools, resources, MCP selection, and native facet plugins. `--no-session` uses in-memory storage. `--session`, `--session-id`, and `--fork` are unknown options. Fork inside a session with `/tree` or `/fork`. See [Durable single-kernel migration](../../../docs/durable-migration.md).
+Interactive, print, JSON, and RPC sessions all use the Durable Harness and the same SQLite session, tools, resources, MCP selection, and native facet plugins. Native `--session` opens an existing Durable session. `--no-session` uses in-memory storage. `--session-id` and `--new-session-id` belong to the hosted `client` command; `--fork` is an unknown option. Fork inside a session with `/tree` or `/fork`. See [Durable single-kernel migration](../../../docs/durable-migration.md).
 
 ### Import a JSONL session
 
@@ -125,7 +127,9 @@ Interactive, print, JSON, and RPC sessions all use the Durable Harness and the s
 Constraints:
 
 - `--no-session` cannot be combined with `--continue` or `--resume`.
-- `--session`, `--session-id`, and `--fork` are unknown options and exit before session storage is opened.
+- `--session` cannot be combined with `--continue`, `--resume`, or `--no-session`.
+- The hosted `client` selectors `--session-id`, `--new-session-id`, `--continue`, and `--resume` are mutually exclusive.
+- `--fork` is an unknown option and exits before session storage is opened.
 
 <a id="tool-options"></a>
 
@@ -296,7 +300,9 @@ amazme doctor [--json] [--zh]
 | `-e <path>` | `server`, `web`, `client` | Native plugin package. Repeatable |
 | `--model <pattern>` | `server`, `client` | Startup model. `--provider <name>` requires `--model` |
 | `--connect <address>` | `client` | Attach to `unix:///<path>` or `radius://<uuid>` |
-| `--session-id <id>`, `-c`/`--continue`, `-r`/`--resume` | `client` | Session selectors. Mutually exclusive |
+| `--session-id <id>` | `client` | Open one exact existing hosted Session; never creates one |
+| `--new-session-id <id>` | `client` | Create a hosted Session with this ID |
+| `-c`/`--continue`, `-r`/`--resume` | `client` | Hosted Session selectors. All four selectors are mutually exclusive |
 | `--json` | `doctor` | Write the diagnostic report as JSON |
 | `--zh` | `doctor` | Write the text report in Chinese |
 

@@ -172,6 +172,10 @@ export class TaskGraphView {
 				const mount = this.#mount;
 				if (mount === undefined) return;
 				const ops: Op[] = [];
+				const restartLimit = this.#blocking.restartLimit();
+				if (restartLimit !== mount.value.restartLimit) {
+					ops.push(["s", ["restartLimit"], restartLimit]);
+				}
 				for (const [key, record] of mount.records) {
 					const blocked = this.#blocking.blocked(record);
 					if (blocked === mount.value.tasks[key]?.blocked) continue;

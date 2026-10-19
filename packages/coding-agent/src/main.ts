@@ -358,19 +358,17 @@ export async function main(args: string[]) {
 		process.exit(1);
 	}
 
-	// Run migrations (pass cwd for project-local migrations)
-	runMigrations(cwd);
-	time("runMigrations");
-
 	// An explicit session owns the project context: settings, trust, tools, and resources come from its recorded cwd.
 	const sessionDirOption = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
 	let explicitSession: { directory: string; cwd: string } | undefined;
 	if (parsed.session !== undefined) {
 		try {
+			// Session lookup is the documented pre-trust use of the project's sessionDir setting.
+			const lookupSessionDir = sessionDirOption ?? SettingsManager.create(cwd, agentDir).getSessionDir();
 			explicitSession = await resolveExplicitSession(
 				cwd,
 				parsed.session,
-				sessionDirOption === undefined ? {} : { sessionDir: sessionDirOption },
+				lookupSessionDir === undefined ? {} : { sessionDir: lookupSessionDir },
 			);
 		} catch (error) {
 			console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
@@ -378,6 +376,11 @@ export async function main(args: string[]) {
 		}
 	}
 	const effectiveCwd = explicitSession?.cwd ?? cwd;
+
+	// Run migrations against the selected project so opening a session never migrates the launch directory.
+	runMigrations(effectiveCwd);
+	time("runMigrations");
+
 	const startupSettingsManager = SettingsManager.create(effectiveCwd, agentDir);
 	const startupSettingsDiagnostics = collectSettingsDiagnostics(startupSettingsManager);
 

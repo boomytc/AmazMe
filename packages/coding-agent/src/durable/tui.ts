@@ -60,7 +60,7 @@ import { getEditorTheme, getMarkdownTheme, initTheme, onThemeChange, setRegister
 import type { ResourceLoader } from "../core/resource-loader.ts";
 import { InteractiveThemeController } from "../modes/interactive/theme/theme-controller.ts";
 import { agentOf, type DurableController, type DurableView, type DurableViewSource, formatLane } from "./runtime.ts";
-import { restoreDurableScreen } from "./screen-restore.ts";
+import { restoreDurableInput, restoreDurableScreen } from "./screen-restore.ts";
 import { NATIVE_COMMANDS } from "./commands.ts";
 import { CACHE_TTL_MS, collectCacheMisses, type CacheMiss } from "../core/cache-stats.ts";
 import { sessionEntriesFor } from "./session-surface.ts";
@@ -1255,7 +1255,13 @@ export async function runDurableTui(
 	let end: SessionEnd | undefined;
 	try {
 		// A second Ctrl-C can force-exit before this function's finally runs.
-		setShutdownTerminalRestore(() => view.stop());
+		setShutdownTerminalRestore(() => {
+			try {
+				view.stop();
+			} finally {
+				restoreDurableInput(view.ui);
+			}
+		});
 		hooks?.bindInputRestore?.(() => view.restoreInput());
 		view.start();
 		themes.applyFromSettings();

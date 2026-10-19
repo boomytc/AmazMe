@@ -22,6 +22,7 @@ Choose another root with `--session-dir`, `AMAZME_CODING_AGENT_SESSION_DIR`, or 
 ```bash
 amazme --session-dir ./agent-history --name "Review"
 amazme --session-dir ./agent-history --continue
+amazme --session <id|dir>
 amazme --no-session
 ```
 
@@ -57,7 +58,7 @@ The host's `--session-dir` selects its server storage root. Default terminal fla
 
 ## Print, JSON, RPC, and JSONL files
 
-Print, JSON, and RPC use the same Durable session as the terminal. `--continue` resumes the newest Durable session. `--session`, `--session-id`, and `--fork` are unknown options.
+Print, JSON, and RPC use the same Durable session as the terminal. `--session <id|dir>` opens exactly one existing Durable session and never creates another; it cannot be combined with `--continue`, `--resume`, or `--no-session`. The hosted `client` command uses `--session-id` only to open an existing Session and `--new-session-id` to create one. `--fork` remains an unknown option; fork inside a session with `/tree` or `/fork`.
 
 ```bash
 amazme --print --name "Review" "Explain this project"

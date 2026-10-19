@@ -1,6 +1,8 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { JsonValue } from "@amazme/chord";
+import { applyImmutable, type Op } from "@amazme/chord/delta";
 import {
 	createRegistry,
 	defineExtension,
@@ -316,6 +318,14 @@ describe("tasks that cannot run", () => {
 		opened.kill(); // a crash: a close would not count
 		opened = await openWith(path, registry, settings);
 		const graph = await opened.harness.taskGraph(context);
+		const watch = await opened.harness.watchTaskGraph(context);
+		let replica = watch.value as unknown as JsonValue;
+		const ops: Op[] = [];
+		watch.start(async (value, frame) => {
+			replica = applyImmutable(replica, frame);
+			expect(replica).toEqual(value);
+			ops.push(...frame);
+		});
 		opened.harness.resume();
 		await eventually(() => graph.value.tasks[String(id)]?.blocked === "restart_limit");
 		// Let a scheduling pass leave the parked task out.
@@ -326,6 +336,12 @@ describe("tasks that cannot run", () => {
 		opened.harness.resume();
 		expect((await opened.harness.waitForTask(id, context)).state.outcome.status).toBe("completed");
 		expect(state.started).toBe(2);
+		await eventually(() => graph.value.restartLimit === Number.POSITIVE_INFINITY);
+		await flush();
+		expect(watch.value).toEqual(graph.value);
+		expect(replica).toEqual(watch.value);
+		expect(ops).toContainEqual(["s", ["restartLimit"], Number.POSITIVE_INFINITY]);
+		await watch.stop();
 		graph.dispose();
 		await opened.harness.close(context);
 	});

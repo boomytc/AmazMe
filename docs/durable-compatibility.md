@@ -12,7 +12,7 @@
 | RPC `fork` | 接收投影 ID 或原始 Durable ID，返回被选中的用户文本 | 分支仍由 Durable conversation 承载 |
 | RPC `abort_retry` | 从协议、客户端和 RPC 处理里删除 | 旧客户端收到未知命令错误；没有新增只取消退避的 API |
 | `createAgentSession` / `SessionManager` / 内联扩展工厂 | 删除。SDK 只保留 `createDurableSession` | 插件只通过原生 facet。只演示旧 `ExtensionAPI` 的五个示例目录已删除 |
-| `--session` / `--session-id` / `--fork` | 删除。这些选项现在是未知选项 | 分叉使用 `/tree` 和 `/fork`。导入和导出使用 `amazme import` / `amazme export` |
+| `--session` / `--session-id` / `--new-session-id` / `--fork` | 原生 `--session` 精确打开已有 Durable 会话；宿主 `--session-id` 只打开已有会话，`--new-session-id` 用指定 ID 创建；`--fork` 仍为未知选项 | 分叉使用 `/tree` 和 `/fork`。导入和导出使用 `amazme import` / `amazme export` |
 | 只有 JSONL 历史的 `--continue` | 不回退旧内核。若扫描到旧 JSONL，提示先 `amazme import` | 扫描的是旧 sessions 目录，不读取 Durable 存储 |
 | 旧 `AgentSession` / JSONL 内核 / 宿主镜像 | 删除 | JSONL 类型留在 `jsonl-transcript.ts`，只服务导入、导出和投影 |
 | `/share` | 原生终端复用 `writeDurableExport` 和 `shareFilesToUrl` | 目的地仍是设置里的 Radius 或私有 gist |
