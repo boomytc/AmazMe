@@ -88,4 +88,31 @@ describe("durable session export", () => {
 		expect(await readFile(jsonl, "utf8")).toContain("exported answer");
 		expect(sessionId.length).toBeGreaterThan(0);
 	});
+
+	it("exports the focused fork instead of later main-line entries", async () => {
+		durable = await openDurable({
+			cwd,
+			sessionDir: join(directory, "sessions"),
+			continueSession: true,
+			modelRuntime: runtime,
+			settingsManager: settings,
+			noExtensions: true,
+			noMcp: true,
+		});
+		const forkAt = durable.view.current().conversation.entries.at(-1)?.id;
+		if (forkAt === undefined) throw new Error("expected an entry to fork from");
+		faux.setResponses([fauxAssistantMessage("main tail")]);
+		await durable.controller.submitAndWait("main tail marker", "steer");
+		await durable.controller.forkAt(String(forkAt));
+		faux.setResponses([fauxAssistantMessage("fork answer")]);
+		await durable.controller.submitAndWait("fork marker", "steer");
+		await durable.close();
+		durable = undefined;
+
+		const output = join(directory, "fork-export.jsonl");
+		await exportDurableSession(database, { output, format: "jsonl" });
+		const content = await readFile(output, "utf8");
+		expect(content).toContain("fork marker");
+		expect(content).not.toContain("main tail marker");
+	});
 });

@@ -5,9 +5,11 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { Message } from "@amazme/ai";
 import { createModels } from "@amazme/ai/models";
 import { createRegistry, Harness } from "@amazme/durable";
+import type { ConversationId } from "@amazme/durable";
 import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { exportFromFile } from "../core/export-html/index.ts";
 import { durableEntriesToSessionFile, type SessionInteropReport } from "../core/session-interop.ts";
+import { readFocus } from "./session-surface.ts";
 
 const context = BACKGROUND_CONTEXT;
 
@@ -77,9 +79,10 @@ async function copyDatabase(source: string, target: string): Promise<void> {
  * Export one Durable SQLite session to the terminal JSONL bundle or the HTML viewer.
  *
  * The source database is never opened. A temporary copy (including WAL/SHM sidecars) is read
- * with the normal Harness, so an export cannot migrate, lock, or write the live session. Only
- * the active transcript is exported; branch history that is not in the current context stays in
- * the source database. Close a running session before exporting so the copied WAL is complete.
+ * with the normal Harness, so an export cannot migrate, lock, or write the live session. The
+ * transcript is the persisted focus, or the root when the session has not focused a branch.
+ * Other branches stay in the source database. Close a running session before exporting so the
+ * copied WAL is complete.
  */
 export async function exportDurableSession(path: string, options: DurableExportOptions = {}): Promise<DurableExportResult> {
 	const source = await sessionDatabase(path);
@@ -95,7 +98,10 @@ export async function exportDurableSession(path: string, options: DurableExportO
 			context,
 		);
 		const root = await harness.root(context);
-		const view = await root.viewState(context);
+		const focusId = await readFocus(harness, context);
+		const focused = focusId.length === 0 ? undefined : await harness.conversation(Number(focusId) as ConversationId, context);
+		const conversation = focused ?? root;
+		const view = await conversation.viewState(context);
 		const agent = view.value.docs["amazme.agent"] as { cwd?: unknown } | undefined;
 		const cwd = options.cwd ?? (typeof agent?.cwd === "string" ? agent.cwd : process.cwd());
 		const sessionId = basename(dirname(source));
