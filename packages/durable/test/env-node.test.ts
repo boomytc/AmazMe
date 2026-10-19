@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { access, chmod, type FileHandle, open, realpath, symlink } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -124,14 +124,8 @@ function cleanupDetachedChild(pidFile: string): void {
 }
 
 class FailingSpillExecutionEnv extends NodeExecutionEnv {
-	override async createTempFile(
-		options: Parameters<NodeExecutionEnv["createTempFile"]>[0],
-		context: Parameters<NodeExecutionEnv["createTempFile"]>[1],
-	) {
-		if (options?.prefix === "pi-output-") {
-			return { ok: true as const, value: join(this.cwd, "missing", "spill.log") };
-		}
-		return super.createTempFile(options, context);
+	protected override async createSpillFile() {
+		return { ok: true as const, value: join(this.cwd, "missing", "spill.log") };
 	}
 }
 
@@ -933,6 +927,23 @@ describe("NodeExecutionEnv shell", () => {
 		expect(result.spillPath).toBeDefined();
 		tempDirs.push(join(result.spillPath!, ".."));
 		expect([...getOrThrow(await env.readBinaryFile(result.spillPath!, BACKGROUND_CONTEXT))]).toEqual(expected);
+	});
+
+	it("spills into the artifact directory, readable only by the user, not the OS temp directory", async () => {
+		const root = createTempDir();
+		const artifacts = join(root, "artifacts");
+		const env = new NodeExecutionEnv({ artifactDirectory: artifacts, cwd: root });
+		const result = getOrThrow(
+			await env.exec("printf 12345678901234567890", { spill: { afterBytes: 10, afterLines: 10 } }, BACKGROUND_CONTEXT),
+		);
+		expect(result.spillPath).toBeDefined();
+		expect(dirname(result.spillPath!)).toBe(artifacts);
+		expect(basename(result.spillPath!)).toMatch(/^pi-output-[0-9a-f-]+\.log$/);
+		expect(getOrThrow(await env.readTextFile(result.spillPath!, BACKGROUND_CONTEXT))).toBe("12345678901234567890");
+		if (process.platform !== "win32") {
+			expect(statSync(result.spillPath!).mode & 0o777).toBe(0o600);
+			expect(statSync(artifacts).mode & 0o777).toBe(0o700);
+		}
 	});
 
 	it("reports the spill of a command that times out", async () => {

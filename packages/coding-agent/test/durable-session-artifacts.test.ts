@@ -26,6 +26,8 @@ import {
 	deleteSession,
 	readSession,
 } from "../src/host/session-catalog.ts";
+import { outputFileSaver } from "../src/core/mcp/results.ts";
+import { createOutputFileStream, writeOutputFile } from "../src/utils/output-files.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const sessions = new Set<OpenDurableResult>();
@@ -148,6 +150,28 @@ describe("session-scoped code-mode artifacts", () => {
 		});
 		await expect(access(artifacts)).rejects.toMatchObject({ code: "ENOENT" });
 		expect(await readSession(catalog, "sess-1")).toBeUndefined();
+	});
+
+	it("deletes output files (truncated output, MCP resources) with the session", async () => {
+		const catalog = await temp("amazme-artifacts-output-");
+		const metadata = await createSession(catalog, {
+			id: "sess-output",
+			cwd: catalog,
+			name: "output",
+		});
+		const artifacts = join(metadata.path, "artifacts");
+		const mcp = await outputFileSaver(artifacts)(new Uint8Array([1, 2, 3]), ".bin");
+		const text = await writeOutputFile(artifacts, "pi-bash", ".log", "full output");
+		const streamed = createOutputFileStream(artifacts, "pi-output", ".log");
+		await new Promise<void>((resolveEnd) => streamed.stream.end("streamed", resolveEnd));
+		for (const path of [mcp, text, streamed.path]) {
+			expect(path.startsWith(artifacts + "/")).toBe(true);
+			await access(path);
+		}
+
+		await deleteSession(metadata);
+		for (const path of [mcp, text, streamed.path])
+			await expect(access(path)).rejects.toMatchObject({ code: "ENOENT" });
 	});
 
 	it("removes the ephemeral amazme-session-artifacts temp directory on release", async () => {

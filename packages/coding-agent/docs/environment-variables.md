@@ -34,6 +34,8 @@ SDK `createBashTool(cwd, options)` and `createPowerShellTool(cwd, options)` expo
 
 ```typescript
 const bashTool = createBashTool(cwd, {
+  // Standalone tools need a directory for the full output of long commands; in a session it comes from the context.
+  artifactDirectory,
   spawnHook: (ctx) => ({ ...ctx, env: { ...ctx.env, CI: "1" } }),
 });
 ```

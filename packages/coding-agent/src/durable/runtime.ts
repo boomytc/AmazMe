@@ -342,6 +342,11 @@ export interface OpenDurableResult {
 	readonly settings: SettingsManager;
 	/** The same resource owner supplies the presentation's selected themes. */
 	readonly resources: Pick<ResourceLoader, "getThemes">;
+	/**
+	 * The session's artifact directory (`SessionLocation.artifactDirectory`): output files of
+	 * host-run commands go here and are deleted with the session.
+	 */
+	readonly artifactDirectory: string;
 	close(): Promise<void>;
 }
 
@@ -1941,6 +1946,7 @@ export async function openDurable(
 			availableModels: () => modelRuntime.getAvailableSnapshot(),
 			settings: settingsManager,
 			resources,
+			artifactDirectory: location.artifactDirectory,
 			close() {
 				closing ??= (async () => {
 					activeCommand?.abort(new Error("Session closing"));

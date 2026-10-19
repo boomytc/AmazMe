@@ -334,7 +334,7 @@ export function createDurableRpcHandler(
 						command.command,
 						typeof stored?.cwd === "string" ? stored.cwd : process.cwd(),
 						shell,
-						{ signal: bashAbort.signal },
+						{ artifactDirectory: durable.artifactDirectory, signal: bashAbort.signal },
 					);
 					return success(id, "bash", result);
 				} finally {
@@ -418,6 +418,13 @@ export function createDurableRpcHandler(
 		}
 	};
 }
+
+/** The status a signal-driven RPC exit reports: 128 + the signal number. */
+const RPC_SIGNAL_EXIT_CODES: Readonly<Record<"SIGINT" | "SIGTERM" | "SIGHUP", number>> = {
+	SIGINT: 130,
+	SIGTERM: 143,
+	SIGHUP: 129,
+};
 
 export async function runDurableRpc(options: DurableRpcOptions = {}): Promise<never> {
 	let durable = await openDurable(options);
@@ -518,12 +525,16 @@ export async function runDurableRpc(options: DurableRpcOptions = {}): Promise<ne
 		});
 	};
 
-	const signals: NodeJS.Signals[] = ["SIGTERM"];
-	if (process.platform !== "win32") signals.push("SIGHUP");
+	// Every signal that ends the process goes through `shutdown`, which closes the session (and so
+	// releases a `--no-session` artifact directory) before exiting with 128 + the signal number.
+	// SIGINT is included: without a listener its default action killed the process before `close`.
+	const signals: NodeJS.Signals[] =
+		process.platform === "win32" ? ["SIGINT", "SIGTERM"] : ["SIGINT", "SIGTERM", "SIGHUP"];
 	const handlers = signals.map((signal) => {
+		const code = RPC_SIGNAL_EXIT_CODES[signal as keyof typeof RPC_SIGNAL_EXIT_CODES] ?? 1;
 		const handler = () => {
 			killTrackedDetachedChildren();
-			void shutdown(signal === "SIGHUP" ? 129 : 143).catch(() => process.exit(signal === "SIGHUP" ? 129 : 143));
+			void shutdown(code).catch(() => process.exit(code));
 		};
 		process.on(signal, handler);
 		return { signal, handler };

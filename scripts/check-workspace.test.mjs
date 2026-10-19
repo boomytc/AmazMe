@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, test } from "node:test";
 import {
 	checkBuildConfigs,
@@ -10,8 +11,10 @@ import {
 	checkDependencyVersions,
 	checkSourceContracts,
 	checkEntryContracts,
+	checkTempDirAllowlistFiles,
 	checkTempDirUsage,
 	checkVersionLiterals,
+	sourceTempDirAllowlist,
 } from "./check-workspace.mjs";
 
 const roots = [];
@@ -445,4 +448,92 @@ test("temp dir helpers match the ai vitest copy; tui may differ", () => {
 	assert.equal(failures.length, 1, failures.join("\n"));
 	assert.ok(failures[0].includes("packages/client/test/temp-dir.ts:"));
 	assert.ok(failures[0].includes("byte-for-byte"));
+});
+
+test("package sources may not call tmpdir() outside the allowlist", () => {
+	const root = fixture();
+	const src = join(root, "packages", "coding-agent", "src");
+	mkdirSync(join(src, "utils"), { recursive: true });
+	mkdirSync(join(src, "durable"), { recursive: true });
+	writeFileSync(
+		join(src, "utils", "output-files.ts"),
+		'import { tmpdir } from "node:os";\nexport const path = () => join(tmpdir(), "amazme-mcp-x");\n',
+	);
+	writeFileSync(join(src, "utils", "os-call.ts"), 'import os from "node:os";\nexport const dir = os.tmpdir();\n');
+	// A variable named tmpdir is not a call.
+	writeFileSync(join(src, "utils", "remote.ts"), "export const join = (tmpdir) => tmpdir + '/x';\n");
+	writeFileSync(
+		join(src, "durable", "sessions.ts"),
+		'import { tmpdir } from "node:os";\nexport const dir = join(tmpdir(), "amazme-session-artifacts-x");\n',
+	);
+	const failures = checkTempDirUsage(root, {
+		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+	});
+	assert.equal(failures.length, 2, failures.join("\n"));
+	assert.ok(failures.some((message) => message.startsWith("packages/coding-agent/src/utils/output-files.ts:2:")));
+	assert.ok(failures.some((message) => message.startsWith("packages/coding-agent/src/utils/os-call.ts:2:")));
+	assert.ok(failures.every((message) => message.includes("artifactDirectory")));
+});
+
+test("an allowlisted source that stops calling tmpdir() must leave the allowlist", () => {
+	const root = fixture();
+	const src = join(root, "packages", "coding-agent", "src", "durable");
+	mkdirSync(src, { recursive: true });
+	writeFileSync(join(src, "sessions.ts"), "export const dir = '/var/sessions';\n");
+	const failures = checkTempDirUsage(root, {
+		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+	});
+	assert.equal(failures.length, 1, failures.join("\n"));
+	assert.ok(failures[0].includes("remove it from sourceTempDirAllowlist"));
+});
+
+test("an allowlisted source file that no longer exists must leave the allowlist", () => {
+	const root = fixture();
+	const src = join(root, "packages", "coding-agent", "src");
+	mkdirSync(src, { recursive: true });
+	writeFileSync(join(src, "kept.ts"), 'import { tmpdir } from "node:os";\nexport const dir = tmpdir();\n');
+	const allowed = {
+		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+		"packages/coding-agent/src/kept.ts": "still calls it",
+	};
+	// The walk never visits a file that is gone, so only the file check can see this entry.
+	assert.deepEqual(checkTempDirUsage(root, allowed), []);
+	const failures = checkTempDirAllowlistFiles(root, allowed);
+	assert.equal(failures.length, 1, failures.join("\n"));
+	assert.ok(failures[0].startsWith("packages/coding-agent/src/durable/sessions.ts:"));
+	assert.ok(failures[0].includes("no such source file"));
+	assert.ok(failures[0].includes("remove it from sourceTempDirAllowlist"));
+});
+
+test("allowlist entries are exact source files with a reason", () => {
+	const root = fixture();
+	const src = join(root, "packages", "coding-agent", "src", "utils");
+	mkdirSync(src, { recursive: true });
+	writeFileSync(join(src, "scratch.ts"), 'import { tmpdir } from "node:os";\nexport const dir = tmpdir();\n');
+	const failures = checkTempDirUsage(root, {
+		"packages/coding-agent/src/utils": "a whole directory",
+		"packages/coding-agent/src/utils/*.ts": "a pattern",
+		"packages/coding-agent/src/../src/utils/scratch.ts": "a path that leaves and re-enters",
+		"packages/coding-agent/src/utils/scratch.ts": "  ",
+	});
+	assert.equal(failures.length, 4, failures.join("\n"));
+	assert.equal(failures.filter((message) => message.includes("one exact packages/<pkg>/src/... source file")).length, 3);
+	assert.ok(failures.includes("packages/coding-agent/src/utils/scratch.ts: sourceTempDirAllowlist entry needs a reason"));
+});
+
+test("every real allowlist entry is an existing source file with a reason that still calls tmpdir()", () => {
+	const repoRoot = fileURLToPath(new URL("..", import.meta.url));
+	for (const [file, reason] of Object.entries(sourceTempDirAllowlist)) {
+		assert.match(file, /^packages\/[^/]+\/src\/.+\.(?:[cm]?ts|[cm]?js|tsx|jsx)$/);
+		assert.ok(reason.trim().length > 0, file);
+		assert.ok(existsSync(join(repoRoot, file)), `${file} does not exist`);
+	}
+	assert.deepEqual(checkTempDirUsage(repoRoot), []);
+	assert.deepEqual(checkTempDirAllowlistFiles(repoRoot), []);
+});
+
+test("the source allowlist exempts the --no-session directory but not output files", () => {
+	assert.ok(Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/durable/sessions.ts"));
+	assert.ok(!Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/utils/output-files.ts"));
+	assert.ok(!Object.keys(sourceTempDirAllowlist).some((file) => file.includes("/mcp/")));
 });

@@ -1,10 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { resolve } from "node:path";
+import { lstat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 import {
+	closeWhenSignaled,
 	forceShutdownExitLine,
 	SHUTDOWN_FORCE_EXIT_CODE,
 	SHUTDOWN_FORCE_EXIT_MESSAGE,
@@ -73,6 +76,67 @@ describe.skipIf(process.platform === "win32")("shutdown signals", () => {
 		expect(stderr.join("")).not.toContain(SHUTDOWN_FORCE_EXIT_MESSAGE);
 	});
 
+	it("keeps running through a second SIGHUP while cleanup is still in progress", async () => {
+		const child = spawnFixture("slow");
+		const stdout: string[] = [];
+		const stderr: string[] = [];
+		collect(child, stdout, stderr);
+		await waitFor(stdout, "ready\n", child, stderr);
+		child.kill("SIGHUP");
+		await waitFor(stdout, "closing\n", child, stderr);
+		child.kill("SIGHUP");
+		const [code, signal] = await childExit(child);
+		expect(signal).toBeNull();
+		expect(code).toBe(0);
+		expect(stdout.join("")).toContain("closed\n");
+		expect(stderr.join("")).not.toContain(SHUTDOWN_FORCE_EXIT_MESSAGE);
+	});
+
+	for (const sent of ["SIGTERM", "SIGHUP"] as const) {
+		it(`unlinks the socket when ${sent} arrives before listen`, async () => {
+			const socketPath = join(createTempDir("am-sock-"), "s.sock");
+			const child = spawnFixture("socket", true, [socketPath]);
+			const stdout: string[] = [];
+			const stderr: string[] = [];
+			collect(child, stdout, stderr);
+			// `binding` is printed inside `start`: the listeners are up, the socket does not exist yet.
+			await waitFor(stdout, "binding\n", child, stderr);
+			await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+			child.kill(sent);
+			// Let the handler run before the socket is bound, then let `start` listen.
+			await new Promise((resolve) => setTimeout(resolve, 200));
+			expect(child.exitCode).toBeNull();
+			child.stdin?.write("listen\n");
+			const [code, signal] = await childExit(child);
+			expect(signal).toBeNull();
+			expect(code).toBe(0);
+			const text = stdout.join("");
+			expect(text).toContain("listening\n");
+			expect(text).toContain("closing\n");
+			// The signal was seen before `arm`: readiness is never announced for a closing server.
+			expect(text).not.toContain("ready\n");
+			await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+		});
+
+		it(`unlinks the socket when ${sent} arrives after listen`, async () => {
+			const socketPath = join(createTempDir("am-sock-"), "s.sock");
+			const child = spawnFixture("socket", true, [socketPath]);
+			const stdout: string[] = [];
+			const stderr: string[] = [];
+			collect(child, stdout, stderr);
+			await waitFor(stdout, "binding\n", child, stderr);
+			child.stdin?.write("listen\n");
+			await waitFor(stdout, "ready\n", child, stderr);
+			expect((await lstat(socketPath)).isSocket()).toBe(true);
+			child.kill(sent);
+			const [code, signal] = await childExit(child);
+			expect(signal).toBeNull();
+			expect(code).toBe(0);
+			expect(stdout.join("")).toContain("closing\n");
+			await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+		});
+	}
+
 	it("force-exits when SIGTERM started cleanup and a SIGINT follows", async () => {
 		const child = spawnFixture("hang");
 		const stdout: string[] = [];
@@ -128,8 +192,8 @@ describe.skipIf(process.platform === "win32")("shutdown signals", () => {
 		expect(stderr.join("")).toContain(SHUTDOWN_FORCE_EXIT_MESSAGE);
 	});
 
-	function spawnFixture(mode: string, stdin = false): ChildProcess {
-		const child = spawn(process.execPath, ["--import", sourceResolverUrl, fixturePath, mode], {
+	function spawnFixture(mode: string, stdin = false, extra: readonly string[] = []): ChildProcess {
+		const child = spawn(process.execPath, ["--import", sourceResolverUrl, fixturePath, mode, ...extra], {
 			stdio: [stdin ? "pipe" : "ignore", "pipe", "pipe"],
 		});
 		children.push(child);
@@ -176,6 +240,19 @@ async function waitFor(
 		`timed out waiting for ${JSON.stringify(needle)}\nstdout:\n${stdout.join("")}\nstderr:\n${stderr.join("")}\nexit:${String(child.exitCode)} signal:${String(child.signalCode)}`,
 	);
 }
+
+describe("closeWhenSignaled shape", () => {
+	it("cannot be handed a resource that is already listening", () => {
+		const running = { closed: Promise.resolve(), close: async () => {} };
+		// Neither old order type-checks: listening first and then passing the result is not expressible.
+		// @ts-expect-error A started resource is not a `start` callback.
+		const startedFirst = () => closeWhenSignaled(running, () => {});
+		// @ts-expect-error The removed `(closed, close, arm)` shape.
+		const oldShape = () => closeWhenSignaled(running.closed, () => running.close(), () => {});
+		// Never called: this test is about the types, which `npm run typecheck` enforces.
+		expect([typeof startedFirst, typeof oldShape]).toEqual(["function", "function"]);
+	});
+});
 
 describe("force-exit line", () => {
 	it("clears the echoed ^C on a terminal and writes the plain message to a pipe", () => {

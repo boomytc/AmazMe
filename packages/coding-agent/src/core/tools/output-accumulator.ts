@@ -4,6 +4,8 @@ import { createOutputFileStream } from "../../utils/output-files.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, type TruncationResult, truncateTail } from "./truncate.ts";
 
 export interface OutputAccumulatorOptions {
+	/** Session artifact directory (`ExecutionEnv.artifactDirectory`) for the full-output file. Required: no temp-directory fallback. */
+	artifactDirectory: string;
 	maxLines?: number;
 	maxBytes?: number;
 	tempFilePrefix?: string;
@@ -29,14 +31,15 @@ function byteLength(text: string): number {
  * Incrementally tracks streaming output with bounded memory.
  *
  * Appends decode chunks with a streaming UTF-8 decoder, keeps only a decoded
- * tail for display snapshots, and opens a temp file when the full output needs
- * to be preserved.
+ * tail for display snapshots, and opens a file under the session artifact
+ * directory when the full output needs to be preserved.
  */
 export class OutputAccumulator {
 	private readonly maxLines: number;
 	private readonly maxBytes: number;
 	private readonly maxRollingBytes: number;
 	private readonly tempFilePrefix: string;
+	private readonly artifactDirectory: string;
 	private readonly decoder = new TextDecoder();
 
 	private rawChunks: Buffer[] = [];
@@ -54,7 +57,8 @@ export class OutputAccumulator {
 	private tempFilePath: string | undefined;
 	private tempFileStream: WriteStream | undefined;
 
-	constructor(options: OutputAccumulatorOptions = {}) {
+	constructor(options: OutputAccumulatorOptions) {
+		this.artifactDirectory = options.artifactDirectory;
 		this.maxLines = options.maxLines ?? DEFAULT_MAX_LINES;
 		this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
 		this.maxRollingBytes = Math.max(this.maxBytes * 2, 1);
@@ -246,7 +250,7 @@ export class OutputAccumulator {
 		if (this.tempFilePath) {
 			return;
 		}
-		const { path, stream } = createOutputFileStream(this.tempFilePrefix, ".log");
+		const { path, stream } = createOutputFileStream(this.artifactDirectory, this.tempFilePrefix, ".log");
 		this.tempFilePath = path;
 		this.tempFileStream = stream;
 		for (const chunk of this.rawChunks) {

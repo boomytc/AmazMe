@@ -6,7 +6,8 @@ import type { WebCommand } from "../cli/host/commands/web.ts";
 import { runClient } from "./client.ts";
 import { runClientTui } from "./client-tui.ts";
 import type { RadiusRelayHostStatus } from "./radius-relay.ts";
-import { closeWhenSignaled, startForegroundServer } from "./server.ts";
+import { closeWhenSignaled } from "../utils/shutdown-signals.ts";
+import { startForegroundServer } from "./server.ts";
 import { startWebHost, type WebHost } from "./web/host.ts";
 import { watchDesktopParent } from "./desktop-parent.ts";
 
@@ -27,25 +28,29 @@ async function runServerCommand(command: ServerCommand): Promise<void> {
 		previousRelayStatus = description;
 		console.log(`Radius: ${description}`);
 	};
-	const runtime = await startForegroundServer({
-		serverId: command.serverId,
-		sessionDir: command.sessionDir,
-		provider: command.provider,
-		model: command.model,
-		pluginPackages: command.pluginPackages ?? [],
-		relayAuth: command.auth,
-		onRelayStatus(status) {
-			if (relayOutputReady) reportRelayStatus(status);
-			else pendingRelayStatus = status;
+	// The signal listeners go up before the server binds its socket. `Socket:` tells a supervisor the
+	// server is ready, so it is printed in `arm`, once the server is listening.
+	await closeWhenSignaled(
+		() =>
+			startForegroundServer({
+				serverId: command.serverId,
+				sessionDir: command.sessionDir,
+				provider: command.provider,
+				model: command.model,
+				pluginPackages: command.pluginPackages ?? [],
+				relayAuth: command.auth,
+				onRelayStatus(status) {
+					if (relayOutputReady) reportRelayStatus(status);
+					else pendingRelayStatus = status;
+				},
+			}),
+		(runtime) => {
+			console.log(`Server: ${runtime.serverId}`);
+			console.log(`Socket: ${runtime.socketPath}`);
+			relayOutputReady = true;
+			if (pendingRelayStatus !== undefined) reportRelayStatus(pendingRelayStatus);
 		},
-	});
-	// `Socket:` tells a supervisor the server is ready, so it is printed only after the signal listeners are installed.
-	await closeWhenSignaled(runtime.closed, () => runtime.close(), () => {
-		console.log(`Server: ${runtime.serverId}`);
-		console.log(`Socket: ${runtime.socketPath}`);
-		relayOutputReady = true;
-		if (pendingRelayStatus !== undefined) reportRelayStatus(pendingRelayStatus);
-	});
+	);
 	process.exit(process.exitCode ?? 0);
 }
 
@@ -76,22 +81,28 @@ async function runWebCommand(command: WebCommand): Promise<void> {
 	let host: WebHost | undefined;
 	let finished = false;
 	try {
-		const running = await startWebHost({
-			...(command.port === undefined ? {} : { port: command.port }),
-			...(command.serverId === undefined ? {} : { serverId: command.serverId }),
-			...(command.sessionDir === undefined ? {} : { sessionDir: command.sessionDir }),
-			...(command.pluginPackages === undefined ? {} : { pluginPackages: command.pluginPackages }),
-		});
-		host = running;
-		if (parentClosed) {
-			finished = true;
-			return;
-		}
-		// The launch lines tell the desktop app the host is ready, so they follow the signal listeners.
-		await closeWhenSignaled(running.closed, () => running.close(), (finish) => {
-			finishParent = finish;
-			for (const line of webLaunchLines(running)) console.log(line);
-		});
+		// The signal listeners go up before the host binds its port and socket. The launch lines tell
+		// the desktop app the host is ready, so they are printed in `arm`, once both are listening.
+		await closeWhenSignaled(
+			async () => {
+				host = await startWebHost({
+					...(command.port === undefined ? {} : { port: command.port }),
+					...(command.serverId === undefined ? {} : { serverId: command.serverId }),
+					...(command.sessionDir === undefined ? {} : { sessionDir: command.sessionDir }),
+					...(command.pluginPackages === undefined ? {} : { pluginPackages: command.pluginPackages }),
+				});
+				return host;
+			},
+			(running, finish) => {
+				// The desktop parent left while the host was starting: close without announcing it.
+				if (parentClosed) {
+					finish();
+					return;
+				}
+				finishParent = finish;
+				for (const line of webLaunchLines(running)) console.log(line);
+			},
+		);
 		finished = true;
 	} finally {
 		stopParent();

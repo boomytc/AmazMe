@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { copyJson } from "@amazme/chord";
 import type { Context } from "@amazme/chord";
 import {
@@ -7,13 +8,19 @@ import {
 	type AgentState,
 	type Conversation,
 	type Registry,
+	type ToolExecutionApi,
 	type ToolExecutionResult,
 	type ToolRegistration,
 } from "@amazme/durable";
 import { getAgentDir } from "../config.ts";
 import { CODEMODE_TOOL_NAME } from "../core/codemode/declarations.ts";
 import { createMcpResourceTools } from "../core/mcp/resources.ts";
-import { createMcpToolMetadata, createMcpToolName, convertMcpResult } from "../core/mcp/results.ts";
+import {
+	convertMcpResult,
+	createMcpToolMetadata,
+	createMcpToolName,
+	type McpOutputSaver,
+} from "../core/mcp/results.ts";
 import {
 	LIST_MCP_RESOURCES_TOOL,
 	LIST_MCP_RESOURCE_TEMPLATES_TOOL,
@@ -31,6 +38,28 @@ import type { McpServerConnection } from "../extensions/mcp/runtime.ts";
 
 type Selection = NonNullable<AgentState["tools"]>;
 const RESOURCE_NAMES = [LIST_MCP_RESOURCES_TOOL, LIST_MCP_RESOURCE_TEMPLATES_TOOL, READ_MCP_RESOURCE_TOOL];
+
+/**
+ * Saves MCP output through the call's execution environment, under its `artifactDirectory`: the model
+ * reads the file with the same environment's tools (local or remote), and the file is deleted with
+ * the session. There is no temp-directory fallback.
+ */
+function envOutputSaver(api: ToolExecutionApi, context: Context): McpOutputSaver {
+	return async (data, extension) => {
+		const env = api.env;
+		if (env === undefined) throw new Error("No execution environment is configured");
+		const created = await env.createDir(env.artifactDirectory, { recursive: true }, context);
+		if (!created.ok) throw created.error;
+		const joined = await env.joinPath(
+			[env.artifactDirectory, `amazme-mcp-${randomBytes(8).toString("hex")}${extension}`],
+			context,
+		);
+		if (!joined.ok) throw joined.error;
+		const written = await env.writeFileChecked(joined.value, data, { kind: "createIfAbsent" }, context);
+		if (!written.ok) throw written.error;
+		return joined.value;
+	};
+}
 
 export interface DurableMcp {
 	readonly management: McpManagement;
@@ -117,6 +146,7 @@ export async function openDurableMcp(options: {
 								},
 							});
 							const converted = await convertMcpResult(connection.name, tool.name, result, {
+								saveOutput: envOutputSaver(api, context),
 								readableResources: current.hasResources,
 							});
 							return copyJson(
@@ -152,8 +182,8 @@ export async function openDurableMcp(options: {
 					...metadata,
 					structuredOutputSchema: outputSchema,
 					defaultActive: resourceExposure === "direct",
-					async execute(params, _api, context) {
-						const result = await execute(params, context.abortSignal);
+					async execute(params, api, context) {
+						const result = await execute(params, context.abortSignal, envOutputSaver(api, context));
 						return copyJson(
 							{
 								output: result.content,

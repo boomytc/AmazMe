@@ -6,6 +6,10 @@
 
 - Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp path created lazily on first write and cleaned up on release. `executeCodemode` and `ExtensionContext.artifactDirectory` require a directory by type (no `pi-codemode-*` OS-temp fallback); the built-in codemode extension reads it from the session context.
 - 宿主 `server` 和 `web` 改为装好 SIGINT/SIGTERM 处理之后才打印 `Socket:` 等就绪行；之前看到就绪行立刻发信号，进程可能被默认动作直接杀掉，来不及清理 socket 和会话锁。
+- 截断的工具输出全文、MCP 保存的资源和长输出文件不再写进系统临时目录，统一放到会话的 `artifacts/` 下，删除会话时一起删掉；`writeOutputFile`、`createOutputFileStream`、`executeBashWithOperations`、`convertMcpResult` 和独立创建的 bash/powershell 工具在类型上必须传会话产物目录。`--no-session` 的临时产物目录除了在关闭会话时删除，进程以任何方式退出（包括强制退出）时也会同步删除；RPC 模式补上了 SIGINT 处理，之前按 Ctrl-C 会被默认动作直接杀掉，留下 `amazme-session-artifacts-*`。
+- 内部自动启动的 server 改为先装好信号处理器再绑定和监听 socket；之前启动过程中收到 SIGTERM 会被默认动作直接杀掉，留下陈旧 socket 文件。`closeWhenSignaled` 改为接收启动回调，由它自己先装处理器再启动，`server`、`web` 和内部 server 都改用新写法，旧的传入已监听对象的写法不再能通过类型检查。启动期间收到信号时，启动完成后不打印就绪行，直接关闭并删掉 socket。
+- 关掉终端窗口发出的 SIGHUP 现在和 SIGTERM 走同一个处理器：TUI、`server`、`web` 都会先正常关闭再退出，不再留下 socket 和 `--no-session` 的临时产物目录；TUI 在终端挂断后写屏遇到的 EIO 不再被当成崩溃记录并以 1 退出。
+- `--no-session` 的临时产物目录必须以 0700 权限创建（只有当前用户能读），现在 print、RPC 和 TUI 的退出测试都会检查这一点。
 
 ## [1.4.0] - 2026-10-19
 

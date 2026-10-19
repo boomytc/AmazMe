@@ -10,6 +10,10 @@
 
 - `NodeFileSystem` (`@amazme/durable/env/node`): the local file system alone, for callers that only read and write files. It has no shell and no `artifactDirectory`, so file-only code cannot reach a session artifact directory. `NodeExecutionEnv` now extends it with the shell and `artifactDirectory`.
 
+### Fixed
+
+- `NodeExecutionEnv.exec` writes spilled output (`spill`) to `pi-output-*.log` under `artifactDirectory` (owner-only permissions) instead of a fresh `createTempFile` directory in the OS temp directory, which nothing removed; the file is now deleted with the session.
+
 ## [1.4.0] - 2026-10-19
 
 ### Breaking Changes

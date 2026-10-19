@@ -231,7 +231,7 @@ Tools with `codemode` or `deferred` exposure can be reached through either indir
 
 To keep `codemode` active without MCP servers, add `"defaultTools": ["+codemode"]` to [settings](settings.md#tools). To prevent automatic codemode activation, set `"autoEnableCodemode": false` beside `mcpServers`. A project value overrides the user-level value. Pi warns once when neither `codemode` nor `tool_search` is active and non-direct tools cannot be called.
 
-Text results over 20 KB reach the model with their middle removed around a `…N chars truncated…` marker. The full text is saved to a temporary file named in the result. Codemode scripts receive the complete result and can reduce it before returning output to the model.
+Text results over 20 KB reach the model with their middle removed around a `…N chars truncated…` marker. The full text is saved to a file under the session's artifact directory and named in the result; the file is deleted with the session. Codemode scripts receive the complete result and can reduce it before returning output to the model.
 
 In MCP's model-facing projection, image blocks and embedded image resources must contain canonical base64: decoding and re-encoding must reproduce the exact string. Invalid alphabet, padding or whitespace replaces only that image with a text diagnostic; surrounding text and valid images remain. Rejected payloads do not enter image processing or get saved as image files through this projection. This is an encoding check; valid encodings still pass through the normal image-format and size handling. The original remote result remains available to scripts without rewriting its image data.
 
@@ -243,7 +243,7 @@ When a connected server offers [resources](https://modelcontextprotocol.io/speci
 
 - `list_mcp_resources` lists resources as JSON: `{ server?, resources: [{ server, uri, name, ... }], nextCursor? }`. With `server`, it lists one page; `cursor` continues with the next page. Without `server`, it lists every resource from every server.
 - `list_mcp_resource_templates` lists URI templates for resources the servers do not list directly.
-- `read_mcp_resource` reads a resource by `server` and `uri`. Text reaches the model as text and images as images. Other binary resources are saved to temporary files, and the model receives the path. Scripts receive `{ server, uri, contents }`.
+- `read_mcp_resource` reads a resource by `server` and `uri`. Text reaches the model as text and images as images. Other binary resources are saved under the session's artifact directory, and the model receives the path. Scripts receive `{ server, uri, contents }`.
 
 These tools reach every enabled, non-hidden server with resources. Their exposure is the widest exposure among those servers: `direct`, then `codemode` or `deferred`. Resource links in tool results identify `read_mcp_resource` and the server.
 

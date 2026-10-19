@@ -8,12 +8,12 @@
  */
 
 import type { ExtensionAPI } from "@amazme/coding-agent";
-import { createBashTool } from "@amazme/coding-agent";
+import { createBashToolDefinition } from "@amazme/coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	const cwd = process.cwd();
 
-	const bashTool = createBashTool(cwd, {
+	const bashTool = createBashToolDefinition(cwd, {
 		spawnHook: ({ command, cwd, env }) => ({
 			command: `source ~/.profile\n${command}`,
 			cwd,
@@ -23,8 +23,9 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerTool({
 		...bashTool,
-		execute: async (id, params, signal, onUpdate, _ctx) => {
-			return bashTool.execute(id, params, signal, onUpdate);
+		// The session context carries the artifact directory for the full output of long commands.
+		execute: async (id, params, signal, onUpdate, ctx) => {
+			return bashTool.execute(id, params, signal, onUpdate, ctx);
 		},
 	});
 }
