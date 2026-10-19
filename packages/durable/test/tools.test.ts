@@ -1,5 +1,6 @@
 // Ported from packages/agent/test/harness/tools.test.ts and adapted to ToolRegistration: tools take the environment
 // from `api.env`, stream through `api.output()`, and report notices as diagnostics instead of content text.
+import { randomUUID } from "node:crypto";
 import { appendFileSync, mkdirSync, rmSync } from "node:fs";
 import { symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -193,7 +194,8 @@ class TimeoutOutputExecutionEnv extends NodeExecutionEnv {
 		context: Context,
 	): Promise<Result<ShellExecResult, ExecutionError>> {
 		const output = `${Array.from({ length: TRUNCATED_OUTPUT_LINES }, (_, index) => `line-${index + 1}`).join("\n")}\n`;
-		const spillPath = getOrThrow(await this.createTempFile({ prefix: "timeout-", suffix: ".log" }, context));
+		// Like a real spill: under the artifact directory, removed with the test's directory, not left in the OS temp directory.
+		const spillPath = join(this.artifactDirectory, `timeout-${randomUUID()}.log`);
 		getOrThrow(await this.writeFile(spillPath, output, context));
 		options?.onOutput?.(output, context, { stream: "stdout" });
 		const error = new ExecutionError("timeout", `timeout:${options?.timeout}`);

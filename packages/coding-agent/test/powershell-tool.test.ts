@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createPowerShellTool } from "../src/core/tools/powershell.ts";
 import { getPowerShellConfig, POWERSHELL_ARGS } from "../src/utils/shell.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 function getTextOutput(result: { content: Array<{ type: string; text?: string }> }): string {
 	return result.content
@@ -18,7 +19,7 @@ describe("powershell tool", () => {
 		const config = getPowerShellConfig();
 		expect(config.args).toEqual(POWERSHELL_ARGS);
 
-		const tool = createPowerShellTool(process.cwd());
+		const tool = createPowerShellTool(process.cwd(), { artifactDirectory: createTempDir("amazme-powershell-artifacts-") });
 		const result = await tool.execute("powershell-test", {
 			command: "Write-Output 'héllo €'; Get-ExecutionPolicy -Scope Process",
 		});

@@ -2,7 +2,7 @@
 import type { TSchema } from "typebox";
 import type { ToolDefinition } from "../../core/extensions/types.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
-import type { McpToolDetails } from "../../core/mcp/results.ts";
+import { type McpToolDetails, outputFileSaver } from "../../core/mcp/results.ts";
 import { createMcpResourceTools } from "../../core/mcp/resources.ts";
 import type { McpResourceServer } from "../../core/mcp/contracts.ts";
 export { isMcpAppResource } from "../../core/mcp/contracts.ts";
@@ -19,6 +19,7 @@ export function createMcpResourceToolDefinitions(options: {
 }): ToolDefinition<TSchema, McpToolDetails>[] {
 	return createMcpResourceTools(options).map(({ execute, ...metadata }) => ({
 		...metadata,
-		execute: (_toolCallId, params, signal) => execute(params, signal),
+		execute: (_toolCallId, params, signal, _onUpdate, ctx) =>
+			execute(params, signal, outputFileSaver(ctx.artifactDirectory)),
 	}));
 }

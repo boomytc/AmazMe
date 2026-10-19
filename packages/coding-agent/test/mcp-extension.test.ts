@@ -1,8 +1,8 @@
-import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { renderToolOutputType } from "@amazme/codemode/declarations";
 import {
 	type CallToolResult,
@@ -29,7 +29,7 @@ import {
 	McpServerConnection,
 	McpServerLog,
 } from "../src/extensions/mcp/runtime.ts";
-import { convertMcpResult, createMcpResultSchema, createMcpToolName } from "../src/extensions/mcp/tools.ts";
+import { convertMcpResult, createMcpResultSchema, createMcpToolName, outputFileSaver } from "../src/extensions/mcp/tools.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 // Config values are resolved at connect time, so the literal reference must survive loading.
@@ -312,6 +312,8 @@ describe("MCP tools", () => {
 	});
 
 	it("converts results, passing the CallToolResult to scripts and flagging errors", async () => {
+		// Nothing here is truncated or binary, so nothing is saved.
+		const noSave = { saveOutput: vi.fn(async (): Promise<string> => { throw new Error("unexpected save"); }) };
 		const blocks = [
 			{ type: "resource_link" as const, uri: "file:///a", name: "a" },
 			{ type: "resource" as const, resource: { uri: "file:///b", text: "b text" } },
@@ -322,7 +324,7 @@ describe("MCP tools", () => {
 				content: blocks,
 				structuredContent: { ok: true },
 				_meta: { trace: "x" },
-			}),
+			}, noSave),
 		).toEqual({
 			content: [
 				{ type: "text", text: '[Resource file:///a "a"]' },
@@ -333,16 +335,16 @@ describe("MCP tools", () => {
 			// Scripts get the server's blocks as sent, without `_meta`.
 			structuredContent: { content: blocks, structuredContent: { ok: true } },
 		});
-		expect((await convertMcpResult("docs", "t", { content: [], structuredContent: { n: 1 } })).content).toEqual([
+		expect((await convertMcpResult("docs", "t", { content: [], structuredContent: { n: 1 } }, noSave)).content).toEqual([
 			{ type: "text", text: '{\n  "n": 1\n}' },
 		]);
 		// #10416: array structured content reaches the model as JSON and scripts as sent.
-		expect(await convertMcpResult("docs", "t", { content: [], structuredContent: [{ id: 1 }] })).toEqual({
+		expect(await convertMcpResult("docs", "t", { content: [], structuredContent: [{ id: 1 }] }, noSave)).toEqual({
 			content: [{ type: "text", text: '[\n  {\n    "id": 1\n  }\n]' }],
 			details: { server: "docs", tool: "t" },
 			structuredContent: { content: [], structuredContent: [{ id: 1 }] },
 		});
-		expect(await convertMcpResult("docs", "t", { content: [{ type: "text", text: "nope" }], isError: true })).toEqual(
+		expect(await convertMcpResult("docs", "t", { content: [{ type: "text", text: "nope" }], isError: true }, noSave)).toEqual(
 			{
 				content: [{ type: "text", text: "nope" }],
 				details: { server: "docs", tool: "t" },
@@ -350,9 +352,10 @@ describe("MCP tools", () => {
 				isError: true,
 			},
 		);
-		expect((await convertMcpResult("docs", "t", { content: [], isError: true })).content).toEqual([
+		expect((await convertMcpResult("docs", "t", { content: [], isError: true }, noSave)).content).toEqual([
 			{ type: "text", text: "MCP tool docs/t returned an error" },
 		]);
+		expect(noSave.saveOutput).not.toHaveBeenCalled();
 	});
 
 	it("points resource links to read_mcp_resource and saves binary resources", async () => {
@@ -478,6 +481,22 @@ describe("MCP tools", () => {
 		// Text within the limit is not saved.
 		await convertMcpResult("docs", "small", { content: [{ type: "text", text: "ok" }] }, { saveOutput });
 		expect(saved).toHaveLength(1);
+	});
+
+	it("saves output under the session artifact directory, readable only by the user", async () => {
+		const artifacts = join(createTempDir("amazme-mcp-saver-"), "artifacts");
+		const saveOutput = outputFileSaver(artifacts);
+		const full = Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join("\n");
+		const converted = await convertMcpResult("docs", "snapshot", { content: [{ type: "text", text: full }] }, { saveOutput });
+		const path = converted.details.fullOutputPath;
+		expect(path).toBeDefined();
+		expect(dirname(path!)).toBe(artifacts);
+		expect(basename(path!)).toMatch(/^amazme-mcp-[0-9a-f]{16}\.txt$/);
+		expect(readFileSync(path!, "utf8")).toBe(full);
+		if (process.platform !== "win32") {
+			expect(statSync(path!).mode & 0o777).toBe(0o600);
+			expect(statSync(artifacts).mode & 0o777).toBe(0o700);
+		}
 	});
 
 	it("cuts multi-byte text only at character boundaries", () => {

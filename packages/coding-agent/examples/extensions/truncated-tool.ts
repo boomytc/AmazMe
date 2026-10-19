@@ -8,7 +8,7 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
  *
  * This example shows how to:
  * 1. Use the built-in truncation utilities
- * 2. Write full output to a temp file when truncated
+ * 2. Write full output under the session's artifact directory when truncated
  * 3. Inform the LLM where to find the complete output
  * 4. Custom rendering of tool calls and results
  *
@@ -16,7 +16,7 @@ import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
  * built-in `grep` tool in src/core/tools/grep.ts for a more complete implementation.
  */
 
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import type { ExtensionAPI } from "@amazme/coding-agent";
 import {
 	DEFAULT_MAX_BYTES,
@@ -28,7 +28,6 @@ import {
 } from "@amazme/coding-agent";
 import { Text } from "@amazme/tui";
 import { execSync } from "child_process";
-import { tmpdir } from "os";
 import { join } from "path";
 import { Type } from "typebox";
 
@@ -52,7 +51,7 @@ export default function (pi: ExtensionAPI) {
 		name: "rg",
 		label: "ripgrep",
 		// Document the truncation limits in the tool description so the LLM knows
-		description: `Search file contents using ripgrep. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). If truncated, full output is saved to a temp file.`,
+		description: `Search file contents using ripgrep. Output is truncated to ${DEFAULT_MAX_LINES} lines or ${formatSize(DEFAULT_MAX_BYTES)} (whichever is hit first). If truncated, full output is saved to a file.`,
 		parameters: RgParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -110,8 +109,9 @@ export default function (pi: ExtensionAPI) {
 			let resultText = truncation.content;
 
 			if (truncation.truncated) {
-				// Save full output to a temp file so LLM can access it if needed
-				const tempDir = await mkdtemp(join(tmpdir(), "pi-rg-"));
+				// Save full output under the session's artifact directory so the LLM can read it; it is deleted with the session
+				await mkdir(ctx.artifactDirectory, { recursive: true, mode: 0o700 });
+				const tempDir = await mkdtemp(join(ctx.artifactDirectory, "pi-rg-"));
 				const tempFile = join(tempDir, "output.txt");
 				await withFileMutationQueue(new NodeFileSystem({ cwd: process.cwd() }), tempFile, async () => {
 					await writeFile(tempFile, output, "utf8");

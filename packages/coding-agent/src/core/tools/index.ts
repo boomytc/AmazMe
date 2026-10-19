@@ -99,6 +99,11 @@ export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
 
 export interface ToolsOptions extends FileToolOptions {
+	/**
+	 * Session artifact directory for the shell tools' full-output files when the tools run without a
+	 * session context. Required by the factories that build standalone shell tools.
+	 */
+	artifactDirectory?: string;
 	read?: ReadToolOptions;
 	bash?: BashToolOptions;
 	powershell?: PowerShellToolOptions;
@@ -133,15 +138,27 @@ export function createToolDefinition(toolName: ToolName, cwd: string, options?: 
 	}
 }
 
-export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptions): Tool {
-	options = sharedFileOptions(options);
+/** Standalone AgentTools run without a session context, so the shell tools need the artifact directory. */
+type StandaloneToolsOptions = ToolsOptions & { artifactDirectory: string };
+
+function shellOptions<T extends { artifactDirectory?: string }>(
+	options: T | undefined,
+	artifactDirectory: string,
+): T & { artifactDirectory: string } {
+	return { ...options, artifactDirectory: options?.artifactDirectory ?? artifactDirectory } as T & {
+		artifactDirectory: string;
+	};
+}
+
+export function createTool(toolName: ToolName, cwd: string, standalone: StandaloneToolsOptions): Tool {
+	const options = sharedFileOptions(standalone);
 	switch (toolName) {
 		case "read":
 			return createReadTool(cwd, options?.read);
 		case "bash":
-			return createBashTool(cwd, options?.bash);
+			return createBashTool(cwd, shellOptions(options.bash, standalone.artifactDirectory));
 		case "powershell":
-			return createPowerShellTool(cwd, options?.powershell);
+			return createPowerShellTool(cwd, shellOptions(options.powershell, standalone.artifactDirectory));
 		case "edit":
 			return createEditTool(cwd, options?.edit);
 		case "write":
@@ -191,11 +208,11 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 	};
 }
 
-export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
-	options = sharedFileOptions(options);
+export function createCodingTools(cwd: string, standalone: StandaloneToolsOptions): Tool[] {
+	const options = sharedFileOptions(standalone);
 	return [
 		createReadTool(cwd, options?.read),
-		createBashTool(cwd, options?.bash),
+		createBashTool(cwd, shellOptions(options.bash, standalone.artifactDirectory)),
 		createEditTool(cwd, options?.edit),
 		createWriteTool(cwd, options?.write),
 	];
@@ -211,12 +228,12 @@ export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[]
 	];
 }
 
-export function createAllTools(cwd: string, options?: ToolsOptions): Record<ToolName, Tool> {
-	options = sharedFileOptions(options);
+export function createAllTools(cwd: string, standalone: StandaloneToolsOptions): Record<ToolName, Tool> {
+	const options = sharedFileOptions(standalone);
 	return {
 		read: createReadTool(cwd, options?.read),
-		bash: createBashTool(cwd, options?.bash),
-		powershell: createPowerShellTool(cwd, options?.powershell),
+		bash: createBashTool(cwd, shellOptions(options.bash, standalone.artifactDirectory)),
+		powershell: createPowerShellTool(cwd, shellOptions(options.powershell, standalone.artifactDirectory)),
 		edit: createEditTool(cwd, options?.edit),
 		write: createWriteTool(cwd, options?.write),
 		grep: createGrepTool(cwd, options?.grep),
@@ -228,8 +245,15 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 function sharedFileOptions(options?: ToolsOptions): ToolsOptions {
 	const observations = options?.observations ?? createMemoryFileObservations();
 	const shared = { fileSystem: options?.fileSystem, observations };
+	const artifactDirectory = options?.artifactDirectory;
 	return {
 		...options,
+		...(artifactDirectory === undefined
+			? {}
+			: {
+					bash: { artifactDirectory, ...options?.bash },
+					powershell: { artifactDirectory, ...options?.powershell },
+				}),
 		read: { ...shared, ...options?.read },
 		edit: { ...shared, ...options?.edit },
 		write: { ...shared, ...options?.write },

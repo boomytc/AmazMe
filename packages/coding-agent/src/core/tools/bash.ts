@@ -246,6 +246,12 @@ export interface BashToolOptions {
 	exposeSessionEnvironment?: boolean;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
+	/**
+	 * Directory for the full output of a truncated command when the tool runs without an
+	 * {@link ExtensionContext} (standalone {@link createBashTool}). In a session the directory comes
+	 * from {@link ExtensionContext.artifactDirectory}. There is no OS temp-directory fallback.
+	 */
+	artifactDirectory?: string;
 }
 
 export type BashRenderState = {
@@ -276,7 +282,7 @@ export function createShellToolDefinition(
 	return {
 		name: config.name,
 		label: config.label,
-		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
+		description: `Execute a ${config.shellName} command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a file. Optionally provide a timeout in seconds.`,
 		promptSnippet: config.promptSnippet,
 		promptGuidelines: exposeSessionEnvironment && config.promptGuidelines ? [...config.promptGuidelines] : undefined,
 		parameters: bashSchema,
@@ -289,6 +295,14 @@ export function createShellToolDefinition(
 			onUpdate?,
 			ctx?: ExtensionContext,
 		) {
+			// Session tools always receive the context, whose artifactDirectory is required by type.
+			// Standalone createBashTool requires options.artifactDirectory by type.
+			const artifactDirectory = ctx !== undefined ? ctx.artifactDirectory : options?.artifactDirectory;
+			if (artifactDirectory === undefined) {
+				throw new Error(
+					`${config.name} requires artifactDirectory; pass it to the tool factory or run inside a session`,
+				);
+			}
 			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
 			const spawnContext = resolveSpawnContext(
 				resolvedCommand,
@@ -297,7 +311,7 @@ export function createShellToolDefinition(
 				exposeSessionEnvironment,
 				ctx,
 			);
-			const output = new OutputAccumulator({ tempFilePrefix: config.tempFilePrefix });
+			const output = new OutputAccumulator({ artifactDirectory, tempFilePrefix: config.tempFilePrefix });
 			let acceptingOutput = true;
 			let updateTimer: NodeJS.Timeout | undefined;
 			let updateDirty = false;
@@ -468,7 +482,11 @@ export function createBashToolDefinition(
 	return createShellToolDefinition(cwd, bashToolConfig, options);
 }
 
-export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
+/** A standalone tool runs without a session context, so it needs the artifact directory up front. */
+export function createBashTool(
+	cwd: string,
+	options: BashToolOptions & { artifactDirectory: string },
+): AgentTool<typeof bashSchema> {
 	const definition = createBashToolDefinition(cwd, options);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {
