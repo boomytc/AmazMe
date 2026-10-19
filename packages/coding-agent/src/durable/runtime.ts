@@ -162,7 +162,7 @@ export interface DurableController {
 	describeChanges?(args?: string): Promise<string | undefined>;
 	runCommand(name: string, args: string): Promise<void>;
 	completeCommand?(name: string, prefix: string): Promise<readonly SlashCommandCompletion[] | null>;
-	/** Reload prompt resources and any selected application plugin facets while idle. */
+	/** Re-read skills, prompts, tools, selected plugins, and the saved model scope while idle. */
 	reload(): Promise<void>;
 	readonly mcp?: McpManagement;
 	readonly auth?: ProviderAuthManagement;
@@ -270,6 +270,38 @@ function isProviderAuthFailure(message: string, providerId: string): boolean {
 	const token = providerId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 	if (!new RegExp(`(?:^|[^A-Za-z0-9_-])${token}(?:$|[^A-Za-z0-9_-])`).test(message)) return false;
 	return /oauth|refresh|unauthorized|credential|api key|not configured/i.test(message);
+}
+
+function intendedToolNames(selection: NonNullable<AgentState["tools"]>): readonly string[] {
+	if (Array.isArray(selection)) return selection;
+	return selection.allow ?? selection.only ?? selection.add ?? [];
+}
+
+/** Enable names added to the saved tool selection. Names the conversation already turned off stay off. */
+async function enableNamedTools(conversation: Conversation, names: readonly string[]): Promise<void> {
+	if (names.length === 0) return;
+	await conversation.commit(async (tx) => {
+		const state = await tx.doc(AgentDoc, conversation.id);
+		const tools = state.tools;
+		const append = (selected: string[]): void => {
+			for (const name of names) if (!selected.includes(name)) selected.push(name);
+		};
+		if (tools === undefined) {
+			state.tools = { add: [...names] };
+			return;
+		}
+		if (Array.isArray(tools)) {
+			append(tools);
+			return;
+		}
+		if (tools.only !== undefined) append(tools.only);
+		else if (tools.allow !== undefined) append(tools.allow);
+		else {
+			if (tools.add === undefined) tools.add = [];
+			append(tools.add);
+		}
+		if (tools.remove !== undefined) tools.remove = tools.remove.filter((name) => !names.includes(name));
+	}, context);
 }
 
 function inputText(content: unknown): string {
@@ -433,8 +465,13 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			});
 		};
 		let nextNotice = 1;
+		const sessionDiagnostics = new Set<string>();
 		const notice = (level: Notice["level"], message: string): void => {
 			const kept = level === "info" ? state.notices.filter((item) => item.level !== "info") : state.notices;
+			if (level !== "info" && kept.some((item) => item.level === level && item.message === message)) {
+				if (kept.length !== state.notices.length) update({ notices: kept });
+				return;
+			}
 			update({
 				notices: [...kept, { id: nextNotice++, level, message }].slice(-20) });
 		};
@@ -452,9 +489,36 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 			if (current.id === id && policy?.paused && policy.run === String(live?.run?.inputs[0] ?? "")) notice("warning", "本轮预算已用完，已暂停于执行边界。/resume-run 追加预算继续，或按停止键取消。");
 		};
 		await reportPausedRun();
-		const reportResources = (): void => {
+		let scopeDiagnostics = scope.diagnostics;
+		const baselineToolNames = new Set(intendedToolNames(toolSelection));
+		const appliedToolNames = new Map<string, Set<string>>();
+		const appliedToolsFor = (id: ConversationId): Set<string> => {
+			const key = String(id);
+			let applied = appliedToolNames.get(key);
+			if (applied === undefined) {
+				applied = new Set(baselineToolNames);
+				appliedToolNames.set(key, applied);
+			}
+			return applied;
+		};
+		const publishSessionDiagnostics = (): void => {
+			clearNotices((item) => sessionDiagnostics.has(item.message));
+			sessionDiagnostics.clear();
+			const post = (level: Notice["level"], message: string): void => {
+				sessionDiagnostics.add(message);
+				notice(level, message);
+			};
+			for (const diagnostic of collectSettingsDiagnostics(settingsManager)) post(diagnostic.type, diagnostic.message);
+			const modelError = modelRuntime.getError();
+			if (modelError !== undefined) post("warning", `Model configuration or availability has errors; run ${APP_COMMAND} doctor for local diagnostics.`);
+			const savedModel = agentOf(state.conversation).model;
+			if (savedModel === undefined) post("warning", "No model configured; select one with /model.");
+			else if (modelRuntime.getModel(savedModel.provider, savedModel.modelId) === undefined) {
+				post("warning", `Saved model is unavailable: ${savedModel.provider}/${savedModel.modelId}`);
+			}
+			for (const diagnostic of scopeDiagnostics) post("warning", diagnostic.message);
 			for (const diagnostic of [...resources.getSkills().diagnostics, ...resources.getPrompts().diagnostics, ...resources.getThemes().diagnostics]) {
-				notice(diagnostic.type === "error" ? "error" : "warning", `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`);
+				post(diagnostic.type === "error" ? "error" : "warning", `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`);
 			}
 		};
 		const auth = new ProviderLogin(modelRuntime, { getDeviceId: () => settingsManager.getOrCreateDeviceId() });
@@ -848,9 +912,30 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 					await assertPluginsIdle(opened);
 					await resources.reload();
 				} else await plugins.reload();
+				await activeMcp.management.reload(context);
+				if (options.models === undefined) await modelScope.configure(settingsManager.getEnabledModels() ?? null, false);
+				const patterns = modelPatterns();
+				scopeDiagnostics = patterns.length === 0
+					? []
+					: (await resolveModelScopeWithDiagnostics(patterns, modelRuntime, { signal: AbortSignal.timeout(15_000) })).diagnostics;
+				const nextTools = durableToolSelection(
+					options,
+					settingsManager.getDefaultTools(),
+					settingsManager.getSettings().defaultTools,
+				);
+				const nextNames = intendedToolNames(nextTools);
+				const applied = appliedToolsFor(current.id);
+				const added = nextNames.filter((name) => !applied.has(name));
+				if (added.length > 0) await enableNamedTools(current, added);
+				applied.clear();
+				for (const name of nextNames) applied.add(name);
+				await applyDurableMcpSelection(activeMcp, current, context);
 				publishCommands();
-				reportResources();
-				notice("info", plugins === undefined ? "Reloaded prompt resources" : "Reloaded prompt resources and plugins");
+				update({ models: models() });
+				publishSessionDiagnostics();
+				notice("info", plugins === undefined
+					? "Reloaded skills, prompts, tools, and model scope"
+					: "Reloaded skills, prompts, tools, plugins, and model scope");
 			}),
 			mcp: activeMcp.management,
 			submit: async (text, whenBusy, images) => {
@@ -1142,18 +1227,9 @@ export async function openDurable(input: OpenDurableOptions = {}): Promise<OpenD
 		}
 		if (initial?.fallbackMessage !== undefined) startup.push(initial.fallbackMessage);
 		if (startup.length > 0) update({ startup });
-		for (const diagnostic of collectSettingsDiagnostics(settingsManager)) notice(diagnostic.type, diagnostic.message);
-		const modelError = modelRuntime.getError();
-		if (modelError !== undefined) notice("warning", `Model configuration or availability has errors; run ${APP_COMMAND} doctor for local diagnostics.`);
-		const saved = agentOf(state.conversation).model;
-		if (saved === undefined) notice("warning", "No model configured; select one with /model.");
-		else if (modelRuntime.getModel(saved.provider, saved.modelId) === undefined) {
-			notice("warning", `Saved model is unavailable: ${saved.provider}/${saved.modelId}`);
-		}
-		for (const diagnostic of scope.diagnostics) notice("warning", diagnostic.message);
+		publishSessionDiagnostics();
 		const previousCrash = takeUnnotifiedCrash();
 		if (previousCrash) notice("warning", `A previous session crashed: ${previousCrash.message}. Use /bug to export diagnostics.`);
-		reportResources();
 		// The task panel starts open; /tasks hides it.
 		await controller.toggleTasks();
 		// Recovered work from an interrupted turn continues now.

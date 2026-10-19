@@ -30,7 +30,7 @@ The footer shows the focused conversation, saved title, working directory, conte
 | Sign in or remove saved credentials | `/login` / `/logout` |
 | Manage MCP connections | `/mcp` |
 | Remove draft images | `/attachments` |
-| Reload resources and selected plugins while idle | `/reload` |
+| Reload skills, prompts, tools, model scope, and selected plugins while idle | `/reload` |
 | Inspect selected plugin sources | `/plugins`, when plugins are selected |
 
 `--models` controls startup and cycling; without it, `enabledModels` supplies the saved scope. These operations change the focused conversation without saving global defaults. See [Choose a Model](models.md).

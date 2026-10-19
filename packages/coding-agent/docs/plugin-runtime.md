@@ -71,7 +71,7 @@ export default activationFacet("example/commands", [SlashCommands, AgentControll
 ## 当前接线
 
 - 宿主给 session worker 传入自己执行的注册表，现有选包、构建和 session facet 加载流程继续使用。
-- 原生 Durable 运行时接受可选的 `facetLoader`，配置后才创建插件宿主。控制器的 `reload()` 与 TUI `/reload` 在空闲时重读提示资源，并重建已选插件；没有 loader 时只重读资源，不创建插件宿主。
+- 原生 Durable 运行时接受可选的 `facetLoader`，配置后才创建插件宿主。控制器的 `reload()` 与 TUI `/reload` 在空闲时重读技能、提示、工具和已保存的模型范围，并重建已选插件；没有 loader 时不创建插件宿主，其余内容仍重读。
 - CLI、print、JSON、RPC 与 SDK 的扩展来源都是原生 facet。`-e <文件、包目录或 npm/git 来源>`、用户扩展目录、已信任项目的 `.amazme/extensions` 和显式路径走同一发现。`--no-extensions` 关闭发现，显式 `-e` 仍生效。这些入口不加载内联扩展工厂。
 
 ## 源码选择

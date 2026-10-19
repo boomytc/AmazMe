@@ -23,6 +23,6 @@ export const NATIVE_COMMANDS = [
 	{ name: "session", description: "Show session usage and cache waste" },
 	{ name: "bug", description: "Export or upload a bug report", argumentHint: "[description]" },
 	{ name: "plugins", description: "Show selected plugin sources and API" },
-	{ name: "reload", description: "Reload prompt resources and selected plugins" },
+	{ name: "reload", description: "Reload skills, tools, plugins, and model scope" },
 	{ name: "quit", description: `Quit ${APP_NAME}` },
 ] as const;

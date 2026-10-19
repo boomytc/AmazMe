@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, readdir, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, type SimpleStreamOptions } from "@amazme/ai";
@@ -327,6 +327,96 @@ describe("durable startup over SQLite", () => {
 		expect(await credentials.read("faux")).toBeUndefined();
 		expect(existsSync(join(profile, "auth.json"))).toBe(false);
 		expect(session.settings).toBe(settings);
+	});
+
+	it("reload drops a removed model pattern and keeps an unrelated notice", async () => {
+		settings = SettingsManager.inMemory({
+			defaultProvider: "faux",
+			defaultModel: "reason",
+			enabledModels: ["faux/missing", "faux/reason"],
+			retry: { enabled: false },
+		});
+		const session = await open();
+		expect(session.view.current().notices.map((item) => item.message)).toContain(
+			'No models match pattern "faux/missing"',
+		);
+		await session.controller.runCommand("not-a-command", "");
+		settings.setEnabledModels(["faux/reason"]);
+		await settings.flush();
+		await session.controller.reload();
+		const messages = session.view.current().notices.map((item) => item.message);
+		expect(messages.some((message) => message.includes("No models match"))).toBe(false);
+		expect(messages.some((message) => message.includes("Unknown command"))).toBe(true);
+		expect(messages.some((message) => message.includes("Reloaded skills"))).toBe(true);
+		await session.controller.reload();
+		expect(session.view.current().notices.filter((item) => item.message.includes("Reloaded skills"))).toHaveLength(1);
+		expect(session.view.current().notices.some((item) => item.message.includes("No models match"))).toBe(false);
+	});
+
+	it("reload keeps a CLI model scope instead of the saved pattern list", async () => {
+		settings = SettingsManager.inMemory({
+			defaultProvider: "faux",
+			defaultModel: "reason",
+			enabledModels: ["faux/reason"],
+			retry: { enabled: false },
+		});
+		const session = await open({ models: ["faux/missing", "faux/reason"] });
+		expect(session.view.current().notices.map((item) => item.message)).toContain(
+			'No models match pattern "faux/missing"',
+		);
+		settings.setEnabledModels(["faux/reason"]);
+		await settings.flush();
+		await session.controller.reload();
+		expect(session.view.current().notices.map((item) => item.message)).toContain(
+			'No models match pattern "faux/missing"',
+		);
+	});
+
+	it("reload adds a new tool to each focused conversation", async () => {
+		const session = await open();
+		const rootId = session.view.current().conversation.conversation.id;
+		await answer(session);
+		await session.controller.fork();
+		settings.applyOverrides({ defaultTools: ["+ls"] });
+		await session.controller.reload();
+		await session.controller.switchConversation(rootId);
+		await session.controller.reload();
+		let declared: string[] | undefined;
+		faux.setResponses([
+			(transcript) => {
+				declared = getCurrentTools(transcript.messages)
+					.map((tool) => tool.name)
+					.sort();
+				return fauxAssistantMessage("answer");
+			},
+		]);
+		await session.controller.submit("question", "steer");
+		await vi.waitFor(() => expect(declared).toContain("ls"));
+	});
+
+	it("reload enables a newly configured tool and skill without disabling a removed tool", async () => {
+		const session = await open();
+		await mkdir(join(profile, "skills", "reload-check"), { recursive: true });
+		await writeFile(
+			join(profile, "skills", "reload-check", "SKILL.md"),
+			"---\nname: reload-check\ndescription: Confirm reload picks up a skill.\n---\nDo the thing.\n",
+		);
+		settings.applyOverrides({ defaultTools: ["+ls", "-write"] });
+		await session.controller.reload();
+		expect(session.view.current().commands?.some((command) => command.name === "skill:reload-check")).toBe(true);
+		let declared: string[] | undefined;
+		faux.setResponses([
+			(transcript) => {
+				declared = getCurrentTools(transcript.messages)
+					.map((tool) => tool.name)
+					.sort();
+				return fauxAssistantMessage("answer");
+			},
+		]);
+		await session.controller.submit("question", "steer");
+		await vi.waitFor(() =>
+			expect(declared).toEqual(["bash", "context_detail", "edit", "ls", "read", "subagent", "write"]),
+		);
 	});
 
 	it("separates startup banners from notices and keeps model/thinking switches and turns notice-free", async () => {

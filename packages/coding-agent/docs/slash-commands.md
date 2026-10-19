@@ -24,7 +24,7 @@ The default terminal runs on Durable. Its local commands are:
 | `/older` | Load older history |
 | `/compact [instructions]` | Compact the focused conversation |
 | `/plugins` | Inspect selected plugin sources and API; present when plugins are selected |
-| `/reload` | Re-read prompt resources and rebuild selected plugins while idle |
+| `/reload` | While idle, re-read skills, prompts, tools, saved model scope, and rebuild selected plugins |
 
 The terminal favors commands and shortcuts. `Ctrl+L` opens the model selector and `Shift+Tab` cycles the current model's supported reasoning levels in both terminal clients. The composer shows the current selection and a short key guide; typing `/` discovers the other commands. Configure resource selection through `amazme config` and preferences in the settings files. Start or resume sessions through CLI options; see [CLI](cli.md), [Sessions](sessions.md) and [Keybindings](keybindings.md). `Ctrl+C` exits; `Ctrl+D` exits when the editor is empty. Arguments, pauses, and isolation limits for `/changes`, `/limits`, `/resume-run`, and `/execution` are in [Run controls](run-controls.md).
 
