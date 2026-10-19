@@ -10,8 +10,11 @@ export {
 	openNodeSqliteDatabase,
 } from "@amazme/chord/sqlite/node";
 
-/** Node SQLite connection settings plus durable storage options. */
-export type NodeSqliteStorageOptions = NodeSqliteDatabaseOptions & SqliteStorageOptions;
+/**
+ * Node SQLite connection settings plus durable storage options. There is no `preflight`: the schema version check is
+ * always run and cannot be replaced or turned off.
+ */
+export type NodeSqliteStorageOptions = Omit<NodeSqliteDatabaseOptions, "preflight"> & SqliteStorageOptions;
 
 /**
  * Open or create file-backed durable storage using Node's built-in SQLite, optionally under a table prefix.
@@ -29,8 +32,9 @@ export async function openNodeSqliteStorage(
 	const table = createSqliteSchema(prefix).tables.durableSchema;
 	return SqliteStorage.open(
 		await openNodeSqliteDatabase(path, {
-			preflight: (reader) => checkSqliteSchemaVersion(reader, { table, currentVersion: CURRENT_SQLITE_SCHEMA_VERSION }),
 			...databaseOptions,
+			// After the spread, so nothing a caller passes (even past the type) replaces the version check.
+			preflight: (reader) => checkSqliteSchemaVersion(reader, { table, currentVersion: CURRENT_SQLITE_SCHEMA_VERSION }),
 		}),
 		{ prefix },
 	);

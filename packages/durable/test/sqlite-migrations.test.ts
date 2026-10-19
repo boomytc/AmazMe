@@ -126,6 +126,21 @@ describe("durable SQLite migrations", () => {
 		expect(await files()).toEqual(before);
 	});
 
+	it("always runs its schema preflight; callers cannot replace or disable it", async () => {
+		const path = await databasePath();
+		const database = await openNodeSqliteDatabase(path);
+		await applySqliteMigrations(database);
+		await database.run("UPDATE durable_schema SET version = ? WHERE singleton = 1", CURRENT_SQLITE_SCHEMA_VERSION + 1);
+		await database.close();
+
+		// @ts-expect-error NodeSqliteStorageOptions has no preflight: the version check cannot be overridden
+		await expect(openNodeSqliteStorage(path, { preflight: undefined })).rejects.toMatchObject({ kind: "newer-schema" });
+		// @ts-expect-error NodeSqliteStorageOptions has no preflight: the version check cannot be replaced
+		await expect(openNodeSqliteStorage(path, { preflight: async () => {} })).rejects.toMatchObject({
+			kind: "newer-schema",
+		});
+	});
+
 	it("rolls a failed migration back and preserves stored data for a successful retry", async () => {
 		const path = await databasePath();
 		const storage = await openNodeSqliteStorage(path);

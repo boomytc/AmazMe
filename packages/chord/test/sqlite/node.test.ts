@@ -3,7 +3,13 @@ import { copyFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } fro
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import { checkSqliteSchemaVersion, type SqliteExecutor, SqliteSchemaError } from "../../src/sqlite/index.ts";
+import {
+	applySqliteMigrations,
+	checkSqliteSchemaVersion,
+	isSqliteResourceError,
+	type SqliteExecutor,
+	SqliteSchemaError,
+} from "../../src/sqlite/index.ts";
 import { openNodeSqliteDatabase, preflightNodeSqliteFile } from "../../src/sqlite/node.ts";
 import { createTempDir } from "../temp-dir.ts";
 
@@ -252,4 +258,46 @@ describe("Node SQLite driver", () => {
 			await database.close();
 			await expect(preflightNodeSqliteFile(join(directory, "missing.sqlite"), checkApp)).resolves.toBeUndefined();
 		}));
+
+	it("reports a full disk during a migration as the original SQLite error and leaves the file alone", () =>
+		withDirectory(async (directory) => {
+			const path = join(directory, "app.sqlite");
+			const setup = await openNodeSqliteDatabase(path);
+			await applySqliteMigrations(setup, [{ version: 1, statements: ["CREATE TABLE notes (body TEXT)"] }], {
+				table: "app_schema",
+			});
+			await setup.close();
+			const before = snapshot(directory);
+			const database = await openNodeSqliteDatabase(path, { preflight: checkApp });
+			try {
+				const full = [
+					{ version: 1, statements: ["CREATE TABLE notes (body TEXT)"] },
+					{
+						version: 2,
+						statements: [
+							// The file may not grow, so the next write fails with SQLITE_FULL.
+							"PRAGMA max_page_count = 1",
+							"INSERT INTO notes (body) VALUES (zeroblob(1000000))",
+						],
+					},
+				];
+				const error = await applySqliteMigrations(database, full, { table: "app_schema" }).catch(
+					(caught: unknown) => caught,
+				);
+				expect(error).not.toBeInstanceOf(SqliteSchemaError);
+				expect(error).toMatchObject({ code: "ERR_SQLITE_ERROR", errcode: 13 });
+				expect(isSqliteResourceError(error)).toBe(true);
+			} finally {
+				await database.close();
+			}
+			expect(snapshot(directory)).toEqual(before);
+		}));
+
+	it("recognizes SQLITE_FULL and SQLITE_IOERR, including extended codes", () => {
+		expect(isSqliteResourceError({ errcode: 13 })).toBe(true);
+		expect(isSqliteResourceError({ errcode: 10 })).toBe(true);
+		expect(isSqliteResourceError({ errcode: 10 | (3 << 8) })).toBe(true); // SQLITE_IOERR_WRITE
+		expect(isSqliteResourceError({ errcode: 26 })).toBe(false);
+		expect(isSqliteResourceError(new Error("disk full"))).toBe(false);
+	});
 });

@@ -31,6 +31,18 @@ export class SqliteSchemaError extends Error {
 	}
 }
 
+/** SQLite primary result codes for environment failures: `SQLITE_IOERR` (and its extended codes) and `SQLITE_FULL`. */
+const SQLITE_IOERR = 10;
+const SQLITE_FULL = 13;
+
+/** Whether `error` is a SQLite `SQLITE_FULL` or `SQLITE_IOERR*` failure (extended codes included). */
+export function isSqliteResourceError(error: unknown): boolean {
+	if (typeof error !== "object" || error === null || !("errcode" in error) || typeof error.errcode !== "number")
+		return false;
+	const primary = error.errcode & 0xff;
+	return primary === SQLITE_IOERR || primary === SQLITE_FULL;
+}
+
 async function readSchemaVersion(database: SqliteExecutor, table: string, currentVersion: number): Promise<number> {
 	const row = await database.get<SchemaRow>(`SELECT version FROM ${table} WHERE singleton = 1`);
 	if (row === undefined)
@@ -102,6 +114,8 @@ export async function applySqliteMigrations(
 				for (const statement of migration.statements) await transaction.exec(statement);
 				await transaction.run(`UPDATE ${table} SET version = ? WHERE singleton = 1`, migration.version);
 			} catch (error) {
+				// A full disk or an I/O failure is about the machine, not the schema: report it as it is.
+				if (isSqliteResourceError(error)) throw error;
 				throw new SqliteSchemaError(
 					"migration-failed",
 					`SQLite migration to version ${migration.version} failed: ${error instanceof Error ? error.message : String(error)}`,

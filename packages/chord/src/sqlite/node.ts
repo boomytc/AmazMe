@@ -5,6 +5,7 @@ import type { StatementSync } from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 import type { SqliteDatabase, SqliteExecutor, SqliteValue } from "./database.ts";
+import { isSqliteResourceError } from "./migrations.ts";
 
 /** A read-only check of an existing database file, run before anything can write to it. Throw to refuse the open. */
 export type NodeSqlitePreflight = (reader: SqliteExecutor) => void | Promise<void>;
@@ -160,7 +161,9 @@ export class NodeSqliteDatabase extends NodeSqliteExecutor implements SqliteData
 			} catch (error) {
 				scope.active = false;
 				try {
-					this.database.exec("ROLLBACK");
+					// After SQLITE_FULL or SQLITE_IOERR, SQLite may already have rolled the transaction back itself; a second
+					// ROLLBACK would fail and hide the real error. Any other missing transaction is an escaped commit.
+					if (this.database.isTransaction || !isSqliteResourceError(error)) this.database.exec("ROLLBACK");
 				} catch (rollbackError) {
 					throw new AggregateError([error, rollbackError], "SQLite transaction failed and rollback failed");
 				}
