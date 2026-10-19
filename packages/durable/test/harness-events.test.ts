@@ -6,6 +6,7 @@ import {
 	fauxText,
 	fauxThinking,
 	fauxToolCall,
+	type Models,
 	Type,
 } from "@amazme/ai";
 import {
@@ -41,6 +42,29 @@ async function listen(harness: Harness, conversation: Conversation) {
 
 async function drained(): Promise<void> {
 	await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** `models` with `streamSimple` replaced. */
+function withStream(models: Models, streamSimple: Models["streamSimple"]): Models {
+	return new Proxy(models, {
+		get(target, property) {
+			if (property === "streamSimple") return streamSimple;
+			const value = Reflect.get(target, property, target);
+			return typeof value === "function" ? value.bind(target) : value;
+		},
+	});
+}
+
+/** One committed partial, then a final message that is not strict JSON, so the scheduler faults the run task. */
+function invalidFinalStream(): ReturnType<Models["streamSimple"]> {
+	const events = async function* () {
+		yield { type: "start", partial: fauxAssistantMessage("partial", { stopReason: "pending" }) };
+		await new Promise((resolve) => setTimeout(resolve, 300));
+	};
+	const final = { ...fauxAssistantMessage("final"), invalid: () => {} };
+	return { [Symbol.asyncIterator]: events, result: async () => final } as unknown as ReturnType<
+		Models["streamSimple"]
+	>;
 }
 
 function slow(): ChatSetup {
@@ -644,6 +668,25 @@ describe("agent events", () => {
 		expect(events().filter((event) => event.type === "agent_settled")).toEqual([
 			{ type: "agent_settled", aborted: false },
 		]);
+		await stream.stop();
+		await harness.close(context);
+	});
+
+	it("settles once when the run task faults, not before the fault commit", async () => {
+		const base = chatSetup();
+		const setup: ChatSetup = { ...base, models: withStream(base.models, invalidFinalStream()) };
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		const { stream, batches, events } = await listen(harness, root);
+		const submission = await root.submit({ type: "input", content: "hi" }, context);
+		expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "faulted" });
+		await drained();
+		const settlements = events().filter((event) => event.type === "agent_settled");
+		expect(settlements).toEqual([{ type: "agent_settled", aborted: false }]);
+		expect(batches.filter((batch) => batch.some((event) => event.type === "agent_settled"))).toHaveLength(1);
+		expect(batches.at(-1)).toContainEqual({ type: "agent_settled", aborted: false });
+		expect(events().filter((event) => event.type === "run_end")).toMatchObject([{ willRetry: false }]);
+		const settledIndex = batches.findIndex((batch) => batch.some((event) => event.type === "agent_settled"));
+		expect(batches.slice(0, settledIndex).flat().some((event) => event.type === "agent_settled")).toBe(false);
 		await stream.stop();
 		await harness.close(context);
 	});
