@@ -23,6 +23,14 @@ import { MeasuredContainer, ToolBlockFrame } from "./tool-block-frame.ts";
 
 const FALLBACK_PREVIEW_LINES = 10;
 
+function traceOutput(content: Array<{ type: string; text?: string }> | undefined): string {
+	if (content === undefined) return "";
+	return content
+		.filter((block) => block.type === "text" && typeof block.text === "string")
+		.map((block) => block.text ?? "")
+		.join("\n");
+}
+
 export interface ToolExecutionOptions {
 	showImages?: boolean;
 	imageWidthCells?: number;
@@ -36,6 +44,7 @@ export interface ToolTraceState {
 	readonly failed: boolean;
 	readonly args: unknown;
 	readonly details: unknown;
+	readonly output: string;
 	readonly outputPad: number;
 }
 
@@ -59,6 +68,8 @@ export class ToolExecutionComponent extends Container {
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private outputPad: number;
+	/** The trace summary is already on screen, so this card renders only the expanded body. */
+	#traceBodyOnly = false;
 	private isPartial = true;
 	private toolDefinition?: ToolRenderers;
 	private ui: TUI;
@@ -96,6 +107,7 @@ export class ToolExecutionComponent extends Container {
 			failed: settled && this.result?.isError === true,
 			args: this.args,
 			details: this.result?.details,
+			output: traceOutput(this.result?.content),
 			outputPad: this.outputPad,
 		};
 	}
@@ -175,6 +187,7 @@ export class ToolExecutionComponent extends Container {
 			isError: this.result?.isError ?? false,
 			durationMs: this.isPartial ? undefined : this.result?.durationMs,
 			outputPad: this.outputPad,
+			omitCallHeader: this.#traceBodyOnly,
 		};
 	}
 
@@ -235,6 +248,12 @@ export class ToolExecutionComponent extends Container {
 	): void {
 		this.result = result;
 		this.isPartial = isPartial;
+		this.updateDisplay();
+	}
+
+	setTraceBodyOnly(bodyOnly: boolean): void {
+		if (this.#traceBodyOnly === bodyOnly) return;
+		this.#traceBodyOnly = bodyOnly;
 		this.updateDisplay();
 	}
 

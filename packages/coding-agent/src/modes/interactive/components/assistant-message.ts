@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@amazme/ai";
 import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@amazme/tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { formatToolDuration } from "../../../core/tools/render-utils.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 import { markSelectedLines } from "./transcript-selection.ts";
@@ -27,6 +28,9 @@ export class AssistantMessageComponent extends Container {
 	private hasToolCalls = false;
 	private isStreaming = false;
 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+	private readonly thinkingStartedAt = new Map<number, number>();
+	private readonly thinkingDurationMs = new Map<number, number>();
+	private readonly thinkingText = new Map<number, string>();
 	private selected = false;
 
 	constructor(
@@ -99,6 +103,33 @@ export class AssistantMessageComponent extends Container {
 		return lines;
 	}
 
+	/** Collapsed row: `◆ Thinking…` while it runs, `◆ Thinking… 2.5s` once that run has finished. */
+	private thinkingSummary(runIndex: number): string {
+		const duration = this.thinkingDurationMs.get(runIndex);
+		const label = duration === undefined ? "Thinking…" : `Thinking… ${formatToolDuration(duration)}`;
+		return theme.fg("dim", "◆ ") + theme.italic(theme.fg("thinkingText", label));
+	}
+
+	private noteThinkingDuration(runIndex: number, thinkingText: string, hasContentAfter: boolean): void {
+		const started = this.thinkingStartedAt.get(runIndex);
+		if (this.isStreaming) {
+			if (started === undefined) {
+				this.thinkingStartedAt.set(runIndex, Date.now());
+				this.thinkingText.set(runIndex, thinkingText);
+				return;
+			}
+			const grew = this.thinkingText.get(runIndex) !== thinkingText;
+			this.thinkingText.set(runIndex, thinkingText);
+			if (!grew && hasContentAfter && !this.thinkingDurationMs.has(runIndex)) {
+				this.thinkingDurationMs.set(runIndex, Math.max(0, Date.now() - started));
+			}
+			return;
+		}
+		if (started !== undefined && !this.thinkingDurationMs.has(runIndex)) {
+			this.thinkingDurationMs.set(runIndex, Math.max(0, Date.now() - started));
+		}
+	}
+
 	/** Copyable text of the rendered message, without tool calls or chrome. */
 	private collectText(): string | undefined {
 		const message = this.lastMessage;
@@ -168,9 +199,10 @@ export class AssistantMessageComponent extends Container {
 					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
 
 				const runIndex = thinkingRunIndex++;
+				this.noteThinkingDuration(runIndex, thinkingBlocks.join("\n\n"), hasVisibleContentAfter);
 				const hidden = this.thinkingVisibilityOverrides.get(runIndex) ?? this.hideThinkingBlock;
 				const thinkingComponent = hidden
-					? new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), this.outputPad, 0)
+					? new Text(this.thinkingSummary(runIndex), this.outputPad, 0)
 					: new Markdown(
 							thinkingBlocks.join("\n\n"),
 							this.outputPad,

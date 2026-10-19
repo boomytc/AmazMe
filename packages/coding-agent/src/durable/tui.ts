@@ -715,7 +715,7 @@ class DurableTui {
 				this.#streaming ??
 				new AssistantMessageComponent(
 					undefined,
-					false,
+					this.#settings.getHideThinkingBlock(),
 					getMarkdownTheme(),
 					"Thinking...",
 					1,
@@ -763,7 +763,7 @@ class DurableTui {
 			this.#trace.close();
 			this.#streaming = new AssistantMessageComponent(
 				undefined,
-				false,
+				this.#settings.getHideThinkingBlock(),
 				getMarkdownTheme(),
 				"Thinking...",
 				1,

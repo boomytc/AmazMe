@@ -494,6 +494,8 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 	durationMs: number | undefined;
 	/** Horizontal padding configured by the outputPad setting. Renderers with `renderShell: "self"` apply it themselves. */
 	outputPad: number;
+	/** The trace row already shows the summary, so the call header is left out. */
+	omitCallHeader?: boolean;
 }
 
 /**

@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@amazme/ai";
 import type { TuiMouseEvent } from "@amazme/tui";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { terminalMarkdownTransformers } from "../src/modes/interactive/components/mermaid.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
@@ -35,6 +35,9 @@ function createAssistantMessage(
 }
 
 describe("AssistantMessageComponent", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+	});
 	test("marks a selected message within the render width", () => {
 		initTheme("dark");
 		const message = createAssistantMessage([{ type: "text", text: "selected answer" }]);
@@ -96,7 +99,8 @@ describe("AssistantMessageComponent", () => {
 		);
 		const rendered = component.render(80).join("\n");
 
-		expect(rendered).toContain("Thinking...");
+		expect(rendered).toContain("Thinking…");
+		expect(rendered).not.toContain("private reasoning");
 		expect(rendered).toContain("Response was truncated before completion.");
 	});
 
@@ -114,8 +118,44 @@ describe("AssistantMessageComponent", () => {
 		);
 		const rendered = stripAnsi(component.render(80).join("\n"));
 
-		expect(rendered.match(/Thinking\.\.\./g)).toHaveLength(1);
+		expect(rendered.match(/Thinking…/g)).toHaveLength(1);
 		expect(rendered).toContain("answer");
+	});
+
+	test("shows a finished thinking run as one timed row until it is opened", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const message = createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }]);
+		const component = new AssistantMessageComponent(message, true);
+		component.updateContent(message, true);
+		vi.advanceTimersByTime(2500);
+		component.updateContent(message, false);
+
+		const collapsed = stripAnsi(component.render(80).join("\n"));
+		expect(collapsed).toContain("◆ Thinking… 2.5s");
+		expect(collapsed).not.toContain("private reasoning");
+	});
+
+	test("stops the thinking clock when the reply text arrives", () => {
+		initTheme("dark");
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const component = new AssistantMessageComponent(undefined, true);
+		const thinking = createAssistantMessage([{ type: "thinking", thinking: "private reasoning" }]);
+		component.updateContent(thinking, true);
+		vi.advanceTimersByTime(1000);
+		const answered = createAssistantMessage([
+			{ type: "thinking", thinking: "private reasoning" },
+			{ type: "text", text: "done" },
+		]);
+		component.updateContent(answered, true);
+		vi.advanceTimersByTime(5000);
+
+		const rendered = stripAnsi(component.render(80).join("\n"));
+		expect(rendered).toContain("◆ Thinking… 1.0s");
+		expect(rendered).toContain("done");
+		expect(rendered).not.toContain("5.0s");
 	});
 
 	test("collapses individual thinking runs when clicked", () => {
@@ -149,7 +189,7 @@ describe("AssistantMessageComponent", () => {
 
 		const collapsed = stripAnsi(component.render(width).join("\n"));
 		expect(collapsed).not.toContain("first reasoning");
-		expect(collapsed).toContain("Thinking...");
+		expect(collapsed).toContain("Thinking…");
 		expect(collapsed).toContain("second reasoning");
 	});
 

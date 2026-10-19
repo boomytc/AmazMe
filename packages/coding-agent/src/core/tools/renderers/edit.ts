@@ -146,25 +146,28 @@ function buildEditCallComponent(
 	outputPad: number,
 	expanded: boolean,
 	partial: boolean,
+	omitCallHeader: boolean,
 ): EditCallRenderComponent {
 	component.setBgFn(expanded ? getEditHeaderBg(component.preview, component.settledError, theme) : undefined);
 	component.setPaddingX(outputPad);
 	component.clear();
 	const preview = component.preview;
 	const collapsedDiff = !expanded && preview && !("error" in preview) ? preview.diff : undefined;
-	const title = collapsedDiff ? formatCollapsedEditCall(args, collapsedDiff, theme, cwd) : formatEditCall(args, theme, cwd);
-	component.addChild(
-		new Text(expanded ? title : title + rowStatusSuffix(theme, partial, component.settledError === true), 0, 0),
-	);
+	if (!omitCallHeader) {
+		const title = collapsedDiff ? formatCollapsedEditCall(args, collapsedDiff, theme, cwd) : formatEditCall(args, theme, cwd);
+		component.addChild(
+			new Text(expanded ? title : title + rowStatusSuffix(theme, partial, component.settledError === true), 0, 0),
+		);
+	}
 
 	if (!preview) return component;
 	if (!expanded) {
-		if ("error" in preview) component.addChild(new Text(theme.fg("error", preview.error), 0, 0));
+		if (!omitCallHeader && "error" in preview) component.addChild(new Text(theme.fg("error", preview.error), 0, 0));
 		return component;
 	}
 
 	const body = "error" in preview ? theme.fg("error", preview.error) : renderDiff(preview.diff);
-	component.addChild(new Spacer(1));
+	if (!omitCallHeader) component.addChild(new Spacer(1));
 	component.addChild(new Text(body, 0, 0));
 	return component;
 }
@@ -220,6 +223,7 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 			context.outputPad,
 			context.expanded,
 			context.isPartial,
+			context.omitCallHeader === true,
 		);
 	},
 	renderResult(result, _options, theme, context) {
@@ -251,6 +255,7 @@ export const editRenderers: Pick<ToolDefinition<any, any>, "renderCall" | "rende
 					context.outputPad,
 					context.expanded,
 					context.isPartial,
+					context.omitCallHeader === true,
 				);
 			}
 		}

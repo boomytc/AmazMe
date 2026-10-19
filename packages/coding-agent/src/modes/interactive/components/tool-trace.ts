@@ -44,9 +44,10 @@ export class ToolTraceRun extends Container {
 		for (const segment of this.#segments) {
 			const height = segment.lines.length;
 			if (event.y >= top && event.y < top + height) {
-				if (segment.summary) {
+				if (segment.summary && event.y === top) {
 					if (event.type !== "click" || event.button !== "left") return undefined;
-					for (const card of segment.cards) card.setExpanded(true);
+					const open = segment.cards.every((card) => card.transcriptRowExpanded());
+					for (const card of segment.cards) card.setExpanded(!open);
 					return {
 						handled: true,
 						target: {
@@ -108,11 +109,16 @@ function layoutTrace(cards: readonly ToolExecutionComponent[], width: number): T
 		let end = index + 1;
 		while (end < cards.length && foldKind(cards[end]) === kind) end += 1;
 		const group = cards.slice(index, end);
-		if (group.length >= 2 && group.every((card) => !card.transcriptRowExpanded())) {
-			segments.push({ lines: [summaryLine(kind, group)], cards: group, summary: true });
+		const lines = [summaryLine(kind, group)];
+		if (group.some((card) => card.transcriptRowExpanded())) {
+			for (const card of group) {
+				card.setTraceBodyOnly(true);
+				lines.push(...card.render(width));
+			}
 		} else {
-			for (const card of group) segments.push(cardSegment(card, width));
+			for (const card of group) card.setTraceBodyOnly(false);
 		}
+		segments.push({ lines, cards: group, summary: true });
 		index = end;
 	}
 	return segments;
@@ -131,43 +137,141 @@ function foldKind(card: ToolExecutionComponent | undefined): TraceKind | undefin
 
 function summaryLine(kind: TraceKind, cards: readonly ToolExecutionComponent[]): string {
 	const pad = cards[0]?.traceState.outputPad ?? 0;
-	if (kind === "explore") return exploreSummary(cards, pad);
-	if (kind === "edit") return editSummary(cards, pad);
-	const count = cards.length;
-	return styledSummary(`Ran ${count} command${count === 1 ? "" : "s"}`, pad);
+	if (kind === "explore") return traceRow(pad, exploreLabel(cards));
+	if (kind === "edit") {
+		const edit = editLabel(cards);
+		return traceRow(pad, edit.text, edit.stat);
+	}
+	return traceRow(pad, commandLabel(cards));
 }
 
-function exploreSummary(cards: readonly ToolExecutionComponent[], pad: number): string {
-	let files = 0;
-	let searches = 0;
+function exploreLabel(cards: readonly ToolExecutionComponent[]): string {
+	const files: string[] = [];
+	const directories: string[] = [];
+	const searches: SearchFact[] = [];
 	for (const card of cards) {
-		if (card.traceState.name === "read") files += 1;
-		else searches += 1;
+		const state = card.traceState;
+		const path = displayPath(argPath(state.args));
+		if (state.name === "read") {
+			if (path !== undefined) files.push(path);
+		} else if (state.name === "ls") directories.push(path ?? ".");
+		else searches.push(searchFact(state));
+	}
+	const uniqueFiles = unique(files);
+	const uniqueDirectories = unique(directories);
+	const only = cards.length === 1 ? cards[0] : undefined;
+	if (only?.traceState.name === "read" && uniqueFiles.length === 1) return `Read ${uniqueFiles[0]}`;
+	if (only !== undefined && (only.traceState.name === "grep" || only.traceState.name === "find") && searches[0] !== undefined) {
+		return searchLabel(searches[0]);
+	}
+	if (uniqueFiles.length === 1 && uniqueDirectories.length === 0 && searches.length > 0) {
+		return `Explored ${uniqueFiles[0]}, ${countPhrase(searches.length, "search", "searches")}`;
+	}
+	if (uniqueFiles.length === 1 && uniqueDirectories.length === 0 && searches.length === 0) {
+		return `Explored ${uniqueFiles[0]}`;
+	}
+	if (uniqueDirectories.length === 1 && uniqueFiles.length === 0 && searches.length === 0) {
+		return `Explored ${uniqueDirectories[0]}`;
 	}
 	const parts: string[] = [];
-	if (files > 0) parts.push(`${files} file${files === 1 ? "" : "s"}`);
-	if (searches > 0) parts.push(`${searches} search${searches === 1 ? "" : "es"}`);
-	return styledSummary(`Explored ${parts.join(", ")}`, pad);
+	if (uniqueDirectories.length > 0) parts.push(countPhrase(uniqueDirectories.length, "directory", "directories"));
+	if (uniqueFiles.length > 0) parts.push(countPhrase(uniqueFiles.length, "file", "files"));
+	if (searches.length > 0) parts.push(countPhrase(searches.length, "search", "searches"));
+	return `Explored ${parts.join(", ")}`;
 }
 
-function editSummary(cards: readonly ToolExecutionComponent[], pad: number): string {
-	const paths = new Set<string>();
+function editLabel(cards: readonly ToolExecutionComponent[]): { text: string; stat: string } {
+	const paths: string[] = [];
 	let added = 0;
 	let removed = 0;
 	for (const card of cards) {
 		const state = card.traceState;
-		const path = argPath(state.args);
-		if (path !== undefined) paths.add(path);
+		const path = displayPath(argPath(state.args));
+		if (path !== undefined) paths.push(path);
 		const stat = changeStat(state.name, state.args, state.details);
 		added += stat.added;
 		removed += stat.removed;
 	}
-	const count = paths.size > 0 ? paths.size : cards.length;
-	return styledSummary(`Edited ${count} file${count === 1 ? "" : "s"} +${added} -${removed}`, pad);
+	const uniquePaths = unique(paths);
+	const stat = statText(added, removed, cards.length === 1);
+	if (cards.length === 1) return { text: `Edit ${uniquePaths[0] ?? "file"}`, stat };
+	if (uniquePaths.length === 1) return { text: `Edited ${uniquePaths[0]}`, stat };
+	const count = uniquePaths.length > 0 ? uniquePaths.length : cards.length;
+	return { text: `Edited ${countPhrase(count, "file", "files")}`, stat };
 }
 
-function styledSummary(text: string, pad: number): string {
-	return " ".repeat(pad) + theme.fg("toolTitle", theme.bold(text));
+function commandLabel(cards: readonly ToolExecutionComponent[]): string {
+	if (cards.length === 1) {
+		const command = stringArg(cards[0]?.traceState.args, "command");
+		return `Ran ${command ?? "command"}`;
+	}
+	return `Ran ${cards.length} commands`;
+}
+
+function traceRow(pad: number, text: string, stat = ""): string {
+	return `${" ".repeat(pad)}${theme.fg("dim", "◆ ")}${theme.fg("toolTitle", text)}${stat}`;
+}
+
+function statText(added: number, removed: number, slash: boolean): string {
+	const plus = added > 0 ? theme.fg("toolDiffAdded", `+${added}`) : "";
+	const minus = removed > 0 ? theme.fg("toolDiffRemoved", `-${removed}`) : "";
+	if (plus.length > 0 && minus.length > 0) return slash ? ` ${plus}/${minus}` : ` ${plus} ${minus}`;
+	if (plus.length > 0) return ` ${plus}`;
+	if (minus.length > 0) return ` ${minus}`;
+	return "";
+}
+
+interface SearchFact {
+	readonly pattern: string;
+	readonly path: string | undefined;
+	readonly matches: number;
+	readonly files: number;
+}
+
+function searchFact(state: ToolExecutionComponent["traceState"]): SearchFact {
+	const pattern = stringArg(state.args, "pattern") ?? "";
+	const path = displayPath(argPath(state.args));
+	const lines = state.output
+		.split("\n")
+		.map((line) => line.trim())
+		.filter((line) => line.length > 0 && !/^no matches\b/i.test(line));
+	if (lines.length === 0) return { pattern, path, matches: 0, files: 0 };
+	const files = new Set<string>();
+	for (const line of lines) {
+		const match = /^(.+):\d+:/.exec(line);
+		if (match?.[1] !== undefined) files.add(match[1]);
+	}
+	return { pattern, path, matches: lines.length, files: files.size > 0 ? files.size : lines.length };
+}
+
+function searchLabel(fact: SearchFact): string {
+	const where = fact.path !== undefined ? ` in ${fact.path}` : "";
+	const count =
+		fact.matches === 0
+			? "no matches"
+			: `${fact.matches} ${fact.matches === 1 ? "match" : "matches"} in ${countPhrase(fact.files, "file", "files")}`;
+	return `Search "${fact.pattern}"${where} (${count})`;
+}
+
+function countPhrase(count: number, one: string, many: string): string {
+	return `${count} ${count === 1 ? one : many}`;
+}
+
+function unique(values: readonly string[]): string[] {
+	return [...new Set(values)];
+}
+
+function stringArg(args: unknown, key: string): string | undefined {
+	if (args === null || typeof args !== "object" || !(key in args)) return undefined;
+	const value = (args as Record<string, unknown>)[key];
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function displayPath(path: string | undefined): string | undefined {
+	if (path === undefined) return undefined;
+	if (!path.startsWith("/") && !/^[A-Za-z]:\\/.test(path)) return path;
+	const parts = path.split(/[/\\]/);
+	return parts[parts.length - 1] || path;
 }
 
 function argPath(args: unknown): string | undefined {

@@ -180,7 +180,7 @@ export class ExperimentalChatView {
 				this.#streaming ??
 				new AssistantMessageComponent(
 					undefined,
-					false,
+					true,
 					getMarkdownTheme(),
 					"Thinking...",
 					1,
@@ -220,7 +220,7 @@ export class ExperimentalChatView {
 			this.#trace.close();
 			this.#streaming = new AssistantMessageComponent(
 				undefined,
-				false,
+				true,
 				getMarkdownTheme(),
 				"Thinking...",
 				1,

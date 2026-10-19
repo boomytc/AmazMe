@@ -50,13 +50,27 @@ describe("tool trace rows", () => {
 		const run = new ToolTraceRun();
 		const read = card("read", "r1", { path: "a.ts" }, { text: "secret-a" });
 		run.add(read);
-		expect(lines(run)).toEqual([expect.stringContaining("read")]);
-		expect(lines(run)[0]).toContain("a.ts");
+		expect(lines(run)).toEqual([" ◆ Read a.ts"]);
 		expect(lines(run).join("\n")).not.toContain("secret-a");
 
 		run.add(card("read", "r2", { path: "b.ts" }, { text: "secret-b" }));
 		run.add(card("grep", "g1", { pattern: "secret", path: "src" }, { text: "a.ts:1:secret-a\nb.ts:1:secret-b" }));
-		expect(lines(run)).toEqual([" Explored 2 files, 1 search"]);
+		expect(lines(run)).toEqual([" ◆ Explored 2 files, 1 search"]);
+	});
+
+	test("a single search and a file-plus-search run use the shorter labels", () => {
+		const search = new ToolTraceRun();
+		search.add(
+			card("grep", "g1", { pattern: "export type Api", path: "**/ai/src/**/*.ts" }, {
+				text: "a.ts:1:export type Api\nb.ts:4:export type Api",
+			}),
+		);
+		expect(lines(search)).toEqual([' ◆ Search "export type Api" in **/ai/src/**/*.ts (2 matches in 2 files)']);
+
+		const mixed = new ToolTraceRun();
+		mixed.add(card("read", "r1", { path: "edit.ts" }, { text: "export" }));
+		mixed.add(card("grep", "g2", { pattern: "format", path: "edit.ts" }, { text: "edit.ts:3:format" }));
+		expect(lines(mixed)).toEqual([" ◆ Explored edit.ts, 1 search"]);
 	});
 
 	test("a pending or failed call stays out of the summary and keeps its own row", () => {
@@ -67,11 +81,11 @@ describe("tool trace rows", () => {
 		run.add(card("bash", "b2", { command: "npm run build" }, { text: "ok" }));
 		const rendered = lines(run);
 		expect(rendered.some((line) => line.includes("Explored"))).toBe(false);
-		expect(rendered.some((line) => line.includes("Ran"))).toBe(false);
-		expect(rendered.some((line) => line.includes("a.ts"))).toBe(true);
+		expect(rendered.some((line) => line.includes("Ran 2"))).toBe(false);
+		expect(rendered.some((line) => line.includes("Read a.ts"))).toBe(true);
 		expect(rendered.some((line) => line.includes("b.ts"))).toBe(true);
 		expect(rendered.some((line) => line.includes("npm test"))).toBe(true);
-		expect(rendered.some((line) => line.includes("npm run build"))).toBe(true);
+		expect(rendered.some((line) => line.includes("Ran npm run build"))).toBe(true);
 	});
 
 	test("one edit stays a stat line and several edits fold", () => {
@@ -81,26 +95,26 @@ describe("tool trace rows", () => {
 		run.add(edit);
 		const alone = lines(run);
 		expect(alone).toHaveLength(1);
-		expect(alone[0]).toContain("Edit");
-		expect(alone[0]).toContain("a.ts");
-		expect(alone[0]).toContain("+1 -1");
+		expect(alone[0]).toContain("Edit a.ts");
+		expect(alone[0]).toContain("+1/-1");
 		expect(alone.join("\n")).not.toContain("next");
 
 		run.add(card("edit", "e2", { path: "b.ts" }, { text: "updated", details: { diff } }));
-		expect(lines(run)).toEqual([" Edited 2 files +2 -2"]);
+		expect(lines(run)).toEqual([" ◆ Edited 2 files +2 -2"]);
 
 		edit.setExpanded(true);
 		run.cards[1]?.setExpanded(true);
-		const expanded = lines(run).join("\n");
-		expect(expanded).toContain("next");
-		expect(expanded).toContain("previous");
+		const expanded = lines(run);
+		expect(expanded[0]).toContain("Edited 2 files");
+		expect(expanded.join("\n")).toContain("next");
+		expect(expanded.join("\n")).toContain("previous");
 	});
 
 	test("consecutive commands fold, and clicking the summary shows their output", () => {
 		const run = new ToolTraceRun();
 		run.add(card("bash", "b1", { command: "pwd" }, { text: "/work" }));
 		run.add(card("bash", "b2", { command: "ls" }, { text: "src" }));
-		expect(lines(run)).toEqual([" Ran 2 commands"]);
+		expect(lines(run)).toEqual([" ◆ Ran 2 commands"]);
 
 		const event: TuiMouseEvent = {
 			type: "click",
@@ -189,6 +203,6 @@ describe("durable transcript placement", () => {
 		placement.close();
 		placement.add(card("bash", "b1", { command: "pwd" }, { text: "/work" }));
 		placement.add(card("bash", "b2", { command: "ls" }, { text: "src" }));
-		expect(lines(chat)).toEqual([" Explored 2 files", " Ran 2 commands"]);
+		expect(lines(chat)).toEqual([" ◆ Explored 2 files", " ◆ Ran 2 commands"]);
 	});
 });
