@@ -52,7 +52,7 @@ describe("provider attribution on actual model requests", () => {
 		]);
 		expect(f.requests.find((headers) => headers?.["x-owner"] === "enabled")).toHaveProperty(
 			"X-OpenRouter-Title",
-			"AmazMe",
+			"pi",
 		);
 		expect(f.requests.find((headers) => headers?.["x-owner"] === "disabled")).toEqual({ "x-owner": "disabled" });
 		enabledSettings.setEnableInstallTelemetry(false);
@@ -63,11 +63,11 @@ describe("provider attribution on actual model requests", () => {
 	it.each([
 		[
 			"https://openrouter.ai/api/v1",
-			{ "HTTP-Referer": "https://pi.dev", "X-OpenRouter-Title": "AmazMe", "X-OpenRouter-Categories": "cli-agent" },
+			{ "HTTP-Referer": "https://pi.dev", "X-OpenRouter-Title": "pi", "X-OpenRouter-Categories": "cli-agent" },
 		],
-		["https://integrate.api.nvidia.com/v1", { "X-BILLING-INVOKE-ORIGIN": "AmazMe" }],
-		["https://api.cloudflare.com/client/v4", { "User-Agent": "amazme-coding-agent" }],
-		["https://gateway.ai.cloudflare.com/v1/test", { "User-Agent": "amazme-coding-agent" }],
+		["https://integrate.api.nvidia.com/v1", { "X-BILLING-INVOKE-ORIGIN": "Pi" }],
+		["https://api.cloudflare.com/client/v4", { "User-Agent": "pi-coding-agent" }],
+		["https://gateway.ai.cloudflare.com/v1/test", { "User-Agent": "pi-coding-agent" }],
 	])("sends attribution to %s", async (baseUrl, expected) => {
 		const f = await fixture(baseUrl);
 		await f.runtime.completeSimple(f.model, { messages: [] });
@@ -81,7 +81,7 @@ describe("provider attribution on actual model requests", () => {
 		expect(f.headers()).toBeUndefined();
 		vi.stubEnv("AMAZME_TELEMETRY", "1");
 		await f.runtime.completeSimple(f.model, { messages: [] });
-		expect(f.headers()).toHaveProperty("X-OpenRouter-Title", "AmazMe");
+		expect(f.headers()).toHaveProperty("X-OpenRouter-Title", "pi");
 		vi.stubEnv("AMAZME_TELEMETRY", "0");
 		f.settings.setEnableInstallTelemetry(true);
 		await f.runtime.completeSimple(f.model, { messages: [] }, { headers: { "X-OpenRouter-Title": "custom" } });
@@ -114,7 +114,7 @@ describe("provider attribution on actual model requests", () => {
 	it("keeps OpenCode session routing independent of telemetry", async () => {
 		const f = await fixture("https://opencode.ai/zen/v1", SettingsManager.inMemory({ enableInstallTelemetry: false }));
 		await f.runtime.completeSimple(f.model, { messages: [] }, { sessionId: "session-1" });
-		expect(f.headers()).toEqual({ "x-opencode-session": "session-1", "x-opencode-client": "AmazMe" });
+		expect(f.headers()).toEqual({ "x-opencode-session": "session-1", "x-opencode-client": "pi" });
 	});
 
 	it("does not match provider host names embedded in paths or unrelated hosts", () => {
