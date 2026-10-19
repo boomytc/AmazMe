@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-19
+
+### Breaking Changes
+
+- The `TUI` interface requires `restoreInput()`. Code that implements `TUI` by hand, such as a test fake, must add it.
+
+### Added
+
+- `TuiStopOptions.deferInputRestore` and `TerminalStopOptions.deferInputRestore` keep stdin raw after the screen is restored, so a Ctrl-C queued during shutdown is read as a key (passed to `onDeferredInput`) instead of being echoed as `^C`. `TUI.restoreInput()` and the optional `Terminal.restoreInput()` hand cooked input back to the shell; both are idempotent.
+
 ## [1.1.1] - 2026-10-18
 
 ### Breaking Changes

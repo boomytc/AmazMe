@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-19
+
+### Breaking Changes
+
+- `run_end` agent events carry `willRetry`, true when the same commit starts a successor run. Code that builds an `AgentEvent` by hand, such as a test fake, must add it.
+
+### Added
+
+- An `agent_settled` agent event follows `run_end` when no successor run starts in the same commit: the session-level run is over and nothing queued continues it. `aborted` is true when one of the run's inputs was settled `unanswered` with reason `aborted`. It is not part of the snapshot, so an idle attachment sees no past settlement.
+- The task graph shows each task's restart count (`TaskGraphNode.restarts`, absent while zero) and the configured bound (`TaskGraph.restartLimit`, `Infinity` when nothing parks). A change of `settings.restartLimit` alone refreshes the graph. JSON has no `Infinity`, so a host that sends the graph or a summary of it must map an unbounded limit itself.
+
 ## [1.3.0] - 2026-10-19
 
 ### Breaking Changes
