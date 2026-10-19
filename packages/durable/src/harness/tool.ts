@@ -758,7 +758,15 @@ async function finalResult(
 	};
 	await runtime.hooks.each("afterTool", async (hook) => {
 		const changed = (await hook(call, final, runtime, context)) ?? final;
-		if (changed.output !== final.output && changed.structuredOutput === final.structuredOutput) {
+		// A rewritten model output that still carries the same object or array has not rebuilt structured
+		// output, so that container is stale. A number, string, boolean, or null has no separate identity:
+		// the value the hook returned is the value, and dropping it makes a valid result fail the schema.
+		const structured = final.structuredOutput;
+		const staleContainer = changed.output !== final.output
+			&& changed.structuredOutput === structured
+			&& typeof structured === "object"
+			&& structured !== null;
+		if (staleContainer) {
 			const { structuredOutput: _discarded, ...redacted } = changed;
 			final = redacted;
 		} else final = changed;

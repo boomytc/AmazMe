@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createModels, fauxAssistantMessage, fauxProvider, fauxToolCall, Type } from "@amazme/ai";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
-import { AgentDoc, defineExtension, defineTool, Harness, ToolResultEntry } from "@amazme/durable";
+import { AgentDoc, defineExtension, defineTool, Harness, MemoryStorage, ToolResultEntry } from "@amazme/durable";
 import type { HookApi, TaskId, ToolExecutionResult, ToolHookCall, ToolHooks } from "@amazme/durable";
 import type { NestedToolExecutionResult } from "@amazme/durable";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
@@ -427,6 +427,94 @@ describe("coding registry tool-result image hook", () => {
 			const message = persisted[0]?.model?.[0];
 			if (message?.role !== "toolResult") throw new Error("expected a persisted tool result");
 			expect(message.isError).toBe(false);
+			const image = message.content.find((block) => block.type === "image");
+			if (image?.type !== "image") throw new Error("expected a persisted image");
+			expect(readPngDimensions(image.data)).toEqual({ width: 400, height: 800 });
+		} finally {
+			await harness?.close(context);
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps a numeric structured output when resizing a model-visible image", async () => {
+		const directory = await mkdtemp(join(tmpdir(), "amazme-tool-images-"));
+		const settings = SettingsManager.inMemory({ images: { autoResize: true } });
+		const resources = {
+			getSystemPrompt: () => "",
+			getAppendSystemPrompt: () => [],
+			getAgentsFiles: () => ({ agentsFiles: [] }),
+			getSkills: () => ({ skills: [] }),
+		} as unknown as ResourceLoader;
+		const registry = createCodingRegistry(settings, directory, resources, async () => [directory], join(directory, "artifacts"));
+		const original = [imageBlock(createPng(2400, 4800), "image/png")];
+		let nested: NestedToolExecutionResult | undefined;
+		registry.install(
+			defineExtension({
+				name: "counted-image-fixture",
+				tools: [
+					defineTool({
+						name: "capture",
+						description: "Return a large image and a count",
+						parameters: Type.Object({}),
+						structuredOutputSchema: Type.Number(),
+						execute: async () => ({ output: original, structuredOutput: 7 }),
+					}),
+					defineTool({
+						name: "forward",
+						description: "Forward a nested image with its own count",
+						parameters: Type.Object({}),
+						structuredOutputSchema: Type.Number(),
+						async execute(_args, api, callContext) {
+							nested = await api.executeTool("capture", {}, callContext);
+							return { output: original, structuredOutput: 8 };
+						},
+					}),
+				],
+			}),
+		);
+		const faux = fauxProvider({
+			models: [
+				{
+					id: "vision",
+					input: ["text", "image"],
+					inputLimits: { images: { resize: { maxWidth: 800, maxHeight: 800, maxBytes: 5_000_000 } } },
+				},
+			],
+		});
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const reports: string[] = [];
+		let harness: Harness | undefined;
+		try {
+			harness = await Harness.open(
+				new MemoryStorage(),
+				{
+					models,
+					registry,
+					env: () => new NodeExecutionEnv({ cwd: directory }),
+					onReport: (error: unknown) => reports.push(error instanceof Error ? error.message : String(error)),
+				},
+				context,
+			);
+			const root = await harness.root(context, {
+				agent: { model: { provider: "faux", modelId: "vision" }, cwd: directory },
+				init: async (tx, id) => {
+					(await tx.doc(AgentDoc, id)).tools = { only: ["capture", "forward"] };
+				},
+			});
+			faux.setResponses([
+				fauxAssistantMessage([fauxToolCall("forward", {}, { id: "parent" })], { stopReason: "toolUse" }),
+				fauxAssistantMessage("done"),
+			]);
+			expect(await (await root.submit({ type: "input", content: "forward the shot" }, context)).wait(context)).toMatchObject({
+				status: "done",
+			});
+			expect(reports).toEqual([]);
+			expect(nested).toMatchObject({ isError: false, structuredOutput: 7 });
+			const persisted = (await root.entries({}, 100, undefined, context)).items.filter(ToolResultEntry.is);
+			expect(persisted).toHaveLength(1);
+			const message = persisted[0]?.model?.[0];
+			if (message?.role !== "toolResult") throw new Error("expected a persisted tool result");
 			const image = message.content.find((block) => block.type === "image");
 			if (image?.type !== "image") throw new Error("expected a persisted image");
 			expect(readPngDimensions(image.data)).toEqual({ width: 400, height: 800 });

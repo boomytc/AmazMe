@@ -369,6 +369,72 @@ describe("structured output", () => {
 		expect(codes(other!)).toEqual(["invalid_structured_output"]);
 	});
 
+	it("keeps primitive structured output when afterTool rewrites the model output", async () => {
+		const cases: readonly [string, JsonValue][] = [
+			["count", 7],
+			["label", "kept"],
+			["flag", false],
+			["empty", null],
+		];
+		const schemaFor = (value: JsonValue) =>
+			typeof value === "number" ? Type.Number()
+			: typeof value === "string" ? Type.String()
+			: typeof value === "boolean" ? Type.Boolean()
+			: Type.Null();
+		const setup = chatSetup();
+		for (const [name, value] of cases) {
+			addTool(
+				setup.registry,
+				returning(
+					name,
+					{ output: [{ type: "text", text: "secret" }], structuredOutput: value },
+					{ structuredOutputSchema: schemaFor(value) },
+				),
+			);
+		}
+		addHooks(setup.registry, ToolTask, {
+			afterTool: (hookCall, result) =>
+				hookCall.name === "probe" ? result : { ...result, output: [{ type: "text", text: "rewritten" }] },
+		});
+		const received = new Map<string, NestedToolExecutionResult>();
+		addTool(
+			setup.registry,
+			defineTool({
+				name: "probe",
+				description: "probe",
+				parameters: Type.Object({}),
+				execute: async (_args, api, callContext) => {
+					for (const [name] of cases) received.set(name, await api.executeTool(name, {}, callContext));
+					return {};
+				},
+			}),
+		);
+		setup.faux.setResponses([call("probe"), DONE]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
+		await harness.close(context);
+		expect(received.get("count")).toMatchObject({ isError: false, structuredOutput: 7 });
+		expect(received.get("label")).toMatchObject({ isError: false, structuredOutput: "kept" });
+		expect(received.get("flag")).toMatchObject({ isError: false, structuredOutput: false });
+		expect(received.get("empty")).toMatchObject({ isError: false, structuredOutput: null });
+
+		const modelSetup = chatSetup();
+		addTool(
+			modelSetup.registry,
+			returning(
+				"count",
+				{ output: [{ type: "text", text: "secret" }], structuredOutput: 7 },
+				{ structuredOutputSchema: Type.Number() },
+			),
+		);
+		addHooks(modelSetup.registry, ToolTask, {
+			afterTool: (_call, result) => ({ ...result, output: [{ type: "text", text: "rewritten" }] }),
+		});
+		const stored = await direct(modelSetup, "count");
+		expect(stored.isError).toBe(false);
+		expect(modelSetup.reports).toEqual([]);
+	});
+
 	it("gives callers of bash its retained output and exit code, also for a nonzero exit", async () => {
 		const directory = mkdtempSync(join(tmpdir(), "pi-durable-structured-"));
 		try {

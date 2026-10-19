@@ -36,17 +36,17 @@ async function normalizedToolResult(
 		resizeOptions: model?.inputLimits?.images?.resize,
 	});
 	if (normalized === output) return;
-	// A new container keeps the same structured value. Replacing only the model image would otherwise
-	// look like a stale structured result and be dropped before schema checks.
-	const structuredOutput = distinctStructuredOutput(result.structuredOutput);
+	// Objects and arrays need a new container so a rewritten image is not treated as a stale structured
+	// result. Numbers, strings, booleans, and null are returned as the same value: that value is the result.
+	const structuredOutput = carriedStructuredOutput(result.structuredOutput);
 	return structuredOutput === undefined
 		? { ...result, output: normalized }
 		: { ...result, output: normalized, structuredOutput };
 }
 
-/** New object or array identity for the same fields. A primitive cannot get a new identity. */
-function distinctStructuredOutput(value: JsonValue | undefined): JsonValue | undefined {
+/** New object or array identity for the same fields. Primitives and null stay the same value. */
+function carriedStructuredOutput(value: JsonValue | undefined): JsonValue | undefined {
 	if (Array.isArray(value)) return [...value];
 	if (typeof value === "object" && value !== null) return { ...value };
-	return undefined;
+	return value;
 }
