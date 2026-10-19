@@ -7,7 +7,7 @@
  * With a `server`, one page is listed and `cursor` continues it; without, every page of every server.
  * MCP App resources (`ui://` URIs and `profile=mcp-app` HTML) are left out, since they are user
  * interfaces for hosts that render them, and so are icons. Read resources become text and images for
- * the model; binary resources are saved to temp files. Scripts get the JSON payloads.
+ * the model; binary resources are saved under the session's artifact directory. Scripts get the JSON payloads.
  */
 
 import type { ImageContent, JsonValue, TextContent } from "@amazme/ai";
@@ -15,7 +15,7 @@ import type { ContentBlock, McpRequestOptions } from "@amazme/mcp";
 import type { TSchema } from "typebox";
 import type { ToolAnnotations, ToolExposure } from "../extensions/types.ts";
 import { isMcpAppResource, type McpResourceServer } from "./contracts.ts";
-import type { McpToolResult } from "./results.ts";
+import type { McpOutputSaver, McpToolResult } from "./results.ts";
 import { LIST_MCP_RESOURCE_TEMPLATES_TOOL, LIST_MCP_RESOURCES_TOOL, READ_MCP_RESOURCE_TOOL } from "../mcp-servers.ts";
 import type { McpExposure } from "../mcp-servers.ts";
 import { limitMcpContent, type McpToolDetails, toModelContent, toToolExposure } from "./results.ts";
@@ -30,7 +30,8 @@ export interface McpResourceTool {
 	outputSchema: TSchema;
 	exposure: ToolExposure;
 	annotations: ToolAnnotations;
-	execute(params: unknown, signal?: AbortSignal): Promise<McpToolResult>;
+	/** `saveOutput` writes truncated text and binary resources under the calling session's artifact directory. */
+	execute(params: unknown, signal: AbortSignal | undefined, saveOutput: McpOutputSaver): Promise<McpToolResult>;
 }
 
 /** A listed resource or template without `_meta` and icons, tagged with its server. */
@@ -163,8 +164,9 @@ async function jsonResult(
 	tool: string,
 	server: string | undefined,
 	payload: Record<string, unknown>,
+	saveOutput: McpOutputSaver,
 ): Promise<{ content: (TextContent | ImageContent)[]; details: McpToolDetails; structuredContent: JsonValue }> {
-	const { content, fullOutputPath } = await limitMcpContent([{ type: "text", text: JSON.stringify(payload) }]);
+	const { content, fullOutputPath } = await limitMcpContent([{ type: "text", text: JSON.stringify(payload) }], saveOutput);
 	return {
 		content,
 		details: { server: server ?? "", tool, ...(fullOutputPath ? { fullOutputPath } : {}) },
@@ -243,7 +245,7 @@ export function createMcpResourceTools(options: {
 		outputSchema: LIST_OUTPUT_SCHEMA as unknown as TSchema,
 		exposure: toToolExposure(options.exposure),
 		annotations: readOnly,
-		async execute(params, signal) {
+		async execute(params, signal, saveOutput) {
 			const payload = await list(
 				params,
 				signal,
@@ -254,7 +256,7 @@ export function createMcpResourceTools(options: {
 				},
 				(server, requestOptions) => server.allResources(requestOptions),
 			);
-			return jsonResult(LIST_MCP_RESOURCES_TOOL, stringArgument(params, "server"), payload);
+			return jsonResult(LIST_MCP_RESOURCES_TOOL, stringArgument(params, "server"), payload, saveOutput);
 		},
 	};
 
@@ -267,7 +269,7 @@ export function createMcpResourceTools(options: {
 		outputSchema: LIST_TEMPLATES_OUTPUT_SCHEMA as unknown as TSchema,
 		exposure: toToolExposure(options.exposure),
 		annotations: readOnly,
-		async execute(params, signal) {
+		async execute(params, signal, saveOutput) {
 			const payload = await list(
 				params,
 				signal,
@@ -278,7 +280,7 @@ export function createMcpResourceTools(options: {
 				},
 				(server, requestOptions) => server.allResourceTemplates(requestOptions),
 			);
-			return jsonResult(LIST_MCP_RESOURCE_TEMPLATES_TOOL, stringArgument(params, "server"), payload);
+			return jsonResult(LIST_MCP_RESOURCE_TEMPLATES_TOOL, stringArgument(params, "server"), payload, saveOutput);
 		},
 	};
 
@@ -290,7 +292,7 @@ export function createMcpResourceTools(options: {
 		outputSchema: READ_OUTPUT_SCHEMA as unknown as TSchema,
 		exposure: toToolExposure(options.exposure),
 		annotations: readOnly,
-		async execute(params, signal) {
+		async execute(params, signal, saveOutput) {
 			const serverName = stringArgument(params, "server");
 			const uri = stringArgument(params, "uri");
 			if (!serverName) throw new Error("server must be provided");
@@ -302,9 +304,10 @@ export function createMcpResourceTools(options: {
 				...(result.contents.length > 1 ? [{ type: "text" as const, text: `${contents.uri}:` }] : []),
 				{ type: "resource" as const, resource: contents },
 			]);
-			const converted = await toModelContent(server.name, blocks);
+			const converted = await toModelContent(server.name, blocks, { saveOutput });
 			const { content, fullOutputPath } = await limitMcpContent(
 				converted.length > 0 ? converted : [{ type: "text", text: `Resource ${uri} is empty.` }],
+				saveOutput,
 			);
 			const contents = result.contents.map(({ _meta: _ignored, ...rest }) => rest);
 			return {

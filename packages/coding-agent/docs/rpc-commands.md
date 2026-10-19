@@ -480,7 +480,7 @@ If output was truncated, includes `fullOutputPath`:
     "exitCode": 0,
     "cancelled": false,
     "truncated": true,
-    "fullOutputPath": "/tmp/pi-bash-abc123.log"
+    "fullOutputPath": "/home/me/.amazme/agent/sessions/.../artifacts/pi-bash-abc123.log"
   }
 }
 ```

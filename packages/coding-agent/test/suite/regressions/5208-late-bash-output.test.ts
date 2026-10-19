@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { type BashOperations, createBashTool } from "../../../src/core/tools/bash.ts";
+import { createTempDir } from "../../temp-dir.ts";
 
 function getTextOutput(result: { content?: Array<{ type: string; text?: string }> }): string {
 	return (
@@ -19,7 +20,7 @@ describe("regression #5208: late bash output callbacks", () => {
 				return { exitCode: 0 };
 			},
 		};
-		const bash = createBashTool(process.cwd(), { operations });
+		const bash = createBashTool(process.cwd(), { operations, artifactDirectory: createTempDir("amazme-5208-artifacts-") });
 
 		const result = await bash.execute("test-call-late-output", { command: "late-output" });
 		await new Promise((resolve) => setTimeout(resolve, 20));

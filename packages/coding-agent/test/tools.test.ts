@@ -30,12 +30,15 @@ import { createMemoryFileObservations } from "../src/core/file-observations.ts";
 import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import { FileError, err } from "@amazme/durable/env";
 import * as shellModule from "../src/utils/shell.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const observations = createMemoryFileObservations();
 const readTool = createReadTool(process.cwd(), { observations });
 const writeTool = createWriteTool(process.cwd(), { observations });
 const editTool = createEditTool(process.cwd(), { observations });
-const bashTool = createBashTool(process.cwd());
+/** Full output of truncated commands; removed after the file's tests, never left in the OS temp directory. */
+const toolArtifacts = createTempDir("amazme-tools-artifacts-", { scope: "suite" });
+const bashTool = createBashTool(process.cwd(), { artifactDirectory: toolArtifacts });
 const grepTool = createGrepTool(process.cwd());
 const findTool = createFindTool(process.cwd());
 const lsTool = createLsTool(process.cwd());
@@ -591,7 +594,7 @@ describe("Coding Agent Tools", () => {
 					return { exitCode: null };
 				},
 			};
-			const bash = createBashTool(testDir, { operations });
+			const bash = createBashTool(testDir, { operations, artifactDirectory: testDir });
 
 			await expect(bash.execute("test-call-null-exit", { command: "remote" })).rejects.toThrow(
 				/partial\s+Command terminated without an exit code$/,
@@ -616,7 +619,7 @@ describe("Coding Agent Tools", () => {
 						throw new Error(testCase.error);
 					},
 				};
-				const bash = createBashTool(testDir, { operations });
+				const bash = createBashTool(testDir, { operations, artifactDirectory: testDir });
 
 				let error: unknown;
 				try {
@@ -642,7 +645,7 @@ describe("Coding Agent Tools", () => {
 		it("should throw error when cwd does not exist", async () => {
 			const nonexistentCwd = "/this/directory/definitely/does/not/exist/12345";
 
-			const bashToolWithBadCwd = createBashTool(nonexistentCwd);
+			const bashToolWithBadCwd = createBashTool(nonexistentCwd, { artifactDirectory: testDir });
 
 			await expect(bashToolWithBadCwd.execute("test-call-11", { command: "echo test" })).rejects.toThrow(
 				/Working directory does not exist/,
@@ -655,7 +658,7 @@ describe("Coding Agent Tools", () => {
 				args: ["-c"],
 			});
 
-			const bashWithBadShell = createBashTool(testDir);
+			const bashWithBadShell = createBashTool(testDir, { artifactDirectory: testDir });
 
 			await expect(bashWithBadShell.execute("test-call-12", { command: "echo test" })).rejects.toThrow(/ENOENT/);
 		});
@@ -663,6 +666,7 @@ describe("Coding Agent Tools", () => {
 		it("should pass shellPath through to shell resolution", async () => {
 			const getShellConfigSpy = vi.spyOn(shellModule, "getShellConfig");
 			const bashWithCustomShell = createBashTool(testDir, {
+				artifactDirectory: testDir,
 				shellPath: "/custom/bash",
 				operations: {
 					exec: async () => ({ exitCode: 0 }),
@@ -734,6 +738,7 @@ describe("Coding Agent Tools", () => {
 
 		it("should prepend command prefix when configured", async () => {
 			const bashWithPrefix = createBashTool(testDir, {
+				artifactDirectory: testDir,
 				commandPrefix: "export TEST_VAR=hello",
 			});
 
@@ -743,6 +748,7 @@ describe("Coding Agent Tools", () => {
 
 		it("should include output from both prefix and command", async () => {
 			const bashWithPrefix = createBashTool(testDir, {
+				artifactDirectory: testDir,
 				commandPrefix: "echo prefix-output",
 			});
 
@@ -751,7 +757,7 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should work without command prefix", async () => {
-			const bashWithoutPrefix = createBashTool(testDir, {});
+			const bashWithoutPrefix = createBashTool(testDir, { artifactDirectory: testDir });
 
 			const result = await bashWithoutPrefix.execute("test-prefix-3", { command: "echo no-prefix" });
 			expect(getTextOutput(result).trim()).toBe("no-prefix");
@@ -767,7 +773,7 @@ describe("Coding Agent Tools", () => {
 				},
 			};
 			const updates: Array<{ content: Array<{ type: string; text?: string }>; details?: unknown }> = [];
-			const bash = createBashTool(testDir, { operations });
+			const bash = createBashTool(testDir, { operations, artifactDirectory: testDir });
 
 			const result = await bash.execute("test-call-chatty-updates", { command: "chatty" }, undefined, (update) =>
 				updates.push(update),
@@ -786,7 +792,7 @@ describe("Coding Agent Tools", () => {
 					return { exitCode: 0 };
 				},
 			};
-			const bash = createBashTool(testDir, { operations });
+			const bash = createBashTool(testDir, { operations, artifactDirectory: testDir });
 
 			const result = await bash.execute("test-call-trailing-newline-line-count", { command: "many-lines" });
 			const output = getTextOutput(result);
@@ -808,7 +814,7 @@ describe("Coding Agent Tools", () => {
 					return { exitCode: 0 };
 				},
 			};
-			const bash = createBashTool(testDir, { operations });
+			const bash = createBashTool(testDir, { operations, artifactDirectory: testDir });
 
 			const result = await bash.execute("test-call-split-utf8", { command: "split-utf8" });
 
@@ -833,6 +839,7 @@ describe("Coding Agent Tools", () => {
 				"printf '\\033[31mred\\033[0m\\r\\n'",
 				process.cwd(),
 				createLocalBashOperations(),
+				{ artifactDirectory: testDir },
 			);
 
 			expect(result.exitCode).toBe(0);
@@ -840,7 +847,7 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should persist full output when truncation happens by line count only", async () => {
-			const bash = createBashTool(testDir);
+			const bash = createBashTool(testDir, { artifactDirectory: testDir });
 			const result = await bash.execute("test-call-line-truncation", { command: "seq 3000" });
 			const output = getTextOutput(result);
 			const fullOutputPath = result.details?.fullOutputPath;
@@ -863,7 +870,9 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("executeBash should persist full output when truncation happens by line count only", async () => {
-			const result = await executeBashWithOperations("seq 3000", process.cwd(), createLocalBashOperations());
+			const result = await executeBashWithOperations("seq 3000", process.cwd(), createLocalBashOperations(), {
+				artifactDirectory: testDir,
+			});
 			const fullOutputPath = result.fullOutputPath;
 
 			expect(result.truncated).toBe(true);
@@ -1004,7 +1013,7 @@ describe("Coding Agent Tools", () => {
 });
 
 function fakeCtx(cwd: string): ExtensionToolContext {
-	return { cwd } as ExtensionToolContext;
+	return { cwd, artifactDirectory: join(cwd, "artifacts") } as ExtensionToolContext;
 }
 
 describe("tool cwd resolution", () => {

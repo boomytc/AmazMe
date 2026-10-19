@@ -139,7 +139,7 @@ export function createTerminalService(
 				try {
 					const onChunk = (chunk: string): void => { appendTail(pending, chunk); scheduleFlush(); };
 					const execute = async () => {
-						if (!options.env) return executeBashWithOperations(resolved, options.cwd, createLocalBashOperations({ shellPath: options.settings.getShellPath() }), { signal: controller.signal, onChunk });
+						if (!options.env) return executeBashWithOperations(resolved, options.cwd, createLocalBashOperations({ shellPath: options.settings.getShellPath() }), { artifactDirectory: null, signal: controller.signal, onChunk });
 						const outcome = await options.env.exec(resolved, { onOutput: onChunk }, withAbortSignal(controller.signal, context));
 						if (!outcome.ok) throw outcome.error;
 						return { output: "", exitCode: outcome.value.exitCode, cancelled: controller.signal.aborted, truncated: false };

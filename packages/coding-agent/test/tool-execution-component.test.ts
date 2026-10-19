@@ -12,6 +12,7 @@ import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
 	return {
@@ -217,7 +218,7 @@ describe("ToolExecutionComponent parity", () => {
 			{ command: "sleep 10" },
 			undefined,
 			(update) => updates.push(update as { content: Array<{ type: string; text?: string }>; details?: unknown }),
-			{} as never,
+			{ artifactDirectory: createTempDir("amazme-tool-component-") } as never,
 		);
 		expect(updates).toEqual([{ content: [], details: undefined }]);
 		await promise;
@@ -238,7 +239,7 @@ describe("ToolExecutionComponent parity", () => {
 			{ command: "generate output" },
 			undefined,
 			undefined,
-			{} as never,
+			{ artifactDirectory: createTempDir("amazme-tool-component-") } as never,
 		);
 		const component = new ToolExecutionComponent(
 			"bash",

@@ -39,18 +39,20 @@ export { READ_MCP_RESOURCE_TOOL };
 export interface McpToolDetails {
 	server: string;
 	tool: string;
-	/** Temp file with the full text output, when the model-facing text was truncated. */
+	/** File under the session artifact directory with the full text output, when the model-facing text was truncated. */
 	fullOutputPath?: string;
 }
 
 /**
  * Saves the full text of a truncated result, or a binary resource, and returns the file path.
- * `extension` includes the dot, for example `.txt`.
+ * `extension` includes the dot, for example `.txt`. Every saver writes under the session's artifact
+ * directory, so the files are deleted with the session; there is no temp-directory default.
  */
 export type McpOutputSaver = (data: string | Uint8Array, extension: string) => Promise<string>;
 
-export function saveToTempFile(data: string | Uint8Array, extension: string): Promise<string> {
-	return writeOutputFile("amazme-mcp", extension, data);
+/** A saver that writes `amazme-mcp-*` files on this machine under the session's `artifactDirectory`. */
+export function outputFileSaver(artifactDirectory: string): McpOutputSaver {
+	return (data, extension) => writeOutputFile(artifactDirectory, "amazme-mcp", extension, data);
 }
 
 export interface McpToolCaller {
@@ -161,7 +163,7 @@ export function createMcpResultSchema(structuredContentSchema: Record<string, un
  */
 export async function limitMcpContent(
 	content: (TextContent | ImageContent)[],
-	saveOutput: McpOutputSaver = saveToTempFile,
+	saveOutput: McpOutputSaver,
 ): Promise<{ content: (TextContent | ImageContent)[]; fullOutputPath?: string }> {
 	const combined = textOf(content);
 	const truncation = truncateMiddle(combined, MCP_OUTPUT_MAX_BYTES);
@@ -183,8 +185,8 @@ export async function limitMcpContent(
 }
 
 export interface ConvertMcpResultOptions {
-	/** Saves truncated text and binary resources. Default: a temp file. */
-	saveOutput?: McpOutputSaver;
+	/** Saves truncated text and binary resources under the session's artifact directory. */
+	saveOutput: McpOutputSaver;
 	/** Whether the server's resources can be read with `read_mcp_resource`, which resource links then name. */
 	readableResources?: boolean;
 }
@@ -225,7 +227,7 @@ async function blockToContent(
 		if (isTextMimeType(mimeType)) return [{ type: "text", text: data.toString("utf8") }];
 		const kind = `${mimeType ?? "unknown type"}, ${formatSize(data.length)}`;
 		try {
-			const path = await (options.saveOutput ?? saveToTempFile)(data, extensionOf(uri));
+			const path = await options.saveOutput(data, extensionOf(uri));
 			return [{ type: "text", text: `[Binary resource ${uri} (${kind}) saved to ${path}]` }];
 		} catch (error) {
 			const reason = error instanceof Error ? error.message : String(error);
@@ -248,7 +250,7 @@ async function blockToContent(
 export async function toModelContent(
 	server: string,
 	blocks: readonly ContentBlock[],
-	options: ConvertMcpResultOptions = {},
+	options: ConvertMcpResultOptions,
 ): Promise<(TextContent | ImageContent)[]> {
 	return (await Promise.all(blocks.map((block) => blockToContent(server, block, options)))).flat();
 }
@@ -258,7 +260,7 @@ export async function convertMcpResult(
 	server: string,
 	tool: string,
 	result: CallToolResult,
-	options: ConvertMcpResultOptions = {},
+	options: ConvertMcpResultOptions,
 ): Promise<McpToolResult> {
 	// Without content blocks, toLlmContent falls back to the structured content as JSON.
 	const converted: (TextContent | ImageContent)[] =
