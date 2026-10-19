@@ -455,7 +455,7 @@ export class CtxImpl implements Ctx {
 
 	async get<C extends AnyContract>(type: C, input: InputOf<C>, options?: GetOptions): Promise<Ref<C>> {
 		this.check(this.host);
-		const ref = this.host.acquire(type, input, { principal: this.principal, ...options }, "call");
+		const ref = this.host.acquire(type, input, { ...options, principal: options?.principal ?? this.principal }, "call");
 		this.#refs.push(ref);
 		await awaitReady(ref, [this.signal, this.#closing.signal], this.host.readyTimeout);
 		return ref.proxy as Ref<C>;
