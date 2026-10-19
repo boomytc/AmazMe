@@ -73,8 +73,8 @@ export interface TaskSummary {
 	blocked?: BlockedReason;
 	/** Consecutive interruptions without progress; absent while zero. */
 	restarts?: number;
-	/** The configured bound that parks the task, from the same graph revision as `blocked`. */
-	restartLimit: number;
+	/** The configured bound that parks the task, from the same graph revision as `blocked`; `null` when the bound is off. */
+	restartLimit: number | null;
 	/** The phase the task reports, such as the step it is in. */
 	phase: string;
 	/** The tasks a `waiting` task waits on. */

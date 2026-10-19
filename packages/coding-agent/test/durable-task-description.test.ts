@@ -24,4 +24,13 @@ describe("native task description", () => {
 		expect(describeTask({ ...node, blocked: undefined, restarts: 2 }, 5)).toContain("2/5 restarts");
 		expect(describeTask({ ...node, blocked: undefined, restarts: undefined }, 5)).not.toContain("restarts");
 	});
+
+	it("shows only the count when the bound is off, whether it arrives as Infinity or as JSON's null", () => {
+		const running = { ...node, blocked: undefined, restarts: 2 };
+		for (const limit of [Number.POSITIVE_INFINITY, null]) {
+			const text = describeTask(running, limit);
+			expect(text).toContain(", 2 restarts");
+			expect(text).not.toMatch(/null|Infinity/);
+		}
+	});
 });

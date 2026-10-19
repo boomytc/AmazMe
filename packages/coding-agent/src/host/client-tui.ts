@@ -39,6 +39,7 @@ import { formatLane } from "../durable/session-surface.ts";
 import { Commands } from "./services/commands.ts";
 import { SessionInsights } from "./services/insights.ts";
 import { createInsightsCommandsFacet } from "./services/insights-commands.ts";
+import { formatRestartCount } from "../durable/restart-count.ts";
 
 /** Commands owned by the terminal presentation, not by the worker. */
 const TERMINAL_COMMANDS = [
@@ -430,7 +431,7 @@ export class ExperimentalClientTui implements Component {
 				parked.map((task) => ({
 					value: task.id,
 					label: `Task #${task.id}`,
-					description: `${task.kind} · ${String(task.restarts ?? task.restartLimit)}/${String(task.restartLimit)} interruptions`,
+					description: `${task.kind} · ${formatRestartCount(task.restarts ?? task.restartLimit ?? 0, task.restartLimit)} interruptions`,
 				})),
 			);
 			if (value === undefined) return;
@@ -462,12 +463,13 @@ export class ExperimentalClientTui implements Component {
 		}
 		if (this.#chatView !== undefined) this.#statusContainer.addChild(this.#chatView.status);
 		for (const task of this.#parkedTasks()) {
-			const attempts = task.restarts ?? task.restartLimit;
+			const attempts = task.restarts ?? task.restartLimit ?? 0;
+			const limit = task.restartLimit === null ? "" : ` (limit ${String(task.restartLimit)})`;
 			this.#statusContainer.addChild(
 				new Text(
 					theme.fg(
 						"warning",
-						`Task #${task.id} paused after ${String(attempts)} consecutive interruptions (limit ${String(task.restartLimit)}); ${keyText("app.tasks.retry")} to retry.`,
+						`Task #${task.id} paused after ${String(attempts)} consecutive interruptions${limit}; ${keyText("app.tasks.retry")} to retry.`,
 					),
 					1,
 					0,
