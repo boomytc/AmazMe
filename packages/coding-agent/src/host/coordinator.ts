@@ -308,6 +308,8 @@ interface ServerPeer {
 	readonly serverConnectionId: string;
 	readonly endpoint: string;
 	readonly socket: Socket;
+	/** `dev`/`ino` of the backend socket this server registered, so a later file at the path is never removed. */
+	readonly identity: Promise<{ readonly dev: number; readonly ino: number } | undefined>;
 }
 
 interface RoutedPeer {
@@ -406,6 +408,8 @@ function acceptControlConnection(socket: Socket): void {
 		if (server && currentServer === server) {
 			currentServer = undefined;
 			notifyPeers({ type: "server_disconnected", serverConnectionId: server.serverConnectionId });
+			// A backend killed without closing its listener leaves a refused socket; cleanup is safe while we are alive.
+			void removeBackendSocket(server);
 		}
 		if (peer && peers.get(peer.peerId) === peer) {
 			peers.delete(peer.peerId);
@@ -426,7 +430,15 @@ function registerServer(socket: Socket, message: ControlMessage): ServerPeer {
 		throw new Error("Coordinator endpoint must be a string");
 	}
 	const { serverConnectionId, endpoint } = message;
-	const server = { serverConnectionId, endpoint, socket };
+	const server: ServerPeer = {
+		serverConnectionId,
+		endpoint,
+		socket,
+		identity: lstat(endpoint).then(
+			(stats) => (stats.isSocket() ? { dev: stats.dev, ino: stats.ino } : undefined),
+			() => undefined,
+		),
+	};
 	const previous = currentServer;
 	currentServer = server;
 	cancelEmptyShutdown();
@@ -439,6 +451,7 @@ function registerServer(socket: Socket, message: ControlMessage): ServerPeer {
 		closePublicConnections();
 		notifyPeers({ type: "server_disconnected", serverConnectionId: previous.serverConnectionId });
 		writeRoutedLine(previous.socket, { type: "server_replaced" });
+		void removeBackendSocket(previous);
 	}
 	notifyPeers({ type: "server_connected", serverConnectionId });
 	return server;
@@ -559,6 +572,9 @@ async function shutdownCoordinator(): Promise<void> {
 	cancelEmptyShutdown();
 	closePublicConnections();
 	for (const connection of controlConnections) connection.destroy();
+	const backend = currentServer;
+	currentServer = undefined;
+	if (backend !== undefined) await removeBackendSocket(backend);
 	await Promise.all([closeServer(publicServer), closeServer(controlServer)]);
 	await Promise.all([cleanupSocket(publicPath), cleanupSocket(controlPath)]);
 	await removeEmptyRelocatedSocketDirectory(dirname(publicPath));
@@ -655,6 +671,54 @@ async function removeStaleSocket(path: string): Promise<void> {
 	});
 	if (live) throw new Error(`Coordinator socket is already active: ${path}`);
 	await cleanupSocket(path);
+}
+
+/**
+ * Remove the backend endpoint a server registered, if the file at that path is still that socket and nothing accepts
+ * connections there. Runs when the server disconnects, is replaced, or the coordinator shuts down.
+ */
+async function removeBackendSocket(peer: ServerPeer): Promise<void> {
+	const identity = await peer.identity;
+	if (identity === undefined) return;
+	let current;
+	try {
+		current = await lstat(peer.endpoint);
+	} catch {
+		return;
+	}
+	if (!current.isSocket() || current.dev !== identity.dev || current.ino !== identity.ino) return;
+	if (await socketAccepts(peer.endpoint)) return;
+	try {
+		const again = await lstat(peer.endpoint);
+		if (!again.isSocket() || again.dev !== identity.dev || again.ino !== identity.ino) return;
+		await unlink(peer.endpoint);
+	} catch {
+		// Gone already, or replaced while probing.
+	}
+}
+
+/** Whether a process still accepts connections at `path`; an unknown error keeps the file. */
+function socketAccepts(path: string): Promise<boolean> {
+	return new Promise((resolveProbe) => {
+		const socket = createConnection(path);
+		let settled = false;
+		let timer: NodeJS.Timeout | undefined;
+		const finish = (live: boolean): void => {
+			if (settled) return;
+			settled = true;
+			if (timer !== undefined) clearTimeout(timer);
+			socket.removeAllListeners();
+			socket.destroy();
+			resolveProbe(live);
+		};
+		socket.once("connect", () => finish(true));
+		socket.once("error", (error: NodeJS.ErrnoException) => {
+			if (error.code === "ECONNREFUSED" || error.code === "ENOENT") finish(false);
+			else finish(true);
+		});
+		timer = setTimeout(() => finish(true), 250);
+		timer.unref();
+	});
 }
 
 async function cleanupSocket(path: string): Promise<void> {

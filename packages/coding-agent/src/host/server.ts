@@ -25,7 +25,12 @@ import { ProjectTrustStore } from "../core/trust-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { closeAfterSignal } from "../utils/shutdown-signals.ts";
 import { CoordinatorConnection, type CoordinatorStartupLease, ensureCoordinator } from "./coordinator.ts";
-import { ensureHostSocketDirectory, hostSocketDirectory, removeEmptyRelocatedSocketDirectory } from "./socket-directory.ts";
+import {
+	ensureHostSocketDirectory,
+	hostSocketDirectory,
+	removeEmptyRelocatedSocketDirectory,
+	removeStaleBackendSockets,
+} from "./socket-directory.ts";
 import { createPresentationFacetData, createServerPluginFacetLoader } from "./plugins/bundled.ts";
 import { HostSessions } from "../core/plugins/host-sessions.ts";
 import type { HostPromptRequest, HostPromptResult } from "../core/plugins/host-sessions.ts";
@@ -861,6 +866,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 		};
 		const resolvedSocketDirectory = await ensureHostSocketDirectory(directory);
 		socketDirectory = resolvedSocketDirectory;
+		// Backend sockets are named with a random nonce, so a killed server cannot clean its own. Self-heal here,
+		// before this server publishes a new endpoint.
+		await removeStaleBackendSockets(resolvedSocketDirectory, serverId);
 		const socketPath = getUnixSocketPath(serverId, resolvedSocketDirectory);
 		const controlPath = join(resolvedSocketDirectory, `control-${serverId}.sock`);
 		const serverNonce = randomUUID().replaceAll("-", "").slice(0, 12);

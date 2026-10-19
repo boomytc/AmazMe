@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { chmod, lstat, mkdir, rmdir } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, rmdir, unlink } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { basename, dirname, join } from "node:path";
 
 // Longest published name: server-<uuidv4>-<12 hex nonce>.sock.
@@ -72,6 +73,64 @@ export async function removeEmptyRelocatedSocketDirectory(directory: string): Pr
 	} catch {
 		// Non-empty, already gone, or held by a concurrent process.
 	}
+}
+
+/**
+ * Remove backend sockets a killed server left behind: only names of exactly this shape, only sockets, and only when a
+ * connection is refused and the inode did not change. A live server, another file with that name, and an unreadable
+ * path are left alone.
+ */
+export async function removeStaleBackendSockets(directory: string, serverId: string): Promise<void> {
+	const pattern = new RegExp(`^server-${serverId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}-[0-9a-f]{12}\\.sock$`);
+	let names: string[];
+	try {
+		names = await readdir(directory);
+	} catch {
+		return;
+	}
+	await Promise.all(names.filter((name) => pattern.test(name)).map((name) => removeRefusedBackendSocket(join(directory, name))));
+}
+
+async function removeRefusedBackendSocket(path: string): Promise<void> {
+	let original;
+	try {
+		original = await lstat(path);
+	} catch {
+		return;
+	}
+	if (!original.isSocket()) return;
+	if (await acceptsConnection(path)) return;
+	// A replacement server may have bound between the probe and now; only the probed inode may go.
+	try {
+		const current = await lstat(path);
+		if (!current.isSocket() || current.dev !== original.dev || current.ino !== original.ino) return;
+		await unlink(path);
+	} catch {
+		// Gone already, or replaced.
+	}
+}
+
+function acceptsConnection(path: string): Promise<boolean> {
+	return new Promise((resolveProbe) => {
+		const socket = createConnection(path);
+		let settled = false;
+		let timer: NodeJS.Timeout | undefined;
+		const finish = (live: boolean): void => {
+			if (settled) return;
+			settled = true;
+			if (timer !== undefined) clearTimeout(timer);
+			socket.removeAllListeners();
+			socket.destroy();
+			resolveProbe(live);
+		};
+		socket.once("connect", () => finish(true));
+		socket.once("error", (error: NodeJS.ErrnoException) => {
+			if (error.code === "ECONNREFUSED" || error.code === "ENOENT") finish(false);
+			else finish(true);
+		});
+		timer = setTimeout(() => finish(true), 250);
+		timer.unref();
+	});
 }
 
 async function ensurePrivateDirectory(directory: string): Promise<void> {
