@@ -1,12 +1,15 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, realpath } from "node:fs/promises";
+import { mkdir, readdir, realpath, writeFile } from "node:fs/promises";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Check } from "typebox/value";
 import { describe, expect, test } from "vitest";
 import { readDurableSessionCwd } from "../src/durable/session-cwd.ts";
+import { resolveExplicitSession, selectSession } from "../src/durable/sessions.ts";
+import { createSession as createCatalogSession, listSessions } from "../src/host/session-catalog.ts";
 import {
 	classifySessionDatabaseError,
 	findSessionOpenError,
@@ -16,7 +19,12 @@ import {
 import { sessionOpenErrorText } from "../src/host/session-database-error.ts";
 import { SessionDatabaseUnavailableError } from "../src/host/session-worker-manager.ts";
 import { SessionWorkerEventSchema } from "../src/host/session-worker.ts";
-import { BROKEN_SESSION_DATABASES, snapshotDirectory, writeBrokenSessionDatabase } from "./session-database-fixtures.ts";
+import {
+	BROKEN_SESSION_DATABASES,
+	snapshotDirectory,
+	writeBrokenSessionDatabase,
+	writeCurrentSessionDatabase,
+} from "./session-database-fixtures.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
@@ -50,6 +58,56 @@ describe("opening a session database that cannot be used", () => {
 		// The session directory reader used before `--session` takes its lock goes through the same entry.
 		await expect(readDurableSessionCwd(directory)).rejects.toMatchObject({ kind, path });
 		expect(await snapshotDirectory(directory)).toEqual(before);
+	});
+
+	test.each(["current", "wal-newer-schema"] as const)(
+		"removes a .preflight-* directory a killed open left behind (%s database)",
+		async (fixture) => {
+			const directory = join(createTempDir("amazme-session-db-"), "session");
+			const path =
+				fixture === "current"
+					? await writeCurrentSessionDatabase(directory)
+					: await writeBrokenSessionDatabase(directory, fixture);
+			const database = await snapshotDirectory(directory);
+			await mkdir(join(directory, ".preflight-AbC123"));
+			await writeFile(join(directory, ".preflight-AbC123", "database.sqlite"), "copy left by SIGKILL");
+			await writeFile(join(directory, ".preflight-AbC123", "database.sqlite-wal"), "copy left by SIGKILL");
+
+			if (fixture === "current") await (await openSessionStorage(path)).close(BACKGROUND_CONTEXT);
+			else await expect(openSessionStorage(path)).rejects.toMatchObject({ kind: "newer-schema" });
+			// The leftover is gone, nothing new appeared, and session.sqlite, -wal, -shm are byte-identical.
+			expect(await snapshotDirectory(directory)).toEqual(database);
+		},
+	);
+
+	test("a .preflight-* directory is not mistaken for a session by session discovery", async () => {
+		const scratch = await realpath(createTempDir("amazme-session-db-scan-"));
+		const project = join(scratch, "project");
+		await mkdir(project);
+		const sessionsDir = join(scratch, "sessions");
+		const root = join(sessionsDir, createHash("sha256").update(project).digest("hex").slice(0, 24));
+		const directory = join(root, SESSION_NAME);
+		await writeCurrentSessionDatabase(directory);
+		await mkdir(join(directory, ".preflight-AbC123"));
+		await writeFile(join(directory, ".preflight-AbC123", "database.sqlite"), "copy left by SIGKILL");
+		const catalogRoot = join(scratch, "catalog");
+		await createCatalogSession(catalogRoot, { id: "demo-1", cwd: project });
+		await writeCurrentSessionDatabase(join(catalogRoot, "demo-1"));
+		await mkdir(join(catalogRoot, "demo-1", ".preflight-AbC123"));
+
+		await expect(resolveExplicitSession(project, SESSION_NAME, { sessionDir: sessionsDir })).resolves.toMatchObject({
+			directory,
+		});
+		await expect(resolveExplicitSession(project, ".preflight-AbC123", { sessionDir: sessionsDir })).rejects.toThrow(
+			"No durable session matches",
+		);
+		const selected = await selectSession(project, true, { sessionDir: sessionsDir });
+		try {
+			expect(selected.directory).toBe(directory);
+		} finally {
+			await selected.release();
+		}
+		expect((await listSessions(catalogRoot)).map((session) => session.id)).toEqual(["demo-1"]);
 	});
 
 	test("explains each kind with a remedy", async () => {

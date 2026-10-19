@@ -1,5 +1,5 @@
-import { copyFile, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { constants } from "node:fs";
+import { copyFile, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { StatementSync } from "node:sqlite";
 import { DatabaseSync } from "node:sqlite";
@@ -18,7 +18,8 @@ export type NodeSqliteDatabaseOptions = {
 	/**
 	 * Inspect an existing file before the first write (`journal_mode`, migrations, the closing checkpoint). When set,
 	 * the file is read without modifying, creating, or checkpointing the database, `-wal`, or `-shm`; a file that is not
-	 * SQLite fails here. Omit it to open without a preflight.
+	 * SQLite fails here. The preflight may use, and cleans up, `.preflight-*` directories beside the database, so keep
+	 * the database in a directory of its own. Omit it to open without a preflight.
 	 */
 	readonly preflight?: NodeSqlitePreflight;
 };
@@ -207,15 +208,39 @@ async function inspect(location: string | URL, check: NodeSqlitePreflight | unde
 	}
 }
 
+/** Prefix of the private copies a preflight makes next to the database; see `preflightNodeSqliteFile`. */
+export const NODE_SQLITE_PREFLIGHT_PREFIX = ".preflight-";
+
+/** Remove `.preflight-*` copies a killed preflight left next to the database. */
+async function removeStalePreflights(directory: string): Promise<void> {
+	let names: string[];
+	try {
+		names = await readdir(directory);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	await Promise.all(
+		names
+			.filter((name) => name.startsWith(NODE_SQLITE_PREFLIGHT_PREFIX))
+			.map((name) => rm(join(directory, name), { recursive: true, force: true })),
+	);
+}
+
 /**
- * Read an existing database file without changing it, then run `check` on it. Nothing happens when the file does not
+ * Read an existing database file without changing it, then run `check` on it. Nothing is read when the file does not
  * exist. Without a `-wal`, the file is opened `immutable`, which writes no `-wal`/`-shm` and takes no locks. An
  * immutable open ignores the `-wal`, so when one has content (a crash left it uncheckpointed), the file and its `-wal`
- * are copied to a private temporary directory and read there, which sees the committed state without touching the
- * originals. The caller must keep other writers out (session locks do).
+ * are cloned (`COPYFILE_FICLONE`: a clone on APFS and other copy-on-write file systems, an ordinary copy elsewhere)
+ * into a `.preflight-*` directory beside the database and read there, which sees the committed state without touching
+ * the originals; the copy is removed afterwards. Leftover `.preflight-*` directories in the database's directory, from
+ * a preflight killed before it could clean up, are removed first. The caller must keep other openers out (session locks
+ * do), since the directory is shared with them.
  */
 export async function preflightNodeSqliteFile(path: string, check?: NodeSqlitePreflight): Promise<void> {
 	if (path === ":memory:" || path === "" || path.startsWith("file:")) return;
+	const parent = dirname(path);
+	await removeStalePreflights(parent);
 	if ((await fileSize(path)) === undefined) return;
 	if (((await fileSize(`${path}-wal`)) ?? 0) === 0) {
 		const url = pathToFileURL(path);
@@ -223,11 +248,11 @@ export async function preflightNodeSqliteFile(path: string, check?: NodeSqlitePr
 		await inspect(url, check);
 		return;
 	}
-	const directory = await mkdtemp(join(tmpdir(), "amazme-sqlite-preflight-"));
+	const directory = await mkdtemp(join(parent, NODE_SQLITE_PREFLIGHT_PREFIX));
 	try {
 		const copy = join(directory, "database.sqlite");
-		await copyFile(path, copy);
-		await copyFile(`${path}-wal`, `${copy}-wal`);
+		await copyFile(path, copy, constants.COPYFILE_FICLONE);
+		await copyFile(`${path}-wal`, `${copy}-wal`, constants.COPYFILE_FICLONE);
 		await inspect(copy, check);
 	} finally {
 		await rm(directory, { recursive: true, force: true });

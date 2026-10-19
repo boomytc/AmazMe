@@ -13,9 +13,14 @@ function withDirectory(run: (directory: string) => Promise<void>): Promise<void>
 
 function snapshot(directory: string): Record<string, string> {
 	return Object.fromEntries(
-		readdirSync(directory)
-			.sort()
-			.map((name) => [name, createHash("sha256").update(readFileSync(join(directory, name))).digest("hex")]),
+		readdirSync(directory, { withFileTypes: true })
+			.sort((a, b) => a.name.localeCompare(b.name))
+			.map((entry) => [
+				entry.name,
+				entry.isFile()
+					? createHash("sha256").update(readFileSync(join(directory, entry.name))).digest("hex")
+					: "directory",
+			]),
 	);
 }
 
@@ -231,6 +236,9 @@ describe("Node SQLite driver", () => {
 			writer.close();
 			const before = snapshot(crashed);
 			expect(Object.keys(before)).toEqual(["app.sqlite", "app.sqlite-wal"]);
+			// A copy a killed preflight left behind is removed; this preflight's own copy is removed after use.
+			mkdirSync(join(crashed, ".preflight-stale"));
+			writeFileSync(join(crashed, ".preflight-stale", "database.sqlite"), "left by SIGKILL");
 			await expect(preflightNodeSqliteFile(path, checkApp)).rejects.toMatchObject({ kind: "newer-schema", version: 3 });
 			expect(snapshot(crashed)).toEqual(before);
 		}));

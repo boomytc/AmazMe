@@ -29,6 +29,14 @@ function edit(path: string, sql: string): void {
 	}
 }
 
+/** A healthy session database at the current schema version, as `<directory>/session.sqlite`. */
+export async function writeCurrentSessionDatabase(directory: string): Promise<string> {
+	await mkdir(directory, { recursive: true });
+	const path = join(directory, "session.sqlite");
+	await createCurrentDatabase(path);
+	return path;
+}
+
 /**
  * Write `fixture` as `<directory>/session.sqlite` (plus `-wal` for the crash case). The directory is created; nothing
  * else is written into it.
