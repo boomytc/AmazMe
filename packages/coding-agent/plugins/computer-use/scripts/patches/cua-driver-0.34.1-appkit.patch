@@ -1,0 +1,98 @@
+--- a/libs/cua-driver/rust/crates/platform-macos/src/input/mouse.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/input/mouse.rs
+@@ -283,8 +283,8 @@
+ 
+ /// Like `click_at_xy` but also targets a specific window. Foreground delivery
+ /// uses the supplied window-local point with one public pid post. Background
+-/// delivery keeps the translated screen point through the SkyLight route, with
+-/// a public fallback only when the private symbol is unavailable.
++/// delivery uses the Chromium recipe only for Chromium/Electron. AppKit uses
++/// the window-local point with one public pid post; neither route raises the app.
+ // The flattened arguments mirror the native event fields used by existing callers.
+ #[allow(clippy::too_many_arguments)]
+ pub fn click_at_xy_with_window_local(
+@@ -298,11 +298,17 @@
+     modifiers: &[&str],
+     delivery: WindowClickDelivery,
+ ) -> anyhow::Result<()> {
+-    match delivery {
+-        WindowClickDelivery::Background => {
+-            click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
+-        }
+-        WindowClickDelivery::Foreground => click_at_xy_inner(
++    let chromium = matches!(delivery, WindowClickDelivery::Background)
++        && uses_chromium_click_route(
++            &crate::apps::get_app_name_for_pid(pid).unwrap_or_default(),
++            &crate::apps::bundle_id_for_pid(pid).unwrap_or_default(),
++            // Custom-branded Electron apps need framework detection too.
++            crate::browser::ElectronJs::is_electron(pid),
++        );
++    if chromium {
++        click_at_xy_chromium(pid, x, y, wx, wy, wid, count, modifiers)
++    } else {
++        click_at_xy_inner(
+             pid,
+             (x, y),
+             Some((wx, wy)),
+@@ -310,8 +316,12 @@
+             count,
+             modifiers,
+             MousePostMode::PublicOnly,
+-        ),
+-    }
++        )
++    }
++}
++
++fn uses_chromium_click_route(name: &str, bundle_id: &str, electron: bool) -> bool {
++    electron || crate::browser::platform::is_chromium(name, bundle_id)
+ }
+ 
+ /// `screen` is the click point in screen coordinates.
+@@ -1667,6 +1677,35 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    #[test]
++    fn background_click_route_distinguishes_appkit_from_chromium() {
++        assert!(!uses_chromium_click_route(
++            "AmazMe Smoke",
++            "com.amazme.smoke",
++            false
++        ));
++        assert!(!uses_chromium_click_route(
++            "Safari",
++            "com.apple.Safari",
++            false
++        ));
++        assert!(uses_chromium_click_route(
++            "Google Chrome",
++            "com.google.Chrome",
++            false
++        ));
++        assert!(uses_chromium_click_route(
++            "Brave Browser",
++            "com.brave.Browser",
++            false
++        ));
++        assert!(uses_chromium_click_route(
++            "Custom App",
++            "com.example.custom",
++            true
++        ));
++    }
+ 
+     #[test]
+     fn capture_bound_background_route_preserves_nonzero_origin_hit() {
+--- a/libs/cua-driver/rust/crates/platform-macos/src/browser/platform.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/browser/platform.rs
+@@ -279,7 +279,7 @@
+     BrowserRefusal::new(code, message)
+ }
+ 
+-fn is_chromium(name: &str, bundle_id: &str) -> bool {
++pub(crate) fn is_chromium(name: &str, bundle_id: &str) -> bool {
+     let value = format!("{name} {bundle_id}").to_ascii_lowercase();
+     let products = [
+         "chrome", "chromium", "electron", "brave", "edge", "vivaldi", "opera", "arc", "thorium",

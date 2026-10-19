@@ -49,6 +49,16 @@ node /path/to/coding-agent/plugins/computer-use/scripts/prepare-computer-use.mjs
 
 Linux/Windows 脚本安装到 `~/.local/share/AmazMe/ComputerUse/0.34.1/`；使用输出路径设置 `AMAZME_CUA_DRIVER_PATH`。已有组件通过 manifest 与二进制哈希核验后复用，内容不同则拒绝覆盖。未安装驱动不影响包构建或插件注册。
 
+macOS 原版 `0.34.1` 把 AppKit 自绘控件也送入 Chromium 的屏幕坐标点击路径，会导致窗口收到错误的局部坐标。需要此修复时，可从含有固定提交的本地 cua 仓库构建补丁版：
+
+```bash
+node packages/coding-agent/plugins/computer-use/scripts/prepare-patched-computer-use.mjs --source /path/to/cua
+```
+
+脚本只导出上游提交 `0c69d9a2c8abbb5051a2df4a23f0fa166d5385dc` 的 Git 对象，应用随插件提供的补丁，以固定工具链和 Cargo.lock 构建 release 驱动；不使用或修改该仓库的工作区。需要 Rust/rustup、Git 与 Xcode Command Line Tools，首次构建需要下载工具链和依赖。过程宏保留调试信息以避开 [Rust 的 macOS LINKEDIT 问题](https://github.com/rust-lang/rust/issues/157750)，最终驱动仍使用 release 优化。
+
+补丁版安装到 `~/Library/Application Support/AmazMe/ComputerUse/0.34.1-amazme.1/`，保留原版；自动发现会优先选它，显式路径配置仍优先。安装记录保存源码提交、补丁及驱动、宿主、Info.plist 的 SHA-256，复用时还核验应用签名；不同内容拒绝覆盖。重复运行无需源码和联网。新签名可能需要为该目录下的应用重新授予屏幕录制和辅助功能权限。AppKit 使用窗口局部坐标的一次 PID 定向投递，Chromium/Electron 保留原路径，不启用前台回退。
+
 TypeSafe 使用宿主现有的模型目录与认证流程，支持 `TYPESAFE_API_KEY` 或已保存的 TypeSafe 凭据。截图、AX 文本和动作上下文会随对应工具请求发送到配置的分类器供应商。`{"jevEnabled":false}` 可关闭分类请求；此时仅允许已过滤的 AX 单步/批量点击与文本动作，视觉定位和键盘风险判断不可用。
 
 ## 工具
@@ -98,4 +108,4 @@ npm test
 
 自动化测试使用真实 stdio MCP 伪驱动和确定性分类器，覆盖插件重载、关闭、策略隔离、风险过滤、快照绑定和真实图片裁剪；macOS 宿主生命周期测试会用 Xcode Command Line Tools 编译临时 Cocoa 应用，验证 LaunchServices、FIFO 和卡住时的清理。固定的 `0.34.1` 不声明 `tree_format`，测试也覆盖省略该参数的协议路径。它们不能证明实际桌面权限、后台投递效果或线上 Jev 识别质量。手工验证时先 `status/permissions/on`，选择计算器等测试窗口，观察后执行可逆操作，再检查独立观察与后置条件。
 
-已执行的本机权限、线上 Jev 和后台动作结果见[联调记录](./LIVE-VALIDATION.md)，其中包含 Canvas 未生效和低置信度拒绝的边界。
+已执行的本机权限、线上 Jev 和后台动作结果见[联调记录](./LIVE-VALIDATION.md)，其中包含原版 Canvas 未生效的根因和低置信度拒绝的边界。
