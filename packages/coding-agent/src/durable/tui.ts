@@ -288,6 +288,7 @@ class DurableTui {
 	readonly #cwd: string;
 	readonly #plugins: boolean;
 	readonly #completeCommand: Handlers["completeCommand"];
+	#stopTurn: () => void = () => {};
 	#autocompleteCommands: DurableView["commands"] | null = null;
 	#startupKey = "";
 	/** The newest card per call ID; provider call IDs may repeat across turns. */
@@ -317,6 +318,7 @@ class DurableTui {
 		this.#markdownTransformers = terminalMarkdownTransformers(() => settings.getMermaidRenderingMode());
 		this.#plugins = handlers.plugins;
 		this.#completeCommand = handlers.completeCommand;
+		this.#stopTurn = handlers.abort;
 		this.#ui = createInteractiveTui({
 			tuiMode: settings.getTuiMode(),
 			showHardwareCursor: settings.getShowHardwareCursor(),
@@ -689,6 +691,7 @@ class DurableTui {
 
 	#rebuild(entries: readonly EntryRecord[]): void {
 		this.#chat.clear();
+		this.#streaming?.setTurnActions(undefined);
 		this.#trace.reset();
 		this.#discardTools();
 		this.#summaries.length = 0;
@@ -721,6 +724,7 @@ class DurableTui {
 					1,
 					this.#markdownTransformers,
 				);
+			this.#bindTurn(component);
 			if (this.#streaming === undefined) this.#chat.addChild(component);
 			this.#streaming = undefined;
 			component.updateContent(message, false);
@@ -770,6 +774,7 @@ class DurableTui {
 				this.#markdownTransformers,
 			);
 			this.#chat.addChild(this.#streaming);
+			this.#bindTurn(this.#streaming);
 		}
 		this.#streaming.updateContent(message, true);
 		for (const content of message.content) {
@@ -786,6 +791,13 @@ class DurableTui {
 	}
 
 	/** The card of a call; `fresh` starts a new one for a call ID an earlier turn used. */
+	#bindTurn(component: AssistantMessageComponent): void {
+		component.setTurnActions({
+			stop: () => this.#stopTurn(),
+			requestRender: () => this.#ui.requestRender(),
+		});
+	}
+
 	#tool(name: string, callId: string, args?: unknown, fresh = false, key = callId): ToolExecutionComponent {
 		const existing = fresh ? undefined : this.#tools.get(key);
 		if (existing !== undefined) {

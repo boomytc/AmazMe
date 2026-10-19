@@ -1,6 +1,18 @@
 import type { AssistantMessage } from "@amazme/ai";
-import { Container, Markdown, type MarkdownTheme, MouseRegion, Spacer, Text } from "@amazme/tui";
+import {
+	type Component,
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	MouseRegion,
+	Spacer,
+	Text,
+	type TuiMouseEvent,
+	type TuiMouseEventResult,
+	visibleWidth,
+} from "@amazme/tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { formatTokens } from "./footer.ts";
 import { formatToolDuration } from "../../../core/tools/render-utils.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
@@ -31,6 +43,11 @@ export class AssistantMessageComponent extends Container {
 	private readonly thinkingStartedAt = new Map<number, number>();
 	private readonly thinkingDurationMs = new Map<number, number>();
 	private readonly thinkingText = new Map<number, string>();
+	private turnStartedAt: number | undefined;
+	private turnDurationMs: number | undefined;
+	private turnActions: TurnActions | undefined;
+	private turnTimer: ReturnType<typeof setInterval> | undefined;
+	private readonly turnStatus = new TurnStatusLine();
 	private selected = false;
 
 	constructor(
@@ -52,6 +69,7 @@ export class AssistantMessageComponent extends Container {
 		// Container for text/thinking content
 		this.contentContainer = new Container();
 		this.addChild(this.contentContainer);
+		this.addChild(this.turnStatus);
 
 		if (message) {
 			this.updateContent(message);
@@ -91,6 +109,14 @@ export class AssistantMessageComponent extends Container {
 		this.selected = selected;
 	}
 
+	/** Stop control for the live `[stop]` bracket, plus a render tick for the running clock. */
+	setTurnActions(actions: TurnActions | undefined): void {
+		this.turnActions = actions;
+		this.turnStatus.setStop(actions?.stop);
+		if (actions === undefined) this.#clearTurnTimer();
+		else this.#syncTurnTimer();
+	}
+
 	override render(width: number): string[] {
 		const rendered = super.render(width);
 		const lines = this.selected ? markSelectedLines(rendered, width) : rendered;
@@ -101,6 +127,56 @@ export class AssistantMessageComponent extends Container {
 		lines[0] = OSC133_ZONE_START + lines[0];
 		lines[lines.length - 1] = OSC133_ZONE_END + OSC133_ZONE_FINAL + lines[lines.length - 1];
 		return lines;
+	}
+
+	private turnStatusModel(): TurnStatusModel | undefined {
+		const message = this.lastMessage;
+		if (!message) return undefined;
+		if (this.isStreaming) {
+			const elapsed = this.turnStartedAt === undefined ? 0 : Math.max(0, Date.now() - this.turnStartedAt);
+			return {
+				streaming: true,
+				durationMs: elapsed,
+				outputTokens: message.usage.output,
+				bracket: "[stop]",
+				clickable: this.turnActions !== undefined,
+			};
+		}
+		if (message.stopReason === "pending" || message.stopReason === "deferred") return undefined;
+		const durationMs = message.durationMs ?? this.turnDurationMs;
+		if (durationMs === undefined && message.usage.output <= 0) return undefined;
+		return {
+			streaming: false,
+			durationMs,
+			outputTokens: message.usage.output,
+			bracket: `[${message.stopReason}]`,
+			clickable: false,
+		};
+	}
+
+	private noteTurnDuration(isStreaming: boolean): void {
+		if (isStreaming) {
+			if (this.turnStartedAt === undefined) this.turnStartedAt = Date.now();
+			return;
+		}
+		if (this.turnStartedAt !== undefined && this.turnDurationMs === undefined) {
+			this.turnDurationMs = Math.max(0, Date.now() - this.turnStartedAt);
+		}
+	}
+
+	#syncTurnTimer(): void {
+		const want = this.isStreaming && this.turnActions !== undefined;
+		if (want && this.turnTimer === undefined) {
+			this.turnTimer = setInterval(() => this.turnActions?.requestRender(), 1000);
+			return;
+		}
+		if (!want) this.#clearTurnTimer();
+	}
+
+	#clearTurnTimer(): void {
+		if (this.turnTimer === undefined) return;
+		clearInterval(this.turnTimer);
+		this.turnTimer = undefined;
 	}
 
 	/** Collapsed row: `◆ Thinking…` while it runs, `◆ Thinking… 2.5s` once that run has finished. */
@@ -144,8 +220,11 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+		this.noteTurnDuration(isStreaming);
 		this.lastMessage = message;
 		this.isStreaming = isStreaming;
+		this.turnStatus.update(this.turnStatusModel());
+		this.#syncTurnTimer();
 
 		// Clear content container
 		this.contentContainer.clear();
@@ -259,4 +338,88 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 	}
+}
+
+interface TurnActions {
+	stop(): void;
+	requestRender(): void;
+}
+
+interface TurnStatusModel {
+	readonly streaming: boolean;
+	readonly durationMs: number | undefined;
+	readonly outputTokens: number;
+	readonly bracket: string;
+	readonly clickable: boolean;
+}
+
+/** Right-aligned turn clock. While the answer runs, `[stop]` is a hover-red stop button. */
+class TurnStatusLine implements Component {
+	private model: TurnStatusModel | undefined;
+	private onStop: (() => void) | undefined;
+	private hovered = false;
+	private stopStart = -1;
+	private stopEnd = -1;
+
+	setStop(stop: (() => void) | undefined): void {
+		this.onStop = stop;
+	}
+
+	update(model: TurnStatusModel | undefined): void {
+		this.model = model;
+		if (model?.clickable !== true) this.hovered = false;
+	}
+
+	render(width: number): string[] {
+		const model = this.model;
+		if (!model) return [];
+		const parts: string[] = [];
+		if (model.durationMs !== undefined) parts.push(formatTurnDuration(model.durationMs));
+		if (model.outputTokens > 0) parts.push(`↓${formatTokens(model.outputTokens)}`);
+		parts.push(model.bracket);
+		const head = parts.slice(0, -1).join(" ");
+		const gap = head.length > 0 ? " " : "";
+		const plain = head + gap + model.bracket;
+		const pad = Math.max(0, width - visibleWidth(plain));
+		this.stopStart = model.clickable ? pad + visibleWidth(head + gap) : -1;
+		this.stopEnd = model.clickable ? this.stopStart + visibleWidth(model.bracket) : -1;
+		const bracket = model.clickable && this.hovered ? theme.fg("error", model.bracket) : theme.fg("muted", model.bracket);
+		const prefix = head.length > 0 ? theme.fg("muted", head + gap) : "";
+		return [" ".repeat(pad) + prefix + bracket];
+	}
+
+	handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+		if (this.model?.clickable !== true || event.y !== 0) return undefined;
+		const over = event.x >= this.stopStart && event.x < this.stopEnd;
+		if (event.type === "move") {
+			if (over === this.hovered) return over ? { handled: true, render: false } : undefined;
+			this.hovered = over;
+			return { handled: true, render: true };
+		}
+		if (event.type === "click" && over) {
+			this.onStop?.();
+			return { handled: true };
+		}
+		return undefined;
+	}
+
+	handleMouseLeave(): boolean {
+		if (!this.hovered) return false;
+		this.hovered = false;
+		return true;
+	}
+
+	invalidate(): void {}
+}
+
+/** Whole-turn clock, compact like `2.5s` and `15m58s`. */
+function formatTurnDuration(ms: number): string {
+	if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
+	const totalSeconds = Math.max(0, Math.round(ms / 1000));
+	if (totalSeconds < 60) return `${totalSeconds}s`;
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes < 60) return `${minutes}m${String(seconds).padStart(2, "0")}s`;
+	const hours = Math.floor(minutes / 60);
+	return `${hours}h${String(minutes % 60).padStart(2, "0")}m${String(seconds).padStart(2, "0")}s`;
 }

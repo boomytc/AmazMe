@@ -631,7 +631,7 @@ export class ExperimentalClientTui implements Component {
 
 	async #openLane(feature: SessionFeature): Promise<void> {
 		await this.#closeLane();
-		const view = new ExperimentalChatView(this.#ui, process.cwd());
+		const view = new ExperimentalChatView(this.#ui, process.cwd(), () => this.#interrupt());
 		this.#chatView = view;
 		this.#documentContainer.addChild(this.#sessionHeading);
 		this.#documentContainer.addChild(view.transcript);

@@ -40,10 +40,12 @@ export class ExperimentalChatView {
 	readonly #markdownTransformers = terminalMarkdownTransformers(() => "streaming");
 	#indicator: StatusIndicator | undefined;
 	#statusText = "";
+	readonly #stopTurn: (() => void) | undefined;
 
-	constructor(ui: TUI, cwd: string) {
+	constructor(ui: TUI, cwd: string, stopTurn?: () => void) {
 		this.#ui = ui;
 		this.#cwd = cwd;
+		this.#stopTurn = stopTurn;
 	}
 
 	apply(view: ConversationView): void {
@@ -156,6 +158,7 @@ export class ExperimentalChatView {
 
 	#rebuild(entries: readonly EntryRecord[]): void {
 		this.transcript.clear();
+		this.#streaming?.setTurnActions(undefined);
 		this.#trace.reset();
 		this.#discardTools();
 		this.#renderedEntryIds = [];
@@ -186,6 +189,7 @@ export class ExperimentalChatView {
 					1,
 					this.#markdownTransformers,
 				);
+			this.#bindTurn(component);
 			if (this.#streaming === undefined) this.transcript.addChild(component);
 			this.#streaming = undefined;
 			component.updateContent(message, false);
@@ -227,6 +231,7 @@ export class ExperimentalChatView {
 				this.#markdownTransformers,
 			);
 			this.transcript.addChild(this.#streaming);
+			this.#bindTurn(this.#streaming);
 		}
 		this.#streaming.updateContent(message, true);
 		for (const content of message.content) {
@@ -237,6 +242,15 @@ export class ExperimentalChatView {
 	}
 
 	/** The card of a call; `fresh` starts a new one for a call ID an earlier turn used. */
+	#bindTurn(component: AssistantMessageComponent): void {
+		const stop = this.#stopTurn;
+		if (stop === undefined) return;
+		component.setTurnActions({
+			stop,
+			requestRender: () => this.#ui.requestRender(),
+		});
+	}
+
 	#tool(toolName: string, toolCallId: string, args?: unknown, fresh = false, key = toolCallId): ToolExecutionComponent {
 		const existing = fresh ? undefined : this.#tools.get(key);
 		if (existing !== undefined) {

@@ -4,7 +4,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { terminalMarkdownTransformers } from "../src/modes/interactive/components/mermaid.ts";
 import { UserMessageComponent } from "../src/modes/interactive/components/user-message.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -120,6 +120,48 @@ describe("AssistantMessageComponent", () => {
 
 		expect(rendered.match(/Thinking…/g)).toHaveLength(1);
 		expect(rendered).toContain("answer");
+	});
+
+	test("right-aligns the finished turn's duration, output tokens, and stop reason", () => {
+		initTheme("dark");
+		const message = createAssistantMessage([{ type: "text", text: "answer" }]);
+		message.durationMs = 958_000;
+		message.usage = { ...message.usage, output: 266_000, totalTokens: 266_000 };
+		const component = new AssistantMessageComponent(message);
+		const footer = stripAnsi(component.render(40).at(-1) ?? "");
+
+		expect(footer.trim()).toBe("15m58s ↓266k [stop]");
+		expect(footer.endsWith("[stop]")).toBe(true);
+		expect(footer.startsWith(" ")).toBe(true);
+
+		let stopped = 0;
+		component.setTurnActions({
+			stop: () => {
+				stopped += 1;
+			},
+			requestRender: () => {},
+		});
+		component.updateContent(message, true);
+		const live = component.render(40);
+		const liveFooter = stripAnsi(live.at(-1) ?? "");
+		expect(liveFooter.trim()).toBe("0.0s ↓266k [stop]");
+		const stopAt = liveFooter.lastIndexOf("[stop]");
+		const pointer = {
+			button: "left" as const,
+			x: stopAt,
+			y: live.length - 1,
+			screenX: stopAt,
+			screenY: live.length - 1,
+			width: 40,
+			height: live.length,
+			shift: false,
+			alt: false,
+			ctrl: false,
+		};
+		expect(component.handleMouse?.({ ...pointer, type: "move" })?.handled).toBe(true);
+		expect(component.render(40).at(-1) ?? "").toContain(theme.fg("error", "[stop]"));
+		expect(component.handleMouse?.({ ...pointer, type: "click" })?.handled).toBe(true);
+		expect(stopped).toBe(1);
 	});
 
 	test("shows a finished thinking run as one timed row until it is opened", () => {
