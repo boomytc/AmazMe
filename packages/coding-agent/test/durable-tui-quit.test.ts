@@ -1,14 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { openDurable } from "../src/durable/runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -109,7 +109,7 @@ describe.skipIf(process.platform === "win32")("durable TUI /quit", () => {
 		if (address === null || typeof address === "string") throw new Error("test server did not bind");
 		const port = (address as AddressInfo).port;
 
-		const directory = await mkdtemp(join(tmpdir(), "am-quit-"));
+		const directory = createTempDir("am-quit-");
 		directories.push(directory);
 		const cwd = join(directory, "project");
 		const profile = join(directory, "profile");

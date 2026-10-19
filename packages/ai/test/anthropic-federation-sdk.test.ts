@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { stream as streamAnthropic } from "../src/api/anthropic-messages.ts";
 import type { Model } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 // Runs the real Anthropic SDK against a fake fetch to check how often the
 // workload identity federation token exchange happens.
@@ -68,7 +68,7 @@ let tempDir: string;
 let federationEnv: Record<string, string>;
 
 beforeAll(() => {
-	tempDir = mkdtempSync(join(tmpdir(), "pi-anthropic-federation-"));
+	tempDir = createTempDir("pi-anthropic-federation-", { scope: "suite" });
 	const identityTokenFile = join(tempDir, "identity.jwt");
 	writeFileSync(identityTokenFile, "header.payload.signature");
 	federationEnv = {

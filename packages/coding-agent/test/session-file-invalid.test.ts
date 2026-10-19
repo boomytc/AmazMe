@@ -1,10 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const cliPath = resolve(__dirname, "../src/cli.ts");
 // --import takes a module specifier, not a filesystem path.
@@ -17,8 +17,8 @@ afterEach(() => {
 	}
 });
 
-function createTempDir(): string {
-	const dir = realpathSync(mkdtempSync(join(tmpdir(), "pi-session-file-invalid-")));
+function openTempWorkspace(): string {
+	const dir = realpathSync(createTempDir("pi-session-file-invalid-"));
 	tempDirs.push(dir);
 	return dir;
 }
@@ -47,7 +47,7 @@ async function runCli(args: string[], cwd: string, agentDir: string): Promise<{ 
 
 describe("explicit --session", () => {
 	it("rejects a file that is not a session before reading it and leaves its bytes unchanged", async () => {
-		const tempRoot = createTempDir();
+		const tempRoot = openTempWorkspace();
 		const agentDir = join(tempRoot, "agent");
 		const projectDir = join(tempRoot, "project");
 		const sessionFile = join(tempRoot, "not-a-session.log");

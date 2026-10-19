@@ -201,11 +201,49 @@ export function checkChangelogs(repoRoot) {
 	return failures;
 }
 
+
+/** Package test trees may not call mkdtemp/mkdtempSync except from a file named temp-dir.ts. */
+export function checkTempDirUsage(repoRoot) {
+	const failures = [];
+	const packagesDirectory = join(repoRoot, "packages");
+	if (!existsSync(packagesDirectory)) return failures;
+	const banned = /\bmkdtemp(?:Sync)?\s*\(/;
+	const walk = (directory) => {
+		if (!existsSync(directory)) return;
+		for (const entry of readdirSync(directory, { withFileTypes: true })) {
+			const path = join(directory, entry.name);
+			if (entry.isDirectory()) {
+				walk(path);
+				continue;
+			}
+			if (
+				!entry.name.endsWith(".ts") &&
+				!entry.name.endsWith(".js") &&
+				!entry.name.endsWith(".mjs")
+			)
+				continue;
+			if (entry.name === "temp-dir.ts") continue;
+			const source = readFileSync(path, "utf8");
+			for (const [index, line] of source.split("\n").entries()) {
+				if (!banned.test(line)) continue;
+				failures.push(
+					`${relative(repoRoot, path)}:${index + 1}: use createTempDir from temp-dir.ts instead of ${line.includes("mkdtempSync") ? "mkdtempSync" : "mkdtemp"}`,
+				);
+			}
+		}
+	};
+	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
+		if (!entry.isDirectory()) continue;
+		walk(join(packagesDirectory, entry.name, "test"));
+	}
+	return failures;
+}
+
 /** Syntax-aware checks over source, including development-only host and browser modules. */
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
-	const failures = [...checkDependencyVersions(root, packages), ...checkChangelogs(root)];
+	const failures = [...checkDependencyVersions(root, packages), ...checkChangelogs(root), ...checkTempDirUsage(root)];
 	try {
 		runtimePackages(packages, [...packages.keys()]);
 	} catch (error) {
@@ -483,5 +521,5 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
-	else console.log("Workspace imports, runtime dependencies, direction, browser entries, and changelogs passed.");
+	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, and test temp dirs passed.");
 }

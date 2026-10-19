@@ -1,10 +1,10 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { agentOf, openDurable } from "../src/durable/runtime.ts";
 import { runDurableTui } from "../src/durable/tui.ts";
 import { main } from "../src/main.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 // Only the terminal presentation is replaced; main, model resolution, settings and SQLite run normally.
 vi.mock("../src/durable/tui.ts", () => ({ runDurableTui: vi.fn() }));
@@ -27,7 +27,7 @@ describe("main's default durable TUI startup", () => {
 	});
 
 	it("passes model, thinking, credential and theme to the actual SQLite runtime", async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-main-durable-"));
+		directory = createTempDir("amazme-main-durable-");
 		const cwd = join(directory, "project");
 		const profile = join(directory, "profile");
 		await mkdir(cwd);

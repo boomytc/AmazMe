@@ -1,6 +1,5 @@
 // Behavioral coverage from Pi eba849739; uses public task/document scans so both AmazMe result layouts are covered.
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { JsonValue } from "@amazme/chord";
 import { withAbortSignal } from "@amazme/chord/context";
@@ -38,6 +37,7 @@ import { allEntries, type ChatSetup, chatSetup, openChat } from "./chat-support.
 import { addHooks, addTool } from "./harness-support.ts";
 import { context } from "./session-support.ts";
 import { aborted, deferred, eventually } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const Parameters = Type.Object({ text: Type.Optional(Type.String()) });
 type Tool = ToolRegistration<typeof Parameters>;
@@ -494,7 +494,7 @@ describe("nested tool calls", () => {
 	});
 
 	it("reattaches a replay-safe caller to the nested calls it made before a restart", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-durable-nested-"));
+		const directory = createTempDir("amazme-durable-nested-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const setup = chatSetup();
@@ -596,7 +596,7 @@ describe("nested tool calls", () => {
 	});
 
 	it("aborts left-running nested calls of a caller interrupted while it cleaned them up", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-durable-nested-"));
+		const directory = createTempDir("amazme-durable-nested-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const setup = chatSetup();
@@ -1207,7 +1207,7 @@ describe("tool task version 1 records", () => {
 	 * `{ assistant, callId }` input at version 1, with `checkpoint`. Returns the storage path and the task ID.
 	 */
 	async function storeVersion1(setup: ChatSetup, checkpoint: JsonValue): Promise<{ path: string; id: TaskId }> {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-durable-tool-v1-"));
+		const directory = createTempDir("amazme-durable-tool-v1-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		// No submission, so the Harness never starts scheduling and the task stays pending.

@@ -1,11 +1,11 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 function execute(args: readonly string[], options: ExecFileOptions): Promise<{ stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
@@ -27,7 +27,7 @@ describe("compiled CLI tool selection", () => {
 	let payloads: Payload[];
 
 	beforeEach(async () => {
-		directory = mkdtempSync(join(tmpdir(), "amazme-cli-tools-"));
+		directory = createTempDir("amazme-cli-tools-");
 		profile = join(directory, "profile");
 		payloads = [];
 		server = createServer((request, response) => {

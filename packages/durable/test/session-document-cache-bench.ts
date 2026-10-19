@@ -5,8 +5,7 @@
  *
  *   node --conditions=source --experimental-strip-types test/session-document-cache-bench.ts [N...]
  */
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT as context } from "@amazme/chord/context";
 import { createModels } from "@amazme/ai/models";
@@ -22,6 +21,7 @@ import {
 import type { SessionImpl } from "../src/session/session.ts";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { retainedBytes } from "./heap-retained.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /** Writes `pi.usage` of its conversation once, then completes. */
 const Work = defineTask<null, { phase: "work" }, null>({
@@ -40,7 +40,7 @@ const Work = defineTask<null, { phase: "work" }, null>({
 });
 
 async function run(conversations: number, documentRetentionMs: number) {
-	const directory = mkdtempSync(join(tmpdir(), "pi-durable-doc-cache-bench-"));
+	const directory = createTempDir("pi-durable-doc-cache-bench-");
 	try {
 		const storage = await openNodeSqliteStorage(join(directory, "session.sqlite"));
 		const registry = createRegistry();

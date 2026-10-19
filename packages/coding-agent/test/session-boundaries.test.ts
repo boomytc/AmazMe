@@ -1,10 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { runDurableTui } from "../src/durable/tui.ts";
 import { main } from "../src/main.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 vi.mock("../src/durable/tui.ts", () => ({ runDurableTui: vi.fn() }));
 
@@ -15,7 +15,7 @@ describe("interactive storage selection boundary", () => {
 	const tty = streams.map((stream) => Object.getOwnPropertyDescriptor(stream, "isTTY"));
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-session-boundary-"));
+		directory = createTempDir("amazme-session-boundary-");
 		const cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

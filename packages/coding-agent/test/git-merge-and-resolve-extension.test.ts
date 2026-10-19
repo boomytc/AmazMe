@@ -1,9 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import mergeAndResolve from "../examples/extensions/git-merge-and-resolve.ts";
 import type { ExecResult, ExtensionAPI, ExtensionContext } from "../src/core/extensions/index.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 type AgentEndHandler = (event: { type: "agent_end" }, ctx: ExtensionContext) => Promise<undefined>;
 
@@ -55,13 +55,13 @@ describe("git-merge-and-resolve example", () => {
 		if (tempDir) rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	function createTempDir() {
-		tempDir = mkdtempSync(join(tmpdir(), "pi-merge-test-"));
+	function openTempWorkspace() {
+		tempDir = createTempDir("pi-merge-test-");
 		return tempDir;
 	}
 
 	it("skips when not a git repository", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const results = new Map<string, ExecResult>();
 		results.set("git rev-parse --git-dir", fail);
 
@@ -73,7 +73,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("skips when no upstream is configured", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const results = new Map<string, ExecResult>();
 		results.set("git rev-parse --git-dir", ok);
 		results.set("git rev-parse --abbrev-ref --symbolic-full-name @{u}", fail);
@@ -85,7 +85,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("re-sends conflicts when in an unfinished merge", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const conflictContent = ["<<<<<<< HEAD", "ours", "=======", "theirs", ">>>>>>> origin/main"].join("\n");
 		writeFileSync(join(cwd, "file.ts"), conflictContent);
 
@@ -105,7 +105,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("skips when working tree is dirty and not in a merge", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const results = new Map<string, ExecResult>();
 		results.set("git rev-parse --git-dir", ok);
 		results.set("git rev-parse MERGE_HEAD", fail);
@@ -119,7 +119,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("skips when fetch fails", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const results = withUpstream(new Map<string, ExecResult>());
 		results.set("git fetch origin", fail);
 
@@ -130,7 +130,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("skips when merge is clean", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const results = withUpstream(new Map<string, ExecResult>());
 		results.set("git merge --no-ff origin/main", ok);
 
@@ -141,7 +141,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("sends conflict report as a follow-up", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const conflictContent = [
 			"line 1",
 			"<<<<<<< HEAD",
@@ -175,7 +175,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("handles empty ours or theirs sections", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const conflictContent = ["<<<<<<< HEAD", "=======", "only theirs", ">>>>>>> origin/main"].join("\n");
 
 		writeFileSync(join(cwd, "empty-ours.ts"), conflictContent);
@@ -193,7 +193,7 @@ describe("git-merge-and-resolve example", () => {
 	});
 
 	it("skips message when merge fails but no conflict markers found", async () => {
-		const cwd = createTempDir();
+		const cwd = openTempWorkspace();
 		const results = withUpstream(new Map<string, ExecResult>());
 		results.set("git merge --no-ff origin/main", { ...fail, code: 1 });
 		results.set("git diff --name-only --diff-filter=U", { ...ok, stdout: "" });

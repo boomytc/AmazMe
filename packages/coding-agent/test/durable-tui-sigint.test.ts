@@ -1,11 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { SHUTDOWN_FORCE_EXIT_MESSAGE } from "../src/utils/shutdown-signals.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
@@ -167,7 +167,7 @@ describe.skipIf(process.platform === "win32")("durable TUI Ctrl-C then SIGINT", 
 	}, 45_000);
 
 	async function run(mode: "none" | "hold" | "unlock"): Promise<{ stdout: string; ending: string | undefined }> {
-		const directory = await mkdtemp(join(tmpdir(), "am-sigint-"));
+		const directory = createTempDir("am-sigint-");
 		directories.push(directory);
 		const cwd = join(directory, "project");
 		const profile = join(directory, "profile");

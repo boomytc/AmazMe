@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
-import { checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts } from "./check-workspace.mjs";
+import { checkChangelogs, checkDependencyVersions, checkSourceContracts, checkEntryContracts, checkTempDirUsage } from "./check-workspace.mjs";
 
 const roots = [];
 afterEach(() => {
@@ -303,4 +303,25 @@ test("changelog checks reject unknown, repeated, out-of-order, and empty section
 		'ai/CHANGELOG.md:3: first section must be "## [Unreleased]"',
 	])
 		assert.ok(failures.some((failure) => failure.includes(fragment)), `missing ${fragment} in\n${failures.join("\n")}`);
+});
+
+test("temp dir checks allow temp-dir.ts and reject bare mkdtemp in packages/*/test", () => {
+	const root = fixture();
+	const aiTest = join(root, "packages", "ai", "test");
+	mkdirSync(aiTest, { recursive: true });
+	writeFileSync(
+		join(aiTest, "temp-dir.ts"),
+		'import { mkdtempSync } from "node:fs";\nexport const createTempDir = (prefix) => mkdtempSync("/tmp/" + prefix);\n',
+	);
+	writeFileSync(
+		join(aiTest, "leaky.test.ts"),
+		'import { mkdtempSync } from "node:fs";\nconst dir = mkdtempSync("/tmp/x-");\n',
+	);
+	const failures = checkTempDirUsage(root);
+	assert.equal(failures.length, 1);
+	assert.ok(failures[0].includes("createTempDir"));
+	assert.equal(
+		checkTempDirUsage(root).filter((message) => message.includes("/temp-dir.ts:")).length,
+		0,
+	);
 });

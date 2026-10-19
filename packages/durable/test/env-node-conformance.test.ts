@@ -1,12 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, it } from "vitest";
 import { getOrThrow, type WatchChange } from "../src/env/index.ts";
 import { NodeExecutionEnv } from "../src/env/node.ts";
 import { registerEnvConformance } from "../src/testing/index.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const windows = process.platform === "win32";
 const gitBash = join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin", "bash.exe");
@@ -34,7 +34,7 @@ registerEnvConformance(
 	{ describe, expect, it },
 	"NodeExecutionEnv conformance",
 	async (use) => {
-		const cwd = mkdtempSync(join(tmpdir(), "pi-durable-env-conformance-"));
+		const cwd = createTempDir("pi-durable-env-conformance-");
 		try {
 			await use(new NodeExecutionEnv({ cwd }));
 		} finally {
@@ -49,7 +49,7 @@ registerEnvConformance(
 	{ describe, expect, it },
 	"NodeExecutionEnv conformance with polling watches",
 	async (use) => {
-		const cwd = mkdtempSync(join(tmpdir(), "pi-durable-env-conformance-"));
+		const cwd = createTempDir("pi-durable-env-conformance-");
 		try {
 			await use(new NodeExecutionEnv({ cwd, watch: { mode: "polling", pollIntervalMs: 100 } }));
 		} finally {
@@ -61,7 +61,7 @@ registerEnvConformance(
 
 describe("NodeExecutionEnv watch limits", () => {
 	it("refuses a tree over the directory budget and stops with an error when one grows past it", async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "pi-durable-env-watch-"));
+		const cwd = createTempDir("pi-durable-env-watch-");
 		try {
 			const env = new NodeExecutionEnv({ cwd, watch: { maxDirectories: 3 } });
 			getOrThrow(await env.createDir("tree/a/b", undefined, context));
@@ -92,7 +92,7 @@ describe("NodeExecutionEnv watch limits", () => {
 describe("NodeExecutionEnv readers", () => {
 	const dirs: string[] = [];
 	const tempDir = (): string => {
-		const dir = mkdtempSync(join(tmpdir(), "pi-durable-env-readers-"));
+		const dir = createTempDir("pi-durable-env-readers-");
 		dirs.push(dir);
 		return dir;
 	};

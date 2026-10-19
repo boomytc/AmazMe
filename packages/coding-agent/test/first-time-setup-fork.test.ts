@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from "fs";
+import { rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 vi.mock("../src/config.ts", async (importOriginal) => {
 	const actual = await importOriginal();
@@ -19,7 +20,7 @@ describe("shouldRunFirstTimeSetup in forked distributions", () => {
 	let settingsPath: string;
 
 	beforeEach(() => {
-		tempDir = mkdtempSync(join(tmpdir(), "pi-first-time-setup-fork-"));
+		tempDir = createTempDir("pi-first-time-setup-fork-");
 		settingsPath = join(tempDir, "settings.json");
 		process.env.AMAZME_EXPERIMENTAL = "1";
 	});

@@ -1,9 +1,10 @@
 import { colorToHex, okhslColor } from "@amazme/tui";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getThemeExportColors } from "../src/modes/interactive/theme/theme.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 type ThemeFile = {
 	name: string;
@@ -21,7 +22,7 @@ describe("getThemeExportColors", () => {
 	let previousAgentDir: string | undefined;
 
 	beforeEach(() => {
-		tempRoot = mkdtempSync(join(tmpdir(), "pi-theme-export-"));
+		tempRoot = createTempDir("pi-theme-export-");
 		previousAgentDir = process.env.AMAZME_CODING_AGENT_DIR;
 		process.env.AMAZME_CODING_AGENT_DIR = join(tempRoot, "agent");
 		mkdirSync(join(process.env.AMAZME_CODING_AGENT_DIR, "themes"), { recursive: true });

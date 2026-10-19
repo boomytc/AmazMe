@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -10,6 +9,7 @@ import {
 	OPENAI_PROVIDER_ID,
 } from "../evals/acme-server.ts";
 import { inspectAddedModel, inspectProvider, loadConfiguredModelRuntime } from "../evals/configured-runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const PROVIDER_ID = OPENAI_PROVIDER_ID;
 const MODEL = {
@@ -33,7 +33,7 @@ beforeEach(() => server.reset());
 afterAll(() => server.stop());
 
 async function agentDirWith(modelsJson: unknown) {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-eval-provider-probe-"));
+	const directory = createTempDir("amazme-eval-provider-probe-");
 	temporaryDirectories.push(directory);
 	await writeFile(join(directory, "models.json"), `${JSON.stringify(modelsJson)}\n`);
 	return directory;
@@ -110,7 +110,7 @@ describe("inspectProvider", () => {
 	});
 
 	it("returns a structured error when models.json cannot be parsed", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-eval-provider-probe-"));
+		const directory = createTempDir("amazme-eval-provider-probe-");
 		temporaryDirectories.push(directory);
 		await writeFile(join(directory, "models.json"), "{");
 		const output = await inspectProvider(
@@ -184,7 +184,7 @@ describe("inspectAddedModel", () => {
 	});
 
 	it("returns a structured error when models.json cannot be parsed", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-eval-provider-probe-"));
+		const directory = createTempDir("amazme-eval-provider-probe-");
 		temporaryDirectories.push(directory);
 		await writeFile(join(directory, "models.json"), "{");
 		await expect(inspectAddedModel(await loadConfiguredModelRuntime(directory), PROVIDER, MODEL_ID)).resolves.toEqual(

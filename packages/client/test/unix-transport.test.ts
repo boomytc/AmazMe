@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
 import { parseChannelCall } from "@amazme/protocol";
@@ -6,6 +6,7 @@ import { ClientMessageDecoder, encodeServerMessage, PROTOCOL_VERSION } from "@am
 import { afterEach, describe, expect, test } from "vitest";
 import { Client } from "../src/index.ts";
 import { createUnixTransportFactory } from "../src/unix.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const serverId = "00000000-0000-4000-8000-000000000001";
 const tempDirectories = new Set<string>();
@@ -13,7 +14,7 @@ const servers = new Set<Server>();
 const sockets = new Set<Socket>();
 
 async function makeSocketPath(): Promise<string> {
-	const directory = await mkdtemp(join("/tmp", "pi-client-transport-"));
+	const directory = createTempDir("pi-client-transport-", { baseDirectory: "/tmp" });
 	tempDirectories.add(directory);
 	return join(directory, "amazme.sock");
 }

@@ -1,5 +1,4 @@
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@amazme/coding-agent";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +16,7 @@ import {
 } from "../evals/configured-runtime.ts";
 import type { ProviderScenario } from "../evals/configured-runtime.ts";
 import type { AcmeStreamFixtureConfig } from "./fixtures/acme-stream-extension.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const server = createAcmeServer("stream");
 const directories: string[] = [];
@@ -48,7 +48,7 @@ afterEach(async () => {
 afterAll(() => server.stop());
 
 async function temporaryDirectory(): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), "amazme-eval-stream-provider-"));
+	const directory = createTempDir("amazme-eval-stream-provider-");
 	directories.push(directory);
 	return directory;
 }

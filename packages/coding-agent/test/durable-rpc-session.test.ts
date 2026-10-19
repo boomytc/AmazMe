@@ -1,9 +1,9 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenDurableResult } from "../src/durable/runtime.ts";
 import { createDurableRpcSessionControl } from "../src/modes/rpc/durable-rpc.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 function session(directory: string | undefined): OpenDurableResult {
 	return {
@@ -20,7 +20,7 @@ describe("durable RPC session control", () => {
 	let cwd: string;
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-rpc-session-"));
+		directory = createTempDir("amazme-durable-rpc-session-");
 		cwd = join(directory, "project");
 		await mkdir(cwd);
 	});

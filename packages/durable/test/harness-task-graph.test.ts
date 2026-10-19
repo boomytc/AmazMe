@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import type { JsonValue } from "@amazme/chord";
 import { applyImmutable, type Op } from "@amazme/chord/delta";
@@ -15,6 +14,7 @@ import { describe, expect, it } from "vitest";
 import { openNodeSqliteStorage } from "../src/storage/sqlite/node.ts";
 import { ControlledStorage, context, flush } from "./session-support.ts";
 import { aborted, completed, deferred, eventually, openTasks } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 type ParentState = { phase: "spawn" } | { phase: "join"; child: TaskId } | { phase: "finish" };
 
@@ -166,7 +166,7 @@ describe("task graph view", () => {
 	});
 
 	it("builds from committed tasks, shows surviving tasks as pending after reopen, and marks aborts", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "pi-durable-graph-"));
+		const directory = createTempDir("pi-durable-graph-");
 		const path = join(directory, "session.sqlite");
 		const gate = deferred();
 		const Work = defineTask<null, { phase: "work" }, null>({

@@ -1,5 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
 	createAssistantMessageEventStream,
@@ -13,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 function model(id: string): Model<"openai-completions"> {
 	return {
@@ -136,7 +136,7 @@ describe("extension provider model lifecycle", () => {
 	});
 
 	it("preserves native deferred methods through provider overlays", async () => {
-		const tempDir = mkdtempSync(join(tmpdir(), "pi-native-provider-deferred-"));
+		const tempDir = createTempDir("pi-native-provider-deferred-");
 		const modelsPath = join(tempDir, "models.json");
 		writeFileSync(
 			modelsPath,
@@ -260,7 +260,7 @@ describe("extension provider model lifecycle", () => {
 	});
 
 	it("applies models.json overrides above native providers", async () => {
-		const tempDir = mkdtempSync(join(tmpdir(), "pi-native-provider-"));
+		const tempDir = createTempDir("pi-native-provider-");
 		const modelsPath = join(tempDir, "models.json");
 		writeFileSync(
 			modelsPath,

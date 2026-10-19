@@ -2,8 +2,7 @@
 // app's settings file, and an environment that follows the conversation's directory.
 // Run from packages/durable:
 //   node --conditions=source --experimental-strip-types test/examples/26-coding-agent.ts
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { ToolResultMessage } from "@amazme/ai";
@@ -20,9 +19,10 @@ import {
 	ToolResultEntry,
 } from "../../src/index.ts";
 import { CodingTools } from "../../src/tools/index.ts";
+import { createTempDir } from "../temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
-const workspace = await mkdtemp(join(tmpdir(), "pi-durable-agent-"));
+const workspace = createTempDir("pi-durable-agent-");
 await mkdir(join(workspace, "app"));
 
 // The app's own prompt, next to the coding tools.

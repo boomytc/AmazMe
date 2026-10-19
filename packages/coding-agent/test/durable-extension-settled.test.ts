@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { type AssistantMessage, fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +10,7 @@ import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { openDurable, type OpenDurableResult } from "../src/durable/runtime.ts";
 import { createInMemoryModelRegistry } from "./model-runtime-test-utils.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable extension settlement", () => {
 	let directory: string;
@@ -21,7 +21,7 @@ describe("durable extension settlement", () => {
 	const sessions = new Set<OpenDurableResult>();
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-extension-settled-"));
+		directory = createTempDir("amazme-extension-settled-");
 		cwd = join(directory, "project");
 		await mkdir(cwd);
 		vi.stubEnv("AMAZME_CODING_AGENT_DIR", join(directory, "profile"));

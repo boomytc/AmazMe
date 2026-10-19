@@ -1,5 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { withCancel } from "@amazme/chord/context";
 import { fauxAssistantMessage, fauxText, fauxToolCall, Type } from "@amazme/ai";
@@ -30,6 +29,7 @@ import { allEntries, chatSetup, openChat } from "./chat-support.ts";
 import { addHooks, addTool } from "./harness-support.ts";
 import { context, flush } from "./session-support.ts";
 import { aborted, deferred, eventually, settled } from "./task-support.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const harnesses = new Set<Harness>();
 const directories = new Set<string>();
@@ -550,7 +550,7 @@ describe("nested tool execution", () => {
 	});
 
 	it("does not replay interrupted unsafe parents or children when SQLite is reopened", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-nested-recovery-"));
+		const directory = createTempDir("amazme-nested-recovery-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const setup = chatSetup();
@@ -605,7 +605,7 @@ describe("nested tool execution", () => {
 	});
 
 	it("retires nested structured output and reopens the model result from actual SQLite storage", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-nested-tools-"));
+		const directory = createTempDir("amazme-nested-tools-");
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const setup = chatSetup();

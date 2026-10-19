@@ -1,5 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import {
@@ -10,6 +9,7 @@ import {
 	writeSessionName,
 	type SessionCatalogMetadata,
 } from "../src/host/session-catalog.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("session display names", () => {
 	test("normalizes newlines the way /name does", () => {
@@ -18,7 +18,7 @@ describe("session display names", () => {
 	});
 
 	test("stores the name where the roster reads it and clears a blank one", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "session-name-"));
+		const dir = createTempDir("session-name-");
 		try {
 			const created = await createSession(dir, { id: "s1", cwd: "/work", name: "first" });
 			expect((await readSession(dir, "s1"))?.name).toBe("first");

@@ -1,10 +1,10 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import { Connection, RemoteError } from "../src/connection.ts";
 import { openTerminal } from "../src/terminal.ts";
 import { daemon } from "./daemon.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const connections: Connection[] = [];
 const dirs: string[] = [];
@@ -14,7 +14,7 @@ afterAll(() => {
 });
 
 function connect(): { connection: Connection; cwd: string } {
-	const cwd = mkdtempSync(join(tmpdir(), "pi-env-terminal-"));
+	const cwd = createTempDir("pi-env-terminal-");
 	dirs.push(cwd);
 	const connection = new Connection({ command: [daemon] });
 	connections.push(connection);

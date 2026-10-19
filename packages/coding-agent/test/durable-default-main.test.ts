@@ -1,7 +1,7 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 vi.mock("../src/durable/print.ts", () => ({
 	runDurablePrint: vi.fn(async () => 0),
@@ -17,7 +17,7 @@ describe("default headless runtime", () => {
 	const tty = [process.stdin, process.stdout].map((stream) => Object.getOwnPropertyDescriptor(stream, "isTTY"));
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-default-"));
+		directory = createTempDir("amazme-durable-default-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

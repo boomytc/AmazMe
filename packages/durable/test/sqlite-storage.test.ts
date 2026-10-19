@@ -1,5 +1,4 @@
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { Context, JsonValue } from "@amazme/chord";
@@ -23,6 +22,7 @@ import type {
 	TaskRecord,
 } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 const openStorages = new Set<SqliteStorage>();
@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 async function createSqliteStorage(options: { readonly walAutoCheckpointPages?: number } = {}) {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-"));
+	const directory = createTempDir("pi-durable-sqlite-");
 	tempDirectories.add(directory);
 	const path = join(directory, "storage.sqlite");
 	const storage = await openNodeSqliteStorage(path, options);
@@ -115,7 +115,7 @@ registerStorageConformance({ describe, expect, it }, "SqliteStorage", async (use
 );
 
 registerStorageConformance({ describe, expect, it }, "SqliteStorage across reopen", async (use) => {
-	const directory = await mkdtemp(join(tmpdir(), "pi-durable-sqlite-conformance-"));
+	const directory = createTempDir("pi-durable-sqlite-conformance-");
 	const path = join(directory, "storage.sqlite");
 	const created = await openNodeSqliteStorage(path);
 	await created.close(context);
@@ -191,7 +191,7 @@ describe("Pico SqliteStorage", () => {
 	});
 
 	it("namespaces tables and indexes with a prefix across reopen", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-durable-sqlite-"));
+		const directory = createTempDir("amazme-durable-sqlite-");
 		tempDirectories.add(directory);
 		const path = join(directory, "storage.sqlite");
 		const host = new DatabaseSync(path);
@@ -221,7 +221,7 @@ describe("Pico SqliteStorage", () => {
 	});
 
 	it("rejects an invalid prefix before creating the database", async () => {
-		const directory = await mkdtemp(join(tmpdir(), "amazme-durable-sqlite-"));
+		const directory = createTempDir("amazme-durable-sqlite-");
 		tempDirectories.add(directory);
 		const databaseDirectory = join(directory, "nested");
 		await expect(

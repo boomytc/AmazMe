@@ -1,5 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import { getOrThrow, type ShellOutputInfo } from "@amazme/durable/env";
@@ -7,6 +6,7 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { Connection, nodePlatform } from "../src/connection.ts";
 import { RemoteExecutionEnv } from "../src/remote-env.ts";
 import { daemon } from "./daemon.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const context = BACKGROUND_CONTEXT;
 const connections: Connection[] = [];
@@ -17,7 +17,7 @@ afterAll(() => {
 });
 
 function environment(): { env: RemoteExecutionEnv; connection: Connection } {
-	const cwd = mkdtempSync(join(tmpdir(), "amazme-env-remote-"));
+	const cwd = createTempDir("amazme-env-remote-");
 	dirs.push(cwd);
 	const connection = new Connection({ command: [daemon] });
 	connections.push(connection);
@@ -142,7 +142,7 @@ describe("RemoteExecutionEnv", () => {
 	});
 
 	it("computes the command at each start and retries a start that failed", async () => {
-		const cwd = mkdtempSync(join(tmpdir(), "amazme-env-remote-"));
+		const cwd = createTempDir("amazme-env-remote-");
 		dirs.push(cwd);
 		let starts = 0;
 		const connection = new Connection({

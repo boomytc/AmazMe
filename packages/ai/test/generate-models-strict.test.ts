@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { createTempDir } from "./temp-dir.ts";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const temporaryRoots: string[] = [];
@@ -14,7 +14,7 @@ afterEach(() => {
 
 describe("strict model generation", () => {
 	it("fails before mutating generated data when an Individual model loses tool support", () => {
-		const fixtureRoot = mkdtempSync(join(tmpdir(), "pi-generate-models-"));
+		const fixtureRoot = createTempDir("pi-generate-models-");
 		temporaryRoots.push(fixtureRoot);
 		const isolatedPackageRoot = join(fixtureRoot, "package");
 		mkdirSync(isolatedPackageRoot);

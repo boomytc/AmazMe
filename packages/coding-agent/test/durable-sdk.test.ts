@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import type { AgentEvent } from "@amazme/durable";
@@ -8,6 +7,7 @@ import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createDurableSession, type DurableSession } from "../src/durable/sdk.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 describe("durable SDK facade", () => {
 	let directory: string;
@@ -19,7 +19,7 @@ describe("durable SDK facade", () => {
 	const sessions: DurableSession[] = [];
 
 	beforeEach(async () => {
-		directory = await mkdtemp(join(tmpdir(), "amazme-durable-sdk-"));
+		directory = createTempDir("amazme-durable-sdk-");
 		cwd = join(directory, "project");
 		profile = join(directory, "profile");
 		await mkdir(cwd);

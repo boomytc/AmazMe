@@ -1,5 +1,4 @@
-import { lstat, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { lstat, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { ServerMessageDecoder } from "@amazme/protocol";
 import { afterEach, expect, test } from "vitest";
@@ -8,6 +7,7 @@ import { Server } from "../src/index.ts";
 import type { ServerListener } from "../src/listener.ts";
 import { TestServerHost } from "../src/testing/index.ts";
 import { createUnixServer } from "../src/transports/unix/index.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const host = new TestServerHost();
 
@@ -15,7 +15,7 @@ let server: Server | undefined;
 let tempDirectory: string | undefined;
 
 async function makeSocketPath(): Promise<string> {
-	tempDirectory = await mkdtemp(join(tmpdir(), "pss-"));
+	tempDirectory = createTempDir("pss-");
 	return join(tempDirectory, "server.sock");
 }
 

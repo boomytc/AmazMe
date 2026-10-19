@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
 import { replicatedState } from "@amazme/chord";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWorkspaceService, WORKSPACE_PAGE_SIZE } from "../src/host/services/workspace-provider.ts";
 import type { WorkspaceOpenInput } from "../src/host/services/workspace.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 vi.mock("node:fs/promises", async importOriginal => {
 	const original = await importOriginal<typeof import("node:fs/promises")>();
@@ -15,7 +15,7 @@ vi.mock("node:fs/promises", async importOriginal => {
 const folders: string[] = [];
 afterEach(async () => { await Promise.all(folders.splice(0).map(folder => rm(folder, { recursive: true, force: true }))); });
 async function directory(): Promise<string> {
-	const folder = await mkdtemp(join(tmpdir(), "amazme-workspace-page-"));
+	const folder = createTempDir("amazme-workspace-page-");
 	folders.push(folder);
 	return folder;
 }

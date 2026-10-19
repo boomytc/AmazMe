@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { afterEach, describe, expect, test } from "vitest";
 import { createSchedulesService } from "../plugins/automation/src/runtime.ts";
 import type { SchedulesState } from "../src/core/plugins/schedules.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 /**
  * The schedule store over its real file and a clock the test moves: what lands in
@@ -16,7 +16,7 @@ const directories = new Set<string>();
 const stores = new Set<ReturnType<typeof createSchedulesService>>();
 
 async function makeDirectory(prefix: string): Promise<string> {
-	const directory = await mkdtemp(join(tmpdir(), prefix));
+	const directory = createTempDir(prefix);
 	directories.add(directory);
 	return directory;
 }
