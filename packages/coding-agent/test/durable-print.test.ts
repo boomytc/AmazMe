@@ -135,6 +135,7 @@ describe("durable print", () => {
 		const lines = writes.join("").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line) as { type: string; message?: { role?: string } });
 		expect(lines[0]).toMatchObject({ type: "session", version: 3, storage: "durable" });
 		expect(lines.map((line) => line.type)).toEqual(expect.arrayContaining(["agent_start", "message_start", "message_end", "agent_end"]));
+		expect(lines.filter((line) => line.type === "agent_settled")).toEqual([{ type: "agent_settled", aborted: false }]);
 		expect(lines.some((line) => line.type === "message_start" && line.message?.role === "assistant")).toBe(true);
 	});
 
