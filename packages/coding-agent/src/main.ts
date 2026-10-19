@@ -4,6 +4,7 @@
  * Interactive, print, JSON, and RPC all open a Durable session.
  */
 
+import { setTimeout as delay } from "node:timers/promises";
 import { type ImageContent } from "@amazme/ai";
 import chalk from "chalk";
 import { type Args, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
@@ -413,6 +414,7 @@ export async function main(args: string[]) {
 		const { runDurableInteractive } = await import("./durable/interactive.ts");
 		await runDurableInteractive({
 			startupBenchmark,
+			...(startupBenchmark ? {} : { startupNotice: startUpdateCheck() }),
 			cwd: effectiveCwd,
 			continueSession: parsed.continue === true || parsed.resume === true,
 			noSession: parsed.noSession === true,
@@ -529,6 +531,8 @@ export async function main(args: string[]) {
 		await runDurableRpc(durableOptions);
 		return;
 	}
+	// Text print only, and only when a person watches stderr; JSON and pipes stay clean.
+	const updateNotice = appMode !== "json" && process.stderr.isTTY ? startUpdateCheck() : undefined;
 	const { runDurablePrint } = await import("./durable/print.ts");
 	const exitCode = await runDurablePrint({
 		...durableOptions,
@@ -538,5 +542,14 @@ export async function main(args: string[]) {
 		messages: parsed.messages.slice(),
 	});
 	restoreStdout();
+	// The check normally finished during the run; never hold the exit for it longer than 1.5s.
+	const message = updateNotice && (await Promise.race([updateNotice, delay(1500, undefined, { ref: false })]));
+	if (message) process.stderr.write(`${message}\n`);
 	if (exitCode !== 0) process.exitCode = exitCode;
+}
+
+async function startUpdateCheck(): Promise<string | undefined> {
+	const { checkForUpdate, formatUpdateNotice } = await import("./update-check.ts");
+	const notice = await checkForUpdate().catch(() => undefined);
+	return notice === undefined ? undefined : formatUpdateNotice(notice);
 }
