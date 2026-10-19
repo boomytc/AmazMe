@@ -1,9 +1,12 @@
 import { createRequire } from "node:module";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { getPackageDir } from "../../config.ts";
 
 export function resolveAgentPluginExternal(specifier: string): string | undefined {
-	if (specifier === "proper-lockfile") return createRequire(import.meta.url).resolve(specifier);
+	if (specifier === "@amazme/mcp") return fileURLToPath(import.meta.resolve(specifier));
+	if (["proper-lockfile", "@silvia-odwyer/photon-node"].includes(specifier))
+		return createRequire(import.meta.url).resolve(specifier);
 	const entry = specifier === "@amazme/coding-agent/plugin" ? "plugin"
 		: specifier === "@amazme/coding-agent/host/plugin" ? "host/plugin" : undefined;
 	if (entry === undefined) return undefined;

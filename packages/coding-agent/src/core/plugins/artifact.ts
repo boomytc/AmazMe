@@ -20,10 +20,12 @@ const HOST_IMPORTS = [
 	"@amazme/ai",
 	"@amazme/chord",
 	"@amazme/durable",
+	"@amazme/mcp",
 	"@amazme/protocol",
 	"@amazme/coding-agent/plugin",
 	"@amazme/coding-agent/host/plugin",
 	"proper-lockfile",
+	"@silvia-odwyer/photon-node",
 ];
 
 export async function buildPluginEntry(name: string, path: string): Promise<PluginArtifact> {
