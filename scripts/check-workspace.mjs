@@ -318,8 +318,9 @@ export const sourceTempDirAllowlist = {
 /**
  * Package test trees may not call mkdtemp/mkdtempSync except from packages/<pkg>/test/temp-dir.ts at
  * the test root. Package sources (`packages/<pkg>/src`) may not call `tmpdir()` / `os.tmpdir()`
- * outside `allowed` (repo-relative path -> reason), and an allowed file that no longer calls it must
- * leave the list.
+ * outside `allowed` (repo-relative path -> reason). Every entry is one exact source file with a
+ * non-empty reason: no directories, no globs. An entry goes stale, and fails, when its file no longer
+ * calls `tmpdir()`; {@link checkTempDirAllowlistFiles} fails one whose file is gone.
  */
 export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 	const failures = [];
@@ -327,6 +328,17 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 	if (!existsSync(packagesDirectory)) return failures;
 	const tmpdirCall = /\btmpdir\s*\(/;
 	const sourceExtensions = /\.(?:[cm]?ts|[cm]?js|tsx|jsx)$/;
+	const exactSourceFile = /^packages\/[^/*?[\]{}]+\/src\/[^*?[\]{}]+\.(?:[cm]?ts|[cm]?js|tsx|jsx)$/;
+	for (const [file, reason] of Object.entries(allowed)) {
+		if (!exactSourceFile.test(file) || file.endsWith(".d.ts") || file.split("/").some((part) => part === "." || part === "..")) {
+			failures.push(
+				`${file}: sourceTempDirAllowlist entries must be one exact packages/<pkg>/src/... source file, not a directory or pattern`,
+			);
+			continue;
+		}
+		if (typeof reason !== "string" || reason.trim().length === 0)
+			failures.push(`${file}: sourceTempDirAllowlist entry needs a reason`);
+	}
 	const walkSource = (directory) => {
 		if (!existsSync(directory)) return;
 		for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -394,6 +406,17 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 			);
 	}
 	return failures;
+}
+
+/**
+ * Every `sourceTempDirAllowlist` entry names a file in this repository. A deleted or moved file is
+ * never visited by {@link checkTempDirUsage}, so without this its stale entry would stay silently.
+ * Run against the real tree only: a fixture tree does not carry the listed files.
+ */
+export function checkTempDirAllowlistFiles(repoRoot, allowed = sourceTempDirAllowlist) {
+	return Object.keys(allowed)
+		.filter((file) => !existsSync(join(repoRoot, file)))
+		.map((file) => `${file}: listed in sourceTempDirAllowlist but no such source file; remove it from sourceTempDirAllowlist`);
 }
 
 /** Syntax-aware checks over source, including development-only host and browser modules. */
@@ -679,7 +702,7 @@ export async function checkEntryContracts(repoRoot) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	const failures = checkSourceContracts(process.cwd());
+	const failures = [...checkSourceContracts(process.cwd()), ...checkTempDirAllowlistFiles(process.cwd())];
 	const entries = await checkEntryContracts(process.cwd());
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);

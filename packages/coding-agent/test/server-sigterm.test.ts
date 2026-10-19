@@ -23,60 +23,63 @@ describe.skipIf(process.platform === "win32")("server SIGTERM", () => {
 		directories.length = 0;
 	});
 
-	it("unlinks its socket and empty hash directory, then exits", async () => {
-		const getuid = process.getuid;
-		if (getuid === undefined) throw new Error("expected a POSIX user id");
-		const uid = getuid();
-		const scratch = createTempDir("am-sigterm-", { baseDirectory: "/tmp" });
-		directories.push(scratch);
-		const logical = join("/tmp", "d".repeat(80), "srv");
-		directories.push(dirname(logical));
-		const sessionDir = join(scratch, "sessions");
-		const agentDir = join(scratch, "agent");
-		await mkdir(sessionDir, { recursive: true });
-		const sibling = join("/tmp", `am-${uid}`, "ffffffffffff");
-		await mkdir(sibling, { recursive: true });
-		directories.push(sibling);
-		await writeFile(join(sibling, "keep"), "other process");
+	// SIGHUP is what a closed terminal window sends; it must clean up exactly like SIGTERM.
+	for (const sent of ["SIGTERM", "SIGHUP"] as const) {
+		it(`unlinks its socket and empty hash directory on ${sent}, then exits`, async () => {
+			const getuid = process.getuid;
+			if (getuid === undefined) throw new Error("expected a POSIX user id");
+			const uid = getuid();
+			const scratch = createTempDir("am-sigterm-", { baseDirectory: "/tmp" });
+			directories.push(scratch);
+			const logical = join("/tmp", "d".repeat(80), "srv");
+			directories.push(dirname(logical));
+			const sessionDir = join(scratch, "sessions");
+			const agentDir = join(scratch, "agent");
+			await mkdir(sessionDir, { recursive: true });
+			const sibling = join("/tmp", `am-${uid}`, "ffffffffffff");
+			await mkdir(sibling, { recursive: true });
+			directories.push(sibling);
+			await writeFile(join(sibling, "keep"), "other process");
 
-		const stdout: string[] = [];
-		const stderr: string[] = [];
-		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, "server", "--server-id", serverId, "--session-dir", sessionDir], {
-			cwd: scratch,
-			env: {
-				...process.env,
-				AMAZME_CODING_AGENT_DIR: agentDir,
-				AMAZME_SERVER_DIR: logical,
-				AMAZME_OFFLINE: "1",
-			},
-			stdio: ["ignore", "pipe", "pipe"],
+			const stdout: string[] = [];
+			const stderr: string[] = [];
+			const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, "server", "--server-id", serverId, "--session-dir", sessionDir], {
+				cwd: scratch,
+				env: {
+					...process.env,
+					AMAZME_CODING_AGENT_DIR: agentDir,
+					AMAZME_SERVER_DIR: logical,
+					AMAZME_OFFLINE: "1",
+				},
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+			children.push(child);
+			child.stdout?.setEncoding("utf8");
+			child.stderr?.setEncoding("utf8");
+			child.stdout?.on("data", (chunk: string) => stdout.push(chunk));
+			child.stderr?.on("data", (chunk: string) => stderr.push(chunk));
+
+			const socketPath = await readSocketPath(stdout, stderr, child);
+			expect(dirname(dirname(socketPath))).toBe(join("/tmp", `am-${uid}`));
+			const hashDirectory = dirname(socketPath);
+			expect((await lstat(socketPath)).isSocket()).toBe(true);
+
+			const exited = once(child, "exit");
+			child.kill(sent);
+			// The first handler returns immediately. A second signal in that window
+			// used to be re-sent by signal-exit and kill the process before unlink.
+			await new Promise((resolve) => setTimeout(resolve, 5));
+			if (child.exitCode === null && child.signalCode === null) child.kill(sent);
+			const [code, signal] = (await exited) as [number | null, NodeJS.Signals | null];
+
+			expect(signal).toBeNull();
+			expect(code).toBe(0);
+			await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
+			await expect(lstat(hashDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+			expect((await lstat(sibling)).isDirectory()).toBe(true);
+			expect(await lstat(join(sibling, "keep"))).toBeTruthy();
 		});
-		children.push(child);
-		child.stdout?.setEncoding("utf8");
-		child.stderr?.setEncoding("utf8");
-		child.stdout?.on("data", (chunk: string) => stdout.push(chunk));
-		child.stderr?.on("data", (chunk: string) => stderr.push(chunk));
-
-		const socketPath = await readSocketPath(stdout, stderr, child);
-		expect(dirname(dirname(socketPath))).toBe(join("/tmp", `am-${uid}`));
-		const hashDirectory = dirname(socketPath);
-		expect((await lstat(socketPath)).isSocket()).toBe(true);
-
-		const exited = once(child, "exit");
-		child.kill("SIGTERM");
-		// The first handler returns immediately. A second SIGTERM in that window
-		// used to be re-sent by signal-exit and kill the process before unlink.
-		await new Promise((resolve) => setTimeout(resolve, 5));
-		if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
-		const [code, signal] = (await exited) as [number | null, NodeJS.Signals | null];
-
-		expect(signal).toBeNull();
-		expect(code).toBe(0);
-		await expect(lstat(socketPath)).rejects.toMatchObject({ code: "ENOENT" });
-		await expect(lstat(hashDirectory)).rejects.toMatchObject({ code: "ENOENT" });
-		expect((await lstat(sibling)).isDirectory()).toBe(true);
-		expect(await lstat(join(sibling, "keep"))).toBeTruthy();
-	});
+	}
 });
 
 async function readSocketPath(stdout: readonly string[], stderr: readonly string[], child: ChildProcess): Promise<string> {

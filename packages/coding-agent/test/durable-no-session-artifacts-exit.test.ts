@@ -1,5 +1,5 @@
-import { type ChildProcess, spawn } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join, resolve } from "node:path";
@@ -11,6 +11,9 @@ const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolv
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const sessionsUrl = pathToFileURL(resolve(__dirname, "../src/durable/sessions.ts")).href;
 const ARTIFACTS = "amazme-session-artifacts-";
+const ptyHangup = resolve(__dirname, "fixtures/pty-hangup.py");
+/** The interactive TUI needs a terminal; python3's `pty` module provides one where it exists. */
+const hasPython = spawnSync("python3", ["-c", "import pty"], { stdio: "ignore" }).status === 0;
 
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
@@ -29,6 +32,8 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 	/** The artifact directory's entries when the model got the tool result. */
 	let duringTurn: Promise<string[]>;
 	let markDuringTurn: (entries: string[]) => void;
+	/** Permission bits of each artifact directory at that moment. */
+	let modesDuringTurn: number[];
 	const children: ChildProcess[] = [];
 
 	const chunk = (delta: object, finish: string | null = null) =>
@@ -39,6 +44,11 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 			.filter((name) => name.startsWith(ARTIFACTS))
 			.flatMap((name) => readdirSync(join(temp, name)).map((entry) => `${name}/${entry}`));
 
+	const artifactModes = (): number[] =>
+		readdirSync(temp)
+			.filter((name) => name.startsWith(ARTIFACTS))
+			.map((name) => statSync(join(temp, name)).mode & 0o777);
+
 	beforeEach(async () => {
 		directory = createTempDir("amazme-no-session-exit-");
 		temp = join(directory, "tmp");
@@ -46,6 +56,7 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 		mkdirSync(temp);
 		mkdirSync(profile);
 		answer = true;
+		modesDuringTurn = [];
 		duringTurn = new Promise((resolveEntries) => {
 			markDuringTurn = resolveEntries;
 		});
@@ -73,6 +84,7 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 					response.end("data: [DONE]\n\n");
 					return;
 				}
+				modesDuringTurn = artifactModes();
 				markDuringTurn(artifactEntries());
 				if (!answer) return;
 				response.write(chunk({ role: "assistant", content: "done" }));
@@ -162,9 +174,13 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 		]);
 	}
 
-	/** An artifact landed in the session's own directory, never loose in the temp directory. */
+	/**
+	 * An artifact landed in the session's own directory, never loose in the temp directory, and that
+	 * directory was created owner-only: the shared temp directory must not expose session output.
+	 */
 	function expectArtifactWritten(entries: string[]): void {
 		expect(entries.some((entry) => /\/pi-output-[0-9a-f-]+\.log$/.test(entry)), entries.join("\n")).toBe(true);
+		expect(modesDuringTurn.map((mode) => mode.toString(8))).toEqual(["700"]);
 	}
 
 	function expectNothingLeft(stderr: string): void {
@@ -184,6 +200,9 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 		{ mode: "rpc", signal: "SIGTERM", code: 143 },
 		// Root cause: RPC mode had no SIGINT listener, so the default action killed it before close.
 		{ mode: "rpc", signal: "SIGINT", code: 130 },
+		// A closed terminal window sends SIGHUP.
+		{ mode: "print", signal: "SIGHUP", code: 129 },
+		{ mode: "rpc", signal: "SIGHUP", code: 129 },
 	] as const) {
 		it(`removes it when ${mode} mode exits on ${signal} after writing an artifact`, async () => {
 			answer = false;
@@ -194,6 +213,56 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 			expectNothingLeft(stderr());
 		}, 60_000);
 	}
+
+	it.skipIf(!hasPython)("removes it when the interactive TUI's terminal window closes after writing an artifact", async () => {
+		answer = false;
+		// The TUI owns a real pseudo-terminal. Closing its master side is what closing the window does:
+		// the kernel sends SIGHUP to the TUI, and later writes to the terminal fail.
+		const child = spawn(
+			"python3",
+			[
+				ptyHangup,
+				process.execPath,
+				"--import",
+				sourceResolverUrl,
+				cliPath,
+				"--offline",
+				"--provider",
+				"fixture",
+				"--model",
+				"scripted",
+				"--api-key",
+				"fixture-key",
+				"--no-session",
+				"--no-extensions",
+				"--no-mcp",
+				"run it",
+			],
+			{
+				cwd: directory,
+				env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_OFFLINE: "1", TMPDIR: temp, TERM: "xterm-256color" },
+				stdio: ["pipe", "pipe", "pipe"],
+			},
+		);
+		children.push(child);
+		let printed = "";
+		let errors = "";
+		child.stdout?.setEncoding("utf8");
+		child.stderr?.setEncoding("utf8");
+		child.stdout?.on("data", (text: string) => {
+			printed += text;
+		});
+		child.stderr?.on("data", (text: string) => {
+			errors += text;
+		});
+		const exited = new Promise<Exit>((resolveExit) => child.once("exit", (code, signal) => resolveExit({ code, signal })));
+		expectArtifactWritten(await duringTurn);
+		child.stdin?.write("hangup\n");
+		expect(await within(exited, () => `${printed}\n${errors}`), errors).toEqual({ code: 0, signal: null });
+		// The TUI's own status: a graceful close (exit 0), not the default action of SIGHUP.
+		expect(JSON.parse(printed.trim()), errors).toEqual({ code: 0, signal: null });
+		expectNothingLeft(errors);
+	}, 60_000);
 
 	it("removes it when the process leaves through process.exit without releasing", async () => {
 		// The forced-exit shape: a written artifact, no release, and an immediate process.exit.
