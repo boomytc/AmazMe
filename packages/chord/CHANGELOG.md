@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- `@amazme/chord/sqlite/node`：`openNodeSqliteDatabase` 新增 `preflight` 选项和 `preflightNodeSqliteFile()`，在任何写入（`journal_mode`、迁移、关闭时的 checkpoint）之前只读检查已有文件。没有 `-wal` 时以 `immutable=1` 只读打开；有未 checkpoint 的 `-wal` 时，复制主库和 `-wal` 到私有临时目录再读（`immutable` 会忽略 `-wal`，看不到崩溃前最后的提交），用完即删。原文件、`-wal`、`-shm` 都不会被改动或创建。
+- `@amazme/chord/sqlite`：`checkSqliteSchemaVersion()` 只读检查 schema 版本；版本过新、元数据缺失或无效、迁移步骤失败都改抛 `SqliteSchemaError`（`kind`、`version`、`supportedVersion`），原有消息文字不变，迁移失败的消息为 `SQLite migration to version N failed: …`。
+
 ## [1.3.0] - 2026-10-19
 
 ### Breaking Changes

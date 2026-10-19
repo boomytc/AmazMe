@@ -13,6 +13,7 @@
 ### Fixed
 
 - `NodeExecutionEnv.exec` writes spilled output (`spill`) to `pi-output-*.log` under `artifactDirectory` (owner-only permissions) instead of a fresh `createTempFile` directory in the OS temp directory, which nothing removed; the file is now deleted with the session.
+- `openNodeSqliteStorage` 在开写连接之前先只读预检：库里的 schema 版本比当前支持的新、或文件不是 SQLite 时直接拒绝，此时 `-wal`、`-shm` 和主库都不会被改动或创建。之前先设 `journal_mode = WAL` 再查版本，非 WAL 库的文件头会被改写，崩溃后遗留的 `-wal` 也会在关闭时被合进主库。版本问题改为抛 `SqliteSchemaError`（从 `@amazme/durable/storage/sqlite` 导出），消息文字不变。
 
 ## [1.4.0] - 2026-10-19
 
