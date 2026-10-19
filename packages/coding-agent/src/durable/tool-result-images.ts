@@ -1,5 +1,5 @@
 import type { Context, JsonValue } from "@amazme/chord";
-import { defineExtension, hook, ToolTask } from "@amazme/durable";
+import { defineExtension, hook, retainStructuredOutput, ToolTask } from "@amazme/durable";
 import type { HookApi, ToolExecutionResult, ToolHookCall } from "@amazme/durable";
 import type { SettingsManager } from "../core/settings-manager.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
@@ -36,12 +36,13 @@ async function normalizedToolResult(
 		resizeOptions: model?.inputLimits?.images?.resize,
 	});
 	if (normalized === output) return;
-	// Objects and arrays need a new container so a rewritten image is not treated as a stale structured
-	// result. Numbers, strings, booleans, and null are returned as the same value: that value is the result.
+	// The image bytes changed. Keep the tool's structured value explicitly: a copied object is a new
+	// container, and retainStructuredOutput also keeps a number, string, boolean, or null.
 	const structuredOutput = carriedStructuredOutput(result.structuredOutput);
-	return structuredOutput === undefined
+	const rewritten = structuredOutput === undefined
 		? { ...result, output: normalized }
 		: { ...result, output: normalized, structuredOutput };
+	return retainStructuredOutput(rewritten);
 }
 
 /** New object or array identity for the same fields. Primitives and null stay the same value. */

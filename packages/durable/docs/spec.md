@@ -3256,8 +3256,11 @@ Programs that call a tool get its `structuredOutput`. A tool that declares
 on an error result, where it may omit it; the Harness validates it after the
 `afterTool` chain, like arguments. If a hook replaces `output` while leaving the
 original `structuredOutput` value unchanged, AmazMe drops that payload before
-validation; a schema tool must supply a safe replacement if programs still need
-a structured value. A tool without a schema must not return one;
+validation, including a number, string, boolean, or null; a schema tool must
+supply a safe replacement if programs still need a structured value.
+`retainStructuredOutput(result)` keeps the current value on purpose, including
+a primitive beside rewritten image bytes. A later hook that replaces `output`
+without that mark drops the value again. A tool without a schema must not return one;
 programs get its bounded output, the content the model sees without the
 rendered diagnostics, for a success and for an error alike: one text item as
 its string, one image as its `ImageContent`, no items as `""`, and anything

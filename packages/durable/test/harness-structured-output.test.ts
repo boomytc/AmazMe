@@ -18,6 +18,7 @@ import {
 	type NestedToolExecutionResult,
 	type ToolExecutionResult,
 	type ToolRegistration,
+	retainStructuredOutput,
 	ToolResultEntry,
 	ToolTask,
 	watchEvents,
@@ -369,10 +370,10 @@ describe("structured output", () => {
 		expect(codes(other!)).toEqual(["invalid_structured_output"]);
 	});
 
-	it("keeps primitive structured output when afterTool rewrites the model output", async () => {
+	it("drops an unchanged primitive when afterTool rewrites the output", async () => {
 		const cases: readonly [string, JsonValue][] = [
 			["count", 7],
-			["label", "kept"],
+			["label", "secret-label"],
 			["flag", false],
 			["empty", null],
 		];
@@ -394,7 +395,7 @@ describe("structured output", () => {
 		}
 		addHooks(setup.registry, ToolTask, {
 			afterTool: (hookCall, result) =>
-				hookCall.name === "probe" ? result : { ...result, output: [{ type: "text", text: "rewritten" }] },
+				hookCall.name === "probe" ? result : { ...result, output: [{ type: "text", text: "[redacted]" }] },
 		});
 		const received = new Map<string, NestedToolExecutionResult>();
 		addTool(
@@ -413,10 +414,12 @@ describe("structured output", () => {
 		const { harness, root } = await openChat(new MemoryStorage(), setup);
 		await (await root.submit({ type: "input", content: "go" }, context)).wait(context);
 		await harness.close(context);
-		expect(received.get("count")).toMatchObject({ isError: false, structuredOutput: 7 });
-		expect(received.get("label")).toMatchObject({ isError: false, structuredOutput: "kept" });
-		expect(received.get("flag")).toMatchObject({ isError: false, structuredOutput: false });
-		expect(received.get("empty")).toMatchObject({ isError: false, structuredOutput: null });
+		for (const [name] of cases) {
+			const result = received.get(name);
+			expect(result?.isError).toBe(true);
+			expect(result).not.toHaveProperty("structuredOutput");
+		}
+		expect(JSON.stringify(received.get("label"))).not.toContain("secret-label");
 
 		const modelSetup = chatSetup();
 		addTool(
@@ -428,11 +431,76 @@ describe("structured output", () => {
 			),
 		);
 		addHooks(modelSetup.registry, ToolTask, {
-			afterTool: (_call, result) => ({ ...result, output: [{ type: "text", text: "rewritten" }] }),
+			afterTool: (_call, result) => ({ ...result, output: [{ type: "text", text: "[redacted]" }] }),
+		});
+		const stored = await direct(modelSetup, "count");
+		expect(stored.isError).toBe(false);
+		expect(modelSetup.reports.map((error) => (error as Error).message)).toEqual([
+			"Tool count returned no structuredOutput",
+		]);
+	});
+
+	it("keeps a primitive when afterTool retains the structured value", async () => {
+		const setup = chatSetup();
+		addTool(
+			setup.registry,
+			returning(
+				"count",
+				{ output: [{ type: "text", text: "secret" }], structuredOutput: 7 },
+				{ structuredOutputSchema: Type.Number() },
+			),
+		);
+		addHooks(setup.registry, ToolTask, {
+			afterTool: (hookCall, result) =>
+				hookCall.name === "probe"
+					? result
+					: retainStructuredOutput({ ...result, output: [{ type: "text", text: "rewritten" }] }),
+		});
+		const received = await nested(setup, "count");
+		expect(received).toMatchObject({ isError: false, structuredOutput: 7 });
+
+		const modelSetup = chatSetup();
+		addTool(
+			modelSetup.registry,
+			returning(
+				"count",
+				{ output: [{ type: "text", text: "secret" }], structuredOutput: 7 },
+				{ structuredOutputSchema: Type.Number() },
+			),
+		);
+		addHooks(modelSetup.registry, ToolTask, {
+			afterTool: (_call, result) =>
+				retainStructuredOutput({ ...result, output: [{ type: "text", text: "rewritten" }] }),
 		});
 		const stored = await direct(modelSetup, "count");
 		expect(stored.isError).toBe(false);
 		expect(modelSetup.reports).toEqual([]);
+	});
+
+	it("drops an explicitly retained value when a later hook rewrites the output without retaining it", async () => {
+		const setup = chatSetup();
+		addTool(
+			setup.registry,
+			returning(
+				"secret",
+				{ output: [{ type: "text", text: "secret-label" }], structuredOutput: "secret-label" },
+				{ structuredOutputSchema: Type.String() },
+			),
+		);
+		addHooks(setup.registry, ToolTask, {
+			afterTool: (hookCall, result) => hookCall.name === "secret"
+				? retainStructuredOutput({ ...result, output: [{ type: "text", text: "converted" }] })
+				: undefined,
+		});
+		addHooks(setup.registry, ToolTask, {
+			afterTool: (hookCall, result) => hookCall.name === "secret"
+				? { ...result, output: [{ type: "text", text: "[redacted]" }] }
+				: undefined,
+		});
+		const received = await nested(setup, "secret");
+		expect(received.isError).toBe(true);
+		expect(received).not.toHaveProperty("structuredOutput");
+		expect(JSON.stringify(received)).not.toContain("secret-label");
 	});
 
 	it("gives callers of bash its retained output and exit code, also for a nonzero exit", async () => {

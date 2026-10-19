@@ -758,15 +758,14 @@ async function finalResult(
 	};
 	await runtime.hooks.each("afterTool", async (hook) => {
 		const changed = (await hook(call, final, runtime, context)) ?? final;
-		// A rewritten model output that still carries the same object or array has not rebuilt structured
-		// output, so that container is stale. A number, string, boolean, or null has no separate identity:
-		// the value the hook returned is the value, and dropping it makes a valid result fail the schema.
+		// A rewritten model output that still carries the same structured value has not rebuilt it.
+		// Objects are the same container; primitives compare by value, so a string left in place is the
+		// original secret. retainStructuredOutput is the explicit keep, used when the hook still means it.
 		const structured = final.structuredOutput;
-		const staleContainer = changed.output !== final.output
+		const staleValue = changed.output !== final.output
 			&& changed.structuredOutput === structured
-			&& typeof structured === "object"
-			&& structured !== null;
-		if (staleContainer) {
+			&& !structuredOutputRetained(changed);
+		if (staleValue) {
 			const { structuredOutput: _discarded, ...redacted } = changed;
 			final = redacted;
 		} else final = changed;
@@ -815,6 +814,22 @@ async function finalResult(
 		if (text !== "") harness.push(toolDiagnostic("tool_error", text));
 	}
 	return { ...final, output: bounded.content, diagnostics: [...(final.diagnostics ?? []), ...harness] };
+}
+
+const RETAIN_STRUCTURED_OUTPUT = Symbol("amazme.retainStructuredOutput");
+
+/**
+ * Keep `structuredOutput` on an `afterTool` result whose `output` changed.
+ * A spread that only replaces `output` does not keep this mark, so a later rewrite drops the value again.
+ */
+export function retainStructuredOutput<T extends ToolExecutionResult>(result: T): T {
+	const retained: T = { ...result };
+	Object.defineProperty(retained, RETAIN_STRUCTURED_OUTPUT, { value: true });
+	return retained;
+}
+
+function structuredOutputRetained(result: ToolExecutionResult): boolean {
+	return (result as { [RETAIN_STRUCTURED_OUTPUT]?: unknown })[RETAIN_STRUCTURED_OUTPUT] === true;
 }
 
 const structuredValidators = new WeakMap<object, ReturnType<typeof Compile>>();

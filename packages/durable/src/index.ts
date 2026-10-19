@@ -71,6 +71,7 @@ export type { TaskGraph, TaskGraphNode, TaskGraphState, TaskGraphWatch } from ".
 export {
 	NestedCallDoc,
 	type NestedCallState,
+	retainStructuredOutput,
 	ToolTask,
 	type ToolTaskCheckpoint,
 	type ToolTaskInput,
