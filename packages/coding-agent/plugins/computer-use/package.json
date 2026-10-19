@@ -1,0 +1,20 @@
+{
+	"name": "@amazme/computer-use",
+	"version": "1.2.2",
+	"private": true,
+	"type": "module",
+	"peerDependencies": {
+		"@amazme/ai": "^1.2.2",
+		"@amazme/chord": "^1.2.2",
+		"@amazme/coding-agent": "^1.2.2",
+		"@amazme/durable": "^1.2.2",
+		"@amazme/mcp": "^1.2.2",
+		"@amazme/protocol": "^1.2.2",
+		"@silvia-odwyer/photon-node": "0.3.4"
+	},
+	"chord": {
+		"facets": {
+			"session": "src/session.ts"
+		}
+	}
+}

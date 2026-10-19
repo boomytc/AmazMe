@@ -103,6 +103,8 @@ export default activationFacet("example/commands", [SlashCommands, AgentControll
 
 [web](../plugins/web/README.md) 提供直连 DeepSeek 的 `web_search`、`web_fetch` 和 `/web`。默认不加载且 API 关闭；设置按对话保存，凭据来自现有 DeepSeek 配置。调用传递取消上下文、限制响应大小，重开后不自动重复已中断的付费请求。
 
+[computer-use](../plugins/computer-use/README.md) 组合外部 `cua-driver` 和现有 TypeSafe 分类器，提供 `cu_observe`、`cu_locate`、`cu_act`、`cu_ground_and_act`。默认不加载且桌面控制关闭，由 `/computer-use` 修改对话策略；工具串行执行，原生动作与分类请求均不自动重放。二进制独立按需准备，macOS 可使用共享 `.app` 宿主及私有 socket，插件重载或会话关闭时释放 MCP 会话和子进程。
+
 直接加载源码的原生入口通过 `/plugins` 和模型提示提供已选源码、当前安装中的 API 类型位置与本指南。宿主会话的模型提示使用同一 API 与指南，并列出该会话实际选中的 manifest；构建文件 `plugin.json` 按角色保存 ESM 代码，代码带内联 source map，可据其中的 `sources` 与 `sourceRoot` 定位原文件。修改原源码，不修改生成的 bundle；没有源码映射的产物需使用其配置的包源码位置。
 
 修改后，在任务结束或取消时运行 `/reload`，会重新构建并加载候选版本，不要求先手工构建。修改包声明或来源选择后需重启，重载沿用本次启动选中的来源。没有选中插件时，不注册插件开发提示段或插件贡献的命令。
