@@ -3,16 +3,17 @@ import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, realpath, writeFile } from "node:fs/promises";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Check } from "typebox/value";
 import { describe, expect, test } from "vitest";
 import { readDurableSessionCwd } from "../src/durable/session-cwd.ts";
-import { resolveExplicitSession, selectSession } from "../src/durable/sessions.ts";
+import { lockSession, resolveExplicitSession, selectSession } from "../src/durable/sessions.ts";
 import { createSession as createCatalogSession, listSessions } from "../src/host/session-catalog.ts";
 import {
 	classifySessionDatabaseError,
 	findSessionOpenError,
+	lockSessionDatabase,
 	openSessionStorage,
 	SessionOpenError,
 } from "../src/durable/session-database.ts";
@@ -23,6 +24,7 @@ import {
 	BROKEN_SESSION_DATABASES,
 	snapshotDirectory,
 	writeBrokenSessionDatabase,
+	writeCrashedCurrentSessionDatabase,
 	writeCurrentSessionDatabase,
 } from "./session-database-fixtures.ts";
 import { createTempDir } from "./temp-dir.ts";
@@ -30,6 +32,16 @@ import { createTempDir } from "./temp-dir.ts";
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
 const cliPath = resolve(__dirname, "../src/cli.ts");
 const SESSION_NAME = "1760000000000-00000000-0000-4000-8000-000000000001";
+
+/** Open `path` the way hosts do: under its session directory's lock, released again afterwards. */
+async function openLocked(path: string) {
+	const lease = await lockSessionDatabase(dirname(path), path, lockSession);
+	try {
+		return await openSessionStorage(lease);
+	} finally {
+		await lease.release();
+	}
+}
 
 describe("opening a session database that cannot be used", () => {
 	test.each(BROKEN_SESSION_DATABASES)("$fixture is refused as $kind without touching any file", async ({ fixture, kind }) => {
@@ -40,7 +52,7 @@ describe("opening a session database that cannot be used", () => {
 			fixture === "wal-newer-schema" ? ["session.sqlite", "session.sqlite-wal"] : ["session.sqlite"],
 		);
 
-		const error = await openSessionStorage(path).then(
+		const error = await openLocked(path).then(
 			() => undefined,
 			(caught: unknown) => caught,
 		);
@@ -73,8 +85,8 @@ describe("opening a session database that cannot be used", () => {
 			await writeFile(join(directory, ".preflight-AbC123", "database.sqlite"), "copy left by SIGKILL");
 			await writeFile(join(directory, ".preflight-AbC123", "database.sqlite-wal"), "copy left by SIGKILL");
 
-			if (fixture === "current") await (await openSessionStorage(path)).close(BACKGROUND_CONTEXT);
-			else await expect(openSessionStorage(path)).rejects.toMatchObject({ kind: "newer-schema" });
+			if (fixture === "current") await (await openLocked(path)).close(BACKGROUND_CONTEXT);
+			else await expect(openLocked(path)).rejects.toMatchObject({ kind: "newer-schema" });
 			// The leftover is gone, nothing new appeared, and session.sqlite, -wal, -shm are byte-identical.
 			expect(await snapshotDirectory(directory)).toEqual(database);
 		},
@@ -172,6 +184,46 @@ describe("opening a session database that cannot be used", () => {
 		const corrupt = Object.assign(new Error("database disk image is malformed"), { code: "ERR_SQLITE_ERROR", errcode: 11 });
 		expect(classifySessionDatabaseError(corrupt, "/s/session.sqlite")?.kind).toBe("corrupt");
 	});
+});
+
+describe.skipIf(process.platform === "win32")("two processes opening one session", () => {
+	const openerPath = resolve(import.meta.dirname, "fixtures/open-session-locked.ts");
+
+	async function opener(directory: string, mode: "open" | "cwd", holdMs: number) {
+		const child = spawn(process.execPath, ["--import", sourceResolverUrl, openerPath, directory, mode, String(holdMs)], {
+			env: { ...process.env, NODE_NO_WARNINGS: "1" },
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		let stdout = "";
+		let stderr = "";
+		child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
+		child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+		const [code] = (await once(child, "close")) as [number | null];
+		expect({ code, stderr }).toEqual({ code: 0, stderr: "" });
+		return JSON.parse(stdout) as { result: string; message?: string };
+	}
+
+	test("with a non-empty -wal, the preflight copy of one is never deleted by the other", async () => {
+		const scratch = await realpath(createTempDir("amazme-session-db-concurrent-"));
+		for (let round = 0; round < 6; round++) {
+			const directory = join(scratch, `session-${round}`);
+			const path = await writeCrashedCurrentSessionDatabase(directory);
+			// Both openers start together; the copy branch runs because the -wal holds an uncheckpointed commit.
+			const results = await Promise.all([
+				opener(directory, "open", 300),
+				opener(directory, round % 2 === 0 ? "open" : "cwd", 300),
+			]);
+			for (const result of results) {
+				// Existing lock semantics: the loser gets "already open"; never a SessionOpenError or a missing file.
+				expect(["opened", "locked"], JSON.stringify(result)).toContain(result.result);
+			}
+			expect(results.some((result) => result.result === "opened")).toBe(true);
+			const entries = await readdir(directory);
+			expect(entries.filter((entry) => entry.startsWith(".preflight-"))).toEqual([]);
+			expect(entries).toContain("session.sqlite");
+			await (await openLocked(path)).close(BACKGROUND_CONTEXT);
+		}
+	}, 120_000);
 });
 
 describe.skipIf(process.platform === "win32")("CLI with a session database that cannot be used", () => {

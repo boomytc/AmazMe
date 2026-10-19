@@ -1,12 +1,12 @@
 import { createModels } from "@amazme/ai/models";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createRegistry, Harness } from "@amazme/durable";
-import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expandTildePath } from "../config.ts";
 import { sessionEntriesToDurableDrafts, type SessionInteropReport } from "../core/session-interop.ts";
 import { parseSessionEntries, type SessionEntry, type SessionHeader } from "../core/jsonl-transcript.ts";
+import { openSessionStorage } from "./session-database.ts";
 import { selectSession } from "./sessions.ts";
 
 const context = BACKGROUND_CONTEXT;
@@ -68,9 +68,9 @@ export async function importSessionFile(file: string, options: ImportSessionOpti
 	const location = await selectSession(cwd, false, { sessionDir: options.sessionDir });
 	let harness: Harness | undefined;
 	try {
-		if (location.database === undefined) throw new Error("Import requires persistent storage");
+		if (location.lease === undefined) throw new Error("Import requires persistent storage");
 		harness = await Harness.open(
-			await openNodeSqliteStorage(location.database),
+			await openSessionStorage(location.lease),
 			{ models: createModels(), registry: createRegistry() },
 			context,
 		);

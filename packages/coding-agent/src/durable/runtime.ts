@@ -545,9 +545,9 @@ export async function openDurable(
 		});
 		mcp = activeMcp;
 		harness = await Harness.open(
-			location.database === undefined
+			location.lease === undefined
 				? new MemoryStorage()
-				: await openSessionStorage(location.database),
+				: await openSessionStorage(location.lease),
 			{
 				models: modelRuntime,
 				registry,

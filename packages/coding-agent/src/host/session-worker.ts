@@ -56,7 +56,9 @@ import {
 } from "../durable/mcp.ts";
 import {
 	findSessionOpenError,
+	lockSessionDatabase,
 	openSessionStorage,
+	type SessionLease,
 	SessionOpenErrorDataSchema,
 } from "../durable/session-database.ts";
 import { Subagent } from "../durable/subagent.ts";
@@ -646,11 +648,11 @@ async function closeResources(resources: {
 }
 
 /**
- * Open the Session's Harness over `databasePath` and return it with its root conversation. Called while the worker
+ * Open the Session's Harness over the database `lease` holds and return it with its root conversation. Called while the worker
  * holds the Session lock; on failure it closes whatever it opened.
  */
 export type CreateSessionWorkerHarness = (
-	databasePath: string,
+	lease: SessionLease,
 	options: SessionWorkerOptions,
 ) => Promise<SessionWorkerRuntime>;
 
@@ -668,23 +670,26 @@ async function run(
 	).toString();
 	failureControl = control;
 	const pluginManifestPaths = options.pluginManifestPaths;
-	const releaseOwnership = await lockfile.lock(metadata.path, {
-		realpath: true,
-		stale: 2_000,
-		update: 1_000,
-		retries: {
-			retries: 320,
-			factor: 1,
-			minTimeout: 25,
-			maxTimeout: 25,
-			maxRetryTime: 8_000,
-		},
-	});
+	const lease = await lockSessionDatabase(metadata.path, sessionStoragePath(metadata), (path) =>
+		lockfile.lock(path, {
+			realpath: true,
+			stale: 2_000,
+			update: 1_000,
+			retries: {
+				retries: 320,
+				factor: 1,
+				minTimeout: 25,
+				maxTimeout: 25,
+				maxRetryTime: 8_000,
+			},
+		}),
+	);
+	const releaseOwnership = lease.release;
 	let runtime: SessionWorkerRuntime | undefined;
 	let services: SessionWorkerServices | undefined;
 	let taskGraph: AttachedReplicatedState<TaskGraph> | undefined;
 	try {
-		runtime = await createHarness(sessionStoragePath(metadata), options);
+		runtime = await createHarness(lease, options);
 		if (
 			(await readSession(options.sessionDir, metadata.id))?.archivedAt !==
 			undefined
@@ -1057,7 +1062,7 @@ export async function runSessionWorkerWithHarness(
 }
 
 async function createCodingAgentHarness(
-	databasePath: string,
+	lease: SessionLease,
 	options: SessionWorkerOptions,
 ): Promise<SessionWorkerRuntime> {
 	const { cwd } = options.metadata;
@@ -1167,7 +1172,7 @@ async function createCodingAgentHarness(
 		});
 		mcp = activeMcp;
 		harness = await Harness.open(
-			await openSessionStorage(databasePath),
+			await openSessionStorage(lease),
 			{
 				models: modelRuntime,
 				registry,

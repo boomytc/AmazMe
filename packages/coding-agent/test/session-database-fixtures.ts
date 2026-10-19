@@ -38,6 +38,30 @@ export async function writeCurrentSessionDatabase(directory: string): Promise<st
 }
 
 /**
+ * A current-version session database left by a crash: `<directory>/session.sqlite` plus a non-empty, uncheckpointed
+ * `-wal`, so opening it goes through the preflight's private-copy branch.
+ */
+export async function writeCrashedCurrentSessionDatabase(directory: string): Promise<string> {
+	await mkdir(directory, { recursive: true });
+	const path = join(directory, "session.sqlite");
+	const scratch = join(directory, ".fixture");
+	await mkdir(scratch);
+	const source = join(scratch, "session.sqlite");
+	await createCurrentDatabase(source);
+	const writer = new DatabaseSync(source);
+	try {
+		writer.exec("PRAGMA wal_autocheckpoint = 0");
+		writer.exec("CREATE TABLE crash_probe (value TEXT); INSERT INTO crash_probe VALUES ('uncheckpointed')");
+		await copyFile(source, path);
+		await copyFile(`${source}-wal`, `${path}-wal`);
+	} finally {
+		writer.close();
+		await rm(scratch, { recursive: true, force: true });
+	}
+	return path;
+}
+
+/**
  * Write `fixture` as `<directory>/session.sqlite` (plus `-wal` for the crash case). The directory is created; nothing
  * else is written into it.
  */
