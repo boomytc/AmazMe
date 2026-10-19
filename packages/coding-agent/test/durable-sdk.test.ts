@@ -95,4 +95,36 @@ describe("durable SDK facade", () => {
 
 		await expect(session.prompt("fail")).rejects.toThrow();
 	});
+
+	it("releases the session lock when the initial prompt fails", async () => {
+		const sessionDir = join(directory, "sessions");
+		faux.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "fixture failure" })]);
+		await expect(
+			createDurableSession({
+				cwd,
+				sessionDir,
+				modelRuntime: runtime,
+				settingsManager: settings,
+				noExtensions: true,
+				noMcp: true,
+				initialMessage: "fail first",
+			}),
+		).rejects.toThrow(/No answer|fixture failure/);
+
+		faux.setResponses([fauxAssistantMessage("retried")]);
+		const session = await createDurableSession({
+			cwd,
+			sessionDir,
+			continueSession: true,
+			modelRuntime: runtime,
+			settingsManager: settings,
+			noExtensions: true,
+			noMcp: true,
+			initialMessage: "try again",
+		});
+		sessions.push(session);
+		const answered = session.messages().some((message) =>
+			message.role === "assistant" && JSON.stringify(message.content).includes("retried"));
+		expect(answered).toBe(true);
+	});
 });

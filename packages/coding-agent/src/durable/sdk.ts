@@ -119,7 +119,13 @@ export async function createDurableSession(options: DurableSessionOptions = {}):
 		dispose,
 	};
 	if (options.initialMessage !== undefined || (options.initialImages?.length ?? 0) > 0) {
-		await run(options.initialMessage ?? "", "steer", { images: options.initialImages });
+		try {
+			await run(options.initialMessage ?? "", "steer", { images: options.initialImages });
+		} catch (error) {
+			// The caller never receives the session, so a failed first prompt must release the lock.
+			await dispose();
+			throw error;
+		}
 	}
 	return session;
 }
