@@ -27,7 +27,7 @@ export type PowerShellToolDetails = BashToolDetails;
 export type PowerShellToolInput = BashToolInput;
 
 export interface PowerShellToolOptions
-	extends Pick<BashToolOptions, "operations" | "exposeSessionEnvironment" | "spawnHook"> {}
+	extends Pick<BashToolOptions, "operations" | "exposeSessionEnvironment" | "spawnHook" | "artifactDirectory"> {}
 
 export function createLocalPowerShellOperations(): PowerShellOperations {
 	const operations = createLocalShellOperations("PowerShell", getPowerShellConfig);
@@ -56,7 +56,10 @@ export function createPowerShellToolDefinition(
 	});
 }
 
-export function createPowerShellTool(cwd: string, options?: PowerShellToolOptions): ReturnType<typeof createBashTool> {
+export function createPowerShellTool(
+	cwd: string,
+	options: PowerShellToolOptions & { artifactDirectory: string },
+): ReturnType<typeof createBashTool> {
 	const definition = createPowerShellToolDefinition(cwd, options);
 	const tool = wrapToolDefinition(definition);
 	Object.assign(tool, {

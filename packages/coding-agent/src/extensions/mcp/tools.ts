@@ -12,6 +12,7 @@ import {
 	createMcpToolMetadata,
 	type McpToolCaller,
 	type McpToolDetails,
+	outputFileSaver,
 } from "../../core/mcp/results.ts";
 export {
 	convertMcpResult,
@@ -19,8 +20,8 @@ export {
 	createMcpToolName,
 	limitMcpContent,
 	MCP_OUTPUT_MAX_BYTES,
+	outputFileSaver,
 	READ_MCP_RESOURCE_TOOL,
-	saveToTempFile,
 	toModelContent,
 	toToolExposure,
 } from "../../core/mcp/results.ts";
@@ -44,7 +45,7 @@ export function createMcpToolDefinition(options: {
 	return {
 		...metadata,
 		...createMcpToolRenderers(label),
-		async execute(_toolCallId, params, signal, onUpdate) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const client = await options.getClient();
 			const result = await client.callTool(tool.name, (params ?? {}) as Record<string, unknown>, {
 				signal,
@@ -55,7 +56,10 @@ export function createMcpToolDefinition(options: {
 					onUpdate?.({ content: [{ type: "text", text }], details: { server, tool: tool.name } });
 				},
 			});
-			return convertMcpResult(server, tool.name, result, { readableResources: options.readableResources?.() });
+			return convertMcpResult(server, tool.name, result, {
+				saveOutput: outputFileSaver(ctx.artifactDirectory),
+				readableResources: options.readableResources?.(),
+			});
 		},
 	};
 }

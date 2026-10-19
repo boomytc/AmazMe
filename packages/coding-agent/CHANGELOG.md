@@ -6,6 +6,7 @@
 
 - Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp path created lazily on first write and cleaned up on release. `executeCodemode` and `ExtensionContext.artifactDirectory` require a directory by type (no `pi-codemode-*` OS-temp fallback); the built-in codemode extension reads it from the session context.
 - 宿主 `server` 和 `web` 改为装好 SIGINT/SIGTERM 处理之后才打印 `Socket:` 等就绪行；之前看到就绪行立刻发信号，进程可能被默认动作直接杀掉，来不及清理 socket 和会话锁。
+- 截断的工具输出全文、MCP 保存的资源和长输出文件不再写进系统临时目录，统一放到会话的 `artifacts/` 下，删除会话时一起删掉；`writeOutputFile`、`createOutputFileStream`、`executeBashWithOperations`、`convertMcpResult` 和独立创建的 bash/powershell 工具在类型上必须传会话产物目录。`--no-session` 的临时产物目录除了在关闭会话时删除，进程以任何方式退出（包括强制退出）时也会同步删除；RPC 模式补上了 SIGINT 处理，之前按 Ctrl-C 会被默认动作直接杀掉，留下 `amazme-session-artifacts-*`。
 
 ## [1.4.0] - 2026-10-19
 

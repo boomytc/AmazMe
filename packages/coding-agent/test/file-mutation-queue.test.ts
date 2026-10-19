@@ -119,7 +119,7 @@ describe("withFileMutationQueue", () => {
 describe("built-in edit and write tools", () => {
 	it("preserves both parallel edits after one read", async () => {
 		const dir = await openTempWorkspace();
-		const tools = createAllTools(dir);
+		const tools = createAllTools(dir, { artifactDirectory: dir });
 		await writeFile(join(dir, "file.txt"), "alpha\nbeta\ngamma\n");
 		await tools.read.execute("read", { path: "file.txt" });
 		await Promise.all([
@@ -138,7 +138,7 @@ describe("built-in edit and write tools", () => {
 	it("shares the queue and refreshed observation between edit and write", async () => {
 		const dir = await openTempWorkspace();
 		const files = new NodeExecutionEnv({ cwd: dir, artifactDirectory: dir });
-		const tools = createAllTools(dir, { fileSystem: files });
+		const tools = createAllTools(dir, { fileSystem: files, artifactDirectory: dir });
 		await writeFile(join(dir, "file.txt"), "original\n");
 		await tools.read.execute("read", { path: "file.txt" });
 		const started = createDeferred();
@@ -165,7 +165,7 @@ describe("built-in edit and write tools", () => {
 		it(`keeps the ${kind} barrier until cancelled IO actually publishes, then reports completion`, async () => {
 			const dir = await openTempWorkspace();
 			const files = new NodeExecutionEnv({ cwd: dir, artifactDirectory: dir });
-			const tools = createAllTools(dir, { fileSystem: files });
+			const tools = createAllTools(dir, { fileSystem: files, artifactDirectory: dir });
 			await writeFile(join(dir, "file.txt"), "alpha\nbeta\n");
 			await tools.read.execute("read", { path: "file.txt" });
 			const started = createDeferred();

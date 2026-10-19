@@ -18,6 +18,12 @@ import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.ts";
 // ============================================================================
 
 export interface BashExecutorOptions {
+	/**
+	 * Session artifact directory (`ExecutionEnv.artifactDirectory`) for the full output of a command
+	 * whose output exceeds the truncation threshold. `null` writes no file: the caller keeps only the
+	 * tail (`fullOutputPath` stays unset). Required, so no caller falls back to the OS temp directory.
+	 */
+	artifactDirectory: string | null;
 	/** Callback for streaming output chunks (already sanitized) */
 	onChunk?: (chunk: string) => void;
 	/** AbortSignal for cancellation */
@@ -35,7 +41,7 @@ export interface BashResult {
 	backgrounded?: boolean;
 	/** Whether the output was truncated */
 	truncated: boolean;
-	/** Path to temp file containing full output (if output exceeded truncation threshold) */
+	/** File under the session artifact directory with the full output (if output exceeded the truncation threshold) */
 	fullOutputPath?: string;
 }
 
@@ -51,7 +57,7 @@ export async function executeBashWithOperations(
 	command: string,
 	cwd: string,
 	operations: BashOperations,
-	options?: BashExecutorOptions,
+	options: BashExecutorOptions,
 ): Promise<BashResult> {
 	const outputChunks: string[] = [];
 	let outputBytes = 0;
@@ -62,10 +68,10 @@ export async function executeBashWithOperations(
 	let totalBytes = 0;
 
 	const ensureTempFile = () => {
-		if (tempFilePath) {
+		if (tempFilePath || options.artifactDirectory === null) {
 			return;
 		}
-		({ path: tempFilePath, stream: tempFileStream } = createOutputFileStream("pi-bash", ".log"));
+		({ path: tempFilePath, stream: tempFileStream } = createOutputFileStream(options.artifactDirectory, "pi-bash", ".log"));
 		for (const chunk of outputChunks) {
 			tempFileStream.write(chunk);
 		}
@@ -100,7 +106,7 @@ export async function executeBashWithOperations(
 		}
 
 		// Stream to callback
-		if (options?.onChunk) {
+		if (options.onChunk) {
 			options.onChunk(text);
 		}
 	};
@@ -122,7 +128,7 @@ export async function executeBashWithOperations(
 	try {
 		const result = await operations.exec(command, cwd, {
 			onData,
-			signal: options?.signal,
+			signal: options.signal,
 		});
 		if (result.backgrounded) {
 			flushOutput();
@@ -137,7 +143,7 @@ export async function executeBashWithOperations(
 		exitCode = result.exitCode;
 	} catch (err) {
 		// An aborted command still returns the output it produced so far
-		if (!options?.signal?.aborted) {
+		if (!options.signal?.aborted) {
 			tempFileStream?.end();
 			throw err;
 		}
@@ -150,7 +156,7 @@ export async function executeBashWithOperations(
 		ensureTempFile();
 	}
 	tempFileStream?.end();
-	const cancelled = options?.signal?.aborted ?? false;
+	const cancelled = options.signal?.aborted ?? false;
 
 	return {
 		output: truncationResult.truncated ? truncationResult.content : fullOutput,
