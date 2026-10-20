@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Detect Rex as supporting true color and OSC 8 hyperlinks without enabling inline image protocols.
+
 ## [1.4.0] - 2026-10-19
 
 ### Breaking Changes

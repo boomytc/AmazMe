@@ -330,6 +330,30 @@ describe("detectCapabilities", () => {
 		});
 	});
 
+	it("enables hyperlinks without images for Rex", () => {
+		withEnv({ TERM_PROGRAM: "rex", TERM: "xterm-256color", KITTY_WINDOW_ID: "1" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+			assert.strictEqual(caps.images, null);
+			assert.strictEqual(caps.trueColor, true);
+		});
+		withEnv({ TERM_PROGRAM: "rex", AMAZME_HYPERLINKS: "0" }, () => {
+			assert.strictEqual(detectCapabilities().hyperlinks, false);
+		});
+	});
+
+	it("keeps tmux and screen restrictions ahead of Rex detection", () => {
+		withEnv({ TERM_PROGRAM: "rex", TMUX: "/tmp/tmux-test/default,1234,0" }, () => {
+			assert.strictEqual(detectCapabilities(() => false).hyperlinks, false);
+			assert.strictEqual(detectCapabilities(() => true).hyperlinks, true);
+			assert.strictEqual(detectCapabilities(() => true).images, null);
+		});
+		withEnv({ TERM_PROGRAM: "rex", TERM: "screen-256color" }, () => {
+			assert.strictEqual(detectCapabilities().hyperlinks, false);
+			assert.strictEqual(detectCapabilities().images, null);
+		});
+	});
+
 	it("enables hyperlinks for Ghostty", () => {
 		withEnv({ TERM_PROGRAM: "ghostty" }, () => {
 			const caps = detectCapabilities();
