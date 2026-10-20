@@ -30,11 +30,23 @@ export function keyFileProblem(text) {
 	if (!/^-----BEGIN PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PRIVATE KEY-----\s*$/.test(text.trim())) {
 		return "must contain the original unencrypted PKCS#8 .p8 text";
 	}
+	let key;
 	try {
-		createPrivateKey({ key: text, format: "pem", type: "pkcs8" });
+		key = createPrivateKey({ key: text, format: "pem", type: "pkcs8" });
 	} catch {
 		return "does not contain a readable PKCS#8 private key";
 	}
+	if (key.asymmetricKeyType !== "ec" || key.asymmetricKeyDetails?.namedCurve !== "prime256v1") return "must be an App Store Connect EC P-256 key";
+	return undefined;
+}
+
+/** notarytool rejects a non-UUID issuer with a usage error (exit 64); report only the shape, never the value. */
+export function credentialProblem(keyId, issuer) {
+	if (keyId.trim() !== keyId) return "ASC_KEY_ID has leading or trailing whitespace";
+	if (!/^[A-Za-z0-9]{3,}$/.test(keyId)) return "ASC_KEY_ID must be the alphanumeric App Store Connect Key ID";
+	if (issuer.trim() !== issuer) return "ASC_ISSUER_ID has leading or trailing whitespace";
+	if (/^[A-Za-z0-9]{10}$/.test(issuer)) return "ASC_ISSUER_ID looks like a Key ID or Team ID; it must be the Issuer ID UUID";
+	if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(issuer)) return "ASC_ISSUER_ID must be the Issuer ID in UUID format";
 	return undefined;
 }
 
@@ -74,6 +86,10 @@ export function invalidLogDiagnostics(output) {
 
 /** Classify output without copying arbitrary tool text, credentials, paths, or response bodies. */
 export function submissionFailureMessage(output, parsed) {
+	const option = /(?:is invalid for|Missing expected argument|Unknown option) '(--(?:issuer|key-id|key|output-format|wait))\b/.exec(output)?.[1];
+	if (option !== undefined) return `Notarization submit failed (notarytool rejected ${option}; value withheld)`;
+	if (/App Store Connect API Key ID (?:contains invalid characters|must be at least)/.test(output)) return "Notarization submit failed (notarytool rejected the API Key ID format; value withheld)";
+	if (/\b(?:invalidASN1Object|unexpectedFieldType)\b/.test(output)) return "Notarization submit failed (notarytool could not parse the private key as an App Store Connect key)";
 	const jsonCode = [parsed?.statusCode, parsed?.code, parsed?.status,
 		...(Array.isArray(parsed?.errors) ? parsed.errors.slice(0, 16).map(error => error?.status) : [])]
 		.find(value => (typeof value === "number" || typeof value === "string") && /^(401|403|429|5\d{2})$/.test(String(value)));
@@ -186,6 +202,8 @@ async function main() {
 	const teamId = historyOnly ? undefined : required(argument("--team-id"), "--team-id");
 	const keyId = required(process.env.ASC_KEY_ID, "ASC_KEY_ID");
 	const issuer = required(process.env.ASC_ISSUER_ID, "ASC_ISSUER_ID");
+	const credentials = credentialProblem(keyId, issuer);
+	if (credentials !== undefined) throw new Error(credentials);
 	if (image !== undefined && !existsSync(image)) throw new Error(`No DMG at ${image}`);
 	if (!existsSync(key)) throw new Error("App Store Connect key file is missing");
 	let keyText;

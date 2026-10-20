@@ -17,6 +17,8 @@ test("the read-only probe has a single private key step and unconditional cleanu
 		const names = [...JSON.stringify(step).matchAll(/secrets\.([A-Z0-9_]+)/g)].map(match => match[1]).sort();
 		assert.deepEqual(names, step.name === "Query history without submitting an archive" ? ["ASC_ISSUER_ID", "ASC_KEY_ID", "ASC_PRIVATE_KEY"] : []);
 	}
+	const environment = job.steps.find(step => step.name === "Record notarytool environment");
+	assert.match(environment.run, /xcrun notarytool --version/); assert.equal(environment.env, undefined);
 	const probe = job.steps.find(step => step.name === "Query history without submitting an archive");
 	assert.match(probe.run, /^umask 077$/m); assert.match(probe.run, /--history-only --key "\$RUNNER_TEMP\/asc-api-key.p8"/);
 	assert.equal(job.steps.at(-1).if, "always()"); assert.match(job.steps.at(-1).run, /rm -f "\$RUNNER_TEMP\/asc-api-key.p8"/);

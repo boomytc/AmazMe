@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { historyFailureMessage, invalidLogDiagnostics, invalidSubmissionId, keyFileProblem, logMatchesArchive, matchingHistory, parseSubmission, submissionFailureMessage } from "./notarize-macos.mjs";
+import { credentialProblem, historyFailureMessage, invalidLogDiagnostics, invalidSubmissionId, keyFileProblem, logMatchesArchive, matchingHistory, parseSubmission, submissionFailureMessage } from "./notarize-macos.mjs";
 
 test("only an Accepted submission passes, and failures carry just the id and status", () => {
 	assert.deepEqual(parseSubmission('{"id":"12345678-1234-1234-1234-123456789abc","status":"Accepted","message":"ok"}'), { id: "12345678-1234-1234-1234-123456789abc", status: "Accepted" });
@@ -101,6 +101,43 @@ test("key preflight accepts real PKCS#8 text and rejects encoded or corrupt look
 	assert.match(keyFileProblem(Buffer.from(PEM).toString("base64")), /original unencrypted PKCS#8/);
 	assert.match(keyFileProblem("-----BEGIN PRIVATE KEY-----\nAAAA\n-----END PRIVATE KEY-----\n"), /readable PKCS#8/);
 	assert.match(keyFileProblem("-----BEGIN ENCRYPTED PRIVATE KEY-----\nSECRET\n-----END ENCRYPTED PRIVATE KEY-----\n"), /original unencrypted PKCS#8/);
+	for (const [type, options] of [["rsa", { modulusLength: 2048 }], ["ed25519", {}], ["ec", { namedCurve: "secp384r1" }]]) {
+		const other = generateKeyPairSync(type, options).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+		assert.match(keyFileProblem(other), /EC P-256/);
+	}
+});
+
+test("credential preflight reports issuer and key ID shape without echoing values", () => {
+	assert.equal(credentialProblem("KEYID42ABC", UUID), undefined);
+	assert.equal(credentialProblem("KEYID42ABC", UUID.toUpperCase()), undefined);
+	for (const [keyId, issuer, expected] of [
+		["KEYID42ABC", `${UUID}\n`, /ASC_ISSUER_ID has leading or trailing whitespace/],
+		["KEYID42ABC", `${UUID}\r`, /ASC_ISSUER_ID has leading or trailing whitespace/],
+		["KEYID42ABC", "ABCDE12345", /looks like a Key ID or Team ID/],
+		["KEYID42ABC", `"${UUID}"`, /UUID format/],
+		["KEYID42ABC", UUID.replace(/-/g, ""), /UUID format/],
+		["KEYID42ABC ", UUID, /ASC_KEY_ID has leading or trailing whitespace/],
+		["KEY-ID", UUID, /alphanumeric/],
+	]) {
+		const problem = credentialProblem(keyId, issuer);
+		assert.match(problem, expected);
+		assert.ok(!problem.includes(issuer.trim()) && !problem.includes(keyId.trim()));
+	}
+});
+
+test("notarytool usage errors name only allowlisted options, never their values", () => {
+	for (const [output, expected] of [
+		[`Error: The value 'SECRET' is invalid for '--issuer <issuer>': SECRET must be a valid UUID`, /rejected --issuer; value withheld/],
+		[`Error: The value '/private/key.p8' is invalid for '--key <key>': The file couldn’t be opened`, /rejected --key; value withheld/],
+		["Error: Missing expected argument '--key-id <key-id>'", /rejected --key-id; value withheld/],
+		["Error: App Store Connect API Key ID contains invalid characters: [\"SECRET\"]", /API Key ID format/],
+		["Error: invalidASN1Object", /could not parse the private key/],
+	]) {
+		const message = historyFailureMessage({ output, exitCode: 64 });
+		assert.match(message, expected); assert.match(message, /history query failed .*notarytool exit 64/);
+		assert.doesNotMatch(message, /SECRET|private\/|key\.p8/);
+	}
+	assert.match(submissionFailureMessage("Error: Unknown option '--SECRET'"), /unclassified tool error/);
 });
 
 test("only Invalid submissions with a valid UUID can request a log", () => {
@@ -135,8 +172,9 @@ test("Invalid logs yield bounded fixed hints, never arbitrary messages, paths, o
 });
 
 const script = join(dirname(fileURLToPath(import.meta.url)), "notarize-macos.mjs");
+const FIXTURE_ISSUER = "87654321-4321-4321-4321-cba987654321";
 
-function runWithFakeTools({ submitOutput = "", submitError = "", submitExit = 1, logOutput = "", logError = "", logExit = 0, historyOutput = '{"history":[]}', historyError = "", historyExit = 0, keyText = PEM, keyDirectory = false, historyOnly = false, archiveInHistory = false } = {}) {
+function runWithFakeTools({ submitOutput = "", submitError = "", submitExit = 1, logOutput = "", logError = "", logExit = 0, historyOutput = '{"history":[]}', historyError = "", historyExit = 0, keyText = PEM, keyDirectory = false, historyOnly = false, archiveInHistory = false, keyId = "KEYID42", issuer = FIXTURE_ISSUER } = {}) {
 	const temp = realpathSync(mkdtempSync(join(tmpdir(), "amazme-notary-test-")));
 	try {
 		const bin = join(temp, "bin");
@@ -173,7 +211,7 @@ exit 97
 		const result = spawnSync(process.execPath, ["--import", pathToFileURL(join(temp, "as-macos.mjs")).href, script, ...mode, "--key", key], {
 			encoding: "utf8",
 			timeout: 5000,
-			env: { PATH: bin, FIXTURE: temp, SUBMIT_EXIT: String(submitExit), LOG_EXIT: String(logExit), HISTORY_EXIT: String(historyExit), ASC_KEY_ID: "KEYID42", ASC_ISSUER_ID: "issuer-0000-1111" },
+			env: { PATH: bin, FIXTURE: temp, SUBMIT_EXIT: String(submitExit), LOG_EXIT: String(logExit), HISTORY_EXIT: String(historyExit), ASC_KEY_ID: keyId, ASC_ISSUER_ID: issuer },
 		});
 		assert.equal(result.error, undefined);
 		const trace = existsSync(join(temp, "trace")) ? readFileSync(join(temp, "trace"), "utf8").trim().split("\n") : [];
@@ -207,7 +245,7 @@ test("CLI history failures remain private and stop before submit, log, staple or
 		assert.equal(result.status, 1); assert.equal(result.stdout, "");
 		assert.match(result.stderr, fixture.expected);
 		assert.match(result.stderr, new RegExp(`notarytool exit ${fixture.historyExit}`));
-		assert.doesNotMatch(result.stderr, /SECRET|KEYID42|issuer-0000-1111|\/private\/|key\.p8/);
+		assert.doesNotMatch(result.stderr, /SECRET|KEYID42|87654321-4321|\/private\/|key\.p8/);
 		assert.deepEqual(result.trace, ["codesign", "xcrun:notarytool:history"]);
 	}
 });
@@ -227,15 +265,25 @@ test("bad key text and unreadable key files stop before any external tool", cliO
 	assert.deepEqual(unreadable.trace, []);
 });
 
+test("malformed issuer or key ID stops before any external tool, in both modes", cliOptions, () => {
+	for (const historyOnly of [false, true]) {
+		for (const [env, expected] of [[{ issuer: `${FIXTURE_ISSUER}\n` }, /ASC_ISSUER_ID has leading or trailing whitespace/], [{ issuer: "TEAMID1234" }, /looks like a Key ID or Team ID/], [{ keyId: "KEYID42 " }, /ASC_KEY_ID has leading/]]) {
+			const result = runWithFakeTools({ historyOnly, ...env });
+			assert.equal(result.status, 1); assert.match(result.stderr, expected);
+			assert.doesNotMatch(result.stderr, /TEAMID1234|87654321-4321|KEYID42 /); assert.deepEqual(result.trace, []);
+		}
+	}
+});
+
 test("CLI Invalid diagnostics retain fixed hints without secret or path output", cliOptions, () => {
 	const result = runWithFakeTools({
 		submitOutput: JSON.stringify({ status: "Invalid", id: UUID }),
-		logOutput: JSON.stringify({ issues: [{ severity: "error", message: "The binary is not signed KEYID42 issuer-0000-1111 SECRET", path: "/private/key.p8" }] }),
+		logOutput: JSON.stringify({ issues: [{ severity: "error", message: `The binary is not signed KEYID42 ${FIXTURE_ISSUER} SECRET`, path: "/private/key.p8" }] }),
 	});
 	assert.equal(result.status, 1);
 	assert.match(result.stderr, /check the Developer ID signature/);
 	assert.match(result.stderr, new RegExp(`Invalid for submission ${UUID}`));
-	assert.doesNotMatch(result.stderr, /SECRET|KEYID42|issuer-0000-1111|\/private\/|key\.p8/);
+	assert.doesNotMatch(result.stderr, /SECRET|KEYID42|87654321-4321|\/private\/|key\.p8/);
 	assert.deepEqual(result.trace, ["codesign", "xcrun:notarytool:history", "xcrun:notarytool:submit", "xcrun:notarytool:log"]);
 });
 
