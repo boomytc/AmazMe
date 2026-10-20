@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
+import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { PAGE_DIRECTORY } from "@amazme/web/assets";
 import {
@@ -31,12 +32,17 @@ import { withSessionDeepLink } from "./deep-link.ts";
 import { attentionOnTitle } from "./title.ts";
 import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
+import { createDesktopUpdates } from "./desktop-updates.ts";
+import { markUpdatedDesktopHealthy } from "./update-helper.ts";
+import { mayStartInstalledApp } from "./update-launch.ts";
+import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
 const TRAY_ICON = fileURLToPath(new URL("../assets/tray-icon.png", import.meta.url));
 app.setName(APP_NAME);
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
+if (process.env.AMAZME_GUI_USER_DATA_DIR && isAbsolute(process.env.AMAZME_GUI_USER_DATA_DIR)) app.setPath("userData", process.env.AMAZME_GUI_USER_DATA_DIR);
 if (SMOKE && process.env.AMAZME_GUI_SMOKE_DATA_DIR) app.setPath("userData", process.env.AMAZME_GUI_SMOKE_DATA_DIR);
 
 const SMOKE_EXPRESSION = `({
@@ -71,6 +77,16 @@ let folderPicker: Promise<readonly string[]> | undefined;
 let tray: Tray | undefined;
 let quitPrompt: Promise<boolean> | undefined;
 let notices: ShellController;
+let updates: ReturnType<typeof createDesktopUpdates> | undefined;
+const desktopUpdateToken = randomBytes(32).toString("hex");
+
+async function updateHostAdmission(action: "prepare" | "resume"): Promise<boolean> {
+	if (!hostPageUrl) return false;
+	try {
+		const response = await fetch(new URL(`/desktop-update/${action}`, hostPageUrl), { method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000), headers: { "x-amazme-desktop-update": desktopUpdateToken } });
+		await response.body?.cancel(); return response.ok;
+	} catch { return false; }
+}
 
 function readinessTimeout(): number | undefined {
 	const raw = process.env.AMAZME_GUI_READY_TIMEOUT_MS;
@@ -142,6 +158,7 @@ async function refreshApplicationMenu(): Promise<void> {
 						if (hostPageUrl !== undefined) void openWindow(hostPageUrl);
 					},
 					settings: () => send("settings"),
+					updates: () => { void updates?.show(); },
 				}),
 			),
 		);
@@ -230,8 +247,8 @@ function requestQuit(): void {
 	if (quitReleased || quitRequested) return;
 	quitRequested = true;
 	void shutdownHost().finally(() => {
-		quitReleased = true;
-		app.quit();
+		void updates?.dispose().finally(() => { quitReleased = true; app.quit(); });
+		if (updates === undefined) { quitReleased = true; app.quit(); }
 	});
 }
 
@@ -511,7 +528,7 @@ async function boot(): Promise<void> {
 		nodeExecutable: resolveNodeExecutable(process.env),
 		cliEntry,
 		cwd: hostWorkingDirectory(process.env, process.cwd()),
-		env: process.env,
+		env: { ...process.env, AMAZME_DESKTOP_UPDATE_TOKEN: desktopUpdateToken },
 	});
 	const missing = missingHostEntry(launch);
 	if (missing !== undefined) {
@@ -537,11 +554,49 @@ async function boot(): Promise<void> {
 	});
 	const pageUrl = await host.start();
 	await openWindow(pageUrl, deepLinkSession);
+	if (!SMOKE && !notices.quitting) {
+		const target = dirname(dirname(dirname(process.execPath)));
+		if (process.argv.includes("--amazme-update-job")) {
+			const deadline = Date.now() + 30_000;
+			while (Date.now() < deadline) {
+				const current = liveWindow();
+				const ready = current && readiedWindows.has(current.id) && await current.webContents.executeJavaScript("document.getElementById('connection-status')?.dataset.state === 'connected'").catch(() => false);
+				if (ready) { await markUpdatedDesktopHealthy(process.argv, target, app.getVersion()); break; }
+				await new Promise<void>(resolve => setTimeout(resolve, 100));
+			}
+		}
+		updates = createDesktopUpdates({ version: app.getVersion(), executable: process.execPath, userData: app.getPath("userData"), locale: currentLocale,
+			confirmQuit: async () => {
+				if (showingDialog || quitRequested || totalPendingApprovals() > 0) throw new Error("busy");
+				showingDialog = true; showWindow();
+				try {
+					const locale = await currentLocale();
+					const confirmed = await ask({ type: "question", message: translate(locale, "desktop.update.installConfirm"), detail: translate(locale, "desktop.update.installDetail"),
+						buttons: [translate(locale, "desktop.update.later"), translate(locale, "desktop.update.installAction")], defaultId: 0, cancelId: 0, noLink: true }) === 1;
+					if (!confirmed) return false;
+					if (!await updateHostAdmission("prepare")) throw new Error("busy");
+					return true;
+				} finally { showingDialog = false; }
+			},
+			quit: async () => { requestQuit(); },
+			resumeHost: async () => { await updateHostAdmission("resume"); },
+		});
+		await updates.start();
+		await refreshApplicationMenu();
+	}
 }
 
-if (!app.requestSingleInstanceLock()) {
-	app.quit();
-} else {
+async function initializeDesktop(): Promise<void> {
+	const target = dirname(dirname(dirname(process.execPath)));
+	if (!mayStartInstalledApp(target, app.getVersion(), process.argv)) {
+		// Gate-only launches never keep an app-named dialog/process alive during replacement.
+		if (updateLockState(target) !== "stale") { process.stdout.write("desktop update startup blocked\n"); app.exit(0); return; }
+		if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+		const recovery = await recoverStaleUpdateLock(target, app.getVersion(), process.arch);
+		if (recovery !== "recovered") { app.releaseSingleInstanceLock(); process.stdout.write("desktop update startup blocked\n"); app.exit(0); return; }
+		process.stdout.write("desktop update stale lock recovered\n");
+	} else if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+
 	app.on("second-instance", showWindow);
 	app.on("activate", () => {
 		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl);
@@ -571,3 +626,5 @@ if (!app.requestSingleInstanceLock()) {
 		notices.startupFailed(failure);
 	});
 }
+
+void initializeDesktop().catch(() => { console.error("desktop startup unavailable"); app.exit(1); });

@@ -1,31 +1,20 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { valid } from "semver";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { isNewerPackageVersion } from "./utils/version-check.ts";
+import { parseUpdateManifest, UPDATE_MANIFEST_URL, type UpdateAsset } from "./update-manifest.ts";
+export { RELEASE_DOWNLOAD_PREFIX, UPDATE_MANIFEST_URL } from "./update-manifest.ts";
+export type { UpdateAsset } from "./update-manifest.ts";
 
 /** Release assets are only trusted from this repository's GitHub Releases. */
-export const RELEASE_DOWNLOAD_PREFIX = "https://github.com/boomytc/AmazMe/releases/download/";
-export const UPDATE_MANIFEST_URL = "https://github.com/boomytc/AmazMe/releases/latest/download/latest.json";
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 3000;
 
-const Sha256 = Type.String({ pattern: "^[0-9a-f]{64}$" });
-const UpdateAssetSchema = Type.Object({ name: Type.String({ pattern: "^[A-Za-z0-9._-]+$" }), url: Type.String(), sha256: Sha256 });
-/** `latest.json`, written by the release workflow's `manifest` job (scripts/release-manifest.mjs). */
-const UpdateManifestSchema = Type.Object({
-	version: Type.String(),
-	tag: Type.String(),
-	assets: Type.Array(UpdateAssetSchema),
-});
-const validateManifest = Compile(UpdateManifestSchema);
 const UpdateCheckStateSchema = Type.Object({ checkedAt: Type.Number() });
 const validateState = Compile(UpdateCheckStateSchema);
-
-export type UpdateAsset = Static<typeof UpdateAssetSchema>;
 
 /** A newer release. `download` is set only for a release install with an installer for this machine. */
 export type UpdateNotice =
@@ -82,12 +71,7 @@ async function fetchNotice(options: UpdateCheckOptions): Promise<UpdateNotice | 
 	const currentVersion = options.currentVersion ?? VERSION;
 	const response = await get(UPDATE_MANIFEST_URL, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
 	if (!response.ok) return undefined;
-	const manifest: unknown = await response.json();
-	if (!validateManifest.Check(manifest)) return undefined;
-	// Any malformed field drops the whole manifest. Verifying the downloaded file's sha256 belongs to the U2 downloader.
-	if (valid(manifest.version) !== manifest.version || manifest.tag !== `v${manifest.version}`) return undefined;
-	const releaseDownloads = `${RELEASE_DOWNLOAD_PREFIX}${manifest.tag}/`;
-	if (!manifest.assets.every((item) => item.url === `${releaseDownloads}${item.name}`)) return undefined;
+	const manifest = parseUpdateManifest(await response.json());
 	if (!isNewerPackageVersion(manifest.version, currentVersion)) return undefined;
 	const base = { version: manifest.version, currentVersion };
 	if (options.sourceCheckout ?? isSourceCheckout()) return { install: "source", ...base };

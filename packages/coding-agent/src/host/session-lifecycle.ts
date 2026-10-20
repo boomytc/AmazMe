@@ -53,6 +53,22 @@ export function isSessionEmpty(harness: Harness, context: Context): Promise<bool
 	}, context);
 }
 
+/** Includes sleeping/background work and queued input; old transcript entries alone are idle. */
+export function hasSessionWork(harness: Harness, context: Context): Promise<boolean> {
+	return harness.commit(async tx => {
+		for (const status of ["pending", "running", "waiting", "sleeping", "completing"] as const) {
+			if ((await tx.scanTasks({ status }, 1)).items.length > 0) return true;
+		}
+		let cursor: Cursor | undefined;
+		do {
+			const page = await tx.scanConversations({}, 128, cursor);
+			for (const conversation of page.items) if ((await tx.doc(InboxDoc, conversation.id)).items.length > 0) return true;
+			cursor = page.next;
+		} while (cursor !== undefined);
+		return false;
+	}, context);
+}
+
 /** Cancel stored queues and every conversation, including background and ownerless forks. */
 export async function abortSessionWork(harness: Harness, context: Context): Promise<void> {
 	let cursor: Cursor | undefined;

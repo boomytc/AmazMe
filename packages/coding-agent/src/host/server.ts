@@ -343,6 +343,8 @@ export interface RunningServer {
 	readonly server: Server;
 	readonly workerPids: ReadonlyMap<string, number>;
 	readonly closed: Promise<void>;
+	prepareForUpdate?(): Promise<boolean>;
+	resumeAfterUpdate?(): void;
 	close(): Promise<void>;
 }
 
@@ -931,6 +933,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
 			server: activeBackend.server,
 			workerPids: activeWorkers.workerPids,
 			closed: activeBackend.closed.finally(() => activeRelay.close()),
+			prepareForUpdate: () => activeWorkers.prepareForUpdate(BACKGROUND_CONTEXT),
+			resumeAfterUpdate: () => activeWorkers.resumeAfterUpdate(),
 			close() {
 				lifetime.stop();
 				closePromise ??= (async () => {

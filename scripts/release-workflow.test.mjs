@@ -82,3 +82,8 @@ test("pre-release tags publish as prereleases and never become latest", () => {
 	assert.ok(!stable.includes("--latest=false"));
 	assert.ok(!stable.includes("--prerelease"));
 });
+
+test("every release including a prerelease uploads its own manifest without changing the stable latest route", () => {
+	assert.equal(workflow.jobs.manifest.if, undefined);
+	assert.match(workflow.jobs.manifest.steps.find(step => step.name === "Publish latest.json").run, /gh release upload "\$GITHUB_REF_NAME"/);
+});

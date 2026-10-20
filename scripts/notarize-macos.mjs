@@ -5,11 +5,12 @@
  * Credentials come from the environment (ASC_KEY_ID, ASC_ISSUER_ID) and a private key file.
  * notarytool output is never echoed: failures report only an allowlisted diagnostic or id/status.
  */
-import { createPrivateKey } from "node:crypto";
+import { createHash, createPrivateKey } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertTeam, tool, writeChecksum } from "./macos-signing.mjs";
 
@@ -96,6 +97,45 @@ export function parseSubmission(output, commandSucceeded = true) {
 	throw new Error(submissionFailureMessage(output, parsed));
 }
 
+/** History never proves byte identity by filename alone. Pending/unknown matches block resubmission. */
+export function matchingHistory(output, filename) {
+	const parsed = readToolJson(output);
+	if (!Array.isArray(parsed?.history)) throw new Error("Notarization history is unavailable (raw output withheld)");
+	return parsed.history.filter(row => row?.name === filename).map(row => {
+		const id = submissionId(row.id);
+		if (!id || !["Accepted", "Invalid", "Rejected", "In Progress"].includes(row.status)) throw new Error("Matching notarization history is ambiguous; inspect the existing submission before retrying");
+		return { id, status: row.status };
+	});
+}
+
+export function logMatchesArchive(output, digest) {
+	const parsed = readToolJson(output);
+	return typeof parsed?.sha256 === "string" && /^[a-f0-9]{64}$/i.test(parsed.sha256) && parsed.sha256.toLowerCase() === digest;
+}
+
+async function priorSubmission(image, auth) {
+	const hash = createHash("sha256");
+	for await (const chunk of createReadStream(image)) hash.update(chunk);
+	const digest = hash.digest("hex");
+	let history;
+	try { history = tool("xcrun", ["notarytool", "history", ...auth, "--output-format", "json"]); }
+	catch (error) { throw new Error(`History check: ${submissionFailureMessage(typeof error?.output === "string" ? error.output : "")}`); }
+	for (const row of matchingHistory(history, basename(image))) {
+		if (row.status === "In Progress") throw new Error(`Notarization In Progress for submission ${row.id}; inspect it before retrying`);
+		let log;
+		try { log = tool("xcrun", ["notarytool", "log", row.id, ...auth]); }
+		catch { throw new Error(`Cannot establish archive identity for submission ${row.id}; inspect it before retrying`); }
+		if (!logMatchesArchive(log, digest)) {
+			const parsed = readToolJson(log);
+			if (typeof parsed?.sha256 !== "string" || !/^[a-f0-9]{64}$/i.test(parsed.sha256)) throw new Error(`Cannot establish archive identity for submission ${row.id}; inspect it before retrying`);
+			continue;
+		}
+		if (row.status !== "Accepted") throw new Error(`Notarization ${row.status} for submission ${row.id}; identical archive will not be resubmitted`);
+		return row;
+	}
+	return undefined;
+}
+
 function step(name, command, args) {
 	try {
 		return tool(command, args);
@@ -140,10 +180,12 @@ async function main() {
 	if (problem !== undefined) throw new Error(`ASC_PRIVATE_KEY ${problem}`);
 
 	assertTeam(image, teamId);
+	const auth = ["--key", key, "--key-id", keyId, "--issuer", issuer];
+	const existing = await priorSubmission(image, auth);
 	let output;
 	let commandSucceeded = true;
 	try {
-		output = tool("xcrun", ["notarytool", "submit", image, "--key", key, "--key-id", keyId, "--issuer", issuer, "--wait", "--output-format", "json"]);
+		output = existing ? JSON.stringify(existing) : tool("xcrun", ["notarytool", "submit", image, ...auth, "--wait", "--output-format", "json"]);
 	} catch (error) {
 		commandSucceeded = false;
 		output = typeof error?.output === "string" ? error.output : "";

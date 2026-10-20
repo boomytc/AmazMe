@@ -1,0 +1,101 @@
+name: Trusted desktop acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trusted-desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: macos-14
+    environment: release
+    env:
+      NODE_VERSION: "22.23.3"
+      APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require a fresh explicit dispatch
+        run: test "$GITHUB_RUN_ATTEMPT" = 1 || { echo 'Inspect the existing notarization submission before another dispatch; rerun is disabled.'; exit 1; }
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.23.3"
+          cache: npm
+      - run: npm ci
+      - run: npm run build:offline
+      - name: Fetch official Node for the bundle
+        run: |
+          ARCH="$(uname -m)"
+          curl -fsSL -o "$RUNNER_TEMP/node.tar.gz" "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-darwin-$ARCH.tar.gz"
+          tar -xzf "$RUNNER_TEMP/node.tar.gz" -C "$RUNNER_TEMP"
+          echo "NODE_BIN=$RUNNER_TEMP/node-v$NODE_VERSION-darwin-$ARCH/bin/node" >> "$GITHUB_ENV"
+      - name: Import the Developer ID certificate
+        env:
+          MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: |
+          umask 077
+          SIGNING_KEYCHAIN="$RUNNER_TEMP/amazme-signing.keychain-db"
+          test -n "$APPLE_TEAM_ID" || { echo "APPLE_TEAM_ID repository variable is not set"; exit 1; }
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          printf '%s' "$MACOS_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/developer-id.p12"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN"
+          security import "$RUNNER_TEMP/developer-id.p12" -k "$SIGNING_KEYCHAIN" -f pkcs12 -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign > /dev/null
+          rm -f "$RUNNER_TEMP/developer-id.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$SIGNING_KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+      - name: Build, sign, and verify the DMG
+        run: node scripts/package-desktop.mjs --node "$NODE_BIN" --out "$RUNNER_TEMP/AmazMe" --dmg --verify --keychain "$RUNNER_TEMP/amazme-signing.keychain-db" --team-id "$APPLE_TEAM_ID"
+      - name: Notarize and staple the DMG
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc-api-key.p8"
+          node scripts/notarize-macos.mjs --dmg "$(ls "$RUNNER_TEMP"/AmazMe/*.dmg)" --key "$RUNNER_TEMP/asc-api-key.p8" --team-id "$APPLE_TEAM_ID"
+          rm -f "$RUNNER_TEMP/asc-api-key.p8"
+      - name: Build the isolated previous-version fixture
+        run: |
+          node scripts/prepare-update-baseline.mjs
+          node scripts/package-desktop.mjs --node "$NODE_BIN" --out "$RUNNER_TEMP/AmazMe-baseline" --dmg --keychain "$RUNNER_TEMP/amazme-signing.keychain-db" --team-id "$APPLE_TEAM_ID"
+          node scripts/prepare-update-baseline.mjs --restore
+      - name: Notarize the isolated baseline
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc-api-key.p8"
+          node scripts/notarize-macos.mjs --dmg "$(ls "$RUNNER_TEMP"/AmazMe-baseline/*.dmg)" --key "$RUNNER_TEMP/asc-api-key.p8" --team-id "$APPLE_TEAM_ID"
+          rm -f "$RUNNER_TEMP/asc-api-key.p8"
+      - name: Remove signing material
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/amazme-signing.keychain-db" 2> /dev/null || true
+          rm -f "$RUNNER_TEMP/developer-id.p12" "$RUNNER_TEMP/asc-api-key.p8"
+      - name: Validate manifest and isolated installation
+        run: |
+          VERSION="$(node -p "require('./packages/gui/package.json').version")"
+          node scripts/release-manifest.mjs "v$VERSION" "$GITHUB_REPOSITORY" "$RUNNER_TEMP/AmazMe" "$RUNNER_TEMP/AmazMe/latest.json"
+          node scripts/accept-trusted-desktop.mjs --target "$(ls "$RUNNER_TEMP"/AmazMe/*.dmg)" --baseline "$(ls "$RUNNER_TEMP"/AmazMe-baseline/*.dmg)" --out "$RUNNER_TEMP/AmazMe/acceptance.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AmazMe-trusted-desktop-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/AmazMe/*.dmg
+            ${{ runner.temp }}/AmazMe/*.sha256
+            ${{ runner.temp }}/AmazMe/latest.json
+            ${{ runner.temp }}/AmazMe/acceptance.json
+            ${{ runner.temp }}/AmazMe-baseline/*.dmg
+            ${{ runner.temp }}/AmazMe-baseline/*.sha256
+          if-no-files-found: error

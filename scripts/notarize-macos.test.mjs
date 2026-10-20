@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { invalidLogDiagnostics, invalidSubmissionId, keyFileProblem, parseSubmission, submissionFailureMessage } from "./notarize-macos.mjs";
+import { invalidLogDiagnostics, invalidSubmissionId, keyFileProblem, logMatchesArchive, matchingHistory, parseSubmission, submissionFailureMessage } from "./notarize-macos.mjs";
 
 test("only an Accepted submission passes, and failures carry just the id and status", () => {
 	assert.deepEqual(parseSubmission('{"id":"12345678-1234-1234-1234-123456789abc","status":"Accepted","message":"ok"}'), { id: "12345678-1234-1234-1234-123456789abc", status: "Accepted" });
@@ -66,6 +66,13 @@ test("submission fields are validated and never echoed arbitrarily", () => {
 });
 
 const UUID = "12345678-1234-1234-1234-123456789abc";
+test("history is scoped by filename and byte identity is required to resume", () => {
+	assert.deepEqual(matchingHistory(JSON.stringify({ history: [{ name: "other.dmg", id: "SECRET" }, { name: "AmazMe.dmg", id: UUID, status: "In Progress" }] }), "AmazMe.dmg"), [{ id: UUID, status: "In Progress" }]);
+	assert.throws(() => matchingHistory("SECRET", "AmazMe.dmg"), /history is unavailable/);
+	assert.throws(() => matchingHistory(JSON.stringify({ history: [{ name: "AmazMe.dmg", id: "SECRET", status: "Accepted" }] }), "AmazMe.dmg"), /ambiguous/);
+	assert.equal(logMatchesArchive(JSON.stringify({ sha256: "a".repeat(64) }), "a".repeat(64)), true);
+	assert.equal(logMatchesArchive(JSON.stringify({ sha256: "b".repeat(64) }), "a".repeat(64)), false);
+});
 // Disposable test key, generated locally without any App Store Connect account or credentials.
 const PEM = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({ type: "pkcs8", format: "pem" }).toString();
 
@@ -125,6 +132,10 @@ function runWithFakeTools({ submitOutput = "", submitError = "", submitExit = 1,
 		writeFileSync(join(bin, "codesign"), '#!/bin/sh\nprintf "codesign\\n" >> "$FIXTURE/trace"\nprintf "TeamIdentifier=TEAM1\\n" >&2\n', { mode: 0o755 });
 		writeFileSync(join(bin, "xcrun"), `#!/bin/sh
 printf "xcrun:%s:%s\\n" "$1" "$2" >> "$FIXTURE/trace"
+if [ "$1" = notarytool ] && [ "$2" = history ]; then
+  printf '{"history":[]}\\n'
+  exit 0
+fi
 if [ "$1" = notarytool ] && [ "$2" = submit ]; then
   /bin/cat "$FIXTURE/submit.stdout"
   /bin/cat "$FIXTURE/submit.stderr" >&2
@@ -178,7 +189,7 @@ test("CLI Invalid diagnostics retain fixed hints without secret or path output",
 	assert.match(result.stderr, /check the Developer ID signature/);
 	assert.match(result.stderr, new RegExp(`Invalid for submission ${UUID}`));
 	assert.doesNotMatch(result.stderr, /SECRET|KEYID42|issuer-0000-1111|\/private\/|key\.p8/);
-	assert.deepEqual(result.trace, ["codesign", "xcrun:notarytool:submit", "xcrun:notarytool:log"]);
+	assert.deepEqual(result.trace, ["codesign", "xcrun:notarytool:history", "xcrun:notarytool:submit", "xcrun:notarytool:log"]);
 });
 
 test("CLI log failures stay private and preserve the original Invalid result", cliOptions, () => {
@@ -199,7 +210,7 @@ test("CLI failures never staple or request logs for unvalidated or Accepted resp
 		assert.equal(result.status, 1);
 		assert.equal(result.stdout, "");
 		assert.doesNotMatch(result.stderr, /SECRET|KEYID42|\/private\/|key\.p8/);
-		assert.deepEqual(result.trace, ["codesign", "xcrun:notarytool:submit"]);
+		assert.deepEqual(result.trace, ["codesign", "xcrun:notarytool:history", "xcrun:notarytool:submit"]);
 	}
 });
 

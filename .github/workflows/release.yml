@@ -87,7 +87,8 @@ jobs:
           ## 已知限制
 
           - 仅 macOS arm64。
-          - 没有自动更新；升级请下载新 DMG 覆盖安装，会话保存在数据目录。
+          - 签名安装支持每天检查更新；下载与安装重启分别确认，可取消或稍后安装。
+          - 更新前请完成运行中的工作。安装器保留旧应用；二进制回滚不等于数据迁移回滚。
 
           ## 部署方式
 
@@ -106,11 +107,10 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md" \
             "${CHANNEL[@]}"
 
-  # Clients read releases/latest/download/latest.json for the update notice (packages/coding-agent/src/update-check.ts).
-  # Prerelease tags (v<x.y.z>-rc.N) publish no manifest, so clients never get pointed at them.
+  # Every release owns a manifest. GitHub's latest route still selects the stable release;
+  # the preview channel resolves a specific release tag instead.
   manifest:
     needs: release
-    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
