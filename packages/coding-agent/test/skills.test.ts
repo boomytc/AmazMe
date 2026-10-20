@@ -1,10 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import * as os from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
 import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
+import { createTempDir } from "./temp-dir.ts";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
 
@@ -183,21 +183,16 @@ describe("skills", () => {
 		});
 
 		it("should use parent directory name when name not in frontmatter", () => {
-			const root = mkdtempSync(join(os.tmpdir(), "amazme-skill-name-"));
-			const dir = join(root, "parent-dir-name");
+			const dir = join(createTempDir("amazme-skill-name-"), "parent-dir-name");
 			mkdirSync(dir);
 			writeFileSync(join(dir, "SKILL.md"), "---\ndescription: no frontmatter name\n---\nbody\n");
-			try {
-				const { skills } = loadSkillsFromDir({
-					dir,
-					source: "test",
-				});
+			const { skills } = loadSkillsFromDir({
+				dir,
+				source: "test",
+			});
 
-				expect(skills).toHaveLength(1);
-				expect(skills[0].name).toBe("parent-dir-name");
-			} finally {
-				rmSync(root, { recursive: true, force: true });
-			}
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("parent-dir-name");
 		});
 
 		it("should parse disable-model-invocation frontmatter field", () => {
@@ -378,7 +373,7 @@ describe("skills", () => {
 		});
 
 		it("should expand ~ in skillPaths", () => {
-			const home = mkdtempSync(join(os.tmpdir(), "amazme-skill-tilde-"));
+			const home = createTempDir("amazme-skill-tilde-");
 			const dir = join(home, ".amazme", "agent", "skills", "tilde-skill");
 			mkdirSync(dir, { recursive: true });
 			writeFileSync(join(dir, "SKILL.md"), "---\nname: tilde-skill\ndescription: from tilde\n---\nbody\n");
@@ -397,7 +392,6 @@ describe("skills", () => {
 			} finally {
 				if (previousHome === undefined) delete process.env.HOME;
 				else process.env.HOME = previousHome;
-				rmSync(home, { recursive: true, force: true });
 			}
 		});
 	});
