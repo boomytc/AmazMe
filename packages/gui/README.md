@@ -44,6 +44,8 @@ npm run dev:desktop
 
 `AMAZME_GUI_USER_DATA_DIR` 可选定独立桌面 profile；更新重启沿用原 profile 和宿主数据目录。真实验收使用隔离目录，绝不替换用户正在使用的应用。
 
+更新锁先完整写入并 fsync 所有者记录，再原子获取；重复启动不会截断已有锁。普通启动遇到活跃或未知锁立即退出，不留下占用应用 PID 的模态框。持锁 helper 崩溃后，启动进程取得 Electron 单例，再检查私有 job、所有者 PID 已退出、当前应用的 Apple 信任/发布者/版本和旧版本 hash，才恢复启动并清理已知失效锁；未知记录保留，恢复不会自动继续安装或移动应用。
+
 `.github/workflows/trusted-desktop.yml` 仅手动触发，复用现有 release 环境凭证，只输出签名/公证 artifact，不创建 tag 或 Release。目标 DMG 与较低版本的合成基线分别经过真实公证、staple、Gatekeeper 与隔离安装测试；合成基线只改变 GUI 包版本，用来验证安装器，不代表旧正式产品兼容性。Release HTTPS 清单/重定向故障由精确 mocks 覆盖；artifact 安装验收不等于线上 Release 端到端验收。
 
 ## DMG 与 GitHub Release

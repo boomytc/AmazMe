@@ -62,14 +62,17 @@ test.each(["en", "zh"] as const)("update window uses real preload IPC, consent, 
 	expect(JSON.parse(marker!.slice("update window smoke: ".length))).toMatchObject({ locale, checks: 1, downloads: 2, installs: 1, prompts: 2 });
 }, 45_000);
 
-test("ordinary second startup is blocked while the installer is paused in signature verification", async () => {
+test.each([true, false])("ordinary second startup exits without a modal while installer verification holds the lock (smoke=%s)", async smoke => {
 	const directory = createTempDir("amazme-update-startup-"); directories.push(directory);
 	const executable = electronBinary(), target = dirname(dirname(dirname(executable))), lock = target + ".update-lock";
-	await mkdir(lock, { mode: 0o700 });
+	const job = createTempDir(".AmazMe-update-", { baseDirectory: dirname(target) });
+	await writeFile(lock, JSON.stringify({ target, directory: job, nonce: "e".repeat(36), version: "8.5.0", phase: "preparing", pid: process.pid }), { mode: 0o600, flag: "wx" });
 	try {
 		const fixture = join(directory, "locked-startup.mjs");
-		await writeFile(fixture, "await import(" + JSON.stringify(new URL("../dist/main.js", import.meta.url).href) + ");\n");
-		const child = spawn(executable, ["--disable-gpu", fixture], { env: smokeEnvironment(directory), stdio: ["ignore", "pipe", "pipe"] });
+		await writeFile(fixture, 'import {dialog} from "electron"; dialog.showMessageBox=async()=>{throw new Error("A blocked launch must not show a modal");};\nawait import(' + JSON.stringify(new URL("../dist/main.js", import.meta.url).href) + ");\n");
+		const env: NodeJS.ProcessEnv = { ...smokeEnvironment(directory), AMAZME_GUI_USER_DATA_DIR: directory };
+		if (!smoke) delete env.AMAZME_GUI_SMOKE;
+		const child = spawn(executable, ["--disable-gpu", fixture], { env, stdio: ["ignore", "pipe", "pipe"] });
 		let output = "", errors = "";
 		child.stdout.on("data", chunk => { output += String(chunk); }); child.stderr.on("data", chunk => { errors += String(chunk); });
 		const code = await new Promise<number | null>((resolve, reject) => {

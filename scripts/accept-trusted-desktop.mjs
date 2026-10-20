@@ -35,6 +35,17 @@ async function inspectDmg(image, directory) {
 	} finally { await macTool("/usr/bin/hdiutil", ["detach", mounted]); await rm(mounted, { recursive: true, force: true }); }
 }
 
+async function smokeInstalledApp(target, env) {
+	const old = spawn(join(target, "Contents/MacOS/AmazMe"), [], { env: { ...env, AMAZME_GUI_SMOKE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
+	let output = ""; old.stdout.on("data", chunk => { output += String(chunk); });
+	old.stderr.resume();
+	await new Promise((resolvePromise, reject) => {
+		const timer = setTimeout(() => { old.kill("SIGTERM"); reject(new Error("Baseline app launch timed out")); }, 150_000);
+		old.once("error", reject);
+		old.once("exit", code => { clearTimeout(timer); code === 0 && output.includes("desktop smoke:") ? resolvePromise() : reject(new Error("Baseline launch failed; output withheld")); });
+	});
+}
+
 async function main() {
 	if (process.platform !== "darwin") throw new Error("macOS required");
 	const targetImage = argument("--target"), baselineImage = argument("--baseline"), out = argument("--out");
@@ -52,14 +63,7 @@ async function main() {
 		AMAZME_GUI_CWD: data, AMAZME_GUI_SMOKE_DATA_DIR: data, AMAZME_GUI_USER_DATA_DIR: data,
 		AMAZME_CODING_AGENT_DIR: join(data, "agent"), AMAZME_SERVER_DIR: join(data, "server") };
 	// The copied notarized app launches without Chromium or Gatekeeper bypass switches.
-	const old = spawn(join(target, "Contents/MacOS/AmazMe"), [], { env: { ...env, AMAZME_GUI_SMOKE: "1" }, stdio: ["ignore", "pipe", "pipe"] });
-	let output = ""; old.stdout.on("data", chunk => { output += String(chunk); });
-	old.stderr.resume();
-	await new Promise((resolvePromise, reject) => {
-		const timer = setTimeout(() => { old.kill("SIGTERM"); reject(new Error("Baseline app launch timed out")); }, 150_000);
-		old.once("error", reject);
-		old.once("exit", code => { clearTimeout(timer); code === 0 && output.includes("desktop smoke:") ? resolvePromise() : reject(new Error("Baseline launch failed; output withheld")); });
-	});
+	await smokeInstalledApp(target, env);
 	const directory = await mkdtemp(join(scratch, ".AmazMe-update-"));
 	await rename(candidate.path, join(directory, "AmazMe.app"));
 	// This disposable process exercises the live-parent wait without stopping any user's app.
@@ -67,11 +71,20 @@ async function main() {
 	await new Promise((resolvePromise, reject) => { parent.once("spawn", resolvePromise); parent.once("error", reject); });
 	const job = { target, current: baseline.version, version: candidate.version, team: baseline.identity.team, arch: process.arch, originalHash: baseline.identity.hash, parentPid: parent.pid, nonce: randomUUID() };
 	await writeFile(join(directory, "job.json"), JSON.stringify(job), { mode: 0o600 });
-	const helper = spawn(join(target, "Contents/Resources/node/bin/node"), [fileURLToPath(new URL("../packages/gui/dist/update-helper.bundle.mjs", import.meta.url)), directory], { env, stdio: ["pipe", "pipe", "ignore"] });
-	helper.stdin.on("error", () => {});
-	let ready = ""; let exited = false;
-	helper.stdout.on("data", chunk => { ready += String(chunk); }); helper.once("exit", () => { exited = true; });
-	await until(() => { if (exited) throw new Error("Helper preflight failed"); return ready.includes("ready\n"); });
+	async function startHelper() {
+		const helper = spawn(join(target, "Contents/Resources/node/bin/node"), [fileURLToPath(new URL("../packages/gui/dist/update-helper.bundle.mjs", import.meta.url)), directory], { env, stdio: ["pipe", "pipe", "ignore"] });
+		helper.stdin.on("error", () => {});
+		let ready = ""; let exited = false;
+		helper.stdout.on("data", chunk => { ready += String(chunk); }); helper.once("exit", () => { exited = true; });
+		await until(() => { if (exited) throw new Error("Helper preflight failed"); return ready.includes("ready\n"); });
+		return helper;
+	}
+	const crashed = await startHelper();
+	const terminated = new Promise(resolvePromise => crashed.once("exit", resolvePromise));
+	crashed.kill("SIGKILL"); await terminated;
+	await smokeInstalledApp(target, env);
+	if (await import("node:fs").then(fs => fs.existsSync(target + ".update-lock"))) throw new Error("Stale update lock was not recovered");
+	const helper = await startHelper();
 	helper.stdin.end("install\n");
 	await sleep(1000);
 	await verifyApp(target, baseline.version, process.arch, baseline.identity.team);
@@ -87,7 +100,7 @@ async function main() {
 	if (await readFile(sentinel, "utf8") !== "isolated user data must survive\n") throw new Error("User data changed");
 	if (Number.isInteger(healthy.pid)) { try { process.kill(healthy.pid, "SIGTERM"); } catch {} }
 	await writeFile(out, JSON.stringify({ verifiedAt: new Date().toISOString(), platform: process.platform, arch: process.arch, from: baseline.version, to: candidate.version,
-		publisher: updated.team, installedCdHash: updated.hash, sha256: asset.sha256, manifest: "passed", dmgStaple: "passed", dmgGatekeeper: "passed", appSignature: "passed", appGatekeeper: "passed", isolatedStartup: "passed", liveParentWait: "passed", isolatedReplacement: "passed", previousBundleRetained: true, dataSentinelPreserved: true,
+		publisher: updated.team, installedCdHash: updated.hash, sha256: asset.sha256, manifest: "passed", dmgStaple: "passed", dmgGatekeeper: "passed", appSignature: "passed", appGatekeeper: "passed", isolatedStartup: "passed", staleLockRecovery: "passed", liveParentWait: "passed", isolatedReplacement: "passed", previousBundleRetained: true, dataSentinelPreserved: true,
 		scope: "Real signed/notarized CI artifacts and isolated native helper installation; GitHub Release HTTP transport covered separately by mocks", binaryRollbackIsDataRollback: false }, null, 2) + "\n");
 	console.log("Trusted DMG, isolated startup, live-parent wait, replacement, publisher pin and data preservation passed.");
 	// The runner disposes of this directory later; never remove a running app bundle.

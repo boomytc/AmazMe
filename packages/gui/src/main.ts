@@ -35,6 +35,7 @@ import { translate } from "@amazme/web/strings";
 import { createDesktopUpdates } from "./desktop-updates.ts";
 import { markUpdatedDesktopHealthy } from "./update-helper.ts";
 import { mayStartInstalledApp } from "./update-launch.ts";
+import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
@@ -585,16 +586,17 @@ async function boot(): Promise<void> {
 	}
 }
 
-if (!mayStartInstalledApp(dirname(dirname(dirname(process.execPath))), app.getVersion(), process.argv)) {
-	if (SMOKE) { process.stdout.write("desktop update startup blocked\n"); app.exit(0); }
-	else app.whenReady().then(async () => {
-		const locale = await currentLocale();
-		await dialog.showMessageBox({ type: "info", title: APP_NAME, message: translate(locale, "desktop.update.busy"), buttons: [translate(locale, "desktop.update.later")] });
-		app.exit(0);
-	}).catch(() => app.exit(1));
-} else if (!app.requestSingleInstanceLock()) {
-	app.quit();
-} else {
+async function initializeDesktop(): Promise<void> {
+	const target = dirname(dirname(dirname(process.execPath)));
+	if (!mayStartInstalledApp(target, app.getVersion(), process.argv)) {
+		// Gate-only launches never keep an app-named dialog/process alive during replacement.
+		if (updateLockState(target) !== "stale") { process.stdout.write("desktop update startup blocked\n"); app.exit(0); return; }
+		if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+		const recovery = await recoverStaleUpdateLock(target, app.getVersion(), process.arch);
+		if (recovery !== "recovered") { app.releaseSingleInstanceLock(); process.stdout.write("desktop update startup blocked\n"); app.exit(0); return; }
+		process.stdout.write("desktop update stale lock recovered\n");
+	} else if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+
 	app.on("second-instance", showWindow);
 	app.on("activate", () => {
 		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl);
@@ -624,3 +626,5 @@ if (!mayStartInstalledApp(dirname(dirname(dirname(process.execPath))), app.getVe
 		notices.startupFailed(failure);
 	});
 }
+
+void initializeDesktop().catch(() => { console.error("desktop startup unavailable"); app.exit(1); });
