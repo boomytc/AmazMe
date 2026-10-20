@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { desktopUpdateAsset, fetchDesktopManifest, githubReleaseResponse, type UpdateAsset, type UpdateManifest } from "@amazme/coding-agent/update-manifest";
 import type { DesktopUpdateIO, PreparedUpdate } from "./update-controller.ts";
 import { handoffUpdate } from "./update-handoff.ts";
+import { discardPreparedUpdate } from "./update-cleanup.ts";
 
 const exec = promisify(execFile);
 export type MacTool = (command: string, args: readonly string[]) => Promise<string>;
@@ -143,7 +144,7 @@ export function createMacUpdateIO(options: {
 		},
 		async discard(file, prepared) {
 			if (file) await rm(dirname(file), { recursive: true, force: true });
-			if (prepared) await rm(prepared.directory, { recursive: true, force: true });
+			if (prepared) await discardPreparedUpdate(prepared);
 		},
 		async install(prepared: PreparedUpdate) {
 			await writableTarget(options.target);

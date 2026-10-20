@@ -61,7 +61,7 @@ async function main() {
 	const target = join(scratch, "AmazMe.app"); await rename(baseline.path, target);
 	const env = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: process.env.HOME,
 		AMAZME_GUI_CWD: data, AMAZME_GUI_SMOKE_DATA_DIR: data, AMAZME_GUI_USER_DATA_DIR: data,
-		AMAZME_CODING_AGENT_DIR: join(data, "agent"), AMAZME_SERVER_DIR: join(data, "server") };
+		AMAZME_CODING_AGENT_DIR: join(data, "agent"), AMAZME_SERVER_DIR: join(data, "server"), AMAZME_AGENTS_HOME: join(data, "agents") };
 	// The copied notarized app launches without Chromium or Gatekeeper bypass switches.
 	await smokeInstalledApp(target, env);
 	const directory = await mkdtemp(join(scratch, ".AmazMe-update-"));

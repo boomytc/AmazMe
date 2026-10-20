@@ -66,7 +66,8 @@ test.each([true, false])("ordinary second startup exits without a modal while in
 	const directory = createTempDir("amazme-update-startup-"); directories.push(directory);
 	const executable = electronBinary(), target = dirname(dirname(dirname(executable))), lock = target + ".update-lock";
 	const job = createTempDir(".AmazMe-update-", { baseDirectory: dirname(target) });
-	await writeFile(lock, JSON.stringify({ target, directory: job, nonce: "e".repeat(36), version: "8.5.0", phase: "preparing", pid: process.pid }), { mode: 0o600, flag: "wx" });
+	const snapshot = { target, nonce: "e".repeat(36), current: "8.5.0", version: "8.6.0", team: "ABCDE12345", arch: "arm64", originalHash: "a".repeat(40), parentPid: process.pid };
+	await writeFile(lock, JSON.stringify({ format: 1, target, directory: job, nonce: snapshot.nonce, version: snapshot.current, phase: "preparing", pid: process.pid, job: snapshot }), { mode: 0o600, flag: "wx" });
 	try {
 		const fixture = join(directory, "locked-startup.mjs");
 		await writeFile(fixture, 'import {dialog} from "electron"; dialog.showMessageBox=async()=>{throw new Error("A blocked launch must not show a modal");};\nawait import(' + JSON.stringify(new URL("../dist/main.js", import.meta.url).href) + ");\n");

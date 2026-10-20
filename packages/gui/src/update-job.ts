@@ -8,7 +8,12 @@ export async function readInstallJob(directory: string): Promise<InstallJob> {
 	if (!mode.isDirectory() || mode.uid !== process.getuid?.() || (mode.mode & 0o077) !== 0 || await realpath(directory) !== directory) throw new Error("permission");
 	const file = join(directory, "job.json");
 	if (!(await lstat(file)).isFile() || await realpath(file) !== file) throw new Error("permission");
-	const value = JSON.parse(await readFile(file, "utf8")) as Partial<InstallJob>;
+	return parseInstallJob(JSON.parse(await readFile(file, "utf8")), directory);
+}
+
+export function parseInstallJob(input: unknown, directory: string): InstallJob {
+	if (typeof input !== "object" || input === null) throw new Error("install");
+	const value = input as Partial<InstallJob>;
 	if (typeof value.target !== "string" || dirname(value.target) !== dirname(directory) || !directory.startsWith(join(dirname(value.target), ".AmazMe-update-"))
 		|| ![value.current, value.version].every(item => typeof item === "string" && /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(item))
 		|| typeof value.team !== "string" || !/^[A-Z0-9]{10}$/.test(value.team)
