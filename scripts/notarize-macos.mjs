@@ -3,7 +3,7 @@
  * Notarize, staple, and verify a Developer ID signed DMG, then rewrite its checksum.
  *
  * Credentials come from the environment (ASC_KEY_ID, ASC_ISSUER_ID) and a private key file.
- * notarytool output is never echoed: a failed submission reports only its id and status.
+ * notarytool output is never echoed: failures report only an allowlisted diagnostic or id/status.
  */
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -22,18 +22,34 @@ function required(value, name) {
 	return value;
 }
 
-/** Reads `notarytool submit --output-format json`; anything but Accepted fails with id and status only. */
-export function parseSubmission(output) {
+/** Classify output without copying arbitrary tool text, credentials, paths, or response bodies. */
+export function submissionFailureMessage(output, parsed) {
+	const jsonCode = parsed?.statusCode ?? parsed?.code;
+	const safeJsonCode = (typeof jsonCode === "number" || typeof jsonCode === "string") && /^(401|403|429|5\d{2})$/.test(String(jsonCode)) ? String(jsonCode) : undefined;
+	const http = /HTTP status code:\s*(401|403|429|5\d{2})\b/i.exec(output)?.[1] ?? safeJsonCode;
+	if (http === "401") return "Notarization submit failed (HTTP 401: check App Store Connect credentials)";
+	if (http === "403") return "Notarization submit failed (HTTP 403: check App Store Connect permissions and agreements)";
+	if (http === "429") return "Notarization submit failed (HTTP 429: service rate limit)";
+	if (http !== undefined) return `Notarization submit failed (HTTP ${http}: Apple service error)`;
+	if (/timed out|timeout|NSURLErrorTimedOut/i.test(output)) return "Notarization submit failed (network timeout; submission outcome unknown)";
+	if (/could not resolve host|cannot find host|NSURLErrorCannotFindHost/i.test(output)) return "Notarization submit failed (DNS resolution error)";
+	if (/SSL|TLS|certificate verification failed/i.test(output)) return "Notarization submit failed (TLS connection error)";
+	return "Notarization submit failed (unclassified tool error; raw output withheld)";
+}
+
+/** Parse a submission or classify a failure; never echo unvalidated response fields. */
+export function parseSubmission(output, commandSucceeded = true) {
 	let parsed;
 	try {
 		parsed = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1));
 	} catch {
-		throw new Error("notarytool returned no readable result");
+		throw new Error(submissionFailureMessage(output));
 	}
-	const id = typeof parsed.id === "string" ? parsed.id : "(unknown)";
-	const status = typeof parsed.status === "string" ? parsed.status : "(unknown)";
-	if (status !== "Accepted") throw new Error(`Notarization ${status} for submission ${id}`);
-	return { id, status };
+	const id = typeof parsed?.id === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(parsed.id) ? parsed.id : undefined;
+	const status = ["Accepted", "Invalid", "In Progress", "Rejected"].includes(parsed?.status) ? parsed.status : undefined;
+	if (status === "Accepted" && id !== undefined && commandSucceeded) return { id, status };
+	if (status !== undefined && status !== "Accepted") throw new Error(`Notarization ${status} for submission ${id ?? "(unknown)"}`);
+	throw new Error(submissionFailureMessage(output, parsed));
 }
 
 function step(name, command, args) {
@@ -73,13 +89,14 @@ async function main() {
 
 	assertTeam(image, teamId);
 	let output;
+	let commandSucceeded = true;
 	try {
 		output = tool("xcrun", ["notarytool", "submit", image, "--key", key, "--key-id", keyId, "--issuer", issuer, "--wait", "--output-format", "json"]);
 	} catch (error) {
+		commandSucceeded = false;
 		output = typeof error?.output === "string" ? error.output : "";
-		if (!output.includes("{")) throw new Error("Notarization submit failed");
 	}
-	const submission = parseSubmission(output);
+	const submission = parseSubmission(output, commandSucceeded);
 	console.log(`Notarization ${submission.status} for submission ${submission.id}`);
 
 	step("Staple", "xcrun", ["stapler", "staple", image]);
@@ -98,3 +115,4 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(p
 		process.exitCode = 1;
 	});
 }
+
