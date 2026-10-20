@@ -34,6 +34,15 @@ npm test --workspace <name>
 - 写 secret 用 `printf '%s' <值> | gh secret set <名字> --env release`，写入前先在本机验证值。
 - 重打 `v*` 标签前确认该标签没有已发布的 GitHub Release。
 
+## 分支
+
+- 日常开发提交到 `dev`，不直接改 `main`。推送 `dev` 不触发 Actions。
+- 阶段性闭环后再开 `dev` 到 `main` 的 PR，不要长期挂着：PR 的每次推送都会跑 CI。
+- 合入用 merge commit 或快进，不用 squash，保持两条分支历史一致。
+- 直接在 `main` 上的热修要合回 `dev`。
+- `dev` 没有 CI 兜底：改完包按「命令」一节构建并测试；需要完整 CI 时跑 `gh workflow run ci.yml --ref dev`。
+- 版本标签只从 `main` 打。
+
 ## Git
 
 - 只有用户要求时才提交。
