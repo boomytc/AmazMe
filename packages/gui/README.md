@@ -63,7 +63,7 @@ release 工作流在 `release` 环境里运行：证书只给导入证书那一�
 
 调用 notarytool 前还会离线核对凭证形状：`ASC_ISSUER_ID` 必须是团队密钥页上方的 Issuer ID UUID，`ASC_KEY_ID` 只能是字母数字，两者都不能有首尾空白，私钥必须是 EC P-256。Issuer 不是 UUID 时 notarytool 以 exit 64 拒绝参数、不发请求；这类参数错误按选项名报告，不带值。格式通过后返回 HTTP 401，说明 Key ID、Issuer ID 与私钥不是同一套，应在本机用下载的 `AuthKey_<Key ID>.p8` 跑一次只读 `xcrun notarytool history --key … --key-id … --issuer …` 确认组合，再用 `printf '%s' … | gh secret set <名字> --env release` 一并重写三个 secret。个人密钥没有 Issuer ID，不能用于这条流程。
 
-`.github/workflows/notary-history.yml` 只读验证 release 环境里的公证凭证：在要验证的提交上推送 `vnotary-history-<日期>-<序号>` 标签，再手动触发该工作流，约半分钟，不构建、不提交归档，并记录 runner 的 macOS、Xcode 和 notarytool 版本。这个标签也会触发 release 工作流，并在版本检查处失败，不会发布；验证后删除标签。公证 Invalid 时，在本机用同一套凭证 `xcrun notarytool log <submission ID> …` 读完整日志，按文件路径定位，不要反复重跑发布。
+`.github/workflows/notary-history.yml` 只读验证 release 环境里的公证凭证：在要验证的提交上推送 `vnotary-history-<日期>-<序号>` 标签，再手动触发该工作流，约半分钟，不构建、不提交归档，并记录 runner 的 macOS、Xcode 和 notarytool 版本。release 工作流只匹配 `v[0-9]*`，不会被这个标签触发；release 环境按 `v*` 放行，所以诊断标签仍能读到凭证。验证后删除标签。公证 Invalid 时，在本机用同一套凭证 `xcrun notarytool log <submission ID> …` 读完整日志，按文件路径定位，不要反复重跑发布。
 
 打包安装依赖时，npm 缓存写在 `Contents/Resources/app/.npm-cache`，签名前必须删掉：公证会解开其中的 tarball，里面未签名的 esbuild 和原生模块会使整包 Invalid。签名只覆盖直接可见的 Mach-O，app 内不应再带任何含二进制的压缩包。
 

@@ -19,7 +19,7 @@ const SECRET_STEPS = {
 test("release runs in the release environment and takes the team from a repository variable", () => {
 	assert.equal(job.environment, "release");
 	assert.equal(job.env.APPLE_TEAM_ID, "${{ vars.APPLE_TEAM_ID }}");
-	assert.deepEqual(workflow.on, { push: { tags: ["v*"] } });
+	assert.deepEqual(workflow.on, { push: { tags: ["v[0-9]*"] } });
 });
 
 test("secrets reach only the signing and notarization steps", () => {
