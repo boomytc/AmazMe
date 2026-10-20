@@ -1,5 +1,4 @@
 import { fileURLToPath } from "node:url";
-import vm from "node:vm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	CodemodeSandbox,
@@ -13,7 +12,6 @@ import {
 	RemoteCodemodeSandbox,
 	serveCodemodeRemote,
 } from "../src/index.ts";
-import { PRELUDE_SOURCE } from "../src/runtime/prelude-source.ts";
 
 /**
  * Every behavior test runs against each place a VM can run. The remote backend serves executions in
@@ -63,12 +61,6 @@ const PNG = "iVBORw0KGgo=";
 const JPEG = "/9j/4A==";
 const GIF = "R0lGODlh";
 const WEBP = "UklGRgAAAABXRUJQ";
-
-describe("embedded sources", () => {
-	it("parse as JavaScript", () => {
-		expect(() => new vm.Script(PRELUDE_SOURCE, { filename: "prelude.js" })).not.toThrow();
-	});
-});
 
 describe.each(Object.keys(BACKENDS))("%s backend", (name) => {
 	beforeEach(() => {

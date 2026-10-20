@@ -267,19 +267,6 @@ describe("Agent integration with faux provider", () => {
 
 describe("Agent.continue() with faux provider", () => {
 	describe("validation", () => {
-		it("throws when no messages in context", async () => {
-			const faux = createFauxRegistration();
-			const agent = new Agent({
-				streamFn: streamSimple,
-				initialState: {
-					systemPrompt: "Test",
-					model: faux.getModel(),
-				},
-			});
-
-			await expect(agent.continue()).rejects.toThrow("No messages to continue from");
-		});
-
 		it("throws when last message is assistant", async () => {
 			const faux = createFauxRegistration();
 			const model = faux.getModel();

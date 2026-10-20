@@ -8,6 +8,7 @@ import { checkProviderAuth, createAuthCheckModelRuntime, getProviderCredential }
 import { parseAuthCommand } from "../src/cli/auth-command.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
+import { InMemoryCodingAgentModelsStore } from "../src/core/models-store.ts";
 
 const tempDir = join(tmpdir(), `pi-test-auth-check-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 
@@ -165,7 +166,19 @@ describe("auth check command", () => {
 	});
 
 	test("creates an auth-check runtime without catalog storage", async () => {
-		const runtime = await createAuthCheckModelRuntime(AuthStorage.inMemory());
-		expect(runtime.getProvider("openai")).toBeDefined();
+		const credentials = AuthStorage.inMemory();
+		const create = vi.spyOn(ModelRuntime, "create");
+		try {
+			const runtime = await createAuthCheckModelRuntime(credentials);
+			expect(create).toHaveBeenCalledWith({
+				credentials,
+				modelsStore: expect.any(InMemoryCodingAgentModelsStore),
+				allowModelNetwork: false,
+				refreshOnCreate: false,
+			});
+			expect(runtime.getProvider("openai")).toBeDefined();
+		} finally {
+			create.mockRestore();
+		}
 	});
 });

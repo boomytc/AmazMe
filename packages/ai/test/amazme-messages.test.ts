@@ -276,9 +276,4 @@ describe("amazme-messages api registration", () => {
 		const { getApiProvider } = await import("../src/compat.ts");
 		expect(getApiProvider("amazme-messages")).toBeDefined();
 	});
-
-	it("is a known api usable on models", () => {
-		const api: Api = "amazme-messages";
-		expect(api).toBe("amazme-messages");
-	});
 });

@@ -249,8 +249,9 @@ describe("closeWhenSignaled shape", () => {
 		const startedFirst = () => closeWhenSignaled(running, () => {});
 		// @ts-expect-error The removed `(closed, close, arm)` shape.
 		const oldShape = () => closeWhenSignaled(running.closed, () => running.close(), () => {});
-		// Never called: this test is about the types, which `npm run typecheck` enforces.
-		expect([typeof startedFirst, typeof oldShape]).toEqual(["function", "function"]);
+		// Never called: the two `@ts-expect-error` lines are the assertion, checked by tsc.
+		void startedFirst;
+		void oldShape;
 	});
 });
 

@@ -1,12 +1,12 @@
-import { homedir } from "os";
-import { join, resolve } from "path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import * as os from "node:os";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.ts";
 import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.ts";
 import { createSyntheticSourceInfo } from "../src/core/source-info.ts";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
-const collisionFixturesDir = resolve(__dirname, "fixtures/skills-collision");
 
 function createTestSkill(options: {
 	name: string;
@@ -183,16 +183,21 @@ describe("skills", () => {
 		});
 
 		it("should use parent directory name when name not in frontmatter", () => {
-			// The no-frontmatter fixture has no name in frontmatter, so it should use "no-frontmatter"
-			// But it also has no description, so it won't load
-			// Let's test with a valid skill that relies on directory name
-			const { skills } = loadSkillsFromDir({
-				dir: join(fixturesDir, "valid-skill"),
-				source: "test",
-			});
+			const root = mkdtempSync(join(os.tmpdir(), "amazme-skill-name-"));
+			const dir = join(root, "parent-dir-name");
+			mkdirSync(dir);
+			writeFileSync(join(dir, "SKILL.md"), "---\ndescription: no frontmatter name\n---\nbody\n");
+			try {
+				const { skills } = loadSkillsFromDir({
+					dir,
+					source: "test",
+				});
 
-			expect(skills).toHaveLength(1);
-			expect(skills[0].name).toBe("valid-skill");
+				expect(skills).toHaveLength(1);
+				expect(skills[0].name).toBe("parent-dir-name");
+			} finally {
+				rmSync(root, { recursive: true, force: true });
+			}
 		});
 
 		it("should parse disable-model-invocation frontmatter field", () => {
@@ -373,60 +378,27 @@ describe("skills", () => {
 		});
 
 		it("should expand ~ in skillPaths", () => {
-			const homeSkillsDir = join(homedir(), ".amazme/agent/skills");
-			const { skills: withTilde } = loadSkills({
-				agentDir: emptyAgentDir,
-				cwd: emptyCwd,
-				skillPaths: ["~/.amazme/agent/skills"],
-				includeDefaults: true,
-			});
-			const { skills: withoutTilde } = loadSkills({
-				agentDir: emptyAgentDir,
-				cwd: emptyCwd,
-				skillPaths: [homeSkillsDir],
-				includeDefaults: true,
-			});
-			expect(withTilde.length).toBe(withoutTilde.length);
-		});
-	});
-
-	describe("collision handling", () => {
-		it("should detect name collisions and keep first skill", () => {
-			// Load from first directory
-			const first = loadSkillsFromDir({
-				dir: join(collisionFixturesDir, "first"),
-				source: "first",
-			});
-
-			const second = loadSkillsFromDir({
-				dir: join(collisionFixturesDir, "second"),
-				source: "second",
-			});
-
-			// Simulate the collision behavior from loadSkills()
-			const skillMap = new Map<string, Skill>();
-			const collisionWarnings: Array<{ skillPath: string; message: string }> = [];
-
-			for (const skill of first.skills) {
-				skillMap.set(skill.name, skill);
+			const home = mkdtempSync(join(os.tmpdir(), "amazme-skill-tilde-"));
+			const dir = join(home, ".amazme", "agent", "skills", "tilde-skill");
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, "SKILL.md"), "---\nname: tilde-skill\ndescription: from tilde\n---\nbody\n");
+			const previousHome = process.env.HOME;
+			process.env.HOME = home;
+			try {
+				const { skills } = loadSkills({
+					agentDir: emptyAgentDir,
+					cwd: emptyCwd,
+					skillPaths: ["~/.amazme/agent/skills/tilde-skill"],
+					includeDefaults: false,
+				});
+				expect(skills).toHaveLength(1);
+				expect(skills[0].name).toBe("tilde-skill");
+				expect(skills[0].filePath).toBe(join(dir, "SKILL.md"));
+			} finally {
+				if (previousHome === undefined) delete process.env.HOME;
+				else process.env.HOME = previousHome;
+				rmSync(home, { recursive: true, force: true });
 			}
-
-			for (const skill of second.skills) {
-				const existing = skillMap.get(skill.name);
-				if (existing) {
-					collisionWarnings.push({
-						skillPath: skill.filePath,
-						message: `name collision: "${skill.name}" already loaded from ${existing.filePath}`,
-					});
-				} else {
-					skillMap.set(skill.name, skill);
-				}
-			}
-
-			expect(skillMap.size).toBe(1);
-			expect(skillMap.get("calendar")?.sourceInfo.source).toBe("first");
-			expect(collisionWarnings).toHaveLength(1);
-			expect(collisionWarnings[0].message).toContain("name collision");
 		});
 	});
 });

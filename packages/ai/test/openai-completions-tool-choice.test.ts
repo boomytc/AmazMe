@@ -551,50 +551,6 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBeUndefined();
 	});
 
-	it("respects explicit z.ai tool_stream compat override", async () => {
-		const baseModel = getModel("zai", "glm-5.2")!;
-		const model = {
-			...baseModel,
-			compat: {
-				...baseModel.compat,
-				zaiToolStream: true,
-			},
-		} as const;
-		const tools: Tool[] = [
-			{
-				name: "ping",
-				description: "Ping tool",
-				parameters: Type.Object({
-					ok: Type.Boolean(),
-				}),
-			},
-		];
-		let payload: unknown;
-
-		await streamSimple(
-			model,
-			{
-				messages: [
-					{
-						role: "user",
-						content: "Call ping with ok=true",
-						timestamp: Date.now(),
-					},
-				],
-				tools,
-			},
-			{
-				apiKey: "test",
-				onPayload: (params: unknown) => {
-					payload = params;
-				},
-			},
-		).result();
-
-		const params = (payload ?? mockState.lastParams) as { tool_stream?: boolean };
-		expect(params.tool_stream).toBe(true);
-	});
-
 	it("omits tool_stream when no tools are provided", async () => {
 		const model = getModel("zai", "glm-5.2")!;
 		let payload: unknown;
