@@ -26,11 +26,17 @@ const BUNDLE_SUFFIXES = [".app", ".framework"];
  */
 export function tool(command, args) {
 	const result = spawnSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
-	if (result.error) throw new Error(`${basename(command)} ${args[0] ?? ""} could not start: ${result.error.message}`);
+	if (result.error) {
+		const error = new Error(`${basename(command)} ${args[0] ?? ""} could not start: ${result.error.message}`);
+		error.toolErrorCode = result.error.code;
+		throw error;
+	}
 	const output = `${result.stdout}${result.stderr}`;
 	if (result.status !== 0) {
 		const error = new Error(`${basename(command)} ${args[0] ?? ""} exited with ${result.status}\n${output.trim()}`);
 		error.output = output;
+		error.exitCode = result.status;
+		error.signal = result.signal;
 		throw error;
 	}
 	return output;

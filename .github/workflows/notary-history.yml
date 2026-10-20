@@ -1,0 +1,33 @@
+name: Notarization history diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  history:
+    runs-on: macos-14
+    environment: release
+    steps:
+      - uses: actions/checkout@v5
+      - name: Require an explicitly approved diagnostic tag
+        run: |
+          test "$GITHUB_REF_TYPE" = tag || { echo 'An approved diagnostic tag is required.'; exit 1; }
+          [[ "$GITHUB_REF_NAME" == vnotary-history-* ]] || { echo 'Use an approved vnotary-history tag.'; exit 1; }
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22.23.3"
+      - name: Query history without submitting an archive
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s\n' "$ASC_PRIVATE_KEY" > "$RUNNER_TEMP/asc-api-key.p8"
+          node scripts/notarize-macos.mjs --history-only --key "$RUNNER_TEMP/asc-api-key.p8"
+      - name: Remove temporary key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/asc-api-key.p8"
