@@ -20,7 +20,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Require a fresh explicit dispatch
-        run: test "$GITHUB_RUN_ATTEMPT" = 1 || { echo 'Inspect the existing notarization submission before another dispatch; rerun is disabled.'; exit 1; }
+        run: |
+          test "$GITHUB_RUN_ATTEMPT" = 1 || { echo 'Inspect the existing notarization submission before another dispatch; rerun is disabled.'; exit 1; }
+          test "$GITHUB_REF_TYPE" = tag || { echo 'Use an approved version tag; release environment forbids main.'; exit 1; }
+          VERSION="$(node -p "require('./packages/gui/package.json').version")"
+          test "$GITHUB_REF_NAME" = "v$VERSION" || { echo 'Tag does not match the GUI package version.'; exit 1; }
       - uses: actions/setup-node@v5
         with:
           node-version: "22.23.3"

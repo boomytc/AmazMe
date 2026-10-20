@@ -11,6 +11,9 @@ test("trusted acceptance is manual, read-only on repository contents and never p
 	assert.equal(job.environment, "release");
 	assert.doesNotMatch(text, /gh release (?:create|upload)|git (?:tag|push)|contents: write|workflow_dispatch:[\s\S]*inputs:/);
 	assert.match(text, /actions\/upload-artifact@v4/);
+	const guard = job.steps.find(step => step.name === "Require a fresh explicit dispatch").run;
+	assert.match(guard, /GITHUB_REF_TYPE.*tag/);
+	assert.match(guard, /GITHUB_REF_NAME.*v\$VERSION/);
 });
 test("real credentials reach only import/notarization; cleanup precedes acceptance and artifact upload", () => {
 	const expected = {
