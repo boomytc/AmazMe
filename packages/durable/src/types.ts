@@ -1,6 +1,7 @@
 import type { AttachedReplicatedState, Context, Draft, JsonValue } from "@amazme/chord";
 import type { Op } from "@amazme/chord/delta";
 import type { Message, Models } from "@amazme/ai";
+import type { TelemetryCarrier } from "@amazme/telemetry";
 import type { ExecutionEnv } from "./env/index.ts";
 import type {
 	Agent,
@@ -73,8 +74,8 @@ export type CommonDocDefinition<T extends JsonObject> = {
 	readonly version: number;
 	initial(): T;
 	migrate?(value: JsonObject, fromVersion: number): T;
-	/** Return true to store this ordinary change as a complete base instead of a delta. */
-	checkpointWhen?(value: Readonly<T>, ops: readonly Op[], info: CheckpointInfo): boolean;
+	/** Required policy: return true to store this ordinary change as a complete base instead of a delta. */
+	checkpointWhen(value: Readonly<T>, ops: readonly Op[], info: CheckpointInfo): boolean;
 };
 
 /** Singleton document definition. */
@@ -369,6 +370,10 @@ export type JoinPolicy = "failFast" | "allSettled";
 
 /** Creation options for a durable task. */
 export type TaskOptions = {
+	/** Omitted: inherit the creator's carrier. "root": start at the adapter root without a stored carrier. */
+	readonly trace?: TelemetryCarrier | "root";
+	/** Immutable creation-time links, attached to the spans of this task's first invocation. */
+	readonly links?: readonly TelemetryCarrier[];
 	/** Required: a task always names its owner (spec §5.5). */
 	readonly ownership: TaskOwnership;
 	/**
@@ -471,6 +476,8 @@ export interface Entry<D extends JsonValue = never> {
 
 /** Identity fields shared by every durable submission state. */
 type SubmissionRecordBase = {
+	/** Adapter-owned context of the admission span; absent without propagation. */
+	readonly trace?: TelemetryCarrier;
 	readonly id: SubmissionId;
 	readonly conversationId: ConversationId;
 	/** Host-provided deduplication key, scoped to the conversation. */
@@ -649,6 +656,10 @@ export type TaskState<S, R> =
 
 /** Identity, definition, and scheduling fields shared by every task state. */
 type TaskRecordBase<I, R> = {
+	/** Adapter-owned context that created this task; phase invocations extract it as their parent. */
+	readonly trace?: TelemetryCarrier;
+	/** Immutable creation-time links for the task's first invocation. */
+	readonly links?: readonly TelemetryCarrier[];
 	readonly id: TaskId<R>;
 	readonly conversationId: ConversationId;
 	/** Registered task definition name. */

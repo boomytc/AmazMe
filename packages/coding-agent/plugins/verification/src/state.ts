@@ -27,11 +27,13 @@ export const ConfigurationChange = defineDoc<{ applied: boolean }>({
 	version: 1,
 	scope: "task",
 	initial: () => ({ applied: false }),
+	checkpointWhen: () => false,
 });
 
 export const PolicyDoc = defineDoc<Policy>({
 	kind: "amazme.verification.policy",
 	version: 1,
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	scope: "conversation",
 	history: "rewindable",
 	fork: "asOf",
@@ -52,6 +54,7 @@ export const Rounds = defineDoc<{
 }>({
 	kind: "amazme.verification.rounds",
 	version: 1,
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	scope: "conversation",
 	history: "latest",
 	fork: "initial",

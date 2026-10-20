@@ -44,6 +44,7 @@ export const ComputerUsePolicy = defineDoc<ComputerUseSettings>({
 		...DEFAULT_COMPUTER_USE_SETTINGS,
 		allowRiskCategories: [],
 	}),
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

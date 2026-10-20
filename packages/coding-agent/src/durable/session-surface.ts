@@ -40,6 +40,7 @@ export const SessionViewDoc = defineDoc<{ conversationId: string; name?: string 
 	version: 1,
 	scope: "session",
 	initial: () => ({ conversationId: "" }),
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 /** The text of a user entry as a one-line label. */

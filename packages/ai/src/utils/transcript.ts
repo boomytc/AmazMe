@@ -198,40 +198,45 @@ export function hasToolRedefinitions(messages: TranscriptMessages): boolean {
 
 /** Whether tool history contains a removal or same-name redeclaration that an addition-only transport cannot replay. */
 export function hasNonAdditiveToolChanges(messages: TranscriptMessages): boolean {
+	return findLastNonAdditiveToolChange(messages.filter(isSystemMessage)) >= 0;
+}
+
+/** Index of the last system message with a removal or same-name redeclaration, or -1. */
+function findLastNonAdditiveToolChange(systemMessages: readonly SystemMessage[]): number {
+	// Kimi K3 requires a top-level reset when a previously declared name returns, even after removal.
 	const declared = new Set<string>();
-	for (const message of messages) {
-		if (!isSystemMessage(message)) continue;
-		if ((message.toolsRemoved?.length ?? 0) > 0) return true;
+	let last = -1;
+	for (let index = 0; index < systemMessages.length; index++) {
+		const message = systemMessages[index];
+		if ((message.toolsRemoved?.length ?? 0) > 0) last = index;
 		for (const tool of message.toolsAdded ?? []) {
-			if (declared.has(tool.name)) return true;
+			if (declared.has(tool.name)) last = index;
 			declared.add(tool.name);
 		}
 	}
-	return false;
+	return last;
 }
+
+/** Tool support ranges from a current top-level list to inline additions or redefinitions with textual removals. */
+export type TranscriptToolSupport = "none" | "additions" | "changes";
 
 export interface TranscriptTools {
 	/** Tools sent in the top-level request field. */
 	requestTools: Tool[];
-	/**
-	 * Whether later system messages carry their own `toolsAdded` as in-place additions.
-	 * When false, `requestTools` already holds the complete current tool set.
-	 */
-	anchorsAdditions: boolean;
+	/** Number of leading system messages folded into requestTools; later changes remain in place. */
+	foldedSystemMessages: number;
 }
 
-/**
- * Split tool declarations between the top-level request field and in-place additions.
- * Transports that can anchor additions at a system message keep the initial tools at the
- * top and load later ones where they appear; that only works when no tool was removed or
- * redeclared, so everything else sends the current tool list.
- */
-export function resolveTranscriptTools(messages: TranscriptMessages, supportsToolAdditions: boolean): TranscriptTools {
-	const anchorsAdditions = supportsToolAdditions && !hasNonAdditiveToolChanges(messages);
-	return {
-		requestTools: anchorsAdditions
-			? (getInitialSystemMessage(messages)?.toolsAdded ?? [])
-			: getCurrentTools(messages),
-		anchorsAdditions,
-	};
+/** Keep changes inline, fold additions through the last removal or redeclaration, or fold all tools without support. */
+export function resolveTranscriptTools(messages: TranscriptMessages, support: TranscriptToolSupport): TranscriptTools {
+	const systemMessages = messages.filter(isSystemMessage);
+	if (support === "none") {
+		return { requestTools: getCurrentTools(systemMessages), foldedSystemMessages: systemMessages.length };
+	}
+	if (support === "changes") return { requestTools: [], foldedSystemMessages: 0 };
+	const folded = Math.max(
+		getInitialSystemMessage(messages) ? 1 : 0,
+		findLastNonAdditiveToolChange(systemMessages) + 1,
+	);
+	return { requestTools: getCurrentTools(systemMessages.slice(0, folded)), foldedSystemMessages: folded };
 }

@@ -13,6 +13,7 @@ import type { ToolExecutionApi } from "../harness/types.ts";
 /** A resumed conversation retains observations; a new branch or conversation must read for itself. */
 export const FileObservationDoc = defineDoc<FileObservationState>({
 	kind: "amazme.file-observations",
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	version: 1,
 	scope: "conversation",
 	history: "latest",

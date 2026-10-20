@@ -823,9 +823,10 @@ describe("ownership", () => {
 		const tree = await ownedChild(opened.root, "owner", { slowOwner: true });
 		open("owner.inner", "completed");
 		await opened.harness.waitForTask(tree.inner, context);
-		// The owner stays live and cancelled in its slow abort handler.
-		await opened.harness.abortTask(tree.owner, context);
+		// Seal scheduling before the admitted cancellation can launch the non-cooperative abort handler.
+		const cancelling = opened.harness.abortTask(tree.owner, context);
 		await opened.harness.close(context);
+		await cancelling;
 
 		// The child is empty at open, so nothing loads its edge until new work arrives.
 		opened = await openHarness(await openNodeSqliteStorage(path));
@@ -935,8 +936,9 @@ describe("ownership", () => {
 		const tree = await ownedChild(opened.root, "owner", { slowOwner: true });
 		open("owner.inner", "completed");
 		await opened.harness.waitForTask(tree.inner, context);
-		await opened.harness.abortTask(tree.owner, context);
+		const cancelling = opened.harness.abortTask(tree.owner, context);
 		await opened.harness.close(context);
+		await cancelling;
 
 		const storage = await openNodeSqliteStorage(path);
 		let rejectMark: TaskId | undefined;
@@ -1368,6 +1370,7 @@ describe("owned conversations from tools and supervisors", () => {
 		directories.add(directory);
 		const path = join(directory, "session.sqlite");
 		const Children = defineDoc<{ child?: ConversationId }>({
+			checkpointWhen: () => false,
 			kind: "test.children",
 			version: 1,
 			scope: "conversation",

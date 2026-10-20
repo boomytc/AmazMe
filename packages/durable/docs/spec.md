@@ -949,6 +949,7 @@ keeps that in its own document and reads it through `target.read`:
 const ContainerDoc = defineDoc<{ image: string }>({
   kind: "app.container", version: 1, scope: "conversation", history: "latest", fork: "current",
   initial: () => ({ image: "node:22" }),
+  checkpointWhen: () => false,
 });
 const harness = await Harness.open(storage, {
   models,
@@ -1121,7 +1122,8 @@ type CommonDocDefinition<T extends JsonObject> = {
   readonly version: number;
   initial(): T;
   migrate?(value: JsonObject, fromVersion: number): T;
-  checkpointWhen?(value: Readonly<T>, ops: readonly Op[], info: CheckpointInfo): boolean;
+  /** Required, no default: whether this change is stored as a complete base (section 3.5). */
+  checkpointWhen(value: Readonly<T>, ops: readonly Op[], info: CheckpointInfo): boolean;
 };
 
 type DocDefinition<T extends JsonObject> =
@@ -1239,6 +1241,9 @@ Validation rules:
 - Task documents are current-only, are never copied by a conversation fork, and
   retire atomically when their task becomes terminal.
 - `initial()` and `migrate()` return JSON objects.
+- Every `defineDoc()` and `defineDocFamily()` definition supplies
+  `checkpointWhen`; there is no default. A definition that wants only the
+  required bases writes `checkpointWhen: () => false`.
 
 `checkpointWhen()` only selects complete storage bases to bound replay. It does
 not change scope, lifetime, history, or fork semantics.
@@ -1562,7 +1567,7 @@ For an ordinary later mutation, the definition alone decides whether the
 storage record is a base:
 
 ```ts
-const useBase = definition.checkpointWhen?.(candidateValue, ops, { deltasSinceBase }) ?? false;
+const useBase = definition.checkpointWhen(candidateValue, ops, { deltasSinceBase });
 ```
 
 The Session evaluates this predicate exactly once after tracker preparation.
@@ -3026,6 +3031,7 @@ document holds that behavior's state:
 const PlanModeDoc = defineDoc<{ enabled: boolean }>({
   kind: "app.plan-mode", version: 1, scope: "conversation", history: "latest", fork: "current",
   initial: () => ({ enabled: false }),
+  checkpointWhen: () => false,
 });
 export const PlanMode = defineExtension({
   name: "plan-mode",
@@ -5545,9 +5551,9 @@ These are contracts, not invitations to add defensive machinery:
 - **Family initialization:** the first acquisition of an absent family address
   selects its seed. Existing instances and later calls ignore seeds; a seed is
   neither identity nor an update.
-- **Checkpoint starvation:** if `checkpointWhen()` never returns true, replay
-  and current-only document storage can grow without bound while the document is
-  live.
+- **Checkpoint starvation:** if `checkpointWhen()` never returns true, as with
+  `() => false`, replay and current-only document storage can grow without bound
+  while the document is live.
 - **Wrong fork setting:** `current`, `initial`, and `asOf` are product semantics,
   not optimizations. Changing one changes child conversation behavior.
 - **Schema stability:** document kinds and visible mount paths are

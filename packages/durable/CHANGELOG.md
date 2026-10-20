@@ -4,9 +4,13 @@
 
 ### Breaking Changes
 
+- `defineDoc` and `defineDocFamily` require an explicit `checkpointWhen` policy. Task-scoped scratch documents can return false; long-lived documents should periodically checkpoint their deltas.
+
 - `ExecutionEnv` requires `artifactDirectory: string`: a host-injected directory for session-scoped tool artifacts. Code mode writes truncated output and images under a per-run subdirectory of it (recorded in `CodemodeRunDoc.outputDir`) instead of `createTempDir("amazme-codemode-")`. There is no `/tmp` fallback; every `ExecutionEnv` construction (including `NodeExecutionEnv`, `MemoryStorage`/test hosts, and coding-agent) must pass a directory. The host owns its lifetime (typically next to the session database, deleted with the session).
 
 ### Added
+
+- Optional telemetry records submission admission, task phases, committed entry IDs, replay and reports, with persisted trace carriers and links across restart. Live-task and phase-duration metrics do not include prompt or tool output content.
 
 - `NodeFileSystem` (`@amazme/durable/env/node`): the local file system alone, for callers that only read and write files. It has no shell and no `artifactDirectory`, so file-only code cannot reach a session artifact directory. `NodeExecutionEnv` now extends it with the shell and `artifactDirectory`.
 

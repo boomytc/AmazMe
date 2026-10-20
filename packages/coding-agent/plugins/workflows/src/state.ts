@@ -36,6 +36,7 @@ export const Control = defineDoc<{ paused: boolean }>({
 	kind: "amazme.workflow.control",
 	version: 1,
 	scope: "task",
+	checkpointWhen: () => false,
 	initial: () => ({ paused: false }),
 });
 export const Admission = defineDoc<{
@@ -45,6 +46,7 @@ export const Admission = defineDoc<{
 	kind: "amazme.workflow.admission",
 	version: 1,
 	scope: "task",
+	checkpointWhen: () => false,
 	initial: () => ({ run: null, controlApplied: false }),
 });
 /** IDs only; checkpoints, results and ownership remain the existing task records' authority. */
@@ -60,6 +62,7 @@ export const Index = defineDoc<{
 	version: 1,
 	scope: "session",
 	initial: () => ({ runs: [] }),
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 export type JobStatus = "completed" | "passed" | "failed" | "timed_out" | "cancelled" | "unverified";

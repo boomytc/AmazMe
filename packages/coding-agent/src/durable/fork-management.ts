@@ -9,6 +9,7 @@ const ARCHIVE_GATE = "archived-fork-gate";
 /** Session-scoped keys do not inherit names or archive state when a new fork copies context. */
 export const ForkManagementDoc = defineDoc<{ forks: Record<string, ForkMetadata> }>({
 	kind: "amazme.forks", version: 1, scope: "session", initial: () => ({ forks: {} }),
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 export class ForkArchivedError extends Error {

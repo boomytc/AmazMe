@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- 遥测适配器信任类型化输入，不再要求验证非法值或屏蔽后端错误；传播仅检查所需身份字段为字符串。
+- 适配器的 `metrics`、`propagation` 能力随 `TelemetryContext`、子 span 和提取的父上下文传递；`NOOP_TELEMETRY_CONTEXT` 始终是 `TelemetrySpan`。
+
+### Added
+
+- 共享 `StoredSpan`、`StoredTrace`、`StoredMetric`、查询类型和 `TelemetryStore`，内存适配器支持已结束 trace 查询、游标分页和指标查询。
+- `@amazme/telemetry/render` 提供 `renderTrace()`，按父子关系渲染去重后的 span、事件、错误和跨 trace 链接；新增适配器与存储契约回归。
+
 ## [1.3.0] - 2026-10-19
 
 ### Breaking Changes

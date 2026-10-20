@@ -28,6 +28,7 @@ export const WebPolicy = defineDoc<WebSettings>({
 	history: "rewindable",
 	fork: "asOf",
 	initial: () => ({ ...DEFAULT_WEB_SETTINGS }),
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 });
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

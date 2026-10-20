@@ -620,7 +620,7 @@ export async function checkEntryContracts(repoRoot) {
 	for (const budget of [
 		{
 			entry: "packages/ai/src/models.ts",
-			maxFiles: 15,
+			maxFiles: 18,
 			forbid: ["packages/ai/src/providers/", "packages/ai/src/models.generated.ts", "packages/ai/src/index.ts"],
 		},
 		{
@@ -641,7 +641,7 @@ export async function checkEntryContracts(repoRoot) {
 		// Product branch summaries/search/file contracts and the new Chord host graph are included.
 		{
 			entry: "packages/durable/src/index.ts",
-			// Chord's default telemetry reaches four leaf modules; Durable adds its host timer adapter.
+			// Includes the Durable telemetry schema and host timer adapter.
 			maxFiles: 75,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts", "packages/durable/src/images/"],
 		},

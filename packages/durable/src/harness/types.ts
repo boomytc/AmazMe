@@ -14,7 +14,7 @@ import type {
 	Usage,
 	UserMessage,
 } from "@amazme/ai";
-import type { TelemetryContext, TelemetryMetrics, TelemetryPropagation } from "@amazme/telemetry";
+import type { TelemetryContext } from "@amazme/telemetry";
 import type { ExecutionEnv, ShellOutputSkip, ShellOutputWindow } from "../env/index.ts";
 import type {
 	BackgroundTasks,
@@ -663,8 +663,8 @@ export type EnvTarget = {
 };
 
 export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
-	/** Host-owned adapter; propagation and metrics are optional. Durable instrumentation is not yet emitted. */
-	readonly telemetry?: TelemetryContext & Partial<TelemetryPropagation & TelemetryMetrics>;
+	/** Host-owned adapter for content-free admission/phase telemetry; propagation and metrics are optional. */
+	readonly telemetry?: TelemetryContext;
 	/**
 	 * pi-ai model access used by generation, compaction, hooks and tools: a `Models`, or a function returning the current
 	 * one, called at each use, so a host can replace its model configuration without reopening the Harness.

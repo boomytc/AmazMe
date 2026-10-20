@@ -1249,13 +1249,14 @@ describe("overflow compaction", () => {
 		} finally { await chat.harness.close(context); }
 	});
 
-	it("compacts and retries with the same attempt, leaving the error out of the retry", async () => {
+	it.each([OVERFLOW, 'github-copilot API error (413): {"message":"failed to parse request","code":""}'])(
+		"compacts and retries once without replaying the rejected response: %s", async (error) => {
 		const chat = await open();
 		await history(chat);
 		chat.setup.settings.compaction = ENABLED;
 		chat.faux.summaries.push(summary());
 		let attempt: number | undefined;
-		chat.faux.agent.push(failure(OVERFLOW));
+		chat.faux.agent.push(failure(error));
 		chat.faux.agent.push(async () => {
 			attempt = (await live(chat)).generation?.attempt;
 			return answer("fits");

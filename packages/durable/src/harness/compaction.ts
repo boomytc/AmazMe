@@ -182,6 +182,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint, 
 				cacheRetention: "none",
 				maxTokens,
 				signal: runtime.signal,
+				telemetry: context.telemetry,
 				sessionId: await ensureProviderSessionId(runtime, context),
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
@@ -456,13 +457,15 @@ async function placeSummary(
 	const result: CompactionResult =
 		current.owner === undefined
 			? {
-					submissionId: await admitSubmission(
-						tx,
-						runtime.conversationId,
-						{ type: "write", requestId: `compaction:${runtime.taskId}`, entry },
-						runtime.now(),
-						runtime.settings,
-					),
+					submissionId: (
+						await admitSubmission(
+							tx,
+							runtime.conversationId,
+							{ type: "write", requestId: `compaction:${runtime.taskId}`, entry },
+							runtime.now(),
+							runtime.settings,
+						)
+					).id,
 				}
 			: { entryId: (await tx.appendEntry(runtime.conversationId, entry)).id };
 	return { status: "terminal", outcome: { status: "completed", result } };

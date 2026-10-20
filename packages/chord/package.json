@@ -32,6 +32,11 @@
 			"import": "./dist/node.js"
 		},
 		"./package.json": "./package.json",
+		"./telemetry-sqlite": {
+			"source": "./src/telemetry-sqlite/index.ts",
+			"types": "./dist/telemetry-sqlite/index.d.ts",
+			"import": "./dist/telemetry-sqlite/index.js"
+		},
 		"./sqlite": {
 			"source": "./src/sqlite/index.ts",
 			"types": "./dist/sqlite/index.d.ts",

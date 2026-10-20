@@ -31,6 +31,11 @@ function hasResult(
 	return typeof (source as { result?: unknown }).result === "function";
 }
 
+export interface LazyStreamObserver {
+	onEvent?(event: AssistantMessageEvent): void;
+	onResult?(result: AssistantMessage | undefined): void;
+}
+
 /** The Models-owned deadline is independent of a provider's HTTP request timeout. */
 export interface StreamLifetimeOptions {
 	signal?: AbortSignal;
@@ -47,6 +52,7 @@ export function lazyStream(
 	model: Model<Api>,
 	setup: (signal: AbortSignal) => Promise<AsyncIterable<AssistantMessageEvent>>,
 	options: StreamLifetimeOptions = {},
+	observer?: LazyStreamObserver,
 ): AssistantMessageEventStream {
 	const startedAt = Date.now();
 	const outer = new AssistantMessageEventStream();
@@ -73,6 +79,7 @@ export function lazyStream(
 		let iterator: AsyncIterator<AssistantMessageEvent> | undefined;
 		let exhausted = false;
 		let partial: AssistantMessage | undefined;
+		let result: AssistantMessage | undefined;
 		try {
 			const idle = options.idleTimeoutMs;
 			if (idle !== undefined && (!Number.isInteger(idle) || idle < 0 || idle > 2_147_483_647))
@@ -87,27 +94,33 @@ export function lazyStream(
 				if (next.done) {
 					exhausted = true;
 					if (!hasResult(inner)) throw new Error("Stream ended without a terminal response");
-					const result = await wait(() => inner.result());
+					result = structuredClone(await wait(() => inner.result()));
 					signal.throwIfAborted();
-					outer.end(structuredClone(result));
+					outer.end(result);
 					return;
 				}
 				const event = next.value;
 				if (event.type === "done" || event.type === "error") {
 					// Cleanup may still mutate the provider's message after its terminal event.
-					outer.push(event.type === "done" ? { ...event, message: structuredClone(event.message) }
-						: { ...event, error: structuredClone(event.error) });
+					result = structuredClone(event.type === "done" ? event.message : event.error);
+					const terminal: AssistantMessageEvent = event.type === "done" ? { ...event, message: result }
+						: { ...event, error: result };
+					outer.push(terminal);
+					observer?.onEvent?.(terminal);
 					outer.end();
 					return;
 				}
 				outer.push(event);
+				observer?.onEvent?.(event);
 				partial = event.partial;
 			}
 		} catch (error) {
 			const reason = options.signal?.aborted === true ? "aborted" : "error";
-			const message = createErrorMessage(model, error, startedAt, reason === "aborted", partial);
-			outer.push({ type: "error", reason, error: message });
-			outer.end(message);
+			result = createErrorMessage(model, error, startedAt, reason === "aborted", partial);
+			const event: AssistantMessageEvent = { type: "error", reason, error: result };
+			outer.push(event);
+			observer?.onEvent?.(event);
+			outer.end(result);
 		} finally {
 			options.signal?.removeEventListener("abort", onAbort);
 			controller.abort();
@@ -116,6 +129,7 @@ export function lazyStream(
 			if (!exhausted && iterator?.return) {
 				try { void Promise.resolve(iterator.return()).catch(() => {}); } catch { /* already settled */ }
 			}
+			observer?.onResult?.(result);
 		}
 	})();
 

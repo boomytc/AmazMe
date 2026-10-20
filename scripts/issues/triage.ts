@@ -75,6 +75,7 @@ const StateDoc = defineDoc<TriageState>({
 	kind: "triage.state",
 	version: 1,
 	scope: "session",
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	initial: () => ({ repo: "", inboxSince: "", issues: {} }),
 });
 

@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Model requests emit opt-in request and poll spans, content-free block events, usage and timing metrics through `telemetry`; the old `telemetryContext` option is replaced by a parent span.
+- MiniMax-M3.1-Flash uses adaptive thinking and effort levels; direct MiniMax catalogs hide only explicitly retired models.
+
+### Fixed
+
+- Responses transports keep tool definitions anchored across additions and redefinitions, and announce removals without rebuilding the cached prefix. Addition-only transports fold history only through the last incompatible change.
+- HTTP 413 request-size errors are recognized as context overflow without treating an unrelated body mention of 413 as overflow.
+
 ## [1.4.0] - 2026-10-19
 
 ### Changed

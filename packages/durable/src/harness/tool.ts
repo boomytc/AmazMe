@@ -120,6 +120,8 @@ export const NestedCallDoc = defineDocFamily<NestedCallState, null>({
 	scope: "task",
 	family: true,
 	initial: () => ({}),
+	// The document retires with its task.
+	checkpointWhen: () => false,
 });
 
 /** Ordinary workflow tasks can admit ToolTasks directly; count those without retaining a growing key index. */
@@ -127,6 +129,7 @@ const DirectNestedCallsDoc = defineDoc<{ count: number }>({
 	kind: "amazme.tool.direct-nested-count",
 	version: 1,
 	scope: "task",
+	checkpointWhen: () => false,
 	initial: () => ({ count: 0 }),
 });
 
@@ -135,12 +138,14 @@ const LegacyNestedCallsDoc = defineDoc<{ calls: Record<string, TaskId<ToolTaskRe
 	kind: "amazme.tool.nested",
 	version: 1,
 	scope: "task",
+	checkpointWhen: () => false,
 	initial: () => ({ calls: {} }),
 });
 const LegacyNestedResultDoc = defineDocFamily<{ result: JsonRepresentation<NestedToolExecutionResult> }, JsonObject>({
 	kind: "amazme.tool.nested-result",
 	version: 1,
 	scope: "task",
+	checkpointWhen: () => false,
 	family: true,
 	initial: (seed) => seed as { result: JsonRepresentation<NestedToolExecutionResult> },
 });
@@ -327,6 +332,10 @@ async function resolveTool(
 /** The call: from the input for a nested call, which hooks see with its parent, else from the assistant entry. */
 async function readCall(runtime: Runtime, input: ToolTaskInput, context: Context): Promise<ToolHookCall> {
 	if (input.kind === "nested") {
+		context.telemetry.setAttributes({
+			"tool.name": input.call.name,
+			"tool.call_id": input.call.id,
+		});
 		// Ordinary task creators may own tool calls too; register their result address before execution.
 		const current = await runtime.snapshot(NestedCallDoc, input.parent, input.key, context);
 		if (current?.taskId !== runtime.taskId) {
@@ -363,6 +372,10 @@ async function readCall(runtime: Runtime, input: ToolTaskInput, context: Context
 				)
 			: undefined;
 	if (call === undefined) throw new Error(`Entry ${input.assistant} has no tool call ${input.callId}`);
+	context.telemetry.setAttributes({
+		"tool.name": call.name,
+		"tool.call_id": call.id,
+	});
 	return call;
 }
 
@@ -995,6 +1008,7 @@ async function startNestedCall(
 		arguments: copyJson(args, { omitUndefinedProperties: true }) as JsonObject,
 	};
 	let id: TaskId<ToolTaskResult> | undefined;
+	let replayed = false;
 	await runtime.commit(async (tx) => {
 		// Opened, or created empty for a key not made yet.
 		const state = await tx.doc(NestedCallDoc, runtime.taskId, key, null);
@@ -1007,6 +1021,7 @@ async function startNestedCall(
 				jsonEqual(input.call.arguments as JsonValue, call.arguments as JsonValue);
 			if (!same) throw new Error(`Nested call ${call.id} was already made with another tool or other arguments`);
 			id = existing as TaskId<ToolTaskResult>;
+			replayed = state.result !== undefined;
 			return undefined;
 		}
 		const input: ToolTaskInput = {
@@ -1038,6 +1053,9 @@ async function startNestedCall(
 		id = created;
 		return undefined;
 	}, context);
+	if (replayed) {
+		context.telemetry.addEvent("amazme.durable.replay", { "tool.name": name });
+	}
 	return id!;
 }
 

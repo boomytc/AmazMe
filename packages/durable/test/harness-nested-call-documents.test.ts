@@ -40,6 +40,7 @@ const LegacyCalls = defineDoc<{ calls: Record<string, TaskId<ToolTaskResult>> }>
 	kind: "amazme.tool.nested",
 	version: 1,
 	scope: "task",
+	checkpointWhen: () => false,
 	initial: () => ({ calls: {} }),
 });
 type Stored = { result: JsonRepresentation<NestedToolExecutionResult> };
@@ -47,6 +48,7 @@ const LegacyResult = defineDocFamily<Stored, Stored>({
 	kind: "amazme.tool.nested-result",
 	version: 1,
 	scope: "task",
+	checkpointWhen: () => false,
 	family: true,
 	initial: (seed) => seed,
 });

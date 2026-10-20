@@ -20,6 +20,7 @@ import type {
 	ProviderAuth,
 } from "./auth/types.ts";
 import { InMemoryModelsStore, type ModelsStore, type ModelsStoreEntry } from "./models-store.ts";
+import { observeModelRequest } from "./telemetry.ts";
 import type {
 	AnyModel,
 	Api,
@@ -68,6 +69,7 @@ import {
 import { normalizeContext } from "./utils/transcript.ts";
 
 export { ModelsError, type ModelsErrorCode } from "./auth/resolve.ts";
+export { AI_TELEMETRY_SCHEMA } from "./telemetry.ts";
 export { getModelType, isModelType } from "./utils/model-operations.ts";
 
 export interface ModelsPublication {
@@ -895,7 +897,7 @@ class ModelsImpl implements MutableModels {
 			);
 			signal.throwIfAborted();
 			return provider.stream(requestModel, transcript, requestOptions as ApiStreamOptions<TApi>);
-		}, options);
+		}, options, observeModelRequest(model, options, false));
 	}
 
 	async complete<TApi extends Api>(
@@ -914,7 +916,7 @@ class ModelsImpl implements MutableModels {
 			const { requestModel, requestOptions } = await this.applyAuth(model, { ...providerOptions, signal });
 			signal.throwIfAborted();
 			return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
-		}, options);
+		}, options, observeModelRequest(model, options, false));
 	}
 
 	async completeSimple(
@@ -939,7 +941,7 @@ class ModelsImpl implements MutableModels {
 			const { requestModel, requestOptions } = await this.applyAuth(model, { ...providerOptions, signal });
 			signal.throwIfAborted();
 			return provider.fetchDeferred(requestModel, handle, requestOptions as DeferredFetchOptions);
-		}, options);
+		}, options, observeModelRequest(model, options, true));
 	}
 
 	async fetchDeferred(

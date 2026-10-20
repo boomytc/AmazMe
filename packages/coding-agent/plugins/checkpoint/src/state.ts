@@ -10,6 +10,7 @@ export type Summary = { id: string; name: string; createdAt: number; paths: stri
 export const Snapshots = defineDocFamily<Snapshot, Snapshot>({
 	kind: "amazme.checkpoint.snapshot",
 	version: 1,
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	family: true,
 	scope: "conversation",
 	history: "rewindable",
@@ -20,6 +21,7 @@ export const Snapshots = defineDocFamily<Snapshot, Snapshot>({
 export const Index = defineDoc<{ snapshots: Summary[]; lastRestore: TaskId | null }>({
 	kind: "amazme.checkpoint.index",
 	version: 1,
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	scope: "conversation",
 	history: "rewindable",
 	fork: "asOf",
@@ -29,6 +31,7 @@ export const Index = defineDoc<{ snapshots: Summary[]; lastRestore: TaskId | nul
 export const Preview = defineDoc<{ plan: Plan | null; accepted: { caller: TaskId; task: TaskId } | null }>({
 	kind: "amazme.checkpoint.preview",
 	version: 1,
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	scope: "conversation",
 	history: "latest",
 	fork: "initial",
@@ -39,6 +42,7 @@ export const Preview = defineDoc<{ plan: Plan | null; accepted: { caller: TaskId
 export const RestoreOwner = defineDoc<{ task: TaskId | null }>({
 	kind: "amazme.checkpoint.restore-owner",
 	version: 1,
+	checkpointWhen: (_value, _ops, { deltasSinceBase }) => deltasSinceBase >= 64,
 	scope: "session",
 	initial: () => ({ task: null }),
 });

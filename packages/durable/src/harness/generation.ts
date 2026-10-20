@@ -16,6 +16,7 @@ import { isRetryableAssistantError, retryDelayMs } from "@amazme/ai/utils/retry"
 import { getCurrentTools } from "@amazme/ai/utils/transcript";
 import { AssistantEntry, ResetEntry, SystemEntry, UserEntry } from "../entries.ts";
 import type { ExecutionEnv } from "../env/index.ts";
+import type { TaskCreationOptions } from "../session/transaction.ts";
 import { defineTask } from "../tasks.ts";
 import type {
 	ConversationId,
@@ -270,6 +271,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const options: ModelsSimpleStreamOptions = {
 				...streamOptions,
 				signal: runtime.signal,
+				telemetry: context.telemetry,
 				sessionId: await ensureProviderSessionId(runtime, context),
 				...(thinkingLevel === "off" ? {} : { reasoning: thinkingLevel }),
 			};
@@ -301,6 +303,7 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			if (model === undefined) return failNoModel(runtime, ref, context);
 			const message = await runtime.models.fetchDeferred(model, handle, {
 				signal: runtime.signal, idleTimeoutMs: runtime.settings.stream.idleTimeoutMs,
+				telemetry: context.telemetry,
 			});
 			const request = { attempt, compacted, model: ref, cutoff, pollAt, tokens: requestTokens,
 				...(hadImages === undefined ? {} : { hadImages }),
@@ -334,7 +337,10 @@ export const GenerationTask = defineTask<GenerationInput, GenerationCheckpoint, 
 			const model = runtime.models.getModel(checkpoint.model.provider, checkpoint.model.modelId);
 			if (model !== undefined) {
 				try {
-					await runtime.models.cancelDeferred(model, checkpoint.handle, { signal: runtime.signal });
+					await runtime.models.cancelDeferred(model, checkpoint.handle, {
+						signal: runtime.signal,
+						telemetry: context.telemetry,
+					});
 				} catch (error) {
 					runtime.report(error, { type: "host", callback: "models" });
 				}
@@ -831,12 +837,16 @@ export async function startRun(
 	live: Draft<LiveState>,
 	inputs: SubmissionId[],
 ): Promise<void> {
-	live.run = { taskId: await createGeneration(tx, conversationId), inputs };
+	live.run = { taskId: await createGeneration(tx, conversationId, { submissionIds: inputs }), inputs };
 }
 
 /** A generation owned by its conversation. */
-function createGeneration(tx: Tx, conversationId: ConversationId): Promise<TaskId<GenerationResult>> {
-	return tx.createTask(GenerationTask, {}, { ownership: { kind: "conversation" }, conversationId });
+function createGeneration(
+	tx: Tx,
+	conversationId: ConversationId,
+	telemetry: Pick<TaskCreationOptions, "submissionIds"> = {},
+): Promise<TaskId<GenerationResult>> {
+	return tx.createTask(GenerationTask, {}, { ownership: { kind: "conversation" }, conversationId, ...telemetry });
 }
 
 /** Hand run control from `from` to `to`; the run's inputs move with it. */

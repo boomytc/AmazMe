@@ -1,4 +1,5 @@
 import { getEventListeners } from "node:events";
+import { InMemoryTelemetryContext } from "@amazme/telemetry";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { lazyApi, lazyStream } from "../src/api/lazy.ts";
 import { createModels, createProvider, type ModelsSimpleStreamOptions } from "../src/models.ts";
@@ -57,6 +58,32 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe("bounded model streams", () => {
+	it.each(["timeout", "abort"] as const)("settles telemetry once after %s and ignores late provider results", async (reason) => {
+		const source = new PendingStream();
+		const fixture = collection(source, true);
+		const telemetry = new InMemoryTelemetryContext();
+		const caller = new AbortController();
+		const result = telemetry.startSpan({ name: "caller" }, (span) => fixture.models.completeSimple(model, context, {
+			telemetry: span, signal: caller.signal, idleTimeoutMs: 50,
+		}));
+		await vi.advanceTimersByTimeAsync(0);
+		if (reason === "abort") caller.abort(new Error("stopped"));
+		else await vi.advanceTimersByTimeAsync(50);
+		expect((await result).stopReason).toBe(reason === "abort" ? "aborted" : "error");
+		await vi.advanceTimersByTimeAsync(0);
+		const before = telemetry.getSpans();
+		expect(before).toHaveLength(2);
+		expect(before.every(span => span.settled)).toBe(true);
+		expect(before[1]!.attributes.stop).toBe(reason === "abort" ? "aborted" : "error");
+		expect(before[1]!.status.status).toBe(reason === "abort" ? "ok" : "error");
+		source.pushDemand({ type: "done", reason: "stop", message: fauxAssistantMessage("late") });
+		await vi.advanceTimersByTimeAsync(100);
+		expect(telemetry.getSpans()).toEqual(before);
+		expect(telemetry.getMetrics().filter(metric => metric.name === "amazme.ai.request.duration")).toHaveLength(1);
+		expect(source.cleanup).toHaveBeenCalledOnce();
+		expect(getEventListeners(caller.signal, "abort")).toHaveLength(0);
+	});
+
 	it.each(["stream", "simple", "deferred"] as const)("bounds %s and strips its local idle option before provider dispatch", async (kind) => {
 		const source = new PendingStream();
 		const fixture = collection(source, true);
