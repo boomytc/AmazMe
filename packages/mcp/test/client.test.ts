@@ -253,7 +253,7 @@ describe("McpClient", () => {
 		server.setHandler("initialize", () => ({
 			protocolVersion: "2024-11-05",
 			capabilities: {},
-			serverInfo: { name: "old-server", version: "0.1.0" },
+			serverInfo: { name: "old-server", version: "8.5.0" },
 		}));
 		const client = new McpClient({ name: "test-client", version: "1.0.0" });
 		await client.connect(clientTransport);
@@ -264,7 +264,7 @@ describe("McpClient", () => {
 		unsupported.server.setHandler("initialize", () => ({
 			protocolVersion: "1999-01-01",
 			capabilities: {},
-			serverInfo: { name: "ancient-server", version: "0.1.0" },
+			serverInfo: { name: "ancient-server", version: "8.5.0" },
 		}));
 		const rejected = new McpClient({ name: "test-client", version: "1.0.0" });
 		await expect(rejected.connect(unsupported.clientTransport)).rejects.toThrow("unsupported protocol version");

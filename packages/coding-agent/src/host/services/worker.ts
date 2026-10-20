@@ -40,7 +40,7 @@ import { publishSettings, settingsErrors, settingsSnapshot } from "./settings-pr
 import { SessionLifecycle } from "./session-lifecycle.ts";
 import { SessionMirror } from "./session-mirror.ts";
 import type { SessionMirrorStatus } from "./session-mirror.ts";
-import { abortSessionWork, isSessionEmpty } from "../session-lifecycle.ts";
+import { abortSessionWork, hasSessionWork, isSessionEmpty } from "../session-lifecycle.ts";
 import { createTerminalFacet } from "./terminal-provider.ts";
 import { Terminal } from "./terminal.ts";
 import { createTranscriptServiceFacet } from "./transcript-provider.ts";
@@ -146,6 +146,7 @@ export async function createSessionWorkerServices(options: {
 				values.set(AgentController, provided1);
 				const provided2: ServiceValue<typeof SessionLifecycle> = {
 					isEmpty: (context) => isSessionEmpty(options.harness, context),
+					hasWork: async context => authentication?.active === true || pluginRuntime?.changing === true || terminal?.state.value?.status === "running" || await hasSessionWork(options.harness, context),
 					refreshMirror: async () => {},
 					async stopWork(context) {
 						await conversations.cancelSummaries(context);

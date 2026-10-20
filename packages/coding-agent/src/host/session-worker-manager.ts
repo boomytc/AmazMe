@@ -133,6 +133,23 @@ export class SessionWorkerManager {
 	#resolveDiscovery?: () => void;
 	#detached = false;
 	#shuttingDown = false;
+	#updating = false;
+
+	/** Freeze client admission before checking worker-owned state, so no new prompt races the check. */
+	async prepareForUpdate(context: Context): Promise<boolean> {
+		if (this.#updating || this.#detached || this.#shuttingDown || this.#pending.size > 0 || this.#pendingOperations.size > 0) return false;
+		this.#updating = true;
+		let ready = false;
+		try {
+			for (const worker of this.#workersBySession.values()) {
+				const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
+				if (await this.#inspect(worker, scope, lifecycle => lifecycle.hasWork(context), context) !== false) return false;
+			}
+			ready = true; return true;
+		} catch { return false; }
+		finally { if (!ready) this.#updating = false; }
+	}
+	resumeAfterUpdate(): void { this.#updating = false; }
 
 	constructor(
 		coordinator: Pick<
@@ -203,7 +220,7 @@ export class SessionWorkerManager {
 		context: Context,
 		pluginManifestPaths: readonly string[],
 	): Promise<RoutedSessionHandle> {
-		if (this.#detached || this.#shuttingDown) throw new Error("Experimental server is shutting down");
+		if (this.#detached || this.#shuttingDown || this.#updating) throw new Error("Experimental server is shutting down");
 		this.assertSessionPluginManifestPaths(metadata, pluginManifestPaths);
 		const existing = this.#workersBySession.get(metadata.path);
 		if (existing) return this.#routedHandle(existing);
@@ -269,7 +286,7 @@ export class SessionWorkerManager {
 	}
 
 	async #attachClient(worker: WorkerRecord, context: Context): Promise<RoutedSessionAttachment> {
-		if (this.#detached || this.#shuttingDown || worker.stopping) {
+		if (this.#detached || this.#shuttingDown || this.#updating || worker.stopping) {
 			throw new Error("Experimental Session worker is stopping");
 		}
 		if (this.#workersByPeer.get(worker.peerId) !== worker) {
@@ -429,7 +446,7 @@ export class SessionWorkerManager {
 	}
 
 	#operationScope(worker: WorkerRecord, attachmentId: string): WorkerOperationScope {
-		if (this.#detached || this.#shuttingDown || worker.stopping) {
+		if (this.#detached || this.#shuttingDown || this.#updating || worker.stopping) {
 			throw new Error("Experimental Session worker is stopping");
 		}
 		if (this.#workersByPeer.get(worker.peerId) !== worker || !worker.attachmentIds.has(attachmentId)) {

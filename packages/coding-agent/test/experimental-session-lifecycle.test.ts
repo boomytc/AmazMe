@@ -6,6 +6,7 @@ import {
 	automaticSessionName,
 	firstSessionTitle,
 	isSessionEmpty,
+	hasSessionWork,
 	watchSessionTitle,
 } from "../src/host/session-lifecycle.ts";
 import { openFauxConversation } from "./experimental-durable-support.ts";
@@ -25,6 +26,7 @@ describe("session lifecycle", () => {
 		try {
 			await conversation.configure({ thinkingLevel: "high" }, context);
 			expect(await isSessionEmpty(harness, context)).toBe(true);
+			expect(await hasSessionWork(harness, context)).toBe(false);
 			const child = await harness.createConversation({ ownership: { kind: "ownerless" } }, context);
 			await child.submit(
 				{
@@ -34,6 +36,7 @@ describe("session lifecycle", () => {
 				context,
 			);
 			expect(await isSessionEmpty(harness, context)).toBe(false);
+			expect(await hasSessionWork(harness, context)).toBe(false);
 		} finally {
 			await close();
 		}
@@ -50,6 +53,7 @@ describe("session lifecycle", () => {
 				});
 			}, context);
 			expect(await isSessionEmpty(harness, context)).toBe(false);
+			expect(await hasSessionWork(harness, context)).toBe(true);
 		} finally {
 			await close();
 		}
@@ -60,6 +64,7 @@ describe("session lifecycle", () => {
 		try {
 			await conversation.compact(undefined, context);
 			expect(await isSessionEmpty(harness, context)).toBe(false);
+			expect(await hasSessionWork(harness, context)).toBe(true);
 		} finally {
 			await close();
 		}
@@ -80,6 +85,7 @@ describe("session lifecycle", () => {
 			harness.resume();
 			await vi.waitFor(async () => expect((await harness.getTask(id, context))?.state.status).toBe("sleeping"));
 			expect(await isSessionEmpty(harness, context)).toBe(false);
+			expect(await hasSessionWork(harness, context)).toBe(true);
 		} finally {
 			await harness.close(context);
 		}

@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'"><title>AmazMe</title>
+<style>
+:root{color-scheme:light dark;font:15px -apple-system,BlinkMacSystemFont,sans-serif}body{margin:30px;line-height:1.5}h1{font-size:22px;margin:0 0 6px}p{margin:10px 0;color:light-dark(#444,#ccc)}label{display:flex;gap:9px;align-items:center;margin:12px 0}select,button{font:inherit;padding:7px 12px;border-radius:7px}button{cursor:pointer}button:disabled{cursor:default}progress{width:100%;height:20px;margin:10px 0}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}#error{color:light-dark(#a22222,#ffadad)}#detail{min-height:68px}small{display:block;color:light-dark(#555,#bbb);margin:16px 0}
+</style></head><body>
+<h1 id="heading"></h1><p id="current"></p><p id="status" role="status" aria-live="polite"></p><p id="detail"></p><p id="error" role="alert"></p>
+<progress id="progress" hidden></progress>
+<label><span id="channelLabel"></span><select id="channel"><option value="stable"></option><option value="preview"></option></select></label>
+<label><input id="automatic" type="checkbox" checked><span id="automaticLabel"></span></label>
+<small id="trust"></small>
+<div class="actions"><button id="check"></button><button id="download" hidden></button><button id="install" hidden></button><button id="cancel" hidden></button><button id="later"></button></div>
+<script src="./update-window.js"></script></body></html>

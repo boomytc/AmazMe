@@ -12,15 +12,15 @@ const DIGEST = "c".repeat(64);
 const NAME = "AmazMe-8.5.0-macos-arm64.dmg";
 
 test("lists each installer with its release download URL and sha256", () => {
-	assert.deepEqual(buildManifest({ tag: "v8.5.0", repository: "boomytc/AmazMe", installers: [{ name: NAME, digest: DIGEST, published: `${DIGEST}  ${NAME}\n` }] }), {
+	assert.deepEqual(buildManifest({ tag: "v8.5.0", repository: "boomytc/AmazMe", installers: [{ name: NAME, digest: DIGEST, size: 9, published: `${DIGEST}  ${NAME}\n` }] }), {
 		version: "8.5.0",
 		tag: "v8.5.0",
-		assets: [{ name: NAME, url: `https://github.com/boomytc/AmazMe/releases/download/v8.5.0/${NAME}`, sha256: DIGEST }],
+		assets: [{ name: NAME, url: `https://github.com/boomytc/AmazMe/releases/download/v8.5.0/${NAME}`, sha256: DIGEST, size: 9, platform: "darwin", arch: "arm64" }],
 	});
 });
 
 test("refuses a manifest whose installer does not match its published .sha256", () => {
-	const build = (published) => buildManifest({ tag: "v8.5.0", repository: "boomytc/AmazMe", installers: [{ name: NAME, digest: DIGEST, published }] });
+	const build = (published) => buildManifest({ tag: "v8.5.0", repository: "boomytc/AmazMe", installers: [{ name: NAME, digest: DIGEST, size: 9, published }] });
 	assert.throws(() => build(`${"d".repeat(64)}  ${NAME}\n`), /does not match/);
 	assert.throws(() => build(`${DIGEST}  other.dmg\n`), /does not match/);
 	assert.throws(() => buildManifest({ tag: "nightly", repository: "boomytc/AmazMe", installers: [] }), /not a release tag/);

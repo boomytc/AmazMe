@@ -21,6 +21,7 @@ import { hostSocketDirectory } from "../socket-directory.ts";
 import { buildBootManifest, DEFAULT_BOOT_PREFERENCES, serveDocument } from "./boot.ts";
 import { createServerBridge, type ServerBridge } from "./bridge.ts";
 import { bundlePageEntry } from "./bundle.ts";
+import { authorizedDesktopUpdate, takeDesktopUpdateToken } from "./desktop-update.ts";
 /** Canonical loopback address the page and the WebSocket endpoint are served on. */
 const WEB_HOST = "127.0.0.1";
 const WEB_SOCKET_PATH = "/amazme";
@@ -161,6 +162,8 @@ async function hostServer(options: WebHostOptions, listener: WebSocketListener):
  * host serves its pages against that server instead of starting a second one.
  */
 export async function startWebHost(options: WebHostOptions = {}): Promise<WebHost> {
+	const desktopUpdateToken = takeDesktopUpdateToken(process.env);
+	let updateHost: HostedServer | undefined;
 	const repositoryRoot = options.repositoryRoot ?? repositoryRootFromModule;
 	const path = options.path ?? WEB_SOCKET_PATH;
 	const [document, bundle] = await Promise.all([readPageDocument(), bundlePageEntry(repositoryRoot)]);
@@ -175,6 +178,17 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 	const httpServer = createServer((request, response) => {
 		if (authority === undefined || !hasCanonicalHost(request, authority)) {
 			respond(response, 403, "text/plain; charset=utf-8", "Forbidden\n");
+			return;
+		}
+		if (request.url === "/desktop-update/prepare" || request.url === "/desktop-update/resume") {
+			if (!authorizedDesktopUpdate(request, desktopUpdateToken) || updateHost === undefined) { respond(response, 403, "text/plain", "Forbidden\n"); return; }
+			if (request.url === "/desktop-update/resume") {
+				updateHost.runtime?.resumeAfterUpdate?.(); respond(response, 200, "text/plain", "resumed\n"); return;
+			}
+			const hosted = updateHost;
+			void (hosted.owns ? hosted.runtime?.prepareForUpdate?.() ?? Promise.resolve(false) : Promise.resolve(true))
+				.then(ready => respond(response, ready ? 200 : 409, "text/plain", ready ? "ready\n" : "busy\n"))
+				.catch(() => respond(response, 409, "text/plain", "busy\n"));
 			return;
 		}
 		void serveRequest(request, response, {
@@ -198,6 +212,7 @@ export async function startWebHost(options: WebHostOptions = {}): Promise<WebHos
 	authority = `${WEB_HOST}:${port}`;
 	try {
 		const hosted = await hostServer(options, listener);
+		updateHost = hosted;
 		manifest = buildBootManifest({
 			appName: APP_NAME,
 			version: VERSION,
