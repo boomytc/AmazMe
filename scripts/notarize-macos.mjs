@@ -5,7 +5,8 @@
  * Credentials come from the environment (ASC_KEY_ID, ASC_ISSUER_ID) and a private key file.
  * notarytool output is never echoed: failures report only an allowlisted diagnostic or id/status.
  */
-import { existsSync } from "node:fs";
+import { createPrivateKey } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,6 +21,54 @@ function argument(name) {
 function required(value, name) {
 	if (value === undefined || value.length === 0) throw new Error(`Missing ${name}`);
 	return value;
+}
+
+/** Check an unencrypted PKCS#8 key locally; never include key text or parser errors in diagnostics. */
+export function keyFileProblem(text) {
+	if (text.includes("\\n")) return "contains literal \\n sequences instead of line breaks";
+	if (!/^-----BEGIN PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]+-----END PRIVATE KEY-----\s*$/.test(text.trim())) {
+		return "must contain the original unencrypted PKCS#8 .p8 text";
+	}
+	try {
+		createPrivateKey({ key: text, format: "pem", type: "pkcs8" });
+	} catch {
+		return "does not contain a readable PKCS#8 private key";
+	}
+	return undefined;
+}
+
+function readToolJson(output) {
+	try {
+		return JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1));
+	} catch {
+		return undefined;
+	}
+}
+
+function submissionId(id) {
+	return typeof id === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(id) ? id : undefined;
+}
+
+/** Only an explicitly Invalid response with a validated UUID may request a diagnostic log. */
+export function invalidSubmissionId(output) {
+	const parsed = readToolJson(output);
+	return parsed?.status === "Invalid" ? submissionId(parsed.id) : undefined;
+}
+
+/** Map error messages to fixed hints; paths, free text, ids, and arbitrary issue fields stay private. */
+export function invalidLogDiagnostics(output) {
+	const parsed = readToolJson(output);
+	const hints = new Set();
+	if (Array.isArray(parsed?.issues)) {
+		for (const issue of parsed.issues) {
+			if (issue?.severity !== "error" || typeof issue.message !== "string") continue;
+			if (/not signed|invalid signature|signature.*(?:invalid|not valid)/i.test(issue.message)) hints.add("Notarization issue: check the Developer ID signature");
+			if (/hardened runtime/i.test(issue.message)) hints.add("Notarization issue: check hardened runtime");
+			if (/timestamp/i.test(issue.message)) hints.add("Notarization issue: check the secure timestamp");
+			if (/entitlement/i.test(issue.message)) hints.add("Notarization issue: check signing entitlements");
+		}
+	}
+	return hints.size === 0 ? ["Notarization log has no recognized issue (raw output withheld)"] : [...hints];
 }
 
 /** Classify output without copying arbitrary tool text, credentials, paths, or response bodies. */
@@ -39,13 +88,8 @@ export function submissionFailureMessage(output, parsed) {
 
 /** Parse a submission or classify a failure; never echo unvalidated response fields. */
 export function parseSubmission(output, commandSucceeded = true) {
-	let parsed;
-	try {
-		parsed = JSON.parse(output.slice(output.indexOf("{"), output.lastIndexOf("}") + 1));
-	} catch {
-		throw new Error(submissionFailureMessage(output));
-	}
-	const id = typeof parsed?.id === "string" && /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(parsed.id) ? parsed.id : undefined;
+	const parsed = readToolJson(output);
+	const id = submissionId(parsed?.id);
 	const status = ["Accepted", "Invalid", "In Progress", "Rejected"].includes(parsed?.status) ? parsed.status : undefined;
 	if (status === "Accepted" && id !== undefined && commandSucceeded) return { id, status };
 	if (status !== undefined && status !== "Accepted") throw new Error(`Notarization ${status} for submission ${id ?? "(unknown)"}`);
@@ -86,6 +130,14 @@ async function main() {
 	const issuer = required(process.env.ASC_ISSUER_ID, "ASC_ISSUER_ID");
 	if (!existsSync(image)) throw new Error(`No DMG at ${image}`);
 	if (!existsSync(key)) throw new Error("App Store Connect key file is missing");
+	let keyText;
+	try {
+		keyText = readFileSync(key, "utf8");
+	} catch {
+		throw new Error("App Store Connect key file could not be read");
+	}
+	const problem = keyFileProblem(keyText);
+	if (problem !== undefined) throw new Error(`ASC_PRIVATE_KEY ${problem}`);
 
 	assertTeam(image, teamId);
 	let output;
@@ -96,7 +148,21 @@ async function main() {
 		commandSucceeded = false;
 		output = typeof error?.output === "string" ? error.output : "";
 	}
-	const submission = parseSubmission(output, commandSucceeded);
+	let submission;
+	try {
+		submission = parseSubmission(output, commandSucceeded);
+	} catch (error) {
+		const id = invalidSubmissionId(output);
+		if (id !== undefined) {
+			try {
+				const log = tool("xcrun", ["notarytool", "log", id, "--key", key, "--key-id", keyId, "--issuer", issuer]);
+				for (const hint of invalidLogDiagnostics(log)) console.error(hint);
+			} catch {
+				console.error("Notarization log unavailable (raw output withheld)");
+			}
+		}
+		throw error;
+	}
 	console.log(`Notarization ${submission.status} for submission ${submission.id}`);
 
 	step("Staple", "xcrun", ["stapler", "staple", image]);
