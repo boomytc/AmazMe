@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/mcp",
-	"version": "0.1.0-rc.1",
+	"version": "0.1.0",
 	"description": "Standalone Model Context Protocol client for AmazMe and other applications",
 	"type": "module",
 	"main": "./dist/index.js",
