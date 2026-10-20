@@ -9,6 +9,7 @@ import { desktopUpdateAsset, fetchDesktopManifest, githubReleaseResponse, type U
 import type { DesktopUpdateIO, PreparedUpdate } from "./update-controller.ts";
 import { handoffUpdate } from "./update-handoff.ts";
 import { discardPreparedUpdate } from "./update-cleanup.ts";
+import { macOSBundleVersion } from "./macos-version.ts";
 
 const exec = promisify(execFile);
 export type MacTool = (command: string, args: readonly string[]) => Promise<string>;
@@ -39,8 +40,10 @@ export async function verifyApp(path: string, version: string, arch: string, exp
 	await tool("/usr/sbin/spctl", ["--assess", "--type", "execute", path]);
 	const plist = join(path, "Contents", "Info.plist");
 	for (const key of ["CFBundleShortVersionString", "CFBundleVersion"]) {
-		if ((await tool("/usr/bin/plutil", ["-extract", key, "raw", plist])).trim() !== version) throw new Error("signature");
+		if ((await tool("/usr/bin/plutil", ["-extract", key, "raw", plist])).trim() !== macOSBundleVersion(version)) throw new Error("signature");
 	}
+	// This file is covered by the verified bundle seal and is Electron's app.getVersion source.
+	if ((await tool("/usr/bin/plutil", ["-extract", "version", "raw", join(path, "Contents", "Resources", "app", "package.json")])).trim() !== version) throw new Error("signature");
 	if ((await tool("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", plist])).trim() !== "com.amazme.desktop") throw new Error("signature");
 	const architectures = (await tool("/usr/bin/lipo", ["-archs", join(path, "Contents", "MacOS", "AmazMe")])).trim().split(/\s+/);
 	if (!architectures.includes(arch === "x64" ? "x86_64" : arch)) throw new Error("unsupported");

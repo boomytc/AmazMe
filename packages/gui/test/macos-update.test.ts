@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, test, vi } from "vitest";
 import { downloadRelease, verifyApp, type MacTool } from "../src/macos-update.ts";
 import { createTempDir } from "./temp-dir.ts";
+import { macOSBundleVersion } from "../src/macos-version.ts";
 
 const TEAM = "ABCDE12345";
 function fakeTool(detail = "TeamIdentifier=" + TEAM + "\nCDHash=" + "a".repeat(40)): MacTool {
@@ -22,16 +23,27 @@ test("publisher comes from a verified installed app; candidate must match it and
 	await expect(verifyApp("/isolated/app", "8.6.0", "arm64", "OTHER12345", fakeTool())).rejects.toThrow("signature");
 	await expect(verifyApp("/isolated/app", "8.6.0", "arm64", undefined, fakeTool("Signature=adhoc\nTeamIdentifier=not set"))).rejects.toThrow("signature");
 });
-test.each(["version", "bundle", "arch", "gatekeeper"])("rejects incompatible %s", async fault => {
+test.each(["version", "semantic", "bundle", "arch", "gatekeeper"])("rejects incompatible %s", async fault => {
 	const normal = fakeTool();
 	const tool: MacTool = async (command, args) => {
 		if (fault === "gatekeeper" && command.endsWith("spctl")) throw new Error("signature");
 		if (fault === "version" && command.endsWith("plutil") && args[1] === "CFBundleVersion") return "8.5.0";
+		if (fault === "semantic" && command.endsWith("plutil") && args[1] === "version") return "8.5.0";
 		if (fault === "bundle" && command.endsWith("plutil") && args[1] === "CFBundleIdentifier") return "com.other.app";
 		if (fault === "arch" && command.endsWith("lipo")) return "x86_64";
 		return normal(command, args);
 	};
 	await expect(verifyApp("/isolated/app", "8.6.0", "arm64", TEAM, tool)).rejects.toThrow(fault === "arch" ? "unsupported" : "signature");
+});
+test("numeric Apple versions never substitute for the signed full prerelease version", async () => {
+	expect(macOSBundleVersion("8.6.0-rc.1")).toBe("8.6.0");
+	expect(macOSBundleVersion("8.6.0")).toBe("8.6.0");
+	expect(() => macOSBundleVersion("08.6.0-rc.1")).toThrow("signature");
+	const normal = fakeTool();
+	const tool: MacTool = async (command, args) => command.endsWith("plutil") && args[1] === "version" ? "8.6.0-rc.1" : normal(command, args);
+	await expect(verifyApp("/isolated/app", "8.6.0-rc.1", "arm64", TEAM, tool)).resolves.toEqual({ team: TEAM, hash: "a".repeat(40) });
+	await expect(verifyApp("/isolated/app", "8.6.0-rc.2", "arm64", TEAM, tool)).rejects.toThrow("signature");
+	await expect(verifyApp("/isolated/app", "8.6.0", "arm64", TEAM, tool)).rejects.toThrow("signature");
 });
 test("download hashes streamed bytes and the actual file, and rejects truncation/extra bytes/hash mismatch", async () => {
 	const directory = createTempDir("amazme-download-test-");

@@ -26,7 +26,7 @@ async function inspectDmg(image, directory) {
 	try {
 		await macTool("/usr/bin/hdiutil", ["attach", "-readonly", "-nobrowse", "-mountpoint", mounted, image]);
 		const app = join(mounted, "AmazMe.app");
-		const version = (await macTool("/usr/bin/plutil", ["-extract", "CFBundleShortVersionString", "raw", join(app, "Contents", "Info.plist")])).trim();
+		const version = (await macTool("/usr/bin/plutil", ["-extract", "version", "raw", join(app, "Contents", "Resources", "app", "package.json")])).trim();
 		const identity = await verifyApp(app, version, process.arch);
 		const copy = join(directory, "verified-" + version + ".app");
 		await macTool("/usr/bin/ditto", [app, copy]);
@@ -56,7 +56,7 @@ async function main() {
 	const candidate = await inspectDmg(targetImage, scratch);
 	if (baseline.identity.team !== candidate.identity.team) throw new Error("Publisher changed");
 	const manifest = parseUpdateManifest(JSON.parse(await readFile(join(dirname(targetImage), "latest.json"), "utf8")));
-	const asset = desktopUpdateAsset(manifest, baseline.version, "stable", "darwin", process.arch);
+	const asset = desktopUpdateAsset(manifest, baseline.version, manifest.version.includes("-") ? "preview" : "stable", "darwin", process.arch);
 	if (!asset || await fileDigest(targetImage) !== asset.sha256) throw new Error("Manifest bytes mismatch");
 	const target = join(scratch, "AmazMe.app"); await rename(baseline.path, target);
 	const env = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: process.env.HOME,

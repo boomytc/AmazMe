@@ -18,6 +18,7 @@ import {
 	installPackageArtifacts,
 } from "./package-artifacts.mjs";
 import { resolveSigning, signApp, signDiskImage, writeChecksum } from "./macos-signing.mjs";
+import { macOSBundleVersion } from "../packages/gui/dist/macos-version.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -63,7 +64,7 @@ async function releaseManifest(electronVersion, packages, nodeExecutable) {
 			name: "AmazMe",
 			version: app.version,
 			identifier: "com.amazme.desktop",
-			bundleVersion: app.version,
+			bundleVersion: macOSBundleVersion(app.version),
 		},
 		electron: electronVersion,
 		node,
@@ -210,8 +211,8 @@ async function main() {
 		CFBundleIdentifier: "com.amazme.desktop",
 		CFBundleExecutable: "AmazMe",
 		CFBundleIconFile: "app-icon.icns",
-		CFBundleShortVersionString: JSON.parse(await readFile(join(repoRoot, "packages/gui/package.json"), "utf8")).version,
-		CFBundleVersion: JSON.parse(await readFile(join(repoRoot, "packages/gui/package.json"), "utf8")).version,
+		CFBundleShortVersionString: macOSBundleVersion(JSON.parse(await readFile(join(repoRoot, "packages/gui/package.json"), "utf8")).version),
+		CFBundleVersion: macOSBundleVersion(JSON.parse(await readFile(join(repoRoot, "packages/gui/package.json"), "utf8")).version),
 	})) {
 		run("/usr/bin/plutil", ["-replace", key, "-string", String(value), plist]);
 	}
