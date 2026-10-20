@@ -325,6 +325,27 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 
 验证：对上述等价覆盖点重跑现有回归，Web 的设置草稿/重试、提交清空与入口失败 24 项通过，AI 的聊天与分类模型隔离 11 项通过，Coding Agent 的设置写入与恢复 63 项通过。另逐项核对源码：工作区列表没有 HTML 预览、扩展目录没有网页搜索、插件页只有包与 MCP、宿主直接监听且无端口文件、呈现插件为服务端代际。本轮未改代码，因此没有逐包构建；未作 Windows、真实浏览器或 QwenPaw Hub/市场验收。
 
+本轮核对 QwenPaw `697aeb66..210f5aaa` 的 12 个提交（2026-10-20）。核对时本地 main 停在 `697aeb66`、origin/main 领先 12 个提交；直接读取远程跟踪提交的补丁与源码，不把本地旧工作树当作新实现。
+
+| QwenPaw 提交 | 内容 | 处置 |
+| --- | --- | --- |
+| `210f5aaa` | 音频回退识别 llama-server 与 DashScope URL 拒绝，并扩展媒体载荷拒绝词 | 适配吸收图片部分；`isImagePayloadRejection` 新增 `at most 0 image` 和 `are not enabled`，仍要求错误文本点名 image，保持一次性请求级无图片重试、原始附件与诊断。音频回退跳过：AmazMe 没有把音频送入模型请求的入口，MCP 音频内容只转为占位文本 |
+| `b331996e` | 网页搜索新增 Firecrawl provider | 仅参考；可选 web 插件绑定 DeepSeek Search/Fetch，设置没有 provider 选择或工具级凭据；引入 Firecrawl 会新增第二套搜索后端、密钥引用和配置语义，本轮不扩展，也不宣称已有 Firecrawl |
+| `40fe4ccf` | 控制台模型管理重构与设计规范 | 跳过；模型卡片、思考档位布局、自动保存开关和设计规范属于 QwenPaw 的 React 控制台，AmazMe 的 Web 模型选择与设置是独立实现 |
+| `9af3b184` | QwenPaw-Data 1.0.3 | 跳过；源产品专属应用、内嵌控制台、构建产物与发布工作流 |
+| `a568892d` | 控制台支持反向代理子路径 basename | 跳过；AmazMe Web 宿主使用回环根路径，没有子路径部署、登录跳转或资源前缀场景 |
+| `7cb6234f` | 版本升为 2.2.3b1 | 跳过；QwenPaw 自有版本，AmazMe 共享包版本按 Pi |
+| `a973a969` | 会话切换引用 | 跳过；空提交，无文件改动 |
+| `2bae089d` | 新增 Advisor Mode | 仅参考；实验性双模型协作依赖 Loop 模式、agent 级模型槽位、中间件和 `/advisor` 命令。AmazMe 有子代理但没有对应的顾问模式消费者，本轮不新增模式、配置、路由与提示词 |
+| `540940e2` | MCP `server/discover` 的 HTTP 422 视为旧协议证据 | 跳过；AmazMe MCP 客户端走 `initialize`，没有现代 `server/discover` 探测或双协议回退 |
+| `1623c77a` | 跨 agent 解析会话深链 | 等价覆盖；AmazMe 的会话目录是跨项目扁平列表，`?session=` 命中后使用该会话的 `projectId` 选项目，归档会话按显式深链只读打开；没有多 agent 命名空间 |
+| `856f9602` | 聊天历史中截断超大工具输出 | 跳过；AmazMe Web 走本地会话流，不是固定 30 秒的单次 HTTP 历史响应；文本工具输出在工具层有界（read/bash/grep/find/ls 为 50KB，MCP 为 20KB），图片按设计以 data URL 交给预览，历史层截断会破坏现有渲染 |
+| `2705180d` | 保持重复保护阈值可见可编辑 | 跳过；AmazMe 没有 QwenPaw 的 Loop 规则/末日循环配置 |
+
+合计：1 项适配吸收、1 项等价覆盖、2 项仅参考、8 项跳过。12 个提交全部核对完毕，没有将参考项记为新增能力。
+
+验证：AI 包构建后，`image-recovery` 聚焦 18 项通过；除真实供应商用例 `stream.test.ts` 外全包 1,507 项通过、611 项跳过。首次并发全包运行时 `stream.test.ts` 有 6 个真实图片请求失败，单独重跑该文件 78 项通过、221 项跳过，确认与本次分类器改动无关。Durable 的 `harness-image-recovery` 9 项通过；另运行类型检查、工程测试和工作区检查。未启用新的真实供应商请求，未作 Windows、真实浏览器或 QwenPaw 控制台验收。
+
 ## Pi 后续 19 个提交（2026-10-16）
 
 范围为 `b06c1f2cf..4954d7605`（核对时本地 Pi 停在前者、origin/main 领先 19 个提交）。读取该终点的 Git 快照迁移，完成代码吸收后按用户要求将 Pi main 快进到 `4954d7605`，与 origin/main 一致且工作树干净。保留 AmazMe 的产品入口、包作用域、TypeSafe 图像能力及 OAuth/供应商请求身份。
