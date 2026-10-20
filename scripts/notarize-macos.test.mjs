@@ -57,6 +57,8 @@ test("history errors parse structured HTTP codes, distinguish the read operation
 		assert.doesNotMatch(message, /SECRET|private\/|submit failed/);
 	}
 	assert.match(historyFailureMessage({ output: "Authentication failed SECRET /private/key.p8", exitCode: 1 }), /history query failed \(authentication error;/);
+	const timeout = historyFailureMessage({ output: "request timed out SECRET /private/key.p8", exitCode: 1 });
+	assert.match(timeout, /query outcome unknown/); assert.doesNotMatch(timeout, /submission outcome|SECRET|private\//);
 	for (const exitCode of [undefined, 0, -1, 256, 1.5, "69 SECRET"]) {
 		assert.doesNotMatch(historyFailureMessage({ output: "SECRET /private/key.p8", exitCode }), /notarytool exit|SECRET|private\//);
 	}

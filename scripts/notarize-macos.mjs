@@ -94,7 +94,10 @@ export function submissionFailureMessage(output, parsed) {
 export function historyFailureMessage(error) {
 	const output = typeof error?.output === "string" ? error.output : "";
 	const localHint = new Map([["ENOENT", "notarytool executable unavailable"], ["EACCES", "local tool execution permission denied"], ["EPERM", "local tool execution permission denied"], ["ENOBUFS", "tool output exceeded safe buffer"], ["ETIMEDOUT", "history query timed out"]]).get(error?.toolErrorCode);
-	const diagnostic = localHint ? `Notarization history query failed (${localHint}; no archive submitted)` : submissionFailureMessage(output, readToolJson(output)).replace(/^Notarization submit failed /, "Notarization history query failed ");
+	const remoteDiagnostic = submissionFailureMessage(output, readToolJson(output))
+		.replace(/^Notarization submit failed /, "Notarization history query failed ")
+		.replace("submission outcome unknown", "query outcome unknown");
+	const diagnostic = localHint ? `Notarization history query failed (${localHint}; no archive submitted)` : remoteDiagnostic;
 	const exit = Number.isInteger(error?.exitCode) && error.exitCode > 0 && error.exitCode <= 255 ? ` (notarytool exit ${error.exitCode})` : "";
 	const signal = ["SIGABRT", "SIGBUS", "SIGSEGV", "SIGKILL", "SIGTERM"].includes(error?.signal) ? ` (notarytool signal ${error.signal})` : "";
 	return `History check: ${diagnostic}${exit}${signal}`;
