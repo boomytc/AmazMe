@@ -74,17 +74,33 @@ export function invalidLogDiagnostics(output) {
 
 /** Classify output without copying arbitrary tool text, credentials, paths, or response bodies. */
 export function submissionFailureMessage(output, parsed) {
-	const jsonCode = parsed?.statusCode ?? parsed?.code;
+	const jsonCode = [parsed?.statusCode, parsed?.code, parsed?.status,
+		...(Array.isArray(parsed?.errors) ? parsed.errors.slice(0, 16).map(error => error?.status) : [])]
+		.find(value => (typeof value === "number" || typeof value === "string") && /^(401|403|429|5\d{2})$/.test(String(value)));
 	const safeJsonCode = (typeof jsonCode === "number" || typeof jsonCode === "string") && /^(401|403|429|5\d{2})$/.test(String(jsonCode)) ? String(jsonCode) : undefined;
-	const http = /HTTP status code:\s*(401|403|429|5\d{2})\b/i.exec(output)?.[1] ?? safeJsonCode;
+	const http = /\bHTTP(?:\s+status(?:\s+code)?)?\s*[:=]?\s*["']?(401|403|429|5\d{2})(?!\d)/i.exec(output)?.[1] ?? safeJsonCode;
 	if (http === "401") return "Notarization submit failed (HTTP 401: check App Store Connect credentials)";
 	if (http === "403") return "Notarization submit failed (HTTP 403: check App Store Connect permissions and agreements)";
 	if (http === "429") return "Notarization submit failed (HTTP 429: service rate limit)";
 	if (http !== undefined) return `Notarization submit failed (HTTP ${http}: Apple service error)`;
+	if (/\b(?:authentication|authorization) (?:failed|error)\b|\bunauthorized\b/i.test(output)) return "Notarization submit failed (authentication error; check App Store Connect credentials and access)";
 	if (/timed out|timeout|NSURLErrorTimedOut/i.test(output)) return "Notarization submit failed (network timeout; submission outcome unknown)";
 	if (/could not resolve host|cannot find host|NSURLErrorCannotFindHost/i.test(output)) return "Notarization submit failed (DNS resolution error)";
 	if (/SSL|TLS|certificate verification failed/i.test(output)) return "Notarization submit failed (TLS connection error)";
 	return "Notarization submit failed (unclassified tool error; raw output withheld)";
+}
+
+/** A history read never submits an archive. Only normalized diagnostics and a bounded exit code escape. */
+export function historyFailureMessage(error) {
+	const output = typeof error?.output === "string" ? error.output : "";
+	const localHint = new Map([["ENOENT", "notarytool executable unavailable"], ["EACCES", "local tool execution permission denied"], ["EPERM", "local tool execution permission denied"], ["ENOBUFS", "tool output exceeded safe buffer"], ["ETIMEDOUT", "history query timed out"]]).get(error?.toolErrorCode);
+	const remoteDiagnostic = submissionFailureMessage(output, readToolJson(output))
+		.replace(/^Notarization submit failed /, "Notarization history query failed ")
+		.replace("submission outcome unknown", "query outcome unknown");
+	const diagnostic = localHint ? `Notarization history query failed (${localHint}; no archive submitted)` : remoteDiagnostic;
+	const exit = Number.isInteger(error?.exitCode) && error.exitCode > 0 && error.exitCode <= 255 ? ` (notarytool exit ${error.exitCode})` : "";
+	const signal = ["SIGABRT", "SIGBUS", "SIGSEGV", "SIGKILL", "SIGTERM"].includes(error?.signal) ? ` (notarytool signal ${error.signal})` : "";
+	return `History check: ${diagnostic}${exit}${signal}`;
 }
 
 /** Parse a submission or classify a failure; never echo unvalidated response fields. */
@@ -119,7 +135,7 @@ async function priorSubmission(image, auth) {
 	const digest = hash.digest("hex");
 	let history;
 	try { history = tool("xcrun", ["notarytool", "history", ...auth, "--output-format", "json"]); }
-	catch (error) { throw new Error(`History check: ${submissionFailureMessage(typeof error?.output === "string" ? error.output : "")}`); }
+	catch (error) { throw new Error(historyFailureMessage(error)); }
 	for (const row of matchingHistory(history, basename(image))) {
 		if (row.status === "In Progress") throw new Error(`Notarization In Progress for submission ${row.id}; inspect it before retrying`);
 		let log;
@@ -163,12 +179,14 @@ async function verifyMountedApp(image, teamId) {
 
 async function main() {
 	if (process.platform !== "darwin") throw new Error("Notarization runs on macOS only");
-	const image = resolve(required(argument("--dmg"), "--dmg"));
+	const historyOnly = process.argv.includes("--history-only");
+	if (historyOnly && process.argv.includes("--dmg")) throw new Error("History-only mode cannot accept an archive");
+	const image = historyOnly ? undefined : resolve(required(argument("--dmg"), "--dmg"));
 	const key = resolve(required(argument("--key"), "--key"));
-	const teamId = required(argument("--team-id"), "--team-id");
+	const teamId = historyOnly ? undefined : required(argument("--team-id"), "--team-id");
 	const keyId = required(process.env.ASC_KEY_ID, "ASC_KEY_ID");
 	const issuer = required(process.env.ASC_ISSUER_ID, "ASC_ISSUER_ID");
-	if (!existsSync(image)) throw new Error(`No DMG at ${image}`);
+	if (image !== undefined && !existsSync(image)) throw new Error(`No DMG at ${image}`);
 	if (!existsSync(key)) throw new Error("App Store Connect key file is missing");
 	let keyText;
 	try {
@@ -179,8 +197,16 @@ async function main() {
 	const problem = keyFileProblem(keyText);
 	if (problem !== undefined) throw new Error(`ASC_PRIVATE_KEY ${problem}`);
 
-	assertTeam(image, teamId);
 	const auth = ["--key", key, "--key-id", keyId, "--issuer", issuer];
+	if (historyOnly) {
+		let output;
+		try { output = tool("xcrun", ["notarytool", "history", ...auth, "--output-format", "json"]); }
+		catch (error) { throw new Error(historyFailureMessage(error)); }
+		if (!Array.isArray(readToolJson(output)?.history)) throw new Error("Notarization history response is unavailable (raw output withheld; no archive submitted)");
+		console.log("Notarization history query succeeded; no archive submitted.");
+		return;
+	}
+	assertTeam(image, teamId);
 	const existing = await priorSubmission(image, auth);
 	let output;
 	let commandSucceeded = true;
