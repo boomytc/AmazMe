@@ -95,6 +95,8 @@ async function finalizeBundle(appDirectory, manifest, nodeExecutable) {
 	const resources = join(contents, "Resources");
 	await rm(join(resources, "default_app.asar"), { force: true });
 	await rm(join(resources, "app", "package-lock.json"), { force: true });
+	// Notarization unpacks the cached tarballs and rejects the unsigned binaries inside them.
+	await rm(join(resources, "app", ".npm-cache"), { recursive: true, force: true });
 	await mkdir(join(resources, "node", "bin"), { recursive: true });
 	await cp(nodeExecutable, join(resources, "node", "bin", "node"), { mode: constants.COPYFILE_FICLONE });
 	await chmod(join(resources, "node", "bin", "node"), 0o755);
