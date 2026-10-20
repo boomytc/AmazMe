@@ -34,6 +34,18 @@ npm run dev:desktop
 
 正式发布的网页脚本由 coding-agent 构建预先生成，宿主、worker 与客户端共享编译模块和同一持久状态。桌面依赖声明包括 coding-agent；Electron 作为桌面壳运行环境，宿主使用系统 Node 22.19+。
 
+## 确认后更新
+
+签名安装默认每天检查稳定版，可在“软件更新”菜单手动检查、关闭自动检查或切换预览渠道。检查只获取清单，用户确认后才下载；下载显示进度并可取消。校验通过后仍需单独确认“安装并重启”，“稍后”不会在普通退出时偷偷替换应用。开发/ad-hoc 安装、只读 DMG、App Translocation 或不可写目录会停止自动安装，不请求管理员权限。
+
+清单与 CLI/TUI 共用版本、URL 和 SHA256 合同。桌面额外要求精确版本的 macOS/架构/大小元数据；逐次重定向仅允许 GitHub HTTPS 与其 Release CDN。流式下载和落盘文件都核对 SHA256，挂载后及复制暂存后重新验证代码签名、Gatekeeper、bundle ID、真实版本和架构。发布者 Team ID 来自已验证的当前安装，不取自 manifest、下载内容或普通环境变量；DMG 必须有有效 staple，不要求 app 单独已有 staple。
+
+安装前宿主通过仅主进程持有的能力令牌冻结新任务入口，并检查活动/排队/后台任务、终端与认证操作。忙碌时推迟安装。helper 使用单实例锁，等待正常宿主关闭和旧应用 PID 退出后才在同卷重命名替换；新桌面与宿主连接成功才确认健康。旧应用保留在相邻隐藏更新目录的 `Previous.app`，启动失败时尝试恢复；若新进程不能安全停止，保留两份副本并记录 `recovery-required`，不强行覆盖运行中的应用。二进制回滚不回滚用户数据，后续数据迁移必须保持回退兼容。
+
+`AMAZME_GUI_USER_DATA_DIR` 可选定独立桌面 profile；更新重启沿用原 profile 和宿主数据目录。真实验收使用隔离目录，绝不替换用户正在使用的应用。
+
+`.github/workflows/trusted-desktop.yml` 仅手动触发，复用现有 release 环境凭证，只输出签名/公证 artifact，不创建 tag 或 Release。目标 DMG 与较低版本的合成基线分别经过真实公证、staple、Gatekeeper 与隔离安装测试；合成基线只改变 GUI 包版本，用来验证安装器，不代表旧正式产品兼容性。Release HTTPS 清单/重定向故障由精确 mocks 覆盖；artifact 安装验收不等于线上 Release 端到端验收。
+
 ## DMG 与 GitHub Release
 
 在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。推送 `v<version>` 标签触发 `.github/workflows/release.yml`，在 macOS runner 上构建、验证并创建 GitHub Release；标签必须与 `packages/gui/package.json` 的版本一致。

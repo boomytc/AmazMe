@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { desktopUpdateAsset, fetchDesktopManifest, githubReleaseResponse, type UpdateAsset, type UpdateManifest } from "@amazme/coding-agent/update-manifest";
 import type { DesktopUpdateIO, PreparedUpdate } from "./update-controller.ts";
+import { handoffUpdate } from "./update-handoff.ts";
 
 const exec = promisify(execFile);
 export type MacTool = (command: string, args: readonly string[]) => Promise<string>;
@@ -153,30 +154,23 @@ export function createMacUpdateIO(options: {
 			for (const key of ["AMAZME_CODING_AGENT_DIR", "AMAZME_SERVER_DIR", "AMAZME_GUI_CWD", "AMAZME_AGENTS_HOME", "AMAZME_GUI_SMOKE_DATA_DIR"]) {
 				if (process.env[key]) helperEnv[key] = process.env[key];
 			}
-			const child = spawn(node, [fileURLToPath(new URL("./update-helper.bundle.mjs", import.meta.url)), prepared.directory], {
-				detached: true, stdio: ["pipe", "pipe", "ignore"], env: helperEnv,
+			await handoffUpdate({
+				confirm: options.confirmQuit, quit: options.quit, resume: async () => { await options.resumeHost?.(); },
+				start() {
+					const child = spawn(node, [fileURLToPath(new URL("./update-helper.bundle.mjs", import.meta.url)), prepared.directory], {
+						detached: true, stdio: ["pipe", "pipe", "ignore"], env: helperEnv,
+					});
+					child.stdin.on("error", () => {});
+					child.unref();
+					return {
+						onData(listener) { const accept = (chunk: Buffer): void => listener(chunk.toString("utf8")); child.stdout.on("data", accept); return () => { child.stdout.off("data", accept); }; },
+						onDeath(listener) { child.on("error", listener); child.on("exit", listener); return () => { child.off("error", listener); child.off("exit", listener); }; },
+						isAlive: () => child.pid !== undefined && child.exitCode === null && child.signalCode === null,
+						sendInstall: () => new Promise<void>((resolve, reject) => { child.stdin.write("install\n", error => { if (error) reject(new Error("install")); else resolve(); }); }),
+						cancel: () => { child.stdin.end("cancel\n"); },
+					};
+				},
 			});
-			child.stdin.on("error", () => {});
-			let handedOff = false;
-			try {
-			await new Promise<void>((resolve, reject) => {
-				const timer = setTimeout(() => { child.stdin.end(); reject(new Error("install")); }, 180_000);
-				const fail = (): void => { clearTimeout(timer); reject(new Error("install")); };
-				child.once("error", fail); child.once("exit", fail);
-				child.stdout.once("data", chunk => {
-					clearTimeout(timer);
-					if (String(chunk).trim() !== "ready") { reject(new Error("install")); return; }
-					child.off("exit", fail); resolve();
-				});
-			});
-			if (!await options.confirmQuit()) throw new Error("postponed");
-			// Only an explicit install command arms replacement. EOF/cancel alone cannot install.
-			child.stdin.end("install\n"); child.unref();
-			await options.quit();
-			handedOff = true;
-			} finally {
-				if (!handedOff) { child.stdin.end(); await options.resumeHost?.(); }
-			}
 		},
 	};
 }

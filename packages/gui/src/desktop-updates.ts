@@ -11,7 +11,8 @@ import { createMacUpdateIO } from "./macos-update.ts";
 export function updateWindowCopy(locale: Locale, state: UpdateState): Record<string, string> {
 	const t = (key: Parameters<typeof translate>[1], values?: Record<string, string>): string => translate(locale, key, values);
 	const copy: Record<string, string> = { language: locale };
-	for (const key of ["heading", "channelLabel", "automaticLabel", "trust", "check", "download", "install", "cancel", "later", "stable", "preview"] as const) copy[key] = t(`desktop.update.${key}`);
+	for (const key of ["heading", "channelLabel", "automaticLabel", "trust", "check", "download", "cancel", "later", "stable", "preview"] as const) copy[key] = t(`desktop.update.${key}`);
+	copy.install = t("desktop.update.installAction");
 	copy.current = t("desktop.update.current", { version: state.current });
 	copy.status = t(`desktop.update.${state.phase}`, { version: state.version ?? "", percent: state.total ? String(Math.floor((state.received ?? 0) / state.total * 100)) : "0" });
 	copy.error = state.error ? t(`desktop.update.${state.error}`) : "";

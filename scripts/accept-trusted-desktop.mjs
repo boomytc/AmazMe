@@ -1,7 +1,7 @@
 /** Real Apple trust and isolated helper installation. Never touches a live app or user profile. */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +38,7 @@ async function inspectDmg(image, directory) {
 async function main() {
 	if (process.platform !== "darwin") throw new Error("macOS required");
 	const targetImage = argument("--target"), baselineImage = argument("--baseline"), out = argument("--out");
-	const scratch = await mkdtemp(join(tmpdir(), "amazme-trusted-acceptance-"));
+	const scratch = await realpath(await mkdtemp(join(tmpdir(), "amazme-trusted-acceptance-")));
 	const data = join(scratch, "isolated-user-data"); await mkdir(data);
 	const sentinel = join(data, "preserve.txt"); await writeFile(sentinel, "isolated user data must survive\n");
 	const baseline = await inspectDmg(baselineImage, scratch);

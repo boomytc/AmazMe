@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import { electronBinary, smokeEnvironment } from "./smoke-support.ts";
 import { createTempDir } from "./temp-dir.ts";
@@ -19,7 +19,7 @@ test.each(["en", "zh"] as const)("update window uses real preload IPC, consent, 
 		"import { createDesktopUpdates } from " + JSON.stringify(new URL("../dist/desktop-updates.js", import.meta.url).href) + ";",
 		"const locale = " + JSON.stringify(locale) + ";",
 		"app.setPath('userData', " + JSON.stringify(directory) + ");",
-		"await app.whenReady();",
+		"app.whenReady().then(async () => {",
 		"let checks=0, downloads=0, installs=0, prompts=0;",
 		"const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));",
 		"dialog.showMessageBox=async()=>{prompts++; return {response:1,checkboxChecked:false};};",
@@ -42,10 +42,12 @@ test.each(["en", "zh"] as const)("update window uses real preload IPC, consent, 
 		"await intruder.loadURL(" + JSON.stringify(new URL("../dist/update-window.html", import.meta.url).href) + "); await intruder.webContents.executeJavaScript(\"window.amazmeUpdates.command('check')\"); assert.equal(checks,1); intruder.destroy();",
 		...(evidence ? ["await writeFile(" + JSON.stringify(join(evidence, "updates-" + locale + ".png")) + ",(await window.webContents.capturePage()).toPNG());"] : []),
 		"const ready=await read(); assert.equal(ready.lang,locale);",
+		"assert.equal(await window.webContents.executeJavaScript(\"document.getElementById('install').textContent\"),locale==='zh'?'安装并重启':'Install and Restart');",
 		"await click('install'); await click('install'); await waitFor(()=>installs===1);",
 		"process.stdout.write('update window smoke: '+JSON.stringify({locale,checks,downloads,installs,prompts,ready})+'\\n');",
 		"await updates.dispose(); app.exit(0);",
 		"} catch(error){ console.error(error); app.exit(1); }",
+		"}).catch(error=>{console.error(error);app.exit(1);});",
 	].join("\n"));
 	const child = spawn(electronBinary(), ["--disable-gpu", fixture], { env: smokeEnvironment(directory), stdio: ["ignore", "pipe", "pipe"] });
 	let output = "", errors = "";
@@ -59,3 +61,23 @@ test.each(["en", "zh"] as const)("update window uses real preload IPC, consent, 
 	expect(marker).toBeDefined();
 	expect(JSON.parse(marker!.slice("update window smoke: ".length))).toMatchObject({ locale, checks: 1, downloads: 2, installs: 1, prompts: 2 });
 }, 45_000);
+
+test("ordinary second startup is blocked while the installer is paused in signature verification", async () => {
+	const directory = createTempDir("amazme-update-startup-"); directories.push(directory);
+	const executable = electronBinary(), target = dirname(dirname(dirname(executable))), lock = target + ".update-lock";
+	await mkdir(lock, { mode: 0o700 });
+	try {
+		const fixture = join(directory, "locked-startup.mjs");
+		await writeFile(fixture, "await import(" + JSON.stringify(new URL("../dist/main.js", import.meta.url).href) + ");\n");
+		const child = spawn(executable, ["--disable-gpu", fixture], { env: smokeEnvironment(directory), stdio: ["ignore", "pipe", "pipe"] });
+		let output = "", errors = "";
+		child.stdout.on("data", chunk => { output += String(chunk); }); child.stderr.on("data", chunk => { errors += String(chunk); });
+		const code = await new Promise<number | null>((resolve, reject) => {
+			const timer = setTimeout(() => { child.kill("SIGTERM"); reject(new Error("Blocked startup timed out\n" + output + errors)); }, 15_000);
+			child.once("error", reject); child.once("exit", value => { clearTimeout(timer); resolve(value); });
+		});
+		expect(code, errors).toBe(0);
+		expect(output).toContain("desktop update startup blocked");
+		expect(output).not.toContain("desktop host pid:");
+	} finally { await rm(lock, { recursive: true, force: true }); }
+}, 20_000);

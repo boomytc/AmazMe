@@ -113,8 +113,8 @@ describe("checkForUpdate", () => {
 	});
 
 	it("accepts the manifest the release workflow writes", async () => {
-		const written = buildManifest({ tag: "v8.6.0", repository: "boomytc/AmazMe", installers: [{ name: DMG, digest: SHA, published: `${SHA}  ${DMG}\n` }] });
-		expect(written).toEqual(manifest);
+		const written = buildManifest({ tag: "v8.6.0", repository: "boomytc/AmazMe", installers: [{ name: DMG, digest: SHA, size: 42, published: `${SHA}  ${DMG}\n` }] });
+		expect(written).toEqual({ ...manifest, assets: [{ ...manifest.assets[0], size: 42, platform: "darwin", arch: "arm64" }] });
 		expect((await checkForUpdate(options(server(written))))?.install).toBe("release");
 	});
 });

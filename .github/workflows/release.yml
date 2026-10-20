@@ -107,11 +107,10 @@ jobs:
             --notes-file "$RUNNER_TEMP/notes.md" \
             "${CHANNEL[@]}"
 
-  # Clients read releases/latest/download/latest.json for the update notice (packages/coding-agent/src/update-check.ts).
-  # Prerelease tags (v<x.y.z>-rc.N) publish no manifest, so clients never get pointed at them.
+  # Every release owns a manifest. GitHub's latest route still selects the stable release;
+  # the preview channel resolves a specific release tag instead.
   manifest:
     needs: release
-    if: ${{ !contains(github.ref_name, '-') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

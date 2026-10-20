@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { desktopUpdateAsset, githubReleaseResponse, isNewerRelease, parseUpdateManifest } from "../src/update-manifest.ts";
+import { desktopUpdateAsset, fetchDesktopManifest, githubReleaseResponse, isNewerRelease, parseUpdateManifest } from "../src/update-manifest.ts";
 
 const asset = { name: "AmazMe-8.6.0-macos-arm64.dmg", url: "https://github.com/boomytc/AmazMe/releases/download/v8.6.0/AmazMe-8.6.0-macos-arm64.dmg", sha256: "c".repeat(64), size: 3, platform: "darwin", arch: "arm64" };
 const manifest = { version: "8.6.0", tag: "v8.6.0", assets: [asset] };
@@ -21,6 +21,18 @@ describe("shared release contract", () => {
 	});
 });
 describe("HTTPS redirect boundaries", () => {
+	test("preview resolves the newest non-draft release's own manifest; stable never queries the preview list", async () => {
+		const version = "8.7.0-rc.1", name = "AmazMe-" + version + "-macos-arm64.dmg";
+		const preview = { version, tag: "v" + version, assets: [{ ...asset, name, url: "https://github.com/boomytc/AmazMe/releases/download/v" + version + "/" + name }] };
+		const get = vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify(String(url).includes("api.github.com") ? [{ tag_name: "v8.8.0", draft: true }, { tag_name: "v8.6.0", draft: false }, { tag_name: "v" + version, draft: false }] : preview))) as unknown as typeof fetch;
+		expect((await fetchDesktopManifest("preview", new AbortController().signal, get)).version).toBe(version);
+		expect(get).toHaveBeenLastCalledWith("https://github.com/boomytc/AmazMe/releases/download/v" + version + "/latest.json", expect.anything());
+		expect(desktopUpdateAsset(parseUpdateManifest(preview), "8.6.0", "stable", "darwin", "arm64")).toBeUndefined();
+		const stable = vi.fn(async () => new Response(JSON.stringify(manifest))) as unknown as typeof fetch;
+		await fetchDesktopManifest("stable", new AbortController().signal, stable);
+		expect(stable).toHaveBeenCalledTimes(1);
+		expect(stable).toHaveBeenCalledWith("https://github.com/boomytc/AmazMe/releases/latest/download/latest.json", expect.anything());
+	});
 	test.each(["http://github.com/asset", "https://127.0.0.1/file", "https://example.com/file", "https://github.com:444/file", "https://user@github.com/file", "file:///tmp/update"])("rejects redirect to %s before a second request", async target => {
 		const get = vi.fn(async () => new Response(null, { status: 302, headers: { location: target } })) as unknown as typeof fetch;
 		await expect(githubReleaseResponse(asset.url, new AbortController().signal, get)).rejects.toThrow("source"); expect(get).toHaveBeenCalledTimes(1);

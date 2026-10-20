@@ -42,6 +42,18 @@ async function noOtherInstance(target: string, parent: number): Promise<void> {
 
 async function main(directory: string): Promise<void> {
 	if (process.platform !== "darwin") throw new Error("unsupported");
+	let input = "", requested = false, cancelled = false;
+	process.stdin.on("data", (chunk: Buffer) => {
+		input += chunk.toString("utf8");
+		if (input.length > 64) { cancelled = true; return; }
+		for (;;) {
+			const newline = input.indexOf("\n"); if (newline < 0) break;
+			const command = input.slice(0, newline); input = input.slice(newline + 1);
+			if (command === "install" && !requested) requested = true;
+			else cancelled = true;
+		}
+	});
+	process.stdin.once("end", () => { if (!requested) cancelled = true; });
 	const job = await readInstallJob(directory);
 	const record = async (phase: string): Promise<void> => {
 		await writeFile(join(directory, "status.tmp"), JSON.stringify({ phase, version: job.version, target: job.target }), { mode: 0o600 });
@@ -50,6 +62,10 @@ async function main(directory: string): Promise<void> {
 	const lock = `${job.target}.update-lock`;
 	try { await mkdir(lock, { mode: 0o700 }); } catch { throw new Error("busy"); }
 	try {
+		const authorizeLaunch = async (version: string): Promise<void> => {
+			await writeFile(join(lock, "owner.tmp"), JSON.stringify({ target: job.target, directory, version, nonce: job.nonce, pid: process.pid }), { mode: 0o600 });
+			await rename(join(lock, "owner.tmp"), join(lock, "owner.json"));
+		};
 		await writableTarget(job.target);
 		await noOtherInstance(job.target, job.parentPid);
 		const original = await verifyApp(job.target, job.current, job.arch, job.team);
@@ -57,11 +73,9 @@ async function main(directory: string): Promise<void> {
 		await verifyApp(join(directory, "AmazMe.app"), job.version, job.arch, job.team);
 		process.stdout.write("ready\n");
 		// EOF without the explicit command is cancellation. Never stage an install on ordinary app quit.
-		let command = "";
-		process.stdin.on("data", (chunk: Buffer) => { command = (command + chunk.toString("utf8")).slice(0, 32); });
-		await waitFor(() => process.stdin.readableEnded || process.stdin.destroyed, 60_000);
-		if (command !== "install\n") { await record("postponed"); return; }
-		await waitFor(() => !alive(job.parentPid), 60_000);
+		await waitFor(() => { if (cancelled) throw new Error("postponed"); return requested; }, 60_000);
+		process.stdout.write("armed\n");
+		await waitFor(() => { if (cancelled) throw new Error("postponed"); return !alive(job.parentPid); }, 60_000);
 		await noOtherInstance(job.target, 0);
 		const launchEnv: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: process.env.HOME };
 		for (const key of ["AMAZME_CODING_AGENT_DIR", "AMAZME_SERVER_DIR", "AMAZME_GUI_CWD", "AMAZME_AGENTS_HOME", "AMAZME_GUI_USER_DATA_DIR"]) {
@@ -77,6 +91,7 @@ async function main(directory: string): Promise<void> {
 			rename,
 			record,
 			async launch() {
+				await authorizeLaunch(job.version);
 				const child = spawn(executable, ["--amazme-update-job", directory, job.nonce], { env: launchEnv, detached: true, stdio: "ignore" });
 				let failed = false;
 				child.once("error", () => { failed = true; });
@@ -98,11 +113,13 @@ async function main(directory: string): Promise<void> {
 				};
 			},
 			async relaunchOriginal() {
-				const child = spawn(executable, [], { env: launchEnv, detached: true, stdio: "ignore" });
+				await authorizeLaunch(job.current);
+				const child = spawn(executable, ["--amazme-update-job", directory, job.nonce], { env: launchEnv, detached: true, stdio: "ignore" });
 				await new Promise<void>((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); }); child.unref();
 			},
 		});
-	} catch {
+	} catch (error) {
+		if (error instanceof Error && error.message === "postponed") { await record("postponed"); return; }
 		const status = await readFile(join(directory, "status.json"), "utf8").catch(() => "");
 		if (!/"(?:rolled-back|recovery-required)"/.test(status)) await record("failed");
 		throw new Error("install");

@@ -34,6 +34,7 @@ import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
 import { createDesktopUpdates } from "./desktop-updates.ts";
 import { markUpdatedDesktopHealthy } from "./update-helper.ts";
+import { mayStartInstalledApp } from "./update-launch.ts";
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
@@ -570,7 +571,7 @@ async function boot(): Promise<void> {
 				try {
 					const locale = await currentLocale();
 					const confirmed = await ask({ type: "question", message: translate(locale, "desktop.update.installConfirm"), detail: translate(locale, "desktop.update.installDetail"),
-						buttons: [translate(locale, "desktop.update.later"), translate(locale, "desktop.update.install")], defaultId: 0, cancelId: 0, noLink: true }) === 1;
+						buttons: [translate(locale, "desktop.update.later"), translate(locale, "desktop.update.installAction")], defaultId: 0, cancelId: 0, noLink: true }) === 1;
 					if (!confirmed) return false;
 					if (!await updateHostAdmission("prepare")) throw new Error("busy");
 					return true;
@@ -584,7 +585,14 @@ async function boot(): Promise<void> {
 	}
 }
 
-if (!app.requestSingleInstanceLock()) {
+if (!mayStartInstalledApp(dirname(dirname(dirname(process.execPath))), app.getVersion(), process.argv)) {
+	if (SMOKE) { process.stdout.write("desktop update startup blocked\n"); app.exit(0); }
+	else app.whenReady().then(async () => {
+		const locale = await currentLocale();
+		await dialog.showMessageBox({ type: "info", title: APP_NAME, message: translate(locale, "desktop.update.busy"), buttons: [translate(locale, "desktop.update.later")] });
+		app.exit(0);
+	}).catch(() => app.exit(1));
+} else if (!app.requestSingleInstanceLock()) {
 	app.quit();
 } else {
 	app.on("second-instance", showWindow);

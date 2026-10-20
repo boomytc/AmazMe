@@ -82,7 +82,7 @@ export async function boundedJson(response: Response, limit = 65_536): Promise<u
 export async function fetchDesktopManifest(channel: UpdateChannel, signal: AbortSignal, get: typeof fetch = fetch): Promise<UpdateManifest> {
 	let url = UPDATE_MANIFEST_URL;
 	if (channel === "preview") {
-		const releases = await boundedJson(await githubReleaseResponse("https://api.github.com/repos/boomytc/AmazMe/releases?per_page=20", signal, get));
+		const releases = await boundedJson(await githubReleaseResponse("https://api.github.com/repos/boomytc/AmazMe/releases?per_page=20", signal, get), 1_048_576);
 		if (!Array.isArray(releases)) throw new Error("manifest");
 		let selected: string | undefined;
 		for (const release of releases) {
