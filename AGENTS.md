@@ -27,6 +27,13 @@ npm test --workspace <name>
 
 不要主动跑完整 `npm test` 或 `npm run build`。`npm install` 用 `--ignore-scripts`。
 
+## 发布
+
+- 发布流程和公证排错见 `packages/gui/README.md` 的「DMG 与 GitHub Release」。
+- 公证失败先在本机用只读的 `notarytool history` 或 `notarytool log <id>` 定位，或跑 `notary-history.yml`；不要为了试错反复推 `v*` 标签。
+- 写 secret 用 `printf '%s' <值> | gh secret set <名字> --env release`，写入前先在本机验证值。
+- 重打 `v*` 标签前确认该标签没有已发布的 GitHub Release。
+
 ## Git
 
 - 只有用户要求时才提交。
