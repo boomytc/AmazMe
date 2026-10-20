@@ -1,4 +1,4 @@
-/** CI-only package fixture: no tag, source commit, or production version override. */
+/** Acceptance-only package fixture for `release.mjs --acceptance`: no tag, source commit, or production version override. */
 import { readFile, unlink, writeFile } from "node:fs/promises";
 const packagePath = new URL("../packages/gui/package.json", import.meta.url);
 const originalPath = new URL("../packages/gui/package.json.acceptance-original", import.meta.url);

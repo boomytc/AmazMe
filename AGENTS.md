@@ -32,17 +32,16 @@ npm test --workspace <name>
 ## 发布
 
 - 发布流程和公证排错见 `packages/gui/README.md` 的「DMG 与 GitHub Release」。
-- 公证失败先在本机用只读的 `notarytool history` 或 `notarytool log <id>` 定位，或跑 `notary-history.yml`；不要为了试错反复推 `v*` 标签。
-- 写 secret 用 `printf '%s' <值> | gh secret set <名字> --env release`，写入前先在本机验证值。
+- 发布只在本机跑 `npm run release`，仓库没有 GitHub 工作流。先用 `--dry-run` 验证产物，不手工打 `v*` 标签或建 Release。
+- 公证失败先用只读的 `notarize-macos.mjs --history-only` 或 `notarytool log <id>` 定位，不要为了试错反复发布。
 - 重打 `v*` 标签前确认该标签没有已发布的 GitHub Release。
 
 ## 分支
 
-- 日常开发提交到 `dev`，不直接改 `main`。推送 `dev` 不触发 Actions。
-- 阶段性闭环后再开 `dev` 到 `main` 的 PR，不要长期挂着：PR 的每次推送都会跑 CI。
+- 日常开发提交到 `dev`，不直接改 `main`。
+- 阶段性闭环后再合入 `main`。仓库没有 CI，合入和推送前按「命令」一节在本地把关。
 - 合入用 merge commit 或快进，不用 squash，保持两条分支历史一致。
 - 直接在 `main` 上的热修要合回 `dev`。
-- 仓库没有 CI，推送前按「命令」一节在本地把关。
 - 版本标签只从 `main` 打。
 
 ## Git

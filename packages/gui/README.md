@@ -46,24 +46,41 @@ npm run dev:desktop
 
 更新锁先完整写入并 fsync 所有者记录，再原子获取；重复启动不会截断已有锁。普通启动遇到活跃或未知锁立即退出，不留下占用应用 PID 的模态框。持锁 helper 崩溃后，启动进程取得 Electron 单例，再检查私有锁中的完整 job 快照、所有者 PID 已退出、当前应用的 Apple 信任/发布者/版本和旧版本 hash，才恢复启动并清理已知失效锁；未知记录保留，恢复不会自动继续安装或移动应用。恢复元数据不依赖准备目录存在。GUI 退出仅删除未交接的暂存；任何锁、旧应用副本或已开始的事务日志都会保留该目录，由安装/恢复流程接管清理。
 
-`.github/workflows/trusted-desktop.yml` 仅手动触发，复用现有 release 环境凭证，只输出签名/公证 artifact，不创建 tag 或 Release。目标 DMG 与较低版本的合成基线分别经过真实公证、staple、Gatekeeper 与隔离安装测试；合成基线只改变 GUI 包版本，用来验证安装器，不代表旧正式产品兼容性。Release HTTPS 清单/重定向故障由精确 mocks 覆盖；artifact 安装验收不等于线上 Release 端到端验收。
+`npm run release -- --acceptance` 在发布前额外做可信更新验收，加 `--dry-run` 时只输出签名/公证产物，不创建 tag 或 Release。目标 DMG 与较低版本的合成基线分别经过真实公证、staple、Gatekeeper 与隔离安装测试；合成基线只改变 GUI 包版本，用来验证安装器，不代表旧正式产品兼容性。Release HTTPS 清单/重定向故障由精确 mocks 覆盖；artifact 安装验收不等于线上 Release 端到端验收。
 
 ## DMG 与 GitHub Release
 
-在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。推送 `v<version>` 标签触发 `.github/workflows/release.yml`，在 macOS runner 上构建、验证并创建 GitHub Release；标签必须与 `packages/gui/package.json` 的版本一致。
+在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。
+
+仓库没有 GitHub 工作流，发布在本机 macOS 上用 `npm run release` 完成：
+
+1. 预检：当前在 `main`、工作区干净且等于 `origin/main`，根目录与 `packages/gui` 版本一致，`v<version>` 标签与 Release 都还不存在（标签已在 HEAD 但 Release 缺失时续发），并用只读 `notarytool history` 确认公证凭证。
+2. 在临时 worktree 里对 HEAD 跑 `npm ci`、`check:workspace` 和 `build:offline`，本地改动和旧构建产物不会进入 DMG。
+3. 下载并按 SHASUMS256 校验官方 Node，缓存在 `~/Library/Caches/amazme-release`。
+4. 签名打包、公证、staple 并复核；`--acceptance` 再构建、公证较低版本基线并做隔离安装验收。
+5. 生成 `latest.json` 和发布说明，产物留在 `dist-release/<tag>/`。`--dry-run` 到此为止。
+6. 打附注标签 `v<version>` 并推送，`gh release create --verify-tag` 上传 DMG、`.sha256` 和 `latest.json`。带 `-` 的预发布版本标为 prerelease，不成为 latest。
+
+本机配置写在 `~/.config/amazme/release.env`（或用 `AMAZME_RELEASE_ENV` 指定），只放 ID 和路径，不放密钥内容：
+
+```bash
+APPLE_TEAM_ID=<团队 ID>
+ASC_KEY_ID=<Key ID>
+ASC_ISSUER_ID=<Issuer ID>
+ASC_KEY_PATH=~/path/to/AuthKey_<Key ID>.p8
+# SIGNING_KEYCHAIN 默认是登录钥匙串
+```
 
 签名分两种，都走同一套由内向外的签名流程：
 
 - 本地预览不带参数，用 ad-hoc 签名，不开 hardened runtime：ad-hoc 没有团队 ID，开了库校验会拒绝加载自带的 Electron 框架。其他机器首次打开会被 Gatekeeper 拦截。
 - 发布同时传 `--keychain <钥匙串> --team-id <团队 ID>`，从该钥匙串里选出这个团队唯一的 Developer ID Application 身份，带 hardened runtime 和 `packages/gui/assets/entitlements.mac.plist` 里的权限签应用和 DMG，签完核对 TeamIdentifier。随后 `scripts/notarize-macos.mjs` 提交公证、staple，并用 `codesign --verify --deep --strict` 和 `spctl` 复核后重写 `.sha256`。
 
-release 工作流在 `release` 环境里运行：证书只给导入证书那一步，App Store Connect 密钥只给公证那一步；临时钥匙串和密钥文件放在 `$RUNNER_TEMP`，最后一步无论成败都会删掉。团队 ID 取仓库变量 `APPLE_TEAM_ID`。
+签名用钥匙串里已有的 Developer ID 身份，首次签名时 macOS 会询问 codesign 能否使用私钥，选“始终允许”。
 
 公证提交前会离线解析未加密的 PKCS#8 `.p8`，提前发现字面量 `\n`、整段 base64 或损坏的私钥文本；这不验证密钥对应的账户权限。Invalid 结果只在 submission ID 为有效 UUID 时读取日志，并转换为固定的签名、hardened runtime、时间戳或 entitlements 提示。公证提交与日志读取的原始输出、日志路径和任意响应字段不会回显；读取诊断失败也保持公证失败，不会继续 staple。
 
-调用 notarytool 前还会离线核对凭证形状：`ASC_ISSUER_ID` 必须是团队密钥页上方的 Issuer ID UUID，`ASC_KEY_ID` 只能是字母数字，两者都不能有首尾空白，私钥必须是 EC P-256。Issuer 不是 UUID 时 notarytool 以 exit 64 拒绝参数、不发请求；这类参数错误按选项名报告，不带值。格式通过后返回 HTTP 401，说明 Key ID、Issuer ID 与私钥不是同一套，应在本机用下载的 `AuthKey_<Key ID>.p8` 跑一次只读 `xcrun notarytool history --key … --key-id … --issuer …` 确认组合，再用 `printf '%s' … | gh secret set <名字> --env release` 一并重写三个 secret。个人密钥没有 Issuer ID，不能用于这条流程。
-
-`.github/workflows/notary-history.yml` 只读验证 release 环境里的公证凭证：在要验证的提交上推送 `vnotary-history-<日期>-<序号>` 标签，再手动触发该工作流，约半分钟，不构建、不提交归档，并记录 runner 的 macOS、Xcode 和 notarytool 版本。release 工作流只匹配 `v[0-9]*`，不会被这个标签触发；release 环境按 `v*` 放行，所以诊断标签仍能读到凭证。验证后删除标签。公证 Invalid 时，在本机用同一套凭证 `xcrun notarytool log <submission ID> …` 读完整日志，按文件路径定位，不要反复重跑发布。
+调用 notarytool 前还会离线核对凭证形状：`ASC_ISSUER_ID` 必须是团队密钥页上方的 Issuer ID UUID，`ASC_KEY_ID` 只能是字母数字，两者都不能有首尾空白，私钥必须是 EC P-256。Issuer 不是 UUID 时 notarytool 以 exit 64 拒绝参数、不发请求；这类参数错误按选项名报告，不带值。格式通过后返回 HTTP 401，说明 Key ID、Issuer ID 与私钥不是同一套，应在 App Store Connect 团队密钥页核对三者，修正 `release.env` 后单独跑 `node --env-file ~/.config/amazme/release.env scripts/notarize-macos.mjs --history-only --key <.p8>` 确认，不构建、不提交归档。个人密钥没有 Issuer ID，不能用于这条流程。公证 Invalid 时，在本机用同一套凭证 `xcrun notarytool log <submission ID> …` 读完整日志，按文件路径定位，不要反复重跑发布。
 
 打包安装依赖时，npm 缓存写在 `Contents/Resources/app/.npm-cache`，签名前必须删掉：公证会解开其中的 tarball，里面未签名的 esbuild 和原生模块会使整包 Invalid。签名只覆盖直接可见的 Mach-O，app 内不应再带任何含二进制的压缩包。
 

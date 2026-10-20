@@ -21,6 +21,7 @@
 		"test:engineering": "node --test scripts/*.test.mjs",
 		"typecheck": "tsc -b tsconfig.json --pretty false",
 		"check:workspace": "node scripts/check-workspace.mjs",
+		"release": "node scripts/release.mjs",
 		"generate:model-catalog": "npm --prefix packages/ai run generate-model-catalog",
 		"eval": "npm run eval --workspace=@amazme/evals --",
 		"test": "npm run test --workspaces --if-present",
