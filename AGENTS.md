@@ -25,6 +25,8 @@ npm run build --workspace <name>
 npm test --workspace <name>
 ```
 
+推送前跑 `npm run check:workspace`，它覆盖版本号、临时目录、依赖方向等仓库规则；改了 `scripts/` 再跑 `npm run test:engineering`。
+
 不要主动跑完整 `npm test` 或 `npm run build`。`npm install` 用 `--ignore-scripts`。
 
 ## 发布
@@ -40,7 +42,7 @@ npm test --workspace <name>
 - 阶段性闭环后再开 `dev` 到 `main` 的 PR，不要长期挂着：PR 的每次推送都会跑 CI。
 - 合入用 merge commit 或快进，不用 squash，保持两条分支历史一致。
 - 直接在 `main` 上的热修要合回 `dev`。
-- `dev` 没有 CI 兜底：改完包按「命令」一节构建并测试；需要完整 CI 时跑 `gh workflow run ci.yml --ref dev`。
+- 仓库没有 CI，推送前按「命令」一节在本地把关。
 - 版本标签只从 `main` 打。
 
 ## Git
