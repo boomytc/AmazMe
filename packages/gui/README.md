@@ -45,6 +45,8 @@ npm run dev:desktop
 
 release 工作流在 `release` 环境里运行：证书只给导入证书那一步，App Store Connect 密钥只给公证那一步；临时钥匙串和密钥文件放在 `$RUNNER_TEMP`，最后一步无论成败都会删掉。团队 ID 取仓库变量 `APPLE_TEAM_ID`。
 
+公证提交前会离线解析未加密的 PKCS#8 `.p8`，提前发现字面量 `\n`、整段 base64 或损坏的私钥文本；这不验证密钥对应的账户权限。Invalid 结果只在 submission ID 为有效 UUID 时读取日志，并转换为固定的签名、hardened runtime、时间戳或 entitlements 提示。公证提交与日志读取的原始输出、日志路径和任意响应字段不会回显；读取诊断失败也保持公证失败，不会继续 staple。
+
 ## 独立预览包
 
 `scripts/package-desktop.mjs` 生成可移动的 macOS 预览应用：宿主、运行时闭包和固定版本的官方 Node 一起放进 `AmazMe.app`，启动脚本只引用 `Contents/Resources` 内的路径。用官方 Node 压缩包，不要用 Homebrew 的 Node——后者链接共享的 `libnode`，复制单个二进制会在移动后启动失败；脚本会用 `otool` 拒绝这种二进制。
