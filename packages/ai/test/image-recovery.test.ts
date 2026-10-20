@@ -8,6 +8,8 @@ describe("request-only image recovery", () => {
 		"400 Invalid image: image dimensions exceed the supported limit",
 		"422 Failed to decode image: unsupported format",
 		"413 Image is too large",
+		"400 At most 0 image(s) may be provided in one prompt. (parameter=image)",
+		"400 [unsupported_request] Message content supports text content only. Images, audio and files are not enabled.",
 	])("recognizes payload rejection: %s", errorMessage => {
 		expect(isImagePayloadRejection(fauxAssistantMessage([], { stopReason: "error", errorMessage }))).toBe(true);
 	});
@@ -21,6 +23,7 @@ describe("request-only image recovery", () => {
 		"Image context token limit exceeded",
 		"Network error decoding image",
 		"Invalid request",
+		"400 Streaming is not enabled for this key",
 	])("does not bypass other failures: %s", errorMessage => {
 		expect(isImagePayloadRejection(fauxAssistantMessage([], { stopReason: "error", errorMessage }))).toBe(false);
 	});
