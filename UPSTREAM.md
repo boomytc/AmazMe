@@ -10,7 +10,7 @@
 
 ## 当前基线
 
-当前已处理到 Pi 的固定提交 `1d01b3b1f8de2e67a3a1c1694b14c984e4edd156`（2026-10-20）。逐项核对 `1402973a9..1d01b3b1f` 的 14 个提交，吸收 AI/Durable 遥测、SQLite 遥测存储、显式文档 checkpoint 策略、Responses 工具历史缓存、Copilot 请求字节超限恢复，以及 Windows、Rex 和安装标记兼容修复。AmazMe 保持当前 `0.1.0` 版本，本轮不发布、不覆盖既有发布记录；具体适配与验证见本轮记录。此前已处理 `8efd314fa..1402973a9` 的 16 个提交及更早批次，历史处置见下文。
+当前已处理到 Pi 的固定提交 `a731ba8b80ac56662b4ca7f09102f94447862d8c`（2026-10-20）。逐项核对 `1d01b3b1f..a731ba8b8` 的 2 个提交，吸收 TUI 在 CJK 标点旁渲染 Markdown 粗体与斜体的修复及其变更记录；新增 `marked-cjk-friendly` 运行时依赖，同时保留 CommonMark 对非 CJK 文本的边界规则和本地 LaTeX、删除线扩展。AmazMe 沿用 package.json 中的当前版本，本轮不发布、不覆盖既有发布记录；具体适配与验证见本轮记录。此前已处理 `1402973a9..1d01b3b1f` 的 14 个提交、`8efd314fa..1402973a9` 的 16 个提交及更早批次，历史处置见下文。
 
 历史基线为 `0cf65d2bf`（v1.0.4），随后处理 v1.1.0、至 `42a3497d0` 的 12 个提交，以及 `ea448f454..427052247` 的 25 个提交。历史和本轮的具体处置分别记录如下。
 
@@ -446,9 +446,20 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 
 自审查修正：SQLite 状态保存保留原生 Error 的 name/message 并丢弃额外字段；任务定义正常交接明确记录为下一阶段，而非取消；存储读写与提交后 adoption 失败透传当前遥测上下文，同时保持已准入 commit 失败不受读取取消豁免影响。两类遥测缺陷均新增回归先复现再修复。所有权测试明确先准入取消、再同步封闭调度，避免依赖微任务时序启动不会响应取消的慢 abort handler；运行时 close 仍等待已启动调用退出。
 
-验证：Telemetry 48、Chord 606、AI 1407、coding-agent 2599 项通过；Durable 排除两个实网 E2E 后，默认缓存与即时淘汰各 1426 项通过、2 项跳过，真实 workerd 29 项通过。TUI 全包测试、工程测试 89 项、各修改包构建、全仓类型检查、`check:workspace` 与差异检查通过；最终 CLI bundle 实际启动输出 `0.1.0`。测试隔离 HOME、供应商凭据和每组临时目录，避免并行组的产物扫描互相干扰。
+验证：Telemetry 48、Chord 606、AI 1407、coding-agent 2599 项通过；Durable 排除两个实网 E2E 后，默认缓存与即时淘汰各 1426 项通过、2 项跳过，真实 workerd 29 项通过。TUI 全包测试、工程测试 89 项、各修改包构建、全仓类型检查、`check:workspace` 与差异检查通过；最终 CLI bundle 实际启动输出当前版本。测试隔离 HOME、供应商凭据和每组临时目录，避免并行组的产物扫描互相干扰。
 
 验证限制：AI 有 825 项、coding-agent 有 24 项按条件跳过；未调用真实供应商验证提示缓存命中率。Windows 分支采用模拟平台测试，Rex 采用能力断言及本机 OSC8 输出检查，未宣称 Windows 或 Rex 实机验收。新增 17 个 TypeScript 文件的 Biome lint 无错误，但有非空断言警告；默认规则对既有控制字符正则、排版等仍有报错，不将全仓 Biome 检查记为通过。
+
+## 增量跟进：`1d01b3b1f..a731ba8b8`（2026-10-20）
+
+| pi 提交 | 说明 | 处理 |
+| --- | --- | --- |
+| `b2d0da6fe` | Markdown 强调标记可紧邻 CJK 标点 | 吸收 `marked-cjk-friendly@0.1.2` 的 `emStrong` tokenizer 扩展，保留本地 LaTeX 扩展与严格删除线 tokenizer；补 5 组 CJK 与 1 组非 CJK 边界回归。依赖精确固定并更新根锁文件 |
+| `a731ba8b8` | TUI 变更记录 | 吸收 Fixed 条目，保留 AmazMe 的 Unreleased 段与既有发布历史 |
+
+本地适配：只替换 `emStrong` 规则，不改 Markdown 的其余解析、换行和主题渲染；`@amazme/tui` 的公开入口与 `files` 不变，新增依赖随运行时闭包和 coding-agent bundle 发布。AmazMe 没有 Pi 的 `packages/coding-agent/install-lock` 文件，无需同步该锁文件。
+
+验证：`@amazme/tui` 构建通过，全包测试通过，聚焦 `CJK emphasis` 2 项通过；工程测试 89 项、全仓类型检查、`check:workspace` 通过。coding-agent bundle 重新构建成功（158 个文件，9.6 MiB），产物包含新增 tokenizer。测试用标签主题断言粗体与斜体输出，未在真实终端手工核对。`check:workspace` 首次运行发现 `UPSTREAM.md` 两处手写当前版本号（上一批遗留），改为引用 package.json 或当前版本后通过。
 
 ## 刻意偏离
 
