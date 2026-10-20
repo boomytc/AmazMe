@@ -5,6 +5,7 @@
 ### Fixed
 
 - Detect Rex as supporting true color and OSC 8 hyperlinks without enabling inline image protocols.
+- Fixed Markdown bold and italic not rendering next to CJK punctuation ([#10730](https://github.com/earendil-works/pi/pull/10730) by [@theBucky](https://github.com/theBucky))
 
 ## [1.4.0] - 2026-10-19
 
