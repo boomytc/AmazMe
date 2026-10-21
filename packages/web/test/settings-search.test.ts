@@ -271,27 +271,23 @@ describe("settings page", () => {
 	test("keeps the category column open and searches settings into that category", () => {
 		document.body.classList.add("sidebar-collapsed");
 		const elements = collectPageElements();
-		const inertAtFocus: boolean[] = [];
-		elements.sectionSearchInput.addEventListener("focus", () => inertAtFocus.push(elements.sidebar.inert));
 		const renderer = createRenderer(elements);
 		renderer.render(buildWebView(chat));
 		expect(elements.sidebar.inert).toBe(true);
 		expect(elements.sidebarToggle.closest("#session-sidebar")).toBeNull();
 		expect(elements.sidebarToggle.closest(".header")).not.toBeNull();
 		renderer.render(buildWebView(settings));
-		expect(elements.sidebar.inert).toBe(false);
+		expect(elements.center.inert).toBe(false);
 		expect(document.activeElement).toBe(elements.sectionSearchInput);
-		expect(inertAtFocus).toEqual([false]);
+		expect(document.getElementById("library-nav")?.hidden).toBe(false);
 
 		const toggle = elements.sidebarToggle;
 		expect(toggle).toBeInstanceOf(HTMLButtonElement);
-		expect(document.body.classList.contains("settings-open")).toBe(true);
-		expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
-		expect(document.getElementById("view-back")?.hidden).toBe(true);
+		expect(document.body.classList.contains("library-open")).toBe(true);
+		expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
+		expect(document.getElementById("view-back")?.hidden).toBe(false);
 		expect(document.getElementById("session-title")?.hidden).toBe(true);
 		expect((toggle as HTMLButtonElement).hidden).toBe(true);
-		(toggle as HTMLButtonElement).click();
-		expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
 
 		const search = document.getElementById("section-search");
 		const input = document.getElementById("section-search-input");
@@ -323,7 +319,7 @@ describe("settings page", () => {
 		expect(document.activeElement).toBe(field);
 
 		renderer.render(buildWebView(chat));
-		expect(document.body.classList.contains("settings-open")).toBe(false);
+		expect(document.body.classList.contains("library-open")).toBe(false);
 		expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
 		expect((toggle as HTMLButtonElement).hidden).toBe(false);
 		expect(toggle.closest(".header")).not.toBeNull();
@@ -337,27 +333,22 @@ describe("settings page", () => {
 		expect(document.getElementById("session-title")?.hidden).toBe(false);
 
 		renderer.render(buildWebView(shell({ locale: "zh", current: "plugins" })));
-		expect(document.body.classList.contains("settings-open")).toBe(false);
-		expect(elements.sidebarToggle.closest(".header")).not.toBeNull();
-		(toggle as HTMLButtonElement).click();
-		expect(document.body.classList.contains("sidebar-collapsed")).toBe(false);
-		expect(toggle.closest("#section-sidebar")).toBe(elements.sectionSidebar);
-		(toggle as HTMLButtonElement).click();
+		expect(document.body.classList.contains("library-open")).toBe(true);
 		expect(document.body.classList.contains("sidebar-collapsed")).toBe(true);
-		expect(toggle.closest(".header")).not.toBeNull();
+		expect(document.getElementById("library-nav")?.hidden).toBe(true);
 		expect(document.getElementById("section-search")?.hidden).toBe(true);
-		expect(document.getElementById("view-back")?.hidden).toBe(true);
+		expect(document.getElementById("view-back")?.hidden).toBe(false);
 		expect(document.getElementById("session-title")?.hidden).toBe(true);
-		expect((toggle as HTMLButtonElement).hidden).toBe(false);
+		expect((toggle as HTMLButtonElement).hidden).toBe(true);
 
 		renderer.render(buildWebView(shell({ locale: "zh", current: "skills" })));
-		expect(document.getElementById("view-back")?.hidden).toBe(true);
+		expect(document.getElementById("view-back")?.hidden).toBe(false);
 		expect(document.getElementById("session-title")?.hidden).toBe(true);
 
 		renderer.render(buildWebView(shell({ locale: "zh", current: "automation" })));
 		expect(document.getElementById("view-back")?.hidden).toBe(false);
-		expect(document.getElementById("session-title")?.hidden).toBe(false);
-		expect(document.getElementById("session-title")?.textContent).toBe("自动化");
+		expect(document.getElementById("session-title")?.hidden).toBe(true);
+		expect(document.querySelector("#view-body .panel-title")?.textContent).toBe("自动化");
 	});
 
 	test.each([
@@ -392,27 +383,20 @@ describe("settings page", () => {
 			return event;
 		};
 		expect(find().defaultPrevented).toBe(true);
-		expect(document.body.classList.contains("sidebar-open")).toBe(true);
-		expect(elements.sidebar.inert).toBe(false);
-		expect(elements.sidebarToggle.getAttribute("aria-expanded")).toBe("true");
+		expect(document.body.classList.contains("sidebar-open")).toBe(false);
 		expect(document.activeElement).toBe(field);
 		expect(field.selectionStart).toBe(0);
 		expect(field.selectionEnd).toBe(field.value.length);
-		expect(focusStates).toEqual([{ inert: false, open: true }]);
+		expect(focusStates).toEqual([{ inert: true, open: false }]);
 
 		find();
-		expect(document.body.classList.contains("sidebar-open")).toBe(true);
+		expect(document.body.classList.contains("sidebar-open")).toBe(false);
 		field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
 		expect(field.value).toBe("");
-		expect(document.body.classList.contains("sidebar-open")).toBe(true);
-		field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
 		expect(document.body.classList.contains("sidebar-open")).toBe(false);
-		expect(elements.sidebar.inert).toBe(true);
-		expect(document.activeElement).toBe(elements.sidebarToggle);
 
 		find();
-		expect(document.body.classList.contains("sidebar-open")).toBe(true);
-		expect(elements.sidebar.inert).toBe(false);
+		expect(document.body.classList.contains("sidebar-open")).toBe(false);
 		expect(document.activeElement).toBe(field);
 		renderer.render(buildWebView(chat));
 		// The conversation owns the find chord too, opening its own search bar.

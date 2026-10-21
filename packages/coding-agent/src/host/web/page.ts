@@ -293,7 +293,6 @@ function withReturnPoints(view: WebView, points: readonly { readonly id: string;
 		id: "conversations:return",
 		title: copy("history.returnTo"),
 		rows,
-		empty: "",
 	};
 	return {
 		...view,

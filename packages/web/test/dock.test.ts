@@ -165,7 +165,7 @@ describe("the session dock", () => {
 		expect(text.groups[0]?.rows[0]?.actions?.[0]?.data).toBe("/w/src");
 		expect(
 			filesPanel("en", { cwd: "/w", view: { kind: "text", path: "big.txt", text: "…", truncated: true } }).notices[0],
-		).toEqual({ tone: "info", text: "Only the beginning of this text is shown." });
+		).toEqual({ tone: "info", persistence: "pinned", text: "Only the beginning of this text is shown." });
 
 		expect(
 			filesPanel("en", { cwd: "/w", view: { kind: "binary", path: "logo.png" } }).notices[0]?.text,
@@ -333,7 +333,7 @@ describe("the session dock", () => {
 		// With nothing live the panel says so instead of looking broken.
 		expect(
 			tasksPanel("en", { conversations: [], tasks: [], selected: "1" }).groups[0]?.empty,
-		).toBe("No task is running.");
+		).toEqual({ cause: "first-use", text: "No task is running." });
 	});
 
 	test("shows sleep deadlines and makes only parked tasks retryable", () => {

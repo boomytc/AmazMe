@@ -167,17 +167,17 @@ export function changesPanel(locale: Locale, state: InsightsStateLike | undefine
 	const title = translate(locale, "review.title");
 	if (!state) return { id: "changes", title, notices: [], groups: [] };
 	return { id: "changes", title, description: translate(locale, "review.description"),
-		notices: [...(state.paused ? [{ tone: "info" as const, text: translate(locale, `review.paused.${state.paused}`) }] : []),
-			...state.notes.map(text => ({ tone: "info" as const, text })), ...(state.skipped ? [{ tone: "info" as const, text: translate(locale, "review.skipped", { count: String(state.skipped) }) }] : []),
-			...(state.cleanup.tools || state.cleanup.images ? [{ tone: "info" as const, text: translate(locale, "review.cleanup", { tools: String(state.cleanup.tools), images: String(state.cleanup.images) }) }] : [])],
+		notices: [...(state.paused ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, `review.paused.${state.paused}`) }] : []),
+			...state.notes.map(text => ({ tone: "info" as const, text })), ...(state.skipped ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "review.skipped", { count: String(state.skipped) }) }] : []),
+			...(state.cleanup.tools || state.cleanup.images ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "review.cleanup", { tools: String(state.cleanup.tools), images: String(state.cleanup.images) }) }] : [])],
 		groups: [{ id: "changes:files", title: translate(locale, "dock.files"), actions: [
 			{ id: "insights:refresh", label: translate(locale, "dock.reload"), weight: "line" as const },
 			...(state.paused ? [{ id: "insights:resume", data: state.conversationId, label: translate(locale, "review.resume"), weight: "filled" as const }] : []),
 		], rows: state.files.map(file => ({ id: `change:${file.root}/${file.path}`, title: file.path, description: file.root,
 			badges: [translate(locale, `review.${file.kind}`), ...(file.binary ? [translate(locale, "review.binary")] : [`+${file.added} −${file.removed}`])],
 			actions: [{ id: "insights:diff", data: JSON.stringify([state.conversationId, file.root, file.path]), label: translate(locale, "review.diff"), weight: "text" as const }],
-		})), empty: translate(locale, "review.empty") },
-		{ id: "changes:verification", title: translate(locale, "review.verification"), rows: state.verification.map((item, index) => ({ id: `verification:${index}`, title: item.command, description: translate(locale, item.exitCode === null ? "review.unknown" : item.exitCode === 0 ? "review.passed" : "review.failed", { code: String(item.exitCode) }) })), empty: translate(locale, "review.noVerification") }],
+		})), empty: { cause: "first-use", text: translate(locale, "review.empty") } },
+		{ id: "changes:verification", title: translate(locale, "review.verification"), rows: state.verification.map((item, index) => ({ id: `verification:${index}`, title: item.command, description: translate(locale, item.exitCode === null ? "review.unknown" : item.exitCode === 0 ? "review.passed" : "review.failed", { code: String(item.exitCode) }) })), empty: { cause: "first-use", text: translate(locale, "review.noVerification") } }],
 		...(diff === undefined ? {} : { texts: [{ id: "changes:diff", text: diff, diff: /^--- .+\r?\n\+\+\+ .+/m.test(diff) }] }),
 	};
 }
@@ -273,7 +273,7 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 					},
 				],
 				rows: rows.filter((_, index) => !state.conversations[index]?.readOnly && state.conversations[index]?.archivedAt === undefined),
-				empty: translate(locale, "dock.noConversations"),
+				empty: { cause: "first-use", text: translate(locale, "dock.noConversations") },
 				footnote: translate(locale, "dock.forkSharedFiles"),
 			},
 			...(state.conversations.some(item => item.readOnly || item.archivedAt !== undefined) ? [{
@@ -350,7 +350,7 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 					},
 				],
 				rows,
-				empty: translate(locale, "dock.noTasks"),
+				empty: { cause: "first-use", text: translate(locale, "dock.noTasks") },
 			},
 		],
 	};
@@ -446,7 +446,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 			id: "files",
 			title: segments.at(-1) ?? view.path,
 			files,
-			notices: view.truncated ? [{ tone: "info", text: translate(locale, "dock.truncated") }] : [],
+			notices: view.truncated ? [{ tone: "info", persistence: "pinned", text: translate(locale, "dock.truncated") }] : [],
 			groups: [
 				...folders,
 				{
@@ -509,7 +509,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		actions: [reload, ...paging],
 		...(page === undefined ? {} : { description: translate(locale, "dock.pageRange", { from: String(page.total === 0 ? 0 : page.offset + 1), to: String(Math.min(page.offset + page.limit, page.total)), total: String(page.total) }) }),
 		rows,
-		empty: translate(locale, page !== undefined && page.total > 0 ? "dock.emptyPage" : "dock.emptyDirectory"),
+		empty: { cause: page !== undefined && page.total > 0 ? "no-match" : "first-use", text: translate(locale, page !== undefined && page.total > 0 ? "dock.emptyPage" : "dock.emptyDirectory") },
 	};
 	return {
 		id: "files",
@@ -567,13 +567,12 @@ export function terminalPanel(
 		id: "terminal",
 		title,
 		description: `${input.cwd} · ${terminalStatus(locale, state)}`,
-		notices: state.truncated ? [{ tone: "info", text: translate(locale, "dock.truncated") }] : [],
+		notices: state.truncated ? [{ tone: "info", persistence: "pinned", text: translate(locale, "dock.truncated") }] : [],
 		groups: [
 			{
 				id: "terminal:controls",
 				title: translate(locale, "dock.command"),
 				rows: [],
-				empty: "",
 				actions: [
 					{
 						id: TERMINAL_STOP_ACTION,

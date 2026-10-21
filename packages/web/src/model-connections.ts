@@ -54,7 +54,7 @@ export function providerConfigurationModal(locale: Locale, provider?: ModelConne
 
 /** The provider search stays mounted while connection and model states change. */
 export function createModelConnections(report: (action: PanelAction) => void) {
-	const root = document.createElement("section"); root.className = "panel model-connections";
+	const root = document.createElement("section"); root.className = "panel model-connections split-workspace";
 	const head = document.createElement("header"); head.className = "panel-head connection-head";
 	const titles = document.createElement("div"); titles.className = "panel-titles";
 	const title = document.createElement("h1"); title.className = "panel-title";
@@ -74,7 +74,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 	search.autocomplete = "off"; search.spellcheck = false;
 	search.setAttribute("autocorrect", "off"); search.setAttribute("autocapitalize", "off");
 	searchBox.append(search);
-	const add = document.createElement("button"); add.type = "button"; add.className = "panel-button connection-add-button";
+	const add = document.createElement("button"); add.type = "button"; add.className = "panel-button weight-line connection-add-button";
 	add.dataset.action = PROVIDER_EDIT_ACTION;
 	add.addEventListener("click", () => report({ kind: "command", id: PROVIDER_EDIT_ACTION, data: undefined }));
 	railHead.append(searchBox, add);
@@ -125,10 +125,10 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			row.append(top, meta);
 			list.append(row);
 		}
-		if (!list.children.length) list.append(node("p", copy("project.noMatch"), "connection-empty"));
+		if (!list.children.length) list.append(node("p", copy("connections.noMatch"), "connection-empty"));
 	};
 	search.addEventListener("input", renderList);
-	return { element: root, update(nextLocale: Locale, view: ModelConnectionsLike, extraNotices: readonly PanelNotice[] = []) {
+	return { element: root, update(nextLocale: Locale, view: ModelConnectionsLike, extraNotices: readonly (PanelNotice & { readonly key?: string })[] = []) {
 		locale = nextLocale; current = view;
 		title.textContent = copy("connections.title");
 		help.textContent = copy("connections.help");
@@ -148,13 +148,14 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			notices.append(alert);
 		}
 		if (view.state.refresh.status === "warning") {
-			const warn = node("p", copy("model.refreshWarning", { providers: Object.keys(view.state.refresh.errors ?? {}).join(", ") }), "panel-notice error");
+			const warn = node("p", copy("model.refreshWarning", { providers: Object.keys(view.state.refresh.errors ?? {}).join(", ") }), "panel-notice warning");
 			warn.setAttribute("role", "status");
 			notices.append(warn);
 		}
 		for (const notice of extraNotices) {
 			const text = notice.tone === "error" ? errorMessageCopy(locale, notice.text) : notice.text;
 			const item = node("p", text, `panel-notice ${notice.tone}`);
+			if (notice.key !== undefined) item.dataset.noticeKey = notice.key;
 			item.setAttribute("role", notice.tone === "error" ? "alert" : "status");
 			notices.append(item);
 		}

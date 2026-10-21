@@ -116,8 +116,23 @@ export interface PanelRow {
 	readonly menu?: {
 		readonly label: string;
 		readonly data: string;
-		readonly actions: readonly (PanelButton & { readonly glyph: "square-pen" | "folder" })[];
+		readonly actions: readonly (PanelButton & { readonly glyph: "square-pen" | "folder" | "x" })[];
 	};
+}
+
+export type PanelSkeleton = "form" | "records";
+
+export type EmptyCause = "first-use" | "no-match" | "failed" | "unavailable" | "done";
+
+export interface PanelEmpty {
+	readonly cause: EmptyCause;
+	readonly text: string;
+}
+
+export interface PanelLead {
+	readonly title: string;
+	readonly description?: string;
+	readonly actions: readonly PanelButton[];
 }
 
 export interface PanelGroup {
@@ -126,16 +141,23 @@ export interface PanelGroup {
 	readonly description?: string;
 	/** Buttons in the group header, such as New or Add. */
 	readonly actions?: readonly PanelButton[];
+	/** A band above the rows, for one task that is not itself a record. */
+	readonly lead?: PanelLead;
+	readonly skeleton?: PanelSkeleton;
 	readonly rows: readonly PanelRow[];
 	/** The line shown instead of rows when the group has none. */
-	readonly empty?: string;
+	readonly empty?: PanelEmpty;
 	/** One line under the rows, for where a change lands and when it applies. */
 	readonly footnote?: string;
 }
 
+export type NoticePersistence = "transient" | "pinned";
+
 export interface PanelNotice {
-	readonly tone: "info" | "error";
+	readonly tone: "info" | "error" | "warning";
 	readonly text: string;
+	/** Info fades. Errors and warnings stay until the text changes. */
+	readonly persistence?: NoticePersistence;
 }
 
 /** A scrollable text block a panel shows: a file's content, or a terminal's output. */
@@ -218,6 +240,8 @@ export interface PanelModal {
 	readonly data?: string;
 	/** A destructive submit, such as a remove confirmation. */
 	readonly danger?: boolean;
+	/** A long edit sits beside the list. A short form or a confirmation stays centered. */
+	readonly presentation?: "dialog" | "drawer";
 	/** A submit is in flight: fields, actions and dismissal stay locked until it settles. */
 	readonly pending?: boolean;
 	/** What the last submit said; a refused input is reported here, inside the modal. */
@@ -508,7 +532,7 @@ function unavailablePanel(locale: Locale, id: PanelId, title: string, descriptio
 		id,
 		title,
 		description,
-		notices: [{ tone: "info", text: translate(locale, "panel.unavailable") }],
+		notices: [{ tone: "info", text: translate(locale, "panel.unavailable"), persistence: "pinned" }],
 		groups: [],
 	};
 }
@@ -537,7 +561,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	}
 	const groups: PanelGroup[] = [];
 	if (input.hostModels) {
-		groups.push({ id: "settings:models", title: translate(locale, "connections.title"), description: translate(locale, "connections.help"), rows: [], empty: "" });
+		groups.push({ id: "settings:models", title: translate(locale, "connections.title"), description: translate(locale, "connections.help"), rows: [] });
 	} else if (input.models !== undefined) {
 		const { picker, available, authentication, selected: hasSelected } = input.models;
 		const selected = picker.groups.flatMap(group => group.options).find(option => option.selected);
@@ -569,7 +593,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 					controls: [{ id: MODEL_THINKING_ACTION, kind: "select" as const, value: picker.levels.find(level => level.selected)?.level ?? "", disabled: !available || picker.disabled,
 						options: picker.levels.map(level => ({ value: level.level, label: level.label })) }],
 				}]),
-			], empty: "", footnote: picker.refresh.status,
+			], skeleton: "form", footnote: picker.refresh.status,
 		});
 	}
 	const rowsByGroup = new Map<string, PanelRow[]>();
@@ -579,7 +603,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		rows.push(settingRow(locale, descriptor));
 	}
 	for (const [group, rows] of rowsByGroup) {
-		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), description: settingGroupDescriptionCopy(locale, group), rows });
+		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), description: settingGroupDescriptionCopy(locale, group), skeleton: "form", rows });
 	}
 	if (input.archives) {
 		const archives = input.archives;
@@ -595,15 +619,22 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 				...(due ? { badges: [translate(locale, "project.retentionDue")] } : {}),
 				actions: [
 					{ id: SESSION_ARCHIVE_OPEN_ACTION, label: translate(locale, "panel.settings.archivedSessionsOpen"), weight: "text" as const, data: item.id },
-					{ id: SESSION_RESTORE_ACTION, label: translate(locale, "project.restore"), weight: "text" as const, data: item.id },
 				],
+				menu: {
+					label: translate(locale, "project.restore"),
+					data: item.id,
+					actions: [
+						{ id: SESSION_RESTORE_ACTION, label: translate(locale, "project.restore"), weight: "text" as const, data: item.id, glyph: "folder" as const },
+					],
+				},
 			};
 		});
 		groups.push({
 			id: "settings:archives", title: translate(locale, "project.archived"),
 			description: translate(locale, "panel.settings.archivedSessionsHelp"),
+			skeleton: "records",
 			rows,
-			...(rows.length === 0 ? { empty: translate(locale, "panel.settings.archivedGroupEmpty") } : {}),
+			...(rows.length === 0 ? { empty: { cause: "first-use" as const, text: translate(locale, "panel.settings.archivedGroupEmpty") } } : {}),
 			footnote: archives.retentionDays > 0
 				? translate(locale, "panel.settings.archivedFootnote", { days: String(archives.retentionDays) })
 				: translate(locale, "panel.settings.archivedKeepForever"),
@@ -613,6 +644,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		id: "settings:files",
 		title: translate(locale, "panel.settings.filesTitle"),
 		description: translate(locale, "panel.settings.filesDescription"),
+		skeleton: "form",
 		actions: [
 			{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), weight: "line" },
 			...(input.models === undefined ? [] : [{ id: SESSION_RELOAD_ACTION, label: translate(locale, "page.reloadResources"), weight: "line" as const, disabled: !input.models.available }]),
@@ -675,7 +707,7 @@ function groupSearchText(group: PanelGroup): string {
 		group.title,
 		group.description,
 		group.footnote,
-		group.empty,
+		group.empty?.text,
 		...(group.actions ?? []).map((action) => action.label),
 	]);
 }
@@ -736,6 +768,7 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 			{
 				id: "skills:list",
 				title: translate(locale, "panel.skills.loaded"),
+				skeleton: "records",
 				actions: [
 					{ id: SKILL_NEW_ACTION, label: translate(locale, "panel.skills.new"), weight: "filled" },
 					{ id: SKILL_IMPORT_ACTION, label: translate(locale, "panel.skills.import"), weight: "line" },
@@ -756,20 +789,27 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 							data: skill.name,
 							weight: "text" as const,
 						},
-						...(skill.editable
-							? [
-									{
-										id: SKILL_REMOVE_ACTION,
-										label: translate(locale, "panel.skills.remove"),
-										data: skill.name,
-										weight: "text" as const,
-										danger: true,
-									},
-								]
-							: []),
 					],
+					...(skill.editable
+						? {
+								menu: {
+									label: translate(locale, "panel.skills.remove"),
+									data: skill.name,
+									actions: [
+										{
+											id: SKILL_REMOVE_ACTION,
+											label: translate(locale, "panel.skills.remove"),
+											data: skill.name,
+											weight: "text" as const,
+											danger: true,
+											glyph: "x" as const,
+										},
+									],
+								},
+							}
+						: {}),
 				})),
-				empty: translate(locale, "panel.skills.empty"),
+				empty: { cause: "first-use", text: translate(locale, "panel.skills.empty") },
 				footnote: translate(locale, "panel.skills.footnote", { directory: state.directory }),
 			},
 		],
@@ -803,6 +843,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 			{
 				id: "plugins:packages",
 				title: translate(locale, "panel.plugins.packages"),
+				skeleton: "records",
 				description: translate(locale, "panel.plugins.packagesDescription"),
 				actions: [
 					{ id: PLUGIN_PACKAGE_ADD_ACTION, label: translate(locale, "panel.plugins.addPackage"), weight: "filled" },
@@ -811,22 +852,28 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 					id: `package:${path}`,
 					title: path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || path,
 					value: path,
-					actions: [
-						{
-							id: PLUGIN_PACKAGE_REMOVE_ACTION,
-							label: translate(locale, "panel.plugins.remove"),
-							data: path,
-							weight: "text",
-							danger: true,
-						},
-					],
+					menu: {
+						label: translate(locale, "panel.plugins.remove"),
+						data: path,
+						actions: [
+							{
+								id: PLUGIN_PACKAGE_REMOVE_ACTION,
+								label: translate(locale, "panel.plugins.remove"),
+								data: path,
+								weight: "text",
+								danger: true,
+								glyph: "x",
+							},
+						],
+					},
 				})),
-				empty: translate(locale, "panel.plugins.packagesEmpty"),
+				empty: { cause: "first-use", text: translate(locale, "panel.plugins.packagesEmpty") },
 				footnote: translate(locale, "panel.plugins.packagesFootnote"),
 			},
 			{
 				id: "plugins:mcp",
 				title: translate(locale, "panel.plugins.mcp"),
+				skeleton: "records",
 				description: translate(locale, "panel.plugins.mcpDescription"),
 				actions: [
 					{ id: PLUGIN_MCP_ADD_ACTION, label: translate(locale, "panel.plugins.addServer"), weight: "filled" },
@@ -880,80 +927,55 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 										],
 									}
 								: {}),
-							actions: [
-								...(live?.scope === "global" && runtime?.canOverrideProject && server.editable
-									? [{ id: PLUGIN_MCP_PROJECT_ACTION, label: translate(locale, "panel.plugins.projectSettings"), data: server.name, weight: "text" as const }]
-									: []),
-								...(live?.enabled
-									? [
-											{
-												id: PLUGIN_MCP_RECONNECT_ACTION,
-												label: translate(locale, "panel.plugins.reconnect"),
-												data: server.name,
-												weight: "text" as const,
-											},
-										]
-									: []),
-								...(live?.canLogin
-									? [
-											{
-												id: PLUGIN_MCP_LOGIN_ACTION,
-												label: translate(locale, "panel.plugins.login"),
-												data: server.name,
-												weight: "text" as const,
-											},
-										]
-									: []),
-								{
-									id: PLUGIN_MCP_REMOVE_ACTION,
-									label: server.editable ? translate(locale, "panel.plugins.remove") : remove,
-									data: server.name,
-									weight: "text" as const,
-									...(server.editable ? { danger: true } : {}),
-									...(server.editable && server.removable !== false ? {} : { disabled: true }),
-								},
-							],
+							menu: {
+								label: translate(locale, "panel.rowActions"),
+								data: server.name,
+								actions: [
+									...(live?.scope === "global" && runtime?.canOverrideProject && server.editable
+										? [{ id: PLUGIN_MCP_PROJECT_ACTION, label: translate(locale, "panel.plugins.projectSettings"), data: server.name, weight: "text" as const, glyph: "folder" as const }]
+										: []),
+									...(live?.enabled
+										? [{ id: PLUGIN_MCP_RECONNECT_ACTION, label: translate(locale, "panel.plugins.reconnect"), data: server.name, weight: "text" as const, glyph: "folder" as const }]
+										: []),
+									...(live?.canLogin
+										? [{ id: PLUGIN_MCP_LOGIN_ACTION, label: translate(locale, "panel.plugins.login"), data: server.name, weight: "text" as const, glyph: "folder" as const }]
+										: []),
+									{
+										id: PLUGIN_MCP_REMOVE_ACTION,
+										label: server.editable ? translate(locale, "panel.plugins.remove") : remove,
+										data: server.name,
+										weight: "text" as const,
+										glyph: "x" as const,
+										...(server.editable ? { danger: true } : {}),
+										...(server.editable && server.removable !== false ? {} : { disabled: true }),
+									},
+								],
+							},
 						};
 					}),
-					...(runtime?.login
-						? [
-								{
-									id: `mcp-login:${runtime.login.id}`,
-									title: translate(locale, "panel.plugins.loginFor", { server: runtime.login.server }),
-									description: runtime.login.error ?? mcpStatusCopy(locale, runtime.login.status),
-									actions: [
-										...(runtime.login.url
-											? [
-													{
-														id: PLUGIN_MCP_LOGIN_OPEN_ACTION,
-														label: translate(locale, "panel.plugins.openAuthorization"),
-														data: runtime.login.url,
-														weight: "filled" as const,
-													},
-													{
-														id: PLUGIN_MCP_LOGIN_REDIRECT_ACTION,
-														label: translate(locale, "panel.plugins.pasteRedirect"),
-														data: runtime.login.id,
-														weight: "line" as const,
-													},
-												]
-											: []),
-										...(["preparing", "awaiting", "finishing"].includes(runtime.login.status)
-											? [
-													{
-														id: PLUGIN_MCP_LOGIN_CANCEL_ACTION,
-														label: translate(locale, "panel.plugins.cancelLogin"),
-														data: runtime.login.id,
-														weight: "line" as const,
-													},
-												]
-											: []),
-									],
-								},
-							]
-						: []),
 				],
-				empty: runtime === null ? translate(locale, "panel.plugins.mcpUnavailable") : translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }),
+				...(runtime?.login
+					? {
+							lead: {
+								title: translate(locale, "panel.plugins.loginFor", { server: runtime.login.server }),
+								description: runtime.login.error ?? mcpStatusCopy(locale, runtime.login.status),
+								actions: [
+									...(runtime.login.url
+										? [
+												{ id: PLUGIN_MCP_LOGIN_OPEN_ACTION, label: translate(locale, "panel.plugins.openAuthorization"), data: runtime.login.url, weight: "filled" as const },
+												{ id: PLUGIN_MCP_LOGIN_REDIRECT_ACTION, label: translate(locale, "panel.plugins.pasteRedirect"), data: runtime.login.id, weight: "line" as const },
+											]
+										: []),
+									...(["preparing", "awaiting", "finishing"].includes(runtime.login.status)
+										? [{ id: PLUGIN_MCP_LOGIN_CANCEL_ACTION, label: translate(locale, "panel.plugins.cancelLogin"), data: runtime.login.id, weight: "line" as const }]
+										: []),
+								],
+							},
+						}
+					: {}),
+				empty: runtime === null
+					? { cause: "unavailable" as const, text: translate(locale, "panel.plugins.mcpUnavailable") }
+					: { cause: "first-use" as const, text: translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }) },
 				footnote: translate(locale, "panel.plugins.mcpFootnote", { path: state.mcp.globalPath }),
 			},
 		],
@@ -984,12 +1006,13 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 		description: translate(locale, "panel.automation.description"),
 		notices: [
 			...(state.problem ? [{ tone: "error" as const, text: state.problem }] : []),
-			...(sessionId === undefined ? [{ tone: "info" as const, text: translate(locale, "panel.automation.noSession") }] : []),
+			...(sessionId === undefined ? [{ tone: "info" as const, text: translate(locale, "panel.automation.noSession"), persistence: "pinned" as const }] : []),
 		],
 		groups: [
 			{
 				id: "automation:schedules",
 				title: translate(locale, "panel.automation.schedules"),
+				skeleton: "records",
 				actions: [
 					{
 						id: SCHEDULE_ADD_ACTION,
@@ -1022,31 +1045,36 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 							value: String(schedule.enabled),
 						},
 					],
-					actions: [
-						{
-							id: SCHEDULE_RUN_ACTION,
-							...(state.problem || schedule.pending !== null ? { disabled: true } : {}),
-							label: translate(locale, "panel.automation.run"),
-							data: schedule.id,
-							weight: "text" as const,
-						},
-						...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, weight: "text" as const, danger: true }]),
-						{ id: SCHEDULE_EDIT_ACTION, label: translate(locale, "panel.automation.edit"), data: schedule.id, weight: "text" as const,
-							...(state.problem || schedule.pending !== null ? { disabled: true } : {}) },
-						{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, weight: "text" as const,
-							...(schedule.history.length === 0 ? { disabled: true } : {}) },
-
-						{
-							id: SCHEDULE_REMOVE_ACTION,
-							...(state.problem ? { disabled: true } : {}),
-							label: translate(locale, "panel.automation.remove"),
-							data: schedule.id,
-							weight: "text" as const,
-							danger: true,
-						},
-					],
+					menu: {
+						label: translate(locale, "panel.rowActions"),
+						data: schedule.id,
+						actions: [
+							{
+								id: SCHEDULE_RUN_ACTION,
+								...(state.problem || schedule.pending !== null ? { disabled: true } : {}),
+								label: translate(locale, "panel.automation.run"),
+								data: schedule.id,
+								weight: "text" as const,
+								glyph: "folder" as const,
+							},
+							...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, weight: "text" as const, danger: true, glyph: "x" as const }]),
+							{ id: SCHEDULE_EDIT_ACTION, label: translate(locale, "panel.automation.edit"), data: schedule.id, weight: "text" as const, glyph: "square-pen" as const,
+								...(state.problem || schedule.pending !== null ? { disabled: true } : {}) },
+							{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, weight: "text" as const, glyph: "folder" as const,
+								...(schedule.history.length === 0 ? { disabled: true } : {}) },
+							{
+								id: SCHEDULE_REMOVE_ACTION,
+								...(state.problem ? { disabled: true } : {}),
+								label: translate(locale, "panel.automation.remove"),
+								data: schedule.id,
+								weight: "text" as const,
+								danger: true,
+								glyph: "x" as const,
+							},
+						],
+					},
 				})),
-				empty: translate(locale, state.problem ? "panel.automation.unreadable" : "panel.automation.empty"),
+				empty: { cause: state.problem ? "failed" : "first-use", text: translate(locale, state.problem ? "panel.automation.unreadable" : "panel.automation.empty") },
 				footnote: translate(locale, "panel.automation.footnote", { path: state.path }),
 			},
 		],
@@ -1156,6 +1184,7 @@ export function newSkillModal(locale: Locale): PanelModal {
 			},
 		],
 		submit: translate(locale, "modal.create"),
+		presentation: "drawer",
 	};
 }
 
@@ -1170,6 +1199,7 @@ export function skillModal(locale: Locale, name: string, content: string, editab
 		],
 		submit: translate(locale, editable ? "modal.save" : "modal.close"),
 		data: name,
+		presentation: "drawer",
 	};
 }
 
@@ -1340,6 +1370,7 @@ function scheduleModal(locale: Locale, target: { id: string; sessionId: string; 
 			{ id: "timeoutSeconds", label: translate(locale, "modal.scheduleAdd.timeout"), kind: "text", inputType: "number", value: String(record?.timeoutSeconds ?? 600) },
 		],
 		submit: translate(locale, record === undefined ? "modal.scheduleAdd.submit" : "modal.scheduleAdd.save"),
+		presentation: "drawer",
 	};
 }
 
@@ -1352,7 +1383,7 @@ export function scheduleHistoryModal(locale: Locale, record: ScheduleRecordLike)
 		...(receipt.scheduledFor === null ? [] : [translate(locale, "panel.automation.historyDue", { time: format(receipt.scheduledFor) })]),
 	].join("\n")).join("\n\n");
 	return { id: SCHEDULE_HISTORY_MODAL, title: translate(locale, "panel.automation.history"), description: `${record.prompt} · ${translate(locale, "modal.scheduleAdd.timeZone")}: ${zone}`,
-		fields: [{ id: "content", label: translate(locale, "panel.automation.history"), kind: "textarea", value, readOnly: true }], submit: translate(locale, "panel.dismiss") };
+		fields: [{ id: "content", label: translate(locale, "panel.automation.history"), kind: "textarea", value, readOnly: true }], submit: translate(locale, "panel.dismiss"), presentation: "drawer" };
 }
 
 /** The confirmation a schedule's remove control opens; its id is what a submit acts on. */

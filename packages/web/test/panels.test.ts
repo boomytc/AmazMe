@@ -155,7 +155,7 @@ describe("settings panel", () => {
 	test("explains itself while the host offers no service", () => {
 		const panel = settingsPanel("en", { state: undefined  });
 		expect(panel.groups).toEqual([]);
-		expect(panel.notices).toEqual([{ tone: "info", text: UNAVAILABLE_EN }]);
+		expect(panel.notices).toEqual([{ tone: "info", text: UNAVAILABLE_EN, persistence: "pinned" }]);
 		expect(settingsPanel("zh", { state: undefined  }).notices[0]?.text).toBe(UNAVAILABLE_ZH);
 	});
 
@@ -284,21 +284,26 @@ describe("settings panel", () => {
 		expect(group?.rows[0]).toMatchObject({
 			description: "应用 · 归档于 1s",
 			actions: [
-				{ id: SESSION_ARCHIVE_OPEN_ACTION, data: "fresh", label: "打开" },
-				{ id: SESSION_RESTORE_ACTION, data: "fresh", label: "恢复会话" },
+				{ id: SESSION_ARCHIVE_OPEN_ACTION, data: "fresh", label: "打开", weight: "text" },
 			],
+			menu: {
+				label: "恢复会话",
+				data: "fresh",
+				actions: [{ id: SESSION_RESTORE_ACTION, data: "fresh", label: "恢复会话", weight: "text", glyph: "folder" }],
+			},
 		});
 		expect(group?.rows[0]?.badges).toBeUndefined();
 		expect(group?.rows[1]).toMatchObject({
 			description: "旧项目 · 归档于 2d",
 			badges: ["到期，请检查是否保留"],
 		});
-		expect(group?.rows[1]?.actions?.map(action => action.data)).toEqual(["due", "due"]);
+		expect(group?.rows[1]?.actions?.map(action => action.id)).toEqual([SESSION_ARCHIVE_OPEN_ACTION]);
+		expect(group?.rows[1]?.menu?.actions.map(action => action.id)).toEqual([SESSION_RESTORE_ACTION]);
 		expect(group?.footnote).toBe("保留提醒为 1 天。到期只做标记，不自动删除。");
 
 		const empty = settingsPanel("zh", { state: SETTINGS, archives: { ...archives, sessions: [] } }).groups.find(item => item.id === "settings:archives");
 		expect(empty?.rows).toEqual([]);
-		expect(empty?.empty).toBe("没有归档会话。");
+		expect(empty?.empty).toEqual({ cause: "first-use", text: "没有归档会话。" });
 		const forever = settingsPanel("zh", { state: SETTINGS, archives: { ...archives, retentionDays: 0 } }).groups.find(item => item.id === "settings:archives");
 		expect(forever?.footnote).toBe("长期保留，不自动删除。");
 		expect(forever?.rows.some(row => row.badges !== undefined)).toBe(false);
@@ -368,9 +373,9 @@ describe("skills panel", () => {
 			badges: ["user"],
 			value: "/agent/skills/weekly-report/SKILL.md",
 		});
-		expect(rows[0]?.actions?.map((action) => action.label)).toEqual(["Edit", "Remove"]);
+		expect(rows[0]?.actions?.map((action) => action.label)).toEqual(["Edit"]);
 		expect(rows[0]?.actions?.[0]).toMatchObject({ id: SKILL_EDIT_ACTION, data: "weekly-report" });
-		expect(rows[0]?.actions?.[1]).toMatchObject({ id: SKILL_REMOVE_ACTION, data: "weekly-report", weight: "text", danger: true });
+		expect(rows[0]?.menu?.actions[0]).toMatchObject({ id: SKILL_REMOVE_ACTION, data: "weekly-report", weight: "text", danger: true });
 		// A project skill is read-only here: no Remove, and View instead of Edit.
 		expect(rows[1]?.badges).toEqual(["project", "command only"]);
 		expect(rows[1]?.actions?.map((action) => action.label)).toEqual(["View"]);
@@ -386,7 +391,8 @@ describe("skills panel", () => {
 		const rows = zh.groups[0]?.rows ?? [];
 		expect(rows[0]?.badges).toEqual(["用户"]);
 		expect(rows[1]?.badges).toEqual(["项目", "仅命令"]);
-		expect(rows[0]?.actions?.map((action) => action.label)).toEqual(["编辑", "删除"]);
+		expect(rows[0]?.actions?.map((action) => action.label)).toEqual(["编辑"]);
+		expect(rows[0]?.menu?.actions.map((action) => action.label)).toEqual(["删除"]);
 		expect(rows[1]?.actions?.map((action) => action.label)).toEqual(["查看"]);
 		expect(zh.groups[0]?.actions?.map((action) => action.label)).toEqual(["新建技能", "导入技能…"]);
 		// The host's own diagnostic message stays as the host wrote it.
@@ -395,7 +401,7 @@ describe("skills panel", () => {
 
 	test("names the empty state and the unavailable line", () => {
 		expect(
-			skillsPanel("en", { state: { directory: "/agent/skills", skills: [], diagnostics: [] } }).groups[0]?.empty,
+			skillsPanel("en", { state: { directory: "/agent/skills", skills: [], diagnostics: [] } }).groups[0]?.empty?.text,
 		).toContain("No skills yet");
 		expect(skillsPanel("en", { state: undefined }).notices[0]?.text).toBe(UNAVAILABLE_EN);
 	});
@@ -465,7 +471,11 @@ describe("plugins panel", () => {
 			id: "package:/tmp/example-plugin",
 			title: "example-plugin",
 			value: "/tmp/example-plugin",
-			actions: [{ id: PLUGIN_PACKAGE_REMOVE_ACTION, label: "Remove", data: "/tmp/example-plugin", weight: "text", danger: true }],
+			menu: {
+				label: "Remove",
+				data: "/tmp/example-plugin",
+				actions: [{ id: PLUGIN_PACKAGE_REMOVE_ACTION, label: "Remove", data: "/tmp/example-plugin", weight: "text", danger: true, glyph: "x" }],
+			},
 		});
 	});
 
@@ -482,9 +492,9 @@ describe("plugins panel", () => {
 				options: mcpExposures("en"),
 			},
 		]);
-		expect(rows[0]?.actions?.[0]).toMatchObject({ id: "plugins:mcp-remove", data: "filesystem", weight: "text", danger: true });
+		expect(rows[0]?.menu?.actions.at(-1)).toMatchObject({ id: "plugins:mcp-remove", data: "filesystem", weight: "text", danger: true });
 		expect(rows[1]?.controls).toBeUndefined();
-		expect(rows[1]?.actions?.[0]).toMatchObject({ label: "From extension", disabled: true });
+		expect(rows[1]?.menu?.actions.at(-1)).toMatchObject({ label: "From extension", disabled: true });
 		expect(rows[1]?.badges).toEqual(["extension", "Codemode"]);
 	});
 
@@ -495,7 +505,7 @@ describe("plugins panel", () => {
 		const rows = zh.groups[1]?.rows ?? [];
 		expect(rows[0]?.badges).toEqual(["全局", "直接"]);
 		expect(rows[0]?.controls?.[1]?.options).toEqual(mcpExposures("zh"));
-		expect(rows[1]?.actions?.[0]?.label).toBe("来自扩展");
+		expect(rows[1]?.menu?.actions.at(-1)?.label).toBe("来自扩展");
 	});
 
 	test("reports a broken mcp.json and the empty states", () => {
@@ -504,8 +514,8 @@ describe("plugins panel", () => {
 			{ tone: "error", text: '/project/.amazme/mcp.json: server "x" needs either "command" or "url"' },
 		]);
 		const empty = pluginsPanel("en", { state: { packages: [], mcp: { ...PLUGINS.mcp, servers: [], errors: [] } } });
-		expect(empty.groups[0]?.empty).toContain("Built-in features are available");
-		expect(empty.groups[1]?.empty).toContain("Add a server");
+		expect(empty.groups[0]?.empty?.text).toContain("Built-in features are available");
+		expect(empty.groups[1]?.empty?.text).toContain("Add a server");
 		expect(empty.groups[1]?.footnote).toContain("/agent/mcp.json");
 	});
 
@@ -563,11 +573,8 @@ describe("automation panel", () => {
 			value: "Next run in 20 minutes · Completed",
 		});
 		expect(first?.controls).toEqual([{ id: SCHEDULE_ENABLED_ACTION, kind: "switch", data: "s1", value: "true" }]);
-		expect(first?.actions).toEqual([
-			{ id: SCHEDULE_RUN_ACTION, label: "Run now", data: "s1", weight: "text" },
-			{ id: SCHEDULE_EDIT_ACTION, label: "Edit", data: "s1", weight: "text" },
-			{ id: SCHEDULE_HISTORY_ACTION, label: "Run history", data: "s1", weight: "text" },
-			{ id: SCHEDULE_REMOVE_ACTION, label: "Remove", data: "s1", weight: "text", danger: true },
+		expect(first?.menu?.actions.map((action) => action.id)).toEqual([
+			SCHEDULE_RUN_ACTION, SCHEDULE_EDIT_ACTION, SCHEDULE_HISTORY_ACTION, SCHEDULE_REMOVE_ACTION,
 		]);
 		expect(second).toMatchObject({ badges: ["other", "Conversation 1", "paused"], value: "Next run in 16 minutes" });
 		expect(panel.groups[0]?.footnote).toContain("/agent/schedules.json");
@@ -588,12 +595,12 @@ describe("automation panel", () => {
 	test("asks for a session, and explains the empty state and a missing service", () => {
 		const withoutSession = automationPanel("en", { state: SCHEDULES, now: 1_000 });
 		expect(withoutSession.notices).toEqual([
-			{ tone: "info", text: "Open a session before creating a scheduled task for it." },
+			{ tone: "info", persistence: "pinned", text: "Open a session before creating a scheduled task for it." },
 		]);
 		expect(withoutSession.groups[0]?.actions?.[0]?.disabled).toBe(true);
 		const empty = automationPanel("en", { state: { ...SCHEDULES, schedules: [] }, sessionId: "web-loop" });
 		expect(empty.groups[0]?.rows).toEqual([]);
-		expect(empty.groups[0]?.empty).toContain("No scheduled tasks");
+		expect(empty.groups[0]?.empty?.text).toContain("No scheduled tasks");
 		expect(automationPanel("en", { state: undefined }).notices[0]?.text).toBe(UNAVAILABLE_EN);
 	});
 

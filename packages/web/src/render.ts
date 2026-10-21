@@ -30,8 +30,10 @@ import {
 	type PanelGroup,
 	type PanelInput,
 	type PanelModal,
+	type PanelNotice,
 	type PanelPending,
 	type PanelRow,
+	type PanelSkeleton,
 	type PanelSpec,
 	searchSettings,
 	SETTINGS_FIELD_ACTION,
@@ -648,6 +650,44 @@ export function createRenderer(
 	// Before the first paint there is no session. The desktop smoke reads this as soon as the document loads.
 	if (app !== undefined) writeWindowTitle(app, { sessionLabel: undefined, approvalIndicator: undefined });
 	let lastView: WebView | undefined;
+	const dismissedNotices = new Set<string>();
+	const noticeTimers = new Map<string, number>();
+	const noticeKey = (scope: string, notice: PanelNotice): string => `${scope}\u0000${notice.tone}\u0000${notice.text}`;
+	const shownNotices = (scope: string, notices: readonly PanelNotice[]): Array<PanelNotice & { readonly key: string }> => {
+		const live = new Set<string>();
+		const visible: Array<PanelNotice & { readonly key: string }> = [];
+		for (const notice of notices) {
+			const key = noticeKey(scope, notice);
+			live.add(key);
+			if (dismissedNotices.has(key)) continue;
+			const persistence = notice.persistence ?? (notice.tone === "info" ? "transient" : "pinned");
+			visible.push({ ...notice, text: notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text, key });
+			if (persistence === "transient" && !noticeTimers.has(key)) {
+				noticeTimers.set(key, window.setTimeout(() => {
+					noticeTimers.delete(key);
+					dismissedNotices.add(key);
+					for (const node of document.querySelectorAll<HTMLElement>("[data-notice-key]")) {
+						if (node.dataset.noticeKey === key) node.remove();
+					}
+				}, 2400));
+			}
+		}
+		for (const [key, timer] of noticeTimers) {
+			if (!key.startsWith(`${scope}\u0000`) || live.has(key)) continue;
+			window.clearTimeout(timer);
+			noticeTimers.delete(key);
+			dismissedNotices.delete(key);
+		}
+		return visible;
+	};
+	const appendNotices = (parent: HTMLElement, notices: readonly (PanelNotice & { readonly key: string })[]): void => {
+		for (const notice of notices) {
+			const item = element("p", `panel-notice ${notice.tone}`, notice.text);
+			item.dataset.noticeKey = notice.key;
+			item.setAttribute("role", notice.tone === "error" ? "alert" : "status");
+			parent.append(item);
+		}
+	};
 	/** Reader disclosure choices, keyed by block id so a rebuild keeps them. */
 	const expanded = new Map<TranscriptBlock["id"], boolean>();
 	const flowCache = new DomCache();
@@ -834,7 +874,7 @@ export function createRenderer(
 	let locatedRow: { groupId: string; rowId: string } | undefined;
 	let locatedScrolled = false;
 	/** The conversation sidebar's collapsed state, restored when the reader leaves settings. */
-	let restoreSidebarCollapsed = false;
+	const libraryNav = document.getElementById("library-nav");
 	let restoreChatPosition: (() => void) | undefined;
 	let shownSection = "";
 
@@ -1179,7 +1219,7 @@ export function createRenderer(
 		return field;
 	};
 
-	const rowElementOf = (row: PanelRow, pending?: PanelPending): HTMLElement => {
+	const rowElementOf = (row: PanelRow, pending?: PanelPending, skeleton?: PanelSkeleton): HTMLElement => {
 		if (row.file) {
 			const node = panelButton(row.file.action, report, pending);
 			node.className = `file-entry file-entry-${row.file.kind}`;
@@ -1193,16 +1233,23 @@ export function createRenderer(
 			if (row.file.kind === "dir") node.append(icon("chevron-down", "icon file-entry-chevron"));
 			return node;
 		}
-		const node = element("div", "panel-row");
+		const records = skeleton === "records";
+		const node = element("div", records ? "panel-row record-row" : "panel-row");
 		node.dataset.rowId = row.id;
 		const text = element("div", "panel-row-text");
 		const head = element("div", "panel-row-head");
 		head.append(element("span", "panel-row-title", row.title));
-		for (const badge of row.badges ?? []) head.append(element("span", "panel-badge", badge));
+		if (!records) for (const badge of row.badges ?? []) head.append(element("span", "panel-badge", badge));
 		text.append(head);
 		if (row.description !== undefined) text.append(element("p", "panel-row-desc", row.description));
-		if (row.value !== undefined) text.append(element("code", "panel-row-value", row.value));
+		if (!records && row.value !== undefined) text.append(element("code", "panel-row-value", row.value));
 		node.append(text);
+		if (records && ((row.badges?.length ?? 0) > 0 || row.value !== undefined)) {
+			const status = element("div", "record-status");
+			for (const badge of row.badges ?? []) status.append(element("span", "panel-badge", badge));
+			if (row.value !== undefined) status.append(element("span", "record-value", row.value));
+			node.append(status);
+		}
 		if (row.controls !== undefined && row.controls.length > 0) {
 			const controls = element("div", "panel-controls");
 			for (const control of row.controls) {
@@ -1233,7 +1280,7 @@ export function createRenderer(
 				const menu = row.menu;
 				const choices = menu.actions.map(action => ({ ...action, danger: action.danger === true, disabled: action.disabled || isPending(pending, action) }));
 				const id = `panel:${row.id}:${JSON.stringify(choices.map(action => [action.id, action.disabled === true]))}`;
-				const more = button("panel-button panel-more");
+				const more = button("panel-button weight-text panel-more");
 				more.dataset.menuId = id;
 				more.dataset.action = "panel:more";
 				more.dataset.actionData = menu.data;
@@ -1254,6 +1301,7 @@ export function createRenderer(
 	const groupElement = (group: PanelGroup, pending?: PanelPending): HTMLElement => {
 		const node = element("section", "panel-group");
 		node.dataset.groupId = group.id;
+		if (group.skeleton !== undefined) node.dataset.skeleton = group.skeleton;
 		const head = element("header", "panel-group-head");
 		const titles = element("div", "panel-group-titles");
 		if (group.title) titles.append(element("h2", "panel-group-title", group.title));
@@ -1265,6 +1313,15 @@ export function createRenderer(
 			head.append(actions);
 		}
 		if (head.childElementCount > 0) node.append(head);
+		if (group.lead !== undefined) {
+			const lead = element("div", "panel-lead");
+			lead.append(element("p", "panel-lead-title", group.lead.title));
+			if (group.lead.description !== undefined) lead.append(element("p", "panel-lead-desc", group.lead.description));
+			const actions = element("div", "panel-actions");
+			for (const action of group.lead.actions) actions.append(panelButton(action, report, pending));
+			lead.append(actions);
+			node.append(lead);
+		}
 		const rows = element("div", "panel-rows");
 		if (group.id === "files:entries" || group.rows.some(row => row.file)) {
 			rows.classList.add("file-entries");
@@ -1278,8 +1335,11 @@ export function createRenderer(
 				controls[next]?.focus();
 			});
 		}
-		if (group.rows.length === 0 && group.empty !== "") rows.append(element("p", "panel-empty", group.empty ?? copy("panel.empty")));
-		else for (const row of group.rows) rows.append(rowElementOf(row, pending));
+		if (group.rows.length === 0 && group.empty !== undefined) {
+			const empty = element("p", "panel-empty", group.empty.text);
+			empty.dataset.cause = group.empty.cause;
+			rows.append(empty);
+		} else for (const row of group.rows) rows.append(rowElementOf(row, pending, group.skeleton));
 		node.append(rows);
 		if (group.rows.some((row) => TYPOGRAPHY_ROW_IDS.has(row.id))) {
 			const preview = element("div", "typography-preview");
@@ -1377,7 +1437,7 @@ export function createRenderer(
 			head.append(actions);
 		}
 		node.append(head);
-		for (const notice of panel.notices) node.append(element("p", `panel-notice ${notice.tone}`, notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text));
+		appendNotices(node, shownNotices(panel.id, panel.notices));
 		const previousInput = container?.querySelector<HTMLElement>("form[data-input-row]") ?? undefined;
 		for (const input of panel.inputs ?? []) node.append(inputElement(input, previousInput));
 		for (const group of panel.groups) node.append(groupElement(group, panel.pending));
@@ -1451,7 +1511,7 @@ export function createRenderer(
 
 	const renderModal = (modal: PanelModal | undefined): void => {
 		const key =
-			modal === undefined ? undefined : JSON.stringify([modal.id, modal.data, modal.title, modal.description, modal.fields, modal.submit, modal.dismiss, modal.actions, modal.danger]);
+			modal === undefined ? undefined : JSON.stringify([modal.id, modal.data, modal.title, modal.description, modal.fields, modal.submit, modal.dismiss, modal.actions, modal.danger, modal.presentation]);
 		if (key === modalKey) {
 			if (modal !== undefined) applyModalState(modal);
 			return;
@@ -1461,6 +1521,7 @@ export function createRenderer(
 			modalSubmit = undefined;
 			modalMessage = undefined;
 			elements.modalRoot.close();
+			elements.modalRoot.classList.remove("is-drawer");
 			elements.modalRoot.replaceChildren();
 			elements.modalRoot.hidden = true;
 			elements.modalRoot.removeAttribute("aria-busy");
@@ -1473,6 +1534,7 @@ export function createRenderer(
 			else elements.sidebarToggle.focus({ preventScroll: true });
 			return;
 		}
+		elements.modalRoot.classList.toggle("is-drawer", modal.presentation === "drawer");
 		const card = element("div", "modal-card");
 		card.tabIndex = -1;
 		const projectForm = modal.fields.some(field => field.kind === "directories");
@@ -1657,7 +1719,15 @@ export function createRenderer(
 	const syncSidebarToggle = (): void => {
 		const narrow = isNarrow();
 		// Drawer flags do not apply to wide columns or coexist with the visible dock.
-		if (!narrow || !elements.dock.hidden) document.body.classList.remove("sidebar-open");
+		if (!narrow || !elements.dock.hidden || document.body.classList.contains("library-open")) document.body.classList.remove("sidebar-open");
+		if (document.body.classList.contains("library-open")) {
+			elements.sidebarToggle.setAttribute("aria-expanded", "false");
+			elements.center.inert = false;
+			elements.sidebar.inert = true;
+			elements.dock.inert = true;
+			activeDrawer = undefined;
+			return;
+		}
 		const expanded = sidebarExpanded();
 		const drawer = !narrow ? undefined : !elements.dock.hidden ? elements.dock : expanded ? elements.sidebar : undefined;
 		const previous = activeDrawer;
@@ -1684,8 +1754,7 @@ export function createRenderer(
 
 	/** A column collapses and expands; a drawer slides in and out. */
 	const toggleSidebar = (): void => {
-		// Settings keeps its category column on a wide window. A narrow window still opens the drawer.
-		if (document.body.classList.contains("settings-open") && !isNarrow()) return;
+		if (document.body.classList.contains("library-open")) return;
 		if (isNarrow() && !sidebarExpanded() && !elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 		document.body.classList.toggle(isNarrow() ? "sidebar-open" : "sidebar-collapsed");
 		syncSidebarToggle();
@@ -1802,26 +1871,26 @@ export function createRenderer(
 		markSectionNav(sections.get(panel.id));
 	};
 
-	/** Settings does not collapse its category column. A narrow window still uses the drawer toggle. */
-	const syncSettingsChrome = (view: WebView): void => {
-		const settings = view.panel.current === SETTINGS_VIEW && view.panel.panel !== undefined;
-		const was = document.body.classList.contains("settings-open");
-		if (settings && !was) restoreSidebarCollapsed = document.body.classList.contains("sidebar-collapsed");
-		if (settings && !isNarrow()) document.body.classList.remove("sidebar-collapsed");
-		else if (!settings && was && restoreSidebarCollapsed) document.body.classList.add("sidebar-collapsed");
-		document.body.classList.toggle("settings-open", settings);
-		elements.sidebarToggle.hidden = settings && !isNarrow();
+	/** A library page keeps the session column and the inspector out of the grid. */
+	const syncLibraryChrome = (view: WebView): void => {
+		const library = view.panel.panel !== undefined;
+		const was = document.body.classList.contains("library-open");
+		document.body.classList.toggle("library-open", library);
+		if (libraryNav) libraryNav.hidden = !library || view.panel.panel?.id !== SETTINGS_VIEW;
+		elements.sidebarToggle.hidden = library && !isNarrow();
 		syncSidebarToggle();
-		if (settings && !was && !isNarrow() && !elements.sectionSearch.hidden) elements.sectionSearchInput.focus({ preventScroll: true });
+		if (library && !was && !isNarrow() && view.panel.panel?.id === SETTINGS_VIEW) {
+			elements.sectionSearch.hidden = false;
+			elements.sectionSearchInput.focus({ preventScroll: true });
+		}
 	};
 
 	/** Switch the main area between the conversation and one panel, and paint the panel. */
 	const renderPanelView = (view: WebView): void => {
 		const panel = view.panel.panel;
 		const open = panel !== undefined;
-		document.body.classList.toggle("management-page", open);
 		elements.sessionSidebar.hidden = open;
-		elements.sectionSidebar.hidden = !open;
+		elements.sectionSidebar.hidden = true;
 		if (open) {
 			setMeterExpanded(false);
 			elements.meter.hidden = true;
@@ -1836,9 +1905,8 @@ export function createRenderer(
 		elements.view.hidden = !open;
 		elements.transcript.hidden = open;
 		elements.composerDock.hidden = open;
-		const titledInSidebar = panel?.id === "plugins" || panel?.id === "skills" || panel?.id === SETTINGS_VIEW;
-		elements.viewBack.hidden = !open || titledInSidebar;
-		elements.sessionTitle.hidden = titledInSidebar;
+		elements.viewBack.hidden = !open;
+		elements.sessionTitle.hidden = open;
 		if (panel === undefined) {
 			panelFocus.delete(elements.viewBody);
 			shownSection = "";
@@ -1856,7 +1924,6 @@ export function createRenderer(
 			);
 			return;
 		}
-		if (panel.id !== "plugins" && panel.id !== "skills" && panel.id !== SETTINGS_VIEW) writeSessionTitle(panel.title);
 		elements.sectionTitle.textContent = panel.title;
 		const groups = orderedGroups(panel);
 		const selected = groups.find((group) => group.id === sections.get(panel.id)) ?? groups[0];
@@ -1868,7 +1935,7 @@ export function createRenderer(
 		if (selected) {
 			if (selected.id === "settings:models" && view.modelConnections) {
 				if (elements.viewBody.firstElementChild !== connections.element) elements.viewBody.replaceChildren(connections.element);
-				connections.update(view.locale, view.modelConnections, panel.notices);
+				connections.update(view.locale, view.modelConnections, shownNotices(panel.id, panel.notices));
 				return;
 			}
 			const { title, description, actions, ...content } = selected;
@@ -3299,7 +3366,7 @@ export function createRenderer(
 			if (changed("submit", [view.locale, view.busy, view.run.submitModes])) renderSubmitModes(view);
 			if (changed("nav", [view.locale, view.panel.nav, view.panel.current])) renderNav(view);
 			if (changed("panel", [view.locale, view.panel.panel, view.sessionLabel, view.focus, view.modelConnections])) renderPanelView(view);
-			syncSettingsChrome(view);
+			syncLibraryChrome(view);
 			renderModal(view.panel.modal);
 			if (
 				modelSetupReturn !== undefined &&
@@ -3695,7 +3762,7 @@ export function createRenderer(
 	elements.roster.addEventListener("scroll", () => closeSessionMenu());
 	window.addEventListener("resize", () => {
 		closeSessionMenu();
-		if (lastView !== undefined) syncSettingsChrome(lastView);
+		if (lastView !== undefined) syncLibraryChrome(lastView);
 		else syncSidebarToggle();
 	});
 	meterNodes.trigger.addEventListener("click", () => {
@@ -3801,8 +3868,8 @@ export function createRenderer(
 			elements.modalRoot.hidden
 		) {
 			event.preventDefault();
-			if (isNarrow()) document.body.classList.add("sidebar-open");
-			syncSidebarToggle();
+			elements.sectionSearch.hidden = false;
+			if (libraryNav) libraryNav.hidden = false;
 			elements.sectionSearchInput.focus();
 			elements.sectionSearchInput.select();
 			return;

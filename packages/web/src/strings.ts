@@ -90,6 +90,7 @@ export const EN = {
 	"connections.configured": "Credentials configured",
 	"connections.unconfigured": "Needs configuration",
 	"connections.choose": "Choose a provider to configure its connection and models.",
+	"connections.noMatch": "No provider matches that search.",
 	"connections.default": "Default for new chats: {model}",
 	"connections.noDefault": "Connect a provider to choose a default model.",
 	"connections.syncError": "Saved. Some sessions could not reload; refresh models to retry.",
@@ -645,6 +646,7 @@ export const EN = {
 
 	"panel.unavailable": "The host did not offer this service.",
 	"panel.empty": "Nothing here yet.",
+	"panel.rowActions": "Row actions",
 	"panel.cancel": "Cancel",
 	"panel.dismiss": "Close",
 
@@ -1013,6 +1015,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"connections.configured": "已配置凭证",
 	"connections.unconfigured": "待配置",
 	"connections.choose": "选择供应商，配置连接和可用模型。",
+	"connections.noMatch": "没有匹配的供应商。",
 	"connections.default": "新聊天默认模型：{model}",
 	"connections.noDefault": "连接供应商后即可选择默认模型。",
 	"connections.syncError": "已保存，部分会话未能重新加载；刷新模型可重试。",
@@ -1568,6 +1571,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 
 	"panel.unavailable": "宿主未提供该服务。",
 	"panel.empty": "这里暂时没有内容。",
+	"panel.rowActions": "行内操作",
 	"panel.cancel": "取消",
 	"panel.dismiss": "关闭",
 
