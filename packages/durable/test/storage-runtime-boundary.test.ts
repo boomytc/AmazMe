@@ -28,6 +28,11 @@ describe("durable storage runtime boundaries", () => {
 		expect([...graph].some((path) => path.includes("/env/"))).toBe(false);
 		expect([...graph].some((path) => path.includes("/storage/jsonl/"))).toBe(false);
 		expect([...graph].some((path) => path.includes("/storage/sqlite/"))).toBe(false);
+		expect([...graph].some((path) => path.endsWith("/storage/indexeddb.ts"))).toBe(false);
+	});
+
+	it("keeps the IndexedDB subpath free of Node imports", async () => {
+		await sourceGraph("storage/indexeddb.ts");
 	});
 
 	it("keeps the portable SQLite subpath free of Node imports", async () => {

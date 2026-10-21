@@ -10,6 +10,8 @@
 
 ### Added
 
+- `IndexedDbStorage` (`@amazme/durable/storage/indexeddb`): browser storage backed by IndexedDB.
+
 - Optional telemetry records submission admission, task phases, committed entry IDs, replay and reports, with persisted trace carriers and links across restart. Live-task and phase-duration metrics do not include prompt or tool output content.
 
 - `NodeFileSystem` (`@amazme/durable/env/node`): the local file system alone, for callers that only read and write files. It has no shell and no `artifactDirectory`, so file-only code cannot reach a session artifact directory. `NodeExecutionEnv` now extends it with the shell and `artifactDirectory`.
