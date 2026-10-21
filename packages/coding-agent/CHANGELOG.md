@@ -17,6 +17,12 @@
 - 关掉终端窗口发出的 SIGHUP 现在和 SIGTERM 走同一个处理器：TUI、`server`、`web` 都会先正常关闭再退出，不再留下 socket 和 `--no-session` 的临时产物目录；TUI 在终端挂断后写屏遇到的 EIO 不再被当成崩溃记录并以 1 退出。
 - `--no-session` 的临时产物目录必须以 0700 权限创建（只有当前用户能读），现在 print、RPC 和 TUI 的退出测试都会检查这一点。
 - 会话库打不开（由更新版本写入、升级迁移失败、不是 SQLite 文件或已损坏）时，CLI、TUI、print、RPC 和网页/桌面端都走同一个打开入口，抛带类型的 `SessionOpenError`（含 `kind`、路径、库里的版本和支持的版本），提示里写明文件路径、原因和该怎么办（升级 AmazMe，或从备份恢复、把会话目录挪开）。CLI/TUI 以非 0 退出；网页和桌面端的 Session worker 在 `worker_failed` 里带上类型和字段，界面直接显示这段提示，不再只剩 `Session worker failed`，server 照常服务。任何情况下都不会新建空会话代替，`session.sqlite`、`-wal`、`-shm` 保持逐字节不变，原本不存在的文件也不会被创建。磁盘满或 I/O 错误（`SQLITE_FULL`、`SQLITE_IOERR*`）原样报出，不当作会话库问题。预检（含 `.preflight-*` 清理）只在拿到会话锁之后运行：`openSessionStorage` 只接受 `lockSessionDatabase` 返回的 `SessionLease`，`--session <dir>` 读工作目录时也先拿锁再读库，两个进程同时打开一个会话时，后到的照常得到“会话已在另一进程打开”。所有入口（`cli.ts`、`rpc-entry.ts`、Bun 入口）最先加载共用的 `quiet-warnings.ts` 压掉运行时警告，能碰到 SQLite 的代码改为在它之后动态加载，`node:sqlite` 的 ExperimentalWarning 不会再漏到 stderr。
+- 扩展导入 `@amazme/ai/models`（例如使用 `clampThinkingLevel`）不再因解析失败而无法加载；扩展加载器和虚拟模块提供该子路径，并保留 `@mariozechner/pi-ai/models` 旧名称。
+- codemode 脚本在 worker 已满时不再立即失败，而是按到达顺序最多等待 60 秒；`AMAZME_CODEMODE_MAX_WORKERS` 可把默认的两个 worker 调高，等待计入 `timeout_ms`。
+- Linux 上复制文本后挂起 AmazMe 再回 shell 粘贴不再卡住：`wl-copy`、`xclip` 和 `xsel` 改为在独立进程组中运行，不随 AmazMe 一起被 Ctrl+Z 挂起。
+- HTML 导出中 CJK 标点旁的 Markdown 粗体和斜体不再显示为字面星号。
+- 进程未正常调用 `stop()` 就退出时，终端不再停留在鼠标跟踪、焦点报告、Kitty 键盘、括号粘贴和备用屏幕模式；`exit` 处理器会同步恢复终端状态。
+- 以 UTF-8 BOM 开头的 `mcp.json` 不再解析失败，其 MCP 服务器会正常加载，`mcp add`/`mcp remove` 也能继续编辑该文件。
 
 ## [1.4.0] - 2026-10-19
 

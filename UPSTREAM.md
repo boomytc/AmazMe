@@ -10,7 +10,7 @@
 
 ## 当前基线
 
-当前已处理到 Pi 的固定提交 `a731ba8b80ac56662b4ca7f09102f94447862d8c`（2026-10-20）。逐项核对 `1d01b3b1f..a731ba8b8` 的 2 个提交，吸收 TUI 在 CJK 标点旁渲染 Markdown 粗体与斜体的修复及其变更记录；新增 `marked-cjk-friendly` 运行时依赖，同时保留 CommonMark 对非 CJK 文本的边界规则和本地 LaTeX、删除线扩展。AmazMe 沿用 package.json 中的当前版本，本轮不发布、不覆盖既有发布记录；具体适配与验证见本轮记录。此前已处理 `1402973a9..1d01b3b1f` 的 14 个提交、`8efd314fa..1402973a9` 的 16 个提交及更早批次，历史处置见下文。
+当前已处理到 Pi 的固定提交 `bdd9f0399d785189eb1920255e0a5a393bb389e3`（2026-10-21）。逐项核对 `a731ba8b8..bdd9f0399` 的 12 个提交，10 项吸收、1 项已覆盖、1 项跳过；TUI 终端恢复按 AmazMe 的统一恢复序列适配，codemode worker 上限沿用 `AMAZME_` 变量名，Codex 目录只删除两个不可用模型并重算清单，没有整体重新生成。AmazMe 沿用 package.json 中的当前版本，本轮不发布、不覆盖既有发布记录；具体适配与验证见本轮记录。此前已处理 `1d01b3b1f..a731ba8b8` 的 2 个提交、`1402973a9..1d01b3b1f` 的 14 个提交、`8efd314fa..1402973a9` 的 16 个提交及更早批次，历史处置见下文。
 
 历史基线为 `0cf65d2bf`（v1.0.4），随后处理 v1.1.0、至 `42a3497d0` 的 12 个提交，以及 `ea448f454..427052247` 的 25 个提交。历史和本轮的具体处置分别记录如下。
 
@@ -481,6 +481,29 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 本地适配：只替换 `emStrong` 规则，不改 Markdown 的其余解析、换行和主题渲染；`@amazme/tui` 的公开入口与 `files` 不变，新增依赖随运行时闭包和 coding-agent bundle 发布。AmazMe 没有 Pi 的 `packages/coding-agent/install-lock` 文件，无需同步该锁文件。
 
 验证：`@amazme/tui` 构建通过，全包测试通过，聚焦 `CJK emphasis` 2 项通过；工程测试 89 项、全仓类型检查、`check:workspace` 通过。coding-agent bundle 重新构建成功（158 个文件，9.6 MiB），产物包含新增 tokenizer。测试用标签主题断言粗体与斜体输出，未在真实终端手工核对。`check:workspace` 首次运行发现 `UPSTREAM.md` 两处手写当前版本号（上一批遗留），改为引用 package.json 或当前版本后通过。
+
+## 增量跟进：`a731ba8b8..bdd9f0399`（2026-10-21）
+
+| pi 提交 | 说明 | 处理 |
+| --- | --- | --- |
+| `bdd9f0399` | `mcp.json` 接受 UTF-8 BOM | 吸收；读取配置和编辑服务器列表前统一去 BOM，补加载与编辑回归 |
+| `22dc6c26f` | 扩展加载器暴露 `pi-ai/models` | 适配吸收为 `@amazme/ai/models`，同时保留 `@mariozechner/pi-ai/models` 旧名称；加载器别名、虚拟模块、测试解析和回归同步 |
+| `885a564b3` | codemode worker 达到上限时排队 | 吸收；按到达顺序等待，支持取消和 `timeout_ms`，最多 60 秒；环境变量改为 `AMAZME_CODEMODE_MAX_WORKERS`，文档与回归同步 |
+| `f8ab362cc` | 剪贴板助手脱离进程组 | 吸收；POSIX 下以独立进程组启动，补真实进程组回归 |
+| `38847563f` | 并发扩展对话框改为堆叠 | 跳过；AmazMe 已删除 `InteractiveMode` 的扩展对话框路径，`ExtensionUIContext.setUIContext` 仅测试使用，没有可复用的真实堆叠消费者 |
+| `9df819de3` | 未调用 `stop()` 退出时恢复终端 | 适配吸收；复用现有统一恢复序列，在进程 `exit` 处理器同步写入，鼠标与键盘模式在离开备用屏幕前关闭；补真实子进程回归 |
+| `2ed3118b0` | 未闭合行间公式不再吞掉 Markdown 表格 | 吸收；块公式与流式 pending 回退都跳过包含表格起点的内容，补 8 组上游回归 |
+| `396ecd7b8` | Rex 启用 Kitty 图片 | 吸收；保留 truecolor 和超链接能力，更新能力断言和变更记录 |
+| `fdce48eb4` | 移除非 ChatGPT 账号可用的 Codex 模型 | 吸收；从生成器和已提交目录删除 `gpt-5.5`、`gpt-5.3-codex-spark`，按规则重算 manifest 结构哈希与文件 SHA-256，测试模型改用 `gpt-6.1-sol`/`gpt-5.6-sol` |
+| `48c8f3228` | SQLite `exclusive()` 与复制连接包装 | 吸收；独占操作在事务外串行执行并回滚遗留事务，复制包装保持内部模块、不新增包导出；补两类回归 |
+| `26293e74f` | HTML 导出渲染 CJK 强调 | 吸收；升级 marked 18.0.11，内置 CJK `emStrong` tokenizer，保留本地 LaTeX 和删除线扩展；补 VM 回归 |
+| `fbc456d82` | Grok 4.3/4.5 期望 xhigh | 已覆盖；本地目录和断言已具备 |
+
+本地适配：保持 AmazMe 的 `AMAZME_*` 环境变量、`.amazme` 配置目录、扩展虚拟模块名称和 TUI 统一恢复序列。Codex 目录没有整体重新生成，只删除两个不可用模型后按生成器规则重算 `.manifest.json`，并沿用单行生成格式。复制连接包装与上游一样只供内部使用，包入口不导出。
+
+自审修正：HTML 导出测试改为复用 `createTempDir` 和现有会话版本类型；TUI 退出恢复在 `stop()` 后移除 `exit` 监听，正常退出不会重复写恢复序列；codemode 队列在预约被取消或超时后移除等待项，避免空转唤醒。以上行为均有回归覆盖。
+
+验证：ai（`build:offline`，`check:model-data` 通过）、chord、tui、coding-agent 逐包构建通过，coding-agent bundle 为 158 个文件、9.6 MiB。测试在隔离 HOME 下运行：AI 1,484 项通过、862 项跳过，Chord 586 项通过，coding-agent 2,605 项通过、24 项跳过，TUI 1,097 项通过、1 项跳过。`npm run typecheck` 和 `npm run check:workspace` 通过。没有读取本机供应商凭据，也没有发送真实模型请求；终端恢复由真实子进程输出断言，未在真实终端手工核对，未重打标签或发布。
 
 ## 刻意偏离
 
