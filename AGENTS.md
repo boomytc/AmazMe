@@ -31,13 +31,13 @@ npm test --workspace <name>
 
 ## 发布
 
-- GitHub 只承担版本管理和 Releases，不新增 `.github/workflows`。发版检查和构建都在本机完成。
+- 1.0.0 之前不创建 GitHub Release，也不为发布打 `v*` 标签。版本记在 `package.json` 和 `CHANGELOG.md`。本地验证和本地构建即可。
+- `npm run release` 在版本低于 1.0.0 时直接拒绝。到 1.0.0 才用它做签名、公证并上传 GitHub Release。
+- 不新增 `.github/workflows`。发版检查和构建都在本机完成。
 - 对外分发的 DMG 必须用 Developer ID 签名并公证：否则 Gatekeeper 拒绝打开，应用内更新也靠签名团队和 staple 确认更新来自同一发布者。不要为了省事削弱签名、公证或更新校验。
 - 签名和公证凭证只留在本机：钥匙串、`.p8` 和 `~/.config/amazme/release.env`。不写进仓库，不放回 GitHub secret。
-- 发布流程和公证排错见 `packages/gui/README.md` 的「DMG 与 GitHub Release」。
-- 发布只在本机跑 `npm run release`，仓库没有 GitHub 工作流。先用 `--dry-run` 验证产物，不手工打 `v*` 标签或建 Release。
-- 公证失败先用只读的 `notarize-macos.mjs --history-only` 或 `notarytool log <id>` 定位，不要为了试错反复发布。
-- 重打 `v*` 标签前确认该标签没有已发布的 GitHub Release。
+- 1.0.0 的发布步骤和公证排错见 `packages/gui/README.md` 的「DMG 与 GitHub Release」。
+- 不手工打 `v*` 标签或建 Release。公证失败先用只读的 `notarize-macos.mjs --history-only` 或 `notarytool log <id>` 定位，不要为了试错反复发布。
 
 ## 分支
 
