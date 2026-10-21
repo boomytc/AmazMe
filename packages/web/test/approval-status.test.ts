@@ -5,7 +5,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, test } from "vitest";
-import { APPROVAL_APPROVE_ACTION, APPROVAL_DENY_ACTION } from "../src/actions.ts";
+import { APPROVAL_APPROVE_ACTION, APPROVAL_DENY_ACTION, COMPACT_ACTION } from "../src/actions.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { buildWebView, type WebViewInput } from "../src/view.ts";
 
@@ -103,12 +103,21 @@ describe("pending approval indicator", () => {
 		expect(mark?.textContent).toBe("Waiting for approval 1");
 	});
 
-	test("hides the header usage meter while empty and reveals expandable token and cost details once usage arrives", () => {
+	test("hides the context ring while empty and opens token and cost details on hover beside the model picker", () => {
 		const elements = collectPageElements();
 		const renderer = createRenderer(elements);
+		const actions: { id: string }[] = [];
+		renderer.onPanelAction = (action) => {
+			if (action.kind === "command") actions.push({ id: action.id });
+		};
 		const emptyView = buildWebView(input([]));
 		renderer.render(emptyView);
 		expect(elements.meter.hidden).toBe(true);
+		expect(elements.meter.closest(".header")).toBeNull();
+		expect(elements.meter.parentElement?.classList.contains("composer-model-control")).toBe(true);
+		expect(elements.meter.nextElementSibling?.classList.contains("composer-model-picker")).toBe(true);
+		expect(document.querySelector("#meter-trigger .meter-ring")).not.toBeNull();
+		expect(document.querySelector(".meter-chevron")).toBeNull();
 
 		const tokensOnly = {
 			...emptyView,
@@ -121,8 +130,13 @@ describe("pending approval indicator", () => {
 		};
 		renderer.render(tokensOnly);
 		expect(elements.meter.hidden).toBe(false);
-		expect(elements.meterContext.textContent).toBe("792 tokens");
-		expect(elements.meter.title).toBe("上下文 ?，token 792，费用 $0.000");
+		expect(elements.meterContext.textContent).toBe("792");
+		expect(elements.meterContext.parentElement?.hidden).toBe(false);
+		expect(document.getElementById("meter-used")).toBeNull();
+		expect(document.getElementById("meter-title")?.textContent).toBe("上下文窗口");
+		expect(document.getElementById("meter-tokens-line")?.hidden).toBe(true);
+		expect(elements.meter.dataset.meter).toBe("empty");
+		expect(document.getElementById("meter-trigger")?.getAttribute("aria-label")).toBe("查看会话用量详情: 上下文 ?，token 792，费用 $0.000");
 
 		const withUsage = {
 			...emptyView,
@@ -135,20 +149,42 @@ describe("pending approval indicator", () => {
 		};
 		renderer.render(withUsage);
 		expect(elements.meter.hidden).toBe(false);
-		expect(elements.meterContext.textContent).toBe("42.5%");
+		expect(elements.meterContext.parentElement?.hidden).toBe(true);
+		const ringLength = 2 * Math.PI * 6;
+		expect(Number(document.querySelector<SVGCircleElement>(".meter-ring-value")?.style.strokeDashoffset)).toBeCloseTo(ringLength * (1 - 0.425));
+		expect(elements.meter.dataset.meter).toBeUndefined();
+		expect(elements.meterTokens.textContent).toBe("8.5k / 20k");
+		expect(document.getElementById("meter-tokens-line")?.hidden).toBe(false);
+		expect(document.getElementById("meter-title")?.parentElement).toBe(document.getElementById("meter-context")?.parentElement?.parentElement);
+		expect(document.getElementById("meter-tokens-line")?.parentElement).toBe(document.getElementById("meter-title")?.parentElement);
+		expect(elements.meterCost.textContent).toBe("$0.125");
+		expect(document.getElementById("meter-cost-label")?.textContent).toBe("计费");
+		expect(document.getElementById("meter-cost-label")?.parentElement).toBe(document.getElementById("meter-cost")?.parentElement);
 		const trigger = document.getElementById("meter-trigger");
 		const detail = document.getElementById("meter-detail");
-		expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-		expect(detail?.hidden).toBe(true);
+		expect(detail?.parentElement).toBe(document.body);
+		expect(detail?.dataset.open).toBeUndefined();
 
-		trigger?.click();
-		expect(trigger?.getAttribute("aria-expanded")).toBe("true");
-		expect(detail?.hidden).toBe(false);
-		expect(elements.meterTokens.textContent).toBe("8.5k / 20k");
-		expect(elements.meterCost.textContent).toBe("$0.125");
+		trigger?.dispatchEvent(new Event("pointerenter"));
+		expect(detail?.dataset.open).toBe("true");
+		trigger?.dispatchEvent(new Event("focus"));
+		trigger?.dispatchEvent(new Event("pointerleave"));
+		expect(detail?.dataset.open).toBe("true");
+		trigger?.dispatchEvent(new Event("blur"));
+		expect(detail?.dataset.open).toBeUndefined();
+		expect(document.querySelector(`#run-actions [data-action="${COMPACT_ACTION}"]`)).toBeNull();
 
-		document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-		expect(trigger?.getAttribute("aria-expanded")).toBe("false");
-		expect(detail?.hidden).toBe(true);
+		const compact = document.getElementById("meter-compact");
+		expect(compact).toBeInstanceOf(HTMLButtonElement);
+		expect(compact?.textContent).toBe("压缩当前会话");
+		expect(compact?.getAttribute("title")).toBe("将较早的对话压成摘要，释放上下文窗口。");
+		expect((compact as HTMLButtonElement).disabled).toBe(false);
+		detail?.dispatchEvent(new Event("pointerenter"));
+		trigger?.dispatchEvent(new Event("pointerleave"));
+		expect(detail?.dataset.open).toBe("true");
+		compact?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+		expect(actions).toEqual([{ id: COMPACT_ACTION }]);
+		expect(detail?.dataset.open).toBeUndefined();
+		expect(detail?.getAttribute("aria-hidden")).toBe("true");
 	});
 });

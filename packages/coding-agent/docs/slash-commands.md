@@ -55,7 +55,7 @@ Web and desktop share the same clickable controls. The composer lists plugin com
 | `/tasks` | Session tools → Tasks; open a task's conversation or child conversation from its row |
 | `/mcp` | Plugins in the navigation rail → MCP servers; enable, choose exposure, reconnect, sign in, reload or configure a global server only for the attached trusted project |
 | `/plugins` | Plugins in the navigation rail → Plugin packages |
-| `/compact` | Compact context above the conversation. Typing the command is refused |
+| `/compact` | Compress this session on the context ring. Typing the command is refused |
 | `/reload` | Settings → Configuration & diagnostics → Reload session resources. Typing the command is refused |
 
 `/limits` and `/execution` keep the last selected Settings category, or Interface on first use. Neither selects a category or writes settings.

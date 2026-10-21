@@ -140,18 +140,7 @@
 					</div>
 					<!-- Pending tool approvals. Stays in the header when the transcript is empty or the cards are off screen. -->
 					<span class="approval-status" id="approval-status" hidden></span>
-					<!-- Context occupancy, tokens, and cost. Shown once usage exists; detailed figures sit in the disclosure. -->
-					<div class="status-meter" id="status-meter" hidden>
-						<button class="meter-trigger" type="button" id="meter-trigger" aria-expanded="false" aria-controls="meter-detail">
-							<span id="meter-context">?</span>
-							<svg class="icon meter-chevron" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-chevron-down"></use></svg>
-						</button>
-						<div class="meter-detail" id="meter-detail" hidden>
-							<div class="meter-detail-row"><span class="meter-detail-label" id="meter-tokens-label"></span><span id="meter-tokens">? / ?</span></div>
-							<div class="meter-detail-row"><span class="meter-detail-label" id="meter-cost-label"></span><span id="meter-cost">$0.000</span></div>
-						</div>
-					</div>
-					<!-- The session's run controls (compaction, fork, the session tools); the renderer fills this. -->
+					<!-- Fork and the session tools. Compaction lives on the context ring. -->
 					<div class="header-actions" id="run-actions"></div>
 				</div>
 				<!-- Action diagnostics stay visible; connectivity is shown on the rail's brand mark. -->
@@ -222,6 +211,26 @@
 							<div class="submit-modes" id="submit-modes" hidden></div>
 						</div>
 						<div class="composer-trailing">
+							<!-- Context ring. The renderer nests it in the model control so it stays on the picker's left. -->
+							<div class="status-meter" id="status-meter" hidden>
+								<button class="meter-trigger" type="button" id="meter-trigger">
+									<svg class="meter-ring" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+										<circle class="meter-ring-track" cx="8" cy="8" r="6"></circle>
+										<circle class="meter-ring-value" cx="8" cy="8" r="6" transform="rotate(-90 8 8)"></circle>
+									</svg>
+								</button>
+								<div class="meter-detail" id="meter-detail" aria-hidden="true">
+									<div class="meter-detail-head">
+										<p class="meter-detail-title" id="meter-title"></p>
+										<p class="meter-detail-percent"><span id="meter-context">?</span></p>
+										<p class="meter-detail-line" id="meter-tokens-line" hidden><span id="meter-tokens">? / ?</span></p>
+									</div>
+									<div class="meter-detail-usage" id="meter-usage">
+										<p class="meter-detail-line" id="meter-cost-line"><span id="meter-cost-label"></span><span id="meter-cost">$0.000</span></p>
+									</div>
+									<button class="meter-compact" type="button" id="meter-compact"></button>
+								</div>
+							</div>
 							<!-- Single-choice controls follow the session's model scope and supported reasoning levels. -->
 							<div class="model-setup" id="model-setup" hidden></div>
 							<select class="composer-select model-select" id="model-select" aria-label="{{model.heading}}" disabled>

@@ -950,91 +950,6 @@ p {
 	white-space: nowrap;
 }
 
-/* Context occupancy in the top bar; detailed tokens and cost open in the disclosure popover. */
-.status-meter {
-	position: relative;
-	display: flex;
-	align-items: center;
-	min-width: 0;
-	margin-right: 4px;
-	color: var(--text-3);
-	font-size: 12px;
-	line-height: 16px;
-	font-variant-numeric: tabular-nums;
-	white-space: nowrap;
-}
-
-.meter-trigger {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	height: 28px;
-	padding: 0 8px;
-	border: 0;
-	border-radius: var(--radius-sm);
-	background: transparent;
-	color: inherit;
-	font: inherit;
-	cursor: pointer;
-	transition:
-		background var(--dur-fast) var(--ease),
-		color var(--dur-fast) var(--ease);
-}
-
-.meter-trigger:hover,
-.meter-trigger[aria-expanded="true"] {
-	background: var(--hover);
-	color: var(--text);
-}
-
-.meter-chevron {
-	width: 12px;
-	height: 12px;
-	color: var(--text-3);
-	transition: transform var(--dur-fast) var(--ease);
-}
-
-.meter-trigger[aria-expanded="true"] .meter-chevron {
-	transform: rotate(180deg);
-}
-
-.meter-detail {
-	position: absolute;
-	top: calc(100% + 6px);
-	right: 0;
-	z-index: 1120;
-	display: flex;
-	flex-direction: column;
-	gap: 6px;
-	min-width: 176px;
-	padding: 10px 12px;
-	border: 1px solid var(--line);
-	border-radius: var(--radius-md);
-	background: var(--raised);
-	box-shadow: var(--shadow-popover);
-	color: var(--text);
-}
-
-.meter-detail-row {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
-}
-
-.meter-detail-label {
-	color: var(--text-3);
-	font-size: 12px;
-}
-
-.status-meter[data-tone="warning"] #meter-context {
-	color: var(--warn);
-}
-
-.status-meter[data-tone="error"] #meter-context {
-	color: var(--danger);
-}
-
 .header-actions {
 	display: flex;
 	align-items: center;
@@ -1110,10 +1025,6 @@ p {
 	.lane-status,
 	.connection:not(.error) {
 		display: none;
-	}
-
-	.status-meter {
-		margin-right: 0;
 	}
 
 	.header-actions {
@@ -2166,8 +2077,63 @@ p {
 .project-picker-option:hover, .project-picker-option:focus-visible, .project-picker-option[aria-pressed="true"] { background: var(--hover); outline: none; }
 .project-picker-empty { padding: 8px; color: var(--text-3); }
 
-.composer-model-control { min-width: 0; }
-.composer-model-picker { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 8px; background: transparent; border: 0; border-radius: 7px; font: inherit; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.composer-model-control { display: flex; align-items: center; min-width: 0; }
+.composer-model-picker { min-width: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 8px; background: transparent; border: 0; border-radius: 7px; font: inherit; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.composer-model-control > .status-meter:not([hidden]) + .composer-model-picker { padding-left: 2px; }
+
+/* Context occupancy beside the model name. The arc is the percent; the card opens on hover. */
+.status-meter { position: relative; display: flex; flex: none; align-items: center; }
+.meter-trigger {
+	display: inline-grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0;
+	border: 0; border-radius: 50%; background: transparent; color: var(--text); cursor: default;
+}
+.meter-trigger:hover, .meter-trigger:focus-visible { background: var(--hover); }
+.meter-ring { display: block; width: 16px; height: 16px; }
+.meter-ring-track, .meter-ring-value { fill: none; stroke-width: 2; }
+.meter-ring-track { stroke: currentColor; opacity: 0.22; }
+.meter-ring-value {
+	stroke: currentColor; stroke-linecap: round;
+	transition: stroke-dashoffset var(--dur) var(--ease);
+}
+.status-meter[data-meter="empty"] .meter-ring-value { opacity: 0; }
+.status-meter[data-tone="warning"] .meter-trigger { color: var(--warn); }
+.status-meter[data-tone="error"] .meter-trigger { color: var(--danger); }
+.meter-detail {
+	position: fixed; z-index: 1120; display: flex; flex-direction: column; gap: 4px;
+	width: max-content; max-width: min(360px, calc(100vw - 16px)); padding: 12px 14px 14px;
+	border-radius: 12px; background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover);
+	font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; visibility: hidden;
+	transition: opacity var(--dur-fast) var(--ease), visibility var(--dur-fast) var(--ease);
+}
+.meter-detail::before, .meter-detail::after {
+	content: ""; position: absolute; left: 0; right: 0; height: 12px;
+}
+.meter-detail::before { top: -12px; }
+.meter-detail::after { bottom: -12px; }
+.meter-detail[data-open="true"] { opacity: 1; visibility: visible; pointer-events: auto; }
+.meter-detail-head, .meter-detail-usage {
+	display: flex; align-items: baseline; gap: 12px;
+}
+.meter-detail-usage[hidden] { display: none; }
+.meter-detail-title { margin: 0 auto 0 0; color: var(--text-3); font-size: 12px; line-height: 16px; white-space: nowrap; }
+.meter-detail-percent {
+	display: flex; align-items: baseline; gap: 6px; margin: 0; color: var(--text);
+	font-size: 12px; line-height: 16px; white-space: nowrap;
+}
+.meter-detail-percent[hidden] { display: none; }
+#meter-context { font-weight: 600; }
+.meter-detail-line { margin: 0; color: var(--text-3); font-size: 12px; line-height: 16px; white-space: nowrap; }
+.meter-detail-line[hidden] { display: none; }
+#meter-cost-line { flex: 1; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.meter-detail[data-tone="warning"] #meter-context { color: var(--warn); }
+.meter-detail[data-tone="error"] #meter-context { color: var(--danger); }
+.meter-compact {
+	align-self: stretch; margin: 8px 0 0; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px;
+	background: transparent; color: var(--text); font: inherit; font-size: 12px; font-weight: 550;
+	line-height: 16px; text-align: center; cursor: pointer;
+}
+.meter-compact:hover:not(:disabled) { background: var(--hover); }
+.meter-compact:disabled { opacity: 0.45; cursor: default; }
 .composer-model-picker:hover { background: var(--hover); color: var(--text); }
 .composer-model-picker:disabled { cursor: default; opacity: .5; }
 .model-picker-menu { position: fixed; margin: 0; width: min(360px, calc(100vw - 16px)); max-height: calc(100dvh - 32px); padding: 8px; background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); box-shadow: 0 12px 40px #0003; font-size: 13px; }

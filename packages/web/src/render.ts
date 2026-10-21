@@ -99,14 +99,14 @@ export interface PageElements {
 	readonly primary: HTMLButtonElement;
 	/** Stops the running turn. Hidden while the session is idle. */
 	readonly stop: HTMLButtonElement;
-	/** Pending approvals. Always in the header, beside the usage figures. */
+	/** Pending approvals. Stays in the header when the transcript is empty or the cards are off screen. */
 	readonly approvalStatus: HTMLElement;
 	/** In-conversation search bar; the settings sidebar owns its own field. */
 	readonly transcriptSearch: HTMLElement;
 	readonly transcriptSearchInput: HTMLInputElement;
 	readonly transcriptSearchCount: HTMLElement;
 	readonly transcriptSearchClose: HTMLButtonElement;
-	/** Context %, tokens, and cost. Always in the header. */
+	/** Context ring beside the model picker. Tokens and cost open in the hover card. */
 	readonly meter: HTMLElement;
 	readonly meterContext: HTMLElement;
 	readonly meterTokens: HTMLElement;
@@ -119,7 +119,7 @@ export interface PageElements {
 	readonly approvals: HTMLElement;
 	/** The composer's command palette, filled by the renderer. */
 	readonly palette: HTMLElement;
-	/** The header's run controls (compaction), filled by the renderer. */
+	/** Fork and the session tools. Compaction is on the context ring. */
 	readonly runActions: HTMLElement;
 	/** The composer's submit-mode toggle, filled while a turn runs. */
 	readonly submitModes: HTMLElement;
@@ -384,6 +384,29 @@ function pixelLogo(): SVGSVGElement {
 	svg.setAttribute("aria-hidden", "true");
 	svg.setAttribute("focusable", "false");
 	svg.append(useOf("i-logo-a", "pixel-a"), useOf("i-logo-m", "pixel-m"));
+	return svg;
+}
+
+/** Circle radius 6 in the 16px ring. Dash geometry uses this length, not `pathLength`. */
+const METER_RING_LENGTH = 2 * Math.PI * 6;
+
+/** Context ring: a track plus an arc whose dash offset is the occupancy, starting at 12 o'clock. */
+function meterRing(): SVGSVGElement {
+	const svg = document.createElementNS(SVG_NAMESPACE, "svg");
+	svg.setAttribute("class", "meter-ring");
+	svg.setAttribute("viewBox", "0 0 16 16");
+	svg.setAttribute("aria-hidden", "true");
+	svg.setAttribute("focusable", "false");
+	const circle = (className: string, value: boolean): SVGCircleElement => {
+		const node = document.createElementNS(SVG_NAMESPACE, "circle");
+		node.setAttribute("class", className);
+		node.setAttribute("cx", "8");
+		node.setAttribute("cy", "8");
+		node.setAttribute("r", "6");
+		if (value) node.setAttribute("transform", "rotate(-90 8 8)");
+		return node;
+	};
+	svg.append(circle("meter-ring-track", false), circle("meter-ring-value", true));
 	return svg;
 }
 
@@ -722,53 +745,117 @@ export function createRenderer(
 	let expandedSuggestionKey: string | undefined;
 	let composing = false;
 	let dismissedSuggestion: string | undefined;
-	let meterExpanded = false;
+	let meterOverTrigger = false;
+	let meterOverDetail = false;
+	let meterFocus = false;
 	const ensureMeterElements = (): {
 		readonly trigger: HTMLButtonElement;
 		readonly detail: HTMLElement;
-		readonly tokensLabel: HTMLElement;
+		readonly title: HTMLElement;
+		readonly tokensLine: HTMLElement;
+		readonly usage: HTMLElement;
+		readonly costLine: HTMLElement;
 		readonly costLabel: HTMLElement;
+		readonly compact: HTMLButtonElement;
 	} => {
-		const existingTrigger = elements.meter.querySelector<HTMLButtonElement>("#meter-trigger");
-		const existingDetail = elements.meter.querySelector<HTMLElement>("#meter-detail");
-		const existingTokensLabel = elements.meter.querySelector<HTMLElement>("#meter-tokens-label");
-		const existingCostLabel = elements.meter.querySelector<HTMLElement>("#meter-cost-label");
-		if (existingTrigger && existingDetail && existingTokensLabel && existingCostLabel) {
+		const triggerNode = document.getElementById("meter-trigger");
+		const existingTrigger = triggerNode instanceof HTMLButtonElement ? triggerNode : null;
+		const compactNode = document.getElementById("meter-compact");
+		const existingCompact = compactNode instanceof HTMLButtonElement ? compactNode : null;
+		const existingDetail = document.getElementById("meter-detail");
+		const existingTitle = document.getElementById("meter-title");
+		const existingUsage = document.getElementById("meter-usage");
+		const existingTokensLine = document.getElementById("meter-tokens-line");
+		const existingCostLine = document.getElementById("meter-cost-line");
+		const costLabelNode = document.getElementById("meter-cost-label");
+		const existingCostLabel = costLabelNode instanceof HTMLElement ? costLabelNode : null;
+		if (
+			existingTrigger &&
+			existingDetail &&
+			existingTitle?.parentElement?.classList.contains("meter-detail-head") &&
+			document.getElementById("meter-used") === null &&
+			existingUsage &&
+			existingTokensLine?.parentElement === existingTitle.parentElement &&
+			existingCostLine &&
+			existingCostLabel?.parentElement === existingCostLine &&
+			existingCompact &&
+			existingTrigger.querySelector(".meter-ring")
+		) {
 			return {
 				trigger: existingTrigger,
 				detail: existingDetail,
-				tokensLabel: existingTokensLabel,
+				title: existingTitle,
+				tokensLine: existingTokensLine,
+				usage: existingUsage,
+				costLine: existingCostLine,
 				costLabel: existingCostLabel,
+				compact: existingCompact,
 			};
 		}
+		document.getElementById("meter-detail")?.remove();
 		const trigger = button("meter-trigger");
 		trigger.id = "meter-trigger";
-		trigger.setAttribute("aria-expanded", "false");
-		trigger.setAttribute("aria-controls", "meter-detail");
-		trigger.append(elements.meterContext, icon("chevron-down", "icon meter-chevron"));
+		trigger.append(meterRing());
 		const detail = element("div", "meter-detail");
 		detail.id = "meter-detail";
-		detail.hidden = true;
-		const tokensRow = element("div", "meter-detail-row");
-		const tokensLabel = element("span", "meter-detail-label");
-		tokensLabel.id = "meter-tokens-label";
-		tokensRow.append(tokensLabel, elements.meterTokens);
-		const costRow = element("div", "meter-detail-row");
-		const costLabel = element("span", "meter-detail-label");
+		detail.setAttribute("aria-hidden", "true");
+		const head = element("div", "meter-detail-head");
+		const title = element("p", "meter-detail-title");
+		title.id = "meter-title";
+		const percent = element("p", "meter-detail-percent");
+		percent.append(elements.meterContext);
+		const tokensLine = element("p", "meter-detail-line");
+		tokensLine.id = "meter-tokens-line";
+		tokensLine.hidden = true;
+		tokensLine.append(elements.meterTokens);
+		head.append(title, percent, tokensLine);
+		const usage = element("div", "meter-detail-usage");
+		usage.id = "meter-usage";
+		const costLine = element("p", "meter-detail-line");
+		costLine.id = "meter-cost-line";
+		const costLabel = element("span", "");
 		costLabel.id = "meter-cost-label";
-		costRow.append(costLabel, elements.meterCost);
-		detail.append(tokensRow, costRow);
+		costLine.append(costLabel, elements.meterCost);
+		usage.append(costLine);
+		const compact = button("meter-compact");
+		compact.id = "meter-compact";
+		detail.append(head, usage, compact);
 		elements.meter.replaceChildren(trigger, detail);
-		return { trigger, detail, tokensLabel, costLabel };
+		return { trigger, detail, title, tokensLine, usage, costLine, costLabel, compact };
 	};
 	const meterNodes = ensureMeterElements();
-	const setMeterExpanded = (open: boolean, restoreFocus = false): void => {
-		meterExpanded = open;
-		meterNodes.trigger.setAttribute("aria-expanded", String(open));
-		meterNodes.detail.hidden = !open;
-		if (open) elements.meter.dataset.open = "true";
-		else delete elements.meter.dataset.open;
-		if (!open && restoreFocus) meterNodes.trigger.focus({ preventScroll: true });
+	// The ring stays in the model control. The card is portaled so the composer's scrollport cannot clip it.
+	sharedModelPicker.element.prepend(elements.meter);
+	document.body.append(meterNodes.detail);
+	const placeMeterDetail = (): void => {
+		const detail = meterNodes.detail;
+		const rect = meterNodes.trigger.getBoundingClientRect();
+		const margin = 8;
+		const width = detail.offsetWidth;
+		const height = detail.offsetHeight;
+		const maxLeft = Math.max(margin, window.innerWidth - width - margin);
+		const left = Math.min(Math.max(margin, rect.left + rect.width / 2 - width / 2), maxLeft);
+		const above = rect.top - height - margin;
+		const top = above >= margin ? above : rect.bottom + margin;
+		detail.style.left = `${Math.round(left)}px`;
+		detail.style.top = `${Math.round(top)}px`;
+	};
+	const syncMeterOpen = (): void => {
+		const open = (meterOverTrigger || meterOverDetail || meterFocus) && !elements.meter.hidden;
+		meterNodes.detail.setAttribute("aria-hidden", String(!open));
+		if (open) {
+			meterNodes.detail.dataset.open = "true";
+			placeMeterDetail();
+			return;
+		}
+		delete meterNodes.detail.dataset.open;
+	};
+	const closeMeterDetail = (): void => {
+		meterOverTrigger = false;
+		meterOverDetail = false;
+		meterFocus = false;
+		meterNodes.detail.setAttribute("aria-hidden", "true");
+		delete meterNodes.detail.dataset.open;
 	};
 	let seenTranscriptDigest = "";
 	let unreadTranscriptBelow = false;
@@ -1894,7 +1981,7 @@ export function createRenderer(
 		elements.sessionSidebar.hidden = open;
 		elements.sectionSidebar.hidden = true;
 		if (open) {
-			setMeterExpanded(false);
+			closeMeterDetail();
 			elements.meter.hidden = true;
 			// A management page owns its own find chord; a chat search bar would be stale here.
 			elements.transcriptSearch.hidden = true;
@@ -1988,37 +2075,61 @@ export function createRenderer(
 		elements.approvalStatus.setAttribute("aria-label", indicator.label);
 	};
 
-	/** Context %, tokens, and cost. Shown once usage exists; detailed figures sit in the disclosure. */
+	/** Occupancy as a 0–1 ring fill. Anything that is not a percent draws the track only. */
+	const meterRatio = (context: string): number => {
+		if (!context.endsWith("%")) return 0;
+		const parsed = Number.parseFloat(context);
+		if (!Number.isFinite(parsed)) return 0;
+		return Math.min(1, Math.max(0, parsed / 100));
+	};
+
+	/** Context %, tokens, and cost. The ring sits left of the model picker; figures open on hover. */
 	const renderMeter = (view: WebView): void => {
 		const hasTokens = !view.meter.tokens.startsWith("? /");
 		const hasCost = view.meter.cost !== "$0.000";
 		const hasContext = view.meter.context !== "?";
 		const hasUsage = view.attachedId !== undefined && view.panel.panel === undefined && (hasContext || hasTokens || hasCost);
 		if (!hasUsage) {
-			setMeterExpanded(false);
+			closeMeterDetail();
 			elements.meter.hidden = true;
 			return;
 		}
-		const usedTokens = view.meter.tokens.split(" / ")[0] ?? view.meter.tokens;
-		const summaryText = hasContext ? view.meter.context : hasTokens ? `${usedTokens} tokens` : view.meter.cost;
-		const displayTokens = view.meter.tokens.endsWith(" / ?") ? usedTokens : view.meter.tokens;
-		elements.meterContext.textContent = summaryText;
-		elements.meterTokens.textContent = displayTokens;
+		const [usedTokens = view.meter.tokens, totalTokens] = view.meter.tokens.split(" / ");
+		const knownTotal = totalTokens !== undefined && totalTokens !== "?";
+		const ratio = meterRatio(view.meter.context);
+		const percent = elements.meterContext.parentElement;
+		if (percent instanceof HTMLElement) percent.hidden = hasContext;
+		elements.meterContext.textContent = hasContext ? "" : hasTokens ? usedTokens : view.meter.cost;
+		meterNodes.title.textContent = copy("header.meterTitle");
+		const showTokenLine = hasTokens && (knownTotal || hasContext);
+		meterNodes.tokensLine.hidden = !showTokenLine;
+		elements.meterTokens.textContent = knownTotal
+			? copy("header.meterTokensOf", { used: usedTokens, total: totalTokens })
+			: copy("header.meterTokensUsed", { used: usedTokens });
 		elements.meterCost.textContent = view.meter.cost;
-		meterNodes.tokensLabel.textContent = copy("header.meterTokens");
 		meterNodes.costLabel.textContent = copy("header.meterCost");
-		if (elements.meterTokens.parentElement) elements.meterTokens.parentElement.hidden = !hasTokens;
+		meterNodes.costLine.hidden = !hasContext && !hasTokens;
+		meterNodes.usage.hidden = meterNodes.costLine.hidden;
 		elements.meter.dataset.tone = view.meter.tone;
+		meterNodes.detail.dataset.tone = view.meter.tone;
+		const ring = elements.meter.querySelector<SVGCircleElement>(".meter-ring-value");
+		if (ring !== null) {
+			ring.style.strokeDasharray = String(METER_RING_LENGTH);
+			ring.style.strokeDashoffset = String(METER_RING_LENGTH * (1 - ratio));
+		}
+		if (ratio === 0) elements.meter.dataset.meter = "empty";
+		else delete elements.meter.dataset.meter;
 		const meterLabel = copy("header.meter", {
 			context: view.meter.context,
-			tokens: displayTokens,
+			tokens: knownTotal ? view.meter.tokens : usedTokens,
 			cost: view.meter.cost,
 		});
-		elements.meter.setAttribute("aria-label", meterLabel);
-		elements.meter.title = meterLabel;
-		meterNodes.trigger.title = meterLabel;
 		meterNodes.trigger.setAttribute("aria-label", `${copy("header.meterToggle")}: ${meterLabel}`);
+		meterNodes.compact.textContent = view.run.compact.label;
+		meterNodes.compact.disabled = view.run.compact.disabled === true;
+		meterNodes.compact.title = copy("header.compactHint");
 		elements.meter.hidden = false;
+		if (meterNodes.detail.dataset.open === "true") placeMeterDetail();
 	};
 
 	/** A disclosure whose open state is the reader's, falling back to a per-block default. */
@@ -2735,12 +2846,8 @@ export function createRenderer(
 		positionSessionMenu();
 	};
 
-	/** The header's run controls: one icon per action the view offers, each named on its title and in its label. */
+	/** Fork and the session tools. Each is an icon named on its title and in its label. */
 	const renderRunActions = (view: WebView): void => {
-		const compact = panelButton(view.run.compact, report);
-		compact.className = "header-action";
-		compact.dataset.action = COMPACT_ACTION;
-		placeHeaderAction(compact, view.run.compact.label, "minimize");
 		const fork = panelButton(view.run.fork, report);
 		fork.className = "header-action";
 		fork.dataset.action = "conversation:fork";
@@ -2752,7 +2859,7 @@ export function createRenderer(
 		dock.setAttribute("aria-controls", elements.dock.id);
 		placeHeaderAction(dock, view.dock.toggle.label, "panel-right");
 		dock.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
-		elements.runActions.replaceChildren(compact, fork, dock);
+		elements.runActions.replaceChildren(fork, dock);
 		elements.laneStatus.textContent = view.lane;
 		elements.laneStatus.hidden = view.panel.current !== CHAT_VIEW || view.lane.length === 0;
 		if (view.lane.length === 0) elements.laneStatus.removeAttribute("title");
@@ -3216,7 +3323,7 @@ export function createRenderer(
 				modelSetupReturn = undefined;
 				seenTranscriptDigest = transcriptDigest(view);
 				unreadTranscriptBelow = false;
-				setMeterExpanded(false);
+				closeMeterDetail();
 			}
 
 			// Streaming repaints keep the roster's nodes and keyboard focus when it has not changed.
@@ -3767,18 +3874,48 @@ export function createRenderer(
 	});
 	// Session menus close when their roster moves.
 	elements.roster.addEventListener("scroll", () => closeSessionMenu());
+	const repositionMeterDetail = (): void => {
+		if (meterNodes.detail.dataset.open === "true") placeMeterDetail();
+	};
 	window.addEventListener("resize", () => {
 		closeSessionMenu();
+		repositionMeterDetail();
 		if (lastView !== undefined) syncLibraryChrome(lastView);
 		else syncSidebarToggle();
 	});
-	meterNodes.trigger.addEventListener("click", () => {
-		if (!elements.meter.hidden) setMeterExpanded(!meterExpanded);
+	window.addEventListener("scroll", repositionMeterDetail, true);
+	meterNodes.trigger.addEventListener("pointerenter", () => {
+		meterOverTrigger = true;
+		syncMeterOpen();
+	});
+	meterNodes.trigger.addEventListener("pointerleave", () => {
+		meterOverTrigger = false;
+		syncMeterOpen();
+	});
+	meterNodes.detail.addEventListener("pointerenter", () => {
+		meterOverDetail = true;
+		syncMeterOpen();
+	});
+	meterNodes.detail.addEventListener("pointerleave", () => {
+		meterOverDetail = false;
+		syncMeterOpen();
+	});
+	meterNodes.compact.addEventListener("click", () => {
+		if (meterNodes.compact.disabled) return;
+		closeMeterDetail();
+		report({ kind: "command", id: COMPACT_ACTION, data: undefined });
+	});
+	meterNodes.trigger.addEventListener("focus", () => {
+		meterFocus = true;
+		syncMeterOpen();
+	});
+	meterNodes.trigger.addEventListener("blur", () => {
+		meterFocus = false;
+		syncMeterOpen();
 	});
 	document.addEventListener("pointerdown", (event) => {
 		const target = event.target;
 		if (sessionMenu !== undefined && target instanceof Node && !sessionMenu.node.contains(target) && !sessionMenuTrigger(sessionMenu.id)?.contains(target)) closeSessionMenu();
-		if (meterExpanded && target instanceof Node && !elements.meter.contains(target)) setMeterExpanded(false);
 		if (!quoteAction.hidden && target instanceof Node && !quoteAction.contains(target)) hideQuoteAction();
 	});
 	quoteAction.addEventListener("mousedown", (event) => event.preventDefault());
@@ -3891,11 +4028,6 @@ export function createRenderer(
 		if (sessionMenu !== undefined) {
 			event.preventDefault();
 			closeSessionMenu(true);
-			return;
-		}
-		if (meterExpanded) {
-			event.preventDefault();
-			setMeterExpanded(false, true);
 			return;
 		}
 		if (elements.modalRoot.hidden === false) {

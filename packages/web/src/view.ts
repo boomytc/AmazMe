@@ -397,7 +397,7 @@ export interface LaneLike {
 
 /** The controls around the conversation: compaction, fork, and how a busy turn takes input. */
 export interface RunControls {
-	/** The header's compaction control. */
+	/** Compaction, offered from the context ring. */
 	readonly compact: PanelButton;
 	/** Fork the shown conversation at its newest entry. */
 	readonly fork: PanelButton;
@@ -907,8 +907,9 @@ function usageCost(docs: ConversationView["docs"]): number {
 }
 
 /**
- * The status bar the header keeps on screen: context occupancy, tokens against the window, and
- * cost. The widths and the warning thresholds match the TUI top bar.
+ * Context occupancy, tokens against the window, and cost. The ring beside the model picker draws
+ * the percent; the hover card shows the figures. The widths and the warning thresholds match the
+ * TUI top bar.
  */
 export function statusMeter(transcript: ConversationView | undefined, models: ModelsStateLike | undefined): StatusMeter {
 	const configured = models?.configuration.model;
@@ -1410,9 +1411,10 @@ export function queuedInputs(locale: Locale, view: ConversationView | undefined)
 }
 
 /**
- * The run controls: compaction for the attached session, and the composer's mode toggle. The mode
- * is the page's own choice, so it arrives with the view rather than being decided here. Fork stays
- * visible, and stays disabled until the shown conversation has an entry to fork from.
+ * The run controls: compaction for the attached session, and the composer's mode toggle. Compaction
+ * is offered from the context ring. The mode is the page's own choice, so it arrives with the view
+ * rather than being decided here. Fork stays visible, and stays disabled until the shown
+ * conversation has an entry to fork from.
  */
 export function runControls(locale: Locale, mode: SubmitMode, attached: boolean, forkable: boolean): RunControls {
 	return {

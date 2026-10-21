@@ -128,8 +128,9 @@ reused, so a fresh load shows the committed entries again. Published packages an
 
 ### Run the conversation
 
-The header carries **Compact context** (an optional instruction steers the summary; the host compacts
-in the background and appends the summary entry to the transcript), and **Settings → Models and connections** offers
+The context ring beside the model name opens usage details and **Compress this session** (an optional
+instruction steers the summary; the host compacts in the background and appends the summary entry to
+the transcript). **Settings → Models and connections** offers
 **Refresh models** plus the host's last refresh outcome. While a turn runs, the composer shows an
 **Adjust task / Continue after** dropdown: a message sent in steer mode joins the running turn at its next boundary, and
 one sent in queue mode waits for the turn to finish. Each queued input is one strip above the composer

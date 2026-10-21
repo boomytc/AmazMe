@@ -1255,7 +1255,7 @@ export function removeSessionModal(locale: Locale, sessionId: string): PanelModa
 }
 
 /**
- * The modal the header's compaction control opens. Instructions are optional: an empty field asks
+ * The modal the context ring's compaction control opens. Instructions are optional: an empty field asks
  * the host for its own summary, exactly as the CLI's `/compact` does.
  */
 export function compactModal(locale: Locale): PanelModal {

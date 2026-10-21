@@ -1132,7 +1132,7 @@ describe("web view model", () => {
 
 	test("offers the run controls: compaction, and how a busy turn takes input", () => {
 		const attached = runControls("en", "steer", true, true);
-		expect(attached.compact).toMatchObject({ id: COMPACT_ACTION, label: "Compact context", disabled: false });
+		expect(attached.compact).toMatchObject({ id: COMPACT_ACTION, label: "Compress this session", disabled: false });
 		expect(attached.fork).toMatchObject({ label: "Fork", disabled: false });
 		expect(attached.submitModes).toEqual([
 			{ mode: "steer", label: "Adjust task", selected: true },

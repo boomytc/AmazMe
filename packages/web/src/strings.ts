@@ -208,8 +208,11 @@ export const EN = {
 	"header.connecting": "Connecting to the host…",
 	"header.meter": "Context {context}, tokens {tokens}, cost {cost}",
 	"header.meterToggle": "Session usage details",
+	"header.meterTitle": "Context window",
 	"header.meterContext": "Context",
 	"header.meterTokens": "Tokens",
+	"header.meterTokensOf": "{used} / {total}",
+	"header.meterTokensUsed": "{used} used",
 	"header.meterCost": "Cost",
 	"header.pendingApprovals": "Waiting for approval {count}",
 
@@ -249,7 +252,8 @@ export const EN = {
 	"queue.cancel": "Withdraw",
 	"queue.cancelAria": "Withdraw this queued input",
 
-	"header.compact": "Compact context",
+	"header.compact": "Compress this session",
+	"header.compactHint": "Summarize earlier messages and free the context window.",
 	"header.fork": "Fork",
 
 	"model.none": "No model",
@@ -291,7 +295,7 @@ export const EN = {
 	"page.pluginsCommandInstead": "Open Plugins in the sidebar to manage packages and MCP servers.",
 	"page.attachmentsCommandInstead": "Use the remove button on a draft attachment thumbnail.",
 	"page.reloadCommandInstead": "Use Reload session resources in Settings.",
-	"page.compactCommandInstead": "Use Compact context above the conversation.",
+	"page.compactCommandInstead": "Use Compress this session on the context ring.",
 	"page.reloadResources": "Reload session resources",
 	"model.levelsEmpty": "This model provides no reasoning effort levels.",
 	"model.refresh": "Refresh models",
@@ -1154,9 +1158,12 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"header.connecting": "正在连接宿主…",
 	"header.meter": "上下文 {context}，token {tokens}，费用 {cost}",
 	"header.meterToggle": "查看会话用量详情",
+	"header.meterTitle": "上下文窗口",
 	"header.meterContext": "上下文",
 	"header.meterTokens": "Token 用量",
-	"header.meterCost": "累计费用",
+	"header.meterTokensOf": "{used} / {total}",
+	"header.meterTokensUsed": "已用 {used}",
+	"header.meterCost": "计费",
 	"header.pendingApprovals": "等待审批 {count}",
 
 	"connection.starting": "启动中…",
@@ -1195,7 +1202,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"queue.cancel": "撤回",
 	"queue.cancelAria": "撤回这条排队输入",
 
-	"header.compact": "压缩上下文",
+	"header.compact": "压缩当前会话",
+	"header.compactHint": "将较早的对话压成摘要，释放上下文窗口。",
 	"header.fork": "分叉",
 
 	"model.none": "无模型",
@@ -1237,7 +1245,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"page.pluginsCommandInstead": "请打开侧栏「插件」，管理插件包与 MCP 服务。",
 	"page.attachmentsCommandInstead": "请点击草稿附件缩略图上的删除按钮。",
 	"page.reloadCommandInstead": "请点击设置中的「重新加载会话资源」。",
-	"page.compactCommandInstead": "请点击对话上方的「压缩上下文」。",
+	"page.compactCommandInstead": "请在上下文圆环的详情里选择「压缩当前会话」。",
 	"page.reloadResources": "重新加载会话资源",
 	"model.levelsEmpty": "该模型不提供思考强度档位。",
 	"model.refresh": "刷新模型",
