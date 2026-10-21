@@ -20,6 +20,7 @@ export const workspaceSourcePaths = {
 	mcpTesting: fileURLToPath(new URL("./packages/mcp/src/testing/index.ts", import.meta.url)),
 	aiIndex: fileURLToPath(new URL("./packages/ai/src/index.ts", import.meta.url)),
 	aiCompat: fileURLToPath(new URL("./packages/ai/src/compat.ts", import.meta.url)),
+	aiModels: fileURLToPath(new URL("./packages/ai/src/models.ts", import.meta.url)),
 	aiOAuth: fileURLToPath(new URL("./packages/ai/src/oauth.ts", import.meta.url)),
 	aiApi: fileURLToPath(new URL("./packages/ai/src/api", import.meta.url)),
 	aiProviders: fileURLToPath(new URL("./packages/ai/src/providers", import.meta.url)),
@@ -72,6 +73,7 @@ export default defineConfig({
 			{ find: /^@amazme\/mcp\/testing$/, replacement: workspaceSourcePaths.mcpTesting },
 			{ find: /^@amazme\/ai$/, replacement: workspaceSourcePaths.aiIndex },
 			{ find: /^@amazme\/ai\/compat$/, replacement: workspaceSourcePaths.aiCompat },
+			{ find: /^@amazme\/ai\/models$/, replacement: workspaceSourcePaths.aiModels },
 			{ find: /^@amazme\/ai\/oauth$/, replacement: workspaceSourcePaths.aiOAuth },
 			{
 				find: /^@amazme\/ai\/utils\/(.+)$/,

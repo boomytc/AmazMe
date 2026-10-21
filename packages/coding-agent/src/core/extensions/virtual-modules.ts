@@ -1,5 +1,6 @@
 import * as bundledPiAgentCore from "@amazme/agent";
 import * as bundledPiAiCompat from "@amazme/ai/compat";
+import * as bundledPiAiModels from "@amazme/ai/models";
 import * as bundledPiAiOauth from "@amazme/ai/oauth";
 import * as bundledPiAiProviders from "@amazme/ai/providers/all";
 import * as bundledPiTui from "@amazme/tui";
@@ -25,6 +26,7 @@ export const VIRTUAL_MODULES: Record<string, unknown> = {
 	// global API keep working at runtime until compat is removed.
 	"@amazme/ai": bundledPiAiCompat,
 	"@amazme/ai/compat": bundledPiAiCompat,
+	"@amazme/ai/models": bundledPiAiModels,
 	"@amazme/ai/oauth": bundledPiAiOauth,
 	"@amazme/ai/providers/all": bundledPiAiProviders,
 	"@amazme/coding-agent": bundledPiCodingAgent,
@@ -32,6 +34,7 @@ export const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@mariozechner/pi-tui": bundledPiTui,
 	"@mariozechner/pi-ai": bundledPiAiCompat,
 	"@mariozechner/pi-ai/compat": bundledPiAiCompat,
+	"@mariozechner/pi-ai/models": bundledPiAiModels,
 	"@mariozechner/pi-ai/oauth": bundledPiAiOauth,
 	"@mariozechner/pi-ai/providers/all": bundledPiAiProviders,
 	"@mariozechner/pi-coding-agent": bundledPiCodingAgent,
