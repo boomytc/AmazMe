@@ -330,11 +330,11 @@ describe("detectCapabilities", () => {
 		});
 	});
 
-	it("enables hyperlinks without images for Rex", () => {
+	it("enables Kitty images and hyperlinks for Rex", () => {
 		withEnv({ TERM_PROGRAM: "rex", TERM: "xterm-256color", KITTY_WINDOW_ID: "1" }, () => {
 			const caps = detectCapabilities();
 			assert.strictEqual(caps.hyperlinks, true);
-			assert.strictEqual(caps.images, null);
+			assert.strictEqual(caps.images, "kitty");
 			assert.strictEqual(caps.trueColor, true);
 		});
 		withEnv({ TERM_PROGRAM: "rex", AMAZME_HYPERLINKS: "0" }, () => {

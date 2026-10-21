@@ -94,9 +94,10 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: "kitty", trueColor: hasTrueColorHint, hyperlinks: true };
 	}
 
-	// Rex lacks Kitty Unicode placeholders; ignore leaked outer-terminal hints and leave images off.
+	// Rex supports OSC 8 hyperlinks and only partially implements the Kitty graphics protocol
+	// (no Unicode placeholders), but enough to support AmazMe.
 	if (termProgram === "rex") {
-		return { images: null, trueColor: true, hyperlinks: true };
+		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
 
 	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
