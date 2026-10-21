@@ -1,7 +1,7 @@
 import type { Locale } from "./locale.ts";
 import type { PanelAction, PanelModal, PanelNotice } from "./panels.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
-import { MODEL_DEFAULTS_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION } from "./actions.ts";
+import { MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION } from "./actions.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { translate } from "./strings.ts";
 
@@ -10,6 +10,8 @@ export const PROVIDER_SELECT_ACTION = "models:provider";
 export const PROVIDER_EDIT_ACTION = "models:edit-provider";
 export const PROVIDER_EDIT_MODAL = "models:save-provider";
 export const PROVIDER_TEST_ACTION = "models:test";
+export const PROVIDER_TEST_MODAL = "models:test-models";
+export const PROVIDER_TEST_ALL_ACTION = "models:test-all";
 export const MODEL_ENABLED_ACTION = "models:enabled";
 
 export interface ConnectionModelLike {
@@ -40,18 +42,81 @@ export interface ModelConnectionsLike {
 	readonly disabled: boolean;
 }
 
-export function providerConfigurationModal(locale: Locale, provider?: ModelConnectionsLike["state"]["providers"][number], models: readonly ConnectionModelLike[] = []): PanelModal {
+const credentialOrder = (type: "api_key" | "oauth") => type === "api_key" ? 0 : 1;
+
+/** The same line the provider detail and the test dialog use for a check. */
+export function verificationStatusText(locale: Locale, verification: { readonly status: "idle" | "checking" | "success" | "error"; readonly checkedAt?: number; readonly modelId?: string }, modelId?: string): string {
+	const label = translate(locale, verification.status === "success" ? "connections.verified" : verification.status === "error" ? "connections.failed" : verification.status === "checking" ? "connections.testing" : "connections.untested");
+	const name = modelId ?? verification.modelId;
+	const when = verification.checkedAt === undefined ? undefined : new Date(verification.checkedAt).toLocaleString(locale);
+	return [name, label, when].filter((part): part is string => part !== undefined && part.length > 0).join(" · ");
+}
+const EDITABLE_APIS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
+type CredentialMethod = { readonly type: "api_key" | "oauth"; readonly label: string };
+
+export function providerConfigurationModal(locale: Locale, provider?: ModelConnectionsLike["state"]["providers"][number], models: readonly ConnectionModelLike[] = [], presets: readonly { readonly id: string; readonly name: string; readonly methods: readonly CredentialMethod[] }[] = [], methods: readonly CredentialMethod[] = []): PanelModal {
 	const copy = (key: Parameters<typeof translate>[1]) => translate(locale, key);
-	return { id: PROVIDER_EDIT_MODAL, data: provider?.id, title: copy(provider ? "connections.edit" : "connections.add"), submit: copy("modal.save"), fields: [
-		{ id: "id", label: copy("connections.id"), kind: "text", value: provider?.id ?? "", ...(provider ? { readOnly: true } : {}) },
-		{ id: "name", label: copy("connections.name"), kind: "text", value: provider?.name ?? "" },
-		{ id: "baseUrl", label: copy("connections.endpoint"), kind: "text", value: provider?.baseUrl ?? "" },
-		{ id: "api", label: copy("connections.protocol"), kind: "select", value: provider?.api ?? "openai-completions", options: [
-			{ value: "openai-completions", label: "OpenAI Chat Completions" }, { value: "openai-responses", label: "OpenAI Responses" },
-			{ value: "anthropic-messages", label: "Anthropic Messages" }, { value: "google-generative-ai", label: "Google Generative AI" },
-		] },
-		...(!provider || provider.custom ? [{ id: "models", label: copy("connections.modelIds"), kind: "textarea" as const, value: (provider?.modelIds ?? models.map(model => model.modelId)).join("\n") }] : []),
+	if (provider === undefined) {
+		const choices = presets.filter(item => item.methods.length > 0);
+		const methodLabel = (type: "api_key" | "oauth") => copy(type === "api_key" ? "connections.apiKey" : "connections.signIn");
+		return {
+			id: PROVIDER_EDIT_MODAL, title: copy("connections.add"), description: copy("connections.choosePreset"), submit: copy("auth.continue"),
+			fields: [
+				{ id: "id", label: copy("connections.provider"), kind: "select", value: choices[0]?.id ?? "", options: choices.map(item => ({ value: item.id, label: item.name })) },
+				...choices.filter(item => item.methods.length > 1).map(item => {
+					const methods = [...item.methods].sort((left, right) => credentialOrder(left.type) - credentialOrder(right.type));
+					return {
+						id: `method:${item.id}`, label: copy("connections.method"), kind: "select" as const, value: methods[0]?.type ?? "api_key",
+						options: methods.map(method => ({ value: method.type, label: methodLabel(method.type) })),
+						visibleWhen: { field: "id", values: [item.id] },
+					};
+				}),
+				...choices.filter(item => item.methods.some(method => method.type === "api_key")).map(item => ({
+					id: `key:${item.id}`, label: copy("connections.apiKey"), kind: "text" as const, inputType: "password" as const, value: "",
+					visibleWhen: item.methods.length > 1
+						? [{ field: "id", values: [item.id] }, { field: `method:${item.id}`, values: ["api_key"] }]
+						: { field: "id", values: [item.id] },
+				})),
+			],
+		};
+	}
+	const editable = EDITABLE_APIS.includes(provider.api);
+	const ordered = [...methods].sort((left, right) => credentialOrder(left.type) - credentialOrder(right.type));
+	const methodLabel = (type: "api_key" | "oauth") => copy(type === "api_key" ? "connections.apiKey" : "connections.signIn");
+	const onlyLogin = !editable && ordered.length > 0 && ordered.every(method => method.type === "oauth");
+	return { id: PROVIDER_EDIT_MODAL, data: provider.id, title: copy("connections.configure"), submit: copy(onlyLogin ? "auth.continue" : "modal.save"), fields: [
+		...(editable ? [
+			{ id: "name", label: copy("connections.name"), kind: "text" as const, value: provider.name },
+			{ id: "baseUrl", label: copy("connections.endpoint"), kind: "text" as const, value: provider.baseUrl },
+			{ id: "api", label: copy("connections.protocol"), kind: "select" as const, value: provider.api, options: [
+				{ value: "openai-completions", label: "OpenAI Chat Completions" }, { value: "openai-responses", label: "OpenAI Responses" },
+				{ value: "anthropic-messages", label: "Anthropic Messages" }, { value: "google-generative-ai", label: "Google Generative AI" },
+			] },
+			...(provider.custom ? [{ id: "models", label: copy("connections.modelIds"), kind: "textarea" as const, value: (provider.modelIds ?? models.map(model => model.modelId)).join("\n") }] : []),
+		] : []),
+		...(ordered.length > 1 ? [{
+			id: `method:${provider.id}`, label: copy("connections.method"), kind: "select" as const, value: ordered[0]?.type ?? "api_key",
+			options: ordered.map(method => ({ value: method.type, label: methodLabel(method.type) })),
+		}] : []),
+		...(ordered.some(method => method.type === "api_key") ? [{
+			id: `key:${provider.id}`, label: copy("connections.apiKey"), kind: "text" as const, inputType: "password" as const, value: "",
+			...(provider.configured ? { placeholder: copy("connections.keyKeep") } : {}),
+			...(ordered.length > 1 ? { visibleWhen: { field: `method:${provider.id}`, values: ["api_key"] } } : {}),
+		}] : []),
 	] };
+}
+
+/** The test dialog checks one selected model, or every model of this provider. The key is never copied here. */
+export function providerTestModal(locale: Locale, models: readonly ConnectionModelLike[], configured: boolean): PanelModal {
+	const copy = (key: Parameters<typeof translate>[1]) => translate(locale, key);
+	return {
+		id: PROVIDER_TEST_MODAL, title: copy("connections.testTitle"), submit: copy("connections.testStart"), dismiss: copy("panel.cancel"),
+		actions: [{ id: PROVIDER_TEST_ALL_ACTION, label: copy("connections.testAll"), weight: "line", placement: "start", disabled: models.length === 0 }],
+		fields: [
+			{ id: "model", label: copy("connections.testModel"), kind: "select", value: models[0]?.modelId ?? "", options: models.map(model => ({ value: model.modelId, label: model.name })) },
+			{ id: "key", label: copy("connections.apiKey"), kind: "text", readOnly: true, value: configured ? "••••••••" : copy("connections.keyMissing") },
+		],
+	};
 }
 
 /** The provider search stays mounted while connection and model states change. */
@@ -107,34 +172,36 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 	const renderList = () => {
 		list.replaceChildren();
 		const query = search.value.trim().toLowerCase();
-		for (const provider of current?.state.providers ?? []) {
-			if (!`${provider.name} ${provider.id}`.toLowerCase().includes(query)) continue;
+		const configured = (current?.state.providers ?? []).filter(provider => provider.configured);
+		for (const provider of configured) {
+			if (query && !`${provider.name} ${provider.id}`.toLowerCase().includes(query)) continue;
 			const selected = provider.id === current?.selected;
 			const row = action("", PROVIDER_SELECT_ACTION, provider.id, false, `connection-row${selected ? " selected" : ""}`);
 			row.setAttribute("aria-pressed", String(selected));
 			const top = document.createElement("span"); top.className = "connection-row-top";
 			const dot = document.createElement("span");
-			dot.className = `connection-status-dot ${provider.configured ? "configured" : "unconfigured"}`;
+			dot.className = "connection-status-dot configured";
 			dot.setAttribute("aria-hidden", "true");
 			top.append(node("span", provider.name, "connection-row-name"), dot);
 			const meta = document.createElement("small"); meta.className = "connection-row-meta";
 			const sep = node("span", " · ", "connection-row-sep"); sep.setAttribute("aria-hidden", "true");
 			meta.append(
-				node("span", copy(provider.configured ? "connections.configured" : "connections.unconfigured"), "connection-row-state"),
+				node("span", copy("connections.configured"), "connection-row-state"),
 				sep,
 				node("span", String(provider.modelCount), "connection-row-count"),
 			);
 			row.append(top, meta);
 			list.append(row);
 		}
-		if (!list.children.length) list.append(node("p", copy("connections.noMatch"), "connection-empty"));
+		if (!list.children.length) list.append(node("p", copy(configured.length === 0 ? "connections.empty" : "connections.noMatch"), "connection-empty"));
 	};
 	search.addEventListener("input", renderList);
 	return { element: root, update(nextLocale: Locale, view: ModelConnectionsLike, extraNotices: readonly (PanelNotice & { readonly key?: string })[] = []) {
 		locale = nextLocale; current = view;
 		title.textContent = copy("connections.title");
 		help.textContent = copy("connections.help");
-		add.textContent = copy("connections.add"); add.disabled = view.disabled;
+		const canAdd = view.state.providers.some(provider => !provider.configured && (view.state.authentication.providers.find(item => item.id === provider.id)?.methods.length ?? 0) > 0);
+		add.textContent = copy("connections.add"); add.disabled = view.disabled || !canAdd;
 		search.placeholder = copy("connections.search"); search.setAttribute("aria-label", search.placeholder);
 
 		const refreshing = view.state.refresh.status === "refreshing";
@@ -219,23 +286,20 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		providerTitles.append(titleRow, node("p", provider.baseUrl, "connection-endpoint"));
 
 		const controls = document.createElement("div"); controls.className = "connection-actions";
-		const editable = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"].includes(provider.api);
+		const editable = EDITABLE_APIS.includes(provider.api);
 		const auth = view.state.authentication.providers.find(item => item.id === provider.id);
-		const canAuthenticate = (auth?.methods.length ?? 0) > 0 || provider.configured;
-		const connectPrimary = !provider.configured && canAuthenticate;
+		const canConfigure = editable || (auth?.methods.length ?? 0) > 0;
 		controls.append(
-			action(copy("connections.edit"), PROVIDER_EDIT_ACTION, provider.id, !editable),
-			action(copy(provider.configured ? "auth.title" : "model.connectProvider"), PROVIDER_AUTH_ACTION, provider.id, !canAuthenticate, connectPrimary ? "panel-button weight-filled" : "panel-button weight-line"),
+			action(copy("connections.configure"), PROVIDER_EDIT_ACTION, provider.id, !canConfigure, !provider.configured && canConfigure ? "panel-button weight-filled" : "panel-button weight-line"),
+			action(copy("connections.testAction"), PROVIDER_TEST_ACTION, provider.id, !provider.configured || view.loading || view.models.length === 0 || provider.verification.status === "checking"),
 		);
 		providerHead.append(providerTitles, controls);
 		providerSection.append(providerHead);
 
-		if (!editable || !canAuthenticate) providerSection.append(node("p", copy("connections.native"), "connection-native"));
+		if (!canConfigure) providerSection.append(node("p", copy("connections.native"), "connection-native"));
 		const verification = provider.verification;
-		const status = node("p", copy(verification.status === "success" ? "connections.verified" : verification.status === "error" ? "connections.failed" : verification.status === "checking" ? "connections.testing" : "connections.untested"));
+		const status = node("p", verificationStatusText(locale, verification));
 		status.className = `connection-verification ${verification.status}`; status.setAttribute("role", "status");
-		if (verification.modelId) status.prepend(document.createTextNode(`${verification.modelId} · `));
-		if (verification.checkedAt) status.append(document.createTextNode(` · ${new Date(verification.checkedAt).toLocaleString(locale)}`));
 		providerSection.append(status);
 
 		const modelsSection = document.createElement("section"); modelsSection.className = "connection-models-section";
@@ -265,10 +329,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			enabled.addEventListener("change", () => report({ kind: "control", id: MODEL_ENABLED_ACTION, data: modelRef, value: String(enabled.checked) }));
 			label.append(enabled, node("span", model.name, "connection-model-name"));
 			main.append(label, node("small", model.modelId, "connection-model-id"));
-			const rowActions = document.createElement("div"); rowActions.className = "connection-model-actions";
-			const verify = action(copy("connections.test"), PROVIDER_TEST_ACTION, modelRef, !model.available || verification.status === "checking", "panel-button weight-text connection-row-button");
-			rowActions.append(verify);
-			row.append(main, rowActions);
+			row.append(main);
 			modelList.append(row);
 		}
 		modelsSection.append(modelList);

@@ -186,7 +186,7 @@ import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
 import { Models, type Models as ModelsService, type ModelsState } from "../services/models.ts";
 import { ModelCatalog, type CatalogModel, type ModelSelection } from "../services/model-catalog.ts";
-import { MODEL_CONNECTIONS_ACTION, MODEL_ENABLED_ACTION, PROVIDER_SELECT_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_TEST_ACTION, providerConfigurationModal } from "@amazme/web";
+import { MODEL_CONNECTIONS_ACTION, MODEL_ENABLED_ACTION, PROVIDER_SELECT_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_TEST_ACTION, PROVIDER_TEST_ALL_ACTION, PROVIDER_TEST_MODAL, providerConfigurationModal, providerTestModal, verificationStatusText } from "@amazme/web";
 import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
@@ -1108,7 +1108,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			modalNotice = undefined;
 			panelPending = undefined;
 		}
-		if (providerAuthView !== undefined) {
+		if (providerAuthView !== undefined && !probing) {
 			const owner = providerAuthView;
 			const state = modelCatalog.state.value?.authentication;
 			if (!client.connected || !state) {
@@ -1129,6 +1129,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				if (modal?.data !== next.data) modalNotice = undefined;
 				if (expired) modalNotice = { tone: "error", text: copy("auth.expired") };
 				modal = next;
+				if (confirming && login?.id === confirming.loginId && login.status === "done") {
+					const job = confirming;
+					confirming = undefined;
+					probing = true;
+					queueMicrotask(() => finishProbe(job));
+				}
 			}
 		}
 		const now = Date.now();
@@ -1334,7 +1340,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	});
 	modelCatalog.state.subscribe((state, _context, delivery) => {
 		if (delivery.kind === "hydrate") draftModelsKey = "";
-		if (!state.providers.some(provider => provider.id === selectedProvider)) selectedProvider = state.providers.find(provider => provider.configured)?.id ?? state.providers[0]?.id;
+		if (!state.providers.some(provider => provider.id === selectedProvider)) selectedProvider = state.providers.find(provider => provider.configured)?.id;
 		loadProviderModels(); refreshDraftModels(); paint();
 	});
 	// A rating given here, or by another tab, repaints the transcript's controls.
@@ -1838,6 +1844,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	const closeModal = (): void => {
 		if (modalPending) panelPending = undefined;
+		const abandoned = probing ? undefined : confirming;
+		if (!probing) confirming = undefined;
 		providerAuthView = undefined;
 		modelScopeView = undefined;
 		mcpView = undefined;
@@ -1849,6 +1857,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		modalNotice = undefined;
 		const opener = modalOpener;
 		modalOpener = undefined;
+		if (abandoned) void modelCatalog.cancelLogin(abandoned.loginId, BACKGROUND_CONTEXT).then(() => undefined, () => undefined);
 		paint();
 		if (opener === undefined) return;
 		if (view === CHAT_VIEW && (opener.id === PROVIDER_AUTH_ACTION || opener.id === MODEL_SCOPE_ACTION)) {
@@ -1886,7 +1895,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	/** What one management call answers: the schedule store's shape, or a plain success. */
-	type PanelCallResult = { readonly ok: false; readonly problem: string } | { readonly ok: true; readonly note?: string };
+	type PanelCallResult = { readonly ok: false; readonly problem: string; readonly verification?: "success" | "error" | "checking" } | { readonly ok: true; readonly note?: string; readonly verification?: "success" | "error" | "checking" };
 	const scheduleReply = (response: ScheduleResult): PanelCallResult => response.ok
 		? { ok: true, note: scheduleActionCopy(locale, response.code) }
 		: { ok: false, problem: response.code === undefined ? response.problem : response.code === "timed_out"
@@ -1938,7 +1947,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				panelPending = undefined;
 				modalPending = false;
 				if (result !== undefined && result.ok === false) {
-					const notice: PanelNotice = { tone: "error", text: result.problem };
+					const notice: PanelNotice = { tone: "error", text: result.problem, ...(result.verification === undefined ? {} : { verification: result.verification }) };
 					if (inModal) modalNotice = notice;
 					else panelNotice = notice;
 					paint();
@@ -1949,7 +1958,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					return;
 				}
 				if (result !== undefined && result.ok && result.note !== undefined) {
-					const notice: PanelNotice = { tone: "info", text: result.note };
+					const notice: PanelNotice = { tone: "info", text: result.note, ...(result.verification === undefined ? {} : { verification: result.verification }) };
 					if (inModal) modalNotice = notice;
 					else panelNotice = notice;
 				}
@@ -1978,6 +1987,95 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		const login = state.login && ["preparing", "awaiting", "finishing"].includes(state.login.status) ? state.login : null;
 		providerAuthView = { service, preferred, ...(login ? { loginId: login.id } : {}) };
 		openModal(providerAuthModal(locale, state, preferred), { id: PROVIDER_AUTH_ACTION });
+	};
+	const providerLogin = (id: string) => {
+		const login = modelCatalog.state.value?.authentication.login;
+		return login?.id === id ? login : undefined;
+	};
+	/** Catalog state trails the login owner, so wait until this sign-in is visible and actionable. */
+	const waitForLogin = (id: string, ready: (login: NonNullable<ReturnType<typeof providerLogin>>) => boolean): Promise<void> => new Promise(resolve => {
+		const done = () => {
+			const login = providerLogin(id);
+			return login !== undefined && ready(login);
+		};
+		if (done()) { resolve(); return; }
+		const stop = modelCatalog.state.subscribe(() => {
+			if (!done()) return;
+			stop();
+			resolve();
+		});
+	});
+	/** A credential is kept only after a live model answers. `rollback` removes it when the probe fails. */
+	let confirming: { providerId: string; loginId: string; rollback: boolean } | undefined;
+	let probing = false;
+	const credentialProbe = async (providerId: string, modelId?: string): Promise<{ ok: boolean; failed: string[] }> => {
+		const target = modelId ?? (await modelCatalog.models(providerId, BACKGROUND_CONTEXT))[0]?.modelId;
+		if (!target) return { ok: false, failed: [] };
+		return modelCatalog.testModels(providerId, target, BACKGROUND_CONTEXT);
+	};
+	const rejectCredential = (providerId: string): Promise<void> => modelCatalog.logout(providerId, BACKGROUND_CONTEXT).then(() => undefined, () => undefined);
+	const verificationNotice = (providerId: string, result: { ok: boolean; failed: string[] }) => {
+		if (!result.ok && result.failed.length === 0) return { ok: false as const, problem: copy("connections.noModel") };
+		const stated = modelCatalog.state.value?.providers.find(item => item.id === providerId)?.verification;
+		const text = verificationStatusText(locale, stated ?? { status: result.ok ? "success" : "error", checkedAt: Date.now() }, result.failed.length > 1 ? result.failed.join(", ") : undefined);
+		return result.ok
+			? { ok: true as const, note: text, verification: "success" as const }
+			: { ok: false as const, problem: text, verification: "error" as const };
+	};
+	const finishProbe = (job: { providerId: string; rollback: boolean }): void => {
+		modalPending = true;
+		paint();
+		void (async () => {
+			let ok = false;
+			let problem = copy("connections.failed");
+			try {
+				const result = await credentialProbe(job.providerId);
+				ok = result.ok;
+				if (!ok) {
+					if (job.rollback) await rejectCredential(job.providerId);
+					if (result.failed.length === 0) problem = copy("connections.noModel");
+				}
+			} catch {
+				if (job.rollback) await rejectCredential(job.providerId);
+			} finally {
+				probing = false;
+				modalPending = false;
+			}
+			if (ok) {
+				selectedProvider = job.providerId;
+				loadProviderModels();
+				closeModal();
+				return;
+			}
+			if (modal !== undefined) {
+				providerAuthView = undefined;
+				modalNotice = { tone: "error", text: problem };
+			} else panelNotice = { tone: "error", text: problem };
+			paint();
+		})();
+	};
+	const beginLogin = async (providerId: string, method: "api_key" | "oauth", secret: string): Promise<{ ok: false; problem: string } | { ok: true; pending: boolean; loginId: string }> => {
+		try {
+			const loginId = await modelCatalog.startLogin(providerId, method, BACKGROUND_CONTEXT);
+			await waitForLogin(loginId, login => ["done", "cancelled", "error"].includes(login.status) || login.prompt !== null || login.authorization !== null || (method === "oauth" && login.message !== null));
+			let login = providerLogin(loginId);
+			if (method === "api_key" && login?.prompt?.type === "secret") {
+				const promptId = login.prompt.id;
+				if (!await modelCatalog.submitLoginPrompt(loginId, promptId, secret, BACKGROUND_CONTEXT)) return { ok: false, problem: copy("auth.expired") };
+				await waitForLogin(loginId, current => ["done", "cancelled", "error"].includes(current.status) || current.authorization !== null
+					|| (current.prompt !== null && current.prompt.id !== promptId)
+					|| (current.message !== null && current.prompt === null && current.status === "awaiting"));
+				login = providerLogin(loginId);
+			}
+			if (login?.status === "error") return { ok: false, problem: copy("auth.failed") };
+			if (login?.status === "cancelled") return { ok: false, problem: copy("auth.cancelled") };
+			if (!login || !["preparing", "awaiting", "finishing"].includes(login.status)) return { ok: true, pending: false, loginId };
+			return { ok: true, pending: true, loginId };
+		} catch { return { ok: false, problem: copy("auth.failed") }; }
+	};
+	const handOffLogin = (providerId: string, loginId: string): void => {
+		confirming = { providerId, loginId, rollback: true };
+		providerAuthView = { service: modelCatalog, preferred: providerId, loginId };
 	};
 	/** Authentication calls never retry onto a replacement binding, and never echo provider errors. */
 	const runProviderAuthCall = (owner: NonNullable<typeof providerAuthView>, call: () => Promise<PanelCallResult>): void => {
@@ -2151,14 +2249,34 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case PROVIDER_SELECT_ACTION:
 						selectedProvider = action.data; loadProviderModels(); paint(); return;
 					case PROVIDER_EDIT_ACTION: {
-						const provider = modelCatalog.state.value?.providers.find(provider => provider.id === action.data);
-						if (provider && provider.id !== selectedProvider) return;
-						openModal(providerConfigurationModal(locale, provider, providerModels), action); return;
+						const providers = modelCatalog.state.value?.providers ?? [];
+						if (action.data === undefined) {
+							const authentication = new Map((modelCatalog.state.value?.authentication.providers ?? []).map(provider => [provider.id, provider.methods]));
+							const presets = providers.flatMap(provider => {
+								if (provider.configured) return [];
+								const methods = authentication.get(provider.id) ?? [];
+								return methods.length === 0 ? [] : [{ id: provider.id, name: provider.name, methods }];
+							});
+							if (presets.length === 0) return;
+							openModal(providerConfigurationModal(locale, undefined, [], presets), action); return;
+						}
+						const provider = providers.find(provider => provider.id === action.data);
+						if (!provider || provider.id !== selectedProvider) return;
+						const methods = modelCatalog.state.value?.authentication.providers.find(item => item.id === provider.id)?.methods ?? [];
+						openModal(providerConfigurationModal(locale, provider, providerModels, [], methods), action); return;
 					}
 					case PROVIDER_TEST_ACTION: {
-						const ref = readModelReference(action.data);
-						if (ref) runPanelCall({ id: action.id, data: action.data, retry: false, call: () => modelCatalog.testConnection(ref, BACKGROUND_CONTEXT).then(done) });
-						return;
+						const provider = modelCatalog.state.value?.providers.find(item => item.id === action.data);
+						if (!provider || provider.id !== selectedProvider || !provider.configured || providerModels.length === 0) return;
+						openModal(providerTestModal(locale, providerModels.filter(model => model.provider === provider.id), true), action); return;
+					}
+					case PROVIDER_TEST_ALL_ACTION: {
+						const providerId = selectedProvider;
+						if (modal?.id !== PROVIDER_TEST_MODAL || modalPending || providerId === undefined) return;
+						runPanelCall({ id: action.id, inModal: true, closeOnSuccess: false, retry: false, call: async () => {
+							const result = await modelCatalog.testModels(providerId, null, BACKGROUND_CONTEXT);
+							return verificationNotice(providerId, result);
+						} }); return;
 					}
 					case "insights:refresh":
 						if (painter.insightsService) { const service = painter.insightsService; runPanelCall({ id: action.id, sessionId: painter.sessionId, retry: false, call: () => service.refresh(BACKGROUND_CONTEXT).then(done) }); } return;
@@ -2753,12 +2871,78 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				switch (action.id) {
 					case PROVIDER_EDIT_MODAL: {
 						if (modalPending) return;
-						const id = action.data ?? fields.id?.trim() ?? "";
-						runPanelCall({ id: action.id, inModal: true, retry: false, call: async () => {
-							await modelCatalog.configureProvider({ id, name: fields.name ?? "", baseUrl: fields.baseUrl ?? "", api: fields.api ?? "",
-								...(fields.models === undefined ? {} : { modelIds: fields.models.split("\n").map(id => id.trim()).filter(Boolean) }) }, BACKGROUND_CONTEXT);
-							selectedProvider = id; loadProviderModels();
+						if (action.data === undefined) {
+							const id = fields.id?.trim() ?? "";
+							const provider = modelCatalog.state.value?.authentication.providers.find(provider => provider.id === id);
+							const known = modelCatalog.state.value?.providers.some(item => item.id === id && !item.configured) === true;
+							const method = provider?.methods.length === 1 ? provider.methods[0]?.type : fields[`method:${id}`];
+							if (!known || !provider || (method !== "api_key" && method !== "oauth") || !provider.methods.some(item => item.type === method)) {
+								refuseInModal(copy(provider ? "auth.invalid" : "connections.unknown")); return;
+							}
+							const key = (fields[`key:${id}`] ?? "").trim();
+							if (method === "api_key" && key.length === 0) { refuseInModal(copy("connections.keyRequired")); return; }
+							selectedProvider = id;
+							loadProviderModels();
+							let added = false;
+							runPanelCall({ id: action.id, inModal: true, closeOnSuccess: false, retry: false, call: async () => {
+								const signed = await beginLogin(id, method, key);
+								if (!signed.ok) return signed;
+								if (signed.pending) { handOffLogin(id, signed.loginId); return { ok: true as const }; }
+								const probed = await credentialProbe(id);
+								if (!probed.ok) {
+									await rejectCredential(id);
+									return { ok: false as const, problem: copy(probed.failed.length === 0 ? "connections.noModel" : "connections.failed") };
+								}
+								added = true;
+								loadProviderModels();
+								return { ok: true as const };
+							}, afterSuccess: () => { if (added) closeModal(); } });
+							return;
+						}
+						const id = action.data;
+						const current = modelCatalog.state.value?.providers.find(item => item.id === id);
+						if (!current || current.id !== selectedProvider) return;
+						const methods = modelCatalog.state.value?.authentication.providers.find(item => item.id === id)?.methods ?? [];
+						const method = methods.length <= 1 ? methods[0]?.type : fields[`method:${id}`];
+						if (methods.length > 1 && method !== "api_key" && method !== "oauth") { refuseInModal(copy("auth.invalid")); return; }
+						const key = (fields[`key:${id}`] ?? "").trim();
+						const editable = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"].includes(current.api);
+						const replacingKey = method === "api_key" && key.length > 0;
+						const startingLogin = method === "oauth" && (!current.configured || methods.length > 1);
+						if (!current.configured && method === "api_key" && key.length === 0) { refuseInModal(copy("connections.keyRequired")); return; }
+						if (!editable && !replacingKey && !startingLogin && !current.configured) { refuseInModal(copy("auth.invalid")); return; }
+						let saved = false;
+						runPanelCall({ id: action.id, inModal: true, closeOnSuccess: false, retry: false, call: async () => {
+							if (editable) await modelCatalog.configureProvider({ id, name: fields.name ?? "", baseUrl: fields.baseUrl ?? "", api: fields.api ?? "",
+								...(fields.models === undefined ? {} : { modelIds: fields.models.split("\n").map(item => item.trim()).filter(Boolean) }) }, BACKGROUND_CONTEXT);
+							if (replacingKey || startingLogin) {
+								const signed = await beginLogin(id, method === "oauth" ? "oauth" : "api_key", key);
+								if (!signed.ok) return signed;
+								if (signed.pending) { handOffLogin(id, signed.loginId); return { ok: true as const }; }
+								const probed = await credentialProbe(id);
+								if (!probed.ok) {
+									await rejectCredential(id);
+									return { ok: false as const, problem: copy(probed.failed.length === 0 ? "connections.noModel" : "connections.failed") };
+								}
+							} else if (current.configured) {
+								const probed = await credentialProbe(id);
+								if (!probed.ok) return { ok: false as const, problem: copy(probed.failed.length === 0 ? "connections.noModel" : "connections.failed") };
+							}
+							saved = true;
+							selectedProvider = id;
+							loadProviderModels();
 							return { ok: true as const };
+						}, afterSuccess: () => { if (saved) closeModal(); } });
+						return;
+					}
+					case PROVIDER_TEST_MODAL: {
+						const providerId = selectedProvider;
+						if (modalPending || providerId === undefined) return;
+						const modelId = fields.model?.trim() ?? "";
+						if (!modelId) { refuseInModal(copy("connections.noModel")); return; }
+						runPanelCall({ id: action.id, inModal: true, closeOnSuccess: false, retry: false, call: async () => {
+							const result = await modelCatalog.testModels(providerId, modelId, BACKGROUND_CONTEXT);
+							return verificationNotice(providerId, result);
 						} }); return;
 					}
 					case PROJECT_ADD_MODAL:

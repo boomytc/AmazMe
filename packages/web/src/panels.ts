@@ -98,6 +98,8 @@ export interface PanelButton {
 	readonly danger?: boolean;
 	readonly data?: string;
 	readonly disabled?: boolean;
+	/** A footer action sits on the leading edge; the others stay with cancel and submit. */
+	readonly placement?: "start";
 }
 
 export interface PanelRow {
@@ -158,6 +160,8 @@ export interface PanelNotice {
 	readonly text: string;
 	/** Info fades. Errors and warnings stay until the text changes. */
 	readonly persistence?: NoticePersistence;
+	/** The provider verification line: a status dot, then the text. */
+	readonly verification?: "checking" | "success" | "error";
 }
 
 /** A scrollable text block a panel shows: a file's content, or a terminal's output. */
@@ -212,7 +216,8 @@ export interface PanelField {
 	readonly kind: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "directories";
 	readonly inputType?: "number" | "datetime-local" | "password";
 	readonly options?: readonly { readonly value: string; readonly label: string }[];
-	readonly visibleWhen?: { readonly field: string; readonly values: readonly string[] };
+	/** Every condition must match. One condition stays a single rule; several are combined. */
+	readonly visibleWhen?: { readonly field: string; readonly values: readonly string[] } | readonly { readonly field: string; readonly values: readonly string[] }[];
 	readonly readOnly?: boolean;
 	readonly description?: string;
 	readonly value: string;

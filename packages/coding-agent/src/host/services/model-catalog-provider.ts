@@ -105,6 +105,13 @@ export async function createModelCatalogService(options: {
 		if (!model) throw new Error("Choose an available model.");
 		return model;
 	};
+	/** A live reply is the availability check. Provider errors can carry credentials, so only the outcome is kept. */
+	const probeModel = async (model: ReturnType<ModelRuntime["getModels"]>[number], signal: AbortSignal): Promise<boolean> => {
+		try {
+			const answer = await runtime.completeSimple(model, { messages: [{ role: "user", content: "Reply OK.", timestamp: Date.now() }] }, { signal, maxTokens: 16 });
+			return answer.stopReason !== "error" && answer.stopReason !== "aborted";
+		} catch { return false; }
+	};
 	const service: ModelCatalog = {
 		state,
 		async resolve(projectId, context) {
@@ -181,13 +188,24 @@ export async function createModelCatalogService(options: {
 			const model = requireModel(ref);
 			const signal = AbortSignal.any([lifetime.signal, AbortSignal.timeout(30_000), ...(context.abortSignal ? [context.abortSignal] : [])]);
 			checks.set(ref.provider, { status: "checking", modelId: model.id }); await publish();
-			let success = false;
-			try {
-				const answer = await runtime.completeSimple(model, { messages: [{ role: "user", content: "Reply OK.", timestamp: Date.now() }] }, { signal, maxTokens: 16 });
-				success = answer.stopReason !== "error" && answer.stopReason !== "aborted";
-			} catch { /* Raw provider errors may contain credentials; publish only the outcome. */ }
+			const success = await probeModel(model, signal);
 			checks.set(ref.provider, { status: success ? "success" : "error", checkedAt: Date.now(), modelId: model.id });
 			await publish();
+		}),
+		testModels: (provider, modelId, context) => serialize(async () => {
+			context.abortSignal?.throwIfAborted();
+			const models = runtime.getModels(provider).filter(model => modelId === null || model.id === modelId);
+			const signal = AbortSignal.any([lifetime.signal, ...(context.abortSignal ? [context.abortSignal] : [])]);
+			checks.set(provider, { status: "checking", ...(modelId === null ? {} : { modelId }) }); await publish();
+			const failed: string[] = [];
+			for (const model of models) {
+				signal.throwIfAborted();
+				const attempt = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+				if (!await probeModel(model, attempt)) failed.push(model.id);
+			}
+			checks.set(provider, { status: models.length > 0 && failed.length === 0 ? "success" : "error", checkedAt: Date.now(), ...(modelId === null ? {} : { modelId }) });
+			await publish();
+			return { ok: models.length > 0 && failed.length === 0, failed };
 		}),
 		startLogin(provider, method, context) { return serialize(() => authentication.startLogin(provider, method, context.abortSignal)); },
 		async submitLoginPrompt(id, promptId, value, context) { context.abortSignal?.throwIfAborted(); return authentication.submitPrompt(id, promptId, value); },

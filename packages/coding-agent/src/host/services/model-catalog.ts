@@ -56,9 +56,11 @@ export interface ModelCatalog {
 	setModelEnabled(model: ModelRef, enabled: boolean, context: Context): Promise<void>;
 	saveDefaults(selection: ModelSelection, context: Context): Promise<void>;
 	testConnection(model: ModelRef, context: Context): Promise<void>;
+	/** `modelId` null checks every model of the provider. Failures name the models that did not answer. */
+	testModels(provider: string, modelId: string | null, context: Context): Promise<{ ok: boolean; failed: string[] }>;
 	startLogin(provider: string, method: AuthType, context: Context): Promise<string>;
 	submitLoginPrompt(id: string, promptId: string, value: string, context: Context): Promise<boolean>;
 	cancelLogin(id: string, context: Context): Promise<boolean>;
 	logout(provider: string, context: Context): Promise<void>;
 }
-export const ModelCatalog = remoteService<ModelCatalog>("amazme.model-catalog", { resolve: 1, models: 1, refresh: 0, configureProvider: 1, setModelEnabled: 2, saveDefaults: 1, testConnection: 1, startLogin: 2, submitLoginPrompt: 3, cancelLogin: 1, logout: 1 }, ["state"]);
+export const ModelCatalog = remoteService<ModelCatalog>("amazme.model-catalog", { resolve: 1, models: 1, refresh: 0, configureProvider: 1, setModelEnabled: 2, saveDefaults: 1, testConnection: 1, testModels: 2, startLogin: 2, submitLoginPrompt: 3, cancelLogin: 1, logout: 1 }, ["state"]);

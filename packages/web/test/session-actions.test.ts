@@ -16,6 +16,7 @@ import {
 	PROVIDER_SELECT_ACTION,
 	PROVIDER_TEST_ACTION,
 	providerConfigurationModal,
+	providerTestModal,
 	type ModelConnectionsLike,
 } from "../src/model-connections.ts";
 
@@ -53,6 +54,30 @@ describe("session actions", () => {
 			{ provider: "openai", modelId: "custom-model", name: "Custom", available: true },
 		]);
 		expect(modal.fields.find(field => field.id === "models")?.value).toBe("custom-model");
+		expect(modal.fields.find(field => field.id === "id")).toBeUndefined();
+		const configured = providerConfigurationModal("zh", { id: "openai", name: "OpenAI", baseUrl: "https://example.test/v1", api: "openai-completions", modelCount: 1, custom: false, configured: true, verification: { status: "idle" } }, [], [], [{ type: "api_key", label: "Key" }, { type: "oauth", label: "Login" }]);
+		expect(configured.title).toBe("配置");
+		expect(configured.fields.map(field => field.id)).toEqual(["name", "baseUrl", "api", "method:openai", "key:openai"]);
+		expect(configured.fields.find(field => field.id === "key:openai")).toMatchObject({ inputType: "password", placeholder: "留空则保留已保存的密钥", visibleWhen: { field: "method:openai", values: ["api_key"] } });
+
+		const add = providerConfigurationModal("zh", undefined, [], [
+			{ id: "anthropic", name: "Anthropic", methods: [{ type: "oauth", label: "Claude" }, { type: "api_key", label: "Key" }] },
+			{ id: "google", name: "Google", methods: [{ type: "api_key", label: "Key" }] },
+		]);
+		expect(add.title).toBe("添加供应商");
+		expect(add.description).toBe("选择供应商，再用 API 密钥或登录完成配置。");
+		expect(add.submit).toBe("继续");
+		expect(add.fields.map(field => field.id)).toEqual(["id", "method:anthropic", "key:anthropic", "key:google"]);
+		expect(add.fields[1]).toMatchObject({
+			kind: "select", value: "api_key",
+			options: [{ value: "api_key", label: "API 密钥" }, { value: "oauth", label: "登录凭证" }],
+			visibleWhen: { field: "id", values: ["anthropic"] },
+		});
+		expect(add.fields[2]).toMatchObject({
+			kind: "text", inputType: "password",
+			visibleWhen: [{ field: "id", values: ["anthropic"] }, { field: "method:anthropic", values: ["api_key"] }],
+		});
+		expect(add.fields[3]).toMatchObject({ visibleWhen: { field: "id", values: ["google"] } });
 	});
 
 	test("the new chat model menu searches models, selects reasoning, and opens connection management without clearing input", () => {
@@ -332,6 +357,8 @@ describe("session actions", () => {
 		};
 
 		connections.update("zh", baseView, [{ tone: "info", text: "已保存默认配置" }]);
+		expect([...connections.element.querySelectorAll(".connection-row-name")].map(node => node.textContent)).toEqual(["OpenAI"]);
+		expect(connections.element.querySelector<HTMLButtonElement>(`.connection-rail [data-action="${PROVIDER_EDIT_ACTION}"]`)?.disabled).toBe(false);
 		expect(connections.element.querySelector("h1.panel-title")?.textContent).toBe("模型与连接");
 		expect(connections.element.querySelector("p.panel-desc")?.textContent).toBe("管理供应商连接和新聊天可选的模型。");
 		expect(connections.element.querySelector("h2.connection-provider-name")?.textContent).toBe("Anthropic");
@@ -339,10 +366,12 @@ describe("session actions", () => {
 		expect(connections.element.querySelector(".connection-models-count")?.textContent).toBe("1 / 2");
 		expect(connections.element.querySelector(".connection-notices .panel-notice")?.textContent).toBe("已保存默认配置");
 
-		// Unconfigured provider highlights Connect provider as the single primary button in the detail pane.
+		// An unconfigured provider keeps Configure as the only filled action. Test waits until a credential exists.
 		const primaryButtons = connections.element.querySelectorAll(".connection-detail .weight-filled");
 		expect(primaryButtons).toHaveLength(1);
-		expect(primaryButtons[0]?.getAttribute("data-action")).toBe(PROVIDER_AUTH_ACTION);
+		expect(primaryButtons[0]?.textContent).toBe("配置");
+		expect(connections.element.querySelector<HTMLButtonElement>(`.connection-detail [data-action="${PROVIDER_TEST_ACTION}"]`)?.disabled).toBe(true);
+		expect(connections.element.querySelector(".connection-model [data-action]")).toBeNull();
 
 		// Search input is inside a <search> landmark with autocorrect/spellcheck disabled and stays mounted across updates.
 		const searchInput = connections.element.querySelector<HTMLInputElement>("search.connection-search > input.connection-search-input")!;
@@ -359,6 +388,13 @@ describe("session actions", () => {
 		expect(connections.element.querySelector("input.connection-search-input")).toBe(searchInput);
 		expect(connections.element.querySelectorAll(".connection-detail .weight-filled")).toHaveLength(0);
 		expect(connections.element.querySelector(".connection-verification.success")?.textContent).toContain("gpt-5 · 最近验证成功");
+		connections.element.querySelector<HTMLButtonElement>(`.connection-detail [data-action="${PROVIDER_TEST_ACTION}"]`)!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROVIDER_TEST_ACTION, data: "openai" });
+		const testDialog = providerTestModal("zh", [{ provider: "openai", modelId: "gpt-5", name: "GPT-5", available: true }], true);
+		expect(testDialog.title).toBe("请选择要检测的模型");
+		expect(testDialog.fields.map(field => [field.id, field.value])).toEqual([["model", "gpt-5"], ["key", "••••••••"]]);
+		expect(testDialog.actions?.[0]).toMatchObject({ label: "检测所有模型", placement: "start" });
+		expect(testDialog.submit).toBe("开始");
 
 		// Model row interactions report expected actions; the default is set once in the overview.
 		connections.update("zh", baseView);
@@ -372,12 +408,6 @@ describe("session actions", () => {
 			id: MODEL_ENABLED_ACTION,
 			data: JSON.stringify(["anthropic", "claude-sonnet-4"]),
 			value: "false",
-		});
-		firstRow.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_TEST_ACTION}"]`)!.click();
-		expect(report).toHaveBeenLastCalledWith({
-			kind: "command",
-			id: PROVIDER_TEST_ACTION,
-			data: JSON.stringify(["anthropic", "claude-sonnet-4"]),
 		});
 		connections.element.querySelector<HTMLButtonElement>(`[data-action="${REFRESH_MODELS_ACTION}"]`)!.click();
 		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined });
@@ -408,5 +438,21 @@ describe("session actions", () => {
 		const emptySelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
 		expect(emptySelect.disabled).toBe(true);
 		expect(emptySelect.selectedOptions[0]?.textContent).toBe("连接供应商后即可选择默认模型。");
+
+		searchInput.value = "";
+		connections.update("zh", {
+			...baseView,
+			selected: undefined,
+			state: { ...baseView.state, providers: baseView.state.providers.map(provider => ({ ...provider, configured: false })) },
+		});
+		expect(connections.element.querySelector(".connection-list .connection-empty")?.textContent).toBe("还没有配置过的供应商。");
+		expect(connections.element.querySelector<HTMLButtonElement>(`.connection-rail [data-action="${PROVIDER_EDIT_ACTION}"]`)?.disabled).toBe(false);
+
+		connections.update("zh", {
+			...baseView,
+			state: { ...baseView.state, providers: baseView.state.providers.map(provider => ({ ...provider, configured: true })) },
+		});
+		expect(connections.element.querySelector<HTMLButtonElement>(`.connection-rail [data-action="${PROVIDER_EDIT_ACTION}"]`)?.disabled).toBe(true);
+		expect([...connections.element.querySelectorAll(".connection-row-name")].map(node => node.textContent)).toEqual(["Anthropic", "OpenAI"]);
 	});
 });

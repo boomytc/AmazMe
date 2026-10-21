@@ -616,7 +616,7 @@ function panelButtonClass(action: Pick<PanelButton, "weight" | "danger">): strin
 }
 
 function panelButton(action: PanelButton, report: (action: PanelAction) => void, pending?: PanelPending): HTMLButtonElement {
-	const node = button(panelButtonClass(action));
+	const node = button(`${panelButtonClass(action)}${action.placement === "start" ? " is-footer-start" : ""}`);
 	node.dataset.action = action.id;
 	if (action.data !== undefined) node.dataset.actionData = action.data;
 	node.textContent = action.label;
@@ -1504,7 +1504,9 @@ export function createRenderer(
 			const text = notice === undefined ? "" : notice.tone === "error" ? errorMessageCopy(lastView?.locale ?? FALLBACK_LOCALE, notice.text) : notice.text;
 			modalMessage.setAttribute("role", notice?.tone === "error" ? "alert" : "status");
 			if (modalMessage.textContent !== text) modalMessage.textContent = text;
-			modalMessage.className = notice === undefined ? "modal-notice" : `modal-notice ${notice.tone}`;
+			modalMessage.className = notice === undefined ? "modal-notice"
+				: notice.verification !== undefined ? `modal-notice connection-verification ${notice.verification}`
+				: `modal-notice ${notice.tone}`;
 			modalMessage.hidden = notice === undefined;
 		}
 	};
@@ -1612,7 +1614,8 @@ export function createRenderer(
 		const visibility = (): void => {
 			for (const field of modal.fields) {
 				const input = inputs.get(field.id)!;
-				const visible = field.visibleWhen === undefined || field.visibleWhen.values.includes(inputs.get(field.visibleWhen.field)?.value ?? "");
+				const rules = field.visibleWhen === undefined ? [] : Array.isArray(field.visibleWhen) ? field.visibleWhen : [field.visibleWhen];
+				const visible = rules.every(rule => rule.values.includes(inputs.get(rule.field)?.value ?? ""));
 				input.disabled = !visible;
 				fieldContainers.get(field.id)!.hidden = !visible;
 			}
@@ -1639,8 +1642,9 @@ export function createRenderer(
 				submit.click();
 			}
 		});
+		for (const action of modal.actions ?? []) if (action.placement === "start") foot.append(panelButton(action, report));
 		foot.append(cancel);
-		for (const action of modal.actions ?? []) foot.append(panelButton(action, report));
+		for (const action of modal.actions ?? []) if (action.placement !== "start") foot.append(panelButton(action, report));
 		if (modal.submit !== undefined) foot.append(submit);
 		const message = document.createElement("p");
 		message.className = "modal-notice";

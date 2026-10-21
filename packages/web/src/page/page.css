@@ -4003,6 +4003,12 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	color: var(--danger);
 }
 
+.modal-notice.connection-verification {
+	font-size: 12px;
+	line-height: 18px;
+	font-variant-numeric: tabular-nums;
+}
+
 .modal-foot {
 	flex: none;
 	display: flex;
@@ -4012,6 +4018,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	gap: 8px;
 	padding: 12px 20px 18px;
 }
+
+.modal-foot .is-footer-start { margin-right: auto; }
 
 /* ---------------------------------------------------------- drawers (narrow) */
 

@@ -155,12 +155,21 @@ describe("native management modal", () => {
 		const { paint, modal } = setup();
 		paint({ ...modal, fields: [
 			{ id: "secret", label: "Hidden", kind: "text", value: "", visibleWhen: { field: "mode", values: ["other"] } },
-			{ id: "mode", label: "Mode", kind: "select", value: "local", options: [{ value: "local", label: "Local" }], description: "Choose where to save" },
+			{ id: "mode", label: "Mode", kind: "select", value: "local", options: [{ value: "local", label: "Local" }, { value: "other", label: "Other" }], description: "Choose where to save" },
+			{ id: "key", label: "Key", kind: "text", value: "", visibleWhen: [{ field: "mode", values: ["local"] }, { field: "gate", values: ["yes"] }] },
+			{ id: "gate", label: "Gate", kind: "select", value: "no", options: [{ value: "no", label: "No" }, { value: "yes", label: "Yes" }] },
 		] });
 		const field = document.querySelector<HTMLSelectElement>(".modal-input:not(:disabled)");
 		expect(document.activeElement).toBe(field);
 		expect(field?.getAttribute("aria-describedby")).toBe("modal-help-mode");
 		expect(input().closest(".modal-field")?.hasAttribute("hidden")).toBe(true);
+		const key = [...document.querySelectorAll(".modal-field")].find(node => node.textContent?.startsWith("Key"));
+		expect(key?.hasAttribute("hidden")).toBe(true);
+		const gate = [...document.querySelectorAll<HTMLSelectElement>("select.modal-input")].find(node => [...node.options].some(option => option.value === "yes"));
+		if (!gate) throw new Error("Missing gate");
+		gate.value = "yes";
+		gate.dispatchEvent(new Event("change"));
+		expect(key?.hasAttribute("hidden")).toBe(false);
 	});
 
 	test("late directory results cannot unlock a pending form or corrupt its settled control state", async () => {
