@@ -100,7 +100,7 @@ export interface BranchSummaryEntry<T = unknown> extends SessionEntryBase {
  * Purpose: Persist extension state across session reloads. On reload, extensions can
  * scan entries for their customType and reconstruct internal state.
  *
- * Does NOT participate in LLM context (ignored by buildSessionContext).
+ * Does NOT participate in LLM context (ignored by buildSessionProjection).
  * For injecting content into context, see CustomMessageEntry.
  */
 export interface CustomEntry<T = unknown> extends SessionEntryBase {
@@ -127,7 +127,7 @@ export interface SessionInfoEntry extends SessionEntryBase {
  * Use customType to identify your extension's entries.
  *
  * Unlike CustomEntry, this DOES participate in LLM context.
- * The content is converted to a user message in buildSessionContext().
+ * The content is converted to a user message in buildSessionProjection().
  * Use details for extension-specific metadata (not sent to LLM).
  *
  * display controls TUI rendering:
@@ -539,15 +539,5 @@ export function buildSessionProjection(
 		thinkingLevel,
 		model,
 	};
-}
-
-/** Build the finalized model context from the canonical session projection. */
-export function buildSessionContext(
-	entries: SessionEntry[],
-	leafId?: string | null,
-	byId?: Map<string, SessionEntry>,
-): SessionContext {
-	const { messages, thinkingLevel, model } = buildSessionProjection(entries, leafId, byId);
-	return { messages, thinkingLevel, model };
 }
 

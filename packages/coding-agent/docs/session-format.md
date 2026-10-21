@@ -236,7 +236,7 @@ Entries normally form one tree, but navigation APIs can create multiple roots:
 
 `buildSessionProjection()` then applies the latest `context_edit` for each selected target. It returns the model-visible messages together with their source entries. Omitted targets produce no message; replacements retain the source entry's role and metadata while changing only content. The raw selected entries are not modified.
 
-`buildSessionContext()` builds on that projection to produce the message list for the LLM:
+The same projection also produces the message list for the LLM:
 
 1. Extracts current model and thinking level settings from the full path
 2. Converts selected entries to messages:
