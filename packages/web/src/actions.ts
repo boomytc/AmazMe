@@ -16,6 +16,8 @@ export const COMPACT_ACTION = "run:compact";
 export const COMPACT_MODAL = "run:compact-submit";
 /** Ask the attached session's host to re-read the provider catalog. */
 export const REFRESH_MODELS_ACTION = "run:model-refresh";
+/** Open Models and connections, where providers are added and configured. */
+export const MODEL_CONNECTIONS_ACTION = "models:connections";
 /** Open the provider sign-in surface from the model picker. */
 export const PROVIDER_AUTH_ACTION = "run:provider-auth";
 export const PROVIDER_AUTH_MODAL = "run:provider-auth-submit";

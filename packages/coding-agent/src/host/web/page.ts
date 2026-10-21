@@ -186,7 +186,7 @@ import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
 import { Models, type Models as ModelsService, type ModelsState } from "../services/models.ts";
 import { ModelCatalog, type CatalogModel, type ModelSelection } from "../services/model-catalog.ts";
-import { MODEL_CONNECTIONS_ACTION, MODEL_ENABLED_ACTION, PROVIDER_SELECT_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_TEST_ACTION, PROVIDER_TEST_ALL_ACTION, PROVIDER_TEST_MODAL, providerConfigurationModal, providerTestModal, verificationStatusText } from "@amazme/web";
+import { MODEL_CONNECTIONS_ACTION, MODEL_ENABLED_ACTION, PROVIDER_SELECT_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_TEST_ACTION, PROVIDER_TEST_ALL_ACTION, PROVIDER_TEST_MODAL, providerConfigurationModal, providerLogoutModal, providerTestModal, verificationStatusText } from "@amazme/web";
 import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
@@ -2245,7 +2245,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "command":
 				switch (action.id) {
 					case "models:back": view = CHAT_VIEW; paint(); return;
-					case MODEL_CONNECTIONS_ACTION: view = SETTINGS_VIEW; paint(); return;
+					case MODEL_CONNECTIONS_ACTION: closeModal(); view = SETTINGS_VIEW; paint(); return;
 					case PROVIDER_SELECT_ACTION:
 						selectedProvider = action.data; loadProviderModels(); paint(); return;
 					case PROVIDER_EDIT_ACTION: {
@@ -2264,6 +2264,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						if (!provider || provider.id !== selectedProvider) return;
 						const methods = modelCatalog.state.value?.authentication.providers.find(item => item.id === provider.id)?.methods ?? [];
 						openModal(providerConfigurationModal(locale, provider, providerModels, [], methods), action); return;
+					}
+					case PROVIDER_LOGOUT_ACTION: {
+						const provider = modelCatalog.state.value?.providers.find(item => item.id === action.data);
+						if (!provider || provider.id !== selectedProvider || !provider.configured) return;
+						openModal(providerLogoutModal(locale, provider.id, provider.name), action); return;
 					}
 					case PROVIDER_TEST_ACTION: {
 						const provider = modelCatalog.state.value?.providers.find(item => item.id === action.data);
@@ -2933,6 +2938,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							loadProviderModels();
 							return { ok: true as const };
 						}, afterSuccess: () => { if (saved) closeModal(); } });
+						return;
+					}
+					case PROVIDER_LOGOUT_MODAL: {
+						const id = action.data ?? "";
+						if (modalPending || id.length === 0) return;
+						runPanelCall({
+							id: action.id, data: id, inModal: true, closeOnSuccess: false, retry: false,
+							call: () => modelCatalog.logout(id, BACKGROUND_CONTEXT).then(() => ({ ok: true as const })),
+							afterSuccess: () => { panelNotice = { tone: "info", text: copy("auth.loggedOut") }; closeModal(); },
+						});
 						return;
 					}
 					case PROVIDER_TEST_MODAL: {

@@ -15,7 +15,7 @@ import {
 	MODEL_SELECT_ACTION,
 	MODEL_THINKING_ACTION,
 	MODEL_DEFAULTS_ACTION,
-	PROVIDER_AUTH_ACTION,
+	MODEL_CONNECTIONS_ACTION,
 	SESSION_RELOAD_ACTION,
 	SCHEDULE_ADD_ACTION,
 	SCHEDULE_ADD_MODAL,
@@ -568,7 +568,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	if (input.hostModels) {
 		groups.push({ id: "settings:models", title: translate(locale, "connections.title"), description: translate(locale, "connections.help"), rows: [] });
 	} else if (input.models !== undefined) {
-		const { picker, available, authentication, selected: hasSelected } = input.models;
+		const { picker, available, selected: hasSelected } = input.models;
 		const selected = picker.groups.flatMap(group => group.options).find(option => option.selected);
 		const scopeEmpty = picker.empty === translate(locale, "model.scopeEmpty");
 		const placeholderKey = picker.empty === undefined ? "model.choose" : scopeEmpty ? "model.configure" : "model.connectProvider";
@@ -578,7 +578,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 			actions: [
 				{ id: REFRESH_MODELS_ACTION, label: picker.refresh.label, weight: "line", disabled: !available || picker.refresh.busy },
 				{ id: MODEL_SCOPE_ACTION, label: translate(locale, "model.scope"), weight: "line", disabled: !available },
-				{ id: PROVIDER_AUTH_ACTION, label: translate(locale, "auth.title"), weight: "line", disabled: !available || !authentication },
+				{ id: MODEL_CONNECTIONS_ACTION, label: translate(locale, "model.connectProvider"), weight: "line", disabled: !available },
 				{ id: MODEL_DEFAULTS_ACTION, label: translate(locale, "model.defaults"), weight: "line", disabled: !available || picker.disabled || !hasSelected },
 			], rows: [
 				{

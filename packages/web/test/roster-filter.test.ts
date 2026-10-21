@@ -2,8 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, test, vi } from "vitest";
-import { DOCK_TAB_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, WELCOME_SESSION_ACTION } from "../src/actions.ts";
-import { MODEL_CONNECTIONS_ACTION } from "../src/model-connections.ts";
+import { DOCK_TAB_ACTION, MODEL_CONNECTIONS_ACTION, MODEL_SCOPE_ACTION, WELCOME_SESSION_ACTION } from "../src/actions.ts";
 import { modelScopeModal } from "../src/model-scope.ts";
 import { DIAGNOSTICS_ACTION } from "../src/panels.ts";
 import { SESSION_RESTORE_ACTION } from "../src/projects.ts";
@@ -182,7 +181,23 @@ test("an attached session without models offers nearby provider and model setup 
 	expect(menu.textContent).toContain("没有可用模型。");
 	menu.querySelector<HTMLButtonElement>(".model-picker-manage")!.click();
 	expect(report).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_CONNECTIONS_ACTION, data: undefined });
-	expect(document.querySelector(`#transcript-empty [data-action="${PROVIDER_AUTH_ACTION}"]`)?.textContent).toBe("连接供应商");
+	const settingsState = {
+		paths: { global: "/agent/settings.json" },
+		projectTrusted: true,
+		descriptors: [{ id: "compactionEnabled", group: "conversation", kind: "boolean" as const, field: "compactionEnabled", explicit: false, value: "false" }],
+		errors: [],
+	};
+	const settingsView = { locale: "zh" as const, current: "settings" as const, settings: { hostModels: true, state: settingsState } };
+	renderer.render(buildWebView({ ...base, panel: settingsView }));
+	document.querySelector<HTMLButtonElement>('#section-nav [data-group-id="settings:conversation"]')!.click();
+	expect(document.querySelector("#section-nav .nav-row.active")?.getAttribute("data-group-id")).toBe("settings:conversation");
+	renderer.render(buildWebView(base));
+	document.querySelector<HTMLButtonElement>(".composer-model-picker")!.click();
+	document.querySelector<HTMLButtonElement>(".model-picker-manage")!.click();
+	renderer.render(buildWebView({ ...base, panel: settingsView }));
+	expect(document.querySelector("#section-nav .nav-row.active")?.getAttribute("data-group-id")).toBe("settings:models");
+	renderer.render(buildWebView(base));
+	expect(document.querySelector(`#transcript-empty [data-action="${MODEL_CONNECTIONS_ACTION}"]`)?.textContent).toBe("添加供应商");
 	expect(document.querySelector(`#transcript-empty [data-action="${MODEL_SCOPE_ACTION}"]`)).toBeNull();
 	renderer.render(buildWebView({
 		...base,
@@ -211,20 +226,20 @@ test("an attached session without models offers nearby provider and model setup 
 	// Empty modelScopeModal offers a direct provider connection action instead of a dead-end 0/0 form.
 	const emptyModal = modelScopeModal("zh", { allModels: [], enabledModelIds: null });
 	expect(emptyModal.fields).toEqual([]);
-	expect(emptyModal.actions).toEqual([{ id: PROVIDER_AUTH_ACTION, label: "连接供应商", weight: "filled" }]);
+	expect(emptyModal.actions).toEqual([{ id: MODEL_CONNECTIONS_ACTION, label: "添加供应商", weight: "filled" }]);
 	expect(emptyModal.submit).toBeUndefined();
 	const staleScope = modelScopeModal("zh", { allModels: [], enabledModelIds: ["deepseek/v4"] });
 	expect(staleScope.fields[0]?.options).toEqual([{ value: "deepseek/v4", label: "deepseek/v4（当前不可用）" }]);
 	expect(staleScope.submit).toBe("应用列表");
-	expect(staleScope.actions?.[0]?.id).toBe(PROVIDER_AUTH_ACTION);
+	expect(staleScope.actions?.[0]?.id).toBe(MODEL_CONNECTIONS_ACTION);
 
 	// Cancelling the modal restores the draft selection once and consumes it so later edits do not jump the cursor.
 	renderer.render(buildWebView(base));
 	renderer.setDraft("abcdefghij");
 	elements.prompt.setSelectionRange(10, 10);
 	elements.prompt.dispatchEvent(new Event("select"));
-	document.querySelector<HTMLButtonElement>(`#transcript-empty [data-action="${PROVIDER_AUTH_ACTION}"]`)?.click();
-	expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROVIDER_AUTH_ACTION, data: undefined });
+	document.querySelector<HTMLButtonElement>(`#transcript-empty [data-action="${MODEL_CONNECTIONS_ACTION}"]`)?.click();
+	expect(report).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_CONNECTIONS_ACTION, data: undefined });
 
 	const modal = modelScopeModal("zh", { allModels: [{ provider: "deepseek", id: "v4", name: "DeepSeek V4" }], enabledModelIds: ["deepseek/v4"] });
 	renderer.render(buildWebView({ ...base, draft: "abcdefghij", panel: { ...base.panel, modal } }));
@@ -256,7 +271,7 @@ test("an attached session without models offers nearby provider and model setup 
 	// Opening setup again and completing model configuration restores selection to the draft.
 	elements.prompt.setSelectionRange(3, 5);
 	elements.prompt.dispatchEvent(new Event("select"));
-	document.querySelector<HTMLButtonElement>(`#transcript-empty [data-action="${PROVIDER_AUTH_ACTION}"]`)?.click();
+	document.querySelector<HTMLButtonElement>(`#transcript-empty [data-action="${MODEL_CONNECTIONS_ACTION}"]`)?.click();
 	renderer.render(buildWebView({ ...base, draft: "XYabcdefghij", panel: { ...base.panel, modal } }));
 	const configured = buildWebView({
 		...base,

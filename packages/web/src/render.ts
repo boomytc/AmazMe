@@ -4,11 +4,11 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_CONNECTIONS_ACTION, MODEL_SCOPE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
 import { createModelPicker } from "./model-picker.ts";
-import { createModelConnections, MODEL_CONNECTIONS_ACTION } from "./model-connections.ts";
+import { createModelConnections } from "./model-connections.ts";
 import { COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
@@ -999,6 +999,8 @@ export function createRenderer(
 	};
 
 	const report = (action: PanelAction): void => {
+		// Adding a provider always opens that settings section, including from a modal or a stale category.
+		if (action.kind === "command" && action.id === MODEL_CONNECTIONS_ACTION) sections.set(SETTINGS_VIEW, "settings:models");
 		renderer.onPanelAction(action);
 	};
 
@@ -2177,11 +2179,11 @@ export function createRenderer(
 				if (scopeEmpty) {
 					actions.append(
 						panelButton({ id: MODEL_SCOPE_ACTION, label: copy("model.configureModels"), weight: "filled", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_SCOPE_ACTION)),
-						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), weight: "line", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
+						panelButton({ id: MODEL_CONNECTIONS_ACTION, label: copy("model.connectProvider"), weight: "line", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_CONNECTIONS_ACTION)),
 					);
 				} else {
 					actions.append(
-						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), weight: "filled", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
+						panelButton({ id: MODEL_CONNECTIONS_ACTION, label: copy("model.connectProvider"), weight: "filled", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_CONNECTIONS_ACTION)),
 					);
 				}
 				block.append(element("p", "greeting-hint", view.model.empty), actions);
@@ -3086,9 +3088,9 @@ export function createRenderer(
 					...(scopeEmpty
 						? [
 								makeAction(MODEL_SCOPE_ACTION, copy("model.configureModels"), true),
-								makeAction(PROVIDER_AUTH_ACTION, copy("model.connectProvider"), false),
+								makeAction(MODEL_CONNECTIONS_ACTION, copy("model.connectProvider"), false),
 							]
-						: [makeAction(PROVIDER_AUTH_ACTION, copy("model.connectProvider"), true)]),
+						: [makeAction(MODEL_CONNECTIONS_ACTION, copy("model.connectProvider"), true)]),
 				);
 			}
 		} else {

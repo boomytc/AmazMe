@@ -1,4 +1,4 @@
-import { MODEL_SCOPE_MODAL, PROVIDER_AUTH_ACTION } from "./actions.ts";
+import { MODEL_CONNECTIONS_ACTION, MODEL_SCOPE_MODAL } from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import type { PanelModal } from "./panels.ts";
 import { translate } from "./strings.ts";
@@ -54,7 +54,7 @@ export function modelScopeModal(
 			? {
 					actions: [
 						{
-							id: PROVIDER_AUTH_ACTION,
+							id: MODEL_CONNECTIONS_ACTION,
 							label: translate(locale, "model.connectProvider"),
 							weight: options.length === 0 ? ("filled" as const) : ("line" as const),
 						},

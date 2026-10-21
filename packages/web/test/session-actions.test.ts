@@ -3,14 +3,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { MODEL_DEFAULTS_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_RENAME_ACTION } from "../src/actions.ts";
+import { MODEL_CONNECTIONS_ACTION, MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION, SESSION_RENAME_ACTION } from "../src/actions.ts";
 import { removeSessionModal, renameSessionModal } from "../src/panels.ts";
 import { archiveSessionModal, projectGroups, COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView, rosterItems } from "../src/view.ts";
 import {
 	createModelConnections,
-	MODEL_CONNECTIONS_ACTION,
 	MODEL_ENABLED_ACTION,
 	PROVIDER_EDIT_ACTION,
 	PROVIDER_SELECT_ACTION,
@@ -57,6 +56,7 @@ describe("session actions", () => {
 		expect(modal.fields.find(field => field.id === "id")).toBeUndefined();
 		const configured = providerConfigurationModal("zh", { id: "openai", name: "OpenAI", baseUrl: "https://example.test/v1", api: "openai-completions", modelCount: 1, custom: false, configured: true, verification: { status: "idle" } }, [], [], [{ type: "api_key", label: "Key" }, { type: "oauth", label: "Login" }]);
 		expect(configured.title).toBe("配置");
+		expect(configured.actions).toEqual([{ id: "models:logout", data: "openai", label: "删除", weight: "line", danger: true, placement: "start" }]);
 		expect(configured.fields.map(field => field.id)).toEqual(["name", "baseUrl", "api", "method:openai", "key:openai"]);
 		expect(configured.fields.find(field => field.id === "key:openai")).toMatchObject({ inputType: "password", placeholder: "留空则保留已保存的密钥", visibleWhen: { field: "method:openai", values: ["api_key"] } });
 
@@ -440,7 +440,7 @@ describe("session actions", () => {
 		expect(connections.element.querySelector(".connection-default-text")?.textContent).toBe("新聊天默认模型");
 		const emptySelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
 		expect(emptySelect.disabled).toBe(true);
-		expect(emptySelect.selectedOptions[0]?.textContent).toBe("连接供应商后即可选择默认模型。");
+		expect(emptySelect.selectedOptions[0]?.textContent).toBe("添加供应商后即可选择默认模型。");
 
 		searchInput.value = "";
 		connections.update("zh", {

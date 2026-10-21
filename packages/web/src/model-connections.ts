@@ -5,8 +5,9 @@ import { MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION } from "./actions.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { translate } from "./strings.ts";
 
-export const MODEL_CONNECTIONS_ACTION = "models:connections";
 export const PROVIDER_SELECT_ACTION = "models:provider";
+export const PROVIDER_LOGOUT_ACTION = "models:logout";
+export const PROVIDER_LOGOUT_MODAL = "models:logout-confirm";
 export const PROVIDER_EDIT_ACTION = "models:edit-provider";
 export const PROVIDER_EDIT_MODAL = "models:save-provider";
 export const PROVIDER_TEST_ACTION = "models:test";
@@ -84,7 +85,9 @@ export function providerConfigurationModal(locale: Locale, provider?: ModelConne
 	const ordered = [...methods].sort((left, right) => credentialOrder(left.type) - credentialOrder(right.type));
 	const methodLabel = (type: "api_key" | "oauth") => copy(type === "api_key" ? "connections.apiKey" : "connections.signIn");
 	const onlyLogin = !editable && ordered.length > 0 && ordered.every(method => method.type === "oauth");
-	return { id: PROVIDER_EDIT_MODAL, data: provider.id, title: copy("connections.configure"), submit: copy(onlyLogin ? "auth.continue" : "modal.save"), fields: [
+	return { id: PROVIDER_EDIT_MODAL, data: provider.id, title: copy("connections.configure"), submit: copy(onlyLogin ? "auth.continue" : "modal.save"),
+		...(provider.configured ? { actions: [{ id: PROVIDER_LOGOUT_ACTION, data: provider.id, label: copy("connections.delete"), weight: "line" as const, danger: true, placement: "start" as const }] } : {}),
+		fields: [
 		...(editable ? [
 			{ id: "name", label: copy("connections.name"), kind: "text" as const, value: provider.name },
 			{ id: "baseUrl", label: copy("connections.endpoint"), kind: "text" as const, value: provider.baseUrl },
@@ -104,6 +107,14 @@ export function providerConfigurationModal(locale: Locale, provider?: ModelConne
 			...(ordered.length > 1 ? { visibleWhen: { field: `method:${provider.id}`, values: ["api_key"] } } : {}),
 		}] : []),
 	] };
+}
+
+export function providerLogoutModal(locale: Locale, providerId: string, name: string): PanelModal {
+	return {
+		id: PROVIDER_LOGOUT_MODAL, data: providerId, title: translate(locale, "connections.logout"),
+		description: translate(locale, "connections.logoutHelp", { name }),
+		fields: [], submit: translate(locale, "connections.logoutSubmit"), danger: true,
+	};
 }
 
 /** The test dialog checks one selected model, or every model of this provider. The key is never copied here. */

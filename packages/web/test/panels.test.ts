@@ -332,7 +332,7 @@ describe("settings panel", () => {
 		expect(noProvider?.rows[0]?.description).toBe("没有可用模型。");
 		expect(noProvider?.rows[0]?.controls?.[0]?.options?.[0]).toEqual({
 			value: "",
-			label: "连接供应商",
+			label: "添加供应商",
 			disabled: true,
 		});
 

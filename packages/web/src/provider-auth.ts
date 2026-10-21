@@ -1,6 +1,6 @@
 /** Provider interaction is host-owned; this module only projects its public metadata. */
 import type { AuthEvent, AuthInfoLink, AuthPrompt, AuthType } from "@amazme/ai";
-import { PROVIDER_AUTH_ACTION, PROVIDER_AUTH_CANCEL_ACTION, PROVIDER_AUTH_MODAL, PROVIDER_AUTH_OPEN_ACTION } from "./actions.ts";
+import { MODEL_CONNECTIONS_ACTION, PROVIDER_AUTH_CANCEL_ACTION, PROVIDER_AUTH_MODAL, PROVIDER_AUTH_OPEN_ACTION } from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import type { PanelButton, PanelField, PanelModal } from "./panels.ts";
 import { translate } from "./strings.ts";
@@ -70,7 +70,7 @@ export function providerLoginModal(locale: Locale, state: ProviderAuthLike, logi
 			: { placeholder: prompt.placeholder }),
 	});
 	if (active && login) actions.push({ id: PROVIDER_AUTH_CANCEL_ACTION, data: login.id, label: copy("auth.cancel"), weight: "line", danger: true });
-	if (!active) actions.push({ id: PROVIDER_AUTH_ACTION, label: copy("auth.title"), weight: "filled" });
+	if (!active) actions.push({ id: MODEL_CONNECTIONS_ACTION, label: copy("model.connectProvider"), weight: "filled" });
 	const name = state.providers.find(provider => provider.id === login?.provider)?.name;
 	const status = login?.status;
 	const description = status === "done" ? copy("auth.done") : status === "cancelled" ? copy("auth.cancelled")
