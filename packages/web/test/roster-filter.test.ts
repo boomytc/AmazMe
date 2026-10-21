@@ -211,7 +211,7 @@ test("an attached session without models offers nearby provider and model setup 
 	// Empty modelScopeModal offers a direct provider connection action instead of a dead-end 0/0 form.
 	const emptyModal = modelScopeModal("zh", { allModels: [], enabledModelIds: null });
 	expect(emptyModal.fields).toEqual([]);
-	expect(emptyModal.actions).toEqual([{ id: PROVIDER_AUTH_ACTION, label: "连接供应商", tone: "primary" }]);
+	expect(emptyModal.actions).toEqual([{ id: PROVIDER_AUTH_ACTION, label: "连接供应商", weight: "filled" }]);
 	expect(emptyModal.submit).toBeUndefined();
 	const staleScope = modelScopeModal("zh", { allModels: [], enabledModelIds: ["deepseek/v4"] });
 	expect(staleScope.fields[0]?.options).toEqual([{ value: "deepseek/v4", label: "deepseek/v4（当前不可用）" }]);

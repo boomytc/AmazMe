@@ -20,7 +20,7 @@ afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 test("sent and queued credentials start masked; each native button reveals only its own range", () => {
 	const renderer = createRenderer(collectPageElements());
 	const view: WebView = { ...failureView("en", ""), attachedId: "s", blocks: [block], queue: [
-		{ id: "q", text: key, cancel: { id: "withdraw", label: "Withdraw", tone: "default" } },
+		{ id: "q", text: key, cancel: { id: "withdraw", label: "Withdraw", weight: "text" } },
 	] };
 	renderer.render(view);
 	expect(document.querySelector(".bubble")?.textContent).not.toContain(key);

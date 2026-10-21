@@ -39,7 +39,7 @@ export function createFileBrowser(options: FileBrowserOptions) {
 		trail.setAttribute("aria-label", copy("dock.filePath"));
 		for (const [index, crumb] of files.breadcrumbs.entries()) {
 			if (index > 0) trail.append(element("span", "file-path-separator", "/"));
-			const step = crumb.current ? element("span", "file-crumb current", crumb.label) : panelButton({ id: WORKSPACE_OPEN_ACTION, label: crumb.label, tone: "default", data: crumb.path }, panel.pending);
+			const step = crumb.current ? element("span", "file-crumb current", crumb.label) : panelButton({ id: WORKSPACE_OPEN_ACTION, label: crumb.label, weight: "text", data: crumb.path }, panel.pending);
 			step.classList.add("file-crumb");
 			step.title = crumb.path;
 			if (crumb.current) step.setAttribute("aria-current", "page");

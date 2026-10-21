@@ -62,15 +62,15 @@ export function providerLoginModal(locale: Locale, state: ProviderAuthLike, logi
 		...(authorization ? [{ url: authorization.type === "auth_url" ? authorization.url : authorization.verificationUri, label: copy("auth.open") }] : []),
 		...(login?.links ?? []),
 	] : [];
-	for (const link of links) actions.push({ id: PROVIDER_AUTH_OPEN_ACTION, data: link.url, label: link.label ?? copy("auth.open"), tone: "default" });
+	for (const link of links) actions.push({ id: PROVIDER_AUTH_OPEN_ACTION, data: link.url, label: link.label ?? copy("auth.open"), weight: "line" });
 	if (prompt) fields.push({
 		id: "value", label: prompt.message, kind: prompt.type === "select" ? "select" : "text", value: "",
 		...(prompt.type === "secret" ? { inputType: "password" as const } : {}),
 		...(prompt.type === "select" ? { value: prompt.options[0]?.id ?? "", options: prompt.options.map(option => ({ value: option.id, label: option.label })) }
 			: { placeholder: prompt.placeholder }),
 	});
-	if (active && login) actions.push({ id: PROVIDER_AUTH_CANCEL_ACTION, data: login.id, label: copy("auth.cancel"), tone: "danger" });
-	if (!active) actions.push({ id: PROVIDER_AUTH_ACTION, label: copy("auth.title"), tone: "default" });
+	if (active && login) actions.push({ id: PROVIDER_AUTH_CANCEL_ACTION, data: login.id, label: copy("auth.cancel"), weight: "line", danger: true });
+	if (!active) actions.push({ id: PROVIDER_AUTH_ACTION, label: copy("auth.title"), weight: "filled" });
 	const name = state.providers.find(provider => provider.id === login?.provider)?.name;
 	const status = login?.status;
 	const description = status === "done" ? copy("auth.done") : status === "cancelled" ? copy("auth.cancelled")

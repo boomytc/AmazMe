@@ -146,8 +146,8 @@ test("command palette owns Tab; unavailable, busy, approval, attachment and queu
 	renderer.render({ ...view(), palette: { ...view().palette, open: true, rows: [{ value: "help", label: "Help", description: "", selected: true }] } });
 	key("Tab"); expect(pick).toHaveBeenCalledWith("help"); expect(elements.prompt.value).toBe("");
 	for (const changed of [{ busy: true }, { readOnly: true }, { attachedId: undefined },
-		{ attachments: [{ id: "image", name: "image", dataUrl: "data:image/png;base64,eA==", size: "1 B", remove: { id: "remove", label: "Remove", tone: "default" as const } }] },
-		{ queue: [{ id: "queue", text: "Queued", cancel: { id: "cancel", label: "Cancel", tone: "default" as const } }] }]) {
+		{ attachments: [{ id: "image", name: "image", dataUrl: "data:image/png;base64,eA==", size: "1 B", remove: { id: "remove", label: "Remove", weight: "text" as const } }] },
+		{ queue: [{ id: "queue", text: "Queued", cancel: { id: "cancel", label: "Cancel", weight: "text" as const } }] }]) {
 		renderer.render({ ...view(), ...changed });
 		expect(document.querySelector<HTMLElement>("#composer-suggestion")?.hidden).toBe(true);
 		expect(key("Tab").defaultPrevented).toBe(false);

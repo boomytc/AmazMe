@@ -242,7 +242,7 @@ describe("settings panel", () => {
 	test("lists the files it reads and offers a re-read", () => {
 		const files = settingsPanel("en", { state: SETTINGS  }).groups.at(-1);
 		expect(files?.id).toBe("settings:files");
-		expect(files?.actions).toEqual([{ id: SETTINGS_RELOAD_ACTION, label: "Reload settings", tone: "default" }, { id: "settings:diagnostics", label: "View diagnostic report", tone: "default" }]);
+		expect(files?.actions).toEqual([{ id: SETTINGS_RELOAD_ACTION, label: "Reload settings", weight: "line" }, { id: "settings:diagnostics", label: "View diagnostic report", weight: "line" }]);
 		expect(files?.rows).toEqual([
 			{ id: "settings:global-path", title: "Global settings", value: "/agent/settings.json" },
 			{ id: "settings:project-path", title: "Project settings", value: "/project/.amazme/settings.json" },
@@ -370,7 +370,7 @@ describe("skills panel", () => {
 		});
 		expect(rows[0]?.actions?.map((action) => action.label)).toEqual(["Edit", "Remove"]);
 		expect(rows[0]?.actions?.[0]).toMatchObject({ id: SKILL_EDIT_ACTION, data: "weekly-report" });
-		expect(rows[0]?.actions?.[1]).toMatchObject({ id: SKILL_REMOVE_ACTION, data: "weekly-report", tone: "danger" });
+		expect(rows[0]?.actions?.[1]).toMatchObject({ id: SKILL_REMOVE_ACTION, data: "weekly-report", weight: "text", danger: true });
 		// A project skill is read-only here: no Remove, and View instead of Edit.
 		expect(rows[1]?.badges).toEqual(["project", "command only"]);
 		expect(rows[1]?.actions?.map((action) => action.label)).toEqual(["View"]);
@@ -465,7 +465,7 @@ describe("plugins panel", () => {
 			id: "package:/tmp/example-plugin",
 			title: "example-plugin",
 			value: "/tmp/example-plugin",
-			actions: [{ id: PLUGIN_PACKAGE_REMOVE_ACTION, label: "Remove", data: "/tmp/example-plugin", tone: "danger" }],
+			actions: [{ id: PLUGIN_PACKAGE_REMOVE_ACTION, label: "Remove", data: "/tmp/example-plugin", weight: "text", danger: true }],
 		});
 	});
 
@@ -482,7 +482,7 @@ describe("plugins panel", () => {
 				options: mcpExposures("en"),
 			},
 		]);
-		expect(rows[0]?.actions?.[0]).toMatchObject({ id: "plugins:mcp-remove", data: "filesystem", tone: "danger" });
+		expect(rows[0]?.actions?.[0]).toMatchObject({ id: "plugins:mcp-remove", data: "filesystem", weight: "text", danger: true });
 		expect(rows[1]?.controls).toBeUndefined();
 		expect(rows[1]?.actions?.[0]).toMatchObject({ label: "From extension", disabled: true });
 		expect(rows[1]?.badges).toEqual(["extension", "Codemode"]);
@@ -551,7 +551,7 @@ describe("automation panel", () => {
 		expect(panel.groups[0]?.actions?.[0]).toEqual({
 			id: "schedule:add",
 			label: "Plan a prompt…",
-			tone: "primary",
+			weight: "filled",
 		});
 		const [first, second] = panel.groups[0]?.rows ?? [];
 		// A prompt that spans lines is one row title, and the last run is beside the next one.
@@ -564,10 +564,10 @@ describe("automation panel", () => {
 		});
 		expect(first?.controls).toEqual([{ id: SCHEDULE_ENABLED_ACTION, kind: "switch", data: "s1", value: "true" }]);
 		expect(first?.actions).toEqual([
-			{ id: SCHEDULE_RUN_ACTION, label: "Run now", data: "s1", tone: "default" },
-			{ id: SCHEDULE_EDIT_ACTION, label: "Edit", data: "s1", tone: "default" },
-			{ id: SCHEDULE_HISTORY_ACTION, label: "Run history", data: "s1", tone: "default" },
-			{ id: SCHEDULE_REMOVE_ACTION, label: "Remove", data: "s1", tone: "danger" },
+			{ id: SCHEDULE_RUN_ACTION, label: "Run now", data: "s1", weight: "text" },
+			{ id: SCHEDULE_EDIT_ACTION, label: "Edit", data: "s1", weight: "text" },
+			{ id: SCHEDULE_HISTORY_ACTION, label: "Run history", data: "s1", weight: "text" },
+			{ id: SCHEDULE_REMOVE_ACTION, label: "Remove", data: "s1", weight: "text", danger: true },
 		]);
 		expect(second).toMatchObject({ badges: ["other", "Conversation 1", "paused"], value: "Next run in 16 minutes" });
 		expect(panel.groups[0]?.footnote).toContain("/agent/schedules.json");

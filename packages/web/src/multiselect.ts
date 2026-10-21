@@ -33,7 +33,7 @@ export function createMultiselect(
 	controls.className = "multiselect-controls";
 	const all = document.createElement("button");
 	all.type = "button";
-	all.className = "panel-button default";
+	all.className = "panel-button weight-line";
 	const clear = all.cloneNode() as HTMLButtonElement;
 	const count = document.createElement("span");
 	count.className = "multiselect-count";

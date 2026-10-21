@@ -2835,13 +2835,13 @@ p {
 	border-color: var(--text-3);
 }
 
-.model-setup-button.tone-primary {
+.model-setup-button.weight-filled {
 	border-color: transparent;
 	background: var(--accent-soft);
 	color: var(--accent-text);
 }
 
-.model-setup-button.tone-primary:hover:not(:disabled) {
+.model-setup-button.weight-filled:hover:not(:disabled) {
 	background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
@@ -3554,9 +3554,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .panel-button {
 	height: 32px;
 	padding: 0 12px;
-	border: 1px solid var(--line-strong);
+	border: 1px solid transparent;
 	border-radius: var(--radius-md);
-	background: var(--raised);
+	background: transparent;
 	color: var(--text);
 	font-size: 13px;
 	font-weight: 500;
@@ -3578,19 +3578,36 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	cursor: default;
 }
 
-.panel-button.tone-primary {
-	border-color: transparent;
+.panel-button.weight-line {
+	border-color: var(--line-strong);
+}
+
+.panel-button.weight-filled {
 	background: var(--ink);
 	color: var(--on-ink);
 }
 
-.panel-button.tone-primary:hover:not(:disabled) {
+.panel-button.weight-filled:hover:not(:disabled) {
 	background: var(--ink);
 	opacity: 0.84;
 }
 
-.panel-button.tone-danger {
+.panel-button.is-danger:not(.weight-filled) {
 	color: var(--danger);
+}
+
+.panel-button.weight-line.is-danger {
+	border-color: var(--danger);
+}
+
+.panel-button.weight-filled.is-danger {
+	background: var(--danger);
+	color: var(--on-ink);
+}
+
+.panel-button.weight-filled.is-danger:hover:not(:disabled) {
+	background: var(--danger);
+	opacity: 0.84;
 }
 
 .panel-input {

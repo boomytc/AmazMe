@@ -336,7 +336,7 @@ describe("session actions", () => {
 		expect(connections.element.querySelector(".connection-notices .panel-notice")?.textContent).toBe("已保存默认配置");
 
 		// Unconfigured provider highlights Connect provider as the single primary button in the detail pane.
-		const primaryButtons = connections.element.querySelectorAll(".connection-detail .tone-primary");
+		const primaryButtons = connections.element.querySelectorAll(".connection-detail .weight-filled");
 		expect(primaryButtons).toHaveLength(1);
 		expect(primaryButtons[0]?.getAttribute("data-action")).toBe(PROVIDER_AUTH_ACTION);
 
@@ -353,7 +353,7 @@ describe("session actions", () => {
 		// Updating to a configured provider keeps the same search input and removes primary weight from secondary actions.
 		connections.update("zh", { ...baseView, selected: "openai" });
 		expect(connections.element.querySelector("input.connection-search-input")).toBe(searchInput);
-		expect(connections.element.querySelectorAll(".connection-detail .tone-primary")).toHaveLength(0);
+		expect(connections.element.querySelectorAll(".connection-detail .weight-filled")).toHaveLength(0);
 		expect(connections.element.querySelector(".connection-verification.success")?.textContent).toContain("gpt-5 · 最近验证成功");
 
 		// Model row interactions report expected actions.

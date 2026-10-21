@@ -277,11 +277,11 @@ function withReturnPoints(view: WebView, points: readonly { readonly id: string;
 	const copy = (key: MessageKey): string => translate(view.locale, key);
 	const actions = (id: string): PanelRow["actions"] =>
 		skipPrompt
-			? [{ id: LEAVE_ACTION, label: copy("history.return"), tone: "default", data: id }]
+			? [{ id: LEAVE_ACTION, label: copy("history.return"), weight: "text" as const, data: id }]
 			: [
-					{ id: LEAVE_ACTION, label: copy("history.noSummary"), tone: "default", data: id },
-					{ id: LEAVE_SUMMARY_ACTION, label: copy("history.summarize"), tone: "default", data: id },
-					{ id: LEAVE_CUSTOM_ACTION, label: copy("history.custom"), tone: "default", data: id },
+					{ id: LEAVE_ACTION, label: copy("history.noSummary"), weight: "text" as const, data: id },
+					{ id: LEAVE_SUMMARY_ACTION, label: copy("history.summarize"), weight: "text" as const, data: id },
+					{ id: LEAVE_CUSTOM_ACTION, label: copy("history.custom"), weight: "text" as const, data: id },
 				];
 	const rows: PanelRow[] = points.map((point) => ({
 		id: `return:${point.id}`,

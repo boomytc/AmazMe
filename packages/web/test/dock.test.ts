@@ -118,11 +118,11 @@ describe("the session dock", () => {
 			["README.md", undefined, "2 KB"],
 			["logo.png", undefined, "2.0 MB"],
 		]);
-		expect(rows[0]?.actions?.[0]).toEqual({ id: WORKSPACE_OPEN_ACTION, label: "Open", tone: "default", data: "/workspace/AmazMe/src" });
+		expect(rows[0]?.actions?.[0]).toEqual({ id: WORKSPACE_OPEN_ACTION, label: "Open", weight: "text", data: "/workspace/AmazMe/src" });
 		expect(rows[1]?.actions?.[0]).toEqual({
 			id: WORKSPACE_READ_ACTION,
 			label: "Read",
-			tone: "default",
+			weight: "text",
 			data: "/workspace/AmazMe/README.md",
 		});
 		expect(panel.groups[0]?.actions?.[0]?.id).toBe(WORKSPACE_RELOAD_ACTION);
@@ -230,7 +230,7 @@ describe("the session dock", () => {
 		expect(rows[1]?.actions?.[0]).toEqual({
 			id: CONVERSATION_SELECT_ACTION,
 			label: "Open",
-			tone: "default",
+			weight: "text",
 			data: "2",
 		});
 		expect(rows[1]?.actions?.[1]).toMatchObject({ id: CONVERSATION_FORK_ACTION, label: "Fork", data: "2", disabled: false });

@@ -171,11 +171,11 @@ export function changesPanel(locale: Locale, state: InsightsStateLike | undefine
 			...state.notes.map(text => ({ tone: "info" as const, text })), ...(state.skipped ? [{ tone: "info" as const, text: translate(locale, "review.skipped", { count: String(state.skipped) }) }] : []),
 			...(state.cleanup.tools || state.cleanup.images ? [{ tone: "info" as const, text: translate(locale, "review.cleanup", { tools: String(state.cleanup.tools), images: String(state.cleanup.images) }) }] : [])],
 		groups: [{ id: "changes:files", title: translate(locale, "dock.files"), actions: [
-			{ id: "insights:refresh", label: translate(locale, "dock.reload"), tone: "default" },
-			...(state.paused ? [{ id: "insights:resume", data: state.conversationId, label: translate(locale, "review.resume"), tone: "primary" as const }] : []),
+			{ id: "insights:refresh", label: translate(locale, "dock.reload"), weight: "line" as const },
+			...(state.paused ? [{ id: "insights:resume", data: state.conversationId, label: translate(locale, "review.resume"), weight: "filled" as const }] : []),
 		], rows: state.files.map(file => ({ id: `change:${file.root}/${file.path}`, title: file.path, description: file.root,
 			badges: [translate(locale, `review.${file.kind}`), ...(file.binary ? [translate(locale, "review.binary")] : [`+${file.added} −${file.removed}`])],
-			actions: [{ id: "insights:diff", data: JSON.stringify([state.conversationId, file.root, file.path]), label: translate(locale, "review.diff"), tone: "default" }],
+			actions: [{ id: "insights:diff", data: JSON.stringify([state.conversationId, file.root, file.path]), label: translate(locale, "review.diff"), weight: "text" as const }],
 		})), empty: translate(locale, "review.empty") },
 		{ id: "changes:verification", title: translate(locale, "review.verification"), rows: state.verification.map((item, index) => ({ id: `verification:${index}`, title: item.command, description: translate(locale, item.exitCode === null ? "review.unknown" : item.exitCode === 0 ? "review.passed" : "review.failed", { code: String(item.exitCode) }) })), empty: translate(locale, "review.noVerification") }],
 		...(diff === undefined ? {} : { texts: [{ id: "changes:diff", text: diff, diff: /^--- .+\r?\n\+\+\+ .+/m.test(diff) }] }),
@@ -236,23 +236,23 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 		...(conversation.role !== "fork" || conversation.archivedAt !== undefined ? {} : { menu: {
 			label: translate(locale, "dock.forkActions"), data: conversation.id,
 			actions: [
-				{ id: CONVERSATION_RENAME_ACTION, label: translate(locale, "sidebar.rename"), tone: "default" as const, data: conversation.id, glyph: "square-pen" as const, disabled: sessionReadOnly },
-				{ id: CONVERSATION_ARCHIVE_ACTION, label: translate(locale, "project.archive"), tone: "danger" as const, data: conversation.id, glyph: "folder" as const, disabled: sessionReadOnly },
+				{ id: CONVERSATION_RENAME_ACTION, label: translate(locale, "sidebar.rename"), weight: "text" as const, data: conversation.id, glyph: "square-pen" as const, disabled: sessionReadOnly },
+				{ id: CONVERSATION_ARCHIVE_ACTION, label: translate(locale, "project.archive"), weight: "text" as const, danger: true, data: conversation.id, glyph: "folder" as const, disabled: sessionReadOnly },
 			],
 		} }),
 		actions: [
 			{
 				id: CONVERSATION_SELECT_ACTION,
 				label: translate(locale, "dock.select"),
-				tone: "default",
+				weight: "text" as const,
 				data: conversation.id,
 			},
 			...(conversation.readOnly || conversation.archivedAt !== undefined ? [] : [{
-				id: CONVERSATION_FORK_ACTION, label: translate(locale, "header.fork"), tone: "default" as const,
+				id: CONVERSATION_FORK_ACTION, label: translate(locale, "header.fork"), weight: "text" as const,
 				data: conversation.id, disabled: sessionReadOnly || !conversation.hasEntries,
 			}]),
 			...(conversation.role === "fork" && conversation.archivedAt !== undefined ? [{
-				id: CONVERSATION_RESTORE_ACTION, label: translate(locale, "dock.restoreFork"), tone: "default" as const,
+				id: CONVERSATION_RESTORE_ACTION, label: translate(locale, "dock.restoreFork"), weight: "text" as const,
 				data: conversation.id, disabled: sessionReadOnly,
 			}] : []),
 		],
@@ -269,7 +269,7 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 					{
 						id: CONVERSATIONS_REFRESH_ACTION,
 						label: translate(locale, "dock.reload"),
-						tone: "default",
+						weight: "line" as const,
 					},
 				],
 				rows: rows.filter((_, index) => !state.conversations[index]?.readOnly && state.conversations[index]?.archivedAt === undefined),
@@ -321,7 +321,7 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 				id: TASK_RETRY_ACTION,
 				label: translate(locale, "dock.retryTask"),
 				data: task.id,
-				tone: "default" as const,
+				weight: "text" as const,
 				disabled: state.conversations.find((item) => item.id === task.conversationId)?.readOnly === true,
 			}] : []),
 			...[...new Set([task.conversationId, ...task.conversations])]
@@ -330,7 +330,7 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 					id: CONVERSATION_SELECT_ACTION,
 					label: translate(locale, id === task.conversationId ? "dock.viewTaskConversation" : "dock.viewOwnedConversation", { name: conversationName(id) }),
 					data: id,
-					tone: "default" as const,
+					weight: "text" as const,
 				})),
 		],
 	}));
@@ -346,7 +346,7 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 					{
 						id: CONVERSATIONS_REFRESH_ACTION,
 						label: translate(locale, "dock.reload"),
-						tone: "default",
+						weight: "line" as const,
 					},
 				],
 				rows,
@@ -383,7 +383,7 @@ export function parseWorkspaceAction(data: string | undefined): WorkspaceActionT
 }
 
 function reloadAction(locale: Locale, path: string, read: boolean) {
-	return { id: WORKSPACE_RELOAD_ACTION, label: translate(locale, "dock.reload"), tone: "default" as const,
+	return { id: WORKSPACE_RELOAD_ACTION, label: translate(locale, "dock.reload"), weight: "line" as const,
 		data: JSON.stringify({ kind: read ? "read" : "open", path }),
 	};
 }
@@ -392,7 +392,7 @@ function openAction(locale: Locale, path: string) {
 	return {
 		id: WORKSPACE_OPEN_ACTION,
 		label: translate(locale, "dock.open"),
-		tone: "default" as const,
+		weight: "text" as const,
 		data: path,
 	};
 }
@@ -490,7 +490,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 	for (const entry of view.entries) {
 		const path = view.path === "." ? entry.name : `${view.path}/${entry.name}`;
 		const action = entry.kind === "dir" ? openAction(locale, workspacePath(state.cwd, path)) : {
-			id: WORKSPACE_READ_ACTION, label: translate(locale, "dock.read"), tone: "default" as const, data: workspacePath(state.cwd, path),
+			id: WORKSPACE_READ_ACTION, label: translate(locale, "dock.read"), weight: "text" as const, data: workspacePath(state.cwd, path),
 		};
 		rows.push({
 			id: `files:${path}`, title: entry.name,
@@ -500,8 +500,8 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 	}
 	const page = view.page;
 	const paging = page === undefined ? [] : [
-		...(page.offset > 0 ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.previousPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: Math.max(0, page.offset - page.limit) }), tone: "default" as const }] : []),
-		...(page.offset + page.limit < page.total ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.nextPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: page.offset + page.limit }), tone: "default" as const }] : []),
+		...(page.offset > 0 ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.previousPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: Math.max(0, page.offset - page.limit) }), weight: "line" as const }] : []),
+		...(page.offset + page.limit < page.total ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.nextPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: page.offset + page.limit }), weight: "line" as const }] : []),
 	];
 	const group: PanelGroup = {
 		id: "files:entries",
@@ -578,7 +578,8 @@ export function terminalPanel(
 					{
 						id: TERMINAL_STOP_ACTION,
 						label: translate(locale, "dock.stop"),
-						tone: "danger",
+						weight: "line",
+						danger: true,
 						disabled: !running,
 					},
 				],
@@ -592,7 +593,7 @@ export function terminalPanel(
 				submit: {
 					id: TERMINAL_RUN_ACTION,
 					label: translate(locale, "dock.run"),
-					tone: "primary",
+					weight: "filled",
 					disabled: running,
 				},
 			},

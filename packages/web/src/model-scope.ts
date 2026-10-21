@@ -56,7 +56,7 @@ export function modelScopeModal(
 						{
 							id: PROVIDER_AUTH_ACTION,
 							label: translate(locale, "model.connectProvider"),
-							tone: options.length === 0 ? ("primary" as const) : ("default" as const),
+							weight: options.length === 0 ? ("filled" as const) : ("line" as const),
 						},
 					],
 				}

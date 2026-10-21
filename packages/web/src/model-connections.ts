@@ -94,7 +94,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		result.textContent = text;
 		return result;
 	};
-	const action = (label: string, id: string, data?: string, disabled = false, className = "panel-button") => {
+	const action = (label: string, id: string, data?: string, disabled = false, className = "panel-button weight-line") => {
 		const control = document.createElement("button"); control.type = "button"; control.className = className; control.textContent = label;
 		control.dataset.action = id;
 		if (data !== undefined) control.dataset.actionData = data;
@@ -138,7 +138,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		const refreshing = view.state.refresh.status === "refreshing";
 		headActions.replaceChildren(
 			action(copy(refreshing ? "model.refreshing" : "model.refresh"), REFRESH_MODELS_ACTION, undefined, refreshing),
-			action(copy("connections.back"), "models:back", undefined, false, "panel-button connection-back-button"),
+			action(copy("connections.back"), "models:back", undefined, false, "panel-button weight-line connection-back-button"),
 		);
 
 		notices.replaceChildren();
@@ -192,7 +192,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		const connectPrimary = !provider.configured && canAuthenticate;
 		controls.append(
 			action(copy("connections.edit"), PROVIDER_EDIT_ACTION, provider.id, !editable),
-			action(copy(provider.configured ? "auth.title" : "model.connectProvider"), PROVIDER_AUTH_ACTION, provider.id, !canAuthenticate, connectPrimary ? "panel-button tone-primary" : "panel-button"),
+			action(copy(provider.configured ? "auth.title" : "model.connectProvider"), PROVIDER_AUTH_ACTION, provider.id, !canAuthenticate, connectPrimary ? "panel-button weight-filled" : "panel-button weight-line"),
 		);
 		providerHead.append(providerTitles, controls);
 		providerSection.append(providerHead);
@@ -234,9 +234,9 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			label.append(enabled, node("span", model.name, "connection-model-name"));
 			main.append(label, node("small", model.modelId, "connection-model-id"));
 			const rowActions = document.createElement("div"); rowActions.className = "connection-model-actions";
-			const setDefault = action(copy("model.defaults"), MODEL_DEFAULTS_ACTION, modelRef, !model.available, "panel-button connection-row-button");
+			const setDefault = action(copy("model.defaults"), MODEL_DEFAULTS_ACTION, modelRef, !model.available, "panel-button weight-text connection-row-button");
 			if (isDefault) setDefault.setAttribute("aria-pressed", "true");
-			const verify = action(copy("connections.test"), PROVIDER_TEST_ACTION, modelRef, !model.available || verification.status === "checking", "panel-button connection-row-button");
+			const verify = action(copy("connections.test"), PROVIDER_TEST_ACTION, modelRef, !model.available || verification.status === "checking", "panel-button weight-text connection-row-button");
 			rowActions.append(setDefault, verify);
 			row.append(main, rowActions);
 			modelList.append(row);

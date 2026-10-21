@@ -180,7 +180,8 @@ describe("web view model", () => {
 		expect(roster[1]?.remove).toEqual({
 			id: SESSION_REMOVE_ACTION,
 			label: "Remove",
-			tone: "danger",
+			weight: "text",
+			danger: true,
 			data: "middle",
 		});
 		expect(rosterItems("en", undefined, undefined, NOW)).toEqual([]);
@@ -981,9 +982,9 @@ describe("web view model", () => {
 		});
 		const offered = buildWebView(input({ showWelcome: true, directory: empty })).welcome;
 		expect(offered?.title).toContain("AmazMe");
-		expect(offered?.steps.map((step) => [step.id, step.tone])).toEqual([
-			[WELCOME_SESSION_ACTION, "primary"],
-			[WELCOME_SETTINGS_ACTION, "default"],
+		expect(offered?.steps.map((step) => [step.id, step.weight])).toEqual([
+			[WELCOME_SESSION_ACTION, "filled"],
+			[WELCOME_SETTINGS_ACTION, "line"],
 		]);
 		expect(offered?.dismiss.id).toBe(WELCOME_DISMISS_ACTION);
 		// A session means the reader is past the guide, and so does the setting.
@@ -1006,8 +1007,8 @@ describe("web view model", () => {
 		const answer = rated.find((block) => block.kind === "assistant");
 		expect(answer?.feedback).toEqual({
 			rating: "up",
-			up: { id: FEEDBACK_UP_ACTION, label: "Helpful", tone: "default", data: "2" },
-			down: { id: FEEDBACK_DOWN_ACTION, label: "Not helpful", tone: "default", data: "2" },
+			up: { id: FEEDBACK_UP_ACTION, label: "Helpful", weight: "text", data: "2" },
+			down: { id: FEEDBACK_DOWN_ACTION, label: "Not helpful", weight: "text", data: "2" },
 		});
 		// A user turn carries no rating, and a host that offers the surface shows it unrated.
 		expect(rated.find((block) => block.kind === "user")?.feedback).toBeUndefined();
@@ -1051,13 +1052,14 @@ describe("web view model", () => {
 		expect(cards[0]?.approve).toEqual({
 			id: APPROVAL_APPROVE_ACTION,
 			label: "Approve",
-			tone: "primary",
+			weight: "filled",
 			data: "approval-1",
 		});
 		expect(cards[0]?.deny).toEqual({
 			id: APPROVAL_DENY_ACTION,
 			label: "Deny",
-			tone: "danger",
+			weight: "line",
+			danger: true,
 			data: "approval-1",
 		});
 		expect(approvalCards("zh", { pending: [] })).toEqual([]);

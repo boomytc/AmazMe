@@ -87,10 +87,15 @@ export interface PanelControl {
 	readonly disabled?: boolean;
 }
 
+/** One filled button per region. Line is the visible secondary. Text is a quiet row action. */
+export type ButtonWeight = "filled" | "line" | "text";
+
 export interface PanelButton {
 	readonly id: string;
 	readonly label: string;
-	readonly tone: "default" | "primary" | "danger";
+	readonly weight: ButtonWeight;
+	/** Danger is a color on the chosen weight, not a fourth weight. */
+	readonly danger?: boolean;
 	readonly data?: string;
 	readonly disabled?: boolean;
 }
@@ -542,10 +547,10 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 			id: "settings:models", title: translate(locale, "model.manage"),
 			description: translate(locale, available ? "model.manageHelp" : "model.needsSession"),
 			actions: [
-				{ id: REFRESH_MODELS_ACTION, label: picker.refresh.label, tone: "default", disabled: !available || picker.refresh.busy },
-				{ id: MODEL_SCOPE_ACTION, label: translate(locale, "model.scope"), tone: "default", disabled: !available },
-				{ id: PROVIDER_AUTH_ACTION, label: translate(locale, "auth.title"), tone: "default", disabled: !available || !authentication },
-				{ id: MODEL_DEFAULTS_ACTION, label: translate(locale, "model.defaults"), tone: "default", disabled: !available || picker.disabled || !hasSelected },
+				{ id: REFRESH_MODELS_ACTION, label: picker.refresh.label, weight: "line", disabled: !available || picker.refresh.busy },
+				{ id: MODEL_SCOPE_ACTION, label: translate(locale, "model.scope"), weight: "line", disabled: !available },
+				{ id: PROVIDER_AUTH_ACTION, label: translate(locale, "auth.title"), weight: "line", disabled: !available || !authentication },
+				{ id: MODEL_DEFAULTS_ACTION, label: translate(locale, "model.defaults"), weight: "line", disabled: !available || picker.disabled || !hasSelected },
 			], rows: [
 				{
 					id: "models:selection", title: translate(locale, "model.current"),
@@ -589,8 +594,8 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 				...(projectName.length === 0 ? { description: item.age } : { description: `${projectName} · ${item.age}` }),
 				...(due ? { badges: [translate(locale, "project.retentionDue")] } : {}),
 				actions: [
-					{ id: SESSION_ARCHIVE_OPEN_ACTION, label: translate(locale, "panel.settings.archivedSessionsOpen"), tone: "default" as const, data: item.id },
-					{ id: SESSION_RESTORE_ACTION, label: translate(locale, "project.restore"), tone: "default" as const, data: item.id },
+					{ id: SESSION_ARCHIVE_OPEN_ACTION, label: translate(locale, "panel.settings.archivedSessionsOpen"), weight: "text" as const, data: item.id },
+					{ id: SESSION_RESTORE_ACTION, label: translate(locale, "project.restore"), weight: "text" as const, data: item.id },
 				],
 			};
 		});
@@ -609,9 +614,9 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		title: translate(locale, "panel.settings.filesTitle"),
 		description: translate(locale, "panel.settings.filesDescription"),
 		actions: [
-			{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), tone: "default" },
-			...(input.models === undefined ? [] : [{ id: SESSION_RELOAD_ACTION, label: translate(locale, "page.reloadResources"), tone: "default" as const, disabled: !input.models.available }]),
-			{ id: DIAGNOSTICS_ACTION, label: translate(locale, "panel.settings.diagnostics"), tone: "default" },
+			{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), weight: "line" },
+			...(input.models === undefined ? [] : [{ id: SESSION_RELOAD_ACTION, label: translate(locale, "page.reloadResources"), weight: "line" as const, disabled: !input.models.available }]),
+			{ id: DIAGNOSTICS_ACTION, label: translate(locale, "panel.settings.diagnostics"), weight: "line" },
 		],
 		rows: [
 			{
@@ -732,8 +737,8 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 				id: "skills:list",
 				title: translate(locale, "panel.skills.loaded"),
 				actions: [
-					{ id: SKILL_NEW_ACTION, label: translate(locale, "panel.skills.new"), tone: "primary" },
-					{ id: SKILL_IMPORT_ACTION, label: translate(locale, "panel.skills.import"), tone: "default" },
+					{ id: SKILL_NEW_ACTION, label: translate(locale, "panel.skills.new"), weight: "filled" },
+					{ id: SKILL_IMPORT_ACTION, label: translate(locale, "panel.skills.import"), weight: "line" },
 				],
 				rows: state.skills.map((skill) => ({
 					id: `skill:${skill.name}`,
@@ -749,7 +754,7 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 							id: SKILL_EDIT_ACTION,
 							label: translate(locale, skill.editable ? "panel.skills.edit" : "panel.skills.view"),
 							data: skill.name,
-							tone: "default",
+							weight: "text" as const,
 						},
 						...(skill.editable
 							? [
@@ -757,7 +762,8 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 										id: SKILL_REMOVE_ACTION,
 										label: translate(locale, "panel.skills.remove"),
 										data: skill.name,
-										tone: "danger" as const,
+										weight: "text" as const,
+										danger: true,
 									},
 								]
 							: []),
@@ -799,7 +805,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 				title: translate(locale, "panel.plugins.packages"),
 				description: translate(locale, "panel.plugins.packagesDescription"),
 				actions: [
-					{ id: PLUGIN_PACKAGE_ADD_ACTION, label: translate(locale, "panel.plugins.addPackage"), tone: "primary" },
+					{ id: PLUGIN_PACKAGE_ADD_ACTION, label: translate(locale, "panel.plugins.addPackage"), weight: "filled" },
 				],
 				rows: state.packages.map((path) => ({
 					id: `package:${path}`,
@@ -810,7 +816,8 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 							id: PLUGIN_PACKAGE_REMOVE_ACTION,
 							label: translate(locale, "panel.plugins.remove"),
 							data: path,
-							tone: "danger",
+							weight: "text",
+							danger: true,
 						},
 					],
 				})),
@@ -822,14 +829,14 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 				title: translate(locale, "panel.plugins.mcp"),
 				description: translate(locale, "panel.plugins.mcpDescription"),
 				actions: [
-					{ id: PLUGIN_MCP_ADD_ACTION, label: translate(locale, "panel.plugins.addServer"), tone: "primary" },
+					{ id: PLUGIN_MCP_ADD_ACTION, label: translate(locale, "panel.plugins.addServer"), weight: "filled" },
 					...(runtime === undefined
 						? []
 						: [
 								{
 									id: PLUGIN_MCP_RELOAD_ACTION,
 									label: translate(locale, "panel.plugins.reloadMcp"),
-									tone: "default" as const,
+									weight: "line" as const,
 								},
 							]),
 				],
@@ -875,7 +882,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 								: {}),
 							actions: [
 								...(live?.scope === "global" && runtime?.canOverrideProject && server.editable
-									? [{ id: PLUGIN_MCP_PROJECT_ACTION, label: translate(locale, "panel.plugins.projectSettings"), data: server.name, tone: "default" as const }]
+									? [{ id: PLUGIN_MCP_PROJECT_ACTION, label: translate(locale, "panel.plugins.projectSettings"), data: server.name, weight: "text" as const }]
 									: []),
 								...(live?.enabled
 									? [
@@ -883,7 +890,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 												id: PLUGIN_MCP_RECONNECT_ACTION,
 												label: translate(locale, "panel.plugins.reconnect"),
 												data: server.name,
-												tone: "default" as const,
+												weight: "text" as const,
 											},
 										]
 									: []),
@@ -893,7 +900,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 												id: PLUGIN_MCP_LOGIN_ACTION,
 												label: translate(locale, "panel.plugins.login"),
 												data: server.name,
-												tone: "default" as const,
+												weight: "text" as const,
 											},
 										]
 									: []),
@@ -901,7 +908,8 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 									id: PLUGIN_MCP_REMOVE_ACTION,
 									label: server.editable ? translate(locale, "panel.plugins.remove") : remove,
 									data: server.name,
-									tone: server.editable ? ("danger" as const) : ("default" as const),
+									weight: "text" as const,
+									...(server.editable ? { danger: true } : {}),
 									...(server.editable && server.removable !== false ? {} : { disabled: true }),
 								},
 							],
@@ -920,13 +928,13 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 														id: PLUGIN_MCP_LOGIN_OPEN_ACTION,
 														label: translate(locale, "panel.plugins.openAuthorization"),
 														data: runtime.login.url,
-														tone: "primary" as const,
+														weight: "filled" as const,
 													},
 													{
 														id: PLUGIN_MCP_LOGIN_REDIRECT_ACTION,
 														label: translate(locale, "panel.plugins.pasteRedirect"),
 														data: runtime.login.id,
-														tone: "default" as const,
+														weight: "line" as const,
 													},
 												]
 											: []),
@@ -936,7 +944,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 														id: PLUGIN_MCP_LOGIN_CANCEL_ACTION,
 														label: translate(locale, "panel.plugins.cancelLogin"),
 														data: runtime.login.id,
-														tone: "default" as const,
+														weight: "line" as const,
 													},
 												]
 											: []),
@@ -986,10 +994,10 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 					{
 						id: SCHEDULE_ADD_ACTION,
 						label: translate(locale, "panel.automation.add"),
-						tone: "primary" as const,
+						weight: "filled" as const,
 						...(sessionId === undefined || state.problem ? { disabled: true } : {}),
 					},
-					...(state.problem ? [{ id: SCHEDULE_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), tone: "default" as const }] : []),
+					...(state.problem ? [{ id: SCHEDULE_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), weight: "line" as const }] : []),
 				],
 				rows: state.schedules.map((schedule) => ({
 					id: `schedule:${schedule.id}`,
@@ -1020,12 +1028,12 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 							...(state.problem || schedule.pending !== null ? { disabled: true } : {}),
 							label: translate(locale, "panel.automation.run"),
 							data: schedule.id,
-							tone: "default" as const,
+							weight: "text" as const,
 						},
-						...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, tone: "danger" as const }]),
-						{ id: SCHEDULE_EDIT_ACTION, label: translate(locale, "panel.automation.edit"), data: schedule.id, tone: "default" as const,
+						...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, weight: "text" as const, danger: true }]),
+						{ id: SCHEDULE_EDIT_ACTION, label: translate(locale, "panel.automation.edit"), data: schedule.id, weight: "text" as const,
 							...(state.problem || schedule.pending !== null ? { disabled: true } : {}) },
-						{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, tone: "default" as const,
+						{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, weight: "text" as const,
 							...(schedule.history.length === 0 ? { disabled: true } : {}) },
 
 						{
@@ -1033,7 +1041,8 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 							...(state.problem ? { disabled: true } : {}),
 							label: translate(locale, "panel.automation.remove"),
 							data: schedule.id,
-							tone: "danger" as const,
+							weight: "text" as const,
+							danger: true,
 						},
 					],
 				})),

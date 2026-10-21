@@ -198,18 +198,18 @@ export function welcomeCard(locale: Locale, input: { readonly show: boolean }): 
 			{
 				id: WELCOME_SESSION_ACTION,
 				label: translate(locale, "welcome.step.session"),
-				tone: "primary",
+				weight: "filled",
 			},
 			{
 				id: WELCOME_SETTINGS_ACTION,
 				label: translate(locale, "welcome.step.settings"),
-				tone: "default",
+				weight: "line",
 			},
 		],
 		dismiss: {
 			id: WELCOME_DISMISS_ACTION,
 			label: translate(locale, "welcome.dismiss"),
-			tone: "default",
+			weight: "text",
 		},
 		note: translate(locale, "welcome.note"),
 	};
@@ -251,13 +251,13 @@ function feedbackControls(locale: Locale, entryId: string, rating: MessageRating
 		up: {
 			id: FEEDBACK_UP_ACTION,
 			label: translate(locale, "feedback.up"),
-			tone: "default",
+			weight: "text",
 			data: entryId,
 		},
 		down: {
 			id: FEEDBACK_DOWN_ACTION,
 			label: translate(locale, "feedback.down"),
-			tone: "default",
+			weight: "text",
 			data: entryId,
 		},
 	};
@@ -294,13 +294,14 @@ export function approvalCards(locale: Locale, state: ApprovalsStateLike | undefi
 		approve: {
 			id: APPROVAL_APPROVE_ACTION,
 			label: translate(locale, "approval.approve"),
-			tone: "primary",
+			weight: "filled",
 			data: request.id,
 		},
 		deny: {
 			id: APPROVAL_DENY_ACTION,
 			label: translate(locale, "approval.deny"),
-			tone: "danger",
+			weight: "line",
+			danger: true,
 			data: request.id,
 		},
 	}));
@@ -356,7 +357,7 @@ export function attachments(
 		remove: {
 			id: ATTACHMENT_REMOVE_ACTION,
 			label: translate(locale, "composer.removeAttachment"),
-			tone: "default",
+			weight: "text",
 			data: image.id,
 		},
 	}));
@@ -742,7 +743,8 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 			remove: {
 				id: SESSION_REMOVE_ACTION,
 				label: translate(locale, "sidebar.remove"),
-				tone: "danger",
+				weight: "text",
+				danger: true,
 				data: session.sessionId,
 			},
 		}));
@@ -1399,7 +1401,7 @@ export function queuedInputs(locale: Locale, view: ConversationView | undefined)
 		cancel: {
 			id: QUEUE_CANCEL_ACTION,
 			label: translate(locale, "queue.cancel"),
-			tone: "default",
+			weight: "text",
 			data: String(item.id),
 		},
 	}));
@@ -1415,13 +1417,13 @@ export function runControls(locale: Locale, mode: SubmitMode, attached: boolean,
 		compact: {
 			id: COMPACT_ACTION,
 			label: translate(locale, "header.compact"),
-			tone: "default",
+			weight: "line",
 			disabled: !attached,
 		},
 		fork: {
 			id: CONVERSATION_FORK_ACTION,
 			label: translate(locale, "header.fork"),
-			tone: "default",
+			weight: "line",
 			disabled: !attached || !forkable,
 		},
 		submitModes: [

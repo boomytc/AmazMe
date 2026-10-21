@@ -609,8 +609,12 @@ function placeHeaderAction(node: HTMLButtonElement, label: string, glyph: IconNa
 	node.replaceChildren(icon(glyph), element("span", "sr-only header-action-label", label));
 }
 
+function panelButtonClass(action: Pick<PanelButton, "weight" | "danger">): string {
+	return `panel-button weight-${action.weight}${action.danger === true ? " is-danger" : ""}`;
+}
+
 function panelButton(action: PanelButton, report: (action: PanelAction) => void, pending?: PanelPending): HTMLButtonElement {
-	const node = button(`panel-button tone-${action.tone}`);
+	const node = button(panelButtonClass(action));
 	node.dataset.action = action.id;
 	if (action.data !== undefined) node.dataset.actionData = action.data;
 	node.textContent = action.label;
@@ -1227,7 +1231,7 @@ export function createRenderer(
 			for (const action of row.actions ?? []) actions.append(panelButton(action, report, pending));
 			if (row.menu !== undefined) {
 				const menu = row.menu;
-				const choices = menu.actions.map(action => ({ ...action, danger: action.tone === "danger", disabled: action.disabled || isPending(pending, action) }));
+				const choices = menu.actions.map(action => ({ ...action, danger: action.danger === true, disabled: action.disabled || isPending(pending, action) }));
 				const id = `panel:${row.id}:${JSON.stringify(choices.map(action => [action.id, action.disabled === true]))}`;
 				const more = button("panel-button panel-more");
 				more.dataset.menuId = id;
@@ -1329,7 +1333,7 @@ export function createRenderer(
 		field.spellcheck = false;
 		// The submit control carries what the reader typed, which is why it does not go through
 		// the shared button helper: that one reports a fixed action id and subject.
-		const submit = button(`panel-button tone-${input.submit.tone}`);
+		const submit = button(panelButtonClass(input.submit));
 		submit.dataset.action = input.submit.id;
 		submit.textContent = input.submit.label;
 		submit.disabled = input.submit.disabled === true;
@@ -1555,10 +1559,10 @@ export function createRenderer(
 		visibility();
 
 		const foot = element("footer", "modal-foot");
-		const cancel = button("panel-button default");
+		const cancel = button("panel-button weight-line");
 		cancel.textContent = modal.dismiss ?? copy("panel.cancel");
 		cancel.addEventListener("click", requestModalClose);
-		const submit = button(`panel-button ${modal.danger === true ? "tone-danger" : "tone-primary"}`);
+		const submit = button(`panel-button weight-filled${modal.danger === true ? " is-danger" : ""}`);
 		submit.textContent = modal.submit ?? "";
 		submit.addEventListener("click", () => {
 			if (lastView?.panel.modal?.pending === true) return;
@@ -2072,20 +2076,20 @@ export function createRenderer(
 			if (view.readOnly) {
 				const actions = element("div", "welcome-steps");
 				actions.append(panelButton(view.archivedAttached
-					? { id: SESSION_RESTORE_ACTION, data: view.attachedId, label: copy("project.restore"), tone: "primary" }
-					: { id: DOCK_TAB_ACTION, data: "conversations", label: copy("greeting.openConversations"), tone: "primary" }, report));
+					? { id: SESSION_RESTORE_ACTION, data: view.attachedId, label: copy("project.restore"), weight: "filled" }
+					: { id: DOCK_TAB_ACTION, data: "conversations", label: copy("greeting.openConversations"), weight: "filled" }, report));
 				block.append(actions);
 			} else if (view.model.empty !== undefined) {
 				const scopeEmpty = view.model.empty === copy("model.scopeEmpty");
 				const actions = element("div", "welcome-steps");
 				if (scopeEmpty) {
 					actions.append(
-						panelButton({ id: MODEL_SCOPE_ACTION, label: copy("model.configureModels"), tone: "primary", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_SCOPE_ACTION)),
-						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), tone: "default", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
+						panelButton({ id: MODEL_SCOPE_ACTION, label: copy("model.configureModels"), weight: "filled", disabled: view.model.disabled }, () => triggerModelSetup(MODEL_SCOPE_ACTION)),
+						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), weight: "line", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
 					);
 				} else {
 					actions.append(
-						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), tone: "primary", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
+						panelButton({ id: PROVIDER_AUTH_ACTION, label: copy("model.connectProvider"), weight: "filled", disabled: view.model.disabled }, () => triggerModelSetup(PROVIDER_AUTH_ACTION)),
 					);
 				}
 				block.append(element("p", "greeting-hint", view.model.empty), actions);
@@ -2101,7 +2105,7 @@ export function createRenderer(
 		if (unavailable) return block;
 		const actions = element("div", "welcome-steps");
 		if (filtered) {
-			const clear = button("panel-button");
+			const clear = button("panel-button weight-filled");
 			clear.textContent = copy("greeting.clearFilter");
 			clear.addEventListener("click", () => {
 				elements.rosterFilter.value = "";
@@ -2110,7 +2114,7 @@ export function createRenderer(
 			actions.append(clear);
 		} else {
 			if (hasSessions) {
-				const pick = button("panel-button tone-primary");
+				const pick = button("panel-button weight-filled");
 				pick.textContent = copy("greeting.pickAction");
 				pick.addEventListener("click", () => {
 					if (!sidebarExpanded()) toggleSidebar();
@@ -2118,7 +2122,7 @@ export function createRenderer(
 				});
 				actions.append(pick);
 			}
-			actions.append(createSessionButton(view, { id: WELCOME_SESSION_ACTION, label: copy("sidebar.newSession"), tone: hasSessions ? "default" : "primary" }));
+			actions.append(createSessionButton(view, { id: WELCOME_SESSION_ACTION, label: copy("sidebar.newSession"), weight: hasSessions ? "line" : "filled" }));
 		}
 		block.append(actions);
 		return block;
@@ -2977,7 +2981,7 @@ export function createRenderer(
 			if (changed("model-setup", [view.locale, picker.empty, picker.disabled, view.modelPending])) {
 				const scopeEmpty = picker.empty === copy("model.scopeEmpty");
 				const makeAction = (id: string, label: string, primary: boolean): HTMLButtonElement => {
-					const node = button(primary ? "model-setup-button tone-primary" : "model-setup-button");
+					const node = button(primary ? "model-setup-button weight-filled" : "model-setup-button weight-line");
 					node.dataset.action = id;
 					node.textContent = label;
 					node.title = [label, picker.empty].filter(Boolean).join("\n");
