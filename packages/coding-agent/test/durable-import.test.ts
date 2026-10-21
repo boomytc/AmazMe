@@ -98,6 +98,33 @@ describe("durable session import", () => {
 		expect(entries[1]?.model?.[0]).toMatchObject({ role: "assistant", content: [{ type: "text", text: "imported answer" }] });
 	});
 
+	it("imports a legacy v1 session after migrating it", async () => {
+		const timestamp = new Date().toISOString();
+		const file = join(directory, "legacy-v1.jsonl");
+		const records = [
+			{ type: "session", version: 1, id: "legacy-v1", timestamp, cwd },
+			{ type: "message", timestamp, message: { role: "user", content: "legacy hello", timestamp: Date.now() } },
+			{
+				type: "message",
+				timestamp,
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: "legacy answer" }],
+					api: "faux",
+					provider: "faux",
+					model: "plain",
+					usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+					stopReason: "stop",
+					timestamp: Date.now(),
+				},
+			},
+		];
+		await writeFile(file, records.map((record) => JSON.stringify(record)).join("\n"));
+
+		const imported = await importSessionFile(file, { sessionDir });
+		expect(imported.report).toEqual({ carried: 2, skipped: {} });
+	});
+
 	it("rejects a branched terminal history instead of flattening it", async () => {
 		const timestamp = new Date().toISOString();
 		const file = join(directory, "branched.jsonl");

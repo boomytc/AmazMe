@@ -5,7 +5,12 @@ import { readFile, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { expandTildePath } from "../config.ts";
 import { sessionEntriesToDurableDrafts, type SessionInteropReport } from "../core/session-interop.ts";
-import { parseSessionEntries, type SessionEntry, type SessionHeader } from "../core/jsonl-transcript.ts";
+import {
+	migrateSessionEntries,
+	parseSessionEntries,
+	type SessionEntry,
+	type SessionHeader,
+} from "../core/jsonl-transcript.ts";
 import { openSessionStorage } from "./session-database.ts";
 import { selectSession } from "./sessions.ts";
 
@@ -27,7 +32,7 @@ export interface ImportSessionResult {
 function headerOf(entries: ReturnType<typeof parseSessionEntries>): SessionHeader {
 	const header = entries[0];
 	if (header === undefined || header.type !== "session") throw new Error("Not an AmazMe session: the first record is not a session header");
-	if (header.version !== 3) throw new Error(`Unsupported session version ${String(header.version)}; only version 3 can be imported`);
+	if (header.version !== 3) throw new Error(`Unsupported session version ${String(header.version)}; expected version 1, 2, or 3`);
 	if (header.parentSession !== undefined) throw new Error("Sessions created from another session cannot be imported as a new root");
 	return header;
 }
@@ -59,6 +64,7 @@ function assertLinear(entries: ReturnType<typeof parseSessionEntries>): void {
 export async function importSessionFile(file: string, options: ImportSessionOptions = {}): Promise<ImportSessionResult> {
 	const content = await readFile(resolve(file), "utf8");
 	const entries = parseSessionEntries(content);
+	migrateSessionEntries(entries);
 	const header = headerOf(entries);
 	assertLinear(entries);
 	const cwd = options.cwd ?? header.cwd;
