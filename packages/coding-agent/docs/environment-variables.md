@@ -55,6 +55,7 @@ Durable's shell factories and execution environments have their own options; thi
 | `AMAZME_OFFLINE` | Disable automatic network activity such as catalog and update checks; explicit model/tool requests still require their configured services |
 | `AMAZME_SKIP_VERSION_CHECK` | Disable optional automatic update checks: the startup notice (GitHub Releases `latest.json`, at most once per 24 hours) and the npm metadata check used by `amazme update` |
 | `AMAZME_TELEMETRY` | Override the install/update telemetry preference with `1`/`true`/`yes` or `0`/`false`/`no` |
+| `AMAZME_CODEMODE_MAX_WORKERS` | Maximum codemode workers alive at once across all sessions in the process; default `2`. Each worker's script may use up to 256 MB. Raise it when one process runs several sessions, such as in-process subagents. Further scripts wait for a free worker. See [Codemode](codemode.md) |
 | `AMAZME_CACHE_RETENTION` | `long` requests extended prompt caching from providers that support it |
 | `AMAZME_STARTUP_BENCHMARK` | Measure native interactive startup and exit; initial prompts are not submitted |
 | `AMAZME_SHARE_VIEWER_URL` | SDK `/share` viewer URL |
