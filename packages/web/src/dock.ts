@@ -147,6 +147,8 @@ export interface DockViewInput {
 	readonly conversations: ConversationsStateLike | undefined;
 	readonly insights?: InsightsStateLike;
 	readonly reviewDiff?: string;
+	/** The file `reviewDiff` belongs to. The panel opens that diff under the file's row. */
+	readonly reviewFile?: { readonly root: string; readonly path: string };
 	readonly readOnly?: boolean;
 	readonly pending?: PanelPending;
 	readonly notice?: PanelNotice;
@@ -163,9 +165,12 @@ export interface InsightsStateLike {
 	readonly skipped: number;
 }
 
-export function changesPanel(locale: Locale, state: InsightsStateLike | undefined, diff?: string): PanelSpec {
+export function changesPanel(locale: Locale, state: InsightsStateLike | undefined, diff?: string, file?: { readonly root: string; readonly path: string }): PanelSpec {
 	const title = translate(locale, "review.title");
 	if (!state) return { id: "changes", title, notices: [], groups: [] };
+	const open = file !== undefined && diff !== undefined && state.files.some(item => item.root === file.root && item.path === file.path);
+	const showing = (item: InsightsStateLike["files"][number]): boolean =>
+		open && file !== undefined && diff !== undefined && item.root === file.root && item.path === file.path;
 	return { id: "changes", title, description: translate(locale, "review.description"),
 		notices: [...(state.paused ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, `review.paused.${state.paused}`) }] : []),
 			...state.notes.map(text => ({ tone: "info" as const, text })), ...(state.skipped ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "review.skipped", { count: String(state.skipped) }) }] : []),
@@ -173,12 +178,13 @@ export function changesPanel(locale: Locale, state: InsightsStateLike | undefine
 		groups: [{ id: "changes:files", title: translate(locale, "dock.files"), actions: [
 			{ id: "insights:refresh", label: translate(locale, "dock.reload"), weight: "line" as const },
 			...(state.paused ? [{ id: "insights:resume", data: state.conversationId, label: translate(locale, "review.resume"), weight: "filled" as const }] : []),
-		], rows: state.files.map(file => ({ id: `change:${file.root}/${file.path}`, title: file.path, description: file.root,
-			badges: [translate(locale, `review.${file.kind}`), ...(file.binary ? [translate(locale, "review.binary")] : [`+${file.added} −${file.removed}`])],
-			actions: [{ id: "insights:diff", data: JSON.stringify([state.conversationId, file.root, file.path]), label: translate(locale, "review.diff"), weight: "text" as const }],
+		], rows: state.files.map(item => ({ id: `change:${item.root}/${item.path}`, title: item.path, description: item.root,
+			badges: [translate(locale, `review.${item.kind}`), ...(item.binary ? [translate(locale, "review.binary")] : [{ added: item.added, removed: item.removed }])],
+			actions: [{ id: "insights:diff", data: JSON.stringify([state.conversationId, item.root, item.path]), label: translate(locale, showing(item) ? "review.hide" : "review.diff"), weight: "text" as const, pressed: showing(item) }],
+			...(showing(item) && diff !== undefined ? { detail: { id: "changes:diff", text: diff, title: item.path, diff: /^--- .+\r?\n\+\+\+ .+/m.test(diff) } } : {}),
 		})), empty: { cause: "first-use", text: translate(locale, "review.empty") } },
 		{ id: "changes:verification", title: translate(locale, "review.verification"), rows: state.verification.map((item, index) => ({ id: `verification:${index}`, title: item.command, description: translate(locale, item.exitCode === null ? "review.unknown" : item.exitCode === 0 ? "review.passed" : "review.failed", { code: String(item.exitCode) }) })), empty: { cause: "first-use", text: translate(locale, "review.noVerification") } }],
-		...(diff === undefined ? {} : { texts: [{ id: "changes:diff", text: diff, diff: /^--- .+\r?\n\+\+\+ .+/m.test(diff) }] }),
+		...(diff === undefined || open ? {} : { texts: [{ id: "changes:diff", text: diff, diff: /^--- .+\r?\n\+\+\+ .+/m.test(diff) }] }),
 	};
 }
 
@@ -617,7 +623,7 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
 				: tab === "conversations"
 					? conversationsPanel(locale, input.conversations, input.readOnly)
-					: tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff) : tasksPanel(locale, input.conversations);
+					: tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff, input.reviewFile) : tasksPanel(locale, input.conversations);
 	return {
 		open: input.open,
 		tabs: [...dockTabs(locale, tab), ...(input.insights ? [{ id: "changes" as const, label: translate(locale, "review.tab"), active: tab === "changes" }] : [])],

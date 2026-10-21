@@ -72,7 +72,11 @@ test("long code and output share wrap and fold controls, preserve raw copy, and 
 		const reader = document.querySelector<HTMLElement>(selector)!;
 		expect(reader.classList.contains("collapsed")).toBe(true);
 		expect(reader.querySelector<HTMLButtonElement>(".reader-fold")?.title).toBe("Show all (30 lines)");
-		reader.querySelector<HTMLButtonElement>(".reader-wrap")!.click();
+		const wrap = reader.querySelector<HTMLButtonElement>(".reader-wrap")!;
+		expect(wrap.querySelector("use")?.getAttribute("href")).toBe("#i-wrap");
+		expect(wrap.getAttribute("aria-label")).toBe("Wrap long lines");
+		expect(wrap.textContent).toBe("");
+		wrap.click();
 		expect(reader.querySelector(".reader-content")?.classList.contains("wrap")).toBe(true);
 		reader.querySelector<HTMLButtonElement>(".reader-fold")!.click();
 		expect(reader.classList.contains("collapsed")).toBe(false);
@@ -96,6 +100,38 @@ test("long recorded diff previews fold without truncating the copied preview", a
 	expect(document.querySelector(".tool-diff")?.classList.contains("collapsed")).toBe(false);
 	click('[aria-label="Copy displayed contents"]'); await Promise.resolve();
 	expect(navigator.clipboard.writeText).toHaveBeenLastCalledWith(text);
+});
+
+test("a changed file paints additions green and deletions red", () => {
+	const renderer = createRenderer(collectPageElements()), view = base();
+	const state = { ...insights, files: [{ root: "/work", path: "src/a.ts", kind: "modified" as const, added: 46, removed: 27, binary: false }] };
+	renderer.render({ ...view, dock: { ...view.dock, open: true, panel: changesPanel("zh", state) } });
+	const delta = document.querySelector("#dock-body .panel-delta");
+	expect(delta?.querySelector(".delta-add")?.textContent).toBe("+46");
+	expect(delta?.querySelector(".delta-remove")?.textContent).toBe("−27");
+	expect(document.querySelector("#dock-body .panel-badge")?.textContent).toBe("修改");
+});
+
+test("a file diff opens under that file instead of after the whole list", () => {
+	const renderer = createRenderer(collectPageElements()), view = base();
+	const state = { ...insights, files: [
+		{ root: "/work", path: "a.ts", kind: "modified" as const, added: 1, removed: 1, binary: false },
+		{ root: "/work", path: "b.ts", kind: "modified" as const, added: 2, removed: 0, binary: false },
+	] };
+	renderer.render({ ...view, dock: { ...view.dock, open: true, panel: changesPanel("zh", state, patch, { root: "/work", path: "b.ts" }) } });
+	const row = document.querySelector<HTMLElement>("#dock-body [data-row-id='change:/work/b.ts']");
+	expect(row?.dataset.reviewOpen).toBe("change:/work/b.ts");
+	const open = row?.querySelector<HTMLButtonElement>("[data-action='insights:diff']");
+	expect(open?.textContent).toBe("收起");
+	expect(open?.getAttribute("aria-pressed")).toBe("true");
+	const closed = document.querySelector<HTMLButtonElement>("#dock-body [data-row-id='change:/work/a.ts'] [data-action='insights:diff']");
+	expect(closed?.textContent).toBe("查看差异");
+	expect(closed?.getAttribute("aria-pressed")).toBe("false");
+	expect(row?.nextElementSibling?.classList.contains("review-detail")).toBe(true);
+	expect(row?.nextElementSibling?.classList.contains("tool-diff")).toBe(true);
+	expect(row?.nextElementSibling?.querySelector(".reader-copy")).toBeNull();
+	expect(document.querySelector("#dock-body [data-row-id='change:/work/a.ts']")?.nextElementSibling?.classList.contains("review-detail")).toBe(false);
+	expect(document.querySelectorAll("#dock-body .tool-diff")).toHaveLength(1);
 });
 
 test("dock reader buttons and keyboard scroll regions keep focus across live repaints", () => {

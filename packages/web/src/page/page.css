@@ -2913,10 +2913,6 @@ p {
 
 .dock-head {
 	flex: none;
-	display: grid;
-	grid-template-columns: minmax(0, 1fr) auto;
-	align-items: center;
-	gap: 8px;
 	padding: 10px 12px;
 	border-bottom: 1px solid var(--line);
 }
@@ -2978,6 +2974,44 @@ p {
 
 .dock-body .panel-head {
 	margin-bottom: 12px;
+}
+
+/* The dock is narrow, but a short title, its note, and its actions still belong on one line. */
+.dock-body .panel-head,
+.dock-body .panel-group-head {
+	flex-direction: row;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 12px;
+}
+
+.dock-body .panel-titles,
+.dock-body .panel-group-titles {
+	display: flex;
+	flex: 1 1 auto;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 2px 8px;
+	min-width: 0;
+}
+
+.dock-body .panel-title,
+.dock-body .panel-group-title {
+	flex: 0 0 auto;
+}
+
+.dock-body .panel-desc,
+.dock-body .panel-group-desc {
+	flex: 1 1 12em;
+	min-width: 0;
+	margin: 0;
+}
+
+.dock-body .panel-head > .panel-actions,
+.dock-body .panel-group-head > .panel-actions {
+	flex: 0 0 auto;
+	margin-left: auto;
+	padding-top: 0;
 }
 
 .dock-body .panel-title {
@@ -3381,8 +3415,38 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	padding: 12px 16px;
 }
 
-.panel-row + .panel-row {
+.panel-row + .panel-row,
+.review-detail + .panel-row {
 	border-top: 1px solid var(--line);
+}
+
+.panel-rows > .review-detail {
+	margin: 0;
+	padding: 4px 8px 12px;
+	border-top: 1px solid var(--line);
+}
+
+.panel-row[data-review-open] [data-action="insights:diff"] {
+	background: var(--active);
+	color: var(--text);
+}
+
+.dock-body .review-detail .reader-meta {
+	flex: 1 1 100%;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.dock-body .review-detail .reader-meta .tool-result-path {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.dock-body .review-detail .reader-controls {
+	flex: 1 1 auto;
+	margin-left: auto;
 }
 
 .panel-row-located {
@@ -3430,6 +3494,33 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	color: var(--text-2);
 	font-size: 11px;
 	line-height: 18px;
+}
+
+.panel-delta {
+	display: inline-flex;
+	align-items: center;
+	flex: none;
+	gap: 4px;
+	font-family: var(--font-mono);
+	font-size: 11px;
+	line-height: 18px;
+	font-variant-numeric: tabular-nums;
+}
+
+.panel-delta .delta-add,
+.panel-delta .delta-remove {
+	padding: 0 6px;
+	border-radius: var(--radius-pill);
+}
+
+.panel-delta .delta-add {
+	color: var(--diff-add);
+	background: var(--diff-add-bg);
+}
+
+.panel-delta .delta-remove {
+	color: var(--danger);
+	background: var(--danger-soft);
 }
 
 .panel-row-desc {
@@ -4058,12 +4149,11 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 .reader-button .icon { width: 14px; height: 14px; }
 .reader-button:hover { background: var(--hover); color: var(--text); }
-.reader-wrap { font-weight: 600; }
 .reader-wrap[aria-pressed="true"] { background: var(--active); color: var(--text); }
 .reader-content { min-width: 0; }
 .text-reader:not(.collapsed) > .reader-content:not(.file-source-code) { max-height: min(70dvh, 840px); overflow-y: auto; }
 .tool-diff, .tool-output-reader { margin-left: 24px; }
-.panel > .tool-diff { margin-left: 0; }
+.panel > .tool-diff, .panel-rows > .tool-diff { margin-left: 0; }
 .tool-diff > .tool-result-heading, .tool-diff > .tool-diff-code,
 .tool-output-reader > .tool-result-heading, .tool-output-reader > .tool-output { margin-left: 0; }
 .tool-output.reader-content { white-space: pre; overflow-x: auto; }

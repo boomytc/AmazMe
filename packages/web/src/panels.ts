@@ -98,8 +98,16 @@ export interface PanelButton {
 	readonly danger?: boolean;
 	readonly data?: string;
 	readonly disabled?: boolean;
+	/** Set on a control that opens and closes the same thing. */
+	readonly pressed?: boolean;
 	/** A footer action sits on the leading edge; the others stay with cancel and submit. */
 	readonly placement?: "start";
+}
+
+/** Additions and deletions of one changed file, drawn as a pair rather than a neutral label. */
+export interface PanelDelta {
+	readonly added: number;
+	readonly removed: number;
 }
 
 export interface PanelRow {
@@ -107,11 +115,13 @@ export interface PanelRow {
 	readonly id: string;
 	readonly title: string;
 	readonly description?: string;
-	readonly badges?: readonly string[];
+	readonly badges?: readonly (string | PanelDelta)[];
 	/** A trailing value line, for a path or a settings key. */
 	readonly value?: string;
 	readonly controls?: readonly PanelControl[];
 	readonly actions?: readonly PanelButton[];
+	/** A block shown directly under this row, such as the diff for a changed file. */
+	readonly detail?: PanelText;
 	/** A compact, whole-row navigation target; never wraps other interactive controls. */
 	readonly file?: { readonly kind: "dir" | "file" | "up"; readonly action: PanelButton };
 	/** Secondary management actions stay in a keyboard-accessible menu instead of repeating buttons. */
@@ -722,7 +732,7 @@ function rowSearchText(row: PanelRow): string {
 		row.title,
 		row.description,
 		row.value,
-		...(row.badges ?? []),
+		...(row.badges ?? []).map((badge) => typeof badge === "string" ? badge : `+${badge.added} −${badge.removed}`),
 		...(row.actions ?? []).map((action) => action.label),
 		...(row.controls ?? []).flatMap((control) => [
 			control.label,

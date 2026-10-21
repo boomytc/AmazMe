@@ -445,7 +445,6 @@ export const EN = {
 	"lane.working": "working",
 
 	"dock.toggle": "Session tools",
-	"dock.close": "Close session tools",
 	"dock.conversations": "Conversations",
 	"dock.tasks": "Tasks",
 	"review.title": "Changes",
@@ -454,6 +453,7 @@ export const EN = {
 	"review.skipped": "{count} files were skipped because of size limits or read failures.",
 	"review.empty": "No captured file changes in this turn.",
 	"review.diff": "View diff",
+	"review.hide": "Hide",
 	"review.added": "Added",
 	"review.removed": "Removed",
 	"review.modified": "Modified",
@@ -1391,7 +1391,6 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"lane.working": "处理中",
 
 	"dock.toggle": "会话工具",
-	"dock.close": "关闭会话工具",
 	"dock.conversations": "对话",
 	"dock.tasks": "任务",
 	"review.title": "本轮变更",
@@ -1400,6 +1399,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"review.skipped": "有 {count} 个文件因大小限制或读取失败而跳过。",
 	"review.empty": "本轮尚未记录到文件变化。",
 	"review.diff": "查看差异",
+	"review.hide": "收起",
 	"review.added": "新增",
 	"review.removed": "删除",
 	"review.modified": "修改",

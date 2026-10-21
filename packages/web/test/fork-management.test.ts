@@ -2,7 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, test, vi } from "vitest";
-import { CONVERSATION_ARCHIVE_ACTION, CONVERSATION_RENAME_ACTION, CONVERSATION_RESTORE_ACTION, CONVERSATION_SELECT_ACTION } from "../src/actions.ts";
+import { CONVERSATION_ARCHIVE_ACTION, CONVERSATION_RENAME_ACTION, CONVERSATION_RESTORE_ACTION, CONVERSATION_SELECT_ACTION, CONVERSATIONS_REFRESH_ACTION, DOCK_TOGGLE_ACTION } from "../src/actions.ts";
 import { conversationsPanel } from "../src/dock.ts";
 import type { ConversationsStateLike } from "../src/dock.ts";
 import { archiveForkModal } from "../src/fork-management.ts";
@@ -60,6 +60,31 @@ test("only manual forks offer management, and list badges report running and que
 	expect(archived.groups[1]?.rows.every(row => row.menu === undefined)).toBe(true);
 	const parentArchived = conversationsPanel("zh", conversations(true), true);
 	expect(parentArchived.groups[1]?.rows[0]?.actions?.find(action => action.id === CONVERSATION_RESTORE_ACTION)?.disabled).toBe(true);
+});
+
+test("a dock group that repeats the panel title folds into the panel head", () => {
+	const renderer = createRenderer(collectPageElements());
+	const view = buildWebView(input());
+	renderer.render({
+		...view,
+		dock: {
+			...view.dock,
+			panel: {
+				...view.dock.panel,
+				groups: [...view.dock.panel.groups, { id: "conversations:return", title: "返回到", rows: [{ id: "return:7", title: "上文" }] }],
+			},
+		},
+	});
+	expect(document.querySelector("#dock-close")).toBeNull();
+	expect(document.querySelector(`#run-actions [data-action="${DOCK_TOGGLE_ACTION}"]`)).toBeInstanceOf(HTMLButtonElement);
+	expect([...document.querySelectorAll("#dock-body h1, #dock-body h2")].map(node => node.textContent)).toEqual(["对话", "返回到"]);
+	expect(document.querySelector(`#dock-body .panel-head [data-action="${CONVERSATIONS_REFRESH_ACTION}"]`)).toBeInstanceOf(HTMLButtonElement);
+	expect(document.querySelector("#dock-body [data-group-id='conversations:list'] .panel-group-head")).toBeNull();
+	renderer.render(buildWebView(input(true)));
+	expect(document.querySelector("#dock-body .panel-title")?.textContent).toBe("对话");
+	expect(document.querySelector("[data-group-id='conversations:list'] .panel-group-title")?.textContent).toBe("活动对话");
+	expect(document.querySelector(`#dock-body .panel-head [data-action="${CONVERSATIONS_REFRESH_ACTION}"]`)).toBeNull();
+	expect(document.querySelector(`[data-group-id='conversations:list'] [data-action="${CONVERSATIONS_REFRESH_ACTION}"]`)).toBeInstanceOf(HTMLButtonElement);
 });
 
 test("archived fork execution is read-only without disabling the shared session terminal", () => {

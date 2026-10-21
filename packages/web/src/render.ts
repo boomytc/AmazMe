@@ -31,6 +31,7 @@ import {
 	type PanelInput,
 	type PanelModal,
 	type PanelNotice,
+	type PanelDelta,
 	type PanelPending,
 	type PanelRow,
 	type PanelSkeleton,
@@ -299,11 +300,28 @@ function element(tag: string, className: string, text?: string): HTMLElement {
 	return node;
 }
 
+/** A file's line counts: additions in one mark, deletions in the other. */
+function panelBadge(badge: string | PanelDelta): HTMLElement {
+	if (typeof badge === "string") return element("span", "panel-badge", badge);
+	const node = element("span", "panel-delta");
+	node.append(element("span", "delta-add", `+${badge.added}`), element("span", "delta-remove", `−${badge.removed}`));
+	return node;
+}
+
 function button(className: string): HTMLButtonElement {
 	const node = document.createElement("button");
 	node.type = "button";
 	node.className = className;
 	return node;
+}
+
+/** Bring an opened file diff into the dock. The list above it can be far taller than the dock. */
+function revealDockReview(body: HTMLElement, row: HTMLElement): void {
+	const bodyRect = body.getBoundingClientRect();
+	const rowRect = row.getBoundingClientRect();
+	const detail = row.nextElementSibling;
+	const bottom = detail instanceof HTMLElement ? detail.getBoundingClientRect().bottom : rowRect.bottom;
+	if (rowRect.top < bodyRect.top + 4 || bottom > bodyRect.bottom - 4) body.scrollTop += rowRect.top - bodyRect.top - 8;
 }
 
 /** One flow item: a classed group around a single child. */
@@ -347,7 +365,8 @@ type IconName =
 	| "search"
 	| "wrench"
 	| "spinner"
-	| "alert";
+	| "alert"
+	| "wrap";
 
 /** A `use` of one sprite symbol. The class on it sets the colour, which is how the pixel mark's two letters differ. */
 function useOf(symbol: string, className: string): SVGUseElement {
@@ -612,6 +631,7 @@ function panelButton(action: PanelButton, report: (action: PanelAction) => void,
 	if (action.data !== undefined) node.dataset.actionData = action.data;
 	node.textContent = action.label;
 	node.title = action.label;
+	if (action.pressed !== undefined) node.setAttribute("aria-pressed", String(action.pressed));
 	node.disabled = action.disabled === true;
 	markPending(node, pending, action);
 	node.addEventListener("click", () => report({ kind: "command", id: action.id, data: action.data }));
@@ -1237,7 +1257,7 @@ export function createRenderer(
 		const text = element("div", "panel-row-text");
 		const head = element("div", "panel-row-head");
 		head.append(element("span", "panel-row-title", row.title));
-		if (!records) for (const badge of row.badges ?? []) head.append(element("span", "panel-badge", badge));
+		if (!records) for (const badge of row.badges ?? []) head.append(panelBadge(badge));
 		text.append(head);
 		if (row.description !== undefined) text.append(element("p", "panel-row-desc", row.description));
 		const path = records && recordPath(row.value) ? row.value : undefined;
@@ -1246,7 +1266,7 @@ export function createRenderer(
 		node.append(text);
 		if (records && ((row.badges?.length ?? 0) > 0 || (row.value !== undefined && path === undefined))) {
 			const status = element("div", "record-status");
-			for (const badge of row.badges ?? []) status.append(element("span", "panel-badge", badge));
+			for (const badge of row.badges ?? []) status.append(panelBadge(badge));
 			if (row.value !== undefined && path === undefined) status.append(element("span", "record-value", row.value));
 			node.append(status);
 		}
@@ -1339,7 +1359,18 @@ export function createRenderer(
 			const empty = element("p", "panel-empty", group.empty.text);
 			empty.dataset.cause = group.empty.cause;
 			rows.append(empty);
-		} else for (const row of group.rows) rows.append(rowElementOf(row, pending, group.skeleton));
+		} else for (const row of group.rows) {
+			const rendered = rowElementOf(row, pending, group.skeleton);
+			if (row.detail !== undefined) rendered.dataset.reviewOpen = row.id;
+			rows.append(rendered);
+			if (row.detail !== undefined) {
+				const detail = row.detail.diff
+					? diffElement({ text: row.detail.text, label: row.detail.title ?? copy("review.diff") }, `panel:${row.id}:${row.detail.id}`, false)
+					: textElement(row.detail);
+				detail.classList.add("review-detail");
+				rows.append(detail);
+			}
+		}
 		node.append(rows);
 		if (group.rows.some((row) => TYPOGRAPHY_ROW_IDS.has(row.id))) {
 			const preview = element("div", "typography-preview");
@@ -1409,7 +1440,7 @@ export function createRenderer(
 		return form;
 	};
 
-	const reading = createReadingControls({ copy, copyText: (control, text, label) => copyAnswer(control, text, label),
+	const reading = createReadingControls({ copy, copyText: (control, text, label) => copyAnswer(control, text, label), icon,
 		preservePosition: root => {
 			if (elements.column.contains(root)) return transcriptPosition(elements.column, elements.transcript, false);
 			for (let parent = root.parentElement; parent; parent = parent.parentElement) {
@@ -2243,7 +2274,7 @@ export function createRenderer(
 	};
 
 	/** A persisted file change. Line numbers and signs come from the recorded diff, not a preview. */
-	const diffElement = (diff: NonNullable<NonNullable<TranscriptBlock["result"]>["diff"]>, key: string): HTMLElement => {
+	const diffElement = (diff: NonNullable<NonNullable<TranscriptBlock["result"]>["diff"]>, key: string, copy = true): HTMLElement => {
 		const container = element("section", "tool-diff");
 		const header = element("div", "tool-result-heading");
 		const meta = element("div", "reader-meta", diff.label);
@@ -2260,7 +2291,8 @@ export function createRenderer(
 		}
 		container.append(header, code);
 		reading.attach({ key, root: container, content: code, toolbar: actions, text: diff.patch ?? diff.text,
-			copyLabel: diff.patch === undefined ? "dock.copyContents" : "tool.copyPatch", lineCount: diff.text.split("\n").length });
+			...(copy ? { copyLabel: diff.patch === undefined ? "dock.copyContents" as const : "tool.copyPatch" as const } : {}),
+			lineCount: diff.text.split("\n").length });
 		return container;
 	};
 
@@ -2636,6 +2668,9 @@ export function createRenderer(
 		return row;
 	};
 
+	/** Which opened file diff the dock has already scrolled to. A later repaint must not yank the list. */
+	let dockReviewKey = "";
+
 	/** The dock: the tabs, the open tab's panel, and the class that gives it a column. */
 	const renderDock = (view: WebView): void => {
 		const open = view.dock.open && view.panel.current === CHAT_VIEW;
@@ -2668,13 +2703,7 @@ export function createRenderer(
 				});
 				tabs.append(node);
 			}
-			const close = button("icon-button dock-close");
-			close.id = "dock-close";
-			close.title = copy("dock.close");
-			close.setAttribute("aria-label", close.title);
-			close.append(icon("x"));
-			close.addEventListener("click", () => report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined }));
-			elements.dockTabs.replaceChildren(tabs, close);
+			elements.dockTabs.replaceChildren(tabs);
 		}
 		const selectionChanged = changed("dock-tab-selection", view.dock.tabs.find(tab => tab.active)?.id);
 		for (const node of elements.dockTabs.querySelectorAll<HTMLButtonElement>(".dock-tab")) {
@@ -2689,10 +2718,20 @@ export function createRenderer(
 		}
 		elements.dockBody.setAttribute("role", "tabpanel");
 		const panel = view.dock.panel;
-		const onlyGroup = panel.groups.length === 1 ? panel.groups[0] : undefined;
-		replacePanel(elements.dockBody, onlyGroup?.title === panel.title
-			? { ...panel, actions: onlyGroup.actions, groups: [{ ...onlyGroup, title: "", actions: undefined }] }
-			: panel);
+		// A group titled the same as the panel repeats that word. Its actions sit beside the panel
+		// title, and the extra heading goes, even when a later group (such as return points) remains.
+		const repeated = panel.groups.find(group => group.title.length > 0 && group.title === panel.title);
+		replacePanel(elements.dockBody, repeated === undefined ? panel : {
+			...panel,
+			actions: repeated.actions ?? panel.actions,
+			groups: panel.groups.map(group => group === repeated ? { ...group, title: "", actions: undefined } : group),
+		});
+		const review = elements.dockBody.querySelector<HTMLElement>("[data-review-open]");
+		const reviewKey = review?.dataset.reviewOpen ?? "";
+		if (reviewKey !== dockReviewKey) {
+			dockReviewKey = reviewKey;
+			if (review) revealDockReview(elements.dockBody, review);
+		}
 		positionSessionMenu();
 	};
 

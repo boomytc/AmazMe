@@ -3,6 +3,7 @@ import type { MessageKey } from "./strings.ts";
 interface ReadingOptions {
 	readonly copy: (key: MessageKey, values?: Record<string, string>) => string;
 	readonly copyText: (control: HTMLButtonElement, text: string, label: MessageKey) => void;
+	readonly icon: (name: "wrap") => SVGSVGElement;
 	readonly preservePosition: (root: HTMLElement) => () => void;
 }
 interface Reader {
@@ -11,7 +12,8 @@ interface Reader {
 	readonly content: HTMLElement;
 	readonly toolbar: HTMLElement;
 	readonly text: string;
-	readonly copyLabel: MessageKey;
+	/** Omitted when the surface already shows the text and has no separate copy action. */
+	readonly copyLabel?: MessageKey;
 	readonly lineCount?: number;
 	readonly fold?: boolean;
 }
@@ -45,7 +47,7 @@ export function createReadingControls(options: ReadingOptions) {
 			return node;
 		};
 		const wrap = control("dock.wrapLines", "reader-wrap");
-		wrap.textContent = "Aa";
+		wrap.replaceChildren(options.icon("wrap"));
 		const syncWrap = (): void => {
 			content.classList.toggle("wrap", preference.wrap);
 			wrap.setAttribute("aria-pressed", String(preference.wrap));
@@ -85,10 +87,13 @@ export function createReadingControls(options: ReadingOptions) {
 			root.append(foot);
 			syncFold();
 		}
-		const copy = control(reader.copyLabel, "reader-copy");
-		copy.dataset.copyLabel = "visible";
-		copy.addEventListener("click", () => options.copyText(copy, reader.text, reader.copyLabel));
-		toolbar.append(copy);
+		if (reader.copyLabel !== undefined) {
+			const label = reader.copyLabel;
+			const copy = control(label, "reader-copy");
+			copy.dataset.copyLabel = "visible";
+			copy.addEventListener("click", () => options.copyText(copy, reader.text, label));
+			toolbar.append(copy);
+		}
 	};
 	return { attach, clear: () => states.clear() };
 }

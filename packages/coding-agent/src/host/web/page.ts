@@ -331,6 +331,7 @@ class SessionPainter {
 	#sessionSettings: SessionSettings | undefined;
 	#insights: SessionInsights | undefined;
 	#reviewDiff: string | undefined;
+	#reviewFile: { readonly root: string; readonly path: string } | undefined;
 	#reviewRequest = 0;
 	#reviewIdentity: string | undefined;
 	#mirror: SessionMirror | undefined;
@@ -373,11 +374,21 @@ class SessionPainter {
 		return value?.conversationId === this.#conversations?.state.value?.selected ? value : undefined;
 	}
 	get reviewDiff(): string | undefined { return this.#reviewDiff; }
+	get reviewFile(): { readonly root: string; readonly path: string } | undefined { return this.#reviewFile; }
+	/** Close the open file diff and drop a load that has not landed yet. */
+	hideDiff(): void {
+		this.#reviewDiff = undefined;
+		this.#reviewFile = undefined;
+		this.#reviewRequest++;
+	}
 	async inspectDiff(conversation: string, root: string, path: string): Promise<void> {
 		const service = this.#insights, request = ++this.#reviewRequest;
 		if (!service) return;
 		const diff = await service.diff(conversation, root, path, BACKGROUND_CONTEXT);
-		if (this.#insights === service && this.#reviewRequest === request && this.insights?.conversationId === conversation) this.#reviewDiff = diff;
+		if (this.#insights === service && this.#reviewRequest === request && this.insights?.conversationId === conversation) {
+			this.#reviewFile = { root, path };
+			this.#reviewDiff = diff;
+		}
 	}
 
 	get mirrorWarning(): SessionMirrorWarning | null | undefined {
@@ -726,7 +737,7 @@ class SessionPainter {
 		this.#insights?.state.subscribe(() => {
 			const value = this.#insights?.state.value;
 			const identity = value === undefined ? undefined : `${value.conversationId}:${value.reviewRevision}`;
-			if (identity !== this.#reviewIdentity) { this.#reviewIdentity = identity; this.#reviewDiff = undefined; this.#reviewRequest++; }
+			if (identity !== this.#reviewIdentity) { this.#reviewIdentity = identity; this.#reviewDiff = undefined; this.#reviewFile = undefined; this.#reviewRequest++; }
 			paint();
 		});
 		this.#approvals = services.get(Approvals);
@@ -777,6 +788,7 @@ class SessionPainter {
 		this.#sessionSettings = undefined;
 		this.#insights = undefined;
 		this.#reviewDiff = undefined;
+		this.#reviewFile = undefined;
 		this.#reviewIdentity = undefined;
 		this.#reviewRequest++;
 		this.#mirror = undefined;
@@ -1199,7 +1211,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						conversations: bound ? painter.conversations : undefined,
 						...(panelPending === undefined ? {} : { pending: panelPending }),
 						...(panelNoticeDock !== dockTab || panelNotice === undefined ? {} : { notice: panelNotice }),
-						...(bound && painter.insights ? { insights: painter.insights, reviewDiff: painter.reviewDiff } : {}),
+						...(bound && painter.insights ? { insights: painter.insights, reviewDiff: painter.reviewDiff, ...(painter.reviewFile === undefined ? {} : { reviewFile: painter.reviewFile }) } : {}),
 					},
 					// The panel inherits this view's language, so one resolution serves the whole page.
 					panel: {
@@ -2302,7 +2314,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					case "insights:diff": {
 						if (!action.data || !painter.insightsService) return;
 						const values: unknown = JSON.parse(action.data);
-						if (Array.isArray(values) && values.length === 3 && values.every(value => typeof value === "string")) void painter.inspectDiff(values[0], values[1], values[2]).then(paint, report);
+						if (!Array.isArray(values) || values.length !== 3 || !values.every(value => typeof value === "string")) return;
+						const [conversation, root, path] = values as [string, string, string];
+						const open = painter.reviewFile;
+						if (open?.root === root && open.path === path && painter.reviewDiff !== undefined && painter.insights?.conversationId === conversation) {
+							painter.hideDiff();
+							paint();
+							return;
+						}
+						runPanelCall({
+							id: action.id, data: action.data, sessionId: painter.sessionId, retry: false, dock: "changes",
+							call: () => painter.inspectDiff(conversation, root, path).then(done),
+						});
 						return;
 					}
 					case SESSION_ARCHIVE_ACTION:

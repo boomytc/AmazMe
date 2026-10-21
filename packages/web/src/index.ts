@@ -196,6 +196,7 @@ export {
 	type PanelAction,
 	type PanelButton,
 	type PanelControl,
+	type PanelDelta,
 	type PanelField,
 	type PanelGroup,
 	type PanelId,
