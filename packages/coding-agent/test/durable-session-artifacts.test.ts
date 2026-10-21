@@ -14,7 +14,7 @@ import {
 	fauxText,
 	fauxToolCall,
 } from "@amazme/ai";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
@@ -32,6 +32,23 @@ import { createTempDir } from "./temp-dir.ts";
 
 const sessions = new Set<OpenDurableResult>();
 const directories = new Set<string>();
+
+// Keep this file's global temp scans isolated from test files running in parallel.
+const tempRoot = createTempDir("amazme-artifacts-suite-", { scope: "suite" });
+const originalTempEnv = { TMPDIR: process.env.TMPDIR, TMP: process.env.TMP, TEMP: process.env.TEMP };
+
+beforeAll(() => {
+	process.env.TMPDIR = tempRoot;
+	process.env.TMP = tempRoot;
+	process.env.TEMP = tempRoot;
+});
+
+afterAll(() => {
+	for (const [key, value] of Object.entries(originalTempEnv)) {
+		if (value === undefined) delete process.env[key];
+		else process.env[key] = value;
+	}
+});
 
 async function temp(prefix: string): Promise<string> {
 	const path = createTempDir(prefix);
