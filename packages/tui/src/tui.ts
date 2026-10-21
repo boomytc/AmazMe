@@ -8,6 +8,7 @@ import { commitTerminalOutput, type Terminal } from "./terminal.ts";
 import {
 	COLOR_SCHEME_NOTIFICATIONS_OFF,
 	COLOR_SCHEME_NOTIFICATIONS_ON,
+	CURSOR_SHOW,
 	terminalRestoreDefaults,
 	terminalRestoreParts,
 	type TerminalRestoreState,
@@ -590,6 +591,29 @@ export abstract class TuiBase extends Container implements TUI {
 
 	protected beforeTerminalStart(): void {}
 
+	/** Mode resets written before the terminal's own resets when the process exits without stop(). */
+	protected getExitRestorePrefix(): string {
+		return `${this.terminalColorSchemeNotificationsEnabled ? COLOR_SCHEME_NOTIFICATIONS_OFF : ""}${CURSOR_SHOW}`;
+	}
+
+	/** Mode resets written after the terminal's own resets when the process exits without stop(). */
+	protected getExitRestoreSuffix(): string {
+		return "";
+	}
+
+	/**
+	 * Last-resort restore for exit paths that skip stop(), e.g. a direct process.exit() (#11170).
+	 * Hard kills and native aborts run no JavaScript and cannot be covered.
+	 */
+	private readonly exitRestoreHandler = (): void => {
+		if (this.stopped) return;
+		try {
+			this.terminal.restoreOnExit?.(this.getExitRestorePrefix(), this.getExitRestoreSuffix());
+		} catch {
+			// Never throw from an exit handler.
+		}
+	};
+
 	protected afterTerminalStart(): void {}
 
 	protected beforeTerminalStop(_options: TuiStopOptions): void {}
@@ -961,6 +985,8 @@ export abstract class TuiBase extends Container implements TUI {
 
 	start(): void {
 		this.stopped = false;
+		process.off("exit", this.exitRestoreHandler);
+		process.on("exit", this.exitRestoreHandler);
 		this.beforeTerminalStart();
 		this.terminal.start(
 			(data) => this.handleTerminalInput(data),
@@ -1027,6 +1053,7 @@ export abstract class TuiBase extends Container implements TUI {
 	stop(options: TuiStopOptions = {}): void {
 		if (this.stopped) return;
 		this.stopped = true;
+		process.off("exit", this.exitRestoreHandler);
 		this.cancelRenderTimer();
 		this.beforeTerminalStop(options);
 		const modes = this.terminal.takeRestoreModes?.() ?? {};

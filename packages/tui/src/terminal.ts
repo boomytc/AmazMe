@@ -116,6 +116,12 @@ export interface Terminal {
 	// Stop the terminal and restore state
 	stop(options?: TerminalStopOptions): void;
 
+	/**
+	 * Synchronously restore terminal modes from a process `exit` handler when stop() did not run.
+	 * Writes `before`, then this terminal's own mode resets, then `after`.
+	 */
+	restoreOnExit?(before: string, after: string): void;
+
 	/** Restore cooked input after a stop that deferred it. Idempotent. */
 	restoreInput?(): void;
 
@@ -539,6 +545,12 @@ export class ProcessTerminal implements Terminal {
 		this.programStatusSupported = false;
 		this.programStatusQueryPending = false;
 		return modes;
+	}
+
+	restoreOnExit(before: string, after: string): void {
+		this.writeSync(
+			`${before}${terminalRestoreSequence({ ...terminalRestoreDefaults(), ...this.takeRestoreModes() })}${after}`,
+		);
 	}
 
 	stop(options?: TerminalStopOptions): void {

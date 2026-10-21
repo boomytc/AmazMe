@@ -20,11 +20,15 @@ import {
 import { getLayoutNode } from "./layout-node.ts";
 import type { Terminal } from "./terminal.ts";
 import {
+	ALT_SCREEN_OFF,
 	ALT_SCREEN_ON,
 	AUTOWRAP_OFF,
+	AUTOWRAP_ON,
 	CURSOR_HIDE,
+	CURSOR_SHOW,
 	MOUSE_ALL_ON,
 	MOUSE_BUTTON_ON,
+	MOUSE_OFF,
 	SYNCHRONIZED_OUTPUT_OFF,
 	SYNCHRONIZED_OUTPUT_ON,
 	type TerminalRestoreState,
@@ -437,6 +441,17 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
 			preserveScreen,
 			reprintLines,
 		};
+	}
+
+	protected override getExitRestorePrefix(): string {
+		const prefix = super.getExitRestorePrefix();
+		if (!this.altScreenActive) return prefix;
+		return `${SYNCHRONIZED_OUTPUT_ON}${this.mouseEnabled ? MOUSE_OFF : ""}${AUTOWRAP_ON}${prefix}`;
+	}
+
+	protected override getExitRestoreSuffix(): string {
+		// Kitty keyboard flags are per screen, so the terminal pops them before the alternate screen is left.
+		return `${super.getExitRestoreSuffix()}${this.altScreenActive ? `${ALT_SCREEN_OFF}${CURSOR_SHOW}${SYNCHRONIZED_OUTPUT_OFF}` : ""}`;
 	}
 
 	private deleteKittyImages(): string {
