@@ -15,6 +15,7 @@ import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import type { PageRenderer, WebView } from "@amazme/web";
 import {
 	BOOT_GLOBAL,
+	PROJECT_NEW_SESSION_ACTION,
 	CONVERSATION_RENAME_ACTION,
 	CONVERSATION_RENAME_MODAL,
 	CONVERSATION_ARCHIVE_ACTION,
@@ -432,6 +433,60 @@ describe("web terminal output retention", () => {
 });
 
 describe("web client interactive loop", () => {
+	test("standalone page sessions keep their workspace and selection through archive and host restart", async () => {
+		const { host, directory, sessionDir } = await startHostWithDirectories(false, () => "standalone reply");
+		const presentation = await openPresentation(host);
+		expect(presentation.directory.state.value?.projects).toEqual([]);
+		const page = await openPage(host);
+		expect(page.renderer.view?.projects?.find(group => group.id === null)?.selected).toBe(true);
+		page.renderer.onCreateSession();
+		await waitFor(() => page.renderer.view?.attachedId !== undefined, "standalone creation", 10_000);
+		const id = page.renderer.view!.attachedId!;
+		const metadata = await readSession(sessionDir, id);
+		const cwd = join(sessionDir, id, "workspace");
+		expect(metadata).toMatchObject({ projectId: null, cwd });
+		expect(presentation.directory.state.value?.projects).toEqual([]);
+		const attached = await attachSession(presentation, id);
+		expect(await attached.terminal.run("printf standalone > note.txt", BACKGROUND_CONTEXT)).toEqual({ ok: true });
+		expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("standalone");
+		await attached.workspace.read("../meta.json", BACKGROUND_CONTEXT);
+		expect(attached.workspace.state.value?.view.kind).toBe("denied");
+		const project = await presentation.projects.create({ cwd, name: "Explicit project" }, BACKGROUND_CONTEXT);
+		const inProject = await presentation.management.create({ projectId: project.id }, BACKGROUND_CONTEXT);
+		page.renderer.onSelect(inProject.sessionId);
+		await waitFor(() => page.renderer.view?.attachedId === inProject.sessionId, "project selection", 10_000);
+		page.renderer.onPanelAction({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: undefined });
+		await waitFor(() => page.renderer.view?.newSession.pending !== true, "empty standalone reuse", 10_000);
+		expect(page.renderer.view?.attachedId).toBe(id);
+		expect(page.renderer.view?.attachedId).not.toBe(inProject.sessionId);
+		page.renderer.onSubmit("standalone prompt");
+		await waitFor(() => page.renderer.view?.blocks.some(block => block.kind === "assistant" && block.text.includes("standalone reply")) === true, "standalone answer", 10_000);
+		const rootId = attached.conversations.state.value!.selected;
+		const fork = await attached.conversations.fork(rootId, null, BACKGROUND_CONTEXT);
+		expect(fork.error).toBeNull();
+		await presentation.projects.remove(project.id, BACKGROUND_CONTEXT);
+		expect((await readSession(sessionDir, id))?.archivedAt).toBeUndefined();
+		await presentation.archives.set(id, true, BACKGROUND_CONTEXT);
+		await waitFor(() => page.renderer.view?.readOnly === true, "standalone archive", 10_000);
+		page.renderer.onPanelAction({ kind: "command", id: SESSION_RESTORE_ACTION, data: id });
+		await waitFor(() => page.renderer.view?.readOnly !== true, "standalone restore", 10_000);
+		expect(page.renderer.view?.projects?.find(group => group.id === null)?.selected).toBe(true);
+		expect(presentation.directory.state.value?.projects?.find(item => item.id === project.id)?.removed).toBe(true);
+		const another = await presentation.management.create({ projectId: null }, BACKGROUND_CONTEXT);
+		expect(another.cwd).not.toBe(cwd);
+		await attached.dispose();
+		await page.dispose();
+		await presentation.dispose();
+		await host.close(); hosts.delete(host);
+		const restarted = await startWebHost({ port: 0, directory, sessionDir }); hosts.add(restarted);
+		const resumed = await openPage(restarted);
+		expect(resumed.renderer.view?.attachedId).toBe(id);
+		expect(resumed.renderer.view?.projects?.find(group => group.id === null)?.selected).toBe(true);
+		expect(await readSession(sessionDir, id)).toMatchObject({ projectId: null, cwd });
+		expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("standalone");
+		await resumed.dispose();
+	}, 60_000);
+
 	test("offers one contextual draft through the real host model service without sending it", async () => {
 		const requests: string[] = [];
 		const suggestion = "请解释两种设计各自适合的使用场景。";
@@ -825,8 +880,7 @@ describe("web client interactive loop", () => {
 		const { host, sessionDir } = await startHostWithDirectories(true);
 		const first = await openPresentation(host);
 		const second = await openPresentation(host);
-		const projectId = first.directory.state.value?.defaultProjectId;
-		if (projectId === undefined) throw new Error("Missing default project");
+		const projectId = (await first.projects.create({ cwd: process.cwd() }, BACKGROUND_CONTEXT)).id;
 		const one = await first.management.create({ id: "archive-project-one", projectId }, BACKGROUND_CONTEXT);
 		const two = await second.management.create({ id: "archive-project-two", projectId }, BACKGROUND_CONTEXT);
 		const attachedOne = await attachSession(first, one.sessionId);
@@ -915,6 +969,7 @@ describe("web client interactive loop", () => {
 	test("accepts current and legacy archive selections without trusting malformed archive stamps", () => {
 		expect(isProjectSelection({ projectId: "p", sessionId: "s", archivedAt: 3 })).toBe(true);
 		expect(isProjectSelection({ projectId: "p" })).toBe(true);
+		expect(isProjectSelection({ projectId: null, sessionId: "standalone" })).toBe(true);
 		expect(isProjectSelection({ projectId: "p", sessionId: "s", archivedAt: 3, showArchived: true })).toBe(true);
 		expect(isProjectSelection({ showArchived: false })).toBe(true);
 		expect(isProjectSelection({ showArchived: "true" })).toBe(false);

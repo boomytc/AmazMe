@@ -1073,6 +1073,7 @@ async function createCodingAgentHarness(
 	const projectCatalog = new ProjectCatalog(options.sessionDir);
 	const workspaceDirectories = async (): Promise<readonly string[]> => {
 		const metadata = await readSession(options.sessionDir, options.metadata.id);
+		if (metadata?.projectId === null) return [cwd];
 		const projects = await projectCatalog.list();
 		const path = await realpath(cwd).catch(() => cwd);
 		const project =

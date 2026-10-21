@@ -85,7 +85,7 @@ export interface TranscriptBlock {
 
 export interface RosterItem {
 	readonly id: string;
-	readonly projectId?: string;
+	readonly projectId?: string | null;
 	readonly archived?: boolean;
 	/** The session's title, or the localized new-session label. */
 	readonly label: string;
@@ -485,7 +485,7 @@ export function inboxOf(view: ConversationView): InboxState {
 
 /** One hosted Session as the host publishes it; only the fields the roster shows. */
 export interface SessionSummaryLike {
-	readonly projectId?: string;
+	readonly projectId?: string | null;
 	readonly archivedAt?: number;
 	readonly workEndedAt?: number;
 	readonly serverId?: string;
@@ -545,7 +545,7 @@ export interface WebViewInput {
 	/** The reader's language, resolved from the stored preference and the browser. */
 	readonly locale: Locale;
 	readonly directory: SessionDirectoryLike | undefined;
-	readonly selectedProjectId?: string;
+	readonly selectedProjectId?: string | null;
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
 	readonly now: number;
@@ -1524,7 +1524,7 @@ export function buildWebView(input: WebViewInput): WebView {
 	return {
 		locale,
 		roster,
-		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.rosterFilter),
+		projects: projectGroups(locale, input.directory, roster, input.selectedProjectId, input.rosterFilter),
 		...(archivedAttached === undefined ? {} : { archivedAttached }),
 		...(readOnly ? { readOnly: true } : {}),
 		rosterFilter: input.rosterFilter,

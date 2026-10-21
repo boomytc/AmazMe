@@ -15,7 +15,8 @@ export interface ProjectSummary {
 
 /** Per-window navigation, also saved by the host as a fallback for a newly opened client. */
 export interface ProjectSelection {
-	projectId?: string;
+	/** null remembers the standalone group rather than falling back to a project. */
+	projectId?: string | null;
 	sessionId?: string;
 	/**
 	 * Older pages stored the archive browser here. New pages omit it. Readers ignore the value
@@ -30,7 +31,7 @@ export function isProjectSelection(value: unknown): value is ProjectSelection {
 	if (typeof value !== "object" || value === null) return false;
 	const row = value as Record<string, unknown>;
 	return (row.showArchived === undefined || typeof row.showArchived === "boolean")
-		&& (row.projectId === undefined || typeof row.projectId === "string")
+		&& (row.projectId === undefined || row.projectId === null || typeof row.projectId === "string")
 		&& (row.sessionId === undefined || typeof row.sessionId === "string")
 		&& (row.archivedAt === undefined || (typeof row.archivedAt === "number" && Number.isFinite(row.archivedAt)));
 }

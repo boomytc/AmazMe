@@ -85,7 +85,7 @@ export async function createExperimentalServerServices(options: {
 		selection(): Promise<ProjectSelection | undefined>;
 		remember(selection: ProjectSelection): Promise<void>;
 		list(): Promise<ProjectSummary[]>;
-		defaultId: string;
+		defaultId?: string;
 		update?(id: string, name: string, workspaces: string[]): Promise<ProjectSummary>;
 		create(cwd: string, name?: string, workspaces?: string[], projectId?: string): Promise<ProjectSummary>;
 		rename(id: string, name: string): Promise<ProjectSummary>;

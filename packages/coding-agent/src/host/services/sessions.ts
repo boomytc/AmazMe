@@ -15,7 +15,7 @@ export interface SessionSummary extends SessionAddress {
 	createdAt: number;
 	/** The working directory the Session's agent runs in, as its catalog metadata records it. */
 	cwd: string;
-	projectId?: string;
+	projectId?: string | null;
 	archivedAt?: number;
 	workEndedAt?: number;
 	/** `host` for a Session this server owns. */
@@ -26,7 +26,8 @@ export interface SessionSummary extends SessionAddress {
 
 export interface SessionCreateOptions {
 	id?: string;
-	projectId?: string;
+	/** null creates a standalone session with its own persistent workspace. Omitted keeps CLI defaults. */
+	projectId?: string | null;
 	/** UI new-session intent: reuse the latest empty session in this workspace. Cannot accompany `id`. */
 	reuseEmpty?: boolean;
 }

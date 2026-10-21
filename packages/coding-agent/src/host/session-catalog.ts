@@ -8,7 +8,8 @@ export interface SessionCatalogMetadata {
 	readonly createdAt: number;
 	/** The working directory the Session's agent runs in. */
 	readonly cwd: string;
-	readonly projectId?: string;
+	/** null is an explicit standalone session; undefined is legacy ownership to migrate. */
+	readonly projectId?: string | null;
 	readonly archivedAt?: number;
 	/** Retained for existing metadata readers; every archive now stops work. */
 	readonly workEndedAt?: number;
@@ -40,12 +41,13 @@ export function mergeTrackedSession(
 	worker: SessionCatalogMetadata,
 ): SessionCatalogMetadata {
 	const name = normalizeSessionName(catalog?.name ?? "");
+	const projectId = catalog?.projectId !== undefined ? catalog.projectId : worker.projectId;
 	const { name: _name, nameSource: _nameSource, archivedAt: _workerArchive, workEndedAt: _workerEnd, ...rest } = worker;
 	return {
 		...rest,
 		...(catalog?.archivedAt === undefined ? {} : { archivedAt: catalog.archivedAt }),
 		...(catalog?.workEndedAt === undefined ? {} : { workEndedAt: catalog.workEndedAt }),
-		...((catalog?.projectId ?? worker.projectId) === undefined ? {} : { projectId: catalog?.projectId ?? worker.projectId }),
+		...(projectId === undefined ? {} : { projectId }),
 		...(name.length === 0 ? {} : { name }),
 		...(catalog?.nameSource === undefined ? {} : { nameSource: catalog.nameSource }),
 	};
@@ -130,7 +132,7 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 		createdAt,
 		cwd,
 		path,
-		...(typeof projectId === "string" ? { projectId } : {}),
+		...(typeof projectId === "string" || projectId === null ? { projectId } : {}),
 		...(typeof archivedAt === "number" && Number.isFinite(archivedAt) ? { archivedAt } : {}),
 		...(typeof workEndedAt === "number" && Number.isFinite(workEndedAt) ? { workEndedAt } : {}),
 		...(display.length === 0 ? {} : { name: display }),
@@ -141,7 +143,10 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 /** Create an empty Session. Its worker creates the storage on first open. */
 export async function createSession(
 	sessionDir: string,
-	options: { readonly id?: string; readonly cwd: string; readonly name?: string; readonly projectId?: string; readonly createdAt?: number },
+	options: { readonly id?: string; readonly name?: string; readonly createdAt?: number } & (
+		| { readonly projectId: null; readonly cwd?: never }
+		| { readonly projectId?: string; readonly cwd: string }
+	),
 ): Promise<SessionCatalogMetadata> {
 	const id = options.id ?? randomUUID();
 	if (!isSessionId(id)) throw new Error(`Invalid session ID: ${id}`);
@@ -157,12 +162,18 @@ export async function createSession(
 	const metadata: SessionCatalogMetadata = {
 		id,
 		createdAt: options.createdAt ?? Date.now(),
-		cwd: options.cwd,
+		cwd: options.projectId === null ? join(path, "workspace") : options.cwd,
 		...(options.projectId === undefined ? {} : { projectId: options.projectId }),
 		path,
 		...(display.length === 0 ? {} : { name: display }),
 	};
-	await writeFile(join(path, METADATA_FILE), `${JSON.stringify(metadataFile(metadata), null, "\t")}\n`);
+	try {
+		if (metadata.projectId === null) await mkdir(metadata.cwd);
+		await writeFile(join(path, METADATA_FILE), `${JSON.stringify(metadataFile(metadata), null, "\t")}\n`);
+	} catch (error) {
+		await rm(path, { recursive: true, force: true });
+		throw error;
+	}
 	return metadata;
 }
 
@@ -221,7 +232,7 @@ async function writeMetadata(metadata: SessionCatalogMetadata): Promise<void> {
 function metadataFile(metadata: SessionCatalogMetadata): {
 	createdAt: number;
 	cwd: string;
-	projectId?: string;
+	projectId?: string | null;
 	archivedAt?: number;
 	workEndedAt?: number;
 	name?: string;

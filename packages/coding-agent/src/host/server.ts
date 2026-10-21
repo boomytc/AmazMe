@@ -412,14 +412,12 @@ async function startServerBackend(
 	const activateHostSessions = (): void => resolveHostReady();
 	const sessionDir = resolveSessionDirectory(options.sessionDir);
 	const projects = new ProjectCatalog(sessionDir);
-	const previousProjects = await projects.list();
-	let projectRows = await projects.initialize([
-		...(previousProjects.length === 0 ? [process.cwd()] : []),
-		...(await listCatalogSessions(sessionDir)).filter(session => session.projectId === undefined).map(session => session.cwd),
-	]);
+	let projectRows = await projects.initialize(
+		(await listCatalogSessions(sessionDir)).filter(session => session.projectId === undefined).map(session => session.cwd),
+	);
 	const defaultCwd = await realpath(process.cwd());
 	const defaultProjectId = (projectRows.find(project => !project.removed && (project.workspaces ?? [project.cwd]).includes(defaultCwd))
-		?? projectRows.find(project => !project.removed) ?? projectRows[0]!).id;
+		?? projectRows.find(project => !project.removed))?.id;
 	const projectForCwd = async (cwd: string) => {
 		const path = await realpath(cwd).catch(() => cwd);
 		return projectRows.find(project => !project.removed && (project.workspaces ?? [project.cwd]).includes(path))
@@ -449,6 +447,17 @@ async function startServerBackend(
 	};
 	const createSession = async (createOptions: SessionCreateOptions, context: Context): Promise<SessionCatalogMetadata> => {
 		if (createOptions.reuseEmpty && createOptions.id !== undefined) throw new Error("An explicit session ID cannot reuse an empty session");
+		if (createOptions.projectId === null) {
+			if (createOptions.reuseEmpty) {
+				const latest = (await listSessions()).filter(metadata => metadata.archivedAt === undefined && metadata.projectId === null)
+					.sort((left, right) => right.createdAt - left.createdAt || left.id.localeCompare(right.id))[0];
+				if (latest !== undefined) {
+					const selected = await options.resolveSessionPlugins(latest, undefined, context);
+					if (await workers.isSessionEmpty(latest, context, selected.manifestPaths)) return latest;
+				}
+			}
+			return createCatalogSession(sessionDir, { id: createOptions.id, projectId: null });
+		}
 		projectRows = await projects.list();
 		let project = createOptions.projectId === undefined ? await projectForCwd(process.cwd()) : projectRows.find(project => project.id === createOptions.projectId);
 		if (project === undefined && createOptions.projectId === undefined) project = await projects.create(process.cwd());
@@ -471,7 +480,7 @@ async function startServerBackend(
 	};
 	const summarize = async (metadata: SessionCatalogMetadata, source: SessionSource = "host", name?: string): Promise<SessionSummary> => {
 		const display = (name ?? metadata.name)?.trim() ?? "";
-		const projectId = metadata.projectId ?? (await projectForCwd(metadata.cwd))?.id;
+		const projectId = metadata.projectId === undefined ? (await projectForCwd(metadata.cwd))?.id : metadata.projectId;
 		return {
 			serverId,
 			sessionId: metadata.id,
@@ -615,7 +624,7 @@ async function startServerBackend(
 	const archiveSession = async (sessionId: string, archived: boolean, context: Context): Promise<void> => {
 		context.abortSignal?.throwIfAborted();
 		const metadata = await resolveSession(sessionId, context);
-		if (!archived) {
+		if (!archived && metadata.projectId !== null) {
 			projectRows = await projects.list();
 			const project = projectRows.find(project => project.id === metadata.projectId) ?? await projectForCwd(metadata.cwd);
 			if (project?.removed) await projects.restore(project.id);

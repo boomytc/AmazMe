@@ -851,7 +851,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let attachmentSequence = 0;
 	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
 	let rosterFilter = "";
-	let selectedProjectId: string | undefined;
+	let selectedProjectId: string | null | undefined;
 	/** Lets the open archived session stay attached. It does not browse the archive list. */
 	let allowArchivedAttach = false;
 	let selectionRevision = 0;
@@ -1273,8 +1273,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				});
 			}
 		}
-		if (!available.some(project => project.id === selectedProjectId)) {
-			selectedProjectId = available.find(project => project.id === state.defaultProjectId)?.id ?? available[0]?.id;
+		if (selectedProjectId !== null && !available.some(project => project.id === selectedProjectId)) {
+			selectedProjectId = available.find(project => project.id === state.defaultProjectId)?.id ?? available[0]?.id ?? null;
 			if (booted) { selectionRevision += 1; rememberSelection(); }
 		}
 		paint();
@@ -1435,10 +1435,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const createSession = (): void => {
 		if (creating || !client.connected || !directoryReady) return;
 		const known = directory.state.value?.projects;
-		if (known !== undefined && !known.some(project => project.id === selectedProjectId && !project.removed)) {
-			selectedProjectId = known.find(project => !project.removed)?.id;
+		if (selectedProjectId !== null && known !== undefined && !known.some(project => project.id === selectedProjectId && !project.removed)) {
+			selectedProjectId = known.find(project => !project.removed)?.id ?? null;
 		}
-		if (known !== undefined && selectedProjectId === undefined) { modal = addProjectModal(locale); paint(); return; }
 		const projectId = selectedProjectId;
 		desiredSessionId = undefined;
 		const selection = ++selectionRevision;
@@ -2061,7 +2060,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						openModal(addProjectModal(locale), action); return;
 					case PROJECT_NEW_SESSION_ACTION:
 						if (creating || !directoryReady || !client.connected) return;
-						selectedProjectId = action.data; rememberSelection(); createSession(); return;
+						selectedProjectId = action.data ?? null; rememberSelection(); createSession(); return;
 					case PROJECT_EDIT_ACTION: {
 						const project = directory.state.value?.projects?.find(project => project.id === action.data);
 						if (project) openModal(editProjectModal(locale, project), action); return;
@@ -2075,8 +2074,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						if (project) openModal(removeProjectModal(locale, project.id, project.name), action); return;
 					}
 					case PROJECT_SELECT_ACTION: {
-						selectedProjectId = action.data;
-						const session = rosterItems(locale, directory.state.value, undefined, Date.now(), "", false).find(item => item.projectId === action.data);
+						selectedProjectId = action.data ?? null;
+						const session = rosterItems(locale, directory.state.value, undefined, Date.now(), "", false).find(item => item.projectId === selectedProjectId);
 						view = CHAT_VIEW;
 						void (session ? selectSession(session.id) : clearSession()).catch(report); paint(); return;
 					}
@@ -3070,11 +3069,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			&& (previous.archivedAt === remembered?.archivedAt || deepLinked);
 		allowArchivedAttach = sameArchive;
 		const available = state?.projects?.filter(project => !project.removed) ?? [];
-		const project = available.find(project => project.id === (remembered?.projectId ?? previous?.projectId))
+		const rememberedProjectId = remembered?.projectId !== undefined ? remembered.projectId : previous?.projectId;
+		const project = available.find(project => project.id === rememberedProjectId)
 			?? available.find(project => project.id === state?.defaultProjectId) ?? available[0];
-		selectedProjectId = project?.id;
+		selectedProjectId = rememberedProjectId === null ? null : project?.id ?? null;
 		let initial: string | undefined;
-		if (remembered === undefined) initial = rosterItems(locale, state, undefined, Date.now()).find(item => project === undefined || item.projectId === project.id)?.id;
+		if (remembered === undefined) initial = rosterItems(locale, state, undefined, Date.now()).find(item => item.projectId === selectedProjectId)?.id;
 		else if (previous !== undefined && canResumeSession(previous.sessionId)
 			&& (previous.archivedAt === undefined || previous.archivedAt === remembered.archivedAt || deepLinked)
 			&& (previous.projectId === selectedProjectId || sameArchive)) initial = previous.sessionId;

@@ -3059,18 +3059,24 @@ export function createRenderer(
 				}
 				if (view.projects !== undefined) {
 					for (const group of view.projects) {
-						const section = element("div", "project-group"); section.dataset.projectId = group.id;
+						const section = element("div", "project-group");
+						const projectId = group.id;
+						if (projectId === null) section.dataset.standalone = "true";
+						else section.dataset.projectId = projectId;
 						const head = element("div", "project-heading");
 						const select = button(group.selected ? "project-select selected" : "project-select"); select.title = (group.workspaces ?? [group.cwd]).join("\n");
 						select.setAttribute("aria-expanded", String(group.selected));
-						select.append(icon("folder"), element("span", "project-name", group.name));
-						select.addEventListener("click", () => report({ kind: "command", id: PROJECT_SELECT_ACTION, data: group.id })); head.append(select);
-						const more = button("project-action project-more"); more.title = copy("project.actions"); more.setAttribute("aria-label", `${more.title}: ${group.name}`);
-						more.dataset.menuId = `project:${group.id}`; more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false"); more.append(icon("more"));
-						more.addEventListener("click", () => openRosterMenu(`project:${group.id}`, group.id, copy("project.actions"), [
-							{ id: PROJECT_EDIT_ACTION, label: copy("project.edit"), glyph: "square-pen" },
-							{ id: PROJECT_REMOVE_ACTION, label: copy("project.remove"), glyph: "x", danger: true },
-						]));
+						select.append(icon(projectId === null ? "message" : "folder"), element("span", "project-name", group.name));
+						select.addEventListener("click", () => report({ kind: "command", id: PROJECT_SELECT_ACTION, data: projectId ?? undefined })); head.append(select);
+						if (projectId !== null) {
+							const more = button("project-action project-more"); more.title = copy("project.actions"); more.setAttribute("aria-label", `${more.title}: ${group.name}`);
+							more.dataset.menuId = `project:${projectId}`; more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false"); more.append(icon("more"));
+							more.addEventListener("click", () => openRosterMenu(`project:${projectId}`, projectId, copy("project.actions"), [
+								{ id: PROJECT_EDIT_ACTION, label: copy("project.edit"), glyph: "square-pen" },
+								{ id: PROJECT_REMOVE_ACTION, label: copy("project.remove"), glyph: "x", danger: true },
+							]));
+							head.append(more);
+						}
 						const creating = view.newSession.pending === true;
 						const newLabel = copy(creating ? "sidebar.creating" : "sidebar.newSession");
 						const create = button("project-action project-new-session");
@@ -3079,7 +3085,7 @@ export function createRenderer(
 						create.setAttribute("aria-label", `${newLabel}: ${group.name}`);
 						create.setAttribute("aria-busy", String(creating));
 						create.append(icon("square-pen"));
-						create.addEventListener("click", () => report({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: group.id })); head.append(more, create);
+						create.addEventListener("click", () => report({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: projectId ?? undefined })); head.append(create);
 						section.append(head);
 						if (group.selected) {
 							const items = element("div", "project-sessions");

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SESSION_RENAME_ACTION } from "../src/actions.ts";
 import { removeSessionModal, renameSessionModal } from "../src/panels.ts";
-import { archiveSessionModal, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
+import { archiveSessionModal, projectGroups, PROJECT_NEW_SESSION_ACTION, PROJECT_SELECT_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView, rosterItems } from "../src/view.ts";
 
@@ -37,6 +37,23 @@ function control(selector: string): HTMLButtonElement {
 }
 
 describe("session actions", () => {
+	test("the standalone group offers selection and creation without project editing", () => {
+		const { renderer, view } = paint();
+		const report = vi.fn();
+		renderer.onPanelAction = report;
+		const standalone = { projects: [], sessions: [{ ...directory.sessions[0]!, projectId: null }] };
+		const roster = rosterItems("zh", standalone, "stable-session-id", 1);
+		renderer.render({ ...view, locale: "zh", roster, projects: projectGroups("zh", standalone, roster, null, "") });
+		const group = document.querySelector('[data-standalone="true"]');
+		expect(group?.querySelector(".project-name")?.textContent).toBe("不在项目中工作");
+		expect(group?.querySelector(".project-more")).toBeNull();
+		expect(group?.querySelectorAll("[data-session-id]")).toHaveLength(1);
+		control('[data-standalone="true"] .project-select').click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROJECT_SELECT_ACTION, data: undefined });
+		control('[data-standalone="true"] .project-new-session').click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: undefined });
+	});
+
 	test("menu and selection are sibling buttons and menu actions do not select a session", () => {
 		const { renderer } = paint();
 		const select = vi.fn();

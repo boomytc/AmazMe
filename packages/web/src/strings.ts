@@ -66,6 +66,7 @@ export const EN = {
 	"nav.settings": "Settings",
 
 	"sidebar.newSession": "New session",
+	"project.standalone": "Work outside a project",
 	"sidebar.creating": "Opening session…",
 	"sidebar.untitled": "New session",
 	"sidebar.more": "Session actions",
@@ -950,6 +951,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"nav.settings": "设置",
 
 	"sidebar.newSession": "新建会话",
+	"project.standalone": "不在项目中工作",
 	"sidebar.creating": "正在打开会话…",
 	"sidebar.untitled": "新会话",
 	"sidebar.more": "会话操作",
