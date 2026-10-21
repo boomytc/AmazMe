@@ -19,6 +19,7 @@ import { AgentController } from "../src/core/plugins/agent-controller.ts";
 import { createSessionServiceSource, type SessionAttachmentState } from "../src/host/services/connection.ts";
 import { Feedback } from "../src/host/services/feedback.ts";
 import { Diagnostics } from "../src/host/services/diagnostics.ts";
+import { ModelCatalog } from "../src/host/services/model-catalog.ts";
 import { Models } from "../src/host/services/models.ts";
 import { Plugins, PresentationPlugins, SessionPlugins } from "../src/host/services/plugins.ts";
 import { SessionDirectory, SessionManagement } from "../src/host/services/sessions.ts";
@@ -304,7 +305,7 @@ describe("experimental durable server composition", () => {
 		expect(firstServices.connection.value).toMatchObject({ status: "connected" });
 		expect(secondServices.connection.value).toMatchObject({ status: "connected" });
 		expect((await firstServices.catalogue(BACKGROUND_CONTEXT)).map(entry => entry.serviceId).sort()).toEqual([
-   SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ProjectManagement, SessionArchive, Schedules,
+   SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ProjectManagement, SessionArchive, Schedules, ModelCatalog,
   ].map(service => service.name).sort());
 		const firstDirectory = firstServices.get(SessionDirectory);
 		const secondDirectory = secondServices.get(SessionDirectory);
