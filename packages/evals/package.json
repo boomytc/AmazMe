@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/evals",
-	"version": "0.2.0",
+	"version": "0.3.0",
 	"private": true,
 	"type": "module",
 	"scripts": {
@@ -12,9 +12,9 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@amazme/ai": "0.2.0",
-		"@amazme/coding-agent": "0.2.0",
-		"@amazme/tui": "0.2.0",
+		"@amazme/ai": "0.3.0",
+		"@amazme/coding-agent": "0.3.0",
+		"@amazme/tui": "0.3.0",
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
 		"autoevals": "0.3.0",
