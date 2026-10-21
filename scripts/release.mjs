@@ -19,6 +19,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY = "boomytc/AmazMe";
 const NODE_VERSION = "22.23.3";
 
+/** GitHub Releases start at 1.0.0. Earlier versions stay in the repo and are not published. */
+export function publishesToGitHub(version) {
+	const match = /^(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.exec(version);
+	return match !== null && Number(match[1]) >= 1;
+}
+
 /** Decide what to publish from repository state; throw before anything has side effects. */
 export function releasePlan({ branch, dirty, head, remoteHead, version, rootVersion, localTag, remoteTag, releaseExists }) {
 	if (branch !== "main") throw new Error(`Release from main, not ${branch || "a detached HEAD"}`);
@@ -27,6 +33,7 @@ export function releasePlan({ branch, dirty, head, remoteHead, version, rootVers
 	if (version !== rootVersion) throw new Error(`packages/gui version ${version} differs from root version ${rootVersion}`);
 	const tag = `v${version}`;
 	if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) throw new Error(`Not a release version: ${version}`);
+	if (!publishesToGitHub(version)) throw new Error(`GitHub Release starts at 1.0.0; ${version} is not published`);
 	if (releaseExists) throw new Error(`GitHub Release ${tag} already exists`);
 	for (const [where, commit] of [["local", localTag], ["remote", remoteTag]]) {
 		if (commit !== undefined && commit !== head) throw new Error(`${where} tag ${tag} points at ${commit.slice(0, 8)}, not HEAD`);

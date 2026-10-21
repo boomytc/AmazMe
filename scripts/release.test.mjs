@@ -18,6 +18,7 @@ test("repository state that could publish the wrong source is refused before any
 		[{ remoteHead: "b".repeat(40) }, /not origin\/main/],
 		[{ rootVersion: "1.2.4" }, /differs from root/],
 		[{ version: "1.2", rootVersion: "1.2" }, /Not a release version/],
+		[{ version: "0.3.0", rootVersion: "0.3.0" }, /starts at 1\.0\.0/],
 		[{ releaseExists: true }, /already exists/],
 		[{ localTag: "b".repeat(40) }, /local tag v1\.2\.3 points at bbbbbbbb/],
 		[{ remoteTag: "b".repeat(40) }, /remote tag v1\.2\.3 points at bbbbbbbb/],
