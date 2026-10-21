@@ -1,6 +1,6 @@
 import { serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
 import { replicatedState } from "@amazme/chord";
-import type { ModelThinkingLevel } from "@amazme/ai";
+import type { Model, ModelThinkingLevel } from "@amazme/ai";
 import { clampThinkingLevel, getSupportedThinkingLevels } from "@amazme/ai";
 import type { Context, Facet, MutableReplicatedState } from "@amazme/chord";
 import { awaitWithContext, withAbortSignal, BACKGROUND_CONTEXT } from "@amazme/chord/context";
@@ -11,6 +11,7 @@ import { ModelScope } from "../../core/model-scope.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import { AgentRuntime } from "../../core/plugins/agent-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
+import { initialThinkingLevel } from "../../durable/harness-setup.ts";
 import { Conversations } from "./conversations.ts";
 import type { Models as ModelsService, ModelsState } from "./models.ts";
 import { Models } from "./models.ts";
@@ -58,6 +59,13 @@ export function createModelsService(
 		const selected = selectedModel(agent);
 		return selected === undefined ? ["off"] : getSupportedThinkingLevels(selected);
 	};
+	const switchThinkingLevel = (
+		model: Model<string>,
+		requested: ModelThinkingLevel | undefined,
+		fallback: ModelThinkingLevel | undefined,
+	): ModelThinkingLevel => settingsManager === undefined
+		? clampThinkingLevel(model, requested ?? fallback ?? "off")
+		: initialThinkingLevel(settingsManager, model, requested, fallback);
 	const readCatalog = (): ModelsState["catalog"] => {
 		const selected = selectedModel();
 		const available = modelRuntime?.getAvailableSnapshot() ?? [];
@@ -122,8 +130,8 @@ export function createModelsService(
 				if (choices.length === 1 && index === 0) return;
 				const next = choices[index < 0 ? 0 : (index + (direction === "forward" ? 1 : choices.length - 1)) % choices.length];
 				if (!next) return;
+				agent.thinkingLevel = switchThinkingLevel(next.model, next.thinkingLevel, agent.thinkingLevel);
 				agent.model = { provider: next.model.provider, modelId: next.model.id };
-				agent.thinkingLevel = clampThinkingLevel(next.model, next.thinkingLevel ?? agent.thinkingLevel ?? "off");
 			}, context);
 		},
 		startLogin(provider, method, context) {
@@ -189,7 +197,7 @@ export function createModelsService(
 			const conversation = await current(context);
 			await conversation.commit(async (tx) => {
 				const agent = await tx.doc(AgentDoc, conversation.id);
-				agent.thinkingLevel = clampThinkingLevel(selected, agent.thinkingLevel ?? "off");
+				agent.thinkingLevel = switchThinkingLevel(selected, undefined, agent.thinkingLevel);
 				agent.model = { provider: selected.provider, modelId: selected.id };
 			}, context);
 		},
