@@ -45,5 +45,10 @@ describe("issue #8337 UTF-8 BOM parsing", () => {
 		settings.setTheme("dark");
 		await settings.flush();
 		expect(readFileSync(globalSettingsPath, "utf-8")).not.toMatch(/^\uFEFF/);
+
+		const reloaded = SettingsManager.create(projectDir, agentDir);
+		expect(reloaded.getDefaultModel()).toBe("global-model");
+		expect(reloaded.getDefaultProvider()).toBe("project-provider");
+		expect(reloaded.getTheme()).toBe("dark");
 	});
 });

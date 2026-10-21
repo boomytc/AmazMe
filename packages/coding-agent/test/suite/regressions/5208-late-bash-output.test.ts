@@ -21,10 +21,14 @@ describe("regression #5208: late bash output callbacks", () => {
 			},
 		};
 		const bash = createBashTool(process.cwd(), { operations, artifactDirectory: createTempDir("amazme-5208-artifacts-") });
+		const updates: string[] = [];
 
-		const result = await bash.execute("test-call-late-output", { command: "late-output" });
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		const result = await bash.execute("test-call-late-output", { command: "late-output" }, undefined, (update) => {
+			updates.push(getTextOutput(update));
+		});
+		await new Promise((resolve) => setTimeout(resolve, 150));
 
 		expect(getTextOutput(result).trim()).toBe("before");
+		expect(updates.join("\n")).not.toContain("late");
 	});
 });

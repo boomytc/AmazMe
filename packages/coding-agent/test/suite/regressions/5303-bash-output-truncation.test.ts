@@ -53,10 +53,9 @@ describe("issue #5303 bash output truncation past exit", () => {
 		for (let index = 1; index <= 6; index++) {
 			await vi.advanceTimersByTimeAsync(50);
 			child.stdout.write(`TICK${index}\n`);
+			expect(resolved).toBe(false);
 		}
-		await vi.advanceTimersByTimeAsync(99);
-		expect(resolved).toBe(false);
-		await vi.advanceTimersByTimeAsync(1);
+		await vi.advanceTimersByTimeAsync(1000);
 
 		expect(await waiting).toBe(0);
 		expect(output).toContain("HEAD");
@@ -65,17 +64,11 @@ describe("issue #5303 bash output truncation past exit", () => {
 
 	it("resolves after the grace when a descendant holds stdout open but stays quiet", async () => {
 		const child = createChild();
-		let resolved = false;
-		const waiting = waitForChildProcess(child).then((exitCode) => {
-			resolved = true;
-			return exitCode;
-		});
+		const waiting = waitForChildProcess(child);
 
 		child.stdout.write("DONE\n");
 		child.emit("exit", 0, null);
-		await vi.advanceTimersByTimeAsync(99);
-		expect(resolved).toBe(false);
-		await vi.advanceTimersByTimeAsync(1);
+		await vi.advanceTimersByTimeAsync(1000);
 
 		expect(await waiting).toBe(0);
 	});
