@@ -109,7 +109,8 @@ body.library-open.sidebar-collapsed.dock-open {
 
 body.library-open .sidebar,
 body.library-open #dock,
-body.library-open .scrim {
+body.library-open .scrim,
+body.library-open .header {
 	display: none;
 }
 
@@ -2210,15 +2211,19 @@ p {
 .model-picker-reasoning button { margin: 4px 2px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
 .model-picker-manage { width: 100%; padding: 10px 8px; margin-top: 5px; border: 0; border-top: 1px solid var(--line); color: inherit; background: transparent; text-align: left; font: inherit; cursor: pointer; }
 
-.library-open .view-body:has(> .split-workspace) { max-width: 960px; }
+.library-open .view-body:has(> .split-workspace) {
+	--library-measure: 960px;
+	max-width: var(--library-measure);
+}
 .model-connections { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.model-connections > .connection-head { margin-bottom: 0; }
 .connection-notices { display: flex; flex-direction: column; gap: 8px; }
 .connection-notices[hidden] { display: none; }
 .connection-notices .panel-notice { margin: 0; }
 .connection-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); }
 .connection-default-text { margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.connection-default-controls { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
 .connection-default-select { min-width: 200px; max-width: min(320px, 100%); }
+.connection-default-refresh { flex: 0 0 auto; }
 .connection-workspace { display: grid; grid-template-columns: 232px minmax(0, 1fr); align-items: start; gap: 0; padding-top: 20px; border-top: 1px solid var(--line); }
 .connection-rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-inline-end: 20px; }
 .connection-rail-head { display: flex; flex-direction: column; gap: 8px; }
@@ -3209,35 +3214,54 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .library-open .view-body {
-	max-width: 840px;
-	padding-top: 40px;
+	--library-measure: 840px;
+	max-width: var(--library-measure);
+	padding-top: 0;
 }
 
 .library-open .view-body:has(.panel-group[data-skeleton="form"]) {
-	max-width: 720px;
+	--library-measure: 720px;
 }
 
 .library-frame {
+	/* LightUI gutter, then the cap correction: the first line sits on the inset, not on the viewport edge.
+	   The category column and the reading measure stay one block and that block is centred. */
+	--inset: 24px;
 	display: flex;
 	align-items: flex-start;
+	justify-content: center;
 	gap: 28px;
 	width: 100%;
+	padding-top: calc(var(--inset) - (1lh - 1cap) / 2);
 	container: library / inline-size;
+}
+
+@supports not (padding-top: 1cap) {
+	.library-frame { padding-top: 16px; }
+	@media (max-width: 1023px) {
+		body.library-open .library-frame { padding-top: calc(env(safe-area-inset-top) + 16px); }
+	}
 }
 
 .library-nav {
 	flex: 0 0 220px;
 	min-width: 0;
-	padding-top: 40px;
+	padding-top: 0;
 }
 
 .library-nav[hidden] { display: none; }
 
-.library-frame > .view-body { flex: 1 1 auto; margin: 0; }
+.library-frame > .view-body {
+	flex: 0 1 var(--library-measure, 840px);
+	width: auto;
+	min-width: 0;
+	margin: 0;
+}
 
 @container library (max-width: 640px) {
-	.library-frame { flex-direction: column; gap: 0; }
-	.library-nav { flex-basis: auto; width: 100%; padding-top: 24px; border-bottom: 1px solid var(--line); }
+	.library-frame { flex-direction: column; justify-content: flex-start; align-items: center; gap: 0; }
+	.library-nav { flex-basis: auto; width: 100%; padding-top: 0; border-bottom: 1px solid var(--line); }
+	.library-frame > .view-body { width: 100%; }
 }
 
 /* The same panel can occupy the page or a narrow dock. Respond to its content width, not the window. */
@@ -3343,7 +3367,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	box-shadow: none;
 }
 
-.panel-group[data-skeleton="form"] {
+.panel-group[data-skeleton="form"]:has(> .panel-group-head) {
 	padding-top: 8px;
 }
 
@@ -3452,6 +3476,22 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	font-size: 13px;
 	line-height: 1.55;
 	overflow-wrap: anywhere;
+}
+
+.record-path {
+	display: block;
+	min-width: 0;
+	max-width: 100%;
+	margin: 0;
+	overflow-x: auto;
+	overscroll-behavior-x: contain;
+	white-space: nowrap;
+	user-select: text;
+	color: var(--text-3);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 18px;
+	scrollbar-width: thin;
 }
 
 .panel-row-value {
@@ -3698,6 +3738,30 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .panel-number {
 	width: 100px;
+}
+
+/* Form rows share one control column, so a caption under the field stays inside it. */
+.panel-group[data-skeleton="form"] .panel-row {
+	align-items: flex-start;
+}
+
+.panel-group[data-skeleton="form"] .panel-controls {
+	flex: 0 1 200px;
+	width: min(200px, 100%);
+	justify-content: flex-end;
+}
+
+.panel-group[data-skeleton="form"] .panel-field,
+.panel-group[data-skeleton="form"] .panel-controls > .panel-select,
+.panel-group[data-skeleton="form"] .panel-controls > .panel-input,
+.panel-group[data-skeleton="form"] .panel-number {
+	width: 100%;
+	max-width: none;
+}
+
+.panel-group[data-skeleton="form"] .panel-field-status {
+	width: 100%;
+	text-align: end;
 }
 
 .panel-select {
@@ -4196,7 +4260,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	.view-body {
 		padding: 20px 16px 48px;
 	}
-	.library-open .view-body { padding-top: 24px; }
+	.library-open .view-body { padding-top: 0; }
 	.modal-root { padding: 12px; }
 }
 
@@ -4500,6 +4564,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	}
 	.header {
 		padding-top: env(safe-area-inset-top);
+	}
+	body.library-open .library-frame {
+		padding-top: calc(env(safe-area-inset-top) + var(--inset) - (1lh - 1cap) / 2);
 	}
 	.app-rail {
 		padding-top: max(10px, env(safe-area-inset-top));

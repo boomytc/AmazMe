@@ -304,7 +304,8 @@ describe("settings page", () => {
 		expect(result?.textContent).toContain("对话");
 		expect(result?.getAttribute("aria-label")).toBe("自动压缩，对话");
 		(result as HTMLButtonElement).click();
-		expect(document.querySelector(".panel-title")?.textContent).toBe("对话");
+		expect(document.querySelector("#view-body .panel-title")).toBeNull();
+		expect(document.querySelector("#section-nav .nav-row.active")?.textContent).toContain("自动压缩");
 		expect(document.querySelector("#view-body [data-row-id='setting:compactionEnabled']")).not.toBeNull();
 
 		field.value = "没有这个设置";

@@ -1219,6 +1219,11 @@ export function createRenderer(
 		return field;
 	};
 
+	/** Absolute paths read as one line under the description. A status sentence stays in the trailing column. */
+	const recordPath = (value: string | undefined): value is string =>
+		value !== undefined && !value.includes(" · ")
+		&& (value.startsWith("/") || value.startsWith("\\") || value.startsWith("~") || /^[A-Za-z]:[\\/]/.test(value));
+
 	const rowElementOf = (row: PanelRow, pending?: PanelPending, skeleton?: PanelSkeleton): HTMLElement => {
 		if (row.file) {
 			const node = panelButton(row.file.action, report, pending);
@@ -1242,12 +1247,14 @@ export function createRenderer(
 		if (!records) for (const badge of row.badges ?? []) head.append(element("span", "panel-badge", badge));
 		text.append(head);
 		if (row.description !== undefined) text.append(element("p", "panel-row-desc", row.description));
-		if (!records && row.value !== undefined) text.append(element("code", "panel-row-value", row.value));
+		const path = records && recordPath(row.value) ? row.value : undefined;
+		if (path !== undefined) text.append(element("code", "record-path", path));
+		else if (!records && row.value !== undefined) text.append(element("code", "panel-row-value", row.value));
 		node.append(text);
-		if (records && ((row.badges?.length ?? 0) > 0 || row.value !== undefined)) {
+		if (records && ((row.badges?.length ?? 0) > 0 || (row.value !== undefined && path === undefined))) {
 			const status = element("div", "record-status");
 			for (const badge of row.badges ?? []) status.append(element("span", "panel-badge", badge));
-			if (row.value !== undefined) status.append(element("span", "record-value", row.value));
+			if (row.value !== undefined && path === undefined) status.append(element("span", "record-value", row.value));
 			node.append(status);
 		}
 		if (row.controls !== undefined && row.controls.length > 0) {
@@ -1427,16 +1434,18 @@ export function createRenderer(
 		const node = element("div", "panel");
 		node.dataset.panelId = panel.id;
 		const head = element("header", "panel-head");
-		const titles = element("div", "panel-titles");
-		titles.append(element("h1", "panel-title", panel.title));
-		if (panel.description) titles.append(element("p", "panel-desc", panel.description));
-		head.append(titles);
+		if (panel.title.length > 0 || panel.description) {
+			const titles = element("div", "panel-titles");
+			if (panel.title.length > 0) titles.append(element("h1", "panel-title", panel.title));
+			if (panel.description) titles.append(element("p", "panel-desc", panel.description));
+			head.append(titles);
+		}
 		if (panel.actions?.length) {
 			const actions = element("div", "panel-actions");
 			for (const action of panel.actions) actions.append(panelButton(action, report, panel.pending));
 			head.append(actions);
 		}
-		node.append(head);
+		if (head.childElementCount > 0) node.append(head);
 		appendNotices(node, shownNotices(panel.id, panel.notices));
 		const previousInput = container?.querySelector<HTMLElement>("form[data-input-row]") ?? undefined;
 		for (const input of panel.inputs ?? []) node.append(inputElement(input, previousInput));
@@ -1444,7 +1453,11 @@ export function createRenderer(
 		for (const text of panel.texts ?? []) node.append(text.diff
 			? diffElement({ text: text.text, label: text.title ?? copy("review.diff") }, `panel:${panel.id}:${text.id}`)
 			: textElement(text));
-		if (panel.files) head.after(fileBrowser.navigation(panel, node, lastView?.attachedId ?? ""));
+		if (panel.files) {
+			const navigation = fileBrowser.navigation(panel, node, lastView?.attachedId ?? "");
+			if (head.isConnected) head.after(navigation);
+			else node.prepend(navigation);
+		}
 		return node;
 	};
 
@@ -1943,7 +1956,15 @@ export function createRenderer(
 				return;
 			}
 			const { title, description, actions, ...content } = selected;
-			replacePanel(elements.viewBody, { ...panel, title, description: description ?? panel.description, actions, groups: [{ ...content, title: "" }] });
+			// The category column already names the open section. Repeating that title and its blurb is the same fact twice.
+			const namedByNav = panel.id === SETTINGS_VIEW;
+			replacePanel(elements.viewBody, {
+				...panel,
+				title: namedByNav ? "" : title,
+				description: namedByNav ? undefined : description ?? panel.description,
+				actions,
+				groups: [{ ...content, title: "" }],
+			});
 		} else replacePanel(elements.viewBody, panel);
 		revealLocatedRow(selected?.id);
 	};

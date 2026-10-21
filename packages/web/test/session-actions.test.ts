@@ -359,8 +359,7 @@ describe("session actions", () => {
 		connections.update("zh", baseView, [{ tone: "info", text: "已保存默认配置" }]);
 		expect([...connections.element.querySelectorAll(".connection-row-name")].map(node => node.textContent)).toEqual(["OpenAI"]);
 		expect(connections.element.querySelector<HTMLButtonElement>(`.connection-rail [data-action="${PROVIDER_EDIT_ACTION}"]`)?.disabled).toBe(false);
-		expect(connections.element.querySelector("h1.panel-title")?.textContent).toBe("模型与连接");
-		expect(connections.element.querySelector("p.panel-desc")?.textContent).toBe("管理供应商连接和新聊天可选的模型。");
+		expect(connections.element.querySelector(".panel-titles")).toBeNull();
 		expect(connections.element.querySelector("h2.connection-provider-name")?.textContent).toBe("Anthropic");
 		expect(connections.element.querySelector("h3.connection-models-title")?.textContent).toBe("启用模型");
 		expect(connections.element.querySelector(".connection-models-count")?.textContent).toBe("1 / 2");
@@ -409,9 +408,13 @@ describe("session actions", () => {
 			data: JSON.stringify(["anthropic", "claude-sonnet-4"]),
 			value: "false",
 		});
-		connections.element.querySelector<HTMLButtonElement>(`[data-action="${REFRESH_MODELS_ACTION}"]`)!.click();
+		expect(connections.element.querySelector(`[data-action="models:back"]`)).toBeNull();
+		const defaultControls = connections.element.querySelector(".connection-overview .connection-default-controls")!;
+		const refresh = defaultControls.querySelector<HTMLButtonElement>(`[data-action="${REFRESH_MODELS_ACTION}"]`)!;
+		expect(refresh.textContent).toBe("刷新");
+		refresh.click();
 		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined });
-		const defaultSelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
+		const defaultSelect = defaultControls.querySelector<HTMLSelectElement>(".connection-default-select")!;
 		expect([...defaultSelect.querySelectorAll("optgroup")].map(group => group.label)).toEqual(["Anthropic", "OpenAI"]);
 		expect(defaultSelect.value).toBe(JSON.stringify(["anthropic", "claude-sonnet-4"]));
 		defaultSelect.value = JSON.stringify(["openai", "gpt-5"]);

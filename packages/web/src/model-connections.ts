@@ -122,13 +122,6 @@ export function providerTestModal(locale: Locale, models: readonly ConnectionMod
 /** The provider search stays mounted while connection and model states change. */
 export function createModelConnections(report: (action: PanelAction) => void) {
 	const root = document.createElement("section"); root.className = "panel model-connections split-workspace";
-	const head = document.createElement("header"); head.className = "panel-head connection-head";
-	const titles = document.createElement("div"); titles.className = "panel-titles";
-	const title = document.createElement("h1"); title.className = "panel-title";
-	const help = document.createElement("p"); help.className = "panel-desc";
-	titles.append(title, help);
-	const headActions = document.createElement("div"); headActions.className = "panel-actions connection-head-actions";
-	head.append(titles, headActions);
 
 	const notices = document.createElement("div"); notices.className = "connection-notices"; notices.hidden = true;
 	const overview = document.createElement("div"); overview.className = "connection-overview";
@@ -150,7 +143,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 
 	const detail = document.createElement("div"); detail.className = "connection-detail";
 	workspace.append(rail, detail);
-	root.append(head, notices, overview, workspace);
+	root.append(notices, overview, workspace);
 
 	let current: ModelConnectionsLike | undefined;
 	let locale: Locale = "en";
@@ -198,17 +191,9 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 	search.addEventListener("input", renderList);
 	return { element: root, update(nextLocale: Locale, view: ModelConnectionsLike, extraNotices: readonly (PanelNotice & { readonly key?: string })[] = []) {
 		locale = nextLocale; current = view;
-		title.textContent = copy("connections.title");
-		help.textContent = copy("connections.help");
 		const canAdd = view.state.providers.some(provider => !provider.configured && (view.state.authentication.providers.find(item => item.id === provider.id)?.methods.length ?? 0) > 0);
 		add.textContent = copy("connections.add"); add.disabled = view.disabled || !canAdd;
 		search.placeholder = copy("connections.search"); search.setAttribute("aria-label", search.placeholder);
-
-		const refreshing = view.state.refresh.status === "refreshing";
-		headActions.replaceChildren(
-			action(copy(refreshing ? "model.refreshing" : "model.refresh"), REFRESH_MODELS_ACTION, undefined, refreshing),
-			action(copy("connections.back"), "models:back", undefined, false, "panel-button weight-line connection-back-button"),
-		);
 
 		notices.replaceChildren();
 		if (view.state.error) {
@@ -265,7 +250,13 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		defaultSelect.addEventListener("change", () => {
 			if (defaultSelect.value) report({ kind: "command", id: MODEL_DEFAULTS_ACTION, data: defaultSelect.value });
 		});
-		overview.replaceChildren(node("span", copy("connections.defaultLabel"), "connection-default-text"), defaultSelect);
+		const refreshing = view.state.refresh.status === "refreshing";
+		const refresh = action(copy("connections.refresh"), REFRESH_MODELS_ACTION, undefined, refreshing, "panel-button weight-line connection-default-refresh");
+		if (refreshing) refresh.setAttribute("aria-busy", "true");
+		const defaultControls = document.createElement("div");
+		defaultControls.className = "connection-default-controls";
+		defaultControls.append(defaultSelect, refresh);
+		overview.replaceChildren(node("span", copy("connections.defaultLabel"), "connection-default-text"), defaultControls);
 
 		renderList();
 		detail.replaceChildren();
