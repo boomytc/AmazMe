@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	type BranchSummaryEntry,
 	buildContextEntries,
-	buildSessionContext,
+	buildSessionProjection,
 	type CompactionEntry,
 	type CustomEntry,
 	type ModelChangeEntry,
@@ -66,10 +66,10 @@ function modelChange(id: string, parentId: string | null, provider: string, mode
 	return { type: "model_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", provider, modelId };
 }
 
-describe("buildSessionContext", () => {
+describe("buildSessionProjection", () => {
 	describe("trivial cases", () => {
 		it("empty entries returns empty context", () => {
-			const ctx = buildSessionContext([]);
+			const ctx = buildSessionProjection([]);
 			expect(ctx.messages).toEqual([]);
 			expect(ctx.thinkingLevel).toBe("off");
 			expect(ctx.model).toBeNull();
@@ -77,7 +77,7 @@ describe("buildSessionContext", () => {
 
 		it("single user message", () => {
 			const entries: SessionEntry[] = [msg("1", null, "user", "hello")];
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 			expect(ctx.messages).toHaveLength(1);
 			expect(ctx.messages[0].role).toBe("user");
 		});
@@ -89,7 +89,7 @@ describe("buildSessionContext", () => {
 				msg("3", "2", "user", "how are you"),
 				msg("4", "3", "assistant", "great"),
 			];
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 			expect(ctx.messages).toHaveLength(4);
 			expect(ctx.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
 		});
@@ -100,14 +100,14 @@ describe("buildSessionContext", () => {
 				thinkingLevel("2", "1", "high"),
 				msg("3", "2", "assistant", "thinking hard"),
 			];
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 			expect(ctx.thinkingLevel).toBe("high");
 			expect(ctx.messages).toHaveLength(2);
 		});
 
 		it("tracks model from assistant message", () => {
 			const entries: SessionEntry[] = [msg("1", null, "user", "hello"), msg("2", "1", "assistant", "hi")];
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 			expect(ctx.model).toEqual({ provider: "anthropic", modelId: "claude-test" });
 		});
 
@@ -117,8 +117,10 @@ describe("buildSessionContext", () => {
 				modelChange("2", "1", "openai", "gpt-4"),
 				msg("3", "2", "assistant", "hi"),
 			];
-			const ctx = buildSessionContext(entries);
-			// Assistant message overwrites model change
+			const changed = buildSessionProjection(entries, "2");
+			expect(changed.model).toEqual({ provider: "openai", modelId: "gpt-4" });
+			// A later assistant message overwrites the model change.
+			const ctx = buildSessionProjection(entries);
 			expect(ctx.model).toEqual({ provider: "anthropic", modelId: "claude-test" });
 		});
 	});
@@ -134,7 +136,7 @@ describe("buildSessionContext", () => {
 				msg("6", "5", "user", "third"),
 				msg("7", "6", "assistant", "response3"),
 			];
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 
 			// Should have: summary + kept (3,4) + after (6,7) = 5 messages
 			expect(ctx.messages).toHaveLength(5);
@@ -152,7 +154,7 @@ describe("buildSessionContext", () => {
 				compaction("3", "2", "Empty summary", "1"),
 				msg("4", "3", "user", "second"),
 			];
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 
 			// Summary + all messages (1,2,4)
 			expect(ctx.messages).toHaveLength(4);
@@ -169,7 +171,7 @@ describe("buildSessionContext", () => {
 				compaction("6", "5", "Second summary", "4"),
 				msg("7", "6", "user", "e"),
 			];
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 
 			// Should use second summary, keep from 4
 			expect(ctx.messages).toHaveLength(4);
@@ -189,7 +191,7 @@ describe("buildSessionContext", () => {
 			];
 
 			expect(buildContextEntries(entries).map((entry) => entry.id)).toEqual(["6", "4", "5", "7", "8"]);
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user", "assistant"]);
 		});
 
@@ -202,7 +204,7 @@ describe("buildSessionContext", () => {
 				compaction("5", "4", "Summary", "4"),
 			];
 
-			const ctx = buildSessionContext(entries);
+			const ctx = buildSessionProjection(entries);
 			expect(ctx.thinkingLevel).toBe("high");
 			expect(ctx.messages.map((message) => message.role)).toEqual(["compactionSummary", "user"]);
 		});
@@ -220,11 +222,11 @@ describe("buildSessionContext", () => {
 				msg("4", "2", "user", "branch B"),
 			];
 
-			const ctxA = buildSessionContext(entries, "3");
+			const ctxA = buildSessionProjection(entries, "3");
 			expect(ctxA.messages).toHaveLength(3);
 			expect((ctxA.messages[2] as any).content).toBe("branch A");
 
-			const ctxB = buildSessionContext(entries, "4");
+			const ctxB = buildSessionProjection(entries, "4");
 			expect(ctxB.messages).toHaveLength(3);
 			expect((ctxB.messages[2] as any).content).toBe("branch B");
 		});
@@ -237,7 +239,7 @@ describe("buildSessionContext", () => {
 				branchSummary("4", "2", "Summary of abandoned work", "3"),
 				msg("5", "4", "user", "new direction"),
 			];
-			const ctx = buildSessionContext(entries, "5");
+			const ctx = buildSessionProjection(entries, "5");
 
 			expect(ctx.messages).toHaveLength(4);
 			expect((ctx.messages[2] as any).summary).toContain("Summary of abandoned work");
@@ -266,7 +268,7 @@ describe("buildSessionContext", () => {
 			];
 
 			// Main path to 7: summary + kept(3,4) + after(6,7)
-			const ctxMain = buildSessionContext(entries, "7");
+			const ctxMain = buildSessionProjection(entries, "7");
 			expect(ctxMain.messages).toHaveLength(5);
 			expect((ctxMain.messages[0] as any).summary).toContain("Compacted history");
 			expect((ctxMain.messages[1] as any).content).toBe("q2");
@@ -275,7 +277,7 @@ describe("buildSessionContext", () => {
 			expect((ctxMain.messages[4] as any).content[0].text).toBe("r3");
 
 			// Branch path to 11: 1,2,3 + branch_summary + 11
-			const ctxBranch = buildSessionContext(entries, "11");
+			const ctxBranch = buildSessionProjection(entries, "11");
 			expect(ctxBranch.messages).toHaveLength(5);
 			expect((ctxBranch.messages[0] as any).content).toBe("start");
 			expect((ctxBranch.messages[1] as any).content[0].text).toBe("r1");
@@ -288,8 +290,9 @@ describe("buildSessionContext", () => {
 	describe("edge cases", () => {
 		it("uses last entry when leafId not found", () => {
 			const entries: SessionEntry[] = [msg("1", null, "user", "hello"), msg("2", "1", "assistant", "hi")];
-			const ctx = buildSessionContext(entries, "nonexistent");
+			const ctx = buildSessionProjection(entries, "nonexistent");
 			expect(ctx.messages).toHaveLength(2);
+			expect((ctx.messages[1] as any).content[0].text).toBe("hi");
 		});
 
 		it("handles orphaned entries gracefully", () => {
@@ -297,9 +300,10 @@ describe("buildSessionContext", () => {
 				msg("1", null, "user", "hello"),
 				msg("2", "missing", "assistant", "orphan"), // parent doesn't exist
 			];
-			const ctx = buildSessionContext(entries, "2");
+			const ctx = buildSessionProjection(entries, "2");
 			// Should only get the orphan since parent chain is broken
 			expect(ctx.messages).toHaveLength(1);
+			expect((ctx.messages[0] as any).content[0].text).toBe("orphan");
 		});
 	});
 });

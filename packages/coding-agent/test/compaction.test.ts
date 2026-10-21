@@ -16,15 +16,13 @@ import {
 	shouldCompact,
 } from "../src/core/compaction/index.ts";
 import {
-	buildSessionContext,
+	buildSessionProjection,
 	type CompactionEntry,
 	type CustomMessageEntry,
-	type ModelChangeEntry,
 	migrateSessionEntries,
 	parseSessionEntries,
 	type SessionEntry,
 	type SessionMessageEntry,
-	type ThinkingLevelChangeEntry,
 } from "../src/core/jsonl-transcript.ts";
 
 // ============================================================================
@@ -103,33 +101,6 @@ function createCompactionEntry(summary: string, firstKeptEntryId: string): Compa
 		summary,
 		firstKeptEntryId,
 		tokensBefore: 10000,
-	};
-	lastId = id;
-	return entry;
-}
-
-function createModelChangeEntry(provider: string, modelId: string): ModelChangeEntry {
-	const id = `test-id-${entryCounter++}`;
-	const entry: ModelChangeEntry = {
-		type: "model_change",
-		id,
-		parentId: lastId,
-		timestamp: new Date().toISOString(),
-		provider,
-		modelId,
-	};
-	lastId = id;
-	return entry;
-}
-
-function createThinkingLevelEntry(thinkingLevel: string): ThinkingLevelChangeEntry {
-	const id = `test-id-${entryCounter++}`;
-	const entry: ThinkingLevelChangeEntry = {
-		type: "thinking_level_change",
-		id,
-		parentId: lastId,
-		timestamp: new Date().toISOString(),
-		thinkingLevel,
 	};
 	lastId = id;
 	return entry;
@@ -411,92 +382,6 @@ describe("findCutPoint", () => {
 	});
 });
 
-describe("buildSessionContext", () => {
-	it("should load all messages when no compaction", () => {
-		const entries: SessionEntry[] = [
-			createMessageEntry(createUserMessage("1")),
-			createMessageEntry(createAssistantMessage("a")),
-			createMessageEntry(createUserMessage("2")),
-			createMessageEntry(createAssistantMessage("b")),
-		];
-
-		const loaded = buildSessionContext(entries);
-		expect(loaded.messages.length).toBe(4);
-		expect(loaded.thinkingLevel).toBe("off");
-		expect(loaded.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
-	});
-
-	it("should handle single compaction", () => {
-		// IDs: u1=test-id-0, a1=test-id-1, u2=test-id-2, a2=test-id-3, compaction=test-id-4, u3=test-id-5, a3=test-id-6
-		const u1 = createMessageEntry(createUserMessage("1"));
-		const a1 = createMessageEntry(createAssistantMessage("a"));
-		const u2 = createMessageEntry(createUserMessage("2"));
-		const a2 = createMessageEntry(createAssistantMessage("b"));
-		const compaction = createCompactionEntry("Summary of 1,a,2,b", u2.id); // keep from u2 onwards
-		const u3 = createMessageEntry(createUserMessage("3"));
-		const a3 = createMessageEntry(createAssistantMessage("c"));
-
-		const entries: SessionEntry[] = [u1, a1, u2, a2, compaction, u3, a3];
-
-		const loaded = buildSessionContext(entries);
-		// summary + kept (u2, a2) + after (u3, a3) = 5
-		expect(loaded.messages.length).toBe(5);
-		expect(loaded.messages[0].role).toBe("compactionSummary");
-		expect((loaded.messages[0] as any).summary).toContain("Summary of 1,a,2,b");
-	});
-
-	it("should handle multiple compactions (only latest matters)", () => {
-		// First batch
-		const u1 = createMessageEntry(createUserMessage("1"));
-		const a1 = createMessageEntry(createAssistantMessage("a"));
-		const compact1 = createCompactionEntry("First summary", u1.id);
-		// Second batch
-		const u2 = createMessageEntry(createUserMessage("2"));
-		const b = createMessageEntry(createAssistantMessage("b"));
-		const u3 = createMessageEntry(createUserMessage("3"));
-		const c = createMessageEntry(createAssistantMessage("c"));
-		const compact2 = createCompactionEntry("Second summary", u3.id); // keep from u3 onwards
-		// After second compaction
-		const u4 = createMessageEntry(createUserMessage("4"));
-		const d = createMessageEntry(createAssistantMessage("d"));
-
-		const entries: SessionEntry[] = [u1, a1, compact1, u2, b, u3, c, compact2, u4, d];
-
-		const loaded = buildSessionContext(entries);
-		// summary + kept from u3 (u3, c) + after (u4, d) = 5
-		expect(loaded.messages.length).toBe(5);
-		expect((loaded.messages[0] as any).summary).toContain("Second summary");
-	});
-
-	it("should keep all messages when firstKeptEntryId is first entry", () => {
-		const u1 = createMessageEntry(createUserMessage("1"));
-		const a1 = createMessageEntry(createAssistantMessage("a"));
-		const compact1 = createCompactionEntry("First summary", u1.id); // keep from first entry
-		const u2 = createMessageEntry(createUserMessage("2"));
-		const b = createMessageEntry(createAssistantMessage("b"));
-
-		const entries: SessionEntry[] = [u1, a1, compact1, u2, b];
-
-		const loaded = buildSessionContext(entries);
-		// summary + all messages (u1, a1, u2, b) = 5
-		expect(loaded.messages.length).toBe(5);
-	});
-
-	it("should track model and thinking level changes", () => {
-		const entries: SessionEntry[] = [
-			createMessageEntry(createUserMessage("1")),
-			createModelChangeEntry("openai", "gpt-4"),
-			createMessageEntry(createAssistantMessage("a")),
-			createThinkingLevelEntry("high"),
-		];
-
-		const loaded = buildSessionContext(entries);
-		// model_change is later overwritten by assistant message's model info
-		expect(loaded.model).toEqual({ provider: "anthropic", modelId: "claude-sonnet-4-5" });
-		expect(loaded.thinkingLevel).toBe("high");
-	});
-});
-
 describe("prepareCompaction", () => {
 	it("does not treat system messages as conversation history", () => {
 		const system = createMessageEntry({
@@ -589,7 +474,7 @@ describe("Large session fixture", () => {
 
 	it("should load session correctly", () => {
 		const entries = loadLargeSessionEntries();
-		const loaded = buildSessionContext(entries);
+		const loaded = buildSessionProjection(entries);
 
 		expect(loaded.messages.length).toBeGreaterThan(100);
 		expect(loaded.model).not.toBeNull();
@@ -623,7 +508,7 @@ describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 
 	it("should produce valid session after compaction", async () => {
 		const entries = loadLargeSessionEntries();
-		const loaded = buildSessionContext(entries);
+		const loaded = buildSessionProjection(entries);
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 
 		const preparation = prepareCompaction(entries, DEFAULT_COMPACTION_SETTINGS);
@@ -642,7 +527,7 @@ describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("LLM summarization", () => {
 			...compactionResult,
 		};
 		const newEntries = [...entries, compactionEntry];
-		const reloaded = buildSessionContext(newEntries);
+		const reloaded = buildSessionProjection(newEntries);
 
 		// Should have summary + kept messages
 		expect(reloaded.messages.length).toBeLessThan(loaded.messages.length);
