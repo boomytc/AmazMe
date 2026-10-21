@@ -5,6 +5,7 @@ import type { RosterItem, SessionDirectoryLike } from "./view.ts";
 
 export const PROJECT_ADD_ACTION = "project:add";
 export const PROJECT_ADD_MODAL = "project:add-submit";
+/** Opens or closes one project's session list. Projects toggle independently of the current project. */
 export const PROJECT_SELECT_ACTION = "project:select";
 export const PROJECT_NEW_SESSION_ACTION = "project:new-session";
 export const COMPOSER_PROJECT_ACTION = "composer:project";
@@ -25,18 +26,31 @@ export interface ProjectGroup {
 	readonly cwd: string;
 	readonly workspaces?: readonly string[];
 	readonly selected: boolean;
+	/** Whether this project's sessions are listed. Independent of `selected`. */
+	readonly expanded: boolean;
 	readonly items: readonly RosterItem[];
 	readonly removed?: true;
 }
 
-export function projectGroups(directory: SessionDirectoryLike | undefined, items: readonly RosterItem[], selectedId: string | null | undefined, filter: string): ProjectGroup[] | undefined {
+/** Add `id` to the open set, or remove it when it is already open. Other ids stay as they are. */
+export function toggleExpandedProjects(expanded: readonly string[], id: string): readonly string[] {
+	return expanded.includes(id) ? expanded.filter(projectId => projectId !== id) : [...expanded, id];
+}
+
+export function projectGroups(directory: SessionDirectoryLike | undefined, items: readonly RosterItem[], selectedId: string | null | undefined, filter: string, expandedIds?: readonly string[]): ProjectGroup[] | undefined {
 	if (directory?.projects === undefined) return undefined;
 	const needle = filter.trim().toLowerCase();
-	return directory.projects.filter(project => !project.removed).map(project => ({
-		...project,
-		selected: project.id === selectedId,
-		items: items.filter(item => item.projectId === project.id),
-	})).filter(group => !needle || group.items.length > 0 || `${group.name} ${(group.workspaces ?? [group.cwd]).join(" ")}`.toLowerCase().includes(needle));
+	const explicit = expandedIds !== undefined;
+	const open = new Set(expandedIds ?? []);
+	return directory.projects.filter(project => !project.removed).map(project => {
+		const groupItems = items.filter(item => item.projectId === project.id);
+		return {
+			...project,
+			selected: project.id === selectedId,
+			expanded: explicit ? open.has(project.id) : project.id === selectedId,
+			items: groupItems,
+		};
+	}).filter(group => !needle || group.items.length > 0 || `${group.name} ${(group.workspaces ?? [group.cwd]).join(" ")}`.toLowerCase().includes(needle));
 }
 
 export function addProjectModal(locale: Locale): PanelModal {

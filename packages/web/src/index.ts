@@ -4,6 +4,7 @@ export {
 	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, SESSION_ARCHIVE_OPEN_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
 	SESSION_ARCHIVE_MODAL,
 	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal, archiveSessionModal,
+	toggleExpandedProjects,
 	type ProjectGroup,
 } from "./projects.ts";
 export { promptSuggestionContext, PromptSuggestionController, type PromptSuggestionContext } from "./prompt-suggestions.ts";

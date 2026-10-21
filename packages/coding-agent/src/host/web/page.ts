@@ -15,6 +15,7 @@ import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
 	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
+	toggleExpandedProjects,
 	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION, COMPOSER_PROJECT_ACTION,
 	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, SESSION_ARCHIVE_OPEN_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
 	SESSION_ARCHIVE_MODAL, archiveSessionModal,
@@ -871,6 +872,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
 	let rosterFilter = "";
 	let selectedProjectId: string | null | undefined;
+	/** Projects whose session lists are open. Independent of which project is current. */
+	let expandedProjectIds: readonly string[] = [];
+	/** The project last revealed because it became current, so collapsing it stays collapsed. */
+	let revealedProjectId: string | null | undefined;
 	const draftConfiguration = (): ModelsState | undefined => draftModels === undefined ? undefined : {
 		...draftModels, configuration: draftModel ?? draftModels.configuration,
 	};
@@ -1045,6 +1050,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * language and palette follow the host's value, so both tabs agree without a reload.
 	 */
 	const paint = (): void => {
+		if (booted && selectedProjectId !== revealedProjectId) {
+			if (typeof selectedProjectId === "string" && !expandedProjectIds.includes(selectedProjectId)) {
+				expandedProjectIds = [...expandedProjectIds, selectedProjectId];
+			}
+			revealedProjectId = selectedProjectId;
+		}
 		refreshDraftModels();
 		const bound = sessionReady();
 		const transcript = shownTranscript();
@@ -1148,6 +1159,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					desktop: typeof window !== "undefined" && window.amazmeDesktop !== undefined,
 					creatingSession: creating,
 					selectedProjectId,
+					...(booted ? { expandedProjectIds } : {}),
 					newSessionDraft: desiredSessionId === undefined && client.connected && directoryReady,
 					directory: directoryReady ? directory.state.value : undefined,
 					transcript,
@@ -2319,10 +2331,10 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						if (project) openModal(removeProjectModal(locale, project.id, project.name), action); return;
 					}
 					case PROJECT_SELECT_ACTION: {
-						selectedProjectId = action.data ?? null;
-						const session = rosterItems(locale, directory.state.value, undefined, Date.now(), "", false).find(item => item.projectId === selectedProjectId);
-						view = CHAT_VIEW;
-						void (session ? selectSession(session.id) : clearSession()).catch(report); paint(); return;
+						const id = action.data;
+						if (id === undefined || !directory.state.value?.projects?.some(project => project.id === id && !project.removed)) return;
+						expandedProjectIds = toggleExpandedProjects(expandedProjectIds, id);
+						paint(); return;
 					}
 					case SESSION_ARCHIVE_OPEN_ACTION: {
 						const id = action.data;

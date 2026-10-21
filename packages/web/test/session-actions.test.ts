@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { MODEL_CONNECTIONS_ACTION, MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION, SESSION_RENAME_ACTION } from "../src/actions.ts";
 import { removeSessionModal, renameSessionModal } from "../src/panels.ts";
-import { archiveSessionModal, projectGroups, COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
+import { archiveSessionModal, projectGroups, toggleExpandedProjects, COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView, rosterItems } from "../src/view.ts";
 import {
@@ -151,6 +151,46 @@ describe("session actions", () => {
 		expect(document.querySelector(".session-menu")).toBeNull();
 	});
 
+	test("project headings expand independently of the current project", () => {
+		const { renderer, view } = paint();
+		const report = vi.fn();
+		renderer.onPanelAction = report;
+		const projects = {
+			projects: [
+				{ id: "a", name: "AmazMe", cwd: "/a", createdAt: 1 },
+				{ id: "b", name: "PilotDeck", cwd: "/b", createdAt: 2 },
+			],
+			sessions: [
+				{ sessionId: "sa", name: "one", cwd: "/a", createdAt: 3, projectId: "a" },
+				{ sessionId: "sb", name: "two", cwd: "/b", createdAt: 4, projectId: "b" },
+			],
+		};
+		const roster = rosterItems("zh", projects, "sa", 5);
+		const open = ["a"];
+		renderer.render({ ...view, locale: "zh", roster, attachedId: "sa", projects: projectGroups(projects, roster, "a", "", open) });
+		const headings = [...document.querySelectorAll<HTMLButtonElement>(".project-select")];
+		expect(headings.map(button => button.getAttribute("aria-expanded"))).toEqual(["true", "false"]);
+		expect(document.querySelector('[data-project-id="a"] [data-session-id="sa"]')).not.toBeNull();
+		expect(document.querySelector('[data-project-id="b"] [data-session-id]')).toBeNull();
+		headings[1]?.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROJECT_SELECT_ACTION, data: "b" });
+		const both = toggleExpandedProjects(open, "b");
+		expect(projectGroups(projects, roster, "a", "", both)?.map(group => [group.id, group.selected, group.expanded])).toEqual([
+			["a", true, true],
+			["b", false, true],
+		]);
+		renderer.render({ ...view, locale: "zh", roster, attachedId: "sa", projects: projectGroups(projects, roster, "a", "", both) });
+		expect([...document.querySelectorAll(".project-select")].map(button => button.getAttribute("aria-expanded"))).toEqual(["true", "true"]);
+		expect(document.querySelector('[data-project-id="a"] [data-session-id="sa"]')).not.toBeNull();
+		expect(document.querySelector('[data-project-id="b"] [data-session-id="sb"]')).not.toBeNull();
+		const closedCurrent = toggleExpandedProjects(both, "a");
+		expect(projectGroups(projects, roster, "a", "", closedCurrent)?.map(group => [group.id, group.selected, group.expanded])).toEqual([
+			["a", true, false],
+			["b", false, true],
+		]);
+		expect(projectGroups(projects, roster, "a", "")?.map(group => group.expanded)).toEqual([true, false]);
+	});
+
 	test("project sessions expose one archive action, replaced by restore when archived", () => {
 		const { renderer, view } = paint();
 		const report = vi.fn();
@@ -171,7 +211,7 @@ describe("session actions", () => {
 		renderer.render({
 			...view,
 			locale: "zh",
-			projects: [{ id: "p", name: "App", cwd: "/work", selected: true, items: [] }],
+			projects: [{ id: "p", name: "App", cwd: "/work", selected: true, expanded: true, items: [] }],
 			roster: [],
 			archivedAttached: { ...pinned, archived: true, attached: true },
 		});
@@ -247,7 +287,7 @@ describe("session actions", () => {
 		expect(document.querySelector(".session-menu")).toBe(menu);
 		renderer.render({
 			...view,
-			projects: [{ id: "p", name: "App", cwd: "/work", selected: true, items: view.roster }],
+			projects: [{ id: "p", name: "App", cwd: "/work", selected: true, expanded: true, items: view.roster }],
 			newSession: { enabled: false, pending: true },
 		});
 		const create = control(".project-new-session");

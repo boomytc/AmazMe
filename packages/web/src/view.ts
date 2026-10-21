@@ -557,6 +557,8 @@ export interface WebViewInput {
 	readonly locale: Locale;
 	readonly directory: SessionDirectoryLike | undefined;
 	readonly selectedProjectId?: string | null;
+	/** Project ids whose session lists are open. Omitted means only the selected project is open. */
+	readonly expandedProjectIds?: readonly string[];
 	readonly newSessionDraft?: boolean;
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
@@ -1538,7 +1540,7 @@ export function buildWebView(input: WebViewInput): WebView {
 		locale,
 		roster,
 		...(input.modelConnections ? { modelConnections: input.modelConnections } : {}),
-		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.rosterFilter),
+		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.rosterFilter, input.expandedProjectIds),
 		...(input.newSessionDraft && input.directory !== undefined ? { sessionDraft: {
 			projectId: input.selectedProjectId ?? null,
 			label: input.directory.projects?.find(project => project.id === input.selectedProjectId)?.name ?? translate(locale, "project.standalone"),

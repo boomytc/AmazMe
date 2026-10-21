@@ -3203,7 +3203,7 @@ export function createRenderer(
 						section.dataset.projectId = projectId;
 						const head = element("div", "project-heading");
 						const select = button(group.selected ? "project-select selected" : "project-select"); select.title = (group.workspaces ?? [group.cwd]).join("\n");
-						select.setAttribute("aria-expanded", String(group.selected));
+						select.setAttribute("aria-expanded", String(group.expanded));
 						select.append(icon("folder"), element("span", "project-name", group.name));
 						select.addEventListener("click", () => report({ kind: "command", id: PROJECT_SELECT_ACTION, data: projectId })); head.append(select);
 						const more = button("project-action project-more"); more.title = copy("project.actions"); more.setAttribute("aria-label", `${more.title}: ${group.name}`);
@@ -3223,7 +3223,7 @@ export function createRenderer(
 						create.append(icon("square-pen"));
 						create.addEventListener("click", () => report({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: projectId })); head.append(create);
 						section.append(head);
-						if (group.selected) {
+						if (group.expanded) {
 							const items = element("div", "project-sessions");
 							for (const item of group.items) items.append(sessionRow(item));
 							if (group.items.length === 0) items.append(element("p", "empty-state", view.empty ?? copy("project.empty")));
@@ -3255,7 +3255,7 @@ export function createRenderer(
 					section.append(items);
 					elements.roster.append(section);
 				}
-				if (view.roster.length === 0 && !view.projects?.some(group => group.selected && group.items.length === 0) && (view.empty !== undefined || view.projects === undefined || view.projects.length === 0)) {
+				if (view.roster.length === 0 && !view.projects?.some(group => group.expanded && group.items.length === 0) && (view.empty !== undefined || view.projects === undefined || view.projects.length === 0)) {
 					const empty = element("p", "empty-state", view.empty ?? copy("header.rosterEmpty"));
 					empty.id = "roster-empty";
 					elements.roster.append(empty);
