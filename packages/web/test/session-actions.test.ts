@@ -313,7 +313,7 @@ describe("session actions", () => {
 					],
 					login: null,
 				},
-				enabledModelIds: ["anthropic/claude-sonnet-4"],
+				enabledModelIds: ["anthropic/claude-sonnet-4", "openai/gpt-5"],
 				defaults: { model: { provider: "anthropic", modelId: "claude-sonnet-4" }, thinkingLevel: "medium" },
 				error: null,
 				refresh: { status: "idle" },
@@ -322,6 +322,10 @@ describe("session actions", () => {
 			models: [
 				{ provider: "anthropic", modelId: "claude-sonnet-4", name: "Claude Sonnet 4", available: true },
 				{ provider: "anthropic", modelId: "claude-opus-4", name: "Claude Opus 4", available: false },
+			],
+			enabledModels: [
+				{ provider: "anthropic", modelId: "claude-sonnet-4", name: "Claude Sonnet 4", available: true },
+				{ provider: "openai", modelId: "gpt-5", name: "GPT-5", available: true },
 			],
 			loading: false,
 			disabled: false,
@@ -356,10 +360,10 @@ describe("session actions", () => {
 		expect(connections.element.querySelectorAll(".connection-detail .weight-filled")).toHaveLength(0);
 		expect(connections.element.querySelector(".connection-verification.success")?.textContent).toContain("gpt-5 · 最近验证成功");
 
-		// Model row interactions report expected actions.
+		// Model row interactions report expected actions; the default is set once in the overview.
 		connections.update("zh", baseView);
 		const firstRow = connections.element.querySelector<HTMLElement>(".connection-model")!;
-		expect(firstRow.classList.contains("is-default")).toBe(true);
+		expect(firstRow.querySelector(`[data-action="${MODEL_DEFAULTS_ACTION}"]`)).toBeNull();
 		const checkbox = firstRow.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
 		checkbox.checked = false;
 		checkbox.dispatchEvent(new Event("change"));
@@ -377,8 +381,12 @@ describe("session actions", () => {
 		});
 		connections.element.querySelector<HTMLButtonElement>(`[data-action="${REFRESH_MODELS_ACTION}"]`)!.click();
 		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined });
-		connections.element.querySelector<HTMLButtonElement>(`.connection-overview [data-action="${MODEL_DEFAULTS_ACTION}"]`)!.click();
-		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_DEFAULTS_ACTION, data: undefined });
+		const defaultSelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
+		expect([...defaultSelect.querySelectorAll("optgroup")].map(group => group.label)).toEqual(["Anthropic", "OpenAI"]);
+		expect(defaultSelect.value).toBe(JSON.stringify(["anthropic", "claude-sonnet-4"]));
+		defaultSelect.value = JSON.stringify(["openai", "gpt-5"]);
+		defaultSelect.dispatchEvent(new Event("change"));
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_DEFAULTS_ACTION, data: JSON.stringify(["openai", "gpt-5"]) });
 		connections.element.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_SELECT_ACTION}"]`)!.click();
 		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROVIDER_SELECT_ACTION, data: "openai" });
 		connections.element.querySelector<HTMLButtonElement>(`.connection-rail [data-action="${PROVIDER_EDIT_ACTION}"]`)!.click();
@@ -387,5 +395,18 @@ describe("session actions", () => {
 		connections.update("zh", baseView, [{ tone: "error", text: "no credentials" }]);
 		expect(connections.element.querySelector(".connection-notices .panel-notice.error")?.textContent).toBe("请登录供应商或检查 API 密钥");
 		expect(connections.element.querySelector(".connection-notices .panel-notice.info")).toBeNull();
+
+		// A default outside the enabled list stays visible so the current choice is not lost.
+		connections.update("zh", { ...baseView, enabledModels: [] });
+		const fallbackSelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
+		expect(fallbackSelect.value).toBe(JSON.stringify(["anthropic", "claude-sonnet-4"]));
+		expect([...fallbackSelect.options].map(option => option.textContent)).toEqual(["anthropic/claude-sonnet-4"]);
+
+		// Without enabled models the overview keeps the label and explains what to do.
+		connections.update("zh", { ...baseView, enabledModels: [], state: { ...baseView.state, defaults: null } });
+		expect(connections.element.querySelector(".connection-default-text")?.textContent).toBe("新聊天默认模型");
+		const emptySelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
+		expect(emptySelect.disabled).toBe(true);
+		expect(emptySelect.selectedOptions[0]?.textContent).toBe("连接供应商后即可选择默认模型。");
 	});
 });

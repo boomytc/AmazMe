@@ -1133,6 +1133,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 		const now = Date.now();
 		const retentionDays = Number(effectiveSettings()?.descriptors.find(descriptor => descriptor.id === "archiveRetentionDays")?.value ?? 0);
+		const catalog = modelCatalog.state.value;
+		const enabledModels = catalog === undefined ? [] : catalog.models.filter(model =>
+			catalog.enabledModelIds === null || catalog.enabledModelIds.includes(`${model.provider}/${model.modelId}`));
 		const built = buildWebView({
 					locale,
 					typography,
@@ -1151,7 +1154,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					now,
 					models: bound ? painter.modelsValue : desiredSessionId === undefined ? draftConfiguration() : undefined,
 					thinkingLevels: bound ? painter.levels : modelCatalog.state.value?.models.find(model => model.provider === draftConfiguration()?.configuration.model?.provider && model.modelId === draftConfiguration()?.configuration.model?.modelId)?.levels,
-					modelConnections: modelCatalog.state.value ? { state: modelCatalog.state.value, selected: selectedProvider, models: providerModels, loading: providerModelsLoading, disabled: !client.connected || panelPending !== undefined } : undefined,
+					modelConnections: catalog ? { state: catalog, selected: selectedProvider, models: providerModels, enabledModels, loading: providerModelsLoading, disabled: !client.connected || panelPending !== undefined } : undefined,
 					modelPending: modelSelection !== undefined && modelSelection.binding === painter.binding,
 					submitMode,
 					attachments: bound || desiredSessionId === undefined ? pending : [],

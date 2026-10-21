@@ -34,6 +34,8 @@ export interface ModelConnectionsLike {
 	};
 	readonly selected?: string;
 	readonly models: readonly ConnectionModelLike[];
+	/** Every model currently offered to new chats, across providers. */
+	readonly enabledModels: readonly ConnectionModelLike[];
 	readonly loading: boolean;
 	readonly disabled: boolean;
 }
@@ -162,11 +164,41 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		notices.hidden = notices.children.length === 0;
 
 		const defaults = view.state.defaults;
-		const defaultId = defaults ? `${defaults.model.provider}/${defaults.model.modelId}` : undefined;
-		overview.replaceChildren(
-			node("p", defaultId ? copy("connections.default", { model: defaultId }) : copy("connections.noDefault"), "connection-default-text"),
-			action(copy("model.defaults"), MODEL_DEFAULTS_ACTION),
-		);
+		const defaultRef = defaults ? JSON.stringify([defaults.model.provider, defaults.model.modelId]) : "";
+		const options = [...view.enabledModels];
+		if (defaults && !options.some(model => model.provider === defaults.model.provider && model.modelId === defaults.model.modelId))
+			options.unshift({ ...defaults.model, name: `${defaults.model.provider}/${defaults.model.modelId}`, available: false });
+		const defaultSelect = document.createElement("select");
+		defaultSelect.className = "panel-select connection-default-select";
+		defaultSelect.setAttribute("aria-label", copy("connections.defaultLabel"));
+		defaultSelect.disabled = view.disabled || options.length === 0;
+		if (defaultRef === "") {
+			const placeholder = document.createElement("option");
+			placeholder.value = "";
+			placeholder.disabled = true;
+			placeholder.selected = true;
+			placeholder.textContent = copy(options.length === 0 ? "connections.noDefault" : "connections.chooseDefault");
+			defaultSelect.append(placeholder);
+		}
+		const groups = new Map<string, HTMLOptGroupElement>();
+		for (const model of options) {
+			let group = groups.get(model.provider);
+			if (!group) {
+				group = document.createElement("optgroup");
+				group.label = view.state.providers.find(provider => provider.id === model.provider)?.name ?? model.provider;
+				groups.set(model.provider, group);
+				defaultSelect.append(group);
+			}
+			const option = document.createElement("option");
+			option.value = JSON.stringify([model.provider, model.modelId]);
+			option.textContent = model.name;
+			option.selected = option.value === defaultRef;
+			group.append(option);
+		}
+		defaultSelect.addEventListener("change", () => {
+			if (defaultSelect.value) report({ kind: "command", id: MODEL_DEFAULTS_ACTION, data: defaultSelect.value });
+		});
+		overview.replaceChildren(node("span", copy("connections.defaultLabel"), "connection-default-text"), defaultSelect);
 
 		renderList();
 		detail.replaceChildren();
@@ -223,9 +255,8 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		const modelList = document.createElement("div"); modelList.className = "connection-model-list";
 		for (const model of view.models) {
 			const modelRef = JSON.stringify([model.provider, model.modelId]);
-			const isDefault = defaultId === `${model.provider}/${model.modelId}`;
 			const row = document.createElement("div");
-			row.className = `connection-model${isDefault ? " is-default" : ""}${!model.available ? " is-unavailable" : ""}`;
+			row.className = `connection-model${!model.available ? " is-unavailable" : ""}`;
 			const main = document.createElement("div"); main.className = "connection-model-main";
 			const label = document.createElement("label"); label.className = "connection-model-label";
 			const enabled = document.createElement("input"); enabled.type = "checkbox";
@@ -235,10 +266,8 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			label.append(enabled, node("span", model.name, "connection-model-name"));
 			main.append(label, node("small", model.modelId, "connection-model-id"));
 			const rowActions = document.createElement("div"); rowActions.className = "connection-model-actions";
-			const setDefault = action(copy("model.defaults"), MODEL_DEFAULTS_ACTION, modelRef, !model.available, "panel-button weight-text connection-row-button");
-			if (isDefault) setDefault.setAttribute("aria-pressed", "true");
 			const verify = action(copy("connections.test"), PROVIDER_TEST_ACTION, modelRef, !model.available || verification.status === "checking", "panel-button weight-text connection-row-button");
-			rowActions.append(setDefault, verify);
+			rowActions.append(verify);
 			row.append(main, rowActions);
 			modelList.append(row);
 		}
