@@ -668,6 +668,11 @@ p {
 	padding-right: 6px;
 }
 
+/* Project headings are list rows. Date groups keep the section gap above. */
+.session-list:has(> .project-group) {
+	gap: 2px;
+}
+
 .session-group {
 	display: flex;
 	flex-direction: column;
