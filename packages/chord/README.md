@@ -21,7 +21,7 @@ Contracts are runtime values described with [TypeBox](https://github.com/sinclai
 | `@amazme/chord/output` | Bounded output streams and paced progress: `OutputBuffer` (head or tail window of a stream, `OutputLimits`, `OutputSkip`), `boundOutput`, `sanitizeOutput`, `utf8ByteLength`, and `Progress` (adaptive commits of a changing value). | Node and browsers |
 | `@amazme/chord/telemetry-sqlite` | `createSqliteTelemetry(db, { retentionMs?, maxQueuedSpans? })`: buffered recording and backend-independent `TelemetryStore` queries. | Any SQLite adapter |
 | `@amazme/chord/sqlite` | Portable `SqliteDatabase`, `SqliteExecutor`, and `SqliteValue`, atomic `applySqliteMigrations(database, migrations, { table })`, and `validateSqliteSchemaPrefix`. The metadata table must be a valid, non-reserved SQLite identifier; migration versions start at 1 and are contiguous. | Any SQLite adapter |
-| `@amazme/chord/sqlite/node` | `NodeSqliteDatabase`, `openNodeSqliteDatabase`, and `NodeSqliteDatabaseOptions`. | Node |
+| `@amazme/chord/sqlite/node` | `NodeSqliteDatabase` (with `exclusive(operation)` for work that must run alone on the connection outside a transaction, such as checkpoints), `openNodeSqliteDatabase`, and `NodeSqliteDatabaseOptions`. | Node |
 | `@amazme/chord/sqlite/cloudflare` | `DurableObjectSqliteDatabase` and the structural `DurableObjectSqliteStorage` binding type. | Cloudflare Durable Objects |
 
 ## Quick start
