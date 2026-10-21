@@ -19,7 +19,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPOSITORY = "boomytc/AmazMe";
 const NODE_VERSION = "22.23.3";
 
-/** GitHub Releases start at 1.0.0. Earlier versions stay in the repo and are not published. */
+/** Tags and GitHub Releases start together at 1.0.0. Earlier versions are not tagged or published. */
+
+/** Local release directories other than the version being built. Dotfiles stay. */
+export function staleReleaseNames(names, currentTag) {
+	return names.filter((name) => name !== currentTag && !name.startsWith("."));
+}
 export function publishesToGitHub(version) {
 	const match = /^(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.exec(version);
 	return match !== null && Number(match[1]) >= 1;
@@ -33,7 +38,7 @@ export function releasePlan({ branch, dirty, head, remoteHead, version, rootVers
 	if (version !== rootVersion) throw new Error(`packages/gui version ${version} differs from root version ${rootVersion}`);
 	const tag = `v${version}`;
 	if (!/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) throw new Error(`Not a release version: ${version}`);
-	if (!publishesToGitHub(version)) throw new Error(`GitHub Release starts at 1.0.0; ${version} is not published`);
+	if (!publishesToGitHub(version)) throw new Error(`GitHub Release starts at 1.0.0; ${version} is not tagged or published`);
 	if (releaseExists) throw new Error(`GitHub Release ${tag} already exists`);
 	for (const [where, commit] of [["local", localTag], ["remote", remoteTag]]) {
 		if (commit !== undefined && commit !== head) throw new Error(`${where} tag ${tag} points at ${commit.slice(0, 8)}, not HEAD`);
@@ -171,7 +176,13 @@ async function main() {
 	step("Checking notarization credentials (read-only)");
 	run(process.execPath, ["scripts/notarize-macos.mjs", "--history-only", "--key", config.key]);
 
-	const out = join(repoRoot, "dist-release", plan.tag);
+	const releaseRoot = join(repoRoot, "dist-release");
+	const out = join(releaseRoot, plan.tag);
+	if (existsSync(releaseRoot)) {
+		for (const name of staleReleaseNames(readdirSync(releaseRoot), plan.tag)) {
+			await rm(join(releaseRoot, name), { recursive: true, force: true });
+		}
+	}
 	const baselineOut = `${out}-baseline`;
 	const work = await mkdtemp(join(tmpdir(), "amazme-release-"));
 	const source = join(work, "source");

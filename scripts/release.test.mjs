@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { releaseArguments, releaseNotes, releasePlan, remoteTagCommit } from "./release.mjs";
+import { releaseArguments, releaseNotes, releasePlan, remoteTagCommit, staleReleaseNames } from "./release.mjs";
 
 const HEAD = "a".repeat(40);
 const ready = { branch: "main", dirty: false, head: HEAD, remoteHead: HEAD, version: "1.2.3", rootVersion: "1.2.3", localTag: undefined, remoteTag: undefined, releaseExists: false };
@@ -46,6 +46,10 @@ test("remote tag lookup resolves annotated tags to their commit", () => {
 	assert.equal(remoteTagCommit(`${tagObject}\trefs/tags/v1.2.3\n${HEAD}\trefs/tags/v1.2.3^{}\n`, "v1.2.3"), HEAD);
 	assert.equal(remoteTagCommit(`${HEAD}\trefs/tags/v1.2.3\n`, "v1.2.3"), HEAD);
 	assert.equal(remoteTagCommit("", "v1.2.3"), undefined);
+});
+
+test("a local release build keeps only the version being built", () => {
+	assert.deepEqual(staleReleaseNames(["v0.2.0", "v0.3.0", "v0.3.0-baseline", ".DS_Store"], "v0.3.0"), ["v0.2.0", "v0.3.0-baseline"]);
 });
 
 test("release notes verify the published DMG by name", () => {

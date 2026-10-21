@@ -31,8 +31,9 @@ npm test --workspace <name>
 
 ## 发布
 
-- 1.0.0 之前不创建 GitHub Release，也不为发布打 `v*` 标签。版本记在 `package.json` 和 `CHANGELOG.md`。本地验证和本地构建即可。
-- `npm run release` 在版本低于 1.0.0 时直接拒绝。到 1.0.0 才用它做签名、公证并上传 GitHub Release。
+- 标签和 GitHub Release 一起处理。没有明确要求发布时，两者都不做。
+- 1.0.0 之前不打 `v*` 标签，也不创建 GitHub Release。版本记在 `package.json` 和 `CHANGELOG.md`。本地验证和本地构建即可。`dist-release` 只保留正在构建的那一个版本。
+- `npm run release` 在版本低于 1.0.0 时直接拒绝。到 1.0.0 且明确要求发布时，才用它同时打标签、签名、公证并上传 GitHub Release。不单独打标签。
 - 不新增 `.github/workflows`。发版检查和构建都在本机完成。
 - 对外分发的 DMG 必须用 Developer ID 签名并公证：否则 Gatekeeper 拒绝打开，应用内更新也靠签名团队和 staple 确认更新来自同一发布者。不要为了省事削弱签名、公证或更新校验。
 - 签名和公证凭证只留在本机：钥匙串、`.p8` 和 `~/.config/amazme/release.env`。不写进仓库，不放回 GitHub secret。
@@ -45,7 +46,7 @@ npm test --workspace <name>
 - 阶段性闭环后再合入 `main`。仓库没有 CI，合入和推送前按「命令」一节在本地把关。
 - 合入用 merge commit 或快进，不用 squash，保持两条分支历史一致。
 - 直接在 `main` 上的热修要合回 `dev`。
-- 版本标签只从 `main` 打。
+- 版本标签只在 1.0.0 的发布里从 `main` 打，并与 GitHub Release 同时产生。
 
 ## Git
 

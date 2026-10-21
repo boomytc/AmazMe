@@ -50,7 +50,7 @@ npm run dev:desktop
 
 ## DMG 与 GitHub Release
 
-1.0.0 之前不上传 GitHub Release。这个阶段只做本地验证和本地构建；`npm run release` 会拒绝低于 1.0.0 的版本。签名、公证和上传留到 1.0.0。
+1.0.0 之前不打 `v*` 标签，也不上传 GitHub Release。没有明确要求发布时，两者都不做。这个阶段只做本地验证和本地构建；`npm run release` 会拒绝低于 1.0.0 的版本。签名、公证、标签和上传留到 1.0.0，并且一次完成。本地 `dist-release` 只保留正在构建的那一个版本，旧版本目录在下一次构建开始时删除。
 
 在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。
 
