@@ -3,12 +3,21 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { SESSION_RENAME_ACTION } from "../src/actions.ts";
+import { MODEL_DEFAULTS_ACTION, PROVIDER_AUTH_ACTION, REFRESH_MODELS_ACTION, SESSION_RENAME_ACTION } from "../src/actions.ts";
 import { removeSessionModal, renameSessionModal } from "../src/panels.ts";
 import { archiveSessionModal, projectGroups, COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView, rosterItems } from "../src/view.ts";
-import { MODEL_CONNECTIONS_ACTION, providerConfigurationModal } from "../src/model-connections.ts";
+import {
+	createModelConnections,
+	MODEL_CONNECTIONS_ACTION,
+	MODEL_ENABLED_ACTION,
+	PROVIDER_EDIT_ACTION,
+	PROVIDER_SELECT_ACTION,
+	PROVIDER_TEST_ACTION,
+	providerConfigurationModal,
+	type ModelConnectionsLike,
+} from "../src/model-connections.ts";
 
 const directory = { sessions: [{ sessionId: "stable-session-id", createdAt: 1, name: "Weekly report", cwd: "/work" }] };
 
@@ -267,5 +276,116 @@ describe("session actions", () => {
 		});
 		expect(input.value).toBe("New title");
 		expect(document.querySelector(".modal-notice")?.textContent).toBe("host unavailable");
+	});
+
+	test("model connections workspace maintains heading hierarchy, search persistence, button weight, and row actions", () => {
+		const report = vi.fn();
+		const connections = createModelConnections(report);
+		document.body.append(connections.element);
+		const baseView: ModelConnectionsLike = {
+			state: {
+				providers: [
+					{
+						id: "anthropic",
+						name: "Anthropic",
+						configured: false,
+						baseUrl: "https://api.anthropic.com",
+						api: "anthropic-messages",
+						modelCount: 2,
+						custom: false,
+						verification: { status: "idle" },
+					},
+					{
+						id: "openai",
+						name: "OpenAI",
+						configured: true,
+						baseUrl: "https://api.openai.com/v1",
+						api: "openai-responses",
+						modelCount: 1,
+						custom: false,
+						verification: { status: "success", modelId: "gpt-5", checkedAt: 1700000000000 },
+					},
+				],
+				authentication: {
+					providers: [
+						{ id: "anthropic", name: "Anthropic", configured: false, methods: [{ type: "api_key", label: "API Key" }] },
+						{ id: "openai", name: "OpenAI", configured: true, methods: [{ type: "api_key", label: "API Key" }] },
+					],
+					login: null,
+				},
+				enabledModelIds: ["anthropic/claude-sonnet-4"],
+				defaults: { model: { provider: "anthropic", modelId: "claude-sonnet-4" }, thinkingLevel: "medium" },
+				error: null,
+				refresh: { status: "idle" },
+			},
+			selected: "anthropic",
+			models: [
+				{ provider: "anthropic", modelId: "claude-sonnet-4", name: "Claude Sonnet 4", available: true },
+				{ provider: "anthropic", modelId: "claude-opus-4", name: "Claude Opus 4", available: false },
+			],
+			loading: false,
+			disabled: false,
+		};
+
+		connections.update("zh", baseView, [{ tone: "info", text: "已保存默认配置" }]);
+		expect(connections.element.querySelector("h1.panel-title")?.textContent).toBe("模型与连接");
+		expect(connections.element.querySelector("p.panel-desc")?.textContent).toBe("管理供应商连接和新聊天可选的模型。");
+		expect(connections.element.querySelector("h2.connection-provider-name")?.textContent).toBe("Anthropic");
+		expect(connections.element.querySelector("h3.connection-models-title")?.textContent).toBe("启用模型");
+		expect(connections.element.querySelector(".connection-models-count")?.textContent).toBe("1 / 2");
+		expect(connections.element.querySelector(".connection-notices .panel-notice")?.textContent).toBe("已保存默认配置");
+
+		// Unconfigured provider highlights Connect provider as the single primary button in the detail pane.
+		const primaryButtons = connections.element.querySelectorAll(".connection-detail .tone-primary");
+		expect(primaryButtons).toHaveLength(1);
+		expect(primaryButtons[0]?.getAttribute("data-action")).toBe(PROVIDER_AUTH_ACTION);
+
+		// Search input is inside a <search> landmark with autocorrect/spellcheck disabled and stays mounted across updates.
+		const searchInput = connections.element.querySelector<HTMLInputElement>("search.connection-search > input.connection-search-input")!;
+		expect(searchInput.getAttribute("autocorrect")).toBe("off");
+		expect(searchInput.getAttribute("autocapitalize")).toBe("off");
+		expect(searchInput.spellcheck).toBe(false);
+		searchInput.value = "open";
+		searchInput.dispatchEvent(new Event("input"));
+		expect(connections.element.querySelectorAll(".connection-row")).toHaveLength(1);
+		expect(connections.element.querySelector(".connection-row-name")?.textContent).toBe("OpenAI");
+
+		// Updating to a configured provider keeps the same search input and removes primary weight from secondary actions.
+		connections.update("zh", { ...baseView, selected: "openai" });
+		expect(connections.element.querySelector("input.connection-search-input")).toBe(searchInput);
+		expect(connections.element.querySelectorAll(".connection-detail .tone-primary")).toHaveLength(0);
+		expect(connections.element.querySelector(".connection-verification.success")?.textContent).toContain("gpt-5 · 最近验证成功");
+
+		// Model row interactions report expected actions.
+		connections.update("zh", baseView);
+		const firstRow = connections.element.querySelector<HTMLElement>(".connection-model")!;
+		expect(firstRow.classList.contains("is-default")).toBe(true);
+		const checkbox = firstRow.querySelector<HTMLInputElement>('input[type="checkbox"]')!;
+		checkbox.checked = false;
+		checkbox.dispatchEvent(new Event("change"));
+		expect(report).toHaveBeenLastCalledWith({
+			kind: "control",
+			id: MODEL_ENABLED_ACTION,
+			data: JSON.stringify(["anthropic", "claude-sonnet-4"]),
+			value: "false",
+		});
+		firstRow.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_TEST_ACTION}"]`)!.click();
+		expect(report).toHaveBeenLastCalledWith({
+			kind: "command",
+			id: PROVIDER_TEST_ACTION,
+			data: JSON.stringify(["anthropic", "claude-sonnet-4"]),
+		});
+		connections.element.querySelector<HTMLButtonElement>(`[data-action="${REFRESH_MODELS_ACTION}"]`)!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: REFRESH_MODELS_ACTION, data: undefined });
+		connections.element.querySelector<HTMLButtonElement>(`.connection-overview [data-action="${MODEL_DEFAULTS_ACTION}"]`)!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_DEFAULTS_ACTION, data: undefined });
+		connections.element.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_SELECT_ACTION}"]`)!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROVIDER_SELECT_ACTION, data: "openai" });
+		connections.element.querySelector<HTMLButtonElement>(`.connection-rail [data-action="${PROVIDER_EDIT_ACTION}"]`)!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROVIDER_EDIT_ACTION, data: undefined });
+
+		connections.update("zh", baseView, [{ tone: "error", text: "no credentials" }]);
+		expect(connections.element.querySelector(".connection-notices .panel-notice.error")?.textContent).toBe("请登录供应商或检查 API 密钥");
+		expect(connections.element.querySelector(".connection-notices .panel-notice.info")).toBeNull();
 	});
 });

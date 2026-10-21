@@ -1864,7 +1864,7 @@ export function createRenderer(
 		if (selected) {
 			if (selected.id === "settings:models" && view.modelConnections) {
 				if (elements.viewBody.firstElementChild !== connections.element) elements.viewBody.replaceChildren(connections.element);
-				connections.update(view.locale, view.modelConnections);
+				connections.update(view.locale, view.modelConnections, panel.notices);
 				return;
 			}
 			const { title, description, actions, ...content } = selected;
