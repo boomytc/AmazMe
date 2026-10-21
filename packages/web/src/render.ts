@@ -7,6 +7,8 @@
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
+import { createModelPicker } from "./model-picker.ts";
+import { createModelConnections, MODEL_CONNECTIONS_ACTION } from "./model-connections.ts";
 import { COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
@@ -647,6 +649,12 @@ export function createRenderer(
 	const flowCache = new DomCache();
 	const chromeValues = new Map<string, unknown>();
 	const modelSetup = elements.modelSetup ?? modelSetupElement(elements.modelSelect);
+	const sharedModelPicker = createModelPicker((provider, modelId) => renderer.onSelectModel(provider, modelId), level => renderer.onSelectThinking(level), () => {
+		sections.set(SETTINGS_VIEW, "settings:models");
+		report({ kind: "command", id: MODEL_CONNECTIONS_ACTION, data: undefined });
+	});
+	elements.modelSelect.insertAdjacentElement("beforebegin", sharedModelPicker.element);
+	const connections = createModelConnections(action => report(action));
 	const transcriptLatest = elements.transcriptLatest ?? transcriptLatestElement(elements.transcript);
 	const quoteAction = button("quote-action");
 	quoteAction.hidden = true;
@@ -1854,6 +1862,11 @@ export function createRenderer(
 		if (shownSection !== section) elements.view.scrollTop = 0;
 		shownSection = section;
 		if (selected) {
+			if (selected.id === "settings:models" && view.modelConnections) {
+				if (elements.viewBody.firstElementChild !== connections.element) elements.viewBody.replaceChildren(connections.element);
+				connections.update(view.locale, view.modelConnections);
+				return;
+			}
 			const { title, description, actions, ...content } = selected;
 			replacePanel(elements.viewBody, { ...panel, title, description: description ?? panel.description, actions, groups: [{ ...content, title: "" }] });
 		} else replacePanel(elements.viewBody, panel);
@@ -1865,7 +1878,7 @@ export function createRenderer(
 		&& (view.sessionDraft === undefined ? view.attachedId !== undefined : !view.sessionDraft.disabled);
 	const renderPrimary = (): void => {
 		const pending = lastView?.attachments.length ?? 0;
-		elements.primary.disabled = !canCompose(lastView) || (draft().length === 0 && pending === 0);
+		elements.primary.disabled = !canCompose(lastView) || (lastView?.sessionDraft !== undefined && (lastView.model.disabled || lastView.model.groups.length === 0)) || (draft().length === 0 && pending === 0);
 	};
 
 	/** The stop control is on screen for the whole turn, whether or not the draft is empty. */
@@ -2942,7 +2955,7 @@ export function createRenderer(
 			placeholder.value = "";
 			placeholder.disabled = true;
 			const scopeEmpty = picker.empty === copy("model.scopeEmpty");
-			placeholder.textContent = view.sessionDraft !== undefined ? copy("model.draftDefault") : picker.empty === undefined ? copy("model.choose") : scopeEmpty ? copy("model.configure") : copy("model.connectProvider");
+			placeholder.textContent = picker.empty === undefined ? copy("model.choose") : scopeEmpty ? copy("model.configure") : copy("model.connectProvider");
 			elements.modelSelect.replaceChildren(placeholder);
 			for (const group of picker.groups) {
 				const optgroup = document.createElement("optgroup");
@@ -2957,7 +2970,7 @@ export function createRenderer(
 			}
 		}
 		const selected = options.find(option => option.selected);
-		const showSetup = view.sessionDraft === undefined && options.length === 0 && picker.empty !== undefined;
+		const showSetup = options.length === 0 && picker.empty !== undefined;
 		elements.modelSelect.hidden = showSetup;
 		modelSetup.hidden = !showSetup;
 		if (showSetup) {
@@ -3002,6 +3015,11 @@ export function createRenderer(
 		elements.thinkingSelect.hidden = picker.levels.length <= 1;
 		elements.thinkingSelect.disabled = picker.disabled || picker.levels.length <= 1;
 		elements.thinkingSelect.title = [picker.effort, picker.levelsEmpty ?? copy("model.nextRequest")].filter(Boolean).join("\n");
+		// Preserve the exported native-control adapters for embedders; the shared menu owns presentation.
+		elements.modelSelect.hidden = true;
+		elements.thinkingSelect.hidden = true;
+		modelSetup.hidden = true;
+		sharedModelPicker.update(view.locale, picker, view.sessionDraft?.disabled);
 	};
 
 	const syncTranscriptLatest = (): void => {
@@ -3276,7 +3294,7 @@ export function createRenderer(
 			if (changed("dock", [view.locale, view.dock, view.panel.current])) renderDock(view);
 			if (changed("submit", [view.locale, view.busy, view.run.submitModes])) renderSubmitModes(view);
 			if (changed("nav", [view.locale, view.panel.nav, view.panel.current])) renderNav(view);
-			if (changed("panel", [view.locale, view.panel.panel, view.sessionLabel, view.focus])) renderPanelView(view);
+			if (changed("panel", [view.locale, view.panel.panel, view.sessionLabel, view.focus, view.modelConnections])) renderPanelView(view);
 			syncSettingsChrome(view);
 			renderModal(view.panel.modal);
 			if (

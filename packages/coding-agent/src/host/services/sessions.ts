@@ -2,6 +2,7 @@ import { remoteService } from "@amazme/protocol/services";
 import { type Context, type ReplicatedState } from "@amazme/chord";
 import type { ServerId } from "@amazme/protocol";
 import type { ProjectSummary } from "./projects.ts";
+import type { ModelSelection } from "./model-catalog.ts";
 
 export interface SessionAddress {
 	serverId: ServerId;
@@ -30,6 +31,8 @@ export interface SessionCreateOptions {
 	projectId?: string | null;
 	/** UI new-session intent: reuse the latest empty session in this workspace. Cannot accompany `id`. */
 	reuseEmpty?: boolean;
+	/** Applied once when the durable root is first created, never on restore. */
+	initialModel?: ModelSelection;
 }
 
 export interface SessionDirectoryState {

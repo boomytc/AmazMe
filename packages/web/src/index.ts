@@ -305,3 +305,4 @@ export {
 	type WebViewInput,
 } from "./view.ts";
 export { DEFAULT_TYPOGRAPHY, FONT_SIZE_LIMITS, FONT_SIZE_FIELDS, FONT_FAMILY_FIELDS, normalizeFontFamily, validateTypography, resolveTypography, adjustedFontSizes, typographyStyles, applyTypography, type Typography, type FontSizeAction } from "./typography.ts";
+export * from "./model-connections.ts";

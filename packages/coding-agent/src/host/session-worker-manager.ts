@@ -18,6 +18,7 @@ import { spawnInternalProcess } from "./process.ts";
 import { sessionOpenErrorReason } from "./session-database-error.ts";
 import type { SessionCatalogMetadata } from "./session-catalog.ts";
 import { SessionLifecycle } from "./services/session-lifecycle.ts";
+import { Models } from "./services/models.ts";
 import {
 	SESSION_WORKER_CONTROL_ADDRESS_ENV,
 	SESSION_INSPECTION_ATTACHMENT_ID,
@@ -176,6 +177,20 @@ export class SessionWorkerManager {
 		return [...this.#workersBySession.values()].map((worker) => worker.metadata);
 	}
 
+	/** Reload public configuration in live workers without replacing their conversation model. */
+	async refreshModels(context: Context): Promise<void> {
+		const results = await Promise.allSettled([...this.#workersBySession.values()].filter(worker => !worker.stopping).map(worker => {
+			const scope = { serverConnectionId: this.#coordinator.serverConnectionId, attachmentId: SESSION_INSPECTION_ATTACHMENT_ID };
+			return this.#inspect(worker, scope, async (_lifecycle, services) => {
+				const models = services.get(Models);
+				await services.ready(context);
+				await models.reload(context);
+			}, context);
+		}));
+		const errors = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+		if (errors.length) throw new AggregateError(errors, "Some session catalogs could not reload.");
+	}
+
 	assertSessionPluginManifestPaths(metadata: SessionCatalogMetadata, manifestPaths: readonly string[]): void {
 		const existing = this.#workersBySession.get(metadata.path);
 		if (existing !== undefined && !sameStrings(existing.pluginManifestPaths, manifestPaths)) {
@@ -265,7 +280,7 @@ export class SessionWorkerManager {
 		catch { await this.#stopWorker(worker, context); }
 	}
 
- async #inspect<T>(worker: WorkerRecord, scope: WorkerOperationScope, fn: (lifecycle: SessionLifecycle) => Promise<T>, context: Context): Promise<T> {
+ async #inspect<T>(worker: WorkerRecord, scope: WorkerOperationScope, fn: (lifecycle: SessionLifecycle, services: ServiceScope) => Promise<T>, context: Context): Promise<T> {
   const connection = await openChannel((call, publish, ctx) => this.#invokeChannel(worker, scope, call, publish, ctx), context);
   const host = createHost({ self: { client: globalThis.crypto.randomUUID() }, kind: "client" });
   const services = new ServiceScope(host, { host: connection.host });
@@ -273,7 +288,7 @@ export class SessionWorkerManager {
    host.connect(connection.link, { principal: { host: connection.host } });
    const lifecycle = services.get(SessionLifecycle);
    await services.ready(context);
-   return await fn(lifecycle);
+   return await fn(lifecycle, services);
   } finally { services.dispose(); await host.close(); await connection.close(); }
  }
 

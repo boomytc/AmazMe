@@ -188,6 +188,7 @@ describe("experimental client TUI", () => {
 				},
 				async refresh() {},
 				select,
+				async reload() {},
 				selectThinking,
 				async startLogin() { throw new Error("Fixture does not log in"); },
 				async submitLoginPrompt() { return false; },

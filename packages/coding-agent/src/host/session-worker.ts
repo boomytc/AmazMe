@@ -1187,13 +1187,13 @@ async function createCodingAgentHarness(
 		const created =
 			(await harness.conversation(ROOT_CONVERSATION_ID, TODO_CONTEXT)) ===
 			undefined;
+		const selected = created ? (await readSession(options.sessionDir, options.metadata.id))?.initialModel : undefined;
 		const initial = created
 			? await findInitialAgentModel(
 					settingsManager,
 					modelRuntime,
-					options.model === undefined
-						? undefined
-						: { provider: options.provider, model: options.model },
+					selected ? { provider: selected.model.provider, model: selected.model.modelId, thinkingLevel: selected.thinkingLevel }
+						: options.model === undefined ? undefined : { provider: options.provider, model: options.model },
 				)
 			: undefined;
 		const conversation = await harness.root(TODO_CONTEXT, {

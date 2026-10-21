@@ -55,6 +55,8 @@ import { Terminal, type Terminal as TerminalService } from "../src/host/services
 import { createTerminalService, TERMINAL_MAX_BYTES } from "../src/host/services/terminal-provider.ts";
 import { Workspace, type Workspace as WorkspaceService } from "../src/host/services/workspace.ts";
 import { Models, type Models as ModelsService } from "../src/host/services/models.ts";
+import { ModelCatalog } from "../src/host/services/model-catalog.ts";
+import { ModelConfig } from "../src/core/model-config.ts";
 import { Plugins, type Plugins as PluginsService } from "../src/host/services/plugins.ts";
 import { Schedules, type Schedules as SchedulesService } from "../src/core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../src/host/services/sessions.ts";
@@ -72,6 +74,7 @@ import { startPage } from "../src/host/web/page.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 interface Presentation {
+	readonly modelCatalog: ModelCatalog;
 	readonly client: Client;
 	readonly management: SessionManagement;
 	readonly directory: SessionDirectory;
@@ -270,13 +273,14 @@ async function openPresentation(host: WebHost): Promise<Presentation> {
 	const sessionSource = createSessionServiceSource(client);
 	const hasSchedules = (await serverSource.catalogue(BACKGROUND_CONTEXT)).some(entry => entry.serviceId === Schedules.name);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, SessionArchive, ProjectManagement, Feedback, ...(hasSchedules ? [Schedules] : [])],
+		services: [ModelCatalog, SessionDirectory, SessionManagement, SessionArchive, ProjectManagement, Feedback, ...(hasSchedules ? [Schedules] : [])],
 		assertAccess(): void {},
 		onError(): void {},
 	});
 	await serverServices.ready(BACKGROUND_CONTEXT);
 	return {
 		client,
+		modelCatalog: serverServices.get(ModelCatalog),
 		management: serverServices.get(SessionManagement),
 		directory: serverServices.get(SessionDirectory),
 		archives: serverServices.get(SessionArchive),
@@ -433,6 +437,83 @@ describe("web terminal output retention", () => {
 });
 
 describe("web client interactive loop", () => {
+	test("host connections, draft selection and restored conversation models have independent ownership", async () => {
+		const requests: string[] = [];
+		const { host, directory, sessionDir } = await startHostWithDirectories(false, body => { requests.push(body); return "model scope reply"; });
+		const presentation = await openPresentation(host);
+		const catalog = presentation.modelCatalog;
+		const connection = catalog.state.value!.providers.find(provider => provider.id === "loop")!;
+		await catalog.configureProvider({ id: "loop", name: "Loop", baseUrl: connection.baseUrl, api: "openai-completions", modelIds: ["held", "chosen"] }, BACKGROUND_CONTEXT);
+		expect(presentation.directory.state.value?.sessions).toHaveLength(0);
+		const page = await openPage(host);
+		await waitFor(() => page.renderer.view?.model.groups.some(group => group.options.some(option => option.modelId === "chosen")) === true, "draft model catalog");
+		page.renderer.onSelectModel("loop", "chosen");
+		expect(page.renderer.view?.model.groups.flatMap(group => group.options).find(option => option.selected)?.modelId).toBe("chosen");
+		expect(presentation.directory.state.value?.sessions).toHaveLength(0);
+		page.renderer.onDraftChange("send with the chosen model"); page.renderer.onSubmit("send with the chosen model");
+		await waitFor(() => page.renderer.view?.blocks.some(block => block.kind === "assistant" && block.text.includes("model scope reply")) === true, "first model send", 15_000);
+		const id = page.renderer.view!.attachedId!;
+		expect(requests.some(body => { const request = JSON.parse(body) as { model: string }; return request.model === "chosen"; })).toBe(true);
+		expect((await readSession(sessionDir, id))?.initialModel).toEqual({ model: { provider: "loop", modelId: "chosen" }, thinkingLevel: "off" });
+		const attached = await attachSession(presentation, id);
+		const manager = SettingsManager.create(process.cwd());
+		await manager.updateGlobalSettings(() => manager.setEnabledModels(["loop/held:low", "loop/chosen:high"]));
+		await catalog.refresh(BACKGROUND_CONTEXT);
+		await catalog.setModelEnabled({ provider: "loop", modelId: "held" }, false, BACKGROUND_CONTEXT);
+		await waitFor(() => attached.models.state.value?.catalog.enabledModelIds?.includes("loop/held") === false, "live worker model scope reload");
+		expect(SettingsManager.create(process.cwd()).getEnabledModels()).toEqual(["loop/chosen:high"]);
+		await catalog.saveDefaults({ model: { provider: "loop", modelId: "held" }, thinkingLevel: "off" }, BACKGROUND_CONTEXT);
+		expect(catalog.state.value?.enabledModelIds).toContain("loop/held");
+		expect(SettingsManager.create(process.cwd()).getEnabledModels()).toEqual(["loop/chosen:high", "loop/held"]);
+		await attached.models.setModelScope(["loop/chosen"], false, BACKGROUND_CONTEXT);
+		await catalog.configureProvider({ id: "loop", name: "Loop", baseUrl: connection.baseUrl, api: "openai-completions", modelIds: ["held", "chosen", "later"] }, BACKGROUND_CONTEXT);
+		await waitFor(() => attached.models.state.value?.catalog.availableModels.some(model => model.modelId === "later") === true, "live worker catalog reload");
+		expect(attached.models.state.value?.configuration.model?.modelId).toBe("chosen");
+		expect(attached.models.state.value?.catalog.enabledModelIds).toEqual(["loop/chosen"]);
+		await catalog.testConnection({ provider: "loop", modelId: "chosen" }, BACKGROUND_CONTEXT);
+		expect(catalog.state.value?.providers.find(provider => provider.id === "loop")?.verification.status).toBe("success");
+		expect(JSON.stringify(catalog.state.value)).not.toContain("fixture-key");
+		page.renderer.onCreateSession();
+		await waitFor(() => page.renderer.view?.sessionDraft !== undefined && page.renderer.view.model.groups.flatMap(group => group.options).find(option => option.selected)?.modelId === "held", "new chat defaults");
+		await attached.dispose(); await page.dispose(); await presentation.dispose(); await host.close(); hosts.delete(host);
+		const restarted = await startWebHost({ port: 0, directory, sessionDir }); hosts.add(restarted);
+		const reopened = await openPresentation(restarted);
+		expect(reopened.modelCatalog.state.value?.defaults?.model.modelId).toBe("held");
+		const restored = await attachSession(reopened, id);
+		expect(restored.models.state.value?.configuration.model?.modelId).toBe("chosen");
+		await restored.dispose(); await reopened.dispose();
+	}, 60_000);
+
+	test("a provider can be configured and signed in without allocating a conversation", async () => {
+		const { host } = await startHostWithDirectories(false, () => "OK");
+		const presentation = await openPresentation(host);
+		const catalog = presentation.modelCatalog;
+		const endpoint = catalog.state.value!.providers.find(provider => provider.id === "loop")!.baseUrl;
+		await catalog.configureProvider({ id: "new-connection", name: "New connection", baseUrl: endpoint, api: "openai-completions", modelIds: ["held"] }, BACKGROUND_CONTEXT);
+		expect(catalog.state.value?.providers.find(provider => provider.id === "new-connection")?.configured).toBe(false);
+		const login = await catalog.startLogin("new-connection", "api_key", BACKGROUND_CONTEXT);
+		await waitFor(() => Boolean(catalog.state.value?.authentication.login?.prompt), "credential prompt");
+		const prompt = catalog.state.value!.authentication.login!.prompt!;
+		expect(await catalog.submitLoginPrompt(login, prompt.id, "secret-connection-key", BACKGROUND_CONTEXT)).toBe(true);
+		await waitFor(() => catalog.state.value?.providers.find(provider => provider.id === "new-connection")?.configured === true, "host authentication synchronization");
+		expect(JSON.stringify(catalog.state.value)).not.toContain("secret-connection-key");
+		expect(presentation.directory.state.value?.sessions).toHaveLength(0);
+		await catalog.testConnection({ provider: "new-connection", modelId: "held" }, BACKGROUND_CONTEXT);
+		expect(catalog.state.value?.providers.find(provider => provider.id === "new-connection")?.verification.status).toBe("success");
+		await catalog.logout("new-connection", BACKGROUND_CONTEXT);
+		expect(catalog.state.value?.providers.find(provider => provider.id === "new-connection")).toMatchObject({ configured: false, verification: { status: "idle" } });
+		const configPath = join(process.env.AMAZME_CODING_AGENT_DIR!, "models.json");
+		const legacyEndpoint = `${endpoint}?api_key=endpoint-secret`;
+		await ModelConfig.updateProvider(configPath, "new-connection", current => ({ ...current, baseUrl: legacyEndpoint }));
+		await catalog.refresh(BACKGROUND_CONTEXT);
+		const publicConnection = catalog.state.value!.providers.find(provider => provider.id === "new-connection")!;
+		expect(publicConnection.modelIds).toEqual(["held"]);
+		expect(JSON.stringify(catalog.state.value)).not.toContain("endpoint-secret");
+		await catalog.configureProvider({ id: publicConnection.id, name: "Renamed", baseUrl: publicConnection.baseUrl, api: publicConnection.api }, BACKGROUND_CONTEXT);
+		expect((await ModelConfig.load(configPath)).getProvider("new-connection")?.baseUrl).toBe(legacyEndpoint);
+		await presentation.dispose();
+	}, 30_000);
+
 	test("standalone page sessions keep their workspace and selection through archive and host restart", async () => {
 		const { host, directory, sessionDir } = await startHostWithDirectories(false, () => "standalone reply");
 		const presentation = await openPresentation(host);
@@ -441,6 +522,7 @@ describe("web client interactive loop", () => {
 		expect(page.renderer.view?.sessionDraft?.projectId).toBeNull();
 		page.renderer.onCreateSession();
 		await waitFor(() => page.renderer.view?.newSession.pending !== true, "new chat draft", 10_000);
+		await waitFor(() => page.renderer.view?.model.disabled === false, "draft model ready");
 		expect(presentation.directory.state.value?.sessions).toHaveLength(0);
 		page.renderer.onDraftChange("standalone prompt");
 		page.renderer.onSubmit("standalone prompt");

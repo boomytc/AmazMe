@@ -8,6 +8,7 @@ import { removeSessionModal, renameSessionModal } from "../src/panels.ts";
 import { archiveSessionModal, projectGroups, COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView, rosterItems } from "../src/view.ts";
+import { MODEL_CONNECTIONS_ACTION, providerConfigurationModal } from "../src/model-connections.ts";
 
 const directory = { sessions: [{ sessionId: "stable-session-id", createdAt: 1, name: "Weekly report", cwd: "/work" }] };
 
@@ -37,6 +38,38 @@ function control(selector: string): HTMLButtonElement {
 }
 
 describe("session actions", () => {
+	test("editing a connection preserves custom model definitions without copying the built-in catalog", () => {
+		const modal = providerConfigurationModal("en", { id: "openai", name: "OpenAI", baseUrl: "https://example.test/v1", api: "openai-completions", modelCount: 2, custom: true, modelIds: ["custom-model"], configured: true, verification: { status: "idle" } }, [
+			{ provider: "openai", modelId: "builtin-model", name: "Built-in", available: true },
+			{ provider: "openai", modelId: "custom-model", name: "Custom", available: true },
+		]);
+		expect(modal.fields.find(field => field.id === "models")?.value).toBe("custom-model");
+	});
+
+	test("the new chat model menu searches models, selects reasoning, and opens connection management without clearing input", () => {
+		const { renderer, view } = paint();
+		const select = vi.fn(), think = vi.fn(), action = vi.fn();
+		renderer.onSelectModel = select; renderer.onSelectThinking = think; renderer.onPanelAction = action;
+		renderer.render({ ...view, attachedId: undefined, sessionDraft: { projectId: null, label: "Work outside a project", projects: [], disabled: false }, model: {
+			...view.model, disabled: false, label: "First", effort: "Low",
+			groups: [{ provider: "one", options: [{ provider: "one", modelId: "first", label: "First", selected: true }] }, { provider: "two", options: [{ provider: "two", modelId: "second", label: "Second", selected: false }] }],
+			levels: [{ level: "low", label: "Low", selected: true }, { level: "high", label: "High", selected: false }],
+		} });
+		renderer.setDraft("keep my draft", false);
+		control(".composer-model-picker").click();
+		const dialog = document.querySelector<HTMLDialogElement>(".model-picker-menu")!;
+		expect(dialog.open).toBe(true);
+		const search = dialog.querySelector<HTMLInputElement>("input")!;
+		search.value = "second"; search.dispatchEvent(new Event("input"));
+		expect(dialog.querySelectorAll(".model-picker-option")).toHaveLength(1);
+		control(".model-picker-option").click(); expect(select).toHaveBeenLastCalledWith("two", "second");
+		control(".composer-model-picker").click(); control(".model-picker-reasoning button:last-child").click();
+		expect(think).toHaveBeenLastCalledWith("high");
+		control(".composer-model-picker").click(); control(".model-picker-manage").click();
+		expect(action).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_CONNECTIONS_ACTION, data: undefined });
+		expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("keep my draft");
+	});
+
 	test("a new chat chooses its project above the editable composer without a synthetic project group", () => {
 		const { renderer, view } = paint();
 		const report = vi.fn();

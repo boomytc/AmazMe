@@ -185,6 +185,8 @@ import { Mcp, type Mcp as McpService } from "../services/mcp.ts";
 import type { McpManagementState } from "../../core/mcp/management.ts";
 import type { McpExposure } from "../../core/mcp-servers.ts";
 import { Models, type Models as ModelsService, type ModelsState } from "../services/models.ts";
+import { ModelCatalog, type CatalogModel, type ModelSelection } from "../services/model-catalog.ts";
+import { MODEL_CONNECTIONS_ACTION, MODEL_ENABLED_ACTION, PROVIDER_SELECT_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_TEST_ACTION, providerConfigurationModal } from "@amazme/web";
 import { Plugins, PresentationPlugins } from "../services/plugins.ts";
 import { type ScheduleInput, type ScheduleResult, Schedules, type Schedules as SchedulesService } from "../../core/plugins/schedules.ts";
 import { SessionDirectory, SessionManagement } from "../services/sessions.ts";
@@ -212,6 +214,15 @@ function readManifest(): WebBootManifest | undefined {
 
 function message(error: unknown): string {
 	return sessionOpenErrorText(error) ?? (error instanceof Error ? error.message : String(error));
+}
+
+function readModelReference(value: string | undefined): { provider: string; modelId: string } | undefined {
+	if (!value) return undefined;
+	try {
+		const ref: unknown = JSON.parse(value);
+		if (Array.isArray(ref) && ref.length === 2 && typeof ref[0] === "string" && typeof ref[1] === "string") return { provider: ref[0], modelId: ref[1] };
+	} catch { /* Ignore malformed actions. The host validates every accepted reference. */ }
+	return undefined;
 }
 
 /** One image the reader attached and has not sent yet, kept as the prompt will carry it. */
@@ -804,11 +815,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let typography = resolveTypography(manifest.preferences.typography);
 	const copy = (key: MessageKey, values?: Record<string, string>): string => translate(locale, key, values);
 	const serverServices = serverSource.open({
-		services: [SessionDirectory, SessionManagement, ProjectManagement, SessionArchive, Settings, Skills, Plugins, PresentationPlugins, Feedback, Diagnostics],
+		services: [ModelCatalog, SessionDirectory, SessionManagement, ProjectManagement, SessionArchive, Settings, Skills, Plugins, PresentationPlugins, Feedback, Diagnostics],
 		assertAccess(): void {},
 		onError: report,
 	});
 	const directory = serverServices.get(SessionDirectory);
+	const modelCatalog = serverServices.get(ModelCatalog);
+	let draftModels: ModelsState | undefined;
+	let draftModel: ModelSelection | undefined;
+	let draftModelsKey = "";
+	let draftModelsRequest = 0;
+	let selectedProvider: string | undefined;
+	let providerModels: CatalogModel[] = [];
+	let providerModelsLoading = false;
+	let providerModelsRequest = 0;
 	const management = serverServices.get(SessionManagement);
 	const projects = serverServices.get(ProjectManagement);
 	const archives = serverServices.get(SessionArchive);
@@ -838,8 +858,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	let mcpView: { readonly service: McpService; readonly sessionId: string; readonly target: string } | undefined;
 	/** Only the modal's binding and expected ids are local; interaction state stays on Models. */
 	let providerAuthView: {
-		readonly service: ModelsService;
-		readonly sessionId: string;
+		readonly service: ModelCatalog;
+		readonly preferred?: string;
 		loginId?: string;
 		starting?: boolean;
 		matched?: boolean;
@@ -852,6 +872,31 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	/** The roster's filter text; the page owns it so creating or attaching never clears it. */
 	let rosterFilter = "";
 	let selectedProjectId: string | null | undefined;
+	const draftConfiguration = (): ModelsState | undefined => draftModels === undefined ? undefined : {
+		...draftModels, configuration: draftModel ?? draftModels.configuration,
+	};
+	const refreshDraftModels = (): void => {
+		if (desiredSessionId !== undefined || !directoryReady || !client.connected || !modelCatalog.state.value) return;
+		const key = JSON.stringify([selectedProjectId, modelCatalog.state.value.revision]);
+		if (key === draftModelsKey) return;
+		draftModelsKey = key;
+		const request = ++draftModelsRequest;
+		draftModels = undefined;
+		void modelCatalog.resolve(selectedProjectId ?? null, BACKGROUND_CONTEXT).then(value => {
+			if (request !== draftModelsRequest || desiredSessionId !== undefined) return;
+			draftModels = value; paint();
+		}, error => { if (request === draftModelsRequest) report(error); });
+	};
+	const loadProviderModels = (): void => {
+		const provider = selectedProvider;
+		const request = ++providerModelsRequest;
+		providerModels = []; providerModelsLoading = provider !== undefined;
+		if (!provider || !client.connected) return;
+		void modelCatalog.models(provider, BACKGROUND_CONTEXT).then(models => {
+			if (provider !== selectedProvider || request !== providerModelsRequest) return;
+			providerModels = models; providerModelsLoading = false; paint();
+		}, error => { if (request === providerModelsRequest) { providerModelsLoading = false; report(error); paint(); } });
+	};
 	/** Lets the open archived session stay attached. It does not browse the archive list. */
 	let allowArchivedAttach = false;
 	let selectionRevision = 0;
@@ -1001,6 +1046,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 * language and palette follow the host's value, so both tabs agree without a reload.
 	 */
 	const paint = (): void => {
+		refreshDraftModels();
 		const bound = sessionReady();
 		const transcript = shownTranscript();
 		const service = bound && !historyLoaded && !historyLoading ? painter.conversationsService : undefined;
@@ -1065,8 +1111,8 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		}
 		if (providerAuthView !== undefined) {
 			const owner = providerAuthView;
-			const state = painter.modelsValue?.authentication;
-			if (!client.connected || painter.modelsService !== owner.service || painter.sessionId !== owner.sessionId || desiredSessionId !== owner.sessionId || !state) {
+			const state = modelCatalog.state.value?.authentication;
+			if (!client.connected || !state) {
 				providerAuthView = undefined;
 				modal = undefined;
 				modalPending = false;
@@ -1080,7 +1126,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					owner.matched = false;
 				}
 				const next = owner.starting || owner.loginId !== undefined ? providerLoginModal(locale, state, login)
-					: providerAuthModal(locale, state);
+					: providerAuthModal(locale, state, owner.preferred);
 				if (modal?.data !== next.data) modalNotice = undefined;
 				if (expired) modalNotice = { tone: "error", text: copy("auth.expired") };
 				modal = next;
@@ -1104,8 +1150,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					historyLoading: bound && historyLoading,
 					attachedId: bound ? painter.sessionId : undefined,
 					now,
-					models: bound ? painter.modelsValue : undefined,
-					thinkingLevels: bound ? painter.levels : undefined,
+					models: bound ? painter.modelsValue : desiredSessionId === undefined ? draftConfiguration() : undefined,
+					thinkingLevels: bound ? painter.levels : modelCatalog.state.value?.models.find(model => model.provider === draftConfiguration()?.configuration.model?.provider && model.modelId === draftConfiguration()?.configuration.model?.modelId)?.levels,
+					modelConnections: modelCatalog.state.value ? { state: modelCatalog.state.value, selected: selectedProvider, models: providerModels, loading: providerModelsLoading, disabled: !client.connected || panelPending !== undefined } : undefined,
 					modelPending: modelSelection !== undefined && modelSelection.binding === painter.binding,
 					submitMode,
 					attachments: bound || desiredSessionId === undefined ? pending : [],
@@ -1144,6 +1191,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 							fields: [{ id: "report", label: copy("panel.settings.diagnostics"), kind: "textarea" as const, readOnly: true, value: diagnosticReport === undefined ? copy(modalNotice?.tone === "error" ? "panel.settings.diagnosticsFailed" : "panel.settings.diagnosticsLoading") : formatDiagnosticReport(diagnosticReport, locale) }],
 						} : modal }),
 						settings: {
+							hostModels: true,
 							...(directoryReady ? { archives: {
 								sessions: directory.state.value?.sessions ?? [],
 								projects: directory.state.value?.projects ?? [],
@@ -1280,6 +1328,12 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			if (booted) { selectionRevision += 1; rememberSelection(); }
 		}
 		paint();
+		refreshDraftModels();
+	});
+	modelCatalog.state.subscribe((state, _context, delivery) => {
+		if (delivery.kind === "hydrate") draftModelsKey = "";
+		if (!state.providers.some(provider => provider.id === selectedProvider)) selectedProvider = state.providers.find(provider => provider.configured)?.id ?? state.providers[0]?.id;
+		loadProviderModels(); refreshDraftModels(); paint();
 	});
 	// A rating given here, or by another tab, repaints the transcript's controls.
 	feedback.state.subscribe(() => paint());
@@ -1442,25 +1496,32 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 		modal = undefined;
 		providerAuthView = undefined;
 		creating = true;
+		draftModel = undefined; draftModelsKey = "";
 		const clearing = clearSession();
 		const selection = selectionRevision;
 		paint();
 		void clearing.catch(report).finally(() => {
 			creating = false;
 			paint();
+			refreshDraftModels();
 			if (selection === selectionRevision && desiredSessionId === undefined) renderer.setDraft("", true);
 		});
 	};
 	/** A draft owns the target choice; only the first send allocates and attaches a session. */
 	const createSessionForPrompt = (text: string): void => {
 		if (creating || !client.connected || !directoryReady) return;
+		const configuration = draftConfiguration()?.configuration;
+		if (!configuration?.model || !modelCatalog.state.value?.models.some(model => model.provider === configuration.model?.provider && model.modelId === configuration.model?.modelId)) {
+			renderer.setDraft(text, false);
+			view = SETTINGS_VIEW; paint(); return;
+		}
 		const projectId = selectedProjectId ?? null;
 		const selection = ++selectionRevision;
 		const images = pending;
 		let createdId: string | undefined;
 		creating = true;
 		paint();
-		void management.create({ projectId }, BACKGROUND_CONTEXT)
+		void management.create({ projectId, initialModel: { model: configuration.model, thinkingLevel: configuration.thinkingLevel } }, BACKGROUND_CONTEXT)
 			.then(async created => {
 				createdId = created.sessionId;
 				sessionDrafts.set(created.sessionId, { text, images });
@@ -1527,8 +1588,25 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			paint();
 		});
 	};
-	renderer.onSelectModel = (provider, modelId) => selectModelSetting(() => painter.selectModel(provider, modelId), "page.modelChangeFailed");
-	renderer.onSelectThinking = (level) => selectModelSetting(() => painter.selectThinking(level), "page.thinkingFailed");
+	renderer.onSelectModel = (provider, modelId) => {
+		if (desiredSessionId === undefined) {
+			const model = modelCatalog.state.value?.models.find(model => model.provider === provider && model.modelId === modelId);
+			if (!model || creating || !client.connected) return;
+			const level = draftConfiguration()?.configuration.thinkingLevel;
+			draftModel = { model: { provider, modelId }, thinkingLevel: level && model.levels.includes(level) ? level : model.levels[0] ?? "off" };
+			paint(); return;
+		}
+		selectModelSetting(() => painter.selectModel(provider, modelId), "page.modelChangeFailed");
+	};
+	renderer.onSelectThinking = level => {
+		if (desiredSessionId === undefined) {
+			const configuration = draftConfiguration()?.configuration;
+			const model = modelCatalog.state.value?.models.find(model => model.provider === configuration?.model?.provider && model.modelId === configuration?.model?.modelId);
+			if (!configuration?.model || !model?.levels.includes(level as ModelThinkingLevel) || creating || !client.connected) return;
+			draftModel = { model: configuration.model, thinkingLevel: level as ModelThinkingLevel }; paint(); return;
+		}
+		selectModelSetting(() => painter.selectThinking(level), "page.thinkingFailed");
+	};
 	/**
 	 * Add picked, pasted, or dropped images. An image the page cannot send is refused with the
 	 * reason instead of being dropped silently, and the rest of the batch still arrives.
@@ -1891,20 +1969,18 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 
 	/** The call answers nothing but its own completion. */
 	const done = (): Promise<{ readonly ok: true }> => Promise.resolve({ ok: true });
-	const openProviderAuthentication = (): void => {
-		const service = painter.modelsService;
-		const sessionId = painter.sessionId;
-		const state = painter.modelsValue?.authentication;
-		if (!service || !sessionId || !state || !client.connected || desiredSessionId !== sessionId) return;
+	const openProviderAuthentication = (preferred?: string): void => {
+		const service = modelCatalog;
+		const state = modelCatalog.state.value?.authentication;
+		if (!state || !client.connected) return;
 		const login = state.login && ["preparing", "awaiting", "finishing"].includes(state.login.status) ? state.login : null;
-		providerAuthView = { service, sessionId, ...(login ? { loginId: login.id } : {}) };
-		openModal(providerAuthModal(locale, state), { id: PROVIDER_AUTH_ACTION });
+		providerAuthView = { service, preferred, ...(login ? { loginId: login.id } : {}) };
+		openModal(providerAuthModal(locale, state, preferred), { id: PROVIDER_AUTH_ACTION });
 	};
 	/** Authentication calls never retry onto a replacement binding, and never echo provider errors. */
 	const runProviderAuthCall = (owner: NonNullable<typeof providerAuthView>, call: () => Promise<PanelCallResult>): void => {
-		const current = () => providerAuthView === owner && painter.modelsService === owner.service &&
-			painter.sessionId === owner.sessionId && desiredSessionId === owner.sessionId && client.connected;
-		runPanelCall({ id: PROVIDER_AUTH_MODAL, inModal: true, closeOnSuccess: false, sessionId: owner.sessionId, retry: false, current,
+		const current = () => providerAuthView === owner && client.connected;
+		runPanelCall({ id: PROVIDER_AUTH_MODAL, inModal: true, closeOnSuccess: false, retry: false, current,
 			call: async () => {
 				if (!current()) return { ok: false, problem: copy("auth.expired") };
 				try { return await call(); }
@@ -1998,6 +2074,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				closeModal();
 				return;
 			case "control":
+				if (action.id === MODEL_ENABLED_ACTION && action.data) {
+					const ref = readModelReference(action.data);
+					if (ref) runPanelCall({ id: action.id, data: action.data, retry: false, call: () => modelCatalog.setModelEnabled(ref, action.value === "true", BACKGROUND_CONTEXT).then(done) });
+					return;
+				}
 				if (action.id === MODEL_SELECT_ACTION) {
 					const option = renderer.view?.model.groups.flatMap(group => group.options).find(option => JSON.stringify([option.provider, option.modelId]) === action.value);
 					if (option) renderer.onSelectModel(option.provider, option.modelId);
@@ -2063,6 +2144,20 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				return;
 			case "command":
 				switch (action.id) {
+					case "models:back": view = CHAT_VIEW; paint(); return;
+					case MODEL_CONNECTIONS_ACTION: view = SETTINGS_VIEW; paint(); return;
+					case PROVIDER_SELECT_ACTION:
+						selectedProvider = action.data; loadProviderModels(); paint(); return;
+					case PROVIDER_EDIT_ACTION: {
+						const provider = modelCatalog.state.value?.providers.find(provider => provider.id === action.data);
+						if (provider && provider.id !== selectedProvider) return;
+						openModal(providerConfigurationModal(locale, provider, providerModels), action); return;
+					}
+					case PROVIDER_TEST_ACTION: {
+						const ref = readModelReference(action.data);
+						if (ref) runPanelCall({ id: action.id, data: action.data, retry: false, call: () => modelCatalog.testConnection(ref, BACKGROUND_CONTEXT).then(done) });
+						return;
+					}
 					case "insights:refresh":
 						if (painter.insightsService) { const service = painter.insightsService; runPanelCall({ id: action.id, sessionId: painter.sessionId, retry: false, call: () => service.refresh(BACKGROUND_CONTEXT).then(done) }); } return;
 					case "insights:resume":
@@ -2145,6 +2240,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					case MODEL_SCOPE_ACTION: {
+						if (desiredSessionId === undefined) { view = SETTINGS_VIEW; paint(); return; }
 						const service = painter.modelsService;
 						const sessionId = painter.sessionId;
 						if (!service || !sessionId || !client.connected || sessionId !== desiredSessionId || modalPending) return;
@@ -2166,14 +2262,14 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					case MODEL_DEFAULTS_ACTION: {
-						const service = painter.modelsService;
-						const sessionId = painter.sessionId;
-						const configuration = painter.modelsValue?.configuration;
-						const model = configuration?.model;
-						if (!service || !sessionId || !model || !client.connected || desiredSessionId !== sessionId) return;
-						runPanelCall({ id: action.id, sessionId, retry: false,
-							current: () => painter.modelsService === service && client.connected && desiredSessionId === sessionId,
-							call: () => service.saveDefaults(model, configuration.thinkingLevel, BACKGROUND_CONTEXT)
+						const configuration = sessionReady() ? painter.modelsValue?.configuration : draftConfiguration()?.configuration;
+						const explicit = readModelReference(action.data);
+						const model = explicit ?? configuration?.model;
+						if (!model || !client.connected) return;
+						const supported = modelCatalog.state.value?.models.find(item => item.provider === model.provider && item.modelId === model.modelId)?.levels;
+						const thinkingLevel = configuration && supported?.includes(configuration.thinkingLevel) ? configuration.thinkingLevel : supported?.[0] ?? "off";
+						runPanelCall({ id: action.id, retry: false,
+							call: () => modelCatalog.saveDefaults({ model, thinkingLevel }, BACKGROUND_CONTEXT)
 								.then(() => settings.reload(BACKGROUND_CONTEXT))
 								.then(() => ({ ok: true as const, note: copy("model.defaultsSaved") }), () => ({ ok: false as const, problem: copy("model.defaultsFailed") })),
 						});
@@ -2191,11 +2287,11 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						return;
 					}
 					case PROVIDER_AUTH_ACTION:
-						openProviderAuthentication(); return;
+						openProviderAuthentication(action.data); return;
 					case PROVIDER_AUTH_OPEN_ACTION: {
 						const owner = providerAuthView;
-						const login = painter.modelsValue?.authentication?.login;
-						if (!owner || !login || !client.connected || owner.service !== painter.modelsService || owner.sessionId !== painter.sessionId || owner.sessionId !== desiredSessionId || login.id !== owner.loginId || !action.data) return;
+						const login = modelCatalog.state.value?.authentication.login;
+						if (!owner || !login || !client.connected || login.id !== owner.loginId || !action.data) return;
 						const authorization = login.authorization;
 						const urls = [...login.links.map(link => link.url), ...(authorization ? [authorization.type === "auth_url" ? authorization.url : authorization.verificationUri] : [])];
 						if (urls.includes(action.data) && URL.canParse(action.data) && ["http:", "https:"].includes(new URL(action.data).protocol)) window.open(action.data, "_blank", "noopener,noreferrer");
@@ -2249,7 +2345,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						openModal(compactModal(locale), action);
 						return;
 					case REFRESH_MODELS_ACTION:
-						settle(painter.refreshModels());
+						settle(modelCatalog.refresh(BACKGROUND_CONTEXT));
 						return;
 					case SUBMIT_MODE_ACTION:
 						submitMode = action.data === "steer" ? "steer" : "followUp";
@@ -2653,6 +2749,16 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			case "modal-submit": {
 				const fields = action.fields;
 				switch (action.id) {
+					case PROVIDER_EDIT_MODAL: {
+						if (modalPending) return;
+						const id = action.data ?? fields.id?.trim() ?? "";
+						runPanelCall({ id: action.id, inModal: true, retry: false, call: async () => {
+							await modelCatalog.configureProvider({ id, name: fields.name ?? "", baseUrl: fields.baseUrl ?? "", api: fields.api ?? "",
+								...(fields.models === undefined ? {} : { modelIds: fields.models.split("\n").map(id => id.trim()).filter(Boolean) }) }, BACKGROUND_CONTEXT);
+							selectedProvider = id; loadProviderModels();
+							return { ok: true as const };
+						} }); return;
+					}
 					case PROJECT_ADD_MODAL:
 					case PROJECT_EDIT_MODAL: {
 						if (!fields.name?.trim()) { refuseInModal(copy("project.nameRequired")); return; }
@@ -2842,7 +2948,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					}
 					case PROVIDER_AUTH_MODAL: {
 						const owner = providerAuthView;
-						const state = painter.modelsValue?.authentication;
+						const state = modelCatalog.state.value?.authentication;
 						if (!owner || !state || modal?.id !== action.id || modal.data !== action.data || modalPending) return;
 						if (owner.loginId !== undefined || owner.starting) {
 							const login = state.login?.id === owner.loginId ? state.login : null;

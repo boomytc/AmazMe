@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, test, vi } from "vitest";
 import { DOCK_TAB_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, WELCOME_SESSION_ACTION } from "../src/actions.ts";
+import { MODEL_CONNECTIONS_ACTION } from "../src/model-connections.ts";
 import { modelScopeModal } from "../src/model-scope.ts";
 import { DIAGNOSTICS_ACTION } from "../src/panels.ts";
 import { SESSION_RESTORE_ACTION } from "../src/projects.ts";
@@ -174,20 +175,20 @@ test("an attached session without models offers nearby provider and model setup 
 	};
 	renderer.render(buildWebView(base));
 	expect(elements.modelSelect.hidden).toBe(true);
-	expect(elements.modelSetup?.hidden).toBe(false);
-	const connect = elements.modelSetup?.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_AUTH_ACTION}"]`);
-	expect(connect?.textContent).toBe("连接供应商");
-	expect(connect?.classList.contains("tone-primary")).toBe(true);
-	expect(connect?.classList.contains("primary")).toBe(false);
-	expect(elements.modelSetup?.querySelector(`[data-action="${MODEL_SCOPE_ACTION}"]`)).toBeNull();
+	const picker = document.querySelector<HTMLButtonElement>(".composer-model-picker")!;
+	picker.click();
+	const menu = document.querySelector<HTMLDialogElement>(".model-picker-menu")!;
+	expect(menu.open).toBe(true);
+	expect(menu.textContent).toContain("没有可用模型。");
+	menu.querySelector<HTMLButtonElement>(".model-picker-manage")!.click();
+	expect(report).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_CONNECTIONS_ACTION, data: undefined });
 	expect(document.querySelector(`#transcript-empty [data-action="${PROVIDER_AUTH_ACTION}"]`)?.textContent).toBe("连接供应商");
 	expect(document.querySelector(`#transcript-empty [data-action="${MODEL_SCOPE_ACTION}"]`)).toBeNull();
 	renderer.render(buildWebView({
 		...base,
 		models: { ...base.models!, catalog: { ...base.models!.catalog, enabledModelIds: [] } },
 	}));
-	expect(elements.modelSetup?.querySelector(`[data-action="${MODEL_SCOPE_ACTION}"]`)).toBeNull();
-	expect(elements.modelSetup?.querySelector(`[data-action="${PROVIDER_AUTH_ACTION}"]`)?.textContent).toBe("连接供应商");
+	picker.click(); expect(menu.textContent).toContain("没有可用模型。"); menu.close();
 
 	// When models exist in the catalog but the scope filter excluded all of them, offer "选择可用模型".
 	const filteredOut: WebViewInput = {
@@ -203,10 +204,8 @@ test("an attached session without models offers nearby provider and model setup 
 		},
 	};
 	renderer.render(buildWebView(filteredOut));
-	const selectModels = elements.modelSetup?.querySelector<HTMLButtonElement>(`[data-action="${MODEL_SCOPE_ACTION}"]`);
-	expect(selectModels?.textContent).toBe("选择可用模型");
-	expect(selectModels?.classList.contains("tone-primary")).toBe(true);
-	expect(selectModels?.classList.contains("primary")).toBe(false);
+	picker.click();
+		expect(menu.textContent).toContain("列表中没有可用模型，请在设置中勾选常用模型。"); menu.close();
 	expect(document.querySelector(`#transcript-empty [data-action="${MODEL_SCOPE_ACTION}"]`)?.textContent).toBe("选择可用模型");
 
 	// Empty modelScopeModal offers a direct provider connection action instead of a dead-end 0/0 form.
@@ -224,7 +223,7 @@ test("an attached session without models offers nearby provider and model setup 
 	renderer.setDraft("abcdefghij");
 	elements.prompt.setSelectionRange(10, 10);
 	elements.prompt.dispatchEvent(new Event("select"));
-	elements.modelSetup?.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_AUTH_ACTION}"]`)?.click();
+	document.querySelector<HTMLButtonElement>(`#transcript-empty [data-action="${PROVIDER_AUTH_ACTION}"]`)?.click();
 	expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROVIDER_AUTH_ACTION, data: undefined });
 
 	const modal = modelScopeModal("zh", { allModels: [{ provider: "deepseek", id: "v4", name: "DeepSeek V4" }], enabledModelIds: ["deepseek/v4"] });
@@ -257,7 +256,7 @@ test("an attached session without models offers nearby provider and model setup 
 	// Opening setup again and completing model configuration restores selection to the draft.
 	elements.prompt.setSelectionRange(3, 5);
 	elements.prompt.dispatchEvent(new Event("select"));
-	elements.modelSetup?.querySelector<HTMLButtonElement>(`[data-action="${PROVIDER_AUTH_ACTION}"]`)?.click();
+	document.querySelector<HTMLButtonElement>(`#transcript-empty [data-action="${PROVIDER_AUTH_ACTION}"]`)?.click();
 	renderer.render(buildWebView({ ...base, draft: "XYabcdefghij", panel: { ...base.panel, modal } }));
 	const configured = buildWebView({
 		...base,
@@ -271,8 +270,9 @@ test("an attached session without models offers nearby provider and model setup 
 	renderer.render(configured);
 	expect(elements.modalRoot.open).toBe(false);
 	expect(elements.modelSetup?.hidden).toBe(true);
-	expect(elements.modelSelect.hidden).toBe(false);
-	expect(elements.modelSelect.disabled).toBe(false);
+	expect(picker.hidden).toBe(false);
+	expect(picker.disabled).toBe(false);
+	expect(picker.textContent).toContain("DeepSeek V4");
 	expect(elements.prompt.value).toBe("XYabcdefghij");
 	expect(document.activeElement).toBe(elements.prompt);
 	expect(elements.prompt.selectionStart).toBe(3);

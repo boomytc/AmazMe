@@ -456,7 +456,7 @@ async function startServerBackend(
 					if (await workers.isSessionEmpty(latest, context, selected.manifestPaths)) return latest;
 				}
 			}
-			return createCatalogSession(sessionDir, { id: createOptions.id, projectId: null });
+			return createCatalogSession(sessionDir, { id: createOptions.id, projectId: null, initialModel: createOptions.initialModel });
 		}
 		projectRows = await projects.list();
 		let project = createOptions.projectId === undefined ? await projectForCwd(process.cwd()) : projectRows.find(project => project.id === createOptions.projectId);
@@ -476,7 +476,7 @@ async function startServerBackend(
 				if (await workers.isSessionEmpty(latest, context, selected.manifestPaths)) return latest;
 			}
 		}
-		return createCatalogSession(sessionDir, { ...(createOptions.id === undefined ? {} : { id: createOptions.id }), cwd, projectId: project.id });
+		return createCatalogSession(sessionDir, { ...(createOptions.id === undefined ? {} : { id: createOptions.id }), cwd, projectId: project.id, initialModel: createOptions.initialModel });
 	};
 	const summarize = async (metadata: SessionCatalogMetadata, source: SessionSource = "host", name?: string): Promise<SessionSummary> => {
 		const display = (name ?? metadata.name)?.trim() ?? "";
@@ -633,6 +633,7 @@ async function startServerBackend(
 		if (archived) await workers.stopSessionWork(metadata, BACKGROUND_CONTEXT);
 	};
 	const serverServices = await createExperimentalServerServices({
+		synchronizeModels: context => workers.refreshModels(context),
 		...(plugins === undefined ? {} : { plugins }),
 		administration,
 		projects: {

@@ -41,6 +41,7 @@ export function createModelsService(
 	const lifetime = new AbortController();
 	let refreshing: Promise<void> | undefined;
 	const modelScope = new ModelScope(settingsManager);
+	let localScope = false;
 	const authentication = sharedAuthentication ?? (modelRuntime === undefined ? undefined
 		: new ProviderLogin(modelRuntime, settingsManager === undefined ? {} : { getDeviceId: () => settingsManager.getOrCreateDeviceId() }));
 	const configurationOf = (value: Readonly<AgentState> | null | undefined): ModelsState["configuration"] => ({
@@ -104,6 +105,7 @@ export function createModelsService(
 		async setModelScope(models, persist, context) {
 			context.abortSignal?.throwIfAborted();
 			await modelScope.configure(models, persist);
+			localScope = !persist;
 			state.change(context, (draft) => { draft.catalog = readCatalog(); });
 		},
 		async saveDefaults(model, thinking, context) {
@@ -190,6 +192,14 @@ export function createModelsService(
 				}
 			}).finally(() => { refreshing = undefined; });
 			await awaitWithContext(refreshing, context);
+		},
+		async reload(context) {
+			context.abortSignal?.throwIfAborted();
+			await settingsManager?.reload();
+			if (!localScope) await modelScope.configure(settingsManager?.getEnabledModels() ?? null, false);
+			await modelRuntime?.refresh({ allowNetwork: false, signal: AbortSignal.any([lifetime.signal, ...(context.abortSignal ? [context.abortSignal] : [])]) });
+			lifetime.signal.throwIfAborted();
+			state.change(context, draft => { draft.catalog = readCatalog(); draft.authentication = authentication?.snapshot() ?? null; });
 		},
 		async select(model, context) {
 			const selected = modelRuntime?.getModel(model.provider, model.modelId);

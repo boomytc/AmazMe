@@ -324,6 +324,7 @@ export interface PluginsStateLike {
 }
 
 export interface SettingsPanelInput {
+	readonly hostModels?: boolean;
 	readonly state: SettingsStateLike | undefined;
 	readonly models?: { readonly available: boolean; readonly authentication: boolean; readonly selected: boolean; readonly picker: ModelPicker };
 	/** Archived sessions the settings list owns. Absent until the host has published a directory. */
@@ -530,7 +531,9 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		return unavailablePanel(locale, "settings", title, translate(locale, "panel.settings.description"));
 	}
 	const groups: PanelGroup[] = [];
-	if (input.models !== undefined) {
+	if (input.hostModels) {
+		groups.push({ id: "settings:models", title: translate(locale, "connections.title"), description: translate(locale, "connections.help"), rows: [], empty: "" });
+	} else if (input.models !== undefined) {
 		const { picker, available, authentication, selected: hasSelected } = input.models;
 		const selected = picker.groups.flatMap(group => group.options).find(option => option.selected);
 		const scopeEmpty = picker.empty === translate(locale, "model.scopeEmpty");

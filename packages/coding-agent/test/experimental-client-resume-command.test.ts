@@ -192,6 +192,7 @@ describe("interactive client resume command", () => {
 				return ["off"];
 			},
 			async refresh() {},
+			async reload() {},
 			async select() {},
 			async selectThinking() {},
 			async startLogin() {

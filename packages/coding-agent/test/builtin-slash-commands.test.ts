@@ -109,6 +109,7 @@ describe("builtin slash commands", () => {
 				return ["off"];
 			},
 			async refresh() {},
+			async reload() {},
 			async select() {},
 			async selectThinking() {},
 			async startLogin() {

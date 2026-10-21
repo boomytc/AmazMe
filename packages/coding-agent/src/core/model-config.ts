@@ -15,6 +15,7 @@ import type { TLocalizedValidationError } from "typebox/error";
 import { stripJsonComments } from "../utils/json.ts";
 import { normalizePath } from "../utils/paths.ts";
 import { stripBom } from "../utils/text.ts";
+import { FileAuthStorageBackend } from "./auth-storage.ts";
 
 const SamplingParamsSchema = Type.Record(Type.String(), Type.Unknown());
 const SamplingParamsByThinkingLevelSchema = Type.Object(
@@ -163,6 +164,18 @@ export class ModelConfig {
 	private constructor(providers: ReadonlyMap<string, ModelsJsonProvider>, error?: string) {
 		this.providers = providers;
 		this.error = error;
+	}
+
+	/** Merge one provider under the same file lock used by the other JSON stores. */
+	static async updateProvider(path: string, id: string, update: (current: ModelsJsonProvider | undefined) => ModelsJsonProvider, signal?: AbortSignal): Promise<void> {
+		await new FileAuthStorageBackend(path).withLockAsync(async content => {
+			const parsed: unknown = content === undefined ? {} : JSON.parse(stripJsonComments(stripBom(content)));
+			const value: unknown = typeof parsed === "object" && parsed !== null && Object.keys(parsed).length === 0 ? { providers: {} } : parsed;
+			if (!validateModelsConfig.Check(value)) throw new Error("Repair models.json before editing provider connections.");
+			value.providers[id] = update(value.providers[id]);
+			if (!validateModelsConfig.Check(value)) throw new Error("Invalid provider configuration.");
+			return { result: undefined, next: `${JSON.stringify(value, null, "\t")}\n` };
+		}, { signal });
 	}
 
 	static async load(modelsJsonPath: string | undefined): Promise<ModelConfig> {

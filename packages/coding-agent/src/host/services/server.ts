@@ -29,6 +29,8 @@ import { Skills, type Skills as SkillsService } from "./skills.ts";
 import { createSkillsService } from "./skills-provider.ts";
 import { ProjectManagement, SessionArchive } from "./projects.ts";
 import type { ProjectSelection, ProjectSummary } from "./projects.ts";
+import { ModelCatalog } from "./model-catalog.ts";
+import { createModelCatalogService } from "./model-catalog-provider.ts";
 import {
 	type SessionCreateOptions,
 	SessionDirectory,
@@ -67,6 +69,7 @@ export interface ExperimentalServerServices {
 }
 
 export async function createExperimentalServerServices(options: {
+	synchronizeModels?(context: Context): Promise<void>;
 	list(context: Context): Promise<SessionSummary[]>;
 	create(createOptions: SessionCreateOptions, context: Context): Promise<SessionSummary>;
 	remove(sessionId: string, context: Context): Promise<void>;
@@ -93,7 +96,7 @@ export async function createExperimentalServerServices(options: {
 		archive(sessionId: string, archived: boolean, context: Context): Promise<void>;
 	};
 }): Promise<ExperimentalServerServices> {
-	const definitions = [SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ...(options.projects ? [ProjectManagement, SessionArchive] : [])];
+	const definitions = [ModelCatalog, SessionDirectory, SessionManagement, PresentationPlugins, Settings, Skills, Plugins, Feedback, Diagnostics, ...(options.projects ? [ProjectManagement, SessionArchive] : [])];
 	const builtinIds = new Set(definitions.map(service => service.name));
 	if (options.plugins?.services.catalogue.some(entry => builtinIds.has(entry.serviceId))) {
 		throw new Error("Server plugins cannot replace built-in services");
@@ -112,6 +115,14 @@ export async function createExperimentalServerServices(options: {
 	// The administration surfaces: one Settings/Skills/Plugins instance per server, shared with every
 	// attached client, so two tabs see the same catalogue and the same files.
 	const { manager, agentDir, cwd, paths } = options.administration.settings;
+	const modelCatalog = await createModelCatalogService({ agentDir,
+		projectCwd: async id => {
+			const project = (await options.projects?.list())?.find(project => project.id === id && !project.removed);
+			if (!project) throw new Error("Unknown project.");
+			return project.cwd;
+		},
+		synchronize: context => options.synchronizeModels?.(context) ?? Promise.resolve(),
+	});
 	let settingsErrorList: SettingsError[] = settingsErrors(manager);
 	const settingsState = replicatedState<SettingsState>({
 		revision: 1,
@@ -178,6 +189,7 @@ export async function createExperimentalServerServices(options: {
 				await serialize(() => refreshNow(BACKGROUND_CONTEXT));
 				if (disposed) throw new Error("Server services are disposed");
 				const provider = new ServiceHost("server-services");
+				provider.provide(ModelCatalog, modelCatalog.service);
 				provider.provide(SessionDirectory, { state: directory });
 				if (options.projects !== undefined) {
 					const projects = options.projects;
@@ -282,7 +294,15 @@ export async function createExperimentalServerServices(options: {
 				});
 				provider.provide(SessionManagement, {
 					create: (createOptions, context) =>
-						updateDirectory(() => options.create(createOptions, context)),
+						updateDirectory(async () => {
+							const selected = createOptions.initialModel;
+							if (selected) {
+								if (createOptions.reuseEmpty) throw new Error("An explicit initial model cannot reuse an existing session.");
+								const model = modelCatalog.service.state.value?.models.find(model => model.provider === selected.model?.provider && model.modelId === selected.model?.modelId);
+								if (!model || !model.levels.includes(selected.thinkingLevel)) throw new Error("Choose an available model and reasoning level.");
+							}
+							return options.create(createOptions, context);
+						}),
 					remove: (sessionId, context) =>
 						updateDirectory(async () => {
 							await presentation.prepareSessionRemoval(sessionId, context);
@@ -317,6 +337,7 @@ export async function createExperimentalServerServices(options: {
 			disposePromise = promise;
 			void (async () => {
 				const releases = await Promise.allSettled([
+					modelCatalog.close(),
 					options.plugins?.close(),
 					...[...attachments].map((attachment) => attachment.release(BACKGROUND_CONTEXT)),
 				]);

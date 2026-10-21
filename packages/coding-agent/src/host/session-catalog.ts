@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ModelSelection } from "./services/model-catalog.ts";
 
 /** One server-hosted Session: a directory holding `meta.json` and the worker-owned `session.sqlite`. */
 export interface SessionCatalogMetadata {
+	readonly initialModel?: ModelSelection;
 	readonly id: string;
 	readonly createdAt: number;
 	/** The working directory the Session's agent runs in. */
@@ -45,6 +47,7 @@ export function mergeTrackedSession(
 	const { name: _name, nameSource: _nameSource, archivedAt: _workerArchive, workEndedAt: _workerEnd, ...rest } = worker;
 	return {
 		...rest,
+		...(catalog?.initialModel === undefined ? {} : { initialModel: catalog.initialModel }),
 		...(catalog?.archivedAt === undefined ? {} : { archivedAt: catalog.archivedAt }),
 		...(catalog?.workEndedAt === undefined ? {} : { workEndedAt: catalog.workEndedAt }),
 		...(projectId === undefined ? {} : { projectId }),
@@ -116,7 +119,8 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 		return undefined;
 	}
 	if (typeof value !== "object" || value === null) return undefined;
-	const { createdAt, cwd, name, nameSource, projectId, archivedAt, workEndedAt } = value as {
+	const { createdAt, cwd, name, nameSource, projectId, archivedAt, workEndedAt, initialModel } = value as {
+		initialModel?: ModelSelection;
 		createdAt?: unknown;
 		cwd?: unknown;
 		name?: unknown;
@@ -130,6 +134,8 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 	return {
 		id,
 		createdAt,
+		...(initialModel?.model && typeof initialModel.model.provider === "string" && typeof initialModel.model.modelId === "string"
+			&& ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(initialModel.thinkingLevel) ? { initialModel } : {}),
 		cwd,
 		path,
 		...(typeof projectId === "string" || projectId === null ? { projectId } : {}),
@@ -143,7 +149,7 @@ export async function readSession(sessionDir: string, id: string): Promise<Sessi
 /** Create an empty Session. Its worker creates the storage on first open. */
 export async function createSession(
 	sessionDir: string,
-	options: { readonly id?: string; readonly name?: string; readonly createdAt?: number } & (
+	options: { readonly id?: string; readonly name?: string; readonly createdAt?: number; readonly initialModel?: ModelSelection } & (
 		| { readonly projectId: null; readonly cwd?: never }
 		| { readonly projectId?: string; readonly cwd: string }
 	),
@@ -160,6 +166,7 @@ export async function createSession(
 	}
 	const display = options.name === undefined ? "" : normalizeSessionName(options.name);
 	const metadata: SessionCatalogMetadata = {
+		...(options.initialModel === undefined ? {} : { initialModel: options.initialModel }),
 		id,
 		createdAt: options.createdAt ?? Date.now(),
 		cwd: options.projectId === null ? join(path, "workspace") : options.cwd,
@@ -230,6 +237,7 @@ async function writeMetadata(metadata: SessionCatalogMetadata): Promise<void> {
 }
 
 function metadataFile(metadata: SessionCatalogMetadata): {
+	initialModel?: ModelSelection;
 	createdAt: number;
 	cwd: string;
 	projectId?: string | null;
@@ -239,6 +247,7 @@ function metadataFile(metadata: SessionCatalogMetadata): {
 	nameSource?: "manual" | "automatic";
 } {
 	return {
+		...(metadata.initialModel === undefined ? {} : { initialModel: metadata.initialModel }),
 		createdAt: metadata.createdAt,
 		cwd: metadata.cwd,
 		...(metadata.projectId === undefined ? {} : { projectId: metadata.projectId }),

@@ -42,6 +42,7 @@ import { type DockView, type DockViewInput, dockView } from "./dock.ts";
 import type { Locale } from "./locale.ts";
 import { errorMessageCopy } from "./errors.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
+import type { ModelConnectionsLike } from "./model-connections.ts";
 import { CHAT_VIEW, type PanelButton, type PanelView, type PanelViewInput, panelView } from "./panels.ts";
 import { type Shortcut, shortcuts } from "./shortcuts.ts";
 import { compactionReasonCopy, type MessageKey, thinkingLevelCopy, toolActivityCopy, toolArgumentCopy, toolTitleCopy, translate } from "./strings.ts";
@@ -411,6 +412,7 @@ export interface NewSessionAffordance {
 }
 
 export interface WebView {
+	readonly modelConnections?: ModelConnectionsLike;
 	readonly typography: Typography;
 	/** The language this view's copy is in; the renderer reads it for its own chrome too. */
 	readonly locale: Locale;
@@ -546,6 +548,7 @@ export interface ModelsStateLike {
 }
 
 export interface WebViewInput {
+	readonly modelConnections?: ModelConnectionsLike;
 	readonly typography?: Typography;
 	readonly desktop?: boolean;
 	readonly creatingSession?: boolean;
@@ -1532,6 +1535,7 @@ export function buildWebView(input: WebViewInput): WebView {
 	return {
 		locale,
 		roster,
+		...(input.modelConnections ? { modelConnections: input.modelConnections } : {}),
 		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.rosterFilter),
 		...(input.newSessionDraft && input.directory !== undefined ? { sessionDraft: {
 			projectId: input.selectedProjectId ?? null,
@@ -1577,7 +1581,7 @@ export function buildWebView(input: WebViewInput): WebView {
 		busy: isBusy(input.transcript),
 		// Only a reachable host can take a create; the roster appears with the same state.
 		newSession: { enabled: input.directory !== undefined && !input.creatingSession, ...(input.creatingSession ? { pending: true } : {}) },
-		model: { ...modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined), ...(input.modelPending ? { disabled: true } : {}) },
+		model: { ...modelPicker(locale, input.models, input.thinkingLevels, input.attachedId !== undefined || input.newSessionDraft === true), ...(input.modelPending ? { disabled: true } : {}) },
 		...(input.modelPending ? { modelPending: true } : {}),
 		panel: panelView({ ...input.panel, locale }),
 		dock: dockView(locale, { ...dockWithShownEntries(input, forkable), ...(archived ? { readOnly: true } : {}) }),

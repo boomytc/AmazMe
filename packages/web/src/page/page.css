@@ -2198,6 +2198,38 @@ p {
 .project-picker-option:hover, .project-picker-option:focus-visible, .project-picker-option[aria-pressed="true"] { background: var(--hover); outline: none; }
 .project-picker-empty { padding: 8px; color: var(--text-3); }
 
+.composer-model-control { min-width: 0; }
+.composer-model-picker { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 8px; background: transparent; border: 0; border-radius: 7px; font: inherit; font-size: 12px; color: var(--text-2); cursor: pointer; }
+.composer-model-picker:hover { background: var(--hover); color: var(--text); }
+.composer-model-picker:disabled { cursor: default; opacity: .5; }
+.model-picker-menu { position: fixed; margin: 0; width: min(360px, calc(100vw - 16px)); max-height: calc(100dvh - 32px); padding: 8px; background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 40px #0003; font-size: 13px; }
+.model-picker-menu::backdrop { background: transparent; }
+.model-picker-menu > input { width: 100%; padding: 9px; background: transparent; border: 0; border-bottom: 1px solid var(--border); color: inherit; font: inherit; }
+.model-picker-list { overflow-y: auto; max-height: min(320px, 45dvh); }
+.model-picker-list > p, .model-picker-reasoning > p { margin: 9px 8px 4px; color: var(--text-3); font-size: 12px; }
+.model-picker-option { display: block; width: 100%; text-align: left; padding: 7px 9px; border: 0; border-radius: 7px; font: inherit; background: transparent; color: inherit; cursor: pointer; }
+.model-picker-option:hover, .model-picker-option[aria-pressed="true"], .model-picker-reasoning button[aria-pressed="true"] { background: var(--hover); }
+.model-picker-reasoning { border-top: 1px solid var(--border); }
+.model-picker-reasoning button { margin: 4px 2px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
+.model-picker-manage { width: 100%; padding: 10px 8px; margin-top: 5px; border: 0; border-top: 1px solid var(--border); color: inherit; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+.model-connections { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; padding-top: 16px; }
+.connection-rail { min-width: 0; }
+.connection-rail > input { width: 100%; padding: 8px 10px; margin: 12px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--raised); color: var(--text); font: inherit; }
+.connection-list { display: grid; gap: 4px; max-height: 65dvh; overflow-y: auto; }
+.connection-row { display: flex; flex-direction: column; gap: 4px; width: 100%; padding: 10px; background: transparent; border: 0; border-radius: 8px; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.connection-row:hover, .connection-row.selected { background: var(--hover); }
+.connection-row small, .connection-model small { color: var(--text-3); font-size: 11px; }
+.connection-detail { min-width: 0; }
+.connection-detail p { overflow-wrap: anywhere; margin-block: 12px; color: var(--text-2); }
+.connection-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.connection-detail button, .connection-rail > button { padding: 6px 10px; margin: 2px; background: var(--raised); color: var(--text); border: 1px solid var(--border); border-radius: 7px; font: inherit; font-size: 12px; cursor: pointer; }
+.connection-detail button:disabled { opacity: .5; cursor: default; }
+.connection-model { display: flex; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+.connection-model label { display: flex; align-items: center; gap: 8px; }
+.connection-model small { flex: 1; overflow-wrap: anywhere; }
+.connection-verification.error { color: var(--danger); }
+@media (max-width: 900px) { .model-connections { grid-template-columns: 1fr; gap: 16px; } .connection-list { max-height: 24dvh; } .composer-model-picker { max-width: 180px; } }
+
 /* Approvals, the queued inputs and the command palette share one scrollable block: a long draft plus
    several cards cannot push the composer off the bottom of a short window. */
 .composer-extras {

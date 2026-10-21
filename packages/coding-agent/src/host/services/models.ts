@@ -50,6 +50,8 @@ export interface Models {
 	saveDefaults(model: ModelRef, thinking: ModelThinkingLevel, context: Context): Promise<void>;
 	getThinkingLevels(context: Context): Promise<ModelThinkingLevel[]>;
 	refresh(context: Context): Promise<void>;
+	/** Re-read shared local configuration without making a network catalog request. */
+	reload(context: Context): Promise<void>;
 	select(model: ModelRef, context: Context): Promise<void>;
 	selectThinking(level: ModelThinkingLevel, context: Context): Promise<void>;
 	startLogin(provider: string, method: AuthType, context: Context): Promise<string>;
@@ -58,7 +60,7 @@ export interface Models {
 	logout(provider: string, context: Context): Promise<void>;
 }
 
-export const Models = remoteService<Models>("amazme.models", {"suggestPrompt":1,"cycleThinking":0,"cycleModel":1,"getModelScope":0,"setModelScope":2,"saveDefaults":2,"getThinkingLevels":0,"refresh":0,"select":1,"selectThinking":1,"startLogin":2,"submitLoginPrompt":3,"cancelLogin":1,"logout":1}, ["state"]);
+export const Models = remoteService<Models>("amazme.models", {"suggestPrompt":1,"cycleThinking":0,"cycleModel":1,"getModelScope":0,"setModelScope":2,"saveDefaults":2,"getThinkingLevels":0,"refresh":0,"reload":0,"select":1,"selectThinking":1,"startLogin":2,"submitLoginPrompt":3,"cancelLogin":1,"logout":1}, ["state"]);
 
 export function selectableModels(state: ModelsState | undefined): ModelSummary[] {
 	if (!state) return [];
