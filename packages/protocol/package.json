@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/protocol",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Transport-neutral CBOR protocol for remote AmazMe sessions",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -44,7 +44,7 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@amazme/chord": "0.1.0",
+		"@amazme/chord": "0.2.0",
 		"typebox": "1.3.27"
 	},
 	"devDependencies": {

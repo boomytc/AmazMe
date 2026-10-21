@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/coding-agent",
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"amazmeConfig": {
@@ -81,14 +81,14 @@
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@amazme/chord": "0.1.0",
-		"@amazme/durable": "0.1.0",
+		"@amazme/chord": "0.2.0",
+		"@amazme/durable": "0.2.0",
 		"@js-temporal/polyfill": "0.5.1",
-		"@amazme/agent": "0.1.0",
-		"@amazme/ai": "0.1.0",
-		"@amazme/codemode": "0.1.0",
-		"@amazme/mcp": "0.1.0",
-		"@amazme/tui": "0.1.0",
+		"@amazme/agent": "0.2.0",
+		"@amazme/ai": "0.2.0",
+		"@amazme/codemode": "0.2.0",
+		"@amazme/mcp": "0.2.0",
+		"@amazme/tui": "0.2.0",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"brace-expansion": "5.0.12",
 		"chalk": "6.0.0",
@@ -106,11 +106,11 @@
 		"typebox": "1.3.27",
 		"undici": "8.10.2",
 		"yaml": "2.9.0",
-		"@amazme/env": "0.1.0",
-		"@amazme/client": "0.1.0",
-		"@amazme/protocol": "0.1.0",
-		"@amazme/server": "0.1.0",
-		"@amazme/web": "0.1.0",
+		"@amazme/env": "0.2.0",
+		"@amazme/client": "0.2.0",
+		"@amazme/protocol": "0.2.0",
+		"@amazme/server": "0.2.0",
+		"@amazme/web": "0.2.0",
 		"esbuild": "0.28.2"
 	},
 	"overrides": {

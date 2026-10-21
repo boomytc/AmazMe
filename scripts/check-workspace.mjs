@@ -248,6 +248,8 @@ const versionLiteralOwners = /(?:^|\/)(?:package\.json|package-lock\.json|CHANGE
  * one of these words is that product's version, not AmazMe's.
  */
 const versionLiteralThirdParty = ["Bun"];
+/** A version pinned to an external scoped package, such as `@scope/tool@1.2.3`, is that package's version. */
+const versionLiteralScopedPackage = /@[A-Za-z0-9][\w.-]*\/[A-Za-z0-9][\w.-]*@$/;
 
 function trackedFiles(repoRoot) {
 	return execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 })
@@ -280,7 +282,8 @@ export function checkVersionLiterals(repoRoot, files) {
 			.split("\n")
 			.forEach((line, index) => {
 				for (const match of line.matchAll(literal)) {
-					if (thirdParty.test(line.slice(0, match.index))) continue;
+					const before = line.slice(0, match.index);
+					if (thirdParty.test(before) || versionLiteralScopedPackage.test(before)) continue;
 					failures.push(
 						`${path}:${index + 1}: release version ${version} is hand-written; read it from package.json or link the releases`,
 					);

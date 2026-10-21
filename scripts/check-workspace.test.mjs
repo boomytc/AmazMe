@@ -393,6 +393,17 @@ test("the third-party allowance applies only right after the product name", () =
 	);
 });
 
+test("a version pinned to a scoped third-party package is not the release version", () => {
+	const files = { "docs/a.md": "npx @modelcontextprotocol/conformance@9.8.7\nAmazMe@9.8.7\nvendor/pkg@9.8.7\n" };
+	const root = versionFixture(files);
+	const failures = checkVersionLiterals(root, Object.keys(files));
+	assert.deepEqual(
+		failures.map((failure) => failure.slice(0, failure.indexOf(": "))),
+		["docs/a.md:2", "docs/a.md:3"],
+		failures.join("\n"),
+	);
+});
+
 test("by default the release-version rule reads only files git tracks", () => {
 	const root = versionFixture({ "src/tracked.ts": 'export const v = "9.8.7";\n', "src/scratch.ts": 'export const v = "9.8.7";\n' });
 	execFileSync("git", ["init", "-q"], { cwd: root });
