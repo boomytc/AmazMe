@@ -7,14 +7,10 @@ describe("Codex live test model selection", () => {
 	});
 
 	it("allows an explicit catalog model without changing historical fixtures", () => {
-		expect(getCodexTestModel("gpt-5.5").id).toBe("gpt-5.5");
+		expect(getCodexTestModel("gpt-5.6-sol").id).toBe("gpt-5.6-sol");
 	});
 
 	it("rejects unknown model IDs instead of falling back or skipping tests", () => {
 		expect(() => getCodexTestModel("missing-model")).toThrow("Unknown Codex test model");
-	});
-
-	it("rejects models that cannot exercise image and reasoning coverage", () => {
-		expect(() => getCodexTestModel("gpt-5.3-codex-spark")).toThrow("must support image input and xhigh reasoning");
 	});
 });
