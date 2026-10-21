@@ -15,7 +15,7 @@ import { NodeExecutionEnv } from "@amazme/durable/env/node";
 import type { PageRenderer, WebView } from "@amazme/web";
 import {
 	BOOT_GLOBAL,
-	PROJECT_NEW_SESSION_ACTION,
+	COMPOSER_PROJECT_ACTION,
 	CONVERSATION_RENAME_ACTION,
 	CONVERSATION_RENAME_MODAL,
 	CONVERSATION_ARCHIVE_ACTION,
@@ -438,9 +438,14 @@ describe("web client interactive loop", () => {
 		const presentation = await openPresentation(host);
 		expect(presentation.directory.state.value?.projects).toEqual([]);
 		const page = await openPage(host);
-		expect(page.renderer.view?.projects?.find(group => group.id === null)?.selected).toBe(true);
+		expect(page.renderer.view?.sessionDraft?.projectId).toBeNull();
 		page.renderer.onCreateSession();
+		await waitFor(() => page.renderer.view?.newSession.pending !== true, "new chat draft", 10_000);
+		expect(presentation.directory.state.value?.sessions).toHaveLength(0);
+		page.renderer.onDraftChange("standalone prompt");
+		page.renderer.onSubmit("standalone prompt");
 		await waitFor(() => page.renderer.view?.attachedId !== undefined, "standalone creation", 10_000);
+		await waitFor(() => page.renderer.view?.blocks.some(block => block.kind === "assistant" && block.text.includes("standalone reply")) === true, "standalone answer", 10_000);
 		const id = page.renderer.view!.attachedId!;
 		const metadata = await readSession(sessionDir, id);
 		const cwd = join(sessionDir, id, "workspace");
@@ -455,12 +460,15 @@ describe("web client interactive loop", () => {
 		const inProject = await presentation.management.create({ projectId: project.id }, BACKGROUND_CONTEXT);
 		page.renderer.onSelect(inProject.sessionId);
 		await waitFor(() => page.renderer.view?.attachedId === inProject.sessionId, "project selection", 10_000);
-		page.renderer.onPanelAction({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: undefined });
-		await waitFor(() => page.renderer.view?.newSession.pending !== true, "empty standalone reuse", 10_000);
-		expect(page.renderer.view?.attachedId).toBe(id);
-		expect(page.renderer.view?.attachedId).not.toBe(inProject.sessionId);
-		page.renderer.onSubmit("standalone prompt");
-		await waitFor(() => page.renderer.view?.blocks.some(block => block.kind === "assistant" && block.text.includes("standalone reply")) === true, "standalone answer", 10_000);
+		page.renderer.onCreateSession();
+		await waitFor(() => page.renderer.view?.newSession.pending !== true, "project draft", 10_000);
+		expect(page.renderer.view?.sessionDraft?.projectId).toBe(project.id);
+		page.renderer.onDraftChange("keep this draft");
+		page.renderer.onPanelAction({ kind: "command", id: COMPOSER_PROJECT_ACTION, data: undefined });
+		expect(page.renderer.view?.sessionDraft?.projectId).toBeNull();
+		expect(presentation.directory.state.value?.sessions).toHaveLength(2);
+		page.renderer.onSelect(id);
+		await waitFor(() => page.renderer.view?.attachedId === id, "return to standalone session", 10_000);
 		const rootId = attached.conversations.state.value!.selected;
 		const fork = await attached.conversations.fork(rootId, null, BACKGROUND_CONTEXT);
 		expect(fork.error).toBeNull();
@@ -470,7 +478,7 @@ describe("web client interactive loop", () => {
 		await waitFor(() => page.renderer.view?.readOnly === true, "standalone archive", 10_000);
 		page.renderer.onPanelAction({ kind: "command", id: SESSION_RESTORE_ACTION, data: id });
 		await waitFor(() => page.renderer.view?.readOnly !== true, "standalone restore", 10_000);
-		expect(page.renderer.view?.projects?.find(group => group.id === null)?.selected).toBe(true);
+		expect(page.renderer.view?.roster.find(item => item.id === id)?.projectId).toBeNull();
 		expect(presentation.directory.state.value?.projects?.find(item => item.id === project.id)?.removed).toBe(true);
 		const another = await presentation.management.create({ projectId: null }, BACKGROUND_CONTEXT);
 		expect(another.cwd).not.toBe(cwd);
@@ -481,7 +489,7 @@ describe("web client interactive loop", () => {
 		const restarted = await startWebHost({ port: 0, directory, sessionDir }); hosts.add(restarted);
 		const resumed = await openPage(restarted);
 		expect(resumed.renderer.view?.attachedId).toBe(id);
-		expect(resumed.renderer.view?.projects?.find(group => group.id === null)?.selected).toBe(true);
+		expect(resumed.renderer.view?.roster.find(item => item.id === id)?.projectId).toBeNull();
 		expect(await readSession(sessionDir, id)).toMatchObject({ projectId: null, cwd });
 		expect(await readFile(join(cwd, "note.txt"), "utf8")).toBe("standalone");
 		await resumed.dispose();

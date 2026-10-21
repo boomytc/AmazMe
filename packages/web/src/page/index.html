@@ -112,6 +112,7 @@
 						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
 					</button>
 				</div>
+				<button type="button" class="sidebar-new-chat" id="new-chat" disabled><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-square-pen"></use></svg>{{sidebar.newChat}}</button>
 				<p class="sidebar-label">{{sidebar.sessions}}</p>
 				<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
 			</div>
@@ -186,6 +187,7 @@
 					<!-- The command palette: the host's commands for the draft. -->
 					<div class="command-palette" id="command-palette" hidden></div>
 				</div>
+				<div class="composer-context" id="composer-context" hidden></div>
 				<form class="composer" id="composer">
 					<!-- The images attached but not sent yet; the renderer fills this. -->
 					<div class="attachments" id="attachments" hidden></div>

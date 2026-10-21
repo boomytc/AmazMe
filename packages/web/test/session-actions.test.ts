@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { SESSION_RENAME_ACTION } from "../src/actions.ts";
 import { removeSessionModal, renameSessionModal } from "../src/panels.ts";
-import { archiveSessionModal, projectGroups, PROJECT_NEW_SESSION_ACTION, PROJECT_SELECT_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
+import { archiveSessionModal, projectGroups, COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, SESSION_ARCHIVE_ACTION, SESSION_ARCHIVE_MODAL, SESSION_RESTORE_ACTION } from "../src/projects.ts";
 import { collectPageElements, createRenderer } from "../src/render.ts";
 import { failureView, rosterItems } from "../src/view.ts";
 
@@ -37,21 +37,34 @@ function control(selector: string): HTMLButtonElement {
 }
 
 describe("session actions", () => {
-	test("the standalone group offers selection and creation without project editing", () => {
+	test("a new chat chooses its project above the editable composer without a synthetic project group", () => {
 		const { renderer, view } = paint();
 		const report = vi.fn();
-		renderer.onPanelAction = report;
+		const create = vi.fn();
+		renderer.onPanelAction = report; renderer.onCreateSession = create;
 		const standalone = { projects: [], sessions: [{ ...directory.sessions[0]!, projectId: null }] };
 		const roster = rosterItems("zh", standalone, "stable-session-id", 1);
-		renderer.render({ ...view, locale: "zh", roster, projects: projectGroups("zh", standalone, roster, null, "") });
-		const group = document.querySelector('[data-standalone="true"]');
-		expect(group?.querySelector(".project-name")?.textContent).toBe("不在项目中工作");
-		expect(group?.querySelector(".project-more")).toBeNull();
-		expect(group?.querySelectorAll("[data-session-id]")).toHaveLength(1);
-		control('[data-standalone="true"] .project-select').click();
-		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROJECT_SELECT_ACTION, data: undefined });
-		control('[data-standalone="true"] .project-new-session').click();
-		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: undefined });
+		const context = { projectId: null, label: "不在项目中工作", projects: [{ id: "p", name: "AmazMe" }, { id: "q", name: "LightUI" }], disabled: false };
+		renderer.render({ ...view, locale: "zh", attachedId: undefined, roster, projects: projectGroups(standalone, roster, null, ""), sessionDraft: context });
+		expect(document.querySelector(".project-group")).toBeNull();
+		expect(document.querySelector(".session-group-label")?.textContent).toBe("聊天");
+		expect(control("#primary").disabled).toBe(true);
+		expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.disabled).toBe(false);
+		control("#new-chat").click(); expect(create).toHaveBeenCalledOnce();
+		control(".composer-project").click();
+		const menu = document.querySelector<HTMLDialogElement>(".project-picker")!;
+		expect(menu.open).toBe(true);
+		const search = menu.querySelector<HTMLInputElement>("input")!;
+		search.value = "amaz"; search.dispatchEvent(new Event("input"));
+		expect(menu.querySelectorAll(".project-picker-list button")).toHaveLength(1);
+		menu.querySelector<HTMLButtonElement>(".project-picker-list button")!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: COMPOSER_PROJECT_ACTION, data: "p" });
+		control(".composer-project").click();
+		const actions = menu.querySelectorAll<HTMLButtonElement>(":scope > .project-picker-option");
+		actions[0]!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: PROJECT_ADD_ACTION, data: undefined });
+		control(".composer-project").click(); actions[1]!.click();
+		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: COMPOSER_PROJECT_ACTION, data: undefined });
 	});
 
 	test("menu and selection are sibling buttons and menu actions do not select a session", () => {

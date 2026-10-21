@@ -7,6 +7,7 @@ export const PROJECT_ADD_ACTION = "project:add";
 export const PROJECT_ADD_MODAL = "project:add-submit";
 export const PROJECT_SELECT_ACTION = "project:select";
 export const PROJECT_NEW_SESSION_ACTION = "project:new-session";
+export const COMPOSER_PROJECT_ACTION = "composer:project";
 export const PROJECT_EDIT_ACTION = "project:edit";
 export const PROJECT_EDIT_MODAL = "project:edit-submit";
 export const PROJECT_RENAME_ACTION = "project:rename";
@@ -19,7 +20,7 @@ export const SESSION_ARCHIVE_MODAL = "session:archive-confirm";
 export const SESSION_RESTORE_ACTION = "session:restore";
 
 export interface ProjectGroup {
-	readonly id: string | null;
+	readonly id: string;
 	readonly name: string;
 	readonly cwd: string;
 	readonly workspaces?: readonly string[];
@@ -28,15 +29,14 @@ export interface ProjectGroup {
 	readonly removed?: true;
 }
 
-export function projectGroups(locale: Locale, directory: SessionDirectoryLike | undefined, items: readonly RosterItem[], selectedId: string | null | undefined, filter: string): ProjectGroup[] | undefined {
+export function projectGroups(directory: SessionDirectoryLike | undefined, items: readonly RosterItem[], selectedId: string | null | undefined, filter: string): ProjectGroup[] | undefined {
 	if (directory?.projects === undefined) return undefined;
 	const needle = filter.trim().toLowerCase();
-	const standalone: ProjectGroup = { id: null, name: translate(locale, "project.standalone"), cwd: "", workspaces: [], selected: selectedId === null, items: items.filter(item => item.projectId === null) };
-	return [standalone, ...directory.projects.filter(project => !project.removed).map(project => ({
+	return directory.projects.filter(project => !project.removed).map(project => ({
 		...project,
 		selected: project.id === selectedId,
 		items: items.filter(item => item.projectId === project.id),
-	}))].filter(group => !needle || group.items.length > 0 || `${group.name} ${(group.workspaces ?? [group.cwd]).join(" ")}`.toLowerCase().includes(needle));
+	})).filter(group => !needle || group.items.length > 0 || `${group.name} ${(group.workspaces ?? [group.cwd]).join(" ")}`.toLowerCase().includes(needle));
 }
 
 export function addProjectModal(locale: Locale): PanelModal {

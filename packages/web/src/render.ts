@@ -7,7 +7,7 @@
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_SCOPE_ACTION, PROVIDER_AUTH_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
-import { PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
+import { COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { DomCache, reconcileChildren, sameViewValue } from "./dom-cache.ts";
@@ -77,6 +77,8 @@ export interface PageElements {
 	/** The main column. Its state (`data-state`) drives the empty layout. */
 	readonly center: HTMLElement;
 	readonly roster: HTMLElement;
+	readonly newChat: HTMLButtonElement;
+	readonly composerContext: HTMLElement;
 	readonly transcript: HTMLElement;
 	readonly transcriptLatest?: HTMLButtonElement;
 	readonly column: HTMLElement;
@@ -215,6 +217,8 @@ export function collectPageElements(): PageElements {
 		attach: pickElement("attach", HTMLButtonElement),
 		fileInput: pickElement("file-input", HTMLInputElement),
 		composerDock: pick("composer-dock"),
+		newChat: pickElement("new-chat", HTMLButtonElement),
+		composerContext: pick("composer-context"),
 		modalRoot: pickElement("modal-root", HTMLDialogElement),
 		queue: pick("queue"),
 		composer: pickElement("composer", HTMLFormElement),
@@ -1857,9 +1861,11 @@ export function createRenderer(
 	};
 
 	/** Send stays send. It is disabled when there is nothing to send. */
+	const canCompose = (view: WebView | undefined): boolean => view !== undefined && view.readOnly !== true
+		&& (view.sessionDraft === undefined ? view.attachedId !== undefined : !view.sessionDraft.disabled);
 	const renderPrimary = (): void => {
 		const pending = lastView?.attachments.length ?? 0;
-		elements.primary.disabled = lastView?.attachedId === undefined || lastView?.readOnly === true || (draft().length === 0 && pending === 0);
+		elements.primary.disabled = !canCompose(lastView) || (draft().length === 0 && pending === 0);
 	};
 
 	/** The stop control is on screen for the whole turn, whether or not the draft is empty. */
@@ -2043,6 +2049,11 @@ export function createRenderer(
 	const emptyElement = (view: WebView): HTMLElement => {
 		const block = element("div", "empty-block");
 		block.id = "transcript-empty";
+		if (view.sessionDraft !== undefined) {
+			block.append(element("h2", "greeting", view.sessionDraft.projectId === null
+				? copy("greeting.standaloneDraft") : copy("greeting.projectDraft", { name: view.sessionDraft.label })));
+			return block;
+		}
 		if (view.attachedId !== undefined) {
 			block.append(element("h2", "greeting", copy(view.readOnly ? "greeting.readOnlyTitle" : "greeting.title")), element("p", "greeting-hint", copy(view.readOnly ? "greeting.readOnlyHint" : "greeting.hint")));
 			if (view.readOnly) {
@@ -2715,7 +2726,8 @@ export function createRenderer(
 		suggestionPreview.hidden = candidate === undefined || expandedSuggestionKey !== candidate.key;
 		previewSuggestion.setAttribute("aria-expanded", String(!suggestionPreview.hidden));
 		elements.prompt.setAttribute("aria-label", copy("composer.promptLabel"));
-		elements.prompt.placeholder = candidate ? "" : composerPlaceholder(lastView?.locale ?? FALLBACK_LOCALE, !elements.prompt.disabled);
+		elements.prompt.placeholder = candidate ? "" : lastView?.sessionDraft !== undefined
+			? copy("composer.placeholderDraft") : composerPlaceholder(lastView?.locale ?? FALLBACK_LOCALE, !elements.prompt.disabled);
 		if (!candidate) { elements.prompt.removeAttribute("aria-describedby"); return; }
 		suggestion.querySelector<HTMLElement>(".suggestion-text")!.textContent = candidate.text;
 		acceptSuggestion.querySelector<HTMLElement>("kbd")!.textContent = copy("composer.tabAccept");
@@ -2864,15 +2876,73 @@ export function createRenderer(
 	};
 
 	/** Retain the native controls during state updates so keyboard focus survives. */
+	const renderComposerContext = (view: WebView): void => {
+		elements.composerContext.replaceChildren();
+		const context = view.sessionDraft;
+		elements.composerContext.hidden = context === undefined;
+		if (context === undefined) return;
+		const trigger = button("composer-project");
+		trigger.disabled = context.disabled;
+		trigger.setAttribute("aria-haspopup", "dialog");
+		trigger.setAttribute("aria-expanded", "false");
+		trigger.setAttribute("aria-label", `${copy("project.choose")}: ${context.label}`);
+		trigger.append(icon(context.projectId === null ? "x" : "folder"), element("span", "", context.label));
+		const menu = document.createElement("dialog");
+		menu.className = "project-picker";
+		menu.setAttribute("aria-label", copy("project.choose"));
+		const search = document.createElement("input");
+		search.type = "search"; search.placeholder = copy("project.search"); search.setAttribute("aria-label", search.placeholder);
+		const rows = element("div", "project-picker-list");
+		const option = (label: string, glyph: IconName, selected: boolean, choose: () => void): HTMLButtonElement => {
+			const control = button("project-picker-option");
+			control.setAttribute("aria-pressed", String(selected));
+			control.append(icon(glyph), element("span", "", label));
+			if (selected) control.append(icon("check"));
+			control.addEventListener("click", () => { menu.close(); choose(); });
+			return control;
+		};
+		const fill = (): void => {
+			const needle = search.value.trim().toLowerCase();
+			const matching = context.projects.filter(project => project.name.toLowerCase().includes(needle));
+			rows.replaceChildren(...matching.map(project => option(project.name, "folder", project.id === context.projectId,
+				() => report({ kind: "command", id: COMPOSER_PROJECT_ACTION, data: project.id }))));
+			if (matching.length === 0) rows.append(element("p", "project-picker-empty", copy("project.noMatch")));
+		};
+		search.addEventListener("input", fill);
+		menu.append(search, rows,
+			option(copy("project.add"), "plus", false, () => report({ kind: "command", id: PROJECT_ADD_ACTION, data: undefined })),
+			option(copy("project.standalone"), "x", context.projectId === null, () => report({ kind: "command", id: COMPOSER_PROJECT_ACTION, data: undefined })));
+		trigger.addEventListener("click", () => {
+			fill(); menu.showModal();
+			const rect = trigger.getBoundingClientRect();
+			menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - menu.offsetWidth - 8))}px`;
+			menu.style.top = `${Math.max(8, rect.top - menu.offsetHeight - 8)}px`;
+			trigger.setAttribute("aria-expanded", "true"); search.focus();
+		});
+		menu.addEventListener("close", () => { trigger.setAttribute("aria-expanded", "false"); trigger.focus(); });
+		menu.addEventListener("click", event => { if (event.target === menu) menu.close(); });
+		menu.addEventListener("keydown", event => {
+			if (event.key === "Escape") { event.preventDefault(); menu.close(); return; }
+			if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+			event.preventDefault();
+			const options = [...menu.querySelectorAll<HTMLButtonElement>(".project-picker-option")];
+			const index = options.findIndex(option => option === document.activeElement);
+			const next = index < 0 ? (event.key === "ArrowDown" ? 0 : options.length - 1)
+				: (index + (event.key === "ArrowDown" ? 1 : options.length - 1)) % options.length;
+			options[next]?.focus();
+		});
+		elements.composerContext.append(trigger, menu);
+	};
+
 	const renderModelSelectors = (view: WebView): void => {
 		const picker = view.model;
 		const options = picker.groups.flatMap(group => group.options);
-		if (changed("model-options", [view.locale, picker.groups.map(group => [group.provider, group.options.map(option => [option.modelId, option.label])]), picker.empty, picker.scopeNotice])) {
+		if (changed("model-options", [view.locale, picker.groups.map(group => [group.provider, group.options.map(option => [option.modelId, option.label])]), picker.empty, picker.scopeNotice, view.sessionDraft !== undefined])) {
 			const placeholder = document.createElement("option");
 			placeholder.value = "";
 			placeholder.disabled = true;
 			const scopeEmpty = picker.empty === copy("model.scopeEmpty");
-			placeholder.textContent = picker.empty === undefined ? copy("model.choose") : scopeEmpty ? copy("model.configure") : copy("model.connectProvider");
+			placeholder.textContent = view.sessionDraft !== undefined ? copy("model.draftDefault") : picker.empty === undefined ? copy("model.choose") : scopeEmpty ? copy("model.configure") : copy("model.connectProvider");
 			elements.modelSelect.replaceChildren(placeholder);
 			for (const group of picker.groups) {
 				const optgroup = document.createElement("optgroup");
@@ -2887,7 +2957,7 @@ export function createRenderer(
 			}
 		}
 		const selected = options.find(option => option.selected);
-		const showSetup = options.length === 0 && picker.empty !== undefined;
+		const showSetup = view.sessionDraft === undefined && options.length === 0 && picker.empty !== undefined;
 		elements.modelSelect.hidden = showSetup;
 		modelSetup.hidden = !showSetup;
 		if (showSetup) {
@@ -3016,6 +3086,9 @@ export function createRenderer(
 			if (preview !== undefined && (attachmentScope(view) !== preview.scope || view.panel.current !== CHAT_VIEW ||
 				!view.attachments.some(attachment => attachment.id === preview.attachmentId))) closeAttachmentPreview();
 			if (languageChanged) renderShellCopy();
+			elements.newChat.replaceChildren(icon("square-pen"), document.createTextNode(copy("sidebar.newChat")));
+			elements.newChat.disabled = !view.newSession.enabled;
+			if (changed("composer-context", [view.locale, view.sessionDraft])) renderComposerContext(view);
 			elements.sessionWarning.hidden = view.mirrorWarning == null;
 			elements.sessionWarning.textContent = view.mirrorWarning == null ? "" : copy("page.mirrorWarning", view.mirrorWarning);
 			if (app !== undefined) writeWindowTitle(app, { ...view, sessionLabel: view.panel.panel?.title ?? view.sessionLabel });
@@ -3061,22 +3134,19 @@ export function createRenderer(
 					for (const group of view.projects) {
 						const section = element("div", "project-group");
 						const projectId = group.id;
-						if (projectId === null) section.dataset.standalone = "true";
-						else section.dataset.projectId = projectId;
+						section.dataset.projectId = projectId;
 						const head = element("div", "project-heading");
 						const select = button(group.selected ? "project-select selected" : "project-select"); select.title = (group.workspaces ?? [group.cwd]).join("\n");
 						select.setAttribute("aria-expanded", String(group.selected));
-						select.append(icon(projectId === null ? "message" : "folder"), element("span", "project-name", group.name));
-						select.addEventListener("click", () => report({ kind: "command", id: PROJECT_SELECT_ACTION, data: projectId ?? undefined })); head.append(select);
-						if (projectId !== null) {
-							const more = button("project-action project-more"); more.title = copy("project.actions"); more.setAttribute("aria-label", `${more.title}: ${group.name}`);
-							more.dataset.menuId = `project:${projectId}`; more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false"); more.append(icon("more"));
-							more.addEventListener("click", () => openRosterMenu(`project:${projectId}`, projectId, copy("project.actions"), [
-								{ id: PROJECT_EDIT_ACTION, label: copy("project.edit"), glyph: "square-pen" },
-								{ id: PROJECT_REMOVE_ACTION, label: copy("project.remove"), glyph: "x", danger: true },
-							]));
-							head.append(more);
-						}
+						select.append(icon("folder"), element("span", "project-name", group.name));
+						select.addEventListener("click", () => report({ kind: "command", id: PROJECT_SELECT_ACTION, data: projectId })); head.append(select);
+						const more = button("project-action project-more"); more.title = copy("project.actions"); more.setAttribute("aria-label", `${more.title}: ${group.name}`);
+						more.dataset.menuId = `project:${projectId}`; more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false"); more.append(icon("more"));
+						more.addEventListener("click", () => openRosterMenu(`project:${projectId}`, projectId, copy("project.actions"), [
+							{ id: PROJECT_EDIT_ACTION, label: copy("project.edit"), glyph: "square-pen" },
+							{ id: PROJECT_REMOVE_ACTION, label: copy("project.remove"), glyph: "x", danger: true },
+						]));
+						head.append(more);
 						const creating = view.newSession.pending === true;
 						const newLabel = copy(creating ? "sidebar.creating" : "sidebar.newSession");
 						const create = button("project-action project-new-session");
@@ -3085,7 +3155,7 @@ export function createRenderer(
 						create.setAttribute("aria-label", `${newLabel}: ${group.name}`);
 						create.setAttribute("aria-busy", String(creating));
 						create.append(icon("square-pen"));
-						create.addEventListener("click", () => report({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: projectId ?? undefined })); head.append(create);
+						create.addEventListener("click", () => report({ kind: "command", id: PROJECT_NEW_SESSION_ACTION, data: projectId })); head.append(create);
 						section.append(head);
 						if (group.selected) {
 							const items = element("div", "project-sessions");
@@ -3096,7 +3166,11 @@ export function createRenderer(
 						elements.roster.append(section);
 					}
 					const grouped = new Set(view.projects.flatMap(group => group.items.map(item => item.id)));
-					for (const item of view.roster.filter(item => !grouped.has(item.id))) elements.roster.append(sessionRow(item));
+					const standalone = view.roster.filter(item => !grouped.has(item.id));
+					if (standalone.length > 0) {
+						elements.roster.append(element("p", "session-group-label", copy("sidebar.chats")));
+						for (const item of standalone) elements.roster.append(sessionRow(item));
+					}
 				} else for (const group of rosterGroups(view.locale, view.roster)) {
 					const section = element("div", "session-group");
 					section.append(element("p", "session-group-label", group.label));
@@ -3157,15 +3231,16 @@ export function createRenderer(
 			// The empty layout centres the greeting and the composer; anything in the transcript brings the conversation layout.
 			elements.center.dataset.state = hasConversation || view.status.length > 0 ? "chat" : "empty";
 			elements.center.dataset.attached = String(view.attachedId !== undefined);
+			elements.center.dataset.draft = String(view.sessionDraft !== undefined);
 			elements.center.dataset.readOnly = String(view.readOnly === true);
 			if (view.blocks.length === 0) {
-				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter, view.newSession, view.readOnly, view.archivedAttached, view.model.empty, view.model.disabled], () => view.welcome !== undefined ? welcomeElement(view, view.welcome) : emptyElement(view)));
+				flow.push(flowCache.get("empty", [view.locale, view.welcome, view.attachedId, view.roster.length, view.rosterFilter, view.newSession, view.sessionDraft, view.readOnly, view.archivedAttached, view.model.empty, view.model.disabled], () => view.welcome !== undefined ? welcomeElement(view, view.welcome) : emptyElement(view)));
 			}
 			if (view.status.length > 0) flow.push(flowCache.get("status", view.status, () => runningElement(view.status)));
 			reconcileChildren(elements.column, flow);
 			flowCache.finish();
 
-			const detached = view.attachedId === undefined || view.readOnly === true;
+			const detached = !canCompose(view);
 			if (!scopeChanged && detached && !elements.prompt.disabled && document.activeElement === elements.prompt) {
 				heldPromptFocus = {
 					start: elements.prompt.selectionStart,
@@ -3192,7 +3267,7 @@ export function createRenderer(
 				for (const item of view.queue) elements.queue.append(queueElement(item));
 			}
 
-			if (changed("model", [view.locale, view.model])) renderModelSelectors(view);
+			if (changed("model", [view.locale, view.model, view.sessionDraft !== undefined])) renderModelSelectors(view);
 			if (changed("attachments", view.attachments)) renderAttachments(view);
 			const paletteChanged = changed("palette", [view.locale, view.palette, view.attachedId !== undefined]);
 			if (paletteChanged) renderPalette(view);
@@ -3294,7 +3369,7 @@ export function createRenderer(
 
 	elements.composer.addEventListener("submit", (event) => {
 		event.preventDefault();
-		if (lastView?.attachedId === undefined || lastView?.readOnly === true) return;
+		if (!canCompose(lastView)) return;
 		const text = draft();
 		if (text.startsWith("/") && lastView?.palette.open === true) {
 			const selected = lastView.palette.rows.find((row) => row.selected);
@@ -3532,6 +3607,7 @@ export function createRenderer(
 		stepTranscriptSearch(event.shiftKey ? -1 : 1);
 	});
 	elements.transcriptSearchClose.addEventListener("click", closeTranscriptSearch);
+	elements.newChat.addEventListener("click", () => renderer.onCreateSession());
 	elements.attach.addEventListener("click", () => elements.fileInput.click());
 	elements.fileInput.addEventListener("change", () => {
 		const files = [...(elements.fileInput.files ?? [])];

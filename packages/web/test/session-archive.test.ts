@@ -60,7 +60,7 @@ test("active projects omit archives, and the open archive stays pinned when the 
 	};
 	const open = buildWebView({ ...input(true), directory, rosterFilter: "" });
 	expect(open.roster.map(item => item.id)).toEqual(["live"]);
-	expect(open.projects?.map(group => group.id)).toEqual([null, "p"]);
+	expect(open.projects?.map(group => group.id)).toEqual(["p"]);
 	expect(open.projects?.find(group => group.id === "p")?.items.map(item => item.id)).toEqual(["live"]);
 	expect(open.archivedAttached?.id).toBe("archived-session");
 	expect(open.empty).toBeUndefined();

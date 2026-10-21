@@ -15,7 +15,7 @@ import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import type { ConversationView, EntryRecord } from "@amazme/durable";
 import {
 	PROJECT_ADD_ACTION, PROJECT_ADD_MODAL, PROJECT_SELECT_ACTION, PROJECT_RENAME_ACTION, PROJECT_RENAME_MODAL,
-	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION,
+	PROJECT_EDIT_ACTION, PROJECT_EDIT_MODAL, PROJECT_NEW_SESSION_ACTION, COMPOSER_PROJECT_ACTION,
 	PROJECT_REMOVE_ACTION, PROJECT_REMOVE_MODAL, SESSION_ARCHIVE_OPEN_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION,
 	SESSION_ARCHIVE_MODAL, archiveSessionModal,
 	addProjectModal, editProjectModal, renameProjectModal, removeProjectModal,
@@ -902,6 +902,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	const suggestions = new PromptSuggestionController(() => paint());
 	const sessionDrafts = new Map<string, { readonly text: string; readonly images: readonly PendingImage[] }>();
 	let draftSessionId: string | undefined;
+	let draftEpoch = 0;
 	const saveDraft = (): void => {
 		if (draftSessionId !== undefined) sessionDrafts.set(draftSessionId, { text: draft, images: pending });
 	};
@@ -1093,6 +1094,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					desktop: typeof window !== "undefined" && window.amazmeDesktop !== undefined,
 					creatingSession: creating,
 					selectedProjectId,
+					newSessionDraft: desiredSessionId === undefined && client.connected && directoryReady,
 					directory: directoryReady ? directory.state.value : undefined,
 					transcript,
 					focus: bound ? focusedLabel() : undefined,
@@ -1106,7 +1108,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					thinkingLevels: bound ? painter.levels : undefined,
 					modelPending: modelSelection !== undefined && modelSelection.binding === painter.binding,
 					submitMode,
-					attachments: bound ? pending : [],
+					attachments: bound || desiredSessionId === undefined ? pending : [],
 					approvals: bound ? painter.approvals : undefined,
 					feedback: feedback.state.value,
 					// Durable entry ids are per conversation, so the ratings are scoped to the one shown.
@@ -1334,6 +1336,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	 */
 	const transition = sessionTransitions();
 	const clearSession = async (): Promise<void> => {
+		draftEpoch += 1;
 		selectionRevision += 1;
 		allowArchivedAttach = false;
 		desiredSessionId = undefined;
@@ -1372,6 +1375,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	const selectSession = (sessionId: string, resume = false): Promise<void> => {
 		if (!resume) {
+			draftEpoch += 1;
 			selectionRevision += 1;
 			const summary = directory.state.value?.sessions.find(session => session.sessionId === sessionId);
 			if (summary?.archivedAt === undefined) allowArchivedAttach = false;
@@ -1409,6 +1413,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 				await management.attach(sessionId, BACKGROUND_CONTEXT);
 				await sessionSource.whenAttached(sessionId, BACKGROUND_CONTEXT);
 				if (!client.connected || desiredSessionId !== sessionId || !canResumeSession(sessionId)) return;
+				// A newly created session can reach the directory after the selection began.
+				const summary = directory.state.value?.sessions.find(session => session.sessionId === sessionId);
+				if (summary !== undefined) { selectedProjectId = summary.projectId; rememberSelection(); }
 				await painter.attach(sessionId, paint);
 			});
 			if (desiredSessionId !== sessionId || client.attachment?.sessionId !== sessionId || !painter.ready) return;
@@ -1429,38 +1436,48 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			);
 		});
 	};
-	// The host creates the session; the roster shows it from the replicated directory. A second
-	// click while the first create is in flight would make a second session, so this one is one-shot.
-	/** Create a session and attach it. The project row and the shortcut share this path. */
-	const createSession = (): void => {
+	const newChat = (): void => {
 		if (creating || !client.connected || !directoryReady) return;
-		const known = directory.state.value?.projects;
-		if (selectedProjectId !== null && known !== undefined && !known.some(project => project.id === selectedProjectId && !project.removed)) {
-			selectedProjectId = known.find(project => !project.removed)?.id ?? null;
-		}
-		const projectId = selectedProjectId;
-		desiredSessionId = undefined;
+		view = CHAT_VIEW;
+		modal = undefined;
+		providerAuthView = undefined;
+		creating = true;
+		const clearing = clearSession();
+		const selection = selectionRevision;
+		paint();
+		void clearing.catch(report).finally(() => {
+			creating = false;
+			paint();
+			if (selection === selectionRevision && desiredSessionId === undefined) renderer.setDraft("", true);
+		});
+	};
+	/** A draft owns the target choice; only the first send allocates and attaches a session. */
+	const createSessionForPrompt = (text: string): void => {
+		if (creating || !client.connected || !directoryReady) return;
+		const projectId = selectedProjectId ?? null;
 		const selection = ++selectionRevision;
-		allowArchivedAttach = false;
-		rememberSelection();
+		const images = pending;
+		let createdId: string | undefined;
 		creating = true;
 		paint();
-		void management.create({ reuseEmpty: true, ...(projectId === undefined ? {} : { projectId }) }, BACKGROUND_CONTEXT)
-			.then(async (created) => {
+		void management.create({ projectId }, BACKGROUND_CONTEXT)
+			.then(async created => {
+				createdId = created.sessionId;
+				sessionDrafts.set(created.sessionId, { text, images });
 				if (selectionRevision !== selection) return;
 				await selectSession(created.sessionId);
-				view = CHAT_VIEW;
-				modal = undefined;
+				if (desiredSessionId !== created.sessionId || !sessionReady()) return;
+				renderer.setDraft("", false);
+				renderer.onSubmit(text);
 			})
 			.catch((error: unknown) => {
+				if (createdId !== undefined && desiredSessionId === createdId) restoreDraft(createdId);
+				else if (selectionRevision === selection) renderer.setDraft(text, false);
 				renderer.setConnection(copy("page.newSessionFailed", { error: message(error) }), "error");
 			})
-			.finally(() => {
-				creating = false;
-				paint();
-			});
+			.finally(() => { creating = false; paint(); });
 	};
-	renderer.onCreateSession = createSession;
+	renderer.onCreateSession = newChat;
 	renderer.onBrowseDirectories = async path => {
 		if (!client.connected) throw new Error(copy("connection.hostGone"));
 		await serverServices.ready(BACKGROUND_CONTEXT);
@@ -1477,7 +1494,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 			return;
 		}
 		if (id === "session.new") {
-			createSession();
+			newChat();
 			return;
 		}
 		if (id === "composer.focus") {
@@ -1563,6 +1580,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 	renderer.onAttachFiles = (files) => {
 		const sessionId = draftSessionId;
+		const epoch = draftEpoch;
 		void (async () => {
 			const added: PendingImage[] = [];
 			for (const file of files) {
@@ -1594,7 +1612,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 					renderer.setConnection(copy("page.attachmentFailed", { name: file.name }), "error");
 				}
 			}
-			if (added.length === 0) return;
+			if (added.length === 0 || (sessionId === undefined && epoch !== draftEpoch)) return;
 			if (sessionId !== draftSessionId) {
 				if (sessionId !== undefined) {
 					const saved = sessionDrafts.get(sessionId);
@@ -1670,6 +1688,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 	};
 
 	renderer.onSubmit = (text) => {
+		if (desiredSessionId === undefined) { createSessionForPrompt(text); return; }
 		if (!client.connected || !painter.ready || painter.sessionId !== desiredSessionId) {
 			renderer.setDraft(text, false);
 			return;
@@ -2060,7 +2079,13 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						openModal(addProjectModal(locale), action); return;
 					case PROJECT_NEW_SESSION_ACTION:
 						if (creating || !directoryReady || !client.connected) return;
-						selectedProjectId = action.data ?? null; rememberSelection(); createSession(); return;
+						selectedProjectId = action.data ?? null; newChat(); return;
+					case COMPOSER_PROJECT_ACTION:
+						if (desiredSessionId !== undefined || creating || !client.connected || !directoryReady) return;
+						if (action.data !== undefined && !directory.state.value?.projects?.some(project => project.id === action.data && !project.removed)) return;
+						selectedProjectId = action.data ?? null;
+						selectionRevision += 1;
+						rememberSelection(); paint(); return;
 					case PROJECT_EDIT_ACTION: {
 						const project = directory.state.value?.projects?.find(project => project.id === action.data);
 						if (project) openModal(editProjectModal(locale, project), action); return;
@@ -2231,7 +2256,7 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 						paint();
 						return;
 					case WELCOME_SESSION_ACTION:
-						createSession();
+						newChat();
 						return;
 					case WELCOME_SETTINGS_ACTION:
 						view = SETTINGS_VIEW;
@@ -2644,7 +2669,9 @@ export async function startPage(renderer: PageRenderer): Promise<Client | undefi
 								? await projects.update(action.data ?? "", { name: fields.name!.trim(), workspaces: folders }, BACKGROUND_CONTEXT)
 								: await projects.create({ cwd: folders[0]!, name: fields.name!.trim(), workspaces: folders }, BACKGROUND_CONTEXT);
 							if (action.id === PROJECT_ADD_MODAL && selectionRevision === selection && modal === dialog) {
-								selectedProjectId = project.id; allowArchivedAttach = false; await clearSession();
+								selectedProjectId = project.id; allowArchivedAttach = false;
+								if (desiredSessionId === undefined) { selectionRevision += 1; rememberSelection(); }
+								else await clearSession();
 							}
 							return { ok: true as const };
 						} }); return;

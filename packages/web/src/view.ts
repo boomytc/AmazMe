@@ -465,6 +465,13 @@ export interface WebView {
 	/** Whether a turn is in flight: the stop control stays on screen until it settles. */
 	readonly busy: boolean;
 	readonly newSession: NewSessionAffordance;
+	/** Only an unsent new chat can choose a project. Existing sessions keep their ownership. */
+	readonly sessionDraft?: {
+		readonly projectId: string | null;
+		readonly label: string;
+		readonly projects: readonly { readonly id: string; readonly name: string }[];
+		readonly disabled: boolean;
+	};
 	readonly model: ModelPicker;
 	readonly modelPending?: boolean;
 	/** The sidebar's navigation and the management panel the main area shows. */
@@ -546,6 +553,7 @@ export interface WebViewInput {
 	readonly locale: Locale;
 	readonly directory: SessionDirectoryLike | undefined;
 	readonly selectedProjectId?: string | null;
+	readonly newSessionDraft?: boolean;
 	readonly transcript: ConversationView | undefined;
 	readonly attachedId: string | undefined;
 	readonly now: number;
@@ -1524,7 +1532,13 @@ export function buildWebView(input: WebViewInput): WebView {
 	return {
 		locale,
 		roster,
-		projects: projectGroups(locale, input.directory, roster, input.selectedProjectId, input.rosterFilter),
+		projects: projectGroups(input.directory, roster, input.selectedProjectId, input.rosterFilter),
+		...(input.newSessionDraft && input.directory !== undefined ? { sessionDraft: {
+			projectId: input.selectedProjectId ?? null,
+			label: input.directory.projects?.find(project => project.id === input.selectedProjectId)?.name ?? translate(locale, "project.standalone"),
+			projects: (input.directory.projects ?? []).filter(project => !project.removed),
+			disabled: input.creatingSession === true,
+		} } : {}),
 		...(archivedAttached === undefined ? {} : { archivedAttached }),
 		...(readOnly ? { readOnly: true } : {}),
 		rosterFilter: input.rosterFilter,
@@ -1553,11 +1567,11 @@ export function buildWebView(input: WebViewInput): WebView {
 		approvalIndicator: approvalIndicator(locale, input.approvals),
 		welcome: welcomeCard(locale, {
 			// Only a host that answered offers the guide, and a session means the reader is past it.
-			show: input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
+			show: !input.newSessionDraft && input.showWelcome && input.directory !== undefined && (input.directory.sessions.length ?? 0) === 0,
 		}),
 		run: runControls(locale, input.submitMode, input.attachedId !== undefined && !readOnly, forkable),
 		attachedId: input.attachedId,
-		sessionLabel: attachedSessionLabel(input.directory, input.attachedId, locale),
+		sessionLabel: input.newSessionDraft ? translate(locale, "sidebar.newChat") : attachedSessionLabel(input.directory, input.attachedId, locale),
 		meter: statusMeter(input.transcript, input.models),
 		empty,
 		busy: isBusy(input.transcript),
