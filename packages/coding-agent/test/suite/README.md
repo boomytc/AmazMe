@@ -1,10 +1,9 @@
-# Coding agent suite tests
+# Coding agent regression suite
 
-Use `test/suite/` for the new harness-based test suite around `AgentSession` and `AgentSessionRuntime`.
+`test/suite/regressions/` holds issue-numbered regression tests for the coding agent.
 
-Rules:
-- Use `test/suite/harness.ts`
-- Use the faux provider from `packages/ai/src/providers/faux.ts`
-- Do not use real provider APIs, real API keys, network calls, or paid tokens
-- Keep these tests CI-safe and deterministic
-- Do not use or extend the legacy `test/test-harness.ts` path unless a missing capability forces it
+- Run them through `npm test --workspace @amazme/coding-agent`, or one file with
+  `npx vitest --run test/suite/regressions/<file>` from the package directory.
+- Keep provider-bound tests deterministic and offline by using the faux provider from
+  `@amazme/ai`; tests that need real credentials must stay gated and skipped without them.
+- `test/mcp-conformance/` is a separate suite for MCP protocol conformance.
