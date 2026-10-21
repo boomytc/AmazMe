@@ -430,7 +430,7 @@ async function openWindow(pageUrl: string, sessionId: string | undefined = undef
 	const created = new BrowserWindow({
 		width: 1440,
 		height: 920,
-		minWidth: 960,
+		minWidth: 1024,
 		minHeight: 640,
 		show: false,
 		title: APP_NAME,

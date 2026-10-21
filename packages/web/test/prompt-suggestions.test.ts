@@ -87,11 +87,8 @@ test("full suggestion preview is literal, never accepts or submits, and tracks c
 	expect(document.activeElement).toBe(elements.prompt); expect(dismiss).toHaveBeenCalledOnce();
 });
 
-test("touch accept text is localized and the preview hides when the draft is filled", () => {
-	const { renderer, elements, submit } = setup();
-	expect(document.querySelector(".suggestion-touch-label")?.textContent).toBe("填入");
-	renderer.render({ ...view(), locale: "en" });
-	expect(document.querySelector(".suggestion-touch-label")?.textContent).toBe("Use draft");
+test("accepting the suggestion hides the preview and fills the draft without sending", () => {
+	const { elements, submit } = setup();
 	document.querySelector<HTMLButtonElement>("#suggestion-preview-toggle")!.click();
 	document.querySelector<HTMLButtonElement>("#suggestion-accept")!.click();
 	expect(document.querySelector<HTMLElement>("#suggestion-preview")?.hidden).toBe(true);

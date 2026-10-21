@@ -74,10 +74,9 @@ export interface PageElements {
 	readonly sectionSearch: HTMLElement;
 	readonly sectionSearchInput: HTMLInputElement;
 	readonly sectionSearchClear: HTMLButtonElement;
-	/** The sidebar, the control that collapses it, and the scrim behind it while it is a drawer. */
+	/** The sidebar and the control that collapses it. */
 	readonly sidebar: HTMLElement;
 	readonly sidebarToggle: HTMLButtonElement;
-	readonly scrim: HTMLElement;
 	/** The main column. Its state (`data-state`) drives the empty layout. */
 	readonly center: HTMLElement;
 	readonly roster: HTMLElement;
@@ -199,7 +198,6 @@ export function collectPageElements(): PageElements {
 		sectionSearchClear: pickElement("section-search-clear", HTMLButtonElement),
 		sidebar: pick("sidebar"),
 		sidebarToggle: pickElement("sidebar-toggle", HTMLButtonElement),
-		scrim: pick("scrim"),
 		center: pick("center"),
 		roster: pick("roster"),
 		transcript: pick("transcript"),
@@ -581,13 +579,6 @@ const DOCK_ICONS: Record<DockTabId, IconName> = {
 	tasks: "activity",
 	changes: "git-fork",
 };
-
-/** Below 1024px the sidebar and the dock are drawers over the conversation, not columns. */
-const NARROW_QUERY = "(max-width: 1023px)";
-
-function isNarrow(): boolean {
-	return typeof window.matchMedia === "function" && window.matchMedia(NARROW_QUERY).matches;
-}
 
 /** Whether this control is the one whose call the page has in flight. */
 function isPending(pending: PanelPending | undefined, action: { readonly id: string; readonly data?: string }): boolean {
@@ -1694,7 +1685,6 @@ export function createRenderer(
 			if (item.active) row.setAttribute("aria-current", "page");
 			row.append(icon(NAV_ICONS[item.glyph]));
 			row.addEventListener("click", () => {
-				closeSidebarDrawer();
 				report({ kind: "open", panel: item.id });
 			});
 			elements.nav.append(row);
@@ -1709,13 +1699,12 @@ export function createRenderer(
 		else elements.settingsButton.removeAttribute("aria-current");
 	};
 
-	/** The sidebar is a column on a wide window and a drawer on a narrow one; this reads which. */
-	const sidebarExpanded = (): boolean =>
-		isNarrow() ? document.body.classList.contains("sidebar-open") : !document.body.classList.contains("sidebar-collapsed");
+	/** The sidebar is a grid column: either collapsed out of the grid or expanded in it. */
+	const sidebarExpanded = (): boolean => !document.body.classList.contains("sidebar-collapsed");
 
 	/**
-	 * An open sidebar column holds the toggle in its own header: the session brand, or the section
-	 * title. A closed drawer leaves it in the main header; an open drawer owns its close control.
+	 * An expanded sidebar holds the toggle in its own header: the session brand, or the section
+	 * title. A collapsed one leaves it in the main header.
 	 */
 	const placeSidebarToggle = (): void => {
 		const headerStart = elements.sessionTitle.closest(".header-start");
@@ -1734,55 +1723,19 @@ export function createRenderer(
 		else host.append(elements.sidebarToggle);
 	};
 
-	let activeDrawer: HTMLElement | undefined;
 	const syncSidebarToggle = (): void => {
-		const narrow = isNarrow();
-		// Drawer flags do not apply to wide columns or coexist with the visible dock.
-		if (!narrow || !elements.dock.hidden || document.body.classList.contains("library-open")) document.body.classList.remove("sidebar-open");
 		if (document.body.classList.contains("library-open")) {
 			elements.sidebarToggle.setAttribute("aria-expanded", "false");
-			elements.center.inert = false;
-			elements.sidebar.inert = true;
-			elements.dock.inert = true;
-			activeDrawer = undefined;
 			return;
 		}
-		const expanded = sidebarExpanded();
-		const drawer = !narrow ? undefined : !elements.dock.hidden ? elements.dock : expanded ? elements.sidebar : undefined;
-		const previous = activeDrawer;
-		activeDrawer = drawer;
-		elements.sidebarToggle.setAttribute("aria-expanded", String(expanded));
-		// Move the close control into an open drawer before making the covered page inert.
-		if (expanded) elements.sidebar.inert = false;
+		elements.sidebarToggle.setAttribute("aria-expanded", String(sidebarExpanded()));
 		placeSidebarToggle();
-		elements.center.inert = drawer !== undefined;
-		elements.sidebar.inert = !expanded || drawer === elements.dock;
-		elements.dock.inert = drawer === elements.sidebar;
-		if (drawer === previous || elements.modalRoot.open) return;
-		if (drawer === elements.dock) elements.dockTabs.querySelector<HTMLButtonElement>('[role="tab"][aria-selected="true"]')?.focus({ preventScroll: true });
-		else if (drawer === elements.sidebar) {
-			if (!elements.sectionSearch.hidden) elements.sectionSearchInput.focus({ preventScroll: true });
-			else elements.sidebarToggle.focus({ preventScroll: true });
-		} else if (previous && (previous === elements.dock ? elements.dock.hidden : !expanded) && (previous.contains(document.activeElement) || document.activeElement === document.body)) {
-			const trigger = previous === elements.dock
-				? elements.runActions.querySelector<HTMLButtonElement>(`[data-action="${DOCK_TOGGLE_ACTION}"]`)
-				: elements.sidebarToggle;
-			if (trigger && !trigger.closest("[hidden], [inert]")) trigger.focus({ preventScroll: true });
-		}
 	};
 
-	/** A column collapses and expands; a drawer slides in and out. */
+	/** Collapsing the sidebar hands its grid track to the conversation. */
 	const toggleSidebar = (): void => {
 		if (document.body.classList.contains("library-open")) return;
-		if (isNarrow() && !sidebarExpanded() && !elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
-		document.body.classList.toggle(isNarrow() ? "sidebar-open" : "sidebar-collapsed");
-		syncSidebarToggle();
-	};
-
-	/** A drawer closes once the reader has used it. On a wide window the sidebar stays where it is. */
-	const closeSidebarDrawer = (): void => {
-		if (!isNarrow()) return;
-		document.body.classList.remove("sidebar-open");
+		document.body.classList.toggle("sidebar-collapsed");
 		syncSidebarToggle();
 	};
 
@@ -1841,7 +1794,6 @@ export function createRenderer(
 		sections.set(panelId, groupId);
 		locatedRow = rowId === undefined ? undefined : { groupId, rowId };
 		locatedScrolled = false;
-		closeSidebarDrawer();
 		renderPanelView(current);
 		if (rowId === undefined) elements.view.scrollTop = 0;
 	};
@@ -1896,9 +1848,9 @@ export function createRenderer(
 		const was = document.body.classList.contains("library-open");
 		document.body.classList.toggle("library-open", library);
 		if (libraryNav) libraryNav.hidden = !library || view.panel.panel?.id !== SETTINGS_VIEW;
-		elements.sidebarToggle.hidden = library && !isNarrow();
+		elements.sidebarToggle.hidden = library;
 		syncSidebarToggle();
-		if (library && !was && !isNarrow() && view.panel.panel?.id === SETTINGS_VIEW) {
+		if (library && !was && view.panel.panel?.id === SETTINGS_VIEW) {
 			elements.sectionSearch.hidden = false;
 			elements.sectionSearchInput.focus({ preventScroll: true });
 		}
@@ -2496,7 +2448,6 @@ export function createRenderer(
 		select.append(name, age);
 		select.addEventListener("click", () => {
 			closeSessionMenu();
-			closeSidebarDrawer();
 			renderer.onSelect(item.id);
 		});
 		const more = button("session-more");
@@ -2842,7 +2793,6 @@ export function createRenderer(
 		if (!candidate) { elements.prompt.removeAttribute("aria-describedby"); return; }
 		suggestion.querySelector<HTMLElement>(".suggestion-text")!.textContent = candidate.text;
 		acceptSuggestion.querySelector<HTMLElement>("kbd")!.textContent = copy("composer.tabAccept");
-		acceptSuggestion.querySelector<HTMLElement>(".suggestion-touch-label")!.textContent = copy("composer.fillSuggestion");
 		previewSuggestion.title = copy("composer.previewSuggestion");
 		previewSuggestion.setAttribute("aria-label", previewSuggestion.title);
 		suggestionPreview.setAttribute("aria-label", previewSuggestion.title);
@@ -3698,9 +3648,6 @@ export function createRenderer(
 		revealTranscriptHit();
 	};
 	const openTranscriptSearch = (): void => {
-		// A narrow drawer makes the conversation inert; the search field lives in it.
-		if (document.body.classList.contains("sidebar-open")) closeSidebarDrawer();
-		if (isNarrow() && !elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 		if (elements.transcriptSearch.hidden) {
 			transcriptSearchReturnFocus =
 				document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
@@ -3752,7 +3699,6 @@ export function createRenderer(
 	});
 	// Selecting the current destination keeps that page open; the home icon returns to the conversation.
 	elements.settingsButton.addEventListener("click", () => {
-		closeSidebarDrawer();
 		report({
 			kind: "open",
 			panel: SETTINGS_VIEW,
@@ -3772,11 +3718,6 @@ export function createRenderer(
 	});
 	elements.viewBack.addEventListener("click", () => report({ kind: "open", panel: CHAT_VIEW }));
 	elements.sidebarToggle.addEventListener("click", toggleSidebar);
-	// A click on the scrim closes whichever drawer is open: the sidebar here, the dock through the page.
-	elements.scrim.addEventListener("click", () => {
-		closeSidebarDrawer();
-		if (!elements.dock.hidden) report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
-	});
 	elements.modelSelect.addEventListener("change", () => {
 		if (elements.modelSelect.disabled) return;
 		const option = lastView?.model.groups.flatMap(group => group.options).find(option => JSON.stringify([option.provider, option.modelId]) === elements.modelSelect.value);
@@ -3823,21 +3764,6 @@ export function createRenderer(
 				: [...turns].reverse().find((node) => node.getBoundingClientRect().top < top - 8);
 		(target ?? (direction > 0 ? turns[turns.length - 1] : turns[0]))?.scrollIntoView({ block: "start" });
 	};
-	/**
-	 * A software keyboard shrinks the visual viewport without changing dvh. Track the
-	 * covered height so the shell can shrink and keep the composer above it.
-	 */
-	const syncKeyboardInset = (): void => {
-		const viewport = window.visualViewport;
-		const inset =
-			viewport === null || viewport === undefined
-				? 0
-				: Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop);
-		document.documentElement.style.setProperty("--keyboard-inset", `${inset}px`);
-	};
-	window.visualViewport?.addEventListener("resize", syncKeyboardInset);
-	window.visualViewport?.addEventListener("scroll", syncKeyboardInset);
-	syncKeyboardInset();
 	// Desktop menu actions reuse the same entry points as the keyboard and the sidebar.
 	window.amazmeDesktop?.onMenuAction?.((action) => {
 		if (action === "new-session") renderer.onShortcut("session.new");
@@ -3845,7 +3771,6 @@ export function createRenderer(
 	});
 	document.addEventListener("selectionchange", scheduleQuoteAction);
 	document.addEventListener("mouseup", scheduleQuoteAction);
-	document.addEventListener("touchend", scheduleQuoteAction);
 	document.addEventListener("keyup", scheduleQuoteAction);
 	document.addEventListener("keydown", (event) => {
 		if (event.key === "Escape") hideQuoteAction();
@@ -3944,17 +3869,6 @@ export function createRenderer(
 			event.preventDefault();
 			clearSettingsQuery();
 			elements.sectionSearchInput.focus();
-			return;
-		}
-		if (document.body.classList.contains("sidebar-open")) {
-			event.preventDefault();
-			closeSidebarDrawer();
-			elements.sidebarToggle.focus();
-			return;
-		}
-		if (isNarrow() && !elements.dock.hidden) {
-			event.preventDefault();
-			report({ kind: "command", id: DOCK_TOGGLE_ACTION, data: undefined });
 			return;
 		}
 		// A suggestion is dismissed from anywhere in the conversation, not only from the composer.

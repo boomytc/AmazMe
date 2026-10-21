@@ -273,11 +273,9 @@ describe("settings page", () => {
 		const elements = collectPageElements();
 		const renderer = createRenderer(elements);
 		renderer.render(buildWebView(chat));
-		expect(elements.sidebar.inert).toBe(true);
 		expect(elements.sidebarToggle.closest("#session-sidebar")).toBeNull();
 		expect(elements.sidebarToggle.closest(".header")).not.toBeNull();
 		renderer.render(buildWebView(settings));
-		expect(elements.center.inert).toBe(false);
 		expect(document.activeElement).toBe(elements.sectionSearchInput);
 		expect(document.getElementById("library-nav")?.hidden).toBe(false);
 
@@ -355,54 +353,14 @@ describe("settings page", () => {
 	test.each([
 		{ name: "Cmd+F", metaKey: true, ctrlKey: false },
 		{ name: "Ctrl+F", metaKey: false, ctrlKey: true },
-	])("opens the narrow settings drawer before focusing search with $name", ({ metaKey, ctrlKey }) => {
-		const matchMedia = window.matchMedia.bind(window);
-		vi.spyOn(window, "matchMedia").mockImplementation((query) => {
-			const media = matchMedia(query);
-			Object.defineProperty(media, "matches", { value: query === "(max-width: 1023px)" });
-			return media;
-		});
+	])("the conversation owns the find chord with $name", ({ metaKey, ctrlKey }) => {
 		const elements = collectPageElements();
-		const focusStates: { inert: boolean; open: boolean }[] = [];
-		elements.sectionSearchInput.addEventListener("focus", () => {
-			focusStates.push({ inert: elements.sidebar.inert, open: document.body.classList.contains("sidebar-open") });
-		});
 		const renderer = createRenderer(elements);
 		renderer.render(buildWebView(chat));
-		renderer.render(buildWebView(settings));
-		expect(elements.sidebarToggle.hidden).toBe(false);
-		expect(document.body.classList.contains("sidebar-open")).toBe(false);
-		expect(elements.sidebar.inert).toBe(true);
-		expect(focusStates).toEqual([]);
-
-		const field = elements.sectionSearchInput;
-		field.value = "自动压缩";
-		field.dispatchEvent(new Event("input"));
-		const find = (): KeyboardEvent => {
-			const event = new KeyboardEvent("keydown", { code: "KeyF", metaKey, ctrlKey, bubbles: true, cancelable: true });
-			document.dispatchEvent(event);
-			return event;
-		};
-		expect(find().defaultPrevented).toBe(true);
-		expect(document.body.classList.contains("sidebar-open")).toBe(false);
-		expect(document.activeElement).toBe(field);
-		expect(field.selectionStart).toBe(0);
-		expect(field.selectionEnd).toBe(field.value.length);
-		expect(focusStates).toEqual([{ inert: true, open: false }]);
-
-		find();
-		expect(document.body.classList.contains("sidebar-open")).toBe(false);
-		field.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
-		expect(field.value).toBe("");
-		expect(document.body.classList.contains("sidebar-open")).toBe(false);
-
-		find();
-		expect(document.body.classList.contains("sidebar-open")).toBe(false);
-		expect(document.activeElement).toBe(field);
-		renderer.render(buildWebView(chat));
-		// The conversation owns the find chord too, opening its own search bar.
-		const chatFind = find();
-		expect(chatFind.defaultPrevented).toBe(true);
+		// The settings page focuses its own search field; the conversation opens its search bar.
+		const event = new KeyboardEvent("keydown", { code: "KeyF", metaKey, ctrlKey, bubbles: true, cancelable: true });
+		document.dispatchEvent(event);
+		expect(event.defaultPrevented).toBe(true);
 		expect(elements.transcriptSearch.hidden).toBe(false);
 		expect(document.activeElement).toBe(elements.transcriptSearchInput);
 	});

@@ -1,8 +1,9 @@
 /*
  * Page shell. A persistent icon rail, a contextual sidebar, the main page, and an optional session dock.
- * Below 1024px the sidebar and the dock become drawers over the conversation. On a wide window the
- * conversation sidebar can collapse; the settings page keeps its category column. Colours, radii,
- * and type sizes come from tokens.css; nothing here names a colour literal.
+ * The sidebar, the page, and the dock are grid columns; the sidebar and the dock can each be closed,
+ * handing their track back to the conversation. The layout targets desktop windows only, so no rule
+ * here reacts to touch pointers, safe areas, or a narrow viewport. The settings page keeps its category
+ * column. Colours, radii, and type sizes come from tokens.css; nothing here names a colour literal.
  */
 
 :root {
@@ -109,16 +110,12 @@ body.library-open.sidebar-collapsed.dock-open {
 
 body.library-open .sidebar,
 body.library-open #dock,
-body.library-open .scrim,
 body.library-open .header {
 	display: none;
 }
 
-@media (min-width: 1024px) {
-	body.sidebar-collapsed .sidebar {
-		display: none;
-	}
-
+body.sidebar-collapsed .sidebar {
+	display: none;
 }
 
 button,
@@ -806,24 +803,6 @@ p {
 	border-top: 1px solid var(--line);
 	margin-top: 4px;
 }
-@media (hover: none) {
-	.session-more {
-		opacity: 1;
-		width: 44px;
-		height: 44px;
-	}
-	.session-select {
-		min-height: 44px;
-		padding-right: 48px;
-	}
-	.session-age {
-		display: none;
-	}
-	.session-menu-item {
-		min-height: 44px;
-	}
-}
-
 .empty-state {
 	margin: 0;
 	padding: 6px 10px;
@@ -1396,12 +1375,6 @@ p {
 	opacity: 1;
 }
 
-@media (hover: none) {
-	.turn-actions {
-		opacity: 1;
-	}
-}
-
 .message-action {
 	display: inline-flex;
 	align-items: center;
@@ -1460,13 +1433,6 @@ p {
 .process-alert { color: var(--danger); }
 .turn-process[data-open="true"] .process-activity { display: none; }
 .process-rows { margin: 4px 0 8px 10px; padding-left: 16px; border-left: 1px solid var(--line); }
-@media (max-width: 640px) {
-	.process-heading { gap: 4px; align-items: flex-start; }
-	.process-meta { flex-basis: 100%; margin-left: 22px; }
-	.process-jump { margin-top: 3px; }
-	.process-rows { margin-left: 6px; padding-left: 10px; }
-}
-
 .disclosure {
 	display: flex;
 	flex-direction: column;
@@ -2286,10 +2252,6 @@ p {
 	.connection-list { max-height: 28dvh; }
 	.connection-detail { padding-inline-start: 0; border-inline-start: 0; padding-top: 20px; border-top: 1px solid var(--line); }
 }
-@media (max-width: 900px) {
-	.composer-model-picker { max-width: 180px; }
-}
-
 /* Approvals, the queued inputs and the command palette share one scrollable block: a long draft plus
    several cards cannot push the composer off the bottom of a short window. */
 .composer-extras {
@@ -2668,7 +2630,6 @@ p {
 }
 
 .composer-editor { position: relative; min-width: 0; }
-.suggestion-touch-label { display: none; }
 .suggestion-preview-toggle {
 	pointer-events: auto; display: grid; place-items: center; flex: none; width: 28px; height: 28px;
 	padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-3); cursor: pointer;
@@ -3196,7 +3157,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .file-line-code { padding-right: 12px; font: inherit; white-space: pre; }
 .file-source-code.wrap .file-source-line { width: 100%; }
 .file-source-code.wrap .file-line-code { white-space: pre-wrap; overflow-wrap: anywhere; }
-@media (pointer: coarse) { .file-entry { min-height: 44px; } .file-crumb, .file-icon-button { min-height: 40px; } }
 
 /* ------------------------------------------------------------- management */
 
@@ -3238,9 +3198,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 @supports not (padding-top: 1cap) {
 	.library-frame { padding-top: 16px; }
-	@media (max-width: 1023px) {
-		body.library-open .library-frame { padding-top: calc(env(safe-area-inset-top) + 16px); }
-	}
 }
 
 .library-nav {
@@ -4085,185 +4042,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .modal-foot .is-footer-start { margin-right: auto; }
 
-/* ---------------------------------------------------------- drawers (narrow) */
-
-.scrim {
-	display: none;
-}
-
-/* Below 1024px the sidebar and the dock are drawers over the conversation: they slide in from their
-   edge, a scrim takes the rest of the window, and a click on the scrim closes them. */
-@media (max-width: 1023px) {
-	body,
-	body.dock-open,
-	body.sidebar-collapsed,
-	body.sidebar-collapsed.dock-open {
-		grid-template-columns: var(--rail-width) minmax(0, 1fr);
-	}
-
-	.sidebar {
-		position: fixed;
-		top: 0;
-		bottom: 0;
-		left: var(--rail-width);
-		z-index: 1050;
-		width: min(300px, calc(100vw - var(--rail-width) - 24px));
-		transform: translateX(-104%);
-		transition: transform 200ms var(--ease);
-		background: var(--sidebar);
-		box-shadow: var(--shadow-popover);
-	}
-
-	body.sidebar-open .sidebar {
-		transform: none;
-	}
-
-	.dock {
-		position: fixed;
-		top: 0;
-		right: 0;
-		bottom: 0;
-		z-index: 1050;
-		width: min(400px, calc(100vw - var(--rail-width)));
-		box-shadow: var(--shadow-popover);
-	}
-
-	body.sidebar-open .scrim,
-	body.dock-open .scrim {
-		position: fixed;
-		inset: 0;
-		z-index: 1040;
-		display: block;
-		background: var(--scrim);
-	}
-
-	.project-action,
-	.session-more {
-		opacity: 1;
-	}
-}
-
-@media (max-width: 640px) {
-	:root { --rail-width: 48px; }
-	.app-rail { padding-inline: 4px; }
-	.rail-button { width: 40px; height: 40px; }
-	.sidebar {
-		width: min(300px, calc(100vw - var(--rail-width) - 12px));
-	}
-	.brand,
-	.brand-filter[data-open="true"] {
-		height: 38px;
-	}
-	.header {
-		flex-wrap: wrap;
-		height: auto;
-		min-height: 52px;
-		gap: 6px 8px;
-		padding: 8px 10px 8px 8px;
-	}
-
-	.icon-button,
-	.crumb-back,
-	.header-action,
-	.file-icon-button,
-	.modal-close {
-		width: 38px;
-		height: 38px;
-		min-width: 38px;
-		min-height: 38px;
-	}
-
-	.composer-attach,
-	.stop,
-	.primary {
-		width: 38px;
-		height: 38px;
-		min-width: 38px;
-		min-height: 38px;
-	}
-
-	.composer-select,
-	.model-setup-button,
-	.transcript-latest,
-	.panel-button,
-	.panel-input,
-	.panel-select,
-	.dock-tab,
-	.meter-trigger {
-		min-height: 38px;
-		height: 38px;
-	}
-
-	.project-add,
-	.project-action,
-	.session-more,
-	.message-action {
-		min-width: 36px;
-		min-height: 36px;
-	}
-
-	.session-select {
-		min-height: 40px;
-		padding-right: 40px;
-	}
-
-	/* The title keeps the room on a phone: the lane line steps aside. */
-	.lane-status {
-		display: none;
-	}
-
-	.connection:not(.error) {
-		display: none;
-	}
-
-	.connection.error {
-		display: block;
-		flex: 0 0 100%;
-		margin-left: 0;
-		white-space: normal;
-		overflow-wrap: anywhere;
-	}
-
-	.approval-status {
-		margin-right: 2px;
-	}
-
-	.header-actions {
-		margin-right: 0;
-		gap: 4px;
-	}
-
-	.greeting {
-		font-size: 24px;
-		line-height: 32px;
-	}
-
-	.column {
-		max-width: calc(100cqi - 32px);
-	}
-
-	.composer-dock {
-		padding: 4px 10px 10px;
-	}
-
-	.composer {
-		padding: 10px 10px 8px 14px;
-		border-radius: 22px;
-	}
-
-	.bubble {
-		max-width: 88%;
-	}
-
-	.model-select { max-width: 160px; }
-
-	.view-body {
-		padding: 20px 16px 48px;
-	}
-	.library-open .view-body { padding-top: 0; }
-	.modal-root { padding: 12px; }
-}
-
 /* Shared reading actions keep code, recorded changes, source previews and output predictable. */
 .reader-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 4px; }
 .reader-meta { flex: 1; min-width: 0; overflow-wrap: anywhere; }
@@ -4297,58 +4075,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .message-action.copy-sensitive, .message-action.copy-masked { width: auto; height: auto; min-height: 28px; gap: 5px; padding: 4px 7px; }
 .message-action.copy-sensitive { color: var(--warn); }
 
-/* Touch controls remain usable without making desktop settings unnecessarily tall. */
-@media (pointer: coarse) {
-	.icon-button,
-	.crumb-back,
-	.header-action,
-	.composer-attach,
-	.composer-select,
-	.model-setup-button,
-	.stop,
-	.primary,
-	.transcript-latest,
-	.meter-trigger,
-	.dock-close,
-	.dock-tab,
-	.panel-button,
-	.panel-input,
-	.panel-select,
-	.modal-close,
-	.project-add,
-	.project-action,
-	.welcome-dismiss,
-	.panel-switch,
-	.reader-button,
-	.process-failures,
-	.process-toggle,
-	.process-jump,
-	.suggestion-accept,
-	.suggestion-preview-toggle,
-	.suggestion-dismiss,
-	.attachment-remove,
-	.credential-toggle,
-	.message-action,
-	.message-action.copy-sensitive,
-	.message-action.copy-masked {
-		min-width: 44px;
-		min-height: 44px;
-	}
-
-	.panel-input,
-	.panel-select,
-	.modal-input,
-	.modal-textarea { font-size: 16px; }
-
-	.project-action { opacity: 1; }
-	.turn-actions { height: auto; min-height: 44px; }
-	.composer-editor { min-height: 44px; }
-	.suggestion-accept { margin-top: 0; }
-	.suggestion-accept kbd { display: none; }
-	.suggestion-touch-label { display: inline; font: 12px/1.5 var(--font-sans); color: var(--text-2); }
-	.suggestion-text { padding-top: 10px; }
-}
-
 @media (prefers-reduced-motion: reduce) {
 	*,
 	*::before,
@@ -4365,18 +4091,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	}
 }
 
-/* A very short window: the padding around the transcript is the last room it can give back. */
-@media (max-height: 420px) {
-	.transcript {
-		padding: 0;
-	}
-
-	.center[data-state="empty"] .composer-dock {
-		padding-top: 8px;
-	}
-}
-
-/* A narrow chat column (a phone, or both side panels open) stacks the composer's controls by the
+/* A narrow chat column (both side panels open) stacks the composer's controls by the
    column's own width: the picture and the two pickers keep the first line, the send controls the
    second. The markup stays one row, so nothing has to move in the template. */
 @container (max-width: 600px) {
@@ -4535,41 +4250,4 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	outline: 2px solid var(--accent);
 	outline-offset: 3px;
 	border-radius: 8px;
-}
-@media (max-width: 640px) {
-	.transcript-search {
-		max-width: 180px;
-	}
-	.transcript-search-input {
-		width: 96px;
-	}
-}
-
-
-/* Notched displays: fixed chrome and the composer stay clear of the safe areas. */
-@media (max-width: 1023px) {
-	/* The software keyboard covers the visual viewport, not dvh; shrink the shell with it. */
-	body {
-		height: calc(100dvh - var(--keyboard-inset, 0px));
-	}
-	.sidebar {
-		padding-top: max(10px, env(safe-area-inset-top));
-		padding-bottom: max(12px, env(safe-area-inset-bottom));
-	}
-	.dock {
-		padding-bottom: env(safe-area-inset-bottom);
-	}
-	.composer-dock {
-		padding-bottom: max(10px, env(safe-area-inset-bottom));
-	}
-	.header {
-		padding-top: env(safe-area-inset-top);
-	}
-	body.library-open .library-frame {
-		padding-top: calc(env(safe-area-inset-top) + var(--inset) - (1lh - 1cap) / 2);
-	}
-	.app-rail {
-		padding-top: max(10px, env(safe-area-inset-top));
-		padding-bottom: max(10px, env(safe-area-inset-bottom));
-	}
 }

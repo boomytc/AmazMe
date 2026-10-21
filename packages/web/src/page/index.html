@@ -2,7 +2,6 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 		<title>AmazMe</title>
 		<link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
 		<link rel="icon" type="image/svg+xml" sizes="any" href="/app-icon.svg" />
@@ -99,7 +98,7 @@
 						</button>
 						<input class="roster-filter-input" id="roster-filter" type="search" autocomplete="off" spellcheck="false" placeholder="{{sidebar.filter}}" aria-label="{{sidebar.filter}}" hidden />
 					</div>
-					<!-- Open columns and drawers own their close control. A closed sidebar leaves its toggle in the main header. -->
+					<!-- An expanded sidebar owns its close control; a collapsed one leaves the toggle in the main header. -->
 					<button
 						class="icon-button"
 						type="button"
@@ -122,7 +121,6 @@
 				</div>
 			</div>
 		</aside>
-		<div class="scrim" id="scrim" aria-hidden="true"></div>
 		<main class="center" id="center" data-state="empty">
 			<header class="header">
 				<div class="header-start">
@@ -205,7 +203,7 @@
 					></textarea>
 					<div class="composer-suggestion" id="composer-suggestion" hidden>
 						<span class="suggestion-text"></span>
-						<button type="button" class="suggestion-accept" id="suggestion-accept"><kbd></kbd><span class="suggestion-touch-label"></span></button>
+						<button type="button" class="suggestion-accept" id="suggestion-accept"><kbd></kbd></button>
 						<button type="button" class="suggestion-preview-toggle" id="suggestion-preview-toggle" aria-controls="suggestion-preview" aria-expanded="false"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-more"></use></svg></button>
 						<button type="button" class="suggestion-dismiss" id="suggestion-dismiss"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg></button>
 					</div>
