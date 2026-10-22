@@ -367,6 +367,8 @@ export class DriverClient {
 	private tools = new Map<string, Tool>();
 	private opening?: Promise<void>;
 	private closing?: Promise<void>;
+	private readonly probeLifetime = new AbortController();
+	private readonly probes = new Set<Promise<CallToolResult>>();
 	private closed = false;
 	private readonly options: DriverOptions;
 
@@ -458,48 +460,55 @@ export class DriverClient {
 		signal: AbortSignal,
 	): Promise<CallToolResult> {
 		if (this.closed) throw new Error("Driver session is closed");
+		signal = AbortSignal.any([signal, this.probeLifetime.signal]);
 		signal.throwIfAborted();
 		const binary = this.options.command ?? (await resolveDriverBinary());
 		const bundle = await hostBundle(binary, signal);
 		if (bundle?.bundleId === "com.amazme.computer-use") {
-			const directory = await mkdtemp(join(tmpdir(), "amcu-permissions-"));
-			const output = join(directory, "result.json");
-			let report: unknown;
-			try {
-				const env = driverEnvironment();
-				await writeFile(output, "", { mode: 0o600 });
-				await execute(
-					"/usr/bin/open",
-					[
-						...applicationArguments(bundle.path, env),
-						"--stdout",
-						output,
-						"--stderr",
-						"/dev/null",
-						"--args",
-						"check-permissions",
-					],
-					{ signal, timeout: timeoutMs, env },
-				);
-				report = JSON.parse(await readFile(output, "utf8"));
-			} finally {
+			signal.throwIfAborted();
+			const probe = (async (): Promise<CallToolResult> => {
+				const directory = await mkdtemp(join(tmpdir(), "amcu-permissions-"));
+				const output = join(directory, "result.json");
+				let report: unknown;
 				try {
-					await stopPermissionProbe(bundle.executable, output);
+					const env = driverEnvironment();
+					await writeFile(output, "", { mode: 0o600 });
+					await execute(
+						"/usr/bin/open",
+						[
+							...applicationArguments(bundle.path, env),
+							"--stdout",
+							output,
+							"--stderr",
+							"/dev/null",
+							"--args",
+							"check-permissions",
+						],
+						{ signal, timeout: timeoutMs, env },
+					);
+					report = JSON.parse(await readFile(output, "utf8"));
 				} finally {
+					await stopPermissionProbe(bundle.executable, output);
 					await rm(directory, { recursive: true, force: true });
 				}
+				if (
+					!isRecord(report) ||
+					typeof report.accessibility !== "boolean" ||
+					typeof report.screen_recording !== "boolean"
+				)
+					throw new Error("Invalid host permission report");
+				report = { ...report, host_path: bundle.path, driver_path: binary };
+				return {
+					content: [{ type: "text", text: JSON.stringify(report) }],
+					structuredContent: report,
+				};
+			})();
+			this.probes.add(probe);
+			try {
+				return await probe;
+			} finally {
+				this.probes.delete(probe);
 			}
-			if (
-				!isRecord(report) ||
-				typeof report.accessibility !== "boolean" ||
-				typeof report.screen_recording !== "boolean"
-			)
-				throw new Error("Invalid host permission report");
-			report = { ...report, host_path: bundle.path, driver_path: binary };
-			return {
-				content: [{ type: "text", text: JSON.stringify(report) }],
-				structuredContent: report,
-			};
 		}
 		return this.call("check_permissions", {}, timeoutMs, signal);
 	}
@@ -635,8 +644,10 @@ export class DriverClient {
 	dispose(): Promise<void> {
 		if (this.closing) return this.closing;
 		this.closed = true;
+		this.probeLifetime.abort();
 		this.snapshot = undefined;
 		this.closing = (async () => {
+			await Promise.allSettled(this.probes);
 			if (this.client && this.supports("end_session"))
 				await this.client
 					.callTool(

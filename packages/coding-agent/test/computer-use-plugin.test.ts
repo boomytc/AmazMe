@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { chmod, copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+	chmod,
+	copyFile,
+	mkdir,
+	readFile,
+	rm,
+	stat,
+	writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -599,6 +607,7 @@ describe("driver observations and policy-bound actions", () => {
 			"hung-service",
 			"hung-probe-cancel",
 			"hung-probe-timeout",
+			"hung-probe-dispose",
 		])(
 		"owns an embedded host and joins its shutdown in %s mode without starting a service for diagnostics",
 		async (mode) => {
@@ -676,6 +685,18 @@ describe("driver observations and policy-bound actions", () => {
 					).toBeDefined(),
 				);
 				if (mode.endsWith("cancel")) controller.abort();
+				if (mode.endsWith("dispose")) {
+					try {
+						await driver.dispose();
+						const diagnostic = required(
+							(await events()).find((event) => event.event === "probe"),
+						);
+						expect(() => process.kill(required(diagnostic.pid), 0)).toThrow();
+					} finally {
+						controller.abort();
+						await rejected;
+					}
+				}
 				await rejected;
 				const diagnostic = required(
 					(await events()).find((event) => event.event === "probe"),
