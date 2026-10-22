@@ -14,6 +14,7 @@ import { streamSimple as streamSimpleBedrock } from "../src/api/bedrock-converse
 import { stream as streamOpenAICompletions } from "../src/api/openai-completions.ts";
 import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
 import type { Model } from "../src/types.ts";
+import { retryAssistantCall } from "../src/utils/retry.ts";
 
 // openai SDK APIError shape: "<status> status code (no body)" message, the
 // parsed body kept on `.error`.
@@ -34,6 +35,7 @@ const bedrockMock = vi.hoisted(() => ({
 
 const openaiMock = vi.hoisted(() => ({
 	// Default parsed body; individual tests may override before invoking.
+	status: 403,
 	parsedBody: { error: "blocked by gateway WAF" } as unknown,
 }));
 
@@ -41,7 +43,7 @@ vi.mock("openai", () => {
 	function throwingCreate() {
 		const promise = Promise.resolve(undefined) as unknown as { withResponse: () => Promise<never> };
 		promise.withResponse = async () => {
-			throw new FakeAPIError(403, openaiMock.parsedBody);
+			throw new FakeAPIError(openaiMock.status, openaiMock.parsedBody);
 		};
 		return promise;
 	}
@@ -134,6 +136,7 @@ async function drainResult(stream: {
 
 describe("provider error body passthrough (per-tier regression)", () => {
 	beforeEach(() => {
+		openaiMock.status = 403;
 		openaiMock.parsedBody = { error: "blocked by gateway WAF" };
 	});
 
@@ -170,6 +173,34 @@ describe("provider error body passthrough (per-tier regression)", () => {
 		expect(output.errorMessage).toContain("OpenAI API error (403)");
 		expect(output.errorMessage).toContain("blocked by gateway WAF");
 	});
+
+	it.each(["inappropriate content", "data_inspection_failed", "DataInspectionFailed"])(
+		"does not retry a gateway-wrapped content inspection rejection: %s",
+		async (reason) => {
+			openaiMock.status = 400;
+			openaiMock.parsedBody = {
+				message: "Provider returned error",
+				code: 400,
+				metadata: { raw: reason },
+			};
+			const produce = vi.fn(() =>
+				streamOpenAICompletions(completionsModel, context, { apiKey: "test" }).result(),
+			);
+			const onRetryScheduled = vi.fn();
+			const output = await retryAssistantCall(
+				produce,
+				{ enabled: true, maxRetries: 3, baseDelayMs: 0 },
+				undefined,
+				{ onRetryScheduled },
+			);
+
+			expect(output.stopReason).toBe("error");
+			expect(output.errorMessage).toContain("Provider returned error");
+			expect(output.errorMessage).toContain(reason);
+			expect(produce).toHaveBeenCalledTimes(1);
+			expect(onRetryScheduled).not.toHaveBeenCalled();
+		},
+	);
 
 	it("bedrock (body-blind) surfaces the gateway body instead of Unknown: UnknownError", async () => {
 		bedrockMock.sendError = Object.assign(new Error("UnknownError"), {

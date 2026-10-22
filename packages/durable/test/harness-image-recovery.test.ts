@@ -59,9 +59,15 @@ describe("durable image payload recovery", () => {
 		} finally { await harness.close(context); }
 	});
 
-	it.each(["inappropriate content", "data_inspection_failed", "DataInspectionFailed"])("preserves a content rejection without retrying or omitting attachments: %s", async reason => {
-		const setup = chatSetup();
-		const errorMessage = `400 Invalid image: ${reason}`;
+	it.each(["inappropriate content", "data_inspection_failed", "DataInspectionFailed"].flatMap(reason => [
+		{ errorMessage: `400 Invalid image: ${reason}`, deferred: false },
+		...[false, true].map(deferred => ({
+			errorMessage: `400 ${JSON.stringify({ message: "Provider returned error", code: 400, metadata: { raw: `Invalid image: ${reason}` } })}`,
+			deferred,
+		})),
+	]))("preserves a content rejection without retrying or omitting attachments: %j", async ({ errorMessage, deferred }) => {
+		const setup = chatSetup(deferred ? { deferred: { pendingFetches: 0, pollAfterMs: 1 } } : {});
+		if (deferred) setup.settings.stream = { deferred: true };
 		setup.settings.retry = { enabled: true, maxRetries: 3, baseDelayMs: 1 };
 		setup.faux.setResponses([
 			fauxAssistantMessage([], { stopReason: "error", errorMessage }),

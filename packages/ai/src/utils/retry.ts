@@ -266,6 +266,11 @@ export async function retryAssistantCall(
 export function isRetryableAssistantError(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || !message.errorMessage) return false;
 	const errorMessage = message.errorMessage;
-	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage)) return false;
+	if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage) || isContentInspectionRejection(errorMessage)) return false;
 	return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
+}
+
+/** Content inspection refusals remain terminal even inside a generic gateway error. */
+export function isContentInspectionRejection(errorMessage: string): boolean {
+	return /inappropriate content|data_?inspection_?failed/i.test(errorMessage);
 }

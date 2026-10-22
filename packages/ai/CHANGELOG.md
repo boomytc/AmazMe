@@ -12,7 +12,7 @@
 
 ### Fixed
 
-- 图片载荷回退识别 `inappropriate content`、`data_inspection_failed` 和 `DataInspectionFailed` 审查拒绝，保留原始错误与附件，不再误触发去图重试。
+- 普通重试和图片载荷回退共同识别 `inappropriate content`、`data_inspection_failed` 和 `DataInspectionFailed` 审查拒绝，包括网关包装的错误；保留原始错误与附件，不再误触发重试。
 - OpenRouter 聊天使用供应商报告的总费用，标记 totalFromProvider；无有效计费时回退目录估算。
 - 修正 Business 工作区额度与代理断流重试识别，状态码不再匹配长数字中的片段。
 - Anthropic 系统更新越过不发送的空 assistant 消息；刷新已退役模型目录。
