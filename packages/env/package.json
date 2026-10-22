@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/env",
-	"version": "0.3.2",
+	"version": "0.3.3",
 	"description": "Remote execution environments for AmazMe Durable: a small daemon deployed over SSH and its ExecutionEnv client",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -47,8 +47,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@amazme/chord": "0.3.2",
-		"@amazme/durable": "0.3.2"
+		"@amazme/chord": "0.3.3",
+		"@amazme/durable": "0.3.3"
 	},
 	"devDependencies": {
 		"shx": "0.3.4",
