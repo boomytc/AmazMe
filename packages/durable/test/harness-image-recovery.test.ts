@@ -59,6 +59,27 @@ describe("durable image payload recovery", () => {
 		} finally { await harness.close(context); }
 	});
 
+	it.each(["inappropriate content", "data_inspection_failed", "DataInspectionFailed"])("preserves a content rejection without retrying or omitting attachments: %s", async reason => {
+		const setup = chatSetup();
+		const errorMessage = `400 Invalid image: ${reason}`;
+		setup.settings.retry = { enabled: true, maxRetries: 3, baseDelayMs: 1 };
+		setup.faux.setResponses([
+			fauxAssistantMessage([], { stopReason: "error", errorMessage }),
+			fauxAssistantMessage("must not retry"),
+		]);
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		try {
+			const submission = await root.submit({ type: "input", content: [IMAGE] }, context);
+			expect(await submission.wait(context)).toMatchObject({ status: "unanswered", reason: "model_error" });
+			expect(setup.faux.state.callCount).toBe(1);
+			const entries = await allEntries(root);
+			expect(entries[0]?.model?.[0]).toMatchObject({ content: [IMAGE] });
+			const answer = entries.at(-1)?.model?.[0] as AssistantMessage;
+			expect(answer).toMatchObject({ stopReason: "error", errorMessage });
+			expect(answer.diagnostics?.some(diagnostic => diagnostic.type === "image_payload_recovery")).not.toBe(true);
+		} finally { await harness.close(context); }
+	});
+
 	it("resumes the committed recovery after restart without sending the rejected images again", async () => {
 		const storage = new ControlledStorage();
 		const setup = chatSetup();

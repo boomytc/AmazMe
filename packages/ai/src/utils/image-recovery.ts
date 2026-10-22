@@ -9,7 +9,7 @@ export function isImagePayloadRejection(message: AssistantMessage): boolean {
 	if (message.stopReason !== "error" || message.content.some(block => block.type !== "text" || block.text.trim().length > 0)) return false;
 	const error = message.errorMessage ?? "";
 	if (!/\bimage\b|\bimages\b/i.test(error)) return false;
-	if (/\b(?:401|403|408|429|5\d\d)\b|auth|api[_ -]?key|permission|forbidden|denied|safety|unsafe|moderation|policy|content[_ -]?filter|blocked|prohibited|restricted|responsible.?ai|quota|billing|rate[_ -]?limit|context|tokens?|timeout|network/i.test(error)) return false;
+	if (/\b(?:401|403|408|429|5\d\d)\b|auth|api[_ -]?key|permission|forbidden|denied|safety|unsafe|moderation|inappropriate content|data_?inspection_?failed|policy|content[_ -]?filter|blocked|prohibited|restricted|responsible.?ai|quota|billing|rate[_ -]?limit|context|tokens?|timeout|network/i.test(error)) return false;
 	return /invalid|unsupported|corrupt|malformed|decod|format|mime|dimensions?|resolution|too large|too many|exceed|size|payload.{0,30}reject|at most 0 image|are not enabled/i.test(error);
 }
 
