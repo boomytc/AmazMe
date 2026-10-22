@@ -66,7 +66,7 @@
 | `943a10e74` | 各模型目录保留按提示长度分档的价格 | 吸收 |
 | `dce4ae6f7` | 为 v1.1.0 核对 changelog | 吸收已落地条目；工具增减的当前实现与验证见 `ddaa0a034` 及产品计划，Bedrock OpenAI 推理档继续跟进 |
 | `a2eef9eb6` | 固定 Kimi K3 的 Moonshot 价格，并期望 Haiku 5.5 使用自适应思考 | 吸收 |
-| `70759f48b` | 处理 npm audit：`shx` 从 0.4.0 降到 0.3.4 | 吸收，`@amazme/gui` 的同一依赖一并降级 |
+| `70759f48b` | 处理 npm audit：降级 `shx`，版本选择见该上游提交 | 吸收，`@amazme/gui` 的同一依赖一并降级 |
 | `e91631070` | 测试改为等待流和 watcher 事件，不再固定 sleep | 吸收 |
 | `bf8d9c659` | 发布脚本可以跳过测试 | 跳过，本仓库没有根 `scripts/release.mjs`，也没有 `.pi/skills` |
 | `abe508e1b` | 发布 v1.1.0 | 吸收共享包的版本号和 changelog 分段；`@amazme/web` 与 `@amazme/gui` 仍是 1.0.4 |

@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/gui",
-	"version": "0.3.3",
+	"version": "0.3.4",
 	"private": true,
 	"type": "module",
 	"description": "Electron window that loads the existing AmazMe web host",
@@ -14,8 +14,8 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"dependencies": {
-		"@amazme/web": "0.3.3",
-		"@amazme/coding-agent": "0.3.3"
+		"@amazme/web": "0.3.4",
+		"@amazme/coding-agent": "0.3.4"
 	},
 	"devDependencies": {
 		"electron": "44.6.0",
