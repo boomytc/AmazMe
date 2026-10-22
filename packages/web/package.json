@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/web",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"private": true,
 	"type": "module",
 	"sideEffects": false,
@@ -39,7 +39,7 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"devDependencies": {
-		"@amazme/durable": "0.3.1",
+		"@amazme/durable": "0.3.2",
 		"happy-dom": "20.10.5"
 	}
 }

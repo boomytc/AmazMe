@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/server",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"description": "experimental server package for AmazMe",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -51,8 +51,8 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@amazme/chord": "0.3.1",
-		"@amazme/protocol": "0.3.1"
+		"@amazme/chord": "0.3.2",
+		"@amazme/protocol": "0.3.2"
 	},
 	"devDependencies": {
 		"shx": "0.3.4",

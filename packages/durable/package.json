@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/durable",
-	"version": "0.3.1",
+	"version": "0.3.2",
 	"description": "Durable conversation, task, and document runtime for AmazMe",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -191,13 +191,13 @@
 		"node": ">=22.19.0"
 	},
 	"dependencies": {
-		"@amazme/ai": "0.3.1",
-		"@amazme/chord": "0.3.1",
-		"@amazme/codemode": "0.3.1",
+		"@amazme/ai": "0.3.2",
+		"@amazme/chord": "0.3.2",
+		"@amazme/codemode": "0.3.2",
 		"@silvia-odwyer/photon": "0.3.3",
 		"diff": "8.0.4",
 		"typebox": "1.3.27",
-		"@amazme/telemetry": "0.3.1"
+		"@amazme/telemetry": "0.3.2"
 	},
 	"devDependencies": {
 		"fake-indexeddb": "6.2.6",
