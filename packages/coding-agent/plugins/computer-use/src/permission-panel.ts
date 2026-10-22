@@ -18,6 +18,12 @@ const execute = promisify(execFile);
 const hash = (bytes: string | Uint8Array) =>
 	createHash("sha256").update(bytes).digest("hex");
 
+export function permissionPanelKey(
+	signingIdentity = process.env.AMAZME_CUA_SIGNING_IDENTITY ?? "-",
+): string {
+	return hash(`${permissionPanelSource}\n${signingIdentity}`);
+}
+
 /** Also called by the optional runtime installer, so no compiler is needed when the panel is shown. */
 export async function preparePermissionPanel(
 	signingIdentity = process.env.AMAZME_CUA_SIGNING_IDENTITY ?? "-",
@@ -25,7 +31,7 @@ export async function preparePermissionPanel(
 ): Promise<string> {
 	if (process.platform !== "darwin")
 		throw new Error("The native permission panel requires macOS");
-	const key = hash(`${permissionPanelSource}\n${signingIdentity}`);
+	const key = permissionPanelKey(signingIdentity);
 	const output = join(
 		homedir(),
 		"Library/Caches/AmazMe/ComputerUse/permissions",

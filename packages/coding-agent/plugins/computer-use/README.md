@@ -46,17 +46,21 @@ amazme -e /path/to/AmazMe/packages/coding-agent/plugins/computer-use
 
 优先使用显式的可执行绝对路径：`AMAZME_CUA_DRIVER_PATH`，其次 `CUA_DRIVER_PATH`。未配置时探测：
 
-1. macOS 的 `~/Library/Application Support/AmazMe/ComputerUse/` 共享组件及其版本子目录。
-2. 同结构的 PilotDeck 组件、`/Applications/CuaDriver.app/Contents/MacOS/cua-driver` 和 PilotDeck 应用内组件。
-3. `~/.local/bin/cua-driver`（Windows 为 `.exe`），以及 `PATH`。
+1. AmazMe 托管安装目录：macOS 为 `~/Library/Application Support/AmazMe/ComputerUse/`，Linux/Windows 为 `~/.local/share/AmazMe/ComputerUse/`。按源码清单明确选择版本，不扫描目录排序：macOS 依次为 `0.34.1-amazme.2`、旧补丁 `0.34.1-amazme.1`、原版 `0.34.1`；其他平台选择固定原版。
+2. `~/.local/bin/cua-driver`（Windows 为 `.exe`），以及 `PATH`。
 
+托管目录在安装复用和运行发现时使用同一个校验器，检查平台、架构、来源、文件哈希及 macOS 签名。已存在的优先版本缺少 manifest 或校验失败时直接报错，不悄悄退回另一份驱动。未列入清单的版本、开发目录和 PilotDeck 安装不会自动选中；使用外部运行时需显式设置路径。
 已有 `.app` 使用它自身的身份；AmazMe/PilotDeck 的宿主可通过 `.app/Contents/Info.plist` 中的入口识别，经 LaunchServices 在后台启动，以私有 socket 和权限为 `0600` 的 stdin FIFO 管理 embedded Driver，再用 stdio MCP 代理连接。调用方关闭或退出后，FIFO 的 EOF 通知宿主结束；卡住时只终止匹配当前私有 socket 的宿主和服务进程，并等待退出。直接执行 bundle 内入口会继承终端的权限归属，因此服务和只读权限诊断都通过 LaunchServices 启动。普通独立驱动执行 `cua-driver mcp`。进程只接收必要的系统/桌面会话环境，不转发模型密钥，并关闭 Driver 遥测。
 
-可选的一键准备脚本固定下载 `0.34.1`，验证对应平台的 SHA-256 后安装，不参与常规构建：
+仓库准备入口在 macOS 安装当前补丁修订版；优先复用经过校验的旧补丁驱动，重建宿主、版本标识和签名。没有旧补丁时需要 `--source /path/to/cua`。其他平台固定下载原版 `0.34.1`，验证 SHA-256 后安装；均不参与常规包构建：
 
 ```bash
 node scripts/prepare-computer-use.mjs
-# 安装后的 npm 包也包含插件内脚本：
+# 首次从源码构建 macOS 补丁：
+node scripts/prepare-computer-use.mjs --source /path/to/cua
+# 安装后的 npm 包也包含独立脚本：
+node /path/to/coding-agent/plugins/computer-use/scripts/prepare-patched-computer-use.mjs --source /path/to/cua
+# 需要原版时显式运行：
 node /path/to/coding-agent/plugins/computer-use/scripts/prepare-computer-use.mjs
 ```
 
@@ -72,7 +76,20 @@ node packages/coding-agent/plugins/computer-use/scripts/prepare-patched-computer
 
 脚本只导出上游提交 `0c69d9a2c8abbb5051a2df4a23f0fa166d5385dc` 的 Git 对象，应用随插件提供的补丁，以固定工具链和 Cargo.lock 构建 release 驱动；不使用或修改该仓库的工作区。需要 Rust/rustup、Git 与 Xcode Command Line Tools，首次构建需要下载工具链和依赖。过程宏保留调试信息以避开 [Rust 的 macOS LINKEDIT 问题](https://github.com/rust-lang/rust/issues/157750)，最终驱动仍使用 release 优化。
 
-补丁版安装到 `~/Library/Application Support/AmazMe/ComputerUse/0.34.1-amazme.1/`，保留原版；自动发现会优先选它，显式路径配置仍优先。安装记录保存源码提交、补丁及驱动、宿主、Info.plist 的 SHA-256，复用时还核验应用签名；不同内容拒绝覆盖。重复运行无需源码和联网。新签名可能需要为该目录下的应用重新授予屏幕录制和辅助功能权限。AppKit 使用窗口局部坐标的一次 PID 定向投递，Chromium/Electron 保留原路径，不启用前台回退。
+当前补丁修订版安装到 `~/Library/Application Support/AmazMe/ComputerUse/0.34.1-amazme.2/`，保留旧补丁和原版，显式路径配置仍优先。`.2` 沿用 `.1` 的 AppKit 修复，只更新安装与宿主元数据。完整修订号同时写入目录、manifest、Info.plist 的 `AmazMeRuntimeVersion` 和应用版本说明；`CFBundleShortVersionString` 保持上游数字版本 `0.34.1`，`CFBundleVersion` 为数字构建号 `2`，符合 [Apple 的版本字段格式](https://developer.apple.com/documentation/BundleResources/Information-Property-List/CFBundleVersion)。安装记录保存源码提交、补丁及驱动、宿主、Info.plist 的 SHA-256，复用时还核验应用签名；不同内容拒绝覆盖。已安装或已有可校验的旧补丁时，重复运行无需源码和联网。新签名可能需要为该目录下的应用重新授予屏幕录制和辅助功能权限。AppKit 使用窗口局部坐标的一次 PID 定向投递，Chromium/Electron 保留原路径，不启用前台回退。
+
+### 构建工作目录与清理
+
+仓库入口把 Rust 源码导出和 Cargo target 放到 `dist-release/computer-use/<运行时版本>/.build-<随机值>/`，运行时版本独立于 AmazMe 应用版本；每次构建独占目录并登记所属进程，完成或失败后回收无占用的工作目录。安装后的独立脚本使用 `~/Library/Caches/AmazMe/ComputerUse/build/`。正式运行时仍在 Application Support，权限面板仍在 Caches；应用发布只清理自己的 `dist-release/v*` 目录，保留 `computer-use/` 命名空间；构建目录清理不影响已安装运行时。
+
+```bash
+node scripts/cleanup-computer-use.mjs          # 预览
+node scripts/cleanup-computer-use.mjs --apply  # 执行
+# 安装后的插件也可清理自己的缓存：
+node /path/to/coding-agent/plugins/computer-use/scripts/cleanup-computer-use.mjs --apply
+```
+
+只处理旧权限面板及带有本工具 owner 记录的构建目录。保留当前面板、存活的构建所属进程、任何仍有文件或可执行映射占用的目录；符号链接及无法识别的内容不删除。无法可靠检查占用时报错。不会扫描清理 `/tmp`、安装运行时或其他产品的目录。强制终止导致的构建残留可在下一次维护时清理。安装临时目录仍在目标目录旁，以便同卷原子安装。
 
 TypeSafe 使用宿主现有的模型目录与认证流程，支持 `TYPESAFE_API_KEY` 或已保存的 TypeSafe 凭据。截图、AX 文本和动作上下文会随对应工具请求发送到配置的分类器供应商。`{"jevEnabled":false}` 可关闭分类请求；此时仅允许已过滤的 AX 单步/批量点击与文本动作，视觉定位和键盘风险判断不可用。
 

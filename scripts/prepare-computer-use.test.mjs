@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -48,6 +48,7 @@ test("preparation reuses a verified installation offline and refuses changed bin
 		const pin = await driverPin(),
 			bytes = Buffer.from("pinned native fixture");
 		await writeFile(join(directory, "cua-driver"), bytes);
+		await chmod(join(directory, "cua-driver"), 0o755);
 		await writeFile(
 			join(directory, "manifest.json"),
 			JSON.stringify({

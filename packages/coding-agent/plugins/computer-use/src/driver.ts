@@ -7,7 +7,6 @@ import {
 	chmod,
 	mkdtemp,
 	open,
-	readdir,
 	readFile,
 	realpath,
 	rm,
@@ -22,6 +21,7 @@ import { VERSION } from "@amazme/coding-agent/config";
 import type { CallToolResult, Tool } from "@amazme/mcp";
 import { McpClient, StdioTransport } from "@amazme/mcp";
 import { isRecord } from "./config.ts";
+import { resolveManagedInstallation } from "./installation.ts";
 import type { NativeObservation } from "./native-candidates.ts";
 import { rect } from "./native-candidates.ts";
 
@@ -194,6 +194,7 @@ export async function resolveDriverBinary(
 		env?: NodeJS.ProcessEnv;
 		platform?: NodeJS.Platform;
 		home?: string;
+		arch?: string;
 	} = {},
 ): Promise<string> {
 	const env = options.env ?? process.env,
@@ -207,34 +208,14 @@ export async function resolveDriverBinary(
 			);
 		return explicit;
 	}
+	const managed = await resolveManagedInstallation({
+		platform,
+		home,
+		arch: options.arch,
+	});
+	if (managed) return managed.binary;
 	const name = platform === "win32" ? "cua-driver.exe" : "cua-driver";
 	const paths: string[] = [];
-	if (platform === "darwin") {
-		for (const product of ["AmazMe", "PilotDeck"]) {
-			const root = join(
-				home,
-				"Library/Application Support",
-				product,
-				"ComputerUse",
-			);
-			paths.push(
-				join(root, `${product} Computer Use.app/Contents/MacOS/cua-driver`),
-			);
-			const versions = await readdir(root).catch((): string[] => []);
-			for (const version of versions.sort().reverse().slice(0, 20))
-				paths.push(
-					join(
-						root,
-						version,
-						`${product} Computer Use.app/Contents/MacOS/cua-driver`,
-					),
-				);
-		}
-		paths.push(
-			"/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
-			"/Applications/PilotDeck.app/Contents/Resources/cua-driver/PilotDeck Computer Use.app/Contents/MacOS/cua-driver",
-		);
-	}
 	paths.push(join(home, ".local/bin", name));
 	for (const directory of (env.PATH ?? "").split(delimiter).filter(isAbsolute))
 		paths.push(join(directory, name));

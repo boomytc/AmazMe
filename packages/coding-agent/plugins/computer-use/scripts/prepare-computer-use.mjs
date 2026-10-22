@@ -6,19 +6,26 @@ import {
 	mkdir,
 	mkdtemp,
 	readdir,
-	readFile,
 	rename,
 	rm,
 	writeFile,
 } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+	archivePin,
+	binaryPath,
+	installationHashes,
+	installationRoot,
+	readInstallation,
+} from "../src/installation.ts";
 import { preparePermissionPanel } from "../src/permission-panel.ts";
+import { DRIVER_PIN } from "../src/runtime-pin.ts";
+import { prepareMacBundle } from "./macos-bundle.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
 export async function driverPin() {
-	return JSON.parse(await readFile(join(directory, "cua-driver.json"), "utf8"));
+	return DRIVER_PIN;
 }
 export function verifyArchive(bytes, asset) {
 	if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
@@ -49,49 +56,16 @@ export async function prepareComputerUse({
 	signingIdentity = process.env.AMAZME_CUA_SIGNING_IDENTITY ?? "-",
 } = {}) {
 	const pin = await driverPin();
-	if (!["arm64", "x64"].includes(arch))
-		throw new Error(`Unsupported architecture: ${arch}`);
-	const asset =
-		pin.assets[platform === "darwin" ? "darwin" : `${platform}-${arch}`];
-	if (!asset) throw new Error(`Unsupported platform: ${platform}`);
-	const output =
-		destination ??
-		(platform === "darwin"
-			? join(
-					homedir(),
-					"Library/Application Support/AmazMe/ComputerUse",
-					pin.version,
-				)
-			: join(homedir(), ".local/share/AmazMe/ComputerUse", pin.version));
-	const executable =
-		platform === "darwin"
-			? "AmazMe Computer Use.app/Contents/MacOS/cua-driver"
-			: platform === "win32"
-				? "cua-driver.exe"
-				: "cua-driver";
-	const existing = await readFile(join(output, "manifest.json"), "utf8").catch(
-		(error) => {
-			if (error.code === "ENOENT") return;
-			throw error;
-		},
+	const expected = archivePin(platform, arch);
+	const asset = Object.values(pin.assets).find(
+		(asset) => asset.sha256 === expected.archiveSha256,
 	);
-	if (existing !== undefined) {
-		const manifest = JSON.parse(existing);
-		const hash = createHash("sha256")
-			.update(await readFile(join(output, executable)))
-			.digest("hex");
-		if (
-			manifest.version !== pin.version ||
-			manifest.platform !== platform ||
-			manifest.arch !== arch ||
-			manifest.archiveSha256 !== asset.sha256 ||
-			manifest.binarySha256 !== hash
-		)
-			throw new Error(
-				"Installed component differs from its pinned manifest; select another destination",
-			);
+	const output = destination ?? join(installationRoot(platform), pin.version);
+	const executable = binaryPath(platform);
+	const existing = await readInstallation(output, expected);
+	if (existing) {
 		if (platform === "darwin") await preparePermissionPanel(signingIdentity);
-		return { directory: output, binary: join(output, executable) };
+		return existing;
 	}
 	await mkdir(dirname(output), { recursive: true });
 	const staging = await mkdtemp(join(dirname(output), ".prepare-"));
@@ -123,58 +97,8 @@ export async function prepareComputerUse({
 			join(directory, "LICENSE.cua-driver.txt"),
 			join(ready, "LICENSE.cua-driver.txt"),
 		);
-		if (platform === "darwin") {
-			const app = join(ready, "AmazMe Computer Use.app");
-			await writeFile(
-				join(app, "Contents/Info.plist"),
-				`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>amazme-computer-use</string>
-<key>CFBundleIdentifier</key><string>com.amazme.computer-use</string>
-<key>CFBundleName</key><string>AmazMe Computer Use</string>
-<key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>${pin.version}</string>
-<key>CFBundleVersion</key><string>${pin.version}</string>
-<key>LSUIElement</key><true/>
-<key>LSMinimumSystemVersion</key><string>13.0</string>
-<key>NSScreenCaptureUsageDescription</key><string>Capture windows for computer tasks requested by the user.</string>
-<key>NSAppleEventsUsageDescription</key><string>Control apps for computer tasks requested by the user.</string>
-</dict></plist>\n`,
-			);
-			run("/usr/bin/xcrun", [
-				"clang",
-				"-fobjc-arc",
-				"-mmacosx-version-min=13.0",
-				"-arch",
-				"arm64",
-				"-arch",
-				"x86_64",
-				join(directory, "macos-host.m"),
-				"-framework",
-				"Cocoa",
-				"-framework",
-				"ApplicationServices",
-				"-o",
-				join(app, "Contents/MacOS/amazme-computer-use"),
-			]);
-			run("/usr/bin/codesign", [
-				"--force",
-				"--sign",
-				signingIdentity,
-				"--options",
-				"runtime",
-				installed,
-			]);
-			run("/usr/bin/codesign", [
-				"--force",
-				"--sign",
-				signingIdentity,
-				"--options",
-				"runtime",
-				app,
-			]);
-		}
+		if (platform === "darwin")
+			await prepareMacBundle(ready, { signingIdentity });
 		await writeFile(
 			join(ready, "manifest.json"),
 			JSON.stringify(
@@ -184,9 +108,7 @@ export async function prepareComputerUse({
 					arch,
 					executable,
 					archiveSha256: asset.sha256,
-					binarySha256: createHash("sha256")
-						.update(await readFile(installed))
-						.digest("hex"),
+					...(await installationHashes(ready, platform)),
 				},
 				null,
 				2,

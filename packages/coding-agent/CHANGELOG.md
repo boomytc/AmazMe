@@ -8,6 +8,8 @@
 
 ### Fixed
 
+- Computer-use 按明确的兼容清单选择并验证运行时；安装修订版 `0.34.1-amazme.2` 补齐 macOS 版本标识，可从旧补丁离线迁移。源码构建工作目录归入 `dist-release/computer-use/<运行时版本>`，增加预览和占用检查的缓存清理命令。
+
 - Windows shell discovery accepts Microsoft Store aliases, checks standard PowerShell install directories, and distinguishes WSL's bash from Git Bash. System utilities use `SystemRoot` instead of an unrelated `WINDIR`.
 - Managed install markers accept a UTF-8 BOM so PowerShell-written markers remain readable.
 - Code-mode output files now live under the session directory (`artifacts/`) and are removed when the session is deleted; ephemeral `--no-session` runs use a private temp path created lazily on first write and cleaned up on release. `executeCodemode` and `ExtensionContext.artifactDirectory` require a directory by type (no `pi-codemode-*` OS-temp fallback); the built-in codemode extension reads it from the session context.

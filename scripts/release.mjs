@@ -21,9 +21,9 @@ const NODE_VERSION = "22.23.3";
 
 /** Tags and GitHub Releases start together at 1.0.0. Earlier versions are not tagged or published. */
 
-/** Local release directories other than the version being built. Dotfiles stay. */
+/** Only application versions belong to this cleanup; component namespaces stay. */
 export function staleReleaseNames(names, currentTag) {
-	return names.filter((name) => name !== currentTag && !name.startsWith("."));
+	return names.filter((name) => name !== currentTag && /^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(name));
 }
 export function publishesToGitHub(version) {
 	const match = /^(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.exec(version);
