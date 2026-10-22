@@ -4,9 +4,9 @@
 
 **当前默认运行时为 `0.38.0-amazme.2`，已于 2026-10-22 通过本机 macOS 受控桌面验收。**
 
-本轮验证原生 AX 点击、赋值、输入，自绘 Canvas 点击、滚动与拖动，以及 Chrome 和自定义品牌 Electron 的 Canvas 精确点击、滚动；12 项动作及前台/鼠标保持检查通过。画布定位使用确定性测试图形，后置状态读取目标应用自身的记录；本轮未调用线上 Jev。旧版线上 Jev 联调属于历史证据。
+驱动层 12 项确定性检查通过，覆盖原生 AX、自绘 Canvas、Chrome 和自定义品牌 Electron。线上 Jev 联调另通过 9 项检查：6 条定位→操作→独立核验链路返回 `verified`，3 项检查验证不存在的目标、错误后置条件和追加风险拦截。每项均对照目标应用实际状态，并检查前台和物理指针保持；风险拦截不能计作操作成功。
 
-Windows/Linux 真机、完整动作矩阵、瓦片定位成功路径及 TUI/Web/GUI 各入口的完整流程仍未全部验收，详见[集成验收记录](./LIVE-VALIDATION.md)。
+Windows/Linux 真机、完整动作矩阵及 TUI/Web/GUI 各入口的完整流程仍未全部验收；线上 Jev 仍可能因置信度或风险判断返回 `review`，详见[集成验收记录](./LIVE-VALIDATION.md)。
 
 ```bash
 amazme -e /path/to/AmazMe/packages/coding-agent/plugins/computer-use
@@ -80,9 +80,16 @@ macOS 补丁固定导出上游提交 `85e2b1318bd77ccf3cfa88ccdf875a4bb7eaed19` 
 node scripts/verify-computer-use-macos.mjs
 # 单独复测 native、chromium 或 electron：
 node scripts/verify-computer-use-macos.mjs --surface native
+# 使用现有 TypeSafe 凭据，实际调用线上 Jev：
+node scripts/verify-computer-use-macos.mjs --jev online
+# 线上模式也支持 --surface native|chromium|electron
 ```
 
 脚本需要当前宿主的两项权限、Chrome 和仓库 Electron 依赖，只打开临时 Cocoa 窗口、独立浏览器配置和改名后的 Electron 测试页。运行时暂停人工鼠标/键盘操作，以免干扰检查。报告和截图写入 `dist-release/computer-use/<运行时版本>/validation/`；退出时等待自己的全部进程结束，清理无占用产物，其他应用仍占用的文件会被保留并记录。
+
+默认模式验证确定性坐标与驱动投递，不调用 Jev。`--jev online` 通过产品的 ModelRuntime 和 `groundAndAct` 调用真实 `jev-1.14.0`，执行 AX 选择、视觉定位与回退、风险判断、动作、重新观察和独立结果核验。测试应用自身的计数和字段值只作为独立断言，不提供给分类器；阈值和风险许可沿用默认设置。线上模式另检查不存在的目标、错误后置条件和文本追加的风险决策。`type_text` 是在当前选择处插入文本，并不保证追加到末尾；被风险门禁拦截时必须保持原状态，不能计作输入成功。
+
+线上请求会使用 API 额度，每次运行最多 64 次分类调用。`jev-trace.json` 保存每次尝试的问题、测试状态、图片尺寸与摘要、模型回答及异常，密钥不写入报告。每个用例核对完整调用范围，服务失败或取消不能计为安全拒绝；成功结果记录 `ax`、`crop` 或 `tiled` 定位路径。若凭据仅在交互式 zsh 中设置，需要从同样的 shell 环境执行命令。详细运行结果见 [LIVE-VALIDATION.md](LIVE-VALIDATION.md)。
 
 ### 构建工作目录与清理
 

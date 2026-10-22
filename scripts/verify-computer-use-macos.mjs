@@ -27,6 +27,8 @@ import {
 	patchBuild,
 } from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
 import { prepareComputerUseBuildRoot } from "./computer-use-paths.mjs";
+import { createJevValidation } from "./computer-use-jev-live.mjs";
+import { recordLiveStep } from "./computer-use-live-evidence.mjs";
 
 const execute = promisify(execFile);
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -133,16 +135,19 @@ async function main() {
 		options = {};
 	for (let i = 0; i < args.length; i += 2) {
 		if (
-			!["--version", "--surface"].includes(args[i]) ||
+			!["--version", "--surface", "--jev"].includes(args[i]) ||
 			!args[i + 1] ||
 			options[args[i]]
 		)
 			throw new Error(
-				"Usage: verify-computer-use-macos.mjs [--version <runtime>] [--surface native|chromium|electron]",
+				"Usage: verify-computer-use-macos.mjs [--version <runtime>] [--surface native|chromium|electron] [--jev online]",
 			);
 		options[args[i]] = args[i + 1];
 	}
 	const surface = options["--surface"];
+	const onlineJev = options["--jev"] === "online";
+	if (options["--jev"] && !onlineJev)
+		throw new Error("Use --jev online to opt into paid classifier requests");
 	if (surface && !["native", "chromium", "electron"].includes(surface))
 		throw new Error("Unsupported live surface");
 	const version = options["--version"] ?? PATCH_PIN.version,
@@ -217,6 +222,24 @@ async function main() {
 		const restore = async () => {
 			await execute(binary, ["--activate", String(initial.frontmostPid)]);
 			await delay(300);
+			if (onlineJev) {
+				let last = await probe(),
+					stableSince = Date.now();
+				await waitFor(async () => {
+					const current = await probe();
+					if (
+						current.frontmostPid !== last.frontmostPid ||
+						Math.hypot(
+							current.pointerX - last.pointerX,
+							current.pointerY - last.pointerY,
+						) > 1
+					) {
+						stableSince = Date.now();
+						last = current;
+					}
+					return Date.now() - stableSince >= 2000;
+				});
+			}
 		};
 		const launch = (path, argv, identity) => {
 			const child = spawn(
@@ -267,46 +290,34 @@ async function main() {
 			await writeFile(join(output, `${name}.png`), snap.imageBytes);
 			return snap;
 		};
-		async function step(name, read, action, accept, verify = () => {}) {
-			const before = await read(),
-				desktopBefore = await probe();
-			const record = { name, before, desktopBefore };
-			report.steps.push(record);
-			try {
-				record.result = await action();
-				await save();
-				record.after = await waitFor(
-					read,
-					(value) => value && accept(value, before),
-				);
-				await delay(250);
-				record.desktopAfter = await probe();
-				assert.equal(
-					record.desktopAfter.frontmostPid,
-					desktopBefore.frontmostPid,
-					`${name}: foreground changed`,
-				);
-				assert.ok(
-					Math.hypot(
-						record.desktopAfter.pointerX - desktopBefore.pointerX,
-						record.desktopAfter.pointerY - desktopBefore.pointerY,
-					) <= 1,
-					`${name}: pointer moved`,
-				);
-				verify(record.after);
-				record.passed = true;
-				console.log(`PASS ${name}`);
-			} catch (error) {
-				record.error = String(error);
-				record.passed = false;
-				console.log(`FAIL ${name}: ${error}`);
-			} finally {
-				record.after = await read();
-				record.desktopAfter = await probe();
-				await save();
-			}
+		async function step(name, read, action, accept, verify) {
+			const record = await recordLiveStep({
+				name,
+				read,
+				action,
+				accept,
+				verify,
+				report,
+				probe,
+				waitFor,
+				save,
+			});
+			console.log(
+				`${record.passed ? "PASS" : "FAIL"} ${name}${record.error ? `: ${record.error}` : ""}`,
+			);
 		}
+
 		const nativeTarget = { pid: native.pid, window_id: native.windowId };
+		const jev = onlineJev
+			? await createJevValidation({
+					driver,
+					output,
+					report,
+					save,
+					step,
+					signal,
+				})
+			: undefined;
 		async function axAction(action, label, text) {
 			const snap = await snapshot(nativeTarget, `native-${action}-before`);
 			const candidate = extractCandidates(snap, policy).find(
@@ -363,7 +374,10 @@ async function main() {
 					.structuredContent,
 			};
 		}
-		if (!surface || surface === "native") {
+		if ((!surface || surface === "native") && jev) {
+			await jev.native(nativeTarget, nativeState);
+			await snapshot(nativeTarget, "native-after");
+		} else if (!surface || surface === "native") {
 			await step(
 				"native AX click",
 				nativeState,
@@ -541,6 +555,11 @@ async function main() {
 			);
 			assert.ok(window, `${name}: fixture window missing`);
 			const target = { pid, window_id: window.window_id };
+			if (jev) {
+				await jev.browser(name, target, state);
+				await snapshot(target, `${name}-after`);
+				continue;
+			}
 			await step(
 				`${name} Canvas click`,
 				state,

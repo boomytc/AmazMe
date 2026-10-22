@@ -5,6 +5,7 @@ static NSString *statePath;
 @property NSWindow *window;
 @property NSTextField *counterLabel;
 @property NSTextField *input;
+@property NSTextField *valueInput;
 @property NSInteger nativeCount;
 @property NSInteger canvasCount;
 @property NSInteger rightCount;
@@ -37,7 +38,7 @@ static NSString *statePath;
 @implementation SmokeDelegate
 - (void)save {
  CGEventRef event=CGEventCreate(NULL); CGPoint pointer=CGEventGetLocation(event); CFRelease(event);
- NSDictionary *state=@{@"pid":@(getpid()),@"windowId":@(self.window.windowNumber),@"nativeCount":@(self.nativeCount),@"canvasCount":@(self.canvasCount),@"rightCount":@(self.rightCount),@"dragCount":@(self.dragCount),@"scrollTotal":@(self.scrollTotal),@"canvasX":@(self.lastCanvasPoint.x),@"dragX":@(self.lastDragPoint.x),@"dragY":@(self.lastDragPoint.y),@"canvasY":@(self.lastCanvasPoint.y),@"text":self.input.stringValue?:@"",@"frontmostPid":@(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier),@"pointerX":@(pointer.x),@"pointerY":@(pointer.y),@"keyWindow":@(self.window.isKeyWindow)};
+ NSDictionary *state=@{@"pid":@(getpid()),@"windowId":@(self.window.windowNumber),@"nativeCount":@(self.nativeCount),@"canvasCount":@(self.canvasCount),@"rightCount":@(self.rightCount),@"dragCount":@(self.dragCount),@"scrollTotal":@(self.scrollTotal),@"canvasX":@(self.lastCanvasPoint.x),@"dragX":@(self.lastDragPoint.x),@"dragY":@(self.lastDragPoint.y),@"canvasY":@(self.lastCanvasPoint.y),@"text":self.input.stringValue?:@"",@"valueText":self.valueInput.stringValue?:@"",@"frontmostPid":@(NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier),@"pointerX":@(pointer.x),@"pointerY":@(pointer.y),@"keyWindow":@(self.window.isKeyWindow)};
  [[NSJSONSerialization dataWithJSONObject:state options:NSJSONWritingPrettyPrinted error:nil] writeToFile:statePath atomically:YES];
 }
 - (void)increment:(id)sender { self.nativeCount++; self.counterLabel.stringValue=[NSString stringWithFormat:@"Native Counter: %ld",(long)self.nativeCount]; [self save]; }
@@ -51,6 +52,8 @@ static NSString *statePath;
  NSButton *button=[NSButton buttonWithTitle:@"Increment Native" target:self action:@selector(increment:)]; button.frame=NSMakeRect(30,260,270,54); button.bezelStyle=NSBezelStyleRounded; button.font=[NSFont systemFontOfSize:22]; [content addSubview:button];
  NSTextField *inputLabel=[NSTextField labelWithString:@"Smoke Input"]; inputLabel.frame=NSMakeRect(30,205,270,24); [content addSubview:inputLabel];
  self.input=[[NSTextField alloc] initWithFrame:NSMakeRect(30,160,280,36)]; self.input.placeholderString=@"Smoke Input"; self.input.accessibilityLabel=@"Smoke Input"; [content addSubview:self.input];
+ NSTextField *valueLabel=[NSTextField labelWithString:@"Smoke Value"]; valueLabel.frame=NSMakeRect(30,130,270,24); [content addSubview:valueLabel];
+ self.valueInput=[[NSTextField alloc] initWithFrame:NSMakeRect(30,90,280,36)]; self.valueInput.placeholderString=@"Smoke Value"; self.valueInput.accessibilityLabel=@"Smoke Value"; [content addSubview:self.valueInput];
  Canvas *canvas=[[Canvas alloc] initWithFrame:NSMakeRect(370,160,330,160)]; canvas.owner=self; [content addSubview:canvas];
  NSTextField *footer=[NSTextField labelWithString:@"Temporary reversible test controls. No external data or network."]; footer.frame=NSMakeRect(30,50,680,30); [content addSubview:footer];
  [self.window orderFrontRegardless];

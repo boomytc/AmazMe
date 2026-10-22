@@ -4,6 +4,8 @@
 
 ### Added
 
+- Computer-use macOS 验收新增显式 `--jev online` 模式，使用宿主模型与认证流程覆盖线上定位、操作和独立结果核验，并交叉检查测试应用的实际状态；完整保留请求、图片及异常证据，防止服务失败被误判为安全拒绝、通过记录被未核验状态覆盖，不降低默认置信度和风险门槛。
+
 - Computer-use 默认升级为 `0.38.0-amazme.2`，提供可重跑的 macOS 原生、Chromium 和自定义品牌 Electron 验收脚本；12 项真实动作与前台/鼠标保持检查通过后切换默认。仅保留最新版，旧配方和自动回退已移除。
 
 - 启动时检查新版本：TUI 显示一条提示，`-p` 文本模式在 stderr 是终端时于结束后提示。来源是 GitHub Releases 的 `latest.json`（发版工作流新增独立的 `manifest` job 生成），24 小时内最多查一次；`--offline`、`AMAZME_OFFLINE=1` 或 `AMAZME_SKIP_VERSION_CHECK=1` 时不发任何请求。源码 checkout 只提示版本、不给下载地址；`latest.json` 里版本号不是合法 semver、产物地址不在本仓 `releases/download/v<版本>/` 下或 sha256 不是 64 位十六进制时整份忽略。网页和桌面端可从包入口导入同一个 `checkForUpdate`。
