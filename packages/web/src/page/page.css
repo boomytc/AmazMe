@@ -2077,9 +2077,22 @@ p {
 .project-picker-option:hover, .project-picker-option:focus-visible, .project-picker-option[aria-pressed="true"] { background: var(--hover); outline: none; }
 .project-picker-empty { padding: 8px; color: var(--text-3); }
 
-.composer-model-control { display: flex; align-items: center; min-width: 0; }
-.composer-model-picker { min-width: 0; max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 8px; background: transparent; border: 0; border-radius: 7px; font: inherit; font-size: 12px; color: var(--text-2); cursor: pointer; }
-.composer-model-control > .status-meter:not([hidden]) + .composer-model-picker { padding-left: 2px; }
+.composer-model-control { display: flex; align-items: center; gap: 2px; min-width: 0; }
+/* The trigger reads as a quiet label: the model in ink, the effort one step back, a small chevron. */
+.composer-model-picker {
+	display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 280px; height: 30px;
+	padding: 0 6px 0 8px; border: 0; border-radius: var(--radius-sm); background: transparent;
+	color: var(--text-2); font: inherit; font-size: 13px; line-height: 18px; white-space: nowrap;
+	cursor: pointer; transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.composer-model-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--text); font-weight: 500; }
+.composer-model-effort { flex: none; color: var(--text-3); }
+.composer-model-picker .composer-model-chevron {
+	width: 14px; height: 14px; margin-left: -1px; color: var(--text-3); stroke-width: 2;
+	transition: transform var(--dur) var(--ease);
+}
+.composer-model-picker[aria-expanded="true"] .composer-model-chevron { transform: rotate(180deg); }
+.composer-model-control > .status-meter:not([hidden]) + .composer-model-picker { padding-left: 6px; }
 
 /* Context occupancy beside the model name. The arc is the percent; the card opens on hover. */
 .status-meter { position: relative; display: flex; flex: none; align-items: center; }
@@ -2134,19 +2147,81 @@ p {
 }
 .meter-compact:hover:not(:disabled) { background: var(--hover); }
 .meter-compact:disabled { opacity: 0.45; cursor: default; }
-.composer-model-picker:hover { background: var(--hover); color: var(--text); }
+.composer-model-picker:hover:not(:disabled),
+.composer-model-picker[aria-expanded="true"] { background: var(--hover); color: var(--text); }
 .composer-model-picker:disabled { cursor: default; opacity: .5; }
-.model-picker-menu { position: fixed; margin: 0; width: min(360px, calc(100vw - 16px)); max-height: calc(100dvh - 32px); padding: 8px; background: var(--raised); color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); box-shadow: 0 12px 40px #0003; font-size: 13px; }
+
+/* One popover above the composer: search, the catalog, thinking levels, then the way out to settings. */
+.model-picker-menu {
+	position: fixed; inset: auto; margin: 0; width: min(320px, calc(100vw - 16px));
+	display: none; flex-direction: column; overflow: hidden; padding: 0;
+	border: 0; border-radius: var(--radius-lg); background: var(--raised); color: var(--text);
+	box-shadow: var(--shadow-popover); font-size: 13px; line-height: 18px;
+}
+.model-picker-menu[open] { display: flex; animation: model-picker-in var(--dur) var(--ease); }
 .model-picker-menu::backdrop { background: transparent; }
-.model-picker-menu > input { width: 100%; height: 32px; padding: 0 10px; background: var(--canvas); border: 1px solid var(--line-strong); border-radius: var(--radius-md); color: inherit; font: inherit; font-size: 13px; outline: none; }
-.model-picker-menu > input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.model-picker-list { overflow-y: auto; max-height: min(320px, 45dvh); }
-.model-picker-list > p, .model-picker-reasoning > p { margin: 9px 8px 4px; color: var(--text-3); font-size: 12px; }
-.model-picker-option { display: block; width: 100%; text-align: left; padding: 7px 9px; border: 0; border-radius: 7px; font: inherit; background: transparent; color: inherit; cursor: pointer; }
-.model-picker-option:hover, .model-picker-option[aria-pressed="true"], .model-picker-reasoning button[aria-pressed="true"] { background: var(--hover); }
-.model-picker-reasoning { border-top: 1px solid var(--line); }
-.model-picker-reasoning button { margin: 4px 2px; padding: 5px 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; font: inherit; }
-.model-picker-manage { width: 100%; padding: 10px 8px; margin-top: 5px; border: 0; border-top: 1px solid var(--line); color: inherit; background: transparent; text-align: left; font: inherit; cursor: pointer; }
+@keyframes model-picker-in { from { opacity: 0; transform: translateY(4px) scale(.985); } }
+@media (prefers-reduced-motion: reduce) { .model-picker-menu[open] { animation: none; } }
+
+.model-picker-search {
+	display: flex; align-items: center; gap: 8px; flex: none; height: 42px; padding: 0 14px;
+	border-bottom: 1px solid var(--line); color: var(--text-3); cursor: text;
+}
+.model-picker-search-icon { width: 15px; height: 15px; stroke-width: 2; }
+.model-picker-search input {
+	flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: none; background: transparent;
+	color: var(--text); font: inherit; font-size: 13px;
+}
+.model-picker-search input::placeholder { color: var(--text-3); }
+.model-picker-search input::-webkit-search-cancel-button { display: none; }
+
+.model-picker-list { flex: 1 1 auto; min-height: 0; max-height: 340px; overflow-y: auto; padding: 4px 6px 6px; scroll-padding-block: 6px; }
+.model-picker-heading {
+	margin: 0; padding: 10px 8px 4px; color: var(--text-3); font-size: 11.5px; font-weight: 500; line-height: 16px;
+}
+.model-picker-option {
+	display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px;
+	border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text);
+	font: inherit; font-size: 13px; text-align: left; cursor: pointer; outline: none;
+}
+.model-picker-option:hover, .model-picker-option:focus-visible,
+.model-picker-search:focus-within + .model-picker-list .model-picker-option[data-active="true"] { background: var(--hover); }
+.model-picker-option[aria-pressed="true"] { font-weight: 500; }
+.model-picker-option-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-picker-option-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 12px; font-weight: 400; }
+.model-picker-check { width: 15px; height: 15px; margin-left: auto; color: var(--accent); stroke-width: 2.2; }
+.model-picker-empty { margin: 0; padding: 18px 8px; color: var(--text-3); text-align: center; }
+
+.model-picker-reasoning {
+	display: flex; align-items: center; gap: 12px; flex: none; padding: 10px 10px 10px 14px; border-top: 1px solid var(--line);
+}
+.model-picker-reasoning[hidden] { display: none; }
+.model-picker-section { flex: none; color: var(--text-2); font-size: 12px; }
+.model-picker-levels {
+	display: flex; flex: 1; min-width: 0; padding: 2px; border-radius: var(--radius-sm); background: var(--hover);
+}
+.model-picker-level {
+	flex: 1 1 0; min-width: 0; height: 26px; padding: 0 6px; border: 0; border-radius: var(--radius-xs);
+	background: transparent; color: var(--text-2); font: inherit; font-size: 12px; white-space: nowrap;
+	overflow: hidden; text-overflow: ellipsis; cursor: pointer;
+	transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+.model-picker-level:hover { color: var(--text); }
+.model-picker-level[aria-checked="true"] {
+	background: var(--knob); color: var(--text); font-weight: 500;
+	box-shadow: var(--shadow-knob), 0 0 0 .5px color-mix(in srgb, var(--text) 10%, transparent);
+}
+:root[data-theme="dark"] .model-picker-level[aria-checked="true"] { background: color-mix(in srgb, var(--text) 16%, var(--raised)); }
+.model-picker-level:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+
+.model-picker-manage {
+	display: flex; align-items: center; gap: 8px; flex: none; width: 100%; height: 38px; padding: 0 14px;
+	border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--text-2);
+	font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; outline: none;
+	transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+.model-picker-manage-icon { width: 15px; height: 15px; }
+.model-picker-manage:hover, .model-picker-manage:focus-visible { background: var(--hover); color: var(--text); }
 
 .library-open .view-body:has(> .split-workspace) {
 	--library-measure: 960px;
