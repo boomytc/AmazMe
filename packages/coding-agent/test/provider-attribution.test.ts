@@ -116,7 +116,9 @@ describe("provider attribution on actual model requests", () => {
 	it("keeps OpenCode session routing independent of telemetry", async () => {
 		const f = await fixture("https://opencode.ai/zen/v1", SettingsManager.inMemory({ enableInstallTelemetry: false }));
 		await f.runtime.completeSimple(f.model, { messages: [] }, { sessionId: "session-1" });
-		expect(f.headers()).toEqual({ ...userAgent, "x-opencode-session": "session-1" });
+		expect(f.headers()).toEqual({ ...userAgent, "x-opencode-session": "session-1", "x-opencode-client": "pi" });
+		await f.runtime.completeSimple(f.model, { messages: [] }, { sessionId: "session-2", headers: { "x-opencode-client": "custom" } });
+		expect(f.headers()).toEqual({ ...userAgent, "x-opencode-session": "session-2", "x-opencode-client": "custom" });
 	});
 
 	it("does not match provider host names embedded in paths or unrelated hosts", () => {

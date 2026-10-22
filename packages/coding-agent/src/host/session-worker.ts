@@ -34,6 +34,7 @@ import {
 import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
+import { getClientIdentity } from "../core/client-identity.ts";
 import { ModelRuntime } from "../core/model-runtime.ts";
 import type { AgentOperationError } from "../core/plugins/agent-controller.ts";
 import { describePluginManifests } from "../core/plugins/info.ts";
@@ -1061,7 +1062,7 @@ export async function runSessionWorkerWithHarness(
 	}
 }
 
-async function createCodingAgentHarness(
+export async function createCodingAgentHarness(
 	lease: SessionLease,
 	options: SessionWorkerOptions,
 ): Promise<SessionWorkerRuntime> {
@@ -1176,6 +1177,7 @@ async function createCodingAgentHarness(
 			await openSessionStorage(lease),
 			{
 				models: modelRuntime,
+				get identity() { return getClientIdentity(settingsManager); },
 				registry,
 				settings: createHarnessSettings(settingsManager),
 				env: envs.env,

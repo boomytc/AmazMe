@@ -581,3 +581,7 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 验证：AI 1,518、Agent 91、Chord 578、Coding Agent 2,614 项通过；Durable 默认缓存和即时淘汰各 1,508 项通过，真实 workerd 30 项通过，新增工具激活回归所在文件另测 43 项通过。TUI 全包、工程测试 102 项、修改源码包构建、全仓类型检查、check:workspace、7 个新增核心文件的 lint 错误检查及差异检查通过；最终 CLI bundle 启动输出当前版本。Chord 随并行测试运行时有一次既有 fuzz 超过 5 秒，隔离重跑全包通过，未修改超时或断言。
 
 验证限制：AI 866、Coding Agent 24、Durable 每轮 4 项按条件跳过。IndexedDB 使用 fake-indexeddb 契约及只读元数据回归；本轮未重新验收原生浏览器。未发送真实模型请求，未做 Windows、签名分发或发布验收。
+
+再次复核（2026-10-22）：核对实际宿主、ModelRuntime、OAuth、分类图片、只读存储与 Chord 状态消费者，修正 Web/桌面 Session worker 漏接实时请求身份设置的问题。关闭遥测仅抑制可选归属头，Pi User-Agent 和 OAuth 身份继续保留；另恢复原先独立于遥测的 OpenCode `x-opencode-client: pi` 会话头，并保留显式请求头覆盖。真实 Harness 与 SQLite 回归在修复前复现四次请求均带归属，修复后正确覆盖关闭、开启、再次关闭及环境退出，四次请求始终保留 Pi User-Agent。
+
+本次复核验证：Coding Agent 构建及全包 2,615 项通过、24 项跳过；AI 身份、OAuth、分类图片、图片恢复与费用 84 项通过；Durable 只读、提交采用、状态桥接、watch 与 IndexedDB 103 项通过。类型检查、check:workspace 和差异检查通过。供应商链路使用本地伪响应，未作真实供应商或原生浏览器验收。

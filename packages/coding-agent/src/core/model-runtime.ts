@@ -699,8 +699,9 @@ export class ModelRuntime implements Models {
 			"sessionId" in providerOptions && typeof providerOptions.sessionId === "string"
 				? providerOptions.sessionId
 				: undefined;
+		const sessionHeaders = getOpenCodeSessionHeaders(requestModel, sessionId);
 		let headers = mergeHeaders(
-			mergeHeaders(getOpenCodeSessionHeaders(requestModel, sessionId), resolution.auth.headers),
+			mergeHeaders(sessionHeaders ? { "x-opencode-client": "pi", ...sessionHeaders } : undefined, resolution.auth.headers),
 			providerOptions.headers,
 		);
 		if (transformHeaders) headers = await transformHeaders(headers ?? {});
