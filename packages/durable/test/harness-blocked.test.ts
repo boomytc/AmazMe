@@ -107,7 +107,7 @@ describe("recovery at open", () => {
 			...rest,
 			state: { status: "completing", outcome: { status: "completed", result: null } },
 		} as const;
-		await raw.commit([{ type: "task", value: completing }], context);
+		await raw.commit([{ type: "task", value: completing }], () => {}, context);
 		await raw.close(context);
 
 		// That pass's commit fails, as on a platform reset.

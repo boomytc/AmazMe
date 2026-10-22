@@ -741,7 +741,8 @@ describe("inbox", () => {
 		class RecordingStorage extends MemoryStorage {
 			override async commit(
 				writes: Parameters<MemoryStorage["commit"]>[0],
-				callContext: Parameters<MemoryStorage["commit"]>[1],
+				adopt: Parameters<MemoryStorage["commit"]>[1],
+				callContext: Parameters<MemoryStorage["commit"]>[2],
 			) {
 				for (const write of writes) {
 					if (write.type !== "document.change" || write.id !== inboxId) continue;
@@ -749,7 +750,7 @@ describe("inbox", () => {
 					const empty = content.kind === "base" && (content.value as InboxState).items.length === 0;
 					written.push({ kind: content.kind, empty });
 				}
-				return super.commit(writes, callContext);
+				return super.commit(writes, adopt, callContext);
 			}
 		}
 		const setup = chatSetup();
@@ -786,6 +787,25 @@ describe("inbox", () => {
 });
 
 describe("usage", () => {
+	it("marks totals as estimates after combining billed and estimated costs", async () => {
+		const setup = chatSetup();
+		const first = structuredClone(answer("billed"));
+		first.usage.cost = { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.9, totalFromProvider: true };
+		const second = structuredClone(answer("estimated"));
+		second.usage.cost = { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0, total: 0.3 };
+		const { harness, root } = await openChat(new MemoryStorage(), setup);
+		try {
+			await root.commit((tx) => recordUsage(tx, root.id, "models", "faux/faux-1", first.usage), context);
+			expect((await harness.usage(context)).models["faux/faux-1"]?.cost.totalFromProvider).toBe(true);
+			await root.commit((tx) => recordUsage(tx, root.id, "models", "faux/faux-1", second.usage), context);
+			const total = (await harness.usage(context)).models["faux/faux-1"]?.cost;
+			expect(total?.total).toBeCloseTo(1.2);
+			expect(total?.totalFromProvider).toBe(false);
+		} finally {
+			await harness.close(context);
+		}
+	});
+
 	it("totals assistant usage per model and tool usage per tool, and sums the Session", async () => {
 		const setup = chatSetup();
 		const spent: Usage = {

@@ -9,6 +9,7 @@ import type {
 	Usage,
 } from "../types.ts";
 import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
+import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
 import { retryProviderRequest } from "../utils/provider-retry.ts";
 
 /** Text-only backends must reject rich entries instead of silently stringifying them. */
@@ -63,9 +64,11 @@ function requestHeaders(
 	model: ClassifierModel<ClassifierApi>,
 	apiKey: string,
 	optionsHeaders?: ProviderHeaders,
+	identity?: ClientIdentity,
 ): Record<string, string> {
 	return (
 		providerHeadersToRecord(
+			getIdentityHeaders(model, identity),
 			{ authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
 			model.headers,
 			optionsHeaders,
@@ -102,7 +105,7 @@ export async function postClassifierRequest(
 			try {
 				const next = await requestFetch(url, {
 					method: "POST",
-					headers: requestHeaders(model, apiKey, options.headers),
+					headers: requestHeaders(model, apiKey, options.headers, options.identity),
 					body: JSON.stringify(payload),
 					signal,
 				});

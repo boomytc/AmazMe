@@ -2,6 +2,12 @@ import type { AttachedReplicatedState, Context, JsonValue } from "@amazme/chord"
 import { withAbortSignal, withoutAbortSignal } from "@amazme/chord/context";
 import type { Models } from "@amazme/ai";
 import {
+	type ClientIdentity,
+	mergeClientIdentity,
+	PI_ATTRIBUTION,
+	withClientIdentity,
+} from "@amazme/ai/utils/identity";
+import {
 	createTypedMetrics,
 	NOOP_TELEMETRY_CONTEXT,
 	NOOP_TELEMETRY_METRICS,
@@ -120,7 +126,7 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return this.#host.submissions.submit(this.id, submission, context);
 	}
 
-	compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
+	async compact(instructions: string | undefined, context: Context): Promise<TaskId<CompactionResult>> {
 		this.#host.tasks.resume();
 		const input = { reason: "manual", ...(instructions === undefined ? {} : { instructions }) } as const;
 		return this.#host.harness.commitWith((tx) => createCompaction(tx, this.id, input), context);
@@ -188,12 +194,12 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 		return new ConversationImpl(id, this.#host);
 	}
 
-	abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
+	async abort(context: Context, options?: ConversationAbortOptions): Promise<void> {
 		this.#host.tasks.resume();
 		return this.#host.tasks.abortConversation(this.id, options?.background === true, context);
 	}
 
-	waitForIdle(context: Context): Promise<void> {
+	async waitForIdle(context: Context): Promise<void> {
 		this.#host.tasks.resume();
 		return this.#host.tasks.waitForIdle(this.id, context);
 	}
@@ -207,9 +213,17 @@ class ConversationImpl<Tool extends ToolRegistration> implements Conversation {
 	}
 }
 
-/** `HarnessOptions.models` as a function: a plain `Models` is returned at every call. */
-function currentModels(models: HarnessOptions["models"]): () => Models {
-	return typeof models === "function" ? models : () => models;
+/** Request identity of a Harness's model requests: pi-ai's defaults with provider attribution to pi. */
+export const DEFAULT_HARNESS_IDENTITY: ClientIdentity = { attribution: PI_ATTRIBUTION };
+
+/**
+ * `HarnessOptions.models` as a function with `HarnessOptions.identity` applied. The models and identity are read at each use.
+ */
+function currentModels(models: HarnessOptions["models"], identity: () => ClientIdentity | undefined): () => Models {
+	const currentIdentity = (): ClientIdentity => mergeClientIdentity(DEFAULT_HARNESS_IDENTITY, identity()) ?? DEFAULT_HARNESS_IDENTITY;
+	if (typeof models === "function") return () => withClientIdentity(models(), currentIdentity);
+	const wrapped = withClientIdentity(models, currentIdentity);
+	return () => wrapped;
 }
 
 /** `HarnessOptions.settings` as a function: plain settings, or none, are returned at every call. */
@@ -232,7 +246,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		const now = safeNow(options.now, report);
 		const hostSettings = currentSettings(options.settings);
 		// Read at each use, as all settings are, but only this field: it is read on every commit.
-		super(rawStorage, now, () => hostSettings()?.documentRetentionMs, options.setTimer);
+		super(rawStorage, now, () => hostSettings()?.documentRetentionMs, options.setTimer, options.readOnly === true);
 		// Every component reads and writes through the Session's failure guard: `rawStorage` serves only `super()`.
 		const storage = this.storage;
 		this.#options = options;
@@ -244,7 +258,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 			session: this,
 			storage,
 			registry: options.registry,
-			models: currentModels(options.models),
+			models: currentModels(options.models, () => options.identity),
 			agent: (id, snapshot, callContext) => this.resolveAgent(id, snapshot as RegistrySnapshot<Tool>, callContext),
 			settings,
 			env: (id, callContext) => this.buildEnv(id, callContext),
@@ -260,6 +274,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 				return record === undefined ? undefined : boundConversation(id, binding, this.#submissions, this.#tasks);
 			},
 			context: withoutAbortSignal(context),
+			readOnly: options.readOnly === true,
 		});
 		this.#submissions = new Submissions(this, storage, now, settings, () => this.#tasks.resume(), options.telemetry);
 		this.#taskGraph = new TaskGraphView(this, storage, {
@@ -301,7 +316,7 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 
 	/** Reconcile surviving `running` tasks to `pending`; part of open. */
 	async openTasks(context: Context): Promise<void> {
-		await migrateNestedCalls(this, context);
+		if (!this.#options.readOnly) await migrateNestedCalls(this, context);
 		await this.#tasks.open(context);
 	}
 
@@ -365,12 +380,12 @@ class HarnessImpl<Tool extends ToolRegistration> extends SessionImpl implements 
 		return this.#tasks.retry(id, context);
 	}
 
-	waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
+	async waitForTask<R>(id: TaskId<R>, context: Context): Promise<SettledTask<R>> {
 		this.#tasks.resume();
 		return this.#tasks.waitForTask(id, context) as Promise<SettledTask<R>>;
 	}
 
-	waitForIdle(context: Context): Promise<void> {
+	async waitForIdle(context: Context): Promise<void> {
 		this.#tasks.resume();
 		return this.#tasks.waitForIdle(undefined, context);
 	}

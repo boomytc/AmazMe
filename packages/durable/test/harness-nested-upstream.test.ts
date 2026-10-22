@@ -1226,7 +1226,7 @@ describe("tool task version 1 records", () => {
 		const { kind: _kind, ...input } = record.input as Extract<ToolTaskInput, { kind: "model" }>;
 		const state = { ...record.state, checkpoint } as typeof record.state;
 		await storage.commit(
-			[{ type: "task", value: { ...record, version: 1, input, state } as typeof record }],
+			[{ type: "task", value: { ...record, version: 1, input, state } as typeof record }], () => {},
 			context,
 		);
 		await storage.close(context);

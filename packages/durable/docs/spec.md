@@ -4673,10 +4673,10 @@ type DocumentState<T extends JsonObject> =
   AttachedReplicatedState<Readonly<T> | null>;
 
 type WatchEnd =
-  | { readonly reason: "stopped" | "cancelled" | "session_closed" | "retired" }
+  | { readonly reason: "stopped" | "cancelled" | "ended" | "retired" }
   | { readonly reason: "listener_error"; readonly error: Error }
   /** The Session failed; `error` is what failed it, usually a storage error (section 10.1). */
-  | { readonly reason: "session_failed"; readonly error: unknown };
+  | { readonly reason: "failed"; readonly error: unknown };
 
 interface WatchHandle<T> {
   /** Acquisition revision before start; latest delivered immutable revision afterward. */
@@ -5196,12 +5196,12 @@ type StorageWrite =
  * ancestry, and transitions. Enforces atomicity, global ID ownership, immutable
  * conversation/entry creation, document record consistency, and detached
  * values; Session serializes commits. Sequences strictly increase but may have
- * gaps. Once commit() resolves, later reads through that Storage observe it.
+ * gaps. After durability, commit() calls adopt(seq) synchronously exactly once, before its next commit starts, then resolves. A failed pre-durability batch never calls adopt. The callback must not throw. Once commit() resolves, later reads through that Storage observe it.
  */
 interface Storage {
-  commit(writes: readonly StorageWrite[], context: Context): Promise<Seq>;
+  commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq>;
   /**
-   * Allocate from the one global numeric namespace, above every ID minted or stored before, also across reopen: scans
+   * Allocate from the one global numeric namespace, above every ID minted since opening and every stored ID, also across reopen: scans
    * order by ID as creation order, and the Harness relies on it. The generic brand is compile-time only.
    */
   mintId<I extends Id<string>>(): Promise<I>;
@@ -5316,7 +5316,7 @@ may not have committed, so a host that resubmits after reopening reuses its
   and every wait that starts later rejects with `SessionFailed`, whose `cause` is
   the first error; so does every Storage call still underway when it returns,
   whatever it returned.
-- Watches and event streams end with `{ reason: "session_failed", error }`;
+- Watches and event streams end with `{ reason: "failed", error }`;
   attached replicated states stop updating and keep their last value.
 - Running task invocations get their abort signal. `HarnessOptions.onReport`
   gets the error once, after the Session is sealed, so a report handler that
@@ -5329,7 +5329,7 @@ may not have committed, so a host that resubmits after reopening reuses its
   ignores its abort signal keeps the backend open and `closed` pending.
 - A failing `Storage.close()` fails the Session too, unless it already failed;
   the `close()` call rejects with it, and `closed` settles `failed`. Waits and
-  watches had already ended as for a close (`session_closed`).
+  watches had already ended as for a close (`ended`).
 
 The exceptions fail only their call, and apply to reads alone: a
 `StorageRequestError`, which a Storage throws for an invalid read, with no
@@ -5395,6 +5395,10 @@ built-in tasks have none. An `extension_error` names the hook's or the wrapper's
 extension, or the last selected extension that provides or wraps the section or
 tool. A host acts on reports outside the scheduler, for example
 counting faults of one task kind toward a breaker.
+
+### 10.2 Read-only host
+
+`HarnessOptions.readOnly` prevents writes before Storage admission and disables recovery, nested-call migration, scheduling, and wake notifications. Persisted running tasks remain running in the viewer. Attempts to write or enable scheduling reject with `ReadOnlySession` while the viewer stays healthy. Storage initialization has its own lifecycle and is not made physically read-only by this option.
 
 ## 11. Backends
 

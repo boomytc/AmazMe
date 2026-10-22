@@ -1,4 +1,4 @@
-import { type AttachedReplicatedState, type Context, type JsonValue, replicatedState } from "@amazme/chord";
+import { type AttachedReplicatedState, type WatchHandle, type Context, type JsonValue, replicatedState } from "@amazme/chord";
 import { withoutAbortSignal } from "@amazme/chord/context";
 import { applyImmutable, type NonEmptyPath, type Op, type Path } from "@amazme/chord/delta";
 import { CommittedStateSource, CommittedWatch } from "../session/observation.ts";
@@ -12,7 +12,6 @@ import type {
 	EntryRecord,
 	JsonObject,
 	Storage,
-	WatchHandle,
 } from "../types.ts";
 import { AgentDoc } from "./agent.ts";
 import { activeEntries, captureContextBounds } from "./context.ts";
@@ -42,7 +41,8 @@ export type ViewObserver = {
 		publication: CommitPublication,
 		context: Context,
 	): void;
-	closeSession(failure: { readonly error: unknown } | undefined): void;
+	/** The Session closed, or failed with `failure`. */
+	end(failure: { readonly error: unknown } | undefined): void;
 };
 
 const MOUNTED = [
@@ -94,7 +94,7 @@ export class ConversationViews {
 			for (const mount of this.#mounts.values())
 				for (const observer of [...mount.observers]) {
 					contained(
-						() => observer.closeSession(this.#session.failure),
+						() => observer.end(this.#session.failure),
 						(error) => this.report(error),
 					);
 				}

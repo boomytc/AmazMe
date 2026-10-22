@@ -3,6 +3,7 @@
 import type { Context, JsonValue } from "@amazme/chord";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { registerStorageConformance } from "@amazme/durable/testing";
+import { Harness, ReadOnlySession } from "@amazme/durable";
 import { IDBDatabase as FakeIDBDatabase, IDBKeyRange as FakeIDBKeyRange, IDBFactory } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import { idFromNumber } from "../src/ids.ts";
@@ -21,10 +22,31 @@ import type {
 	TaskRecord,
 } from "../src/types.ts";
 import { ROOT_CONVERSATION_ID } from "../src/types.ts";
+import { chatSetup } from "./chat-support.ts";
+
+/** Storage-level commits here have no in-memory owner to adopt them. */
+const adopt = (): void => {};
 
 Object.defineProperty(globalThis, "IDBKeyRange", { configurable: true, value: FakeIDBKeyRange });
 
 const context = BACKGROUND_CONTEXT;
+
+it("read-only Harness refuses ID allocation before IndexedDB changes metadata", async () => {
+	const indexedDB = new IDBFactory();
+	const storage = await IndexedDbStorage.open("read-only-mint", { indexedDB });
+	const before = await storage.mintId<ConversationId>();
+	const setup = chatSetup();
+	const viewer = await Harness.open(storage, { models: setup.models, registry: setup.registry, readOnly: true }, context);
+	try {
+		await expect(viewer.createConversation({ ownership: { kind: "ownerless" } }, context)).rejects.toBeInstanceOf(ReadOnlySession);
+		expect(await storage.mintId<ConversationId>()).toBe(before + 1);
+		expect(await viewer.commit(() => "still readable", context)).toBe("still readable");
+	} finally {
+		await viewer.close(context);
+		await IndexedDbStorage.delete("read-only-mint", { indexedDB });
+	}
+});
+
 type StoredTask = TaskRecord<JsonValue, JsonValue, JsonValue>;
 
 class ReopeningStorage implements Storage {
@@ -39,10 +61,10 @@ class ReopeningStorage implements Storage {
 		this.indexedDB = indexedDB;
 	}
 
-	async commit(writes: readonly StorageWrite[], commitContext: Context): Promise<Seq> {
-		if (this.closed) return this.current.commit(writes, commitContext);
+	async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, commitContext: Context): Promise<Seq> {
+		if (this.closed) return this.current.commit(writes, adopt, commitContext);
 		try {
-			return await this.current.commit(writes, commitContext);
+			return await this.current.commit(writes, adopt, commitContext);
 		} finally {
 			await this.current.close(context);
 			this.current = await IndexedDbStorage.open(this.name, { indexedDB: this.indexedDB });
@@ -132,7 +154,7 @@ function pendingTask(id: TaskId<JsonValue>, conversationId = ROOT_CONVERSATION_I
 }
 
 async function createRoot(storage: Storage): Promise<void> {
-	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], context);
+	await storage.commit([{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } }], adopt, context);
 }
 
 it("persists minted IDs across reopen", async () => {
@@ -173,7 +195,7 @@ it("returns empty filtered pages when a cursor has passed the ID range", async (
 	await withStorage(async (storage) => {
 		await createRoot(storage);
 		const taskId = await storage.mintId<TaskId<JsonValue>>();
-		await storage.commit([{ type: "task", value: pendingTask(taskId) }], context);
+		await storage.commit([{ type: "task", value: pendingTask(taskId) }], () => {}, context);
 		for (const [after, order] of [
 			[Number.MAX_SAFE_INTEGER, "ascending"],
 			[0, "descending"],
@@ -204,13 +226,13 @@ it("drains admitted transactions before close and rejects new operations", async
 		{ type: "conversation", value: { id: ROOT_CONVERSATION_ID } },
 		{ type: "task", value: pendingTask(idFromNumber<TaskId<JsonValue>>(100)) },
 	];
-	const committed = storage.commit(writes, context);
+	const committed = storage.commit(writes, () => {}, context);
 	const minted = storage.mintId<EntryId>();
 	const read = storage.task(idFromNumber<TaskId<JsonValue>>(100), context);
 	const closed = storage.close(context);
 	expect(storage.close(context)).toBe(closed);
 	await expect(storage.mintId<EntryId>()).rejects.toThrow("closed");
-	await expect(storage.commit([], context)).rejects.toThrow("closed");
+	await expect(storage.commit([], () => {}, context)).rejects.toThrow("closed");
 	await expect(storage.task(idFromNumber<TaskId<JsonValue>>(100), context)).rejects.toThrow("closed");
 	await closed;
 	expect(await committed).toBe(1);
@@ -250,6 +272,7 @@ it("rolls back table writes when a later document copy fails", async () => {
 		} satisfies DocumentCreate;
 		await storage.commit(
 			[{ type: "document.create", record: source, content: { kind: "base", version: 1, value: { count: 1 } } }],
+			adopt,
 			context,
 		);
 		const taskId = await storage.mintId<TaskId<JsonValue>>();
@@ -264,6 +287,7 @@ it("rolls back table writes when a later document copy fails", async () => {
 						source: { id: sourceId, at: "current" },
 					},
 				],
+				adopt,
 				context,
 			),
 		).rejects.toThrow("was rejected");
@@ -294,6 +318,7 @@ it("scans entries and head markers through fork ancestry", async () => {
 					},
 				},
 			],
+			adopt,
 			context,
 		);
 		const childId = await storage.mintId<ConversationId>();
@@ -304,11 +329,13 @@ it("scans entries and head markers through fork ancestry", async () => {
 					value: { id: childId, parent: { conversationId: ROOT_CONVERSATION_ID, at: rootMarker } },
 				},
 			],
+			adopt,
 			context,
 		);
 		const childEntry = await storage.mintId<EntryId>();
 		await storage.commit(
 			[{ type: "entry", value: { id: childEntry, conversationId: childId, kind: "child" } }],
+			adopt,
 			context,
 		);
 		expect(
@@ -358,7 +385,7 @@ it("keeps one readwrite transaction active through many mixed writes", async () 
 				},
 			);
 		}
-		await storage.commit(writes, context);
+		await storage.commit(writes, adopt, context);
 		expect((await storage.entry(lastEntryId!, context))?.entry.data).toEqual({ index: 39 });
 		expect(await storage.task(lastTaskId!, context)).toEqual(pendingTask(lastTaskId!));
 		expect((await storage.submission(lastSubmissionId!, context))?.requestId).toBe("bulk-39");

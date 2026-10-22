@@ -1,4 +1,4 @@
-import { type AttachedReplicatedState, type Context, type JsonValue, replicatedState } from "@amazme/chord";
+import { type AttachedReplicatedState, type WatchHandle, type Context, type JsonValue, replicatedState } from "@amazme/chord";
 import { BACKGROUND_CONTEXT, withoutAbortSignal } from "@amazme/chord/context";
 import { applyImmutable, type Op } from "@amazme/chord/delta";
 import { CommittedStateSource, CommittedWatch } from "../session/observation.ts";
@@ -11,7 +11,6 @@ import type {
 	TaskId,
 	TaskOutcome,
 	TaskRecord,
-	WatchHandle,
 } from "../types.ts";
 import { type BlockedReason, type BlockedSubject, blockedSubject } from "./scheduler.ts";
 import { closedError, scanAll } from "./util.ts";
@@ -61,7 +60,7 @@ export type TaskGraph = {
 export type TaskGraphWatch = WatchHandle<TaskGraph>;
 
 type AnyTaskRecord = TaskRecord<JsonValue, JsonValue, JsonValue>;
-type Observer = CommittedStateSource<TaskGraph> | CommittedWatch<TaskGraph>;
+type Observer = CommittedWatch<TaskGraph> | CommittedStateSource<TaskGraph>;
 type Mount = {
 	value: TaskGraph;
 	readonly observers: Set<Observer>;
@@ -104,7 +103,7 @@ export class TaskGraphView {
 			this.#closed = true;
 			for (const observer of [...(this.#mount?.observers ?? [])]) {
 				contained(
-					() => observer.closeSession(this.#session.failure),
+					() => observer.end(this.#session.failure),
 					(error) => session.report(error),
 				);
 			}

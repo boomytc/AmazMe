@@ -3,6 +3,7 @@ import {
 	createSession,
 	defineTask,
 	MemoryStorage,
+	type Seq,
 	type StorageWrite,
 	type TaskId,
 } from "@amazme/durable";
@@ -33,10 +34,7 @@ class HoldMarks extends MemoryStorage {
 	target: TaskId | undefined;
 	readonly held = deferred();
 	readonly release = deferred();
-	override async commit(
-		writes: readonly StorageWrite[],
-		commitContext: Context,
-	) {
+	override async commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, commitContext: Context) {
 		if (
 			writes.some(
 				(write) =>
@@ -48,7 +46,7 @@ class HoldMarks extends MemoryStorage {
 			this.held.resolve();
 			await this.release.promise;
 		}
-		return super.commit(writes, commitContext);
+		return super.commit(writes, adopt, commitContext);
 	}
 }
 
@@ -182,6 +180,7 @@ describe("work below a cancelled owner", () => {
 					} as typeof failedRecord,
 				},
 			],
+			() => {},
 			context,
 		);
 		// The child's definition is missing: a restart mark would keep it waiting, a request orphans it.
@@ -291,17 +290,10 @@ describe("work below a cancelled owner", () => {
 			context,
 		);
 		const record = (await storage.task(holder, context))!;
-		const completing = {
-			status: "completing",
-			outcome: { status: "completed", result: null },
-		} as const;
+		const completing = { status: "completing", outcome: { status: "completed", result: null } } as const;
 		await storage.commit(
-			[
-				{
-					type: "task",
-					value: { ...record, state: completing } as typeof record,
-				},
-			],
+			[{ type: "task", value: { ...record, state: completing } as typeof record }],
+			() => {},
 			context,
 		);
 		const { harness } = await openTasks(storage, [Dormant]);

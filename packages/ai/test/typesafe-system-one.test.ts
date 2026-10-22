@@ -417,4 +417,95 @@ describe("TypeSafe System One", () => {
 		expect(withoutTokens.stopReason).toBe("stop");
 		expect(withoutTokens.usage).toBeUndefined();
 	});
+	it("sends images to OpenRouter as image_url parts in the state", async () => {
+		const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			requests.push({
+				body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+				headers: new Headers(init?.headers),
+			});
+			return Response.json({ answers: wireAnswers });
+		});
+		const openRouterModel: ClassifierModel<"typesafe-system-one"> = {
+			...model,
+			id: "typesafe/jev-1.14",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			input: ["text", "image"],
+		};
+
+		const result = await classify(
+			openRouterModel,
+			{ ...context, images: [{ type: "image", data: "cG5n", mimeType: "image/png" }] },
+			{ apiKey: "secret", fetch },
+		);
+
+		expect(result.stopReason).toBe("stop");
+		// OpenRouter answers 200 for `assets` but drops them, and rejects a top-level `images` list.
+		expect(requests[0]?.body).toEqual({
+			model: "typesafe/jev-1.14",
+			state: [{ type: "image_url", image_url: { url: "data:image/png;base64,cG5n" } }, context.state],
+			questions: expect.any(Object),
+		});
+		expect(requests[0]?.headers.has("typesafe-danger-zone-images")).toBe(false);
+	});
+
+	it.each([
+		["OpenRouter behind a proxy", { provider: "openrouter", baseUrl: "https://proxy.example.com/v1" }],
+		["a regional OpenRouter endpoint", { provider: "custom", baseUrl: "https://us.openrouter.ai/api/v1" }],
+		[
+			"a proxy declared through compat",
+			{
+				provider: "custom",
+				baseUrl: "https://proxy.example.com/v1",
+				compat: { imageInput: "state-image-urls" as const, sendImageOptInHeader: false },
+			},
+		],
+	])("sends OpenRouter's image form to %s", async (_name, overrides) => {
+		const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			requests.push({
+				body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+				headers: new Headers(init?.headers),
+			});
+			return Response.json({ answers: wireAnswers });
+		});
+
+		const result = await classify(
+			{ ...model, id: "typesafe/jev-1.14", input: ["text", "image"], ...overrides },
+			{ ...context, images: [{ type: "image", data: "cG5n", mimeType: "image/png" }] },
+			{ apiKey: "secret", fetch },
+		);
+
+		expect(result.stopReason).toBe("stop");
+		expect(requests[0]?.body.state).toEqual([
+			{ type: "image_url", image_url: { url: "data:image/png;base64,cG5n" } },
+			context.state,
+		]);
+		expect(requests[0]?.body).not.toHaveProperty("assets");
+		expect(requests[0]?.headers.has("typesafe-danger-zone-images")).toBe(false);
+	});
+
+	it("lets compat override detected image settings per field", async () => {
+		const requests: Array<{ body: Record<string, unknown>; headers: Headers }> = [];
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			requests.push({
+				body: JSON.parse(String(init?.body)) as Record<string, unknown>,
+				headers: new Headers(init?.headers),
+			});
+			return Response.json({ answers: wireAnswers });
+		});
+
+		// Only the header is overridden; the detected `assets` form stays.
+		await classify(
+			{ ...model, input: ["text", "image"], compat: { sendImageOptInHeader: false } },
+			{ ...context, images: [{ type: "image", data: "cG5n", mimeType: "image/png" }] },
+			{ apiKey: "secret", fetch },
+		);
+
+		expect(requests[0]?.body).toHaveProperty("assets");
+		expect(requests[0]?.headers.has("typesafe-danger-zone-images")).toBe(false);
+	});
+
+
 });

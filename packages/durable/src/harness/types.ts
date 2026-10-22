@@ -1,7 +1,8 @@
-import type { AttachedReplicatedState, Context, JsonValue } from "@amazme/chord";
+import type { AttachedReplicatedState, WatchHandle, Context, JsonValue } from "@amazme/chord";
 import type {
 	AssistantMessage,
 	CacheRetention,
+	ClientIdentity,
 	Message,
 	Models,
 	ModelThinkingLevel,
@@ -41,7 +42,6 @@ import type {
 	TaskRecord,
 	TaskState,
 	Tx,
-	WatchHandle,
 } from "../types.ts";
 import type { TaskGraph, TaskGraphWatch } from "./task-graph.ts";
 import type { UsageState } from "./usage.ts";
@@ -670,6 +670,13 @@ export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
 	 * one, called at each use, so a host can replace its model configuration without reopening the Harness.
 	 */
 	readonly models: Models | (() => Models);
+	/**
+	 * How model requests identify the app to providers, merged field by field over `DEFAULT_HARNESS_IDENTITY`
+	 * (`{ attribution: PI_ATTRIBUTION }`, provider attribution to pi). It applies to every request through the Harness's
+	 * models, including hooks and tools, and overrides the identity the `Models` was created with; a request's own
+	 * `identity` overrides it. Pass `{ attribution: null }` to send no attribution headers.
+	 */
+	readonly identity?: ClientIdentity;
 	readonly registry: RegistryReader<Tool>;
 	/** Run settings, or a function returning the current ones; read at each use either way. */
 	readonly settings?: HarnessSettings | (() => HarnessSettings | undefined);
@@ -710,6 +717,14 @@ export type HarnessOptions<Tool extends ToolRegistration = ToolRegistration> = {
 	 * Its own throw or rejection is dropped.
 	 */
 	readonly onReport?: (error: unknown, info: ReportInfo) => void;
+	/**
+	 * Open for reading only, as a viewer of a session that another process drives, for example a synced copy on a device
+	 * that only shows it. Open recovers nothing: a `running` task stays as committed. Every commit with writes rejects
+	 * with `ReadOnlySession` before it reaches Storage, and so does `resume()` and every call that enables scheduling;
+	 * the Harness stays usable for reads and watches. `wake()` is always inactive, and `onWake` is never called. Reopen
+	 * without it to write.
+	 */
+	readonly readOnly?: boolean;
 };
 
 /**
@@ -879,9 +894,10 @@ export interface Harness extends Session {
 		conversationId?: ConversationId,
 	): Promise<"cancelled" | "settled" | "not_found">;
 	/**
-	 * Enable task scheduling. Idempotent; throws after close. Calls that ask for progress enable it too:
-	 * `Conversation.submit()`, `Conversation.compact()`, `Conversation.abort()`, `Submission.wait()`, `waitForTask()`,
-	 * `Harness.waitForIdle()`, and `Conversation.waitForIdle()`. Read-only viewers never do.
+	 * Enable task scheduling. Idempotent; throws after close, and `ReadOnlySession` on a read-only Harness. Calls that
+	 * ask for progress enable it too: `Conversation.submit()`, `Conversation.compact()`, `Conversation.abort()`,
+	 * `Submission.wait()`, `waitForTask()`, `Harness.waitForIdle()`, and `Conversation.waitForIdle()`. Read-only viewers
+	 * never do.
 	 */
 	resume(): void;
 	/**

@@ -1,11 +1,14 @@
-import type { ProviderHeaders } from "@amazme/ai";
+import { type ProviderHeaders, getIdentityHeaders, getAttributionHeaders, formatUserAgent } from "@amazme/ai";
+import { providerHeadersToRecord } from "@amazme/ai/utils/headers";
+import { VERSION } from "../src/config.ts";
+import { getClientIdentity } from "../src/core/client-identity.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ModelRuntime } from "../src/core/model-runtime.ts";
-import { mergeProviderAttributionHeaders } from "../src/core/provider-attribution.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
 afterEach(() => vi.unstubAllEnvs());
+const userAgent = { "User-Agent": formatUserAgent({ version: VERSION }) };
 
 describe("provider attribution on actual model requests", () => {
 	async function fixture(baseUrl: string, settings = SettingsManager.inMemory({ enableInstallTelemetry: true })) {
@@ -21,7 +24,7 @@ describe("provider attribution on actual model requests", () => {
 			apiKey: "fixture-key",
 			api: "openai-completions",
 			streamSimple: (_model, _context, options) => {
-				captured = options?.headers;
+				captured = providerHeadersToRecord(getIdentityHeaders(_model, options?.identity), options?.headers);
 				requests.push(captured);
 				throw new Error("captured locally");
 			},
@@ -54,10 +57,10 @@ describe("provider attribution on actual model requests", () => {
 			"X-OpenRouter-Title",
 			"pi",
 		);
-		expect(f.requests.find((headers) => headers?.["x-owner"] === "disabled")).toEqual({ "x-owner": "disabled" });
+		expect(f.requests.find((headers) => headers?.["x-owner"] === "disabled")).toEqual({ ...userAgent, "x-owner": "disabled" });
 		enabledSettings.setEnableInstallTelemetry(false);
 		await enabled.completeSimple(f.model, { messages: [] });
-		expect(f.headers()).toBeUndefined();
+		expect(f.headers()).toEqual(userAgent);
 	});
 
 	it.each([
@@ -66,29 +69,29 @@ describe("provider attribution on actual model requests", () => {
 			{ "HTTP-Referer": "https://pi.dev", "X-OpenRouter-Title": "pi", "X-OpenRouter-Categories": "cli-agent" },
 		],
 		["https://integrate.api.nvidia.com/v1", { "X-BILLING-INVOKE-ORIGIN": "Pi" }],
-		["https://api.cloudflare.com/client/v4", { "User-Agent": "pi-coding-agent" }],
-		["https://gateway.ai.cloudflare.com/v1/test", { "User-Agent": "pi-coding-agent" }],
+		["https://api.cloudflare.com/client/v4", {}],
+		["https://gateway.ai.cloudflare.com/v1/test", {}],
 	])("sends attribution to %s", async (baseUrl, expected) => {
 		const f = await fixture(baseUrl);
 		await f.runtime.completeSimple(f.model, { messages: [] });
-		expect(f.headers()).toEqual(expected);
+		expect(f.headers()).toEqual({ ...userAgent, ...expected });
 	});
 
 	it("honors live settings and environment opt-out while preserving explicit headers", async () => {
 		const f = await fixture("https://openrouter.ai/api/v1");
 		f.settings.setEnableInstallTelemetry(false);
 		await f.runtime.completeSimple(f.model, { messages: [] });
-		expect(f.headers()).toBeUndefined();
+		expect(f.headers()).toEqual(userAgent);
 		vi.stubEnv("AMAZME_TELEMETRY", "1");
 		await f.runtime.completeSimple(f.model, { messages: [] });
 		expect(f.headers()).toHaveProperty("X-OpenRouter-Title", "pi");
 		vi.stubEnv("AMAZME_TELEMETRY", "0");
 		f.settings.setEnableInstallTelemetry(true);
 		await f.runtime.completeSimple(f.model, { messages: [] }, { headers: { "X-OpenRouter-Title": "custom" } });
-		expect(f.headers()).toEqual({ "X-OpenRouter-Title": "custom" });
+		expect(f.headers()).toEqual({ ...userAgent, "X-OpenRouter-Title": "custom" });
 	});
 
-	it("assembles defaults before the transform and preserves case-insensitive overrides and null", async () => {
+	it("preserves transformed explicit headers over identity defaults", async () => {
 		const f = await fixture("https://openrouter.ai/api/v1");
 		let transformed = false;
 		await f.runtime.completeSimple(
@@ -101,7 +104,6 @@ describe("provider attribution on actual model requests", () => {
 					expect(headers).toEqual({
 						"http-referer": null,
 						"x-openrouter-title": "custom",
-						"X-OpenRouter-Categories": "cli-agent",
 					});
 					return { ...headers, "x-final": "yes" };
 				},
@@ -114,13 +116,13 @@ describe("provider attribution on actual model requests", () => {
 	it("keeps OpenCode session routing independent of telemetry", async () => {
 		const f = await fixture("https://opencode.ai/zen/v1", SettingsManager.inMemory({ enableInstallTelemetry: false }));
 		await f.runtime.completeSimple(f.model, { messages: [] }, { sessionId: "session-1" });
-		expect(f.headers()).toEqual({ "x-opencode-session": "session-1", "x-opencode-client": "pi" });
+		expect(f.headers()).toEqual({ ...userAgent, "x-opencode-session": "session-1" });
 	});
 
 	it("does not match provider host names embedded in paths or unrelated hosts", () => {
 		const settings = SettingsManager.inMemory();
 		for (const baseUrl of ["https://example.test/openrouter.ai", "https://openrouter.ai.example.test/v1"]) {
-			expect(mergeProviderAttributionHeaders({ provider: "custom", baseUrl }, settings, undefined)).toBeUndefined();
+			expect(getAttributionHeaders({ provider: "custom", baseUrl }, getClientIdentity(settings))).toEqual({});
 		}
 	});
 });

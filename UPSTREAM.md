@@ -10,7 +10,7 @@
 
 ## 当前基线
 
-当前已处理到 Pi 的固定提交 `16f5f0af4d85ca583d045ceb5ed6d646fcaf7761`（2026-10-21）。本轮吸收 `bdd9f0399..16f5f0af4` 的 1 个提交，新增独立的 IndexedDB 存储子入口，并修正初始化事务中止和分页游标边界问题。AmazMe 沿用 package.json 中的当前版本，本轮不发布、不覆盖既有发布记录；具体适配与验证见本轮记录。上一轮 `a731ba8b8..bdd9f0399` 的 12 个提交为 10 项吸收、1 项已覆盖、1 项跳过；此前已处理 `1d01b3b1f..a731ba8b8` 的 2 个提交、`1402973a9..1d01b3b1f` 的 14 个提交、`8efd314fa..1402973a9` 的 16 个提交及更早批次，历史处置见下文。
+当前已处理到 Pi 的固定提交 `be14d9732f98fcc33929cf103a92b96afaa6523e`（2026-10-22）。本轮逐项处理 `16f5f0af4..be14d9732` 的 32 个提交，吸收请求身份、图片协议、计费与重试、Durable 提交及只读观察能力。保留本地产品状态接口、Jev Box 和命名资产、会话生命周期保护。AmazMe 版本继续以 package.json 为准，本轮不发布；具体处置见本轮记录。
 
 历史基线为 `0cf65d2bf`（v1.0.4），随后处理 v1.1.0、至 `42a3497d0` 的 12 个提交，以及 `ea448f454..427052247` 的 25 个提交。历史和本轮的具体处置分别记录如下。
 
@@ -540,3 +540,44 @@ SQLite 阶段验证：3 项新增用例在旧实现失败，修正后 Durable �
 离线验证须同时隔离 HOME 和移除继承的供应商凭据环境变量，保留必要的 PATH、临时目录及 `NODE_EXTRA_CA_CERTS`。Durable 的 `test` 是两轮 Vitest 的复合脚本，末尾追加 `--exclude` 只会作用于后一轮；需要排除实网 E2E 时，必须在隔离环境中逐轮直接调用 Vitest，并在两轮分别指定排除参数，不能只依赖 npm 的尾部参数。
 
 安装产物升级核对：v1 在途嵌套工具一次性迁移到 v2，旧副作用未执行，调用标为 interrupted，父任务结束后结果回收。
+
+## 增量跟进：`16f5f0af4..be14d9732`（2026-10-22）
+
+| Pi 提交 | 行为 | 处理 |
+| --- | --- | --- |
+| `e5fe9777b` | 清理已退役模型 | 吸收生成器规则与目录测试；按现有生成流程刷新已提交模型数据 |
+| `cedefc532` | Business 工作区额度错误 | 吸收不可重试错误识别 |
+| `82432219a` | 生成模型目录不入 Git 的约定 | 保留本地差异；AmazMe 提交目录快照并验证 manifest |
+| `29057ece3` | 代理转发 Codex CLI 断流 | 吸收重试识别与回归 |
+| `6e491cfa9` | 状态码只匹配独立数字 | 吸收；请求 ID 和字节数中的片段不再触发重试 |
+| `612a172e6` | 单段 fd 查询转义 | 吸收补全实现和回归 |
+| `adfc14461` | 分割轮次摘要保留压缩指令 | 吸收共享 compaction 模块；产品 Durable 摘要原已统一携带 instructions |
+| `adc5fa9f8`、`04a93bad8` | AI 请求身份与后续修正 | 吸收 AI、Agent、Harness 和 ModelRuntime；保留 Pi OAuth 身份、逐会话及实时遥测设置 |
+| `4759f09fb`、`89e309581` | WAL 页复制及撤回 | 按最终净变化删除无产品消费者的旧复制包装和 exclusive；保留本地 SQLite 预检及迁移保护 |
+| `4c25119f5`、`cae9fd28a` | Durable 提交日志复制及撤回 | 净行为为零，不引入已经撤回的复制层 |
+| `bd3c9b823` | 恢复后激活新注册扩展工具 | 已由 Durable 的持久选择器与动态注册表覆盖；不恢复已删除的 AgentSession |
+| `8c4e87389` | grep 忽略 ripgrep 用户配置 | 吸收 --no-config 和实际工具回归 |
+| `02726086d` | 恢复时成对移除截断调用和工具结果 | 已由当前 Durable 路径覆盖：仅 toolUse 调用进入工具轮次；压缩投影按调用 ID 同时过滤结果。不恢复旧 SDK 恢复路径 |
+| `7f225f25d` | System One 图片输入 | 适配吸收 Clef、Cloudflare Jev 和 OpenRouter 格式及 compat；保留本地已验收的 TypeSafe jpg 资产、Box、结构化内容及命名引用 |
+| `f76b248ca` | 变更记录审计 | 只补充本地 Unreleased 中实际落地内容，保留已有发布历史 |
+| `18e56a069` | OpenRouter 分类器 compat 断言 | 吸收目录断言 |
+| `4a080252f`、`58c0b02ce` | Pi 发布与下一轮 Unreleased | 保留 AmazMe 版本和现有 Unreleased；不发布或打标签 |
+| `7c22a93d0` | totalFromProvider | 吸收使用量契约；额外修正 Durable 混合计费汇总标记 |
+| `5884ee681` | /ir 从 URL 导入复现会话 | 跳过 Pi 仓库的 .pi 开发扩展；AmazMe 没有此维护入口 |
+| `cae8d69e5` | OpenRouter 报告总费用 | 吸收 Completions、Anthropic 与 BYOK 计算，HTML 导出使用记录总额 |
+| `2685de7a1` | 安全依赖升级 | 全部现有工作区 Vitest 固定到 4.1.12，锁定 Vite 8.3.5；无 Gondolin 示例，无对应依赖可升级 |
+| `db774055e` | 预览包发布流程 | 跳过 Pi 发布配置；仓库禁止新增 GitHub workflows |
+| `3bc6eebac` | Anthropic 空 assistant 后的系统更新 | 吸收请求顺序修复与 SSE 回归 |
+| `92ab53602` | 提交内 adopt、共享 watch 类型及显式退休 | 吸收全部 Storage 后端、Session、观察者和本地消费者；保留 Web/桌面仍使用的 documentState、viewState、taskGraph |
+| `b9fb2b854` | Durable 示例重新编号 | 保留本地状态桥接示例及其编号，现有示例仍参加类型检查 |
+| `ac80dd88f` | 批准贡献者 | 跳过 Pi 仓库治理 |
+| `476a303c1` | 托管 npm ci 去掉年龄覆盖 | 吸收，继续使用已锁定的安装闭包 |
+| `be14d9732` | 只读 Harness | 吸收并补齐本地旧会话迁移和 IndexedDB ID 分配的只读保护 |
+
+自审查修正：保留 Chord 状态桥接的取消隔离与失败后解除缓存固定；watch 明确退休并释放来源引用。只读保护在 Storage 分配 ID 前生效，避免 IndexedDB 元数据写入，并跳过旧嵌套调用迁移。模型包装保留工具与 hook 的共享视图，同时每次请求读取当前身份。Durable 汇总含目录估算的费用时清除 totalFromProvider。请求身份按真实 OpenRouter 主机识别，不因路径或相似域名发送归属头。这些修正落在代码边界，并由回归约束，没有追加行为规则。
+
+四项新增回归分别移除只读迁移、ID 分配、动态身份和混合计费修复后均失败，恢复修复后全部通过。测试隔离 HOME 和供应商凭据。依赖安装保持 --ignore-scripts；npm 10 的可选 peer 解析崩溃后，使用 npm 11.13.0 正常解析并安装，没有使用 force 或 legacy-peer-deps。
+
+验证：AI 1,518、Agent 91、Chord 578、Coding Agent 2,614 项通过；Durable 默认缓存和即时淘汰各 1,508 项通过，真实 workerd 30 项通过，新增工具激活回归所在文件另测 43 项通过。TUI 全包、工程测试 102 项、修改源码包构建、全仓类型检查、check:workspace、7 个新增核心文件的 lint 错误检查及差异检查通过；最终 CLI bundle 启动输出当前版本。Chord 随并行测试运行时有一次既有 fuzz 超过 5 秒，隔离重跑全包通过，未修改超时或断言。
+
+验证限制：AI 866、Coding Agent 24、Durable 每轮 4 项按条件跳过。IndexedDB 使用 fake-indexeddb 契约及只读元数据回归；本轮未重新验收原生浏览器。未发送真实模型请求，未做 Windows、签名分发或发布验收。

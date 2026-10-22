@@ -4,6 +4,10 @@
 
 Versions below are @amazme/agent's own numbering before unified versioning.
 
+### Added
+
+- Agent.identity 可覆盖默认供应商身份并传递到模型请求。
+
 ## [1.1.0] - 2026-10-07
 
 ### Added

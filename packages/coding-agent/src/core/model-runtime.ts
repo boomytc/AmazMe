@@ -25,6 +25,8 @@ import {
 	type DeferredCancelOptions,
 	type DeferredFetchOptions,
 	type DeferredHandle,
+	getOpenCodeSessionHeaders,
+	mergeClientIdentity,
 	type ImageApi,
 	type ImageModel,
 	type ImagesContext,
@@ -70,7 +72,7 @@ import { getAgentDir } from "../config.ts";
 import { operationSignal, raceWithAbortSignal } from "../utils/abort.ts";
 import { AuthStorage as DefaultAuthStorage } from "./auth-storage.ts";
 import { ModelConfig } from "./model-config.ts";
-import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { getClientIdentity } from "./client-identity.ts";
 import { SettingsManager } from "./settings-manager.ts";
 import { FileModelsStore, InMemoryCodingAgentModelsStore } from "./models-store.ts";
 import {
@@ -693,11 +695,13 @@ export class ModelRuntime implements Models {
 		const { transformHeaders, ...rawProviderOptions } = options ?? {};
 		const providerOptions = rawProviderOptions as Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
 		const requestModel: TModel = resolution.auth.baseUrl ? { ...model, baseUrl: resolution.auth.baseUrl } : model;
-		let headers = mergeProviderAttributionHeaders(
-			requestModel,
-			this.requestSettings,
-			"sessionId" in providerOptions && typeof providerOptions.sessionId === "string" ? providerOptions.sessionId : undefined,
-			mergeHeaders(resolution.auth.headers, providerOptions.headers),
+		const sessionId =
+			"sessionId" in providerOptions && typeof providerOptions.sessionId === "string"
+				? providerOptions.sessionId
+				: undefined;
+		let headers = mergeHeaders(
+			mergeHeaders(getOpenCodeSessionHeaders(requestModel, sessionId), resolution.auth.headers),
+			providerOptions.headers,
 		);
 		if (transformHeaders) headers = await transformHeaders(headers ?? {});
 		const env =
@@ -709,6 +713,7 @@ export class ModelRuntime implements Models {
 			model: requestModel,
 			options: {
 				...providerOptions,
+				identity: mergeClientIdentity(getClientIdentity(this.requestSettings), providerOptions.identity),
 				apiKey: providerOptions.apiKey ?? resolution.auth.apiKey,
 				headers,
 				env,

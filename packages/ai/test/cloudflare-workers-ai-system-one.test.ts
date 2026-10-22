@@ -72,11 +72,11 @@ function setup() {
 const auth = { apiKey: "cf-key", env: { CLOUDFLARE_ACCOUNT_ID: "account-id" } };
 
 describe("Cloudflare Workers AI System One", () => {
-	it("rejects unsupported images and Box questions before sending", async () => {
+	it("rejects images on text-only models and unsupported Box questions before sending", async () => {
 		const { models, jev } = setup();
 		const fetch = vi.fn();
 		const imageResult = await models.classify(
-			{ ...jev, input: ["text", "image"] },
+			{ ...jev, input: ["text"] },
 			{
 				...context,
 				images: [{ type: "image", data: "cG5n", mimeType: "image/png" }],
@@ -91,7 +91,7 @@ describe("Cloudflare Workers AI System One", () => {
 			},
 			{ ...auth, fetch },
 		);
-		expect(imageResult.errorMessage).toContain("does not support image input");
+		expect(imageResult.errorMessage).toContain("does not accept image input");
 		expect(boxResult.errorMessage).toContain("does not support box questions");
 		expect(fetch).not.toHaveBeenCalled();
 	});
@@ -128,7 +128,8 @@ describe("Cloudflare Workers AI System One", () => {
 
 	it.each([
 		["@cf/cloudflare/clef", 0.24],
-		["@cf/cloudflare/clef-flash", 0.09],
+		["@cf/cloudflare/clef-flash", 0.038],
+		["@cf/cloudflare/clef-omni", 0.15],
 	])("runs %s through /ai/run and parses its direct output", async (id, inputPrice) => {
 		const { models } = setup();
 		const clef = models.getModelOfType("classifier", "cloudflare-workers-ai", id);
@@ -152,6 +153,106 @@ describe("Cloudflare Workers AI System One", () => {
 		expect(result.answers.department).toMatchObject({ type: "choice", choice: "technical", confidence: 0.4538 });
 		expect(result.usage).toMatchObject({ input: 222, output: 0, totalTokens: 222 });
 		expect(result.usage?.cost.input).toBeCloseTo((222 * inputPrice) / 1_000_000);
+	});
+
+	it("sends images to Clef as data URLs", async () => {
+		const { models } = setup();
+		const clef = models.getModelOfType("classifier", "cloudflare-workers-ai", "@cf/cloudflare/clef");
+		if (!clef) throw new Error("missing Cloudflare Clef model");
+		const bodies: Array<{ model: string; input: Record<string, unknown> }> = [];
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			bodies.push(JSON.parse(String(init?.body)) as { model: string; input: Record<string, unknown> });
+			return Response.json({ result: clefOutput, success: true, errors: [], messages: [] });
+		});
+
+		const result = await models.classify(
+			clef,
+			{
+				...context,
+				images: [
+					{ type: "image", data: "cG5n", mimeType: "image/png" },
+					{ type: "image", data: "d2VicA==", mimeType: "image/webp" },
+				],
+			},
+			{ ...auth, fetch },
+		);
+
+		expect(result.stopReason).toBe("stop");
+		// Clef rejects `assets` with a 422, so the state stays as is.
+		expect(bodies[0]?.input).toEqual({
+			state: context.state,
+			questions: expect.any(Object),
+			images: ["data:image/png;base64,cG5n", "data:image/webp;base64,d2VicA=="],
+		});
+		expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has("typesafe-danger-zone-images")).toBe(false);
+	});
+
+	it("reads the image form from compat before the model ID", async () => {
+		const { models, jev } = setup();
+		const clef = models.getModelOfType("classifier", "cloudflare-workers-ai", "@cf/cloudflare/clef");
+		expect(clef?.compat).toEqual({ imageInput: "images" });
+		expect(jev.compat).toEqual({ imageInput: "assets" });
+		const bodies: Array<{ input: Record<string, unknown> }> = [];
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			bodies.push(JSON.parse(String(init?.body)) as { input: Record<string, unknown> });
+			return Response.json({ result: clefOutput, success: true, errors: [], messages: [] });
+		});
+
+		// A Clef deployment under an ID the prefix check does not recognize.
+		await models.classify(
+			{ ...jev, id: "@cf/acme/clef-finetune", input: ["text", "image"], compat: { imageInput: "images" } },
+			{ ...context, images: [{ type: "image", data: "cG5n", mimeType: "image/png" }] },
+			{ ...auth, fetch },
+		);
+
+		expect(bodies[0]?.input.images).toEqual(["data:image/png;base64,cG5n"]);
+		expect(bodies[0]?.input).not.toHaveProperty("assets");
+	});
+
+	it("rejects more than four images for Clef before sending", async () => {
+		const { models } = setup();
+		const clef = models.getModelOfType("classifier", "cloudflare-workers-ai", "@cf/cloudflare/clef-flash");
+		if (!clef) throw new Error("missing Cloudflare Clef Flash model");
+		const fetch = vi.fn(async () => Response.json({ result: clefOutput, success: true }));
+		const image = { type: "image" as const, data: "cG5n", mimeType: "image/png" };
+
+		const result = await models.classify(clef, { ...context, images: Array(5).fill(image) }, { ...auth, fetch });
+
+		expect(fetch).not.toHaveBeenCalled();
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe(
+			"Cloudflare Workers AI accepts at most 4 images",
+		);
+	});
+
+	it.each(["typesafe/jev", "typesafe/jev-1.14.0"])("sends images to %s as System One assets", async (id) => {
+		const { models } = setup();
+		const jev = models.getModelOfType("classifier", "cloudflare-workers-ai", id);
+		if (!jev) throw new Error(`missing Cloudflare ${id} model`);
+		const bodies: Array<{ model: string; input: Record<string, unknown> }> = [];
+		const fetch = vi.fn(async (_input: string | URL | Request, init?: RequestInit) => {
+			bodies.push(JSON.parse(String(init?.body)) as { model: string; input: Record<string, unknown> });
+			return Response.json(restResponse("Completed"));
+		});
+
+		const result = await models.classify(
+			jev,
+			{ ...context, images: [{ type: "image", data: "cG5n", mimeType: "image/png" }] },
+			{ ...auth, fetch },
+		);
+
+		expect(result.stopReason).toBe("stop");
+		expect(bodies[0]).toMatchObject({
+			model: id,
+			input: {
+				state: { ...context.state, images: [expect.any(String)] },
+				assets: expect.any(Object),
+			},
+		});
+		const input = bodies[0]?.input as { state: { images: string[] }; assets: Record<string, unknown> };
+		expect(input.assets[input.state.images[0]!]).toEqual({ type: "image", format: "png", data_base64: "cG5n" });
+		// Workers AI needs no TypeSafe opt-in header.
+		expect(new Headers(fetch.mock.calls[0]?.[1]?.headers).has("typesafe-danger-zone-images")).toBe(false);
 	});
 
 	it("reports runs that did not complete", async () => {

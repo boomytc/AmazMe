@@ -52,6 +52,9 @@ export function addUsage(total: Draft<Usage> | Usage, usage: Usage): void {
 	total.cost.cacheRead += usage.cost.cacheRead;
 	total.cost.cacheWrite += usage.cost.cacheWrite;
 	total.cost.total += usage.cost.total;
+	if (total.cost.totalFromProvider !== undefined || usage.cost.totalFromProvider !== undefined) {
+		total.cost.totalFromProvider = total.cost.totalFromProvider === true && usage.cost.totalFromProvider === true;
+	}
 }
 
 /** Add every bucket of `state` into `sum`. */

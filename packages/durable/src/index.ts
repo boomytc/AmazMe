@@ -1,3 +1,4 @@
+export type { WatchEnd, WatchHandle } from "@amazme/chord";
 export { defineDoc, defineDocFamily } from "./documents.ts";
 export {
 	AssistantEntry,
@@ -21,6 +22,7 @@ export type {
 export {
 	ConversationBusy,
 	ReadAfterWrite,
+	ReadOnlySession,
 	SessionFailed,
 	StorageRequestError,
 } from "./errors.ts";
@@ -53,7 +55,7 @@ export {
 	type GenerationResult,
 	GenerationTask,
 } from "./harness/generation.ts";
-export { Harness } from "./harness/harness.ts";
+export { DEFAULT_HARNESS_IDENTITY, Harness } from "./harness/harness.ts";
 export { InboxDoc, type InboxItem, type InboxState } from "./harness/inbox.ts";
 export {
 	type CompactionFailure,
@@ -175,12 +177,12 @@ export type {
 	DocumentCreate,
 	DocumentId,
 	DocumentObserver,
+	DocumentState,
 	DocumentPoint,
 	DocumentQuery,
 	DocumentReader,
 	DocumentRecord,
 	DocumentSemantics,
-	DocumentState,
 	DocumentWatch,
 	Entry,
 	EntryDraft,
@@ -235,7 +237,5 @@ export type {
 	Tx,
 	TypedEntry,
 	TypedEntryDraft,
-	WatchEnd,
-	WatchHandle,
 } from "./types.ts";
 export { ROOT_CONVERSATION_ID } from "./types.ts";

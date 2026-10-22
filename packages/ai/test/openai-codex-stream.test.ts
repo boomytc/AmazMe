@@ -1,4 +1,3 @@
-import { arch, platform, release } from "node:os";
 import { join } from "node:path";
 import { zstdDecompressSync } from "node:zlib";
 import { Type } from "typebox";
@@ -12,6 +11,7 @@ import {
 	streamSimple as streamSimpleOpenAICodexResponses,
 } from "../src/api/openai-codex-responses.ts";
 import type { Api, Context, Model } from "../src/types.ts";
+import { formatUserAgent } from "../src/utils/identity.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
 const originalAgentDir = process.env.AMAZME_CODING_AGENT_DIR;
@@ -161,7 +161,7 @@ describe("openai-codex streaming", () => {
 				expect(headers?.get("chatgpt-account-id")).toBe("acc_test");
 				expect(headers?.get("OpenAI-Beta")).toBe("responses=experimental");
 				expect(headers?.get("originator")).toBe("pi");
-				expect(headers?.get("User-Agent")).toBe(`pi (${platform()} ${release()}; ${arch()})`);
+				expect(headers?.get("User-Agent")).toBe(formatUserAgent());
 				expect(headers?.get("accept")).toBe("text/event-stream");
 				expect(headers?.has("x-api-key")).toBe(false);
 				return new Response(stream, {

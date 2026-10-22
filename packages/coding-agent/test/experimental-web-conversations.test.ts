@@ -196,7 +196,7 @@ describe("the session's conversation list", () => {
 			const storage = await openNodeSqliteStorage(join(directory, "session.sqlite"));
 			try {
 				const record = (await storage.task(id, TODO_CONTEXT))!;
-				await storage.commit([{ type: "task", value: { ...record, restarts: 5 } }], TODO_CONTEXT);
+				await storage.commit([{ type: "task", value: { ...record, restarts: 5 } }], () => {}, TODO_CONTEXT);
 			} finally { await storage.close(TODO_CONTEXT); }
 			setup = await openConversations(directory);
 			await waitFor(() => setup.state.value.tasks.some((task) => task.id === String(id) && task.blocked === "restart_limit"), "parked task projection");

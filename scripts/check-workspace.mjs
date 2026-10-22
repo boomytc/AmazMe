@@ -623,7 +623,7 @@ export async function checkEntryContracts(repoRoot) {
 	for (const budget of [
 		{
 			entry: "packages/ai/src/models.ts",
-			maxFiles: 18,
+			maxFiles: 21,
 			forbid: ["packages/ai/src/providers/", "packages/ai/src/models.generated.ts", "packages/ai/src/index.ts"],
 		},
 		{
@@ -645,7 +645,7 @@ export async function checkEntryContracts(repoRoot) {
 		{
 			entry: "packages/durable/src/index.ts",
 			// Includes the Durable telemetry schema and host timer adapter.
-			maxFiles: 75,
+			maxFiles: 78,
 			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts", "packages/durable/src/images/"],
 		},
 		{

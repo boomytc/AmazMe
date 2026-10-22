@@ -943,14 +943,14 @@ describe("ownership", () => {
 		const storage = await openNodeSqliteStorage(path);
 		let rejectMark: TaskId | undefined;
 		const commit = storage.commit.bind(storage);
-		storage.commit = async (writes, ctx) => {
+		storage.commit = async (writes, adopt, ctx) => {
 			if (
 				writes.some((write) => write.type === "task" && write.value.id === rejectMark && write.value.abortRequested)
 			) {
 				rejectMark = undefined;
 				throw new Error("disk gone");
 			}
-			return commit(writes, ctx);
+			return commit(writes, adopt, ctx);
 		};
 		opened = await openHarness(storage);
 		const child = (await opened.harness.conversation(tree.child, context))!;
@@ -976,7 +976,8 @@ describe("ownership", () => {
 		class Failing extends ControlledStorage {
 			override async commit(
 				writes: Parameters<MemoryStorage["commit"]>[0],
-				ctx: Parameters<MemoryStorage["commit"]>[1],
+				adopt: Parameters<MemoryStorage["commit"]>[1],
+				ctx: Parameters<MemoryStorage["commit"]>[2],
 			) {
 				const marks = writes.some(
 					(write) => write.type === "task" && write.value.id === failMark && write.value.abortRequested,
@@ -985,7 +986,7 @@ describe("ownership", () => {
 					failMark = undefined;
 					throw failure;
 				}
-				return super.commit(writes, ctx);
+				return super.commit(writes, adopt, ctx);
 			}
 		}
 		const storage = new Failing();

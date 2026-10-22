@@ -1,5 +1,7 @@
 import type {
 	Context,
+	WatchEnd,
+	WatchHandle,
 	JsonValue,
 	ReplicatedStateSource,
 	ReplicatedStateSourceAttachment,
@@ -8,7 +10,7 @@ import type {
 import { withoutAbortSignal } from "@amazme/chord/context";
 import type { Op } from "@amazme/chord/delta";
 import { errorMessage } from "../errors.ts";
-import type { JsonObject, WatchEnd, WatchHandle } from "../types.ts";
+import type { JsonObject } from "../types.ts";
 
 export type ObservedDocumentValue = Readonly<JsonObject> | null;
 
@@ -60,8 +62,12 @@ export class CommittedStateSource<T = ObservedDocumentValue> implements Replicat
 		for (const attachment of [...this.#attachments]) attachment.publish(frame);
 	}
 
+	retire(this: CommittedStateSource<ObservedDocumentValue>, context: Context): void {
+		this.advance(null, RETIREMENT_OPERATIONS, context);
+	}
+
 	/** Stop publishing; the attached states keep their last value. A failure ends them the same way. */
-	closeSession(): void {
+	end(_failure?: { readonly error: unknown }): void {
 		if (this.#closed) return;
 		for (const attachment of [...this.#attachments]) attachment.dispose();
 		this.#finishDisposal();
@@ -148,20 +154,26 @@ type WatchFrame<T> = {
 	readonly value: T;
 	readonly ops: readonly Op[];
 	readonly context: Context;
+	/** The retirement frame: the watch ends `retired` once it is delivered. */
+	readonly retires?: true;
 };
 
+type WatchListener<T> = (value: T, ops: readonly Op[], context: Context) => Promise<void>;
+
 /**
- * Serialized exact-frame watch bound to one document incarnation or conversation view. A `null` value retires it.
+ * Serialized exact-frame watch bound to one document incarnation or conversation view. Its source ends it explicitly:
+ * `retire()` for a retired document, `end()` for a closed or failed Session. Termination drops every reference the
+ * watch holds into its source, so a stopped watch that is still referenced keeps nothing but its last value alive.
  * @internal
  */
 export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T> {
-	readonly #detach: () => void;
-	readonly #report: (error: unknown) => void;
-	readonly #replace: (() => T) | undefined;
+	#detach: (() => void) | undefined;
+	#report: ((error: unknown) => void) | undefined;
+	#replace: (() => T) | undefined;
 	readonly #closed = Promise.withResolvers<WatchEnd>();
 	readonly #pending: WatchFrame<T>[] = [];
 	#value: T;
-	#listener: ((value: T, ops: readonly Op[], context: Context) => Promise<void>) | undefined;
+	#listener: WatchListener<T> | undefined;
 	#started = false;
 	#scheduled = false;
 	#running = false;
@@ -190,7 +202,7 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		return this.#closed.promise;
 	}
 
-	start(listener: (value: T, ops: readonly Op[], context: Context) => Promise<void>): void {
+	start(listener: WatchListener<T>): void {
 		if (this.#started) throw new Error("Watch is already started");
 		if (this.#end !== undefined) throw new Error("Watch is stopped");
 		this.#started = true;
@@ -216,16 +228,13 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		this.#terminate({ reason: "cancelled" });
 	}
 
-	/** End with `session_closed`, or with `session_failed` and the error when the Session failed. */
-	closeSession(failure?: { readonly error: unknown }): void {
-		this.#terminate(
-			failure === undefined ? { reason: "session_closed" } : { reason: "session_failed", error: failure.error },
-		);
+	/** The source closed: end with `ended`, or with `failed` and the error when the Session failed. */
+	end(failure?: { readonly error: unknown }): void {
+		this.#terminate(failure === undefined ? { reason: "ended" } : { reason: "failed", error: failure.error });
 	}
 
 	advance(value: T, ops: readonly Op[], context: Context): void {
 		if (this.#end !== undefined || this.#retired) return;
-		if (value === null) this.#retired = true;
 		if (this.#pending.length >= MAX_PENDING_WATCH_FRAMES) {
 			this.#pending.length = 0;
 			const replacement = this.#replace?.() ?? value;
@@ -233,6 +242,18 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		} else {
 			this.#pending.push({ value, ops, context });
 		}
+		if (this.#started) this.#schedule();
+	}
+
+	/**
+	 * The document incarnation retired: queue the last frame, `[["r", null]]` with value `null`, after which the watch
+	 * ends `retired`. An overflowing backlog is dropped, since the frame replaces the root anyway.
+	 */
+	retire(this: CommittedWatch<ObservedDocumentValue>, context: Context): void {
+		if (this.#end !== undefined || this.#retired) return;
+		this.#retired = true;
+		if (this.#pending.length >= MAX_PENDING_WATCH_FRAMES) this.#pending.length = 0;
+		this.#pending.push({ value: null, ops: RETIREMENT_OPERATIONS, context, retires: true });
 		if (this.#started) this.#schedule();
 	}
 
@@ -251,14 +272,15 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		try {
 			while (this.#end === undefined) {
 				const frame = this.#pending.shift();
-				if (frame === undefined) break;
+				const listener = this.#listener;
+				if (frame === undefined || listener === undefined) break;
 				this.#value = frame.value;
 				const deliveryContext = withoutAbortSignal(frame.context);
 				try {
-					await this.#listener!(frame.value, frame.ops, deliveryContext);
+					await listener(frame.value, frame.ops, deliveryContext);
 				} catch (error) {
 					if (this.#end === undefined) {
-						this.#report(error);
+						this.#report?.(error);
 						this.#terminate({
 							reason: "listener_error",
 							error: toError(error),
@@ -266,7 +288,7 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 					}
 					break;
 				}
-				if (frame.value === null) {
+				if (frame.retires === true) {
 					this.#terminate({ reason: "retired" });
 					break;
 				}
@@ -277,15 +299,25 @@ export class CommittedWatch<T = ObservedDocumentValue> implements WatchHandle<T>
 		}
 	}
 
-	/** End the watch, once: detach, drop pending frames, and settle `closed`. A callback already running keeps running. */
+	/**
+	 * End the watch, once: detach, drop pending frames and every reference into the source, and settle `closed`. A
+	 * callback already running keeps running.
+	 */
 	#terminate(end: WatchEnd): void {
 		if (this.#end !== undefined) return;
 		this.#end = end;
-		this.#detach();
+		const detach = this.#detach;
+		this.#detach = undefined;
+		this.#report = undefined;
+		this.#replace = undefined;
+		this.#listener = undefined;
 		this.#pending.length = 0;
 		if (this.#cancellationListener !== undefined) {
 			this.#cancellationSignal?.removeEventListener("abort", this.#cancellationListener);
 		}
+		this.#cancellationSignal = undefined;
+		this.#cancellationListener = undefined;
+		detach?.();
 		this.#closed.resolve(end);
 	}
 }

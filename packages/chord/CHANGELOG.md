@@ -8,11 +8,16 @@
 
 ### Added
 
+- 统一导出 WatchHandle 和 WatchEnd。
+
 - `@amazme/chord/telemetry-sqlite` 提供可移植 SQLite 遥测适配器：有界队列、十秒指标聚合、定时事务刷写、保留期清理和共享 `TelemetryStore` 查询；写入失败永久停止记录，`flush()`、`close()` 返回原错误。
 
-- `@amazme/chord/sqlite/node`：`NodeSqliteDatabase.exclusive(operation)` 让操作在连接上独占执行，位于事务之外，排在之前所有调用之后、之后所有调用之前。
 - `@amazme/chord/sqlite/node`：`openNodeSqliteDatabase` 新增 `preflight` 选项和 `preflightNodeSqliteFile()`，在任何写入（`journal_mode`、迁移、关闭时的 checkpoint）之前只读检查已有文件。没有 `-wal` 时以 `immutable=1` 只读打开；有未 checkpoint 的 `-wal` 时，用 `COPYFILE_FICLONE` 把主库和 `-wal` 拷到库所在目录下的 `.preflight-*` 再读（`immutable` 会忽略 `-wal`，看不到崩溃前最后的提交；APFS 等写时复制文件系统上是克隆，其他文件系统自动退回普通拷贝），用完即删；每次预检前先清掉该目录里残留的 `.preflight-*`，被 SIGKILL 留下的副本下次打开时自动清除。原文件、`-wal`、`-shm` 都不会被改动或创建。
 - `@amazme/chord/sqlite`：`checkSqliteSchemaVersion()` 只读检查 schema 版本；版本过新、元数据缺失或无效、迁移步骤失败都改抛 `SqliteSchemaError`（`kind`、`version`、`supportedVersion`），原有消息文字不变，迁移失败的消息为 `SQLite migration to version N failed: …`。迁移中遇到 `SQLITE_FULL` 或 `SQLITE_IOERR`（含扩展码）时原样抛出原错误，不包成 `migration-failed`；新增 `isSqliteResourceError()` 判断这类错误。事务在 SQLite 已因这类错误自行回滚后不再重复 `ROLLBACK`，避免原错误被掩盖。
+
+### Changed
+
+- traceIn 参数改为 options、callback、context；移除没有产品消费者的 SQLite WAL 复制包装与 exclusive 接口。
 
 ### Fixed
 

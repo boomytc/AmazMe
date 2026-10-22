@@ -6,6 +6,7 @@ import type {
 	ClassifierModel,
 	ClassifierOptions,
 	ClassifierResult,
+	SystemOneCompat,
 } from "../types.ts";
 import { formatProviderError, normalizeProviderError } from "../utils/error-body.ts";
 import { providerHeadersToRecord } from "../utils/headers.ts";
@@ -20,8 +21,9 @@ import {
 
 /** TypeSafe System One request body without the transport-specific envelope. */
 export interface SystemOneWireRequest {
-	state: ClassifierContext["state"];
+	state: unknown;
 	questions: Record<string, unknown>;
+	images?: string[];
 	assets?: Record<string, { type: "image"; format: "png" | "jpg"; data_base64: string }>;
 }
 
@@ -31,8 +33,9 @@ export interface SystemOneTransport {
 	api: ClassifierApi;
 	/** Service name used in error messages. */
 	label: string;
-	/** Supports TypeSafe's image assets and Box questions. Other System One hosts opt in separately. */
-	supportsImages?: boolean;
+	detectCompat(model: ClassifierModel<ClassifierApi>): Required<SystemOneCompat>;
+	/** Supports named image assets and Box questions, beyond the transport's image-list format. */
+	supportsNativeAssets?: boolean;
 	/** Accepts structured instructions and criteria without converting them to text. */
 	supportsRichContent?: boolean;
 	/** Absolute request URL. */
@@ -120,7 +123,11 @@ function parseAnswers(label: string, value: unknown, context: ClassifierContext)
 }
 
 /** Maps public `bool` questions to TypeSafe's wire-level `noul` type. */
-function wireRequest(label: string, context: ClassifierContext): SystemOneWireRequest {
+function wireRequest(
+	label: string,
+	context: ClassifierContext,
+	imageInput: NonNullable<SystemOneCompat["imageInput"]>,
+): SystemOneWireRequest {
 	const images = new Map(Object.entries(context.assets ?? {}));
 	const request: SystemOneWireRequest = {
 		state: context.state,
@@ -131,6 +138,26 @@ function wireRequest(label: string, context: ClassifierContext): SystemOneWireRe
 			]),
 		),
 	};
+	if (imageInput !== "assets") {
+		if (images.size) throw new Error(`${label} named image assets require compat.imageInput assets`);
+		const inputs = context.images ?? [];
+		if (imageInput === "images") {
+			if (inputs.length > 4) throw new Error(`${label} accepts at most 4 images`);
+			if (inputs.some((image) => !["image/png", "image/jpeg", "image/webp"].includes(image.mimeType))) {
+				throw new Error(`${label} accepts PNG, JPEG, and WebP images`);
+			}
+			if (inputs.length) request.images = inputs.map((image) => `data:${image.mimeType};base64,${image.data}`);
+		} else if (inputs.length) {
+			request.state = [
+				...inputs.map((image) => ({
+					type: "image_url",
+					image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+				})),
+				context.state,
+			];
+		}
+		return request;
+	}
 	if (context.images?.length) {
 		if (Object.hasOwn(context.state, "images")) {
 			throw new Error(`${label} image input reserves the state field images`);
@@ -200,19 +227,21 @@ export async function classifySystemOne(
 		assertClassifierContext(context);
 		if (!transport.supportsRichContent) assertTextClassifierQuestions(transport.label, context.questions);
 		const hasImages = Boolean(context.images?.length || Object.keys(context.assets ?? {}).length);
+		if (Object.keys(context.assets ?? {}).length && !transport.supportsNativeAssets) {
+			throw new Error(`${transport.label} does not support image assets`);
+		}
 		const hasBox = Object.values(context.questions).some((question) => question.type === "box");
-		if (hasImages) {
-			if (!transport.supportsImages) throw new Error(`${transport.label} does not support image input`);
-			if (!model.input.includes("image")) {
-				throw new Error(`Model ${model.provider}/${model.id} does not accept image input`);
-			}
+		if (hasImages && !model.input.includes("image")) {
+			throw new Error(`Model ${model.provider}/${model.id} does not accept image input`);
 		}
 		if (hasBox) {
-			if (!transport.supportsImages) throw new Error(`${transport.label} does not support box questions`);
+			if (!transport.supportsNativeAssets) throw new Error(`${transport.label} does not support box questions`);
 			if (!hasImages) throw new Error(`${transport.label} box questions require image input`);
 		}
+		const detected = transport.detectCompat(model);
+		const imageInput = model.compat?.imageInput ?? detected.imageInput;
 		const requestOptions =
-			hasImages || hasBox
+			(hasImages || hasBox) && (model.compat?.sendImageOptInHeader ?? detected.sendImageOptInHeader)
 				? {
 						...options,
 						headers: providerHeadersToRecord(options?.headers, { "TypeSafe-Danger-Zone-Images": "true" }),
@@ -222,7 +251,7 @@ export async function classifySystemOne(
 			transport.label,
 			transport.url(model),
 			model,
-			transport.payload(model, wireRequest(transport.label, context)),
+			transport.payload(model, wireRequest(transport.label, context, imageInput)),
 			requestOptions,
 		);
 		const result = transport.output(body);

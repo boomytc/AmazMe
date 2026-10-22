@@ -110,12 +110,12 @@ describe("nested call documents", () => {
 		const storage = new MemoryStorage();
 		const created: { kind: string; key?: string }[] = [];
 		const commit = storage.commit.bind(storage);
-		storage.commit = (writes, ctx) => {
+		storage.commit = (writes, adopt, ctx) => {
 			for (const write of writes) {
 				if (write.type === "document.create" && write.record.kind.startsWith("amazme.tool."))
 					created.push({ kind: write.record.kind, key: write.record.key });
 			}
-			return commit(writes, ctx);
+			return commit(writes, adopt, ctx);
 		};
 		const { harness, root } = await openChat(storage, setup);
 		harnesses.push(harness);

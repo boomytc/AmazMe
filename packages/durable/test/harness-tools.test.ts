@@ -7,6 +7,7 @@ import {
 	fauxAssistantMessage,
 	fauxText,
 	fauxToolCall,
+	type Models,
 	type SystemMessage,
 	type ToolResultMessage,
 	Type,
@@ -131,8 +132,10 @@ describe("tool round", () => {
 		});
 		const { harness, status } = await run(setup, [calls(["echo", {}, "c1"]), DONE]);
 		expect(status).toBe("done");
-		expect(seen).toEqual([setup.models, setup.models]);
-		expect(seen.every((models) => models === setup.models)).toBe(true);
+		// One view of the host's Models that adds the Harness identity, shared by tools and hooks.
+		expect(seen).toHaveLength(2);
+		expect(seen[0]).toBe(seen[1]);
+		expect((seen[0] as Models).getProviders()).toEqual(setup.models.getProviders());
 		await harness.close(context);
 	});
 
@@ -184,6 +187,24 @@ describe("tool round", () => {
 		const systems = result.entries.filter((entry) => entry.kind === "amazme.system");
 		expect((systems.at(-1)!.model![0] as SystemMessage).toolsRemoved).toEqual([{ name: "echo" }]);
 		await result.harness.close(context);
+	});
+
+	it("offers newly registered tools after a recorded loadout while preserving explicit removals", async () => {
+		const setup = chatSetup();
+		const first = await run(setup, [DONE]);
+		try {
+			const off = tool("off", async () => ({ output: [] }));
+			await first.root.configure({ tools: { remove: [off] } }, context);
+			addTool(setup.registry, tool("new-tool", async () => ({ output: [] })));
+			addTool(setup.registry, off);
+			setup.faux.setResponses([DONE]);
+			await (await first.root.submit({ type: "input", content: "again" }, context)).wait(context);
+			const entries = await allEntries(first.root);
+			const addition = entries.filter((entry) => entry.kind === "amazme.system").at(-1)!.model![0] as SystemMessage;
+			expect(addition.toolsAdded?.map((declared) => declared.name)).toEqual(["new-tool"]);
+		} finally {
+			await first.harness.close(context);
+		}
 	});
 
 	it("removes unregistered active tools from the offer and adds them back after re-registration", async () => {

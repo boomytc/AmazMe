@@ -142,13 +142,13 @@ Compatibility settings should describe verified differences in the endpoint's re
 
 ## Use classifier models
 
-Classifier models do not chat. They answer typed questions about JSON state: pick one of several choices, answer yes or no, or give a score, each with probabilities. Pi includes TypeSafe's Jev model from these providers, Cloudflare's Clef and Clef Flash models from Workers AI, and OpenAI's GPT-6 Luna through the [Decisions API](https://developers.openai.com/api/docs/guides/decisions):
+Classifier models do not chat. They answer typed questions about JSON state: pick one of several choices, answer yes or no, or give a score, each with probabilities. Pi includes TypeSafe's Jev model from these providers, Cloudflare's Clef, Clef Flash, and Clef Omni models from Workers AI and OpenRouter, and OpenAI's GPT-6 Luna through the [Decisions API](https://developers.openai.com/api/docs/guides/decisions):
 
 | Provider | Model IDs | Authentication |
 |---|---|---|
 | `typesafe` | `jev-1.14.0`, `jev-latest` | `TYPESAFE_API_KEY` |
-| `openrouter` | `typesafe/jev-1.13`, `~typesafe/jev-latest` | `OPENROUTER_API_KEY` or `/login` |
-| `cloudflare-workers-ai` | `typesafe/jev`, `@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
+| `openrouter` | `typesafe/jev-1.13`, `typesafe/jev-1.14`, `~typesafe/jev-latest`, `cloudflare/clef`, `cloudflare/clef-flash`, `cloudflare/clef-omni` | `OPENROUTER_API_KEY` or `/login` |
+| `cloudflare-workers-ai` | `typesafe/jev`, `typesafe/jev-1.14.0`, `@cf/cloudflare/clef`, `@cf/cloudflare/clef-flash`, `@cf/cloudflare/clef-omni` | `CLOUDFLARE_API_KEY` and `CLOUDFLARE_ACCOUNT_ID` |
 | `vercel-ai-gateway` | `typesafe-ai/jev` | `AI_GATEWAY_API_KEY` |
 | `opencode` | `jev-1.13`, `jev-1.13-free` | `OPENCODE_API_KEY` |
 | `openai` | `gpt-6-luna` | `OPENAI_API_KEY` |
@@ -178,7 +178,11 @@ return result.answers;
 
 [Codemode](codemode.md#classify) describes the question and answer types.
 
-When the service reports token counts, as all System One services do, `result.usage` carries them with their cost. Pi adds the usage of a script's classifier calls to the `codemode` tool result, so it counts toward the session cost in the footer and `/session`. The cost uses the model's catalog price; models without one, such as TypeSafe's direct `jev-latest`, report tokens at no cost.
+Classifier models whose `input` includes `"image"` also judge images passed in `images`; other classifier models return an error for them. Image input works with GPT-6 Luna, with Jev from `typesafe` and `cloudflare-workers-ai`, with Clef from `cloudflare-workers-ai`, and with the OpenRouter models whose catalog lists image input. Jev takes PNG and JPEG images, and image input is experimental on TypeSafe's own API. Clef takes PNG, JPEG, and WebP images, at most four per request. Jev from `vercel-ai-gateway` and `opencode` takes text only.
+
+Each System One service takes images in its own request format, set by the model's `compat.imageInput`. Built-in models set it, so overriding a provider's `baseUrl` keeps it. A custom provider that proxies another service's classifiers sets it in its provider-level `compat` in `models.json` (see [System One compatibility](models-configuration.md#typesafe-system-one)). OpenRouter in particular answers requests in TypeSafe's format without an error but drops the images.
+
+When the service reports token counts, as all System One services do, `result.usage` carries them with their cost. Pi adds the usage of a script's classifier calls to the `codemode` tool result, so it counts toward the session cost in the footer and `/session`. The cost uses the model's catalog price; models without a catalog price report tokens at no cost. Direct TypeSafe Jev uses its configured input-token rate.
 
 Extensions call classifiers through `ctx.modelRegistry.classify()`, without codemode. [Virtual models](virtual-models.md#route-requests) can use them to route requests; see the `jev-router.ts` example.
 

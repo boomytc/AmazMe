@@ -1,3 +1,4 @@
+import { getClientIdentity } from "../core/client-identity.ts";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -552,6 +553,7 @@ export async function openDurable(
 				: await openSessionStorage(location.lease),
 			{
 				models: modelRuntime,
+				get identity() { return getClientIdentity(settingsManager); },
 				registry,
 				settings,
 				env: envs!.env,

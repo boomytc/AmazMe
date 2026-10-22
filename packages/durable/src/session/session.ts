@@ -9,7 +9,7 @@ import {
 	materializeDocument,
 	resolveAddress,
 } from "../documents.ts";
-import { SessionFailed, StorageRequestError } from "../errors.ts";
+import { ReadOnlySession, SessionFailed, StorageRequestError } from "../errors.ts";
 import { idFromNumber } from "../ids.ts";
 import { hostTimers, type Timers } from "../timers.ts";
 import type {
@@ -57,12 +57,7 @@ import type {
 	TaskRecord,
 	Tx,
 } from "../types.ts";
-import {
-	CommittedStateSource,
-	CommittedWatch,
-	type ObservedDocumentValue,
-	RETIREMENT_OPERATIONS,
-} from "./observation.ts";
+import { CommittedStateSource, CommittedWatch, type ObservedDocumentValue } from "./observation.ts";
 import { type LoadedDocument, Transaction, type TransactionHost, type TransactionScope } from "./transaction.ts";
 
 /** The default source of a report: a listener, which never fails what ran it. */
@@ -105,7 +100,7 @@ export function documentRetention(ms: number | undefined): number {
 /**
  * Session kernel: one mutation line, the loaded document tracker cache, and committed publication.
  *
- * The cache is bounded by use: a document with no watch or document state attached leaves it once it was not read or
+ * The cache is bounded by use: a document with no watch or state attached leaves it once it was not read or
  * written for the retention period, and the next access loads it from Storage. Eviction runs as a job on the mutation
  * line, so no transaction ever holds a tracker that leaves.
  *
@@ -127,6 +122,8 @@ export class SessionImpl implements Session {
 	readonly #attachedDocuments = new Map<DocumentId, number>();
 	readonly #clock: () => number;
 	readonly #documentRetentionMs: () => number;
+	/** Refuse every commit with writes (`HarnessOptions.readOnly`). */
+	readonly #readOnly: boolean;
 	readonly #timers: Timers;
 	/** The pending eviction: a timer for the oldest idle document, or a line job when the retention is 0. */
 	#documentSweep: { readonly at: number; disarm: (() => void) | undefined } | undefined;
@@ -164,10 +161,12 @@ export class SessionImpl implements Session {
 		now: () => number = Date.now,
 		documentRetentionMs: () => number | undefined = () => undefined,
 		setTimer?: SetTimer,
+		readOnly = false,
 	) {
 		// Waits race it; none has to.
 		this.#failed.promise.catch(() => {});
-		this.#storage = new GuardedStorage(storage, this);
+		this.#readOnly = readOnly;
+		this.#storage = new GuardedStorage(storage, this, readOnly);
 		this.#timers = hostTimers(setTimer, (error) => this.report(error, { type: "host_error", callback: "setTimer" }));
 		// Cache bookkeeping must never change the outcome of the operation it follows: a clock or a retention setting
 		// that throws counts as now, and as the default.
@@ -428,12 +427,7 @@ export class SessionImpl implements Session {
 				const loaded = await this.#loadDocument(definition, resolved.id, resolved.address, context);
 				if (cancelled) throw cancellationError(signal!);
 				if (loaded === undefined) return undefined;
-				return this.#attachDocument(
-					definition,
-					loaded,
-					(value, release) =>
-						new CommittedWatch<ObservedDocumentValue>(value, release, (error) => this.report(error)),
-				).observer;
+				return this.#attachDocument(definition, loaded, (value, release) => new CommittedWatch(value, release, (error) => this.report(error))).observer;
 			});
 			if (watch === undefined) return undefined;
 			if (cancelled) {
@@ -562,7 +556,7 @@ export class SessionImpl implements Session {
 		return this.#enqueue(async () => {
 			if (this.#failure !== undefined) return;
 			const batch = writes();
-			if (batch.length > 0) await this.#storage.commit(batch, BACKGROUND_CONTEXT);
+			if (batch.length > 0) await this.#storage.commit(batch, () => {}, BACKGROUND_CONTEXT);
 		});
 	}
 
@@ -746,23 +740,42 @@ export class SessionImpl implements Session {
 			this.#sweepDocuments();
 			return result;
 		}
+		if (this.#readOnly) {
+			// Refused before Storage: the Session stays healthy, and the caller sees why.
+			tx.discard();
+			this.#sweepDocuments();
+			throw new ReadOnlySession("a commit with writes");
+		}
+		// Storage adopts the batch synchronously once it is durable, before its next commit; a throw here would reach
+		// Storage, so the callback keeps its own error.
+		let adoption: { readonly documents: DocumentCommitChange[] } | { readonly error: unknown } | undefined;
+		const adopt = (committed: Seq): void => {
+			try {
+				adoption = { documents: tx.adopt(committed) };
+			} catch (error) {
+				adoption = { error };
+			}
+		};
 		let seq: Seq;
 		try {
 			// Once admitted, caller cancellation does not interrupt Storage settlement.
-			seq = await this.#storage.commit(writes, withoutAbortSignal(context));
+			seq = await this.#storage.commit(writes, adopt, withoutAbortSignal(context));
 		} catch (error) {
-			// The guard has failed the Session.
-			tx.discard();
+			// The guard has failed the Session. A rejection after adoption leaves nothing staged to discard.
+			if (adoption === undefined) tx.discard();
 			throw error;
 		}
-		let documents: DocumentCommitChange[];
-		try {
-			documents = tx.adopt(seq);
-		} catch (error) {
-			// Storage already committed; a failed adoption leaves memory behind durable state.
+		if (adoption === undefined) {
+			const error = new Error("Storage committed without adopting the batch");
 			this.fail(error, context);
 			throw error;
 		}
+		if ("error" in adoption) {
+			// Storage already committed; a failed adoption leaves memory behind durable state.
+			this.fail(adoption.error, context);
+			throw adoption.error;
+		}
+		const documents = adoption.documents;
 		for (const document of documents) this.#touchDocument(addressId(document.record));
 		this.#publish(seq, writes, documents, context);
 		this.#sweepDocuments();
@@ -820,13 +833,13 @@ export class SessionImpl implements Session {
 	}
 
 	/**
-	 * Attach an observer to one committed incarnation: check the definition, then forward this incarnation's committed
-	 * changes and close. `detach` removes both subscriptions.
+	 * Attach an observer to one committed incarnation and forward its changes, retirement, and close.
+	 * Detaching removes both subscriptions.
 	 */
-	#attachDocument<O extends CommittedStateSource | CommittedWatch>(
+	#attachDocument<O extends CommittedWatch | CommittedStateSource>(
 		definition: AnyDocToken["definition"],
 		loaded: LoadedDocument,
-		create: (value: JsonObject, detach: () => void) => O,
+		create: (value: ObservedDocumentValue, release: () => void) => O,
 	): { observer: O; detach: () => void } {
 		checkRecordScope(definition, loaded.record);
 		checkRecordVersion(definition, loaded.record, loaded.storedVersion);
@@ -850,17 +863,21 @@ export class SessionImpl implements Session {
 		unsubscribeCommit = this.observeCommits((publication, context) => {
 			for (const change of publication.changes) {
 				if (change.type !== "document" || change.record.id !== loaded.record.id) continue;
-				// A document state's frames carry no caller cancellation; a watch observes its own cancellation.
 				const frameContext = observer instanceof CommittedStateSource ? withoutAbortSignal(context) : context;
+				if (change.value === null) {
+					// A retired incarnation never changes again: its watch delivers the retirement but pins nothing.
+					unpin();
+					if (observer instanceof CommittedWatch) observer.retire(context);
+					else observer.retire(frameContext);
+					continue;
+				}
 				const ops = observedOperations(observed, change);
 				// A migration-only base changes nothing for an observer of the new version.
 				if (ops.length === 0) continue;
-				// A retired incarnation never changes again: its observers keep their last value but pin nothing.
-				if (change.value === null) unpin();
 				observer.advance(change.value, ops, frameContext);
 			}
 		});
-		unsubscribeClose = this.subscribeClose(() => observer.closeSession(this.#failure));
+		unsubscribeClose = this.subscribeClose(() => observer.end(this.#failure));
 		return { observer, detach };
 	}
 
@@ -937,7 +954,6 @@ function observedOperations(
 	observed: { version: number },
 	change: Extract<DocumentCommitChange, { readonly type: "document" }>,
 ): readonly Op[] {
-	if (change.value === null) return RETIREMENT_OPERATIONS;
 	if (change.version === observed.version) return change.ops;
 	observed.version = change.version!;
 	return [["r", change.value]];
@@ -963,21 +979,25 @@ type FailureLatch = {
 class GuardedStorage implements Storage {
 	readonly #storage: Storage;
 	readonly #latch: FailureLatch;
+	readonly #readOnly: boolean;
 	/** Backend calls underway, also those off the Session line, which close waits for before it closes the backend. */
 	readonly #underway = new Set<Promise<unknown>>();
 	#closing = false;
 
-	constructor(storage: Storage, latch: FailureLatch) {
+	constructor(storage: Storage, latch: FailureLatch, readOnly: boolean) {
 		this.#storage = storage;
 		this.#latch = latch;
+		this.#readOnly = readOnly;
 	}
 
 	/** Never exempt, whatever it throws: once admitted, whether a failed batch committed is unknown. */
-	commit(writes: readonly StorageWrite[], context: Context): Promise<Seq> {
-		return this.#call(undefined, () => this.#storage.commit(writes, context), context);
+	commit(writes: readonly StorageWrite[], adopt: (seq: Seq) => void, context: Context): Promise<Seq> {
+		if (this.#readOnly) return Promise.reject(new ReadOnlySession("a storage commit"));
+		return this.#call(undefined, () => this.#storage.commit(writes, adopt, context), context);
 	}
 
 	mintId<I extends Id<string>>(): Promise<I> {
+		if (this.#readOnly) return Promise.reject(new ReadOnlySession("allocating an ID"));
 		return this.#call(undefined, () => this.#storage.mintId<I>());
 	}
 

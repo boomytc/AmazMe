@@ -4,11 +4,16 @@
 
 ### Breaking Changes
 
+- Storage.commit 增加同步 adopt 回调，持久化后、下一次提交前更新内存；watch 终止原因使用 ended 和 failed。
+
 - `defineDoc` and `defineDocFamily` require an explicit `checkpointWhen` policy. Task-scoped scratch documents can return false; long-lived documents should periodically checkpoint their deltas.
 
 - `ExecutionEnv` requires `artifactDirectory: string`: a host-injected directory for session-scoped tool artifacts. Code mode writes truncated output and images under a per-run subdirectory of it (recorded in `CodemodeRunDoc.outputDir`) instead of `createTempDir("amazme-codemode-")`. There is no `/tmp` fallback; every `ExecutionEnv` construction (including `NodeExecutionEnv`, `MemoryStorage`/test hosts, and coding-agent) must pass a directory. The host owns its lifetime (typically next to the session database, deleted with the session).
 
 ### Added
+
+- 只读 Harness 支持读取和观察，禁止恢复、迁移、写入和调度。
+- Harness.identity 向生成、hook 和工具传递当前请求身份。
 
 - `IndexedDbStorage` (`@amazme/durable/storage/indexeddb`): browser storage backed by IndexedDB.
 
@@ -17,6 +22,8 @@
 - `NodeFileSystem` (`@amazme/durable/env/node`): the local file system alone, for callers that only read and write files. It has no shell and no `artifactDirectory`, so file-only code cannot reach a session artifact directory. `NodeExecutionEnv` now extends it with the shell and `artifactDirectory`.
 
 ### Fixed
+
+- watch 显式退休并释放来源引用；计费累计混合目录估算时清除全额供应商计费标记。
 
 - `NodeExecutionEnv.exec` writes spilled output (`spill`) to `pi-output-*.log` under `artifactDirectory` (owner-only permissions) instead of a fresh `createTempFile` directory in the OS temp directory, which nothing removed; the file is now deleted with the session.
 - `openNodeSqliteStorage` 在开写连接之前先只读预检：库里的 schema 版本比当前支持的新、或文件不是 SQLite 时直接拒绝，此时 `-wal`、`-shm` 和主库都不会被改动或创建。之前先设 `journal_mode = WAL` 再查版本，非 WAL 库的文件头会被改写，崩溃后遗留的 `-wal` 也会在关闭时被合进主库。版本问题改为抛 `SqliteSchemaError`（从 `@amazme/durable/storage/sqlite` 导出），消息文字不变。`NodeSqliteStorageOptions` 去掉了 `preflight` 字段，调用方无法用 `preflight: undefined` 或自己的函数覆盖版本预检。

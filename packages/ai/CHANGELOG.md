@@ -4,10 +4,17 @@
 
 ### Added
 
+- 统一 ClientIdentity 配置，支持默认身份、逐请求覆盖、动态包装和供应商归属。
+- System One 分类器按 TypeSafe、OpenRouter 和 Cloudflare 的协议发送图片，并保留本地 Box 与命名资产支持。
+
 - Model requests emit opt-in request and poll spans, content-free block events, usage and timing metrics through `telemetry`; the old `telemetryContext` option is replaced by a parent span.
 - MiniMax-M3.1-Flash uses adaptive thinking and effort levels; direct MiniMax catalogs hide only explicitly retired models.
 
 ### Fixed
+
+- OpenRouter 聊天使用供应商报告的总费用，标记 totalFromProvider；无有效计费时回退目录估算。
+- 修正 Business 工作区额度与代理断流重试识别，状态码不再匹配长数字中的片段。
+- Anthropic 系统更新越过不发送的空 assistant 消息；刷新已退役模型目录。
 
 - Responses transports keep tool definitions anchored across additions and redefinitions, and announce removals without rebuilding the cached prefix. Addition-only transports fold history only through the last incompatible change.
 - HTTP 413 request-size errors are recognized as context overflow without treating an unrelated body mention of 413 as overflow.
