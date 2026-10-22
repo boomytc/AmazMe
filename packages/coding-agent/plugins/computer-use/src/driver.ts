@@ -473,19 +473,33 @@ export class DriverClient {
 				try {
 					const env = driverEnvironment();
 					await writeFile(output, "", { mode: 0o600 });
-					await execute(
-						"/usr/bin/open",
-						[
-							...applicationArguments(bundle.path, env),
-							"--stdout",
-							output,
-							"--stderr",
-							"/dev/null",
-							"--args",
-							"check-permissions",
-						],
-						{ signal, timeout: timeoutMs, env },
-					);
+					try {
+						await execute(
+							"/usr/bin/open",
+							[
+								...applicationArguments(bundle.path, env),
+								"--stdout",
+								output,
+								"--stderr",
+								"/dev/null",
+								"--args",
+								"check-permissions",
+							],
+							{ signal, timeout: timeoutMs, env },
+						);
+					} catch (error) {
+						signal.throwIfAborted();
+						// A short-lived probe can exit before open -W registers its process watch.
+						// Only this exit race may use the completed private report; other failures propagate.
+						if (
+							!isRecord(error) ||
+							typeof error.stderr !== "string" ||
+							!error.stderr.includes(
+								"initial call to kevent() failed: No such process",
+							)
+						)
+							throw error;
+					}
 					report = JSON.parse(await readFile(output, "utf8"));
 				} finally {
 					await stopPermissionProbe(bundle.executable, output);

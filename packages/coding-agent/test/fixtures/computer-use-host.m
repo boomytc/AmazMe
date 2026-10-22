@@ -42,6 +42,10 @@ int main(int argc, const char *argv[]) {
         [NSApp run];
         return 0;
       }
+      if ([mode isEqualToString:@"invalid-probe"]) {
+        puts("{\"accessibility\":\"true\",\"screen_recording\":true}");
+        return 0;
+      }
       puts("{\"accessibility\":false,\"screen_recording\":false}");
       return 0;
     }

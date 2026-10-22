@@ -5,10 +5,15 @@ import {
 	buildCacheRoot,
 	cleanupBuildWorkspaces,
 	cleanupPermissionPanels,
+	cleanupRuntimeVersions,
 } from "../src/maintenance.ts";
 import { permissionPanelKey } from "../src/permission-panel.ts";
 
-export async function cleanupComputerUse({ apply = false, workRoot } = {}) {
+export async function cleanupComputerUse({
+	apply = false,
+	workRoots = [],
+	releaseRoot,
+} = {}) {
 	if (process.platform !== "darwin")
 		throw new Error("Computer-use cleanup currently supports macOS");
 	const panels = await cleanupPermissionPanels(
@@ -19,10 +24,11 @@ export async function cleanupComputerUse({ apply = false, workRoot } = {}) {
 	const builds = [];
 	for (const root of new Set([
 		buildCacheRoot(),
-		...(workRoot ? [resolve(workRoot)] : []),
+		...workRoots.map((root) => resolve(root)),
 	]))
 		builds.push(...(await cleanupBuildWorkspaces(root, apply)));
-	return { apply, panels, builds };
+	const versions = await cleanupRuntimeVersions({ releaseRoot, apply });
+	return { apply, panels, builds, ...versions };
 }
 
 export function cleanupArguments(args) {

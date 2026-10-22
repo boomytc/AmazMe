@@ -24,22 +24,20 @@ import {
 	directoryInUse,
 } from "../src/maintenance.ts";
 import { preparePermissionPanel } from "../src/permission-panel.ts";
-import {
-	BUNDLE_BUILD,
-	LEGACY_PATCH_PIN,
-	PATCH_PIN,
-} from "../src/runtime-pin.ts";
+import { PATCH_PIN, patchBuild } from "../src/runtime-pin.ts";
 import { prepareMacBundle } from "./macos-bundle.mjs";
+import { cleanupComputerUse } from "./cleanup-computer-use.mjs";
 
 const directory = dirname(fileURLToPath(import.meta.url));
-const patch = join(directory, "patches/cua-driver-0.34.1-appkit.patch");
+const patchPath = (build) => join(directory, "patches", build.patchFile);
 const appName = APP_NAME;
 const files = MAC_FILES;
 
-export async function patchedDriverPin() {
-	if (sha256(await readFile(patch)) !== PATCH_PIN.patchSha256)
+export async function patchedDriverPin(version = PATCH_PIN.version) {
+	const build = patchBuild(version);
+	if (sha256(await readFile(patchPath(build))) !== build.pin.patchSha256)
 		throw new Error("Patch differs from its pin");
-	return PATCH_PIN;
+	return build.pin;
 }
 
 export async function readPatchedInstallation(output, pin, arch) {
@@ -61,22 +59,36 @@ export async function preparePatchedComputerUse({
 	source,
 	destination,
 	workRoot = buildCacheRoot(),
+	version = PATCH_PIN.version,
+	releaseRoot,
 } = {}) {
 	if (process.platform !== "darwin" || !["arm64", "x64"].includes(process.arch))
 		throw new Error("The AppKit driver patch requires macOS arm64 or x64");
-	const pin = await patchedDriverPin();
+	const buildRecipe = patchBuild(version);
+	const pin = await patchedDriverPin(version);
+	const patch = patchPath(buildRecipe);
 	const output = resolve(destination ?? join(installationRoot(), pin.version));
+	const finish = async (installed) => {
+		if (
+			pin.version !== PATCH_PIN.version ||
+			output !== join(installationRoot(), PATCH_PIN.version)
+		)
+			return installed;
+		return {
+			...installed,
+			cleanup: await cleanupComputerUse({
+				apply: true,
+				workRoots: [workRoot],
+				releaseRoot,
+			}),
+		};
+	};
 	const installed = await readPatchedInstallation(output, pin, process.arch);
 	if (installed) {
 		await preparePermissionPanel();
-		return installed;
+		return finish(installed);
 	}
-	const legacy = await readPatchedInstallation(
-		join(installationRoot(), LEGACY_PATCH_PIN.version),
-		LEGACY_PATCH_PIN,
-		process.arch,
-	);
-	if (!legacy && !source)
+	if (!source)
 		throw new Error(
 			"Provide --source /path/to/cua containing the pinned upstream commit",
 		);
@@ -86,62 +98,82 @@ export async function preparePatchedComputerUse({
 	try {
 		const ready = join(staging, "ready");
 		await mkdir(join(ready, appName, "Contents/MacOS"), { recursive: true });
-		if (legacy) {
-			await cp(legacy.binary, join(ready, files.binary));
-		} else {
-			build = await createBuildWorkspace(resolve(workRoot), pin.version);
-			const archive = join(build, "source.tar");
-			// Export Git objects at the immutable commit, never the caller's working tree.
-			await run("git", [
-				"-C",
-				resolve(source),
-				"archive",
-				"--format=tar",
-				`--output=${archive}`,
-				pin.sourceCommit,
-				"libs/cua-driver",
-				"libs/cua",
-				"libs/images/sandbox-images.json",
-			]);
-			await run("tar", ["-xf", archive, "-C", build]);
-			await run("git", ["apply", "--check", patch], build);
-			await run("git", ["apply", patch], build);
-			const rust = join(build, "libs/cua-driver/rust");
-			// A private target directory prevents a caller's cache from substituting an
-			// unrelated executable. The locked dependency graph and upstream toolchain apply.
-			// Keep compile-time proc macros loadable on macOS linkers affected by
-			// rust-lang/rust#157750. The final driver still uses release optimization.
-			await run(
-				"cargo",
-				[
-					"build",
-					"--locked",
-					"--release",
-					"-p",
-					"cua-driver",
-					"--config",
-					"profile.release.build-override.debug=2",
-					"--config",
-					'profile.release.build-override.strip="none"',
-				],
-				rust,
-				{
-					...process.env,
-					CARGO_TARGET_DIR: join(build, "target"),
-				},
-			);
-			await cp(
-				join(build, "target/release/cua-driver"),
-				join(ready, files.binary),
-			);
-		}
+		build = await createBuildWorkspace(resolve(workRoot), pin.version);
+		const archive = join(build, "source.tar");
+		// Export Git objects at the immutable commit, never the caller's working tree.
+		await run("git", [
+			"-C",
+			resolve(source),
+			"archive",
+			"--format=tar",
+			`--output=${archive}`,
+			pin.sourceCommit,
+			"libs/cua-driver",
+			"libs/cua",
+			"libs/images/sandbox-images.json",
+		]);
+		await run("tar", ["-xf", archive, "-C", build]);
+		await run("git", ["apply", "--check", patch], build);
+		await run("git", ["apply", patch], build);
+		const rust = join(build, "libs/cua-driver/rust");
+		if (
+			(await readFile(join(rust, "VERSION"), "utf8")).trim() !==
+			buildRecipe.upstreamVersion
+		)
+			throw new Error("Source commit does not match the upstream version");
+		await run(
+			"cargo",
+			[
+				"test",
+				"--locked",
+				"--release",
+				"-p",
+				"platform-macos",
+				"--lib",
+				"input::mouse::tests",
+				"--config",
+				"profile.release.build-override.debug=2",
+				"--config",
+				'profile.release.build-override.strip="none"',
+			],
+			rust,
+			{ ...process.env, CARGO_TARGET_DIR: join(build, "target") },
+		);
+		// A private target directory prevents a caller's cache from substituting an
+		// unrelated executable. The locked dependency graph and upstream toolchain apply.
+		// Keep compile-time proc macros loadable on macOS linkers affected by
+		// rust-lang/rust#157750. The final driver still uses release optimization.
+		await run(
+			"cargo",
+			[
+				"build",
+				"--locked",
+				"--release",
+				"-p",
+				"cua-driver",
+				"--config",
+				"profile.release.build-override.debug=2",
+				"--config",
+				'profile.release.build-override.strip="none"',
+			],
+			rust,
+			{
+				...process.env,
+				CARGO_TARGET_DIR: join(build, "target"),
+			},
+		);
+		await cp(
+			join(build, "target/release/cua-driver"),
+			join(ready, files.binary),
+		);
 		await cp(
 			join(directory, "LICENSE.cua-driver.txt"),
 			join(ready, "LICENSE.cua-driver.txt"),
 		);
 		await prepareMacBundle(ready, {
 			version: pin.version,
-			build: BUNDLE_BUILD,
+			build: buildRecipe.bundleBuild,
+			upstreamVersion: buildRecipe.upstreamVersion,
 		});
 		if (sha256(await readFile(patch)) !== pin.patchSha256)
 			throw new Error("Patch changed during compilation; rerun preparation");
@@ -161,28 +193,43 @@ export async function preparePatchedComputerUse({
 		await readPatchedInstallation(ready, pin, process.arch);
 		await preparePermissionPanel();
 		await rename(ready, output);
-		return { directory: output, binary: join(output, files.binary) };
 	} finally {
 		await rm(staging, { recursive: true, force: true });
 		if (build && !(await directoryInUse(build)))
 			await rm(build, { recursive: true, force: true });
 	}
+	return finish({ directory: output, binary: join(output, files.binary) });
+}
+
+export function preparationArguments(args) {
+	const result = {};
+	for (let i = 0; i < args.length; i += 2) {
+		const key =
+			args[i] === "--source"
+				? "source"
+				: args[i] === "--version"
+					? "version"
+					: undefined;
+		if (!key || !args[i + 1] || result[key])
+			throw new Error(
+				"Usage: prepare-computer-use.mjs [--source /path/to/cua] [--version <supported-runtime>]",
+			);
+		result[key] = args[i + 1];
+	}
+	if (result.version) patchBuild(result.version);
+	return result;
 }
 
 if (
 	process.argv[1] &&
 	resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-) {
-	const args = process.argv.slice(2);
-	if (args.length !== 0 && (args.length !== 2 || args[0] !== "--source"))
-		throw new Error(
-			"Usage: prepare-patched-computer-use.mjs [--source /path/to/cua]",
-		);
+)
 	console.log(
 		JSON.stringify(
-			await preparePatchedComputerUse({ source: args[1] }),
+			await preparePatchedComputerUse(
+				preparationArguments(process.argv.slice(2)),
+			),
 			null,
 			2,
 		),
 	);
-}

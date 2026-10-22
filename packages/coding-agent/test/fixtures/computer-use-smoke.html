@@ -1,0 +1,19 @@
+<!doctype html><meta charset="utf-8"><title>AmazMe Driver Fixture</title>
+<style>body{font:20px system-ui;margin:32px;background:#fff;color:#111}button,input{font:20px system-ui;padding:12px;margin:12px}canvas{display:block;margin:20px;touch-action:none}</style>
+<h1>AmazMe Driver Fixture</h1><button id="increment">Increment Browser</button><input id="input" aria-label="Browser Input">
+<canvas id="canvas" width="360" height="180"></canvas><pre id="report"></pre>
+<script>
+const name = new URLSearchParams(location.search).get('name');
+document.title += ' ' + name;
+const state = { name, nativeCount:0, canvasCount:0, rightCount:0, dragCount:0, scrollTotal:0, text:'', canvasX:null, canvasY:null };
+const canvas=document.querySelector('#canvas'), ctx=canvas.getContext('2d');
+function paint(){ctx.fillStyle='rgb(20,64,153)';ctx.fillRect(0,0,360,180);ctx.fillStyle='white';ctx.font='24px system-ui';ctx.fillText('Canvas Counter: '+state.canvasCount,20,45)}
+function report(){state.text=document.querySelector('#input').value;document.querySelector('#report').textContent=JSON.stringify(state);fetch('/state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(state)}).catch(()=>{})}
+document.querySelector('#increment').onclick=()=>{state.nativeCount++;report()};
+canvas.onclick=e=>{state.canvasCount++;state.canvasX=e.offsetX;state.canvasY=e.offsetY;paint();report()};
+canvas.oncontextmenu=e=>{e.preventDefault();state.rightCount++;report()};
+canvas.onpointermove=e=>{if(e.buttons===1){state.dragCount++;report()}};
+canvas.onwheel=e=>{e.preventDefault();state.scrollTotal+=e.deltaY;report()};
+document.querySelector('#input').oninput=report;
+paint();setInterval(report,100);report();
+</script>

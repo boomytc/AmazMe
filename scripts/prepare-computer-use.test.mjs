@@ -10,9 +10,42 @@ import {
 	verifyArchive,
 } from "../packages/coding-agent/plugins/computer-use/scripts/prepare-computer-use.mjs";
 
+import {
+	patchedDriverPin,
+	preparationArguments,
+} from "../packages/coding-agent/plugins/computer-use/scripts/prepare-patched-computer-use.mjs";
+import {
+	PATCH_BUILDS,
+	PATCH_PIN,
+} from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
+
+test("candidate preparation validates the exact recipe without changing the default", async () => {
+	for (const { pin } of PATCH_BUILDS)
+		assert.deepEqual(await patchedDriverPin(pin.version), pin);
+	assert.deepEqual(
+		preparationArguments([
+			"--version",
+			"0.38.0-amazme.2",
+			"--source",
+			"/source",
+		]),
+		{ version: "0.38.0-amazme.2", source: "/source" },
+	);
+	for (const args of [
+		["--version", "unknown"],
+		["--version", "0.38.0-amazme.1"],
+		["--version", "0.34.1-amazme.2"],
+		["--version"],
+		["--source", "/one", "--source", "/two"],
+		["--unknown", "value"],
+	])
+		assert.throws(() => preparationArguments(args));
+	assert.deepEqual(await patchedDriverPin(), PATCH_PIN);
+});
+
 test("computer-use preparation pins every supported asset and verifies bytes before unpacking", async () => {
 	const pin = await driverPin();
-	assert.equal(pin.version, "0.34.1");
+	assert.equal(pin.tag, `cua-driver-rs-v${pin.version}`);
 	assert.deepEqual(Object.keys(pin.assets), [
 		"darwin",
 		"linux-x64",

@@ -4,11 +4,15 @@
 
 ### Added
 
+- Computer-use 默认升级为 `0.38.0-amazme.2`，提供可重跑的 macOS 原生、Chromium 和自定义品牌 Electron 验收脚本；12 项真实动作与前台/鼠标保持检查通过后切换默认。仅保留最新版，旧配方和自动回退已移除。
+
 - 启动时检查新版本：TUI 显示一条提示，`-p` 文本模式在 stderr 是终端时于结束后提示。来源是 GitHub Releases 的 `latest.json`（发版工作流新增独立的 `manifest` job 生成），24 小时内最多查一次；`--offline`、`AMAZME_OFFLINE=1` 或 `AMAZME_SKIP_VERSION_CHECK=1` 时不发任何请求。源码 checkout 只提示版本、不给下载地址；`latest.json` 里版本号不是合法 semver、产物地址不在本仓 `releases/download/v<版本>/` 下或 sha256 不是 64 位十六进制时整份忽略。网页和桌面端可从包入口导入同一个 `checkForUpdate`。
 
 ### Fixed
 
-- Computer-use 按明确的兼容清单选择并验证运行时；安装修订版 `0.34.1-amazme.2` 补齐 macOS 版本标识，可从旧补丁离线迁移。源码构建工作目录归入 `dist-release/computer-use/<运行时版本>`，增加预览和占用检查的缓存清理命令；关闭会话时取消并等待独立权限探针退出。
+- Computer-use 权限探针快速退出时，LaunchServices 的 `open -W` 偶发报进程已退出；仅对这个竞态读取并验证私有结果文件，其余错误和取消照常失败。macOS 默认版构建安装成功或离线复用后自动清理旧运行时、旧版本产物与缓存；校验当前版、目录归属和占用，保留活动构建、验收与未来候选版，忙碌目录下次重试。
+
+- Computer-use 修复原生后台拖动和 Chromium/Electron 的像素投递：保留窗口局部坐标，取消像素点击转 AXPress，滚轮只投递一次。运行时、版本标识与来源统一校验，构建归入独立 `dist-release/computer-use/<运行时版本>`，清理前检查占用；关闭会话时等待权限探针退出。
 
 - Windows shell discovery accepts Microsoft Store aliases, checks standard PowerShell install directories, and distinguishes WSL's bash from Git Bash. System utilities use `SystemRoot` instead of an unrelated `WINDIR`.
 - Managed install markers accept a UTF-8 BOM so PowerShell-written markers remain readable.

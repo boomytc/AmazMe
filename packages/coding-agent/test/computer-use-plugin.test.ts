@@ -608,6 +608,7 @@ describe("driver observations and policy-bound actions", () => {
 			"hung-probe-cancel",
 			"hung-probe-timeout",
 			"hung-probe-dispose",
+			"invalid-probe",
 		])(
 		"owns an embedded host and joins its shutdown in %s mode without starting a service for diagnostics",
 		async (mode) => {
@@ -705,10 +706,22 @@ describe("driver observations and policy-bound actions", () => {
 				expect((await events()).map((event) => event.event)).toEqual(["probe"]);
 				return;
 			}
-			expect(
-				(await driver.permissions(3000, signal)).structuredContent,
-			).toMatchObject({ accessibility: false });
-			expect((await events()).map((event) => event.event)).toEqual(["probe"]);
+			if (mode === "invalid-probe") {
+				await expect(driver.permissions(3000, signal)).rejects.toThrow(
+					"Invalid host permission report",
+				);
+				expect((await events()).map((event) => event.event)).toEqual(["probe"]);
+				return;
+			}
+			// Fast probes exercise the open -W exit race without starting a desktop service.
+			const probeCount = mode === "native" ? 10 : 1;
+			for (let i = 0; i < probeCount; i++)
+				expect(
+					(await driver.permissions(3000, signal)).structuredContent,
+				).toMatchObject({ accessibility: false });
+			expect((await events()).map((event) => event.event)).toEqual(
+				Array(probeCount).fill("probe"),
+			);
 			await driver.observe(target, 3000, signal);
 			const host = required(
 				(await events()).find((event) => event.event === "host-started"),

@@ -5,12 +5,7 @@ import { access, lstat, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import {
-	BUNDLE_BUILD,
-	DRIVER_PIN,
-	LEGACY_PATCH_PIN,
-	PATCH_PIN,
-} from "./runtime-pin.ts";
+import { DRIVER_PIN, PATCH_BUILDS, PATCH_PIN } from "./runtime-pin.ts";
 
 const execute = promisify(execFile);
 export const APP_NAME = "AmazMe Computer Use.app";
@@ -100,17 +95,8 @@ export async function readInstallation(
 		throw new Error(`Invalid runtime manifest: ${output}`);
 	const values = new Map(Object.entries(manifest));
 	const hashes = await installationHashes(output, expected.platform);
-	// The original archive installation recorded only the driver hash. Its signed
-	// bundle still verifies; new installations and patched builds seal every file.
-	const legacyArchive =
-		expected.version === DRIVER_PIN.version &&
-		!values.has("hostSha256") &&
-		!values.has("plistSha256");
-	const requiredHashes = legacyArchive
-		? { binarySha256: hashes.binarySha256 }
-		: hashes;
 	if (
-		Object.entries({ ...expected, ...requiredHashes }).some(
+		Object.entries({ ...expected, ...hashes }).some(
 			([key, value]) => values.get(key) !== value,
 		)
 	)
@@ -128,24 +114,29 @@ export async function readInstallation(
 			["--verify", "--deep", "--strict", join(output, APP_NAME)],
 			{ timeout: 10_000 },
 		);
-		if (expected.version === PATCH_PIN.version) {
-			for (const [key, value] of Object.entries({
-				AmazMeRuntimeVersion: PATCH_PIN.version,
-				CFBundleShortVersionString: DRIVER_PIN.version,
-				CFBundleVersion: BUNDLE_BUILD,
-				CFBundleIdentifier: "com.amazme.computer-use",
-				CFBundleExecutable: "amazme-computer-use",
-			})) {
-				const { stdout } = await execute(
-					"/usr/bin/plutil",
-					["-extract", key, "raw", "-o", "-", join(output, MAC_FILES.plist)],
-					{ timeout: 2000 },
+		const build = PATCH_BUILDS.find(
+			(build) => build.pin.version === expected.version,
+		);
+		for (const [key, value] of Object.entries({
+			AmazMeRuntimeVersion: expected.version,
+			...(build
+				? {
+						CFBundleShortVersionString: build.upstreamVersion,
+						CFBundleVersion: build.bundleBuild,
+					}
+				: {}),
+			CFBundleIdentifier: "com.amazme.computer-use",
+			CFBundleExecutable: "amazme-computer-use",
+		})) {
+			const { stdout } = await execute(
+				"/usr/bin/plutil",
+				["-extract", key, "raw", "-o", "-", join(output, MAC_FILES.plist)],
+				{ timeout: 2000 },
+			);
+			if (stdout.trim() !== value)
+				throw new Error(
+					`Runtime bundle ${key} differs from its pin: ${output}`,
 				);
-				if (stdout.trim() !== value)
-					throw new Error(
-						`Runtime bundle ${key} differs from its pin: ${output}`,
-					);
-			}
 		}
 	}
 	return { directory: output, binary };
@@ -163,13 +154,7 @@ export async function resolveManagedInstallation({
 	const root = installationRoot(platform, home);
 	const archive = archivePin(platform, arch);
 	const pins =
-		platform === "darwin"
-			? [
-					{ ...PATCH_PIN, platform, arch },
-					{ ...LEGACY_PATCH_PIN, platform, arch },
-					archive,
-				]
-			: [archive];
+		platform === "darwin" ? [{ ...PATCH_PIN, platform, arch }] : [archive];
 	for (const pin of pins) {
 		const installed = await readInstallation(join(root, pin.version), pin);
 		if (installed) return installed;

@@ -3,11 +3,28 @@ import { fileURLToPath } from "node:url";
 import {
 	DRIVER_PIN,
 	PATCH_PIN,
+	patchBuild,
 } from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
+import { markReleaseDirectory } from "../packages/coding-agent/plugins/computer-use/src/maintenance.ts";
 
-export function computerUseBuildRoot() {
+export function computerUseReleaseRoot() {
 	const root = dirname(dirname(fileURLToPath(import.meta.url)));
+	return join(root, "dist-release", "computer-use");
+}
+
+export function computerUseBuildRoot(patchedVersion = PATCH_PIN.version) {
 	const version =
-		process.platform === "darwin" ? PATCH_PIN.version : DRIVER_PIN.version;
-	return join(root, "dist-release", "computer-use", version);
+		process.platform === "darwin"
+			? patchBuild(patchedVersion).pin.version
+			: DRIVER_PIN.version;
+	return join(computerUseReleaseRoot(), version);
+}
+
+export async function prepareComputerUseBuildRoot(version = PATCH_PIN.version) {
+	const root = computerUseBuildRoot(version);
+	await markReleaseDirectory(
+		root,
+		process.platform === "darwin" ? version : DRIVER_PIN.version,
+	);
+	return root;
 }

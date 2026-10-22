@@ -8,7 +8,7 @@ import {
 	MAC_FILES,
 } from "../packages/coding-agent/plugins/computer-use/src/installation.ts";
 import {
-	BUNDLE_BUILD,
+	PATCH_BUILDS,
 	PATCH_PIN,
 } from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
 
@@ -19,9 +19,11 @@ export async function signedRuntime(home, pin = PATCH_PIN) {
 	execFileSync("/usr/bin/clang", ["-x", "c", "-", "-o", binary], {
 		input: "int main(void) { return 0; }",
 	});
+	const build = PATCH_BUILDS.find((build) => build.pin.version === pin.version);
 	await prepareMacBundle(directory, {
 		version: pin.version,
-		build: BUNDLE_BUILD,
+		build: build?.bundleBuild ?? PATCH_BUILDS[0].bundleBuild,
+		upstreamVersion: build?.upstreamVersion ?? PATCH_BUILDS[0].upstreamVersion,
 		signingIdentity: "-",
 	});
 	const manifest = {

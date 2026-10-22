@@ -18,6 +18,7 @@ export async function prepareMacBundle(
 	ready,
 	{
 		version = DRIVER_PIN.version,
+		upstreamVersion = DRIVER_PIN.version,
 		build = DRIVER_PIN.version,
 		signingIdentity = process.env.AMAZME_CUA_SIGNING_IDENTITY ?? "-",
 	} = {},
@@ -34,7 +35,7 @@ export async function prepareMacBundle(
 <key>CFBundleIdentifier</key><string>com.amazme.computer-use</string>
 <key>CFBundleName</key><string>AmazMe Computer Use</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>${DRIVER_PIN.version}</string>
+<key>CFBundleShortVersionString</key><string>${upstreamVersion}</string>
 <key>CFBundleVersion</key><string>${build}</string>
 <key>AmazMeRuntimeVersion</key><string>${version}</string>
 <key>CFBundleGetInfoString</key><string>AmazMe Computer Use ${version}</string>
