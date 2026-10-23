@@ -25,6 +25,8 @@ P2 的代码和协议门槛通过后，可以继续没有被环境挡住的 P3�
 
 `d5cefaf` 之后的源码改动不在 A/B 里。那些安装包不能为新能力背书。修复前的 wheel/sdist 也不再当作当前源码的构建证据；当前源码需重新 `uv build`。
 
+`6c2b25c` 又打了两份 onedir。A 是 `.artifacts/python-backend-verify-a/package-h9p3ay_o/AmazMe Python 0.1.0`，build_id `ab5e3c4cbd48a3ccd24a3596545f5226a5d7b4abbdbfd94af8073d38b9a88ff0`。B 是 `.artifacts/python-backend-verify-b/package-9h7swttg/AmazMe Python 0.1.0`，build_id `0f1ffd0f603c3dbb3c7f1be4333bf943bb575700f64933beb849c3ecdb85661f`。`verify_p2.py --case all` 34 项都是 passed，没有 failed、not_run 或 skipped。报告是 `/tmp/am2-lvmsk__7/report.json`。强停虚拟机走包内 `runtime/lima`，不是 `resources/lima`。这不包含宿主睡眠、物理断电、Linux 宿主、OAuth 或 TCC。同一份源码上 ruff 通过，pyright 0 错误，pytest 390 项通过。
+
 ## 1. P2 代码和协议
 
 协议是 `amazme-http/1`。存储格式是 2。产品版本是 0.1.0。`build_id` 单独标识一次构建。

@@ -1591,7 +1591,7 @@ def vm_force_stop_case(runtime: Runtime, evidence: Evidence) -> None:
     try:
         locator = runtime.vm_owner()
         home = Path(locator["home"])
-        manager = runtime.build.executable.parent / "resources/lima/bin/limactl"
+        manager = runtime.build.executable.parent / "runtime/lima/bin/limactl"
         env = {**runtime.env, "LIMA_HOME": str(home), "PATH": str(manager.parent) + ":" + runtime.env["PATH"]}
         fd = os.open(home / "operation.lock", os.O_RDWR | os.O_NOFOLLOW)
         try:
