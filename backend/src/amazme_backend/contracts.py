@@ -43,6 +43,14 @@ class ModelCatalog(Model):
     current: ModelSettings
 
 
+class SessionModel(Model):
+    """The model last selected for one session. This does not add a provider implementation."""
+
+    session_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
+    model: str = Field(pattern=r"^[\w.:-]{1,128}$")
+
+
 class UpdateModelSettings(Model):
     provider: Literal["deepseek", "faux"]
     model: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")

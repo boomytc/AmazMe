@@ -18,6 +18,7 @@ import {
 	type SearchProgramOptions,
 } from "@amazme/durable/tools";
 import { createPolicyEnv } from "../durable/insights/execution-policy.ts";
+import { PythonTerminalEnv } from "./python-terminal.ts";
 import { createForkArchiveGate } from "../core/fork-admission.ts";
 import type { ResourceLoader } from "../core/resource-loader.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
@@ -155,9 +156,11 @@ export class ExecutionEnvs {
 	readonly env = ({ cwd = this.#defaultCwd }: EnvTarget): ExecutionEnv => {
 		let env = this.#envs.get(cwd);
 		if (env === undefined) {
-			env = this.#settings
-				? createPolicyEnv(cwd, this.#artifactDirectory, this.#settings, this.#workspaces)
-				: new NodeExecutionEnv({ cwd, artifactDirectory: this.#artifactDirectory });
+			env = process.env.AMAZME_PYTHON_URL
+				? new PythonTerminalEnv({ cwd, artifactDirectory: this.#artifactDirectory })
+				: this.#settings
+					? createPolicyEnv(cwd, this.#artifactDirectory, this.#settings, this.#workspaces)
+					: new NodeExecutionEnv({ cwd, artifactDirectory: this.#artifactDirectory });
 			this.#envs.set(cwd, env);
 		}
 		return env;

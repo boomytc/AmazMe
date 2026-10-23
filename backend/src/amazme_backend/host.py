@@ -122,6 +122,7 @@ from .contracts import (
     Session,
     SessionDiagnostic,
     SessionList,
+    SessionModel,
     SettingsUpdate,
     ShareMessage,
     ShareView,
@@ -683,6 +684,19 @@ class Host:
         self._admit()
         self.profile.reload_provider()
         return ModelCatalog(models=list(CATALOG), current=public_settings(self.profile.config.provider))
+
+    async def session_model(self, session_id: str) -> SessionModel:
+        self._admit()
+        found = await self.store.session_model(session_id)
+        if found is None:
+            raise BackendError("session_model_missing", status=404)
+        return found
+
+    async def save_session_model(self, value: SessionModel) -> SessionModel:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        return await self.store.save_session_model(value)
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
         self._admit()
@@ -2117,6 +2131,16 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session_id}/mcp/{server_id}/cancel")
     async def cancel_mcp(session_id: str, server_id: str, value: McpOpen) -> McpView:
         return await owner.cancel_mcp(session_id, value)
+
+    @app.get("/api/v1/session-models/{session_id}")
+    async def session_model(session_id: str) -> SessionModel:
+        return await owner.session_model(session_id)
+
+    @app.put("/api/v1/session-models/{session_id}")
+    async def save_session_model(session_id: str, value: SessionModel) -> SessionModel:
+        if value.session_id != session_id:
+            raise BackendError("session_model_mismatch")
+        return await owner.save_session_model(value)
 
     @app.get("/api/v1/models")
     async def models() -> ModelCatalog:

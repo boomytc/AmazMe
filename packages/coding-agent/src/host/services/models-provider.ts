@@ -15,6 +15,7 @@ import { initialThinkingLevel } from "../../core/hosted-settings.ts";
 import { Conversations } from "./conversations.ts";
 import type { Models as ModelsService, ModelsState } from "./models.ts";
 import { Models } from "./models.ts";
+import { savePythonSessionModel } from "../python-session-model.ts";
 import { suggestPrompt } from "./prompt-suggestions.ts";
 
 export interface ModelsServiceRuntime {
@@ -36,6 +37,7 @@ export function createModelsService(
 	settingsManager: SettingsManager | undefined,
 	createState: (initial: ModelsState) => MutableReplicatedState<ModelsState>,
 	sharedAuthentication?: ProviderLogin,
+	sessionId?: string,
 ): ModelsServiceRuntime {
 	let catalogRevision = 0;
 	const lifetime = new AbortController();
@@ -210,6 +212,9 @@ export function createModelsService(
 				agent.thinkingLevel = switchThinkingLevel(selected, undefined, agent.thinkingLevel);
 				agent.model = { provider: selected.provider, modelId: selected.id };
 			}, context);
+			if (sessionId !== undefined) {
+				await savePythonSessionModel(sessionId, { provider: selected.provider, model: selected.id });
+			}
 		},
 		async selectThinking(level, context) {
 			const conversation = await current(context);
@@ -274,6 +279,7 @@ export async function createModelsServiceFacet(options: {
 	readonly settingsManager?: SettingsManager;
 	readonly context: Context;
 	readonly authentication?: ProviderLogin;
+	readonly sessionId?: string;
 }): Promise<Facet> {
 	return serviceFacet("@amazme/models", Models, [Conversations, AgentRuntime], async (services, signal) => {
   const agent = await options.harness.documentState(AgentDoc, options.conversation.id, withAbortSignal(signal, options.context));
@@ -298,6 +304,7 @@ export async function createModelsServiceFacet(options: {
 				options.settingsManager,
 				replicatedState,
 				options.authentication,
+				options.sessionId,
 			);
 			disposers.push(() => runtime.close());
 			const implementation: ServiceValue<typeof Models> = runtime.service;

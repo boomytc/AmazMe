@@ -21,6 +21,7 @@ from .contracts import (
     ServiceInfo,
     Session,
     SessionList,
+    SessionModel,
     Submit,
     UpdateRecord,
     WorkerActivity,
@@ -137,6 +138,8 @@ class HostStore:
                   text TEXT NOT NULL, digest TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS shares(id TEXT PRIMARY KEY, session TEXT NOT NULL,
                   digest TEXT NOT NULL, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS session_models(
+                  session TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL);
                 PRAGMA user_version=2;
             """)
             # Format 2 already shipped without branch columns. Adding them keeps every existing row.
@@ -338,6 +341,23 @@ class HostStore:
             done = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
             assert done is not None
             return done
+        return await self.transaction(operation)
+
+    async def session_model(self, session_id: str) -> SessionModel | None:
+        def operation(db: sqlite3.Connection) -> SessionModel | None:
+            row = db.execute("SELECT provider, model FROM session_models WHERE session=?", (session_id,)).fetchone()
+            if row is None:
+                return None
+            return SessionModel(session_id=session_id, provider=str(row[0]), model=str(row[1]))
+        return await self.db.call(operation)
+
+    async def save_session_model(self, value: SessionModel) -> SessionModel:
+        def operation(db: sqlite3.Connection) -> SessionModel:
+            db.execute(
+                "INSERT INTO session_models(session, provider, model) VALUES(?,?,?) "
+                "ON CONFLICT(session) DO UPDATE SET provider=excluded.provider, model=excluded.model",
+                (value.session_id, value.provider, value.model))
+            return value
         return await self.transaction(operation)
 
     async def create_session(self, session_id: str, value: CreateSession) -> Session:

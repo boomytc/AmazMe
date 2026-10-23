@@ -90,6 +90,7 @@ export interface SessionWorkerServices {
 }
 
 export async function createSessionWorkerServices(options: {
+	readonly sessionId?: string;
 	readonly admission?: (context: Context) => Promise<AgentOperationError | undefined>;
 	readonly executionEnv?: ExecutionEnv;
 	readonly stopExecution?: (context: Context) => Promise<void>;
@@ -225,7 +226,12 @@ export async function createSessionWorkerServices(options: {
 			...(options.modelRuntime === undefined ? {} : { modelRuntime: options.modelRuntime }),
 		}),
 		...(settingsRuntimeFacet === undefined ? [] : [settingsRuntimeFacet]),
-		await createModelsServiceFacet({ ...options, authentication, context: BACKGROUND_CONTEXT }),
+		await createModelsServiceFacet({
+			...options,
+			authentication,
+			context: BACKGROUND_CONTEXT,
+			...(options.sessionId === undefined ? {} : { sessionId: options.sessionId }),
+		}),
 		...(options.mcp === undefined ? [] : [createMcpFacet(options.mcp)]),
 		await createTranscriptServiceFacet(options.conversation, BACKGROUND_CONTEXT),
 		createCommandsFacet({

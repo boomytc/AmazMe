@@ -1,6 +1,7 @@
 import { openTestHost } from "./native-host-support.ts";
 import { activationFacet, disposeResources } from "@amazme/protocol/services";
-import { access, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { access, lstat, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHost, type Context } from "@amazme/chord";
@@ -31,13 +32,56 @@ import { Transcript } from "../src/host/services/transcript.ts";
 import { createServerServiceBinding, createSessionServiceBinding } from "./experimental-service-binding.ts";
 import {
 	configureExperimentalWorkerModel,
-	createExperimentalSessions,
-	readExperimentalSessionState } from "./experimental-session-support.ts";
+	createExperimentalSessions } from "./experimental-session-support.ts";
+import { loadPythonSessionModel } from "../src/host/python-session-model.ts";
 import { readSession, sessionStoragePath } from "../src/host/session-catalog.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const servers = new Set<RunningServer>();
+
+async function startPythonBackend(): Promise<() => void> {
+	const root = fileURLToPath(new URL("../../..", import.meta.url));
+	const directory = createTempDir("amazme-python-model-");
+	const profile = join(directory, "profile");
+	const workspace = join(directory, "workspace");
+	await mkdir(workspace);
+	const provider = join(directory, "provider.json");
+	await writeFile(provider, JSON.stringify({
+		provider: "faux", model: "faux", base_url: "", api_key: "", max_tokens: 2048, proxy: "", headers: {},
+	}));
+	const python = join(root, "backend/.venv/bin/python");
+	const run = (args: readonly string[]) => new Promise<void>((resolve, reject) => {
+		const child = spawn(python, args, { cwd: root });
+		child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`${args[1]} ${code}`))));
+	});
+	await run(["-m", "amazme_backend", "init", "--profile", profile, "--workspace", workspace, "--provider-config", provider]);
+	const serve = spawn(python, ["-m", "amazme_backend", "serve", "--profile", profile, "--port", "0"], { cwd: root });
+	const url = await new Promise<string>((resolve, reject) => {
+		let pending = "";
+		const timer = setTimeout(() => reject(new Error("python serve timeout")), 30_000);
+		serve.stdout?.setEncoding("utf8");
+		serve.stdout?.on("data", (chunk: string) => {
+			pending += chunk;
+			const line = pending.split("\n").find((item) => item.startsWith("{") && item.includes("\"url\""));
+			if (line === undefined) return;
+			clearTimeout(timer);
+			resolve(String((JSON.parse(line) as { url: string }).url));
+		});
+		serve.once("exit", () => {
+			clearTimeout(timer);
+			reject(new Error("python serve exited"));
+		});
+	});
+	process.env.AMAZME_PYTHON_URL = url;
+	process.env.AMAZME_PYTHON_TOKEN = (await readFile(join(profile, "web.token"), "utf8")).trim();
+	return () => {
+		delete process.env.AMAZME_PYTHON_URL;
+		delete process.env.AMAZME_PYTHON_TOKEN;
+		spawn(python, ["-m", "amazme_backend", "stop", "--profile", profile], { cwd: root }).unref();
+		serve.kill();
+	};
+}
 const clients = new Set<Client>();
 const directories = new Set<string>();
 const fauxWorkerEntryUrl = new URL("fixtures/faux-session-worker.ts", import.meta.url);
@@ -128,6 +172,8 @@ describe("experimental durable server composition", () => {
 	});
 
 	test("preserves an existing Session model when the server default changes", async () => {
+		const stopPython = await startPythonBackend();
+		try {
 		await writeFile(
 			join(agentDir, "settings.json"),
 			JSON.stringify({ defaultProvider: "anthropic", defaultModel: "claude-opus-4-6" }),
@@ -148,8 +194,13 @@ describe("experimental durable server composition", () => {
 		await secondClient.dispose();
 		clients.delete(secondClient);
 		await expect.poll(() => second.workerPids.has("demo-1")).toBe(false);
-		const state = await readExperimentalSessionState(second.sessionDir, "demo-1");
-		expect(state.model).toEqual({ provider: "anthropic", modelId: "claude-opus-4-6" });
+		expect(await loadPythonSessionModel("demo-1")).toEqual({ provider: "anthropic", model: "claude-opus-4-6" });
+		const metadata = await readSession(second.sessionDir, "demo-1");
+		expect(metadata).toBeDefined();
+		await expect(access(sessionStoragePath(metadata!))).rejects.toThrow();
+		} finally {
+			stopPython();
+		}
 	});
 
 	test("rejects model options when discovery selects an existing server", async () => {
@@ -422,6 +473,8 @@ describe("experimental durable server composition", () => {
 	});
 
 	test("keeps a model selection in its Session without changing new Session defaults", async () => {
+		const stopPython = await startPythonBackend();
+		try {
 		const directory = createTempDir("pes-model-selection-", { baseDirectory: "/tmp" });
 		directories.add(directory);
 		const runtime = await startServer({ directory });
@@ -438,8 +491,10 @@ describe("experimental durable server composition", () => {
 		await firstClient.dispose();
 		clients.delete(firstClient);
 		await expect.poll(() => runtime.workerPids.has("demo-1")).toBe(false);
-		expect((await readExperimentalSessionState(join(agentDir, "experimental", "sessions"), "demo-1")).model).toEqual({
-			provider: "anthropic", modelId: "claude-opus-4-6" });
+		expect(await loadPythonSessionModel("demo-1")).toEqual({ provider: "anthropic", model: "claude-opus-4-6" });
+		const kept = await readSession(join(agentDir, "experimental", "sessions"), "demo-1");
+		expect(kept).toBeDefined();
+		await expect(access(sessionStoragePath(kept!))).rejects.toThrow();
 
 		const secondClient = await attachClient(runtime, "demo-2");
 		const secondServices = createSessionServiceBinding(secondClient, { services: [Models] });
@@ -447,6 +502,9 @@ describe("experimental durable server composition", () => {
 		await expect.poll(() => secondServices.get(Models).state.value?.configuration.model).toEqual({
 			provider: "anthropic", modelId: "claude-sonnet-4-5" });
 		await secondServices.dispose(BACKGROUND_CONTEXT);
+		} finally {
+			stopPython();
+		}
 	});
 
 	test("uses explicitly saved model and thinking defaults for a new Session", async () => {

@@ -2197,6 +2197,92 @@
         }
       }
     },
+    "/api/v1/session-models/{session_id}": {
+      "get": {
+        "summary": "Session Model",
+        "operationId": "session_model_api_v1_session_models__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Save Session Model",
+        "operationId": "save_session_model_api_v1_session_models__session_id__put",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionModel"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/models": {
       "get": {
         "summary": "Models",
@@ -6787,6 +6873,34 @@
           "sessions"
         ],
         "title": "SessionList"
+      },
+      "SessionModel": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$",
+            "title": "Session Id"
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "pattern": "^[\\w.:-]{1,128}$",
+            "title": "Model"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "provider",
+          "model"
+        ],
+        "title": "SessionModel",
+        "description": "The model last selected for one session. This does not add a provider implementation."
       },
       "SettingsUpdate": {
         "properties": {

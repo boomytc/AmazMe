@@ -47,7 +47,8 @@ import {
 	loadCodingResources,
 	refreshCodingProjectTrust,
 } from "../core/hosted-settings.ts";
-import { openSessionStorage } from "../durable/session-database.ts";
+import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
+import { loadPythonSessionModel, savePythonSessionModel } from "./python-session-model.ts";
 import {
 	lockSessionDatabase,
 	type SessionLease,
@@ -705,6 +706,7 @@ async function run(
 		else await abortArchivedForks(runtime.harness);
 		taskGraph = await runtime.harness.taskGraph(TODO_CONTEXT);
 		services = await createSessionWorkerServices({
+			sessionId: metadata.id,
 			admission: runtime.admission,
 			executionEnv: runtime.executionEnv,
 			stopExecution: runtime.stopExecution,
@@ -1098,7 +1100,7 @@ function sessionOpenErrorOf(error: unknown): (Error & { toJSON(): SessionOpenErr
 }
 
 export async function createCodingAgentHarness(
-	lease: SessionLease,
+	_lease: SessionLease,
 	options: SessionWorkerOptions,
 ): Promise<SessionWorkerRuntime> {
 	const { cwd } = options.metadata;
@@ -1197,8 +1199,9 @@ export async function createCodingAgentHarness(
 	registry.install(approvalGate.extension);
 	let harness: Harness | undefined;
 	try {
+		const stored = await loadPythonSessionModel(options.metadata.id);
 		harness = await Harness.open(
-			await openSessionStorage(lease),
+			await openNodeSqliteStorage(join(options.metadata.path, "harness.sqlite")),
 			{
 				models: modelRuntime,
 				get identity() { return getClientIdentity(settingsManager); },
@@ -1214,14 +1217,19 @@ export async function createCodingAgentHarness(
 			(await harness.conversation(ROOT_CONVERSATION_ID, TODO_CONTEXT)) ===
 			undefined;
 		const selected = created ? (await readSession(options.sessionDir, options.metadata.id))?.initialModel : undefined;
+		const requested = stored !== undefined
+			? { provider: stored.provider, model: stored.model }
+			: selected ? { provider: selected.model.provider, model: selected.model.modelId, thinkingLevel: selected.thinkingLevel }
+				: options.model === undefined ? undefined : { provider: options.provider, model: options.model };
 		const initial = created
-			? await findInitialAgentModel(
-					settingsManager,
-					modelRuntime,
-					selected ? { provider: selected.model.provider, model: selected.model.modelId, thinkingLevel: selected.thinkingLevel }
-						: options.model === undefined ? undefined : { provider: options.provider, model: options.model },
-				)
+			? await findInitialAgentModel(settingsManager, modelRuntime, requested)
 			: undefined;
+		if (initial?.model !== undefined) {
+			await savePythonSessionModel(options.metadata.id, {
+				provider: initial.model.provider,
+				model: initial.model.modelId,
+			});
+		}
 		const conversation = await harness.root(TODO_CONTEXT, {
 			agent: {
 				cwd,
