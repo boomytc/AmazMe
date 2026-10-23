@@ -200,6 +200,62 @@
         }
       }
     },
+    "/api/v1/automations": {
+      "post": {
+        "summary": "Create Automation",
+        "operationId": "create_automation_api_v1_automations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/automations/tick": {
+      "post": {
+        "summary": "Tick Automations",
+        "operationId": "tick_automations_api_v1_automations_tick_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationTick"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces": {
       "get": {
         "summary": "Workspaces",
@@ -2577,6 +2633,139 @@
           "build_id"
         ],
         "title": "Attachment"
+      },
+      "AutomationCreate": {
+        "properties": {
+          "automation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Automation Id"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Session Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Text"
+          },
+          "zone": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Zone"
+          },
+          "local": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$",
+            "title": "Local"
+          },
+          "fold": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fold"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "automation_id",
+          "session_id",
+          "text",
+          "zone",
+          "local"
+        ],
+        "title": "AutomationCreate"
+      },
+      "AutomationTick": {
+        "properties": {
+          "fired": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutomationView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AutomationTick"
+      },
+      "AutomationView": {
+        "properties": {
+          "automation_id": {
+            "type": "string",
+            "title": "Automation Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "zone": {
+            "type": "string",
+            "title": "Zone"
+          },
+          "local": {
+            "type": "string",
+            "title": "Local"
+          },
+          "fold": {
+            "type": "integer",
+            "title": "Fold"
+          },
+          "due_ms": {
+            "type": "integer",
+            "title": "Due Ms"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "done",
+              "unknown"
+            ],
+            "title": "Phase"
+          },
+          "delivery_id": {
+            "type": "string",
+            "title": "Delivery Id",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "automation_id",
+          "session_id",
+          "workspace",
+          "text",
+          "zone",
+          "local",
+          "fold",
+          "due_ms",
+          "phase"
+        ],
+        "title": "AutomationView"
       },
       "BranchSession": {
         "properties": {

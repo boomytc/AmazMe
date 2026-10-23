@@ -289,6 +289,32 @@ class CheckpointRestore(Model):
     expected_digest: str = Field(default="", max_length=64)
 
 
+class AutomationCreate(Model):
+    automation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    text: str = Field(min_length=1, max_length=4000)
+    zone: str = Field(min_length=1, max_length=64)
+    local: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$")
+    fold: int | None = None
+
+
+class AutomationView(Model):
+    automation_id: str
+    session_id: str
+    workspace: str
+    text: str
+    zone: str
+    local: str
+    fold: int
+    due_ms: int
+    phase: Literal["scheduled", "done", "unknown"]
+    delivery_id: str = ""
+
+
+class AutomationTick(Model):
+    fired: AutomationView | None = None
+
+
 class HostFence(Model):
     host_epoch: int
     build_id: str

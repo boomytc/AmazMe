@@ -578,6 +578,27 @@ function startClient() {
       $("mcp-approval").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let automationId = "";
+  $("automation-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    automationId = automationId || crypto.randomUUID().replaceAll("-", "");
+    try {
+      const view = await api("/api/v1/automations", "POST", {
+        automation_id: automationId, session_id: selected, text: $("automation-text").value,
+        zone: $("automation-zone").value, local: $("automation-local").value,
+      }, current);
+      $("automation-state").textContent = `${view.phase} · ${view.due_ms}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("automation-tick").onclick = async () => {
+    try {
+      const tick = await api("/api/v1/automations/tick", "POST", {}, current);
+      $("automation-state").textContent = tick.fired ? `${tick.fired.phase} · ${tick.fired.delivery_id}` : "没有到期任务";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   $("memory").addEventListener("toggle", () => {
     if (!$("memory").open || !selected) return;
     const workspace = sessionWorkspaces.get(selected) || "primary";

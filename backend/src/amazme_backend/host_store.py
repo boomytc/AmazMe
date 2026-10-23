@@ -125,6 +125,10 @@ class HostStore:
                   text TEXT NOT NULL, digest TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS file_checkpoints(id TEXT PRIMARY KEY, workspace TEXT NOT NULL,
                   path TEXT NOT NULL, digest TEXT NOT NULL, content TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS automations(id TEXT PRIMARY KEY, session TEXT NOT NULL,
+                  workspace TEXT NOT NULL, text TEXT NOT NULL, zone TEXT NOT NULL, local TEXT NOT NULL,
+                  fold INTEGER NOT NULL, due_ms INTEGER NOT NULL, phase TEXT NOT NULL,
+                  delivery_id TEXT NOT NULL DEFAULT '');
                 PRAGMA user_version=2;
             """)
             # Format 2 already shipped without branch columns. Adding them keeps every existing row.
@@ -255,6 +259,68 @@ class HostStore:
                 return None
             return str(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4])
         return await self._call(operation)
+
+    async def save_automation(self, automation_id: str, session_id: str, workspace: str, text: str,
+                              zone: str, local: str, fold: int, due_ms: int) -> sqlite3.Row:
+        def operation(db: sqlite3.Connection) -> sqlite3.Row:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            existing = db.execute("SELECT * FROM automations WHERE id=?", (automation_id,)).fetchone()
+            if existing is not None:
+                same = (str(existing["session"]), str(existing["workspace"]), str(existing["text"]),
+                        str(existing["zone"]), str(existing["local"]), int(existing["fold"]), int(existing["due_ms"]))
+                if same != (session_id, workspace, text, zone, local, fold, due_ms):
+                    raise BackendError("automation_conflict")
+                return existing
+            session = db.execute("SELECT archived, workspace FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if session is None:
+                raise BackendError("session_not_found", status=404)
+            if int(session["archived"]):
+                raise BackendError("session_archived")
+            if str(session["workspace"] or "primary") != workspace:
+                raise BackendError("workspace_conflict")
+            db.execute(
+                "INSERT INTO automations(id,session,workspace,text,zone,local,fold,due_ms,phase) VALUES(?,?,?,?,?,?,?,?, 'scheduled')",
+                (automation_id, session_id, workspace, text, zone, local, fold, due_ms))
+            row = db.execute("SELECT * FROM automations WHERE id=?", (automation_id,)).fetchone()
+            assert row is not None
+            return row
+        return await self.transaction(operation)
+
+    async def claim_due_automation(self, now_ms: int) -> sqlite3.Row | None:
+        """One scheduler claims one due automation and its submit delivery in the same transaction."""
+        def operation(db: sqlite3.Connection) -> sqlite3.Row | None:
+            row = db.execute(
+                "SELECT * FROM automations WHERE phase='scheduled' AND due_ms<=? ORDER BY due_ms, id LIMIT 1",
+                (now_ms,)).fetchone()
+            if row is None:
+                return None
+            session = db.execute("SELECT archived FROM sessions WHERE id=?", (str(row["session"]),)).fetchone()
+            if session is None or int(session["archived"]):
+                db.execute("UPDATE automations SET phase='unknown' WHERE id=? AND phase='scheduled'", (str(row["id"]),))
+                updated = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
+                assert updated is not None
+                return updated
+            claimed = db.execute(
+                "UPDATE automations SET phase='unknown' WHERE id=? AND phase='scheduled'", (str(row["id"]),))
+            if claimed.rowcount != 1:
+                return None
+            submit = Submit(request_id=str(row["id"]), text=str(row["text"]))
+            payload = submit.model_dump_json()
+            digest = hashlib.sha256(payload.encode()).hexdigest()
+            identity = hashlib.sha256(json.dumps([str(row["session"]), "submit", str(row["id"])]).encode()).hexdigest()
+            existing = db.execute("SELECT digest FROM deliveries WHERE id=?", (identity,)).fetchone()
+            if existing is not None and str(existing["digest"]) != digest:
+                return db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
+            if existing is None:
+                db.execute("INSERT INTO deliveries(id,session,kind,digest,payload) VALUES(?,?,?,?,?)",
+                           (identity, str(row["session"]), "submit", digest, payload))
+                db.execute("UPDATE sessions SET wanted=1,next_check=0 WHERE id=?", (str(row["session"]),))
+            db.execute("UPDATE automations SET phase='done', delivery_id=? WHERE id=?", (identity, str(row["id"])))
+            done = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
+            assert done is not None
+            return done
+        return await self.transaction(operation)
 
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         def operation(db: sqlite3.Connection) -> Session:

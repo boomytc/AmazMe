@@ -20,12 +20,16 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .automations import resolve_due
 from .common import Peer, Profile, build_id, child_command, lock, private_write, wait_peer
 from .contracts import (
     ApprovalDecision,
     ApprovalEnvelope,
     ArchiveSession,
     Attachment,
+    AutomationCreate,
+    AutomationTick,
+    AutomationView,
     BackendError,
     BranchSession,
     Cancel,
@@ -678,6 +682,35 @@ class Host:
         found = match_memories(await self.store.memory_rows(), session.workspace, query)
         return MemoryList(workspace=session.workspace, memories=found)
 
+    def _automation(self, row: sqlite3.Row) -> AutomationView:
+        phase = str(row["phase"])
+        if phase not in {"scheduled", "done", "unknown"}:
+            phase = "unknown"
+        return AutomationView(
+            automation_id=str(row["id"]), session_id=str(row["session"]), workspace=str(row["workspace"]),
+            text=str(row["text"]), zone=str(row["zone"]), local=str(row["local"]), fold=int(row["fold"]),
+            due_ms=int(row["due_ms"]), phase=phase, delivery_id=str(row["delivery_id"]))  # type: ignore[arg-type]
+
+    async def create_automation(self, value: AutomationCreate) -> AutomationView:
+        self._admit()
+        due_ms, fold = resolve_due(value.local, value.zone, value.fold)
+        if not await self.store.exists(value.session_id):
+            raise BackendError("session_not_found", status=404)
+        session = next(item for item in (await self.sessions()).sessions if item.session_id == value.session_id)
+        row = await self.store.save_automation(
+            value.automation_id, value.session_id, session.workspace, value.text.strip(),
+            value.zone, value.local, fold, due_ms)
+        return self._automation(row)
+
+    async def tick_automations(self) -> AutomationTick:
+        self._admit()
+        if await self.store.active_update():
+            return AutomationTick()
+        row = await self.store.claim_due_automation(int(time.time() * 1000))
+        if row is None:
+            return AutomationTick()
+        return AutomationTick(fired=self._automation(row))
+
     async def branch_session(self, parent: str, value: BranchSession) -> Session:
         self._admit()
         if not await self.store.exists(parent):
@@ -1004,6 +1037,7 @@ class Host:
                         del tasks[session]
                 try:
                     self._admit()
+                    await self.tick_automations()
                     if await self.store.active_update() is None:
                         await self.ensure_supervisor()
                         sessions = {d.session_id for d in await self.store.pending()}
@@ -1412,6 +1446,14 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/sessions/{session_id}/memories")
     async def session_memories(session_id: str, q: str = "") -> MemoryList:
         return await owner.injection_preview(session_id, q)
+
+    @app.post("/api/v1/automations")
+    async def create_automation(value: AutomationCreate) -> AutomationView:
+        return await owner.create_automation(value)
+
+    @app.post("/api/v1/automations/tick")
+    async def tick_automations() -> AutomationTick:
+        return await owner.tick_automations()
 
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:
