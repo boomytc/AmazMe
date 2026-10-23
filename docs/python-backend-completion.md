@@ -81,7 +81,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | OAuth、单一刷新管理者、取消期间 token 落盘 | P3 | 无 | 未通过 | 无 | 按供应商要求的 client ID、回调和请求身份实现。缺账号时保持未验收并继续无关功能 |
 | 图片、分类 | P3 | 无 | 未通过 | 无 | 按产品里实际有的能力做，不按枚举注册名称 |
 | 会话归档 | P3 | `POST /api/v1/sessions/{id}/archive`；页面「归档 / 恢复」 | 部分通过 | `test_session_branch.py` 的归档用例和 happy-dom | `1af60222`。不在 A/B 安装包里，也还没有真实 Chrome。历史不删除；未开始的任务变为已取消 |
-| 上下文压缩、过期结果拒绝、压缩失败保留原历史 | P3 | 审批过期已有；压缩无 | 未通过 | 审批过期单测 | 压缩要单独做，失败不能改写原历史 |
+| 上下文压缩、过期结果拒绝、压缩失败保留原历史 | P3 | `POST /api/v1/sessions/{id}/compactions`；页面「压缩上下文」 | 部分通过 | `test_session_branch.py` 的压缩用例和 happy-dom | 摘要走当前供应商。依据不一致拒绝写入。失败不删原消息。还不在 A/B 包和真实 Chrome 里 |
 | 切换会话 | P2 Web | 侧栏 | 已通过 | `verify_client.py` 的 A-B-A | 分支后的切换有 happy-dom 测试，还没有进 Chrome 报告 |
 | 文件浏览、编辑、diff、受检写入 | P3 | 现在只有 VM 里的 `read_file` / `write_file` | 部分通过 | P1 工具路径 | 浏览、diff、符号链接、硬链接、权限和并发写未做 |
 | 多工作区与统一路径映射 | P3 | init 只有一个 workspace | 未通过 | 无 | 显式宿主/guest 映射。不默认挂载 HOME、钥匙串或 SSH agent |
@@ -118,5 +118,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 当前源码已重新 `uv build`。Ruff、Pyright 和 pytest 294 通过。A/B 安装包仍是 `d5cefaf`，不覆盖这次分支。
-2. 会话归档已有 API 和页面入口。下一步做上下文压缩，或模型目录与配置。
+2. 上下文压缩已有 API 和页面入口。下一步做模型目录与配置。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。

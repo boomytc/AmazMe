@@ -70,6 +70,23 @@ def provider_messages(messages: list[Message]) -> list[ChatCompletionMessagePara
     return result
 
 
+async def summarize(config: ProviderConfig, messages: list[Message]) -> str:
+    """Ask the configured provider for a context summary. Callers commit it only if the basis still matches."""
+    if not messages or not any(message.content for message in messages):
+        raise BackendError("compaction_empty")
+    source = "\n".join(f"{message.role}: {message.content}" for message in messages if message.content)
+    prompt = Message(role="user", content="压缩对话并保留决定与未完成事项：\n" + source[:12000])
+    summary = ""
+    async for item in stream(config, [prompt]):
+        if isinstance(item, str):
+            summary += item
+        elif item.message.content:
+            summary = item.message.content
+    if not summary.strip():
+        raise BackendError("compaction_empty")
+    return summary.strip()[:16000]
+
+
 async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterator[str | Completion]:
     if not messages or not any(message.role == "user" for message in messages):
         raise BackendError("missing_user_context")

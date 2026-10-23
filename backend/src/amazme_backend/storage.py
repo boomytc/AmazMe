@@ -18,6 +18,7 @@ from .contracts import (
     BackendError,
     Cleanup,
     CommitBatch,
+    Compaction,
     Decision,
     DelegateTasks,
     EffectHold,
@@ -65,6 +66,10 @@ from .session_domain import (
 TERMINAL = frozenset({"succeeded", "cancelled", "interrupted", "failed", "unknown"})
 _SESSION_ID = re.compile(r"^[a-f0-9]{32}$")
 _SESSION_FILES = frozenset({"session.sqlite", "session.sqlite-wal", "session.sqlite-shm"})
+
+
+def compaction_basis(payloads: list[str]) -> str:
+    return hashlib.sha256("\n".join(payloads).encode()).hexdigest()
 
 
 def session_database(profile: Path, session: str) -> Path:
@@ -329,6 +334,7 @@ class SessionStore:
                 CREATE UNIQUE INDEX IF NOT EXISTS resolutions_call ON resolutions(json_extract(payload,'$.call_id'));
                 CREATE TABLE IF NOT EXISTS previews(request_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS batches(seq INTEGER PRIMARY KEY,payload TEXT NOT NULL,bytes INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS compactions(id TEXT PRIMARY KEY,basis TEXT NOT NULL,payload TEXT NOT NULL);
             """)
             for key, value in {"stream_id": secrets.token_hex(16), "revision": "0", "host_epoch": "0",
                                "freeze_id": "", "stopping": "", "blocked": "", "driver_id": "", "execution_epoch": "0"}.items():
@@ -715,12 +721,44 @@ class SessionStore:
         request.status = request.decision.status
         self._save_request(db, c, request)
 
+    def _payloads(self, db: sqlite3.Connection, request_id: str) -> list[str]:
+        return [str(row[0]) for row in db.execute(
+            "SELECT payload FROM messages WHERE request_id=? ORDER BY ordinal", (request_id,))]
+
+    def _match_compaction(self, db: sqlite3.Connection, payloads: list[str]) -> Compaction | None:
+        best: Compaction | None = None
+        for row in db.execute("SELECT payload FROM compactions"):
+            record = Compaction.model_validate_json(row[0])
+            if record.message_count > len(payloads):
+                continue
+            if compaction_basis(payloads[:record.message_count]) != record.basis:
+                continue
+            if best is None or record.message_count > best.message_count:
+                best = record
+        return best
+
+    def _active_summary(self, db: sqlite3.Connection) -> str:
+        previous = db.execute(
+            "SELECT id FROM requests WHERE kind='root' AND status='succeeded' ORDER BY ordinal DESC LIMIT 1").fetchone()
+        if previous is None:
+            return ""
+        matched = self._match_compaction(db, self._payloads(db, str(previous[0])))
+        return matched.summary if matched else ""
+
     def _claim(self, db: sqlite3.Connection, c: Changes, request: Receipt) -> None:
         if request.kind == "root":
             previous = db.execute("SELECT id FROM requests WHERE kind='root' AND status='succeeded' ORDER BY ordinal DESC LIMIT 1").fetchone()
             if previous:
-                for i, message in enumerate(self._messages(db, previous[0])):
-                    self._message(db, c, request.request_id, f"history:{i}", message)
+                payloads = self._payloads(db, str(previous[0]))
+                matched = self._match_compaction(db, payloads)
+                if matched is None:
+                    history = payloads
+                else:
+                    self._message(db, c, request.request_id, "compaction",
+                                  Message(role="user", content=matched.summary))
+                    history = payloads[matched.message_count:]
+                for index, payload in enumerate(history):
+                    self._message(db, c, request.request_id, f"history:{index}", Message.model_validate_json(payload))
         self._message(db, c, request.request_id, "input", Message(role="user", content=request.text))
         request.status = "running"
         request.generation += 1
@@ -1118,6 +1156,33 @@ class SessionStore:
             return Park("frozen" if self._meta(db, "freeze_id") else "idle", wake)
         return await self._tx(operation)
 
+    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str) -> Compaction:
+        """Store a summary without deleting the messages it covers. A stale basis writes nothing."""
+        def operation(db: sqlite3.Connection, c: Changes) -> Compaction:
+            row = db.execute("SELECT payload FROM requests WHERE id=?", (through_request_id,)).fetchone()
+            if row is None:
+                raise BackendError("compaction_unsettled")
+            receipt = Receipt.model_validate_json(row[0])
+            payloads = self._payloads(db, through_request_id)
+            if receipt.kind != "root" or receipt.status != "succeeded" or receipt.decision is None or not payloads:
+                raise BackendError("compaction_unsettled")
+            current = compaction_basis(payloads)
+            if current != basis:
+                raise BackendError("compaction_expired")
+            record = Compaction(compaction_id=compaction_id, through_request_id=through_request_id, basis=current,
+                                message_count=len(payloads), summary=summary)
+            existing = db.execute("SELECT payload FROM compactions WHERE id=?", (compaction_id,)).fetchone()
+            if existing:
+                previous = Compaction.model_validate_json(existing[0])
+                if previous != record:
+                    raise BackendError("compaction_conflict")
+                return previous
+            db.execute("INSERT INTO compactions(id,basis,payload) VALUES(?,?,?)",
+                       (compaction_id, current, record.model_dump_json()))
+            c.emit("compaction", through_request_id, summary)
+            return record
+        return await self._tx(operation)
+
     async def freeze(self, fence: HostFence, freeze_id: str, *, cancel_work: bool = False) -> None:
         def operation(db: sqlite3.Connection, c: Changes) -> None:
             self._fence(db, fence)
@@ -1184,6 +1249,9 @@ class SessionStore:
 
     async def messages(self, request_id: str) -> list[Message]:
         return await self.db.call(lambda db: self._messages(db, request_id))
+
+    async def message_payloads(self, request_id: str) -> list[str]:
+        return await self.db.call(lambda db: self._payloads(db, request_id))
 
     async def import_settled_root(self, parent: Path, request_id: str) -> Receipt:
         """Copy one settled root into an empty session. No lease, effect, or approval is copied."""
@@ -1299,6 +1367,7 @@ class SessionStore:
             if truncated:
                 events.append(Event(seq=seq, kind="status", request_id="", text="snapshot_view_truncated"))
             snapshot = Snapshot(session_id=self.session_id, stream_id=self._meta(db, "stream_id"), seq=seq,
+                                compaction=self._active_summary(db),
                                 state=activity.state if activity.state != "ready" else state or "ready", requests=requests,
                                 events=events, approvals=approvals, effects=effects, previews=previews,
                                 next_wake_ms=activity.next_wake_ms, pending=activity.pending)

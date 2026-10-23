@@ -202,6 +202,24 @@ function startClient() {
     $("pending-count").textContent = model ? `待处理 ${model.pending}${model.next_wake_ms ? ` · 下次唤醒 ${new Date(model.next_wake_ms).toLocaleString()}` : ""}` : "";
     controls();
   }
+  async function compactAt(connection, requestId) {
+    if (!owns(connection) || !writable()) return;
+    const key = `compact:${connection.session}:${requestId}`;
+    if (running.has(key)) return;
+    running.add(key); controls();
+    try {
+      const value = await api(`/api/v1/sessions/${connection.session}/compactions`, "POST",
+        {compaction_id: crypto.randomUUID(), through_request_id: requestId}, connection, connection.identity);
+      if (!owns(connection) || !connection.model) return;
+      connection.model = {...connection.model, compaction: value.summary};
+      render();
+    } catch (failure) {
+      if (owns(connection)) error(failure);
+    } finally {
+      running.delete(key);
+      if (owns(connection)) controls();
+    }
+  }
   async function branchAt(connection, requestId) {
     if (!owns(connection) || !writable()) return;
     const key = `branch:${connection.session}:${requestId}`;
@@ -232,9 +250,13 @@ function startClient() {
       }).join("、")}`, "children"));
       if (row.kind === "root" && row.status === "succeeded") {
         article.append(button("从此处分支", () => void branchAt(connection, row.request_id), !writable()));
+        article.append(button("压缩上下文", () => void compactAt(connection, row.request_id), !writable()));
       }
       return article;
     }));
+    const note = $("compaction");
+    note.hidden = !model?.compaction;
+    note.textContent = model?.compaction ? `上下文已压缩：${model.compaction}` : "";
     $("tools").textContent = (model?.events || []).map(event => toolText(event.text)).join("\n\n").slice(-64000);
     $("approvals").replaceChildren(...(model?.approvals || []).filter(item => item.state === "pending").map(item => {
       const card = element("article"); card.dataset.approvalId = item.approval_id;

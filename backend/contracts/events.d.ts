@@ -36,7 +36,7 @@ export type EffectHold = {
 
 export type Event = {
   seq: string;
-  kind: "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze";
+  kind: "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction";
   request_id: string;
   text: string;
   receipt?: Receipt | null;
@@ -82,6 +82,7 @@ export type Snapshot = {
   previews?: Array<Preview>;
   next_wake_ms?: number;
   pending?: number;
+  compaction?: string;
 };
 
 export type ToolCall = {

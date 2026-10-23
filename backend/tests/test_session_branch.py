@@ -16,6 +16,7 @@ from amazme_backend.contracts import (
     BackendError,
     BranchSession,
     Cleanup,
+    CompactSession,
     CreateSession,
     HostFence,
     Lease,
@@ -43,7 +44,7 @@ from amazme_backend.session_domain import (
     ToolInvocation,
     ToolReturned,
 )
-from amazme_backend.storage import SessionStore, session_database
+from amazme_backend.storage import SessionStore, compaction_basis, session_database
 
 PARENT = "a" * 32
 
@@ -330,6 +331,66 @@ async def test_archive_route_rejects_work_and_keeps_the_turn(owner: Host) -> Non
         await reopened.db.close()
 
 
+async def test_compaction_replaces_context_and_keeps_original_messages(owner: Host) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+        original = await message_payloads(parent)
+        created = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+        assert created.summary and await message_payloads(parent) == original
+        assert (await parent.snapshot()).compaction == created.summary
+        again = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+        assert again == created
+        stale = compaction_basis(["not-the-history"])
+        with pytest.raises(BackendError, match="compaction_expired"):
+            await parent.commit_compaction("c2", "r1", "过期摘要", stale)
+        assert await message_payloads(parent) == original
+        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
+        action = await Driver(parent).until(ModelInvocation)
+        assert isinstance(action, ModelInvocation)
+        assert action.messages[0].content == created.summary
+        assert any(message.content == "later" for message in action.messages)
+        assert not any(message.role == "assistant" for message in action.messages)
+        assert any(message.role == "assistant" for message in await parent.messages("r1"))
+    finally:
+        await parent.db.close()
+
+
+async def test_failed_summary_does_not_replace_history(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+        original = await message_payloads(parent)
+
+        async def fail(_config, _messages):
+            raise BackendError("model_failed")
+
+        monkeypatch.setattr("amazme_backend.host.summarize", fail)
+        with pytest.raises(BackendError, match="model_failed"):
+            await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r1"))
+        assert await message_payloads(parent) == original
+        assert (await parent.snapshot()).compaction == ""
+        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
+        action = await Driver(parent).until(ModelInvocation)
+        assert isinstance(action, ModelInvocation)
+        assert any(message.role == "assistant" and "alpha" in message.content for message in action.messages)
+    finally:
+        await parent.db.close()
+
+
+async def test_archived_session_cannot_compact(owner: Host) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+        original = await message_payloads(parent)
+        await owner.archive_session(PARENT, True)
+        with pytest.raises(BackendError, match="session_archived"):
+            await owner.compact_session(PARENT, CompactSession(compaction_id="c-arch", through_request_id="r1"))
+        assert await message_payloads(parent) == original
+    finally:
+        await parent.db.close()
+
+
 def browser_module() -> str:
     web = Path(__file__).parents[1] / "src/amazme_backend/web"
     contract = (web / "contract.js").read_text().split("\n", 1)[1]
@@ -400,7 +461,7 @@ def test_browser_branches_from_the_selected_turn() -> None:
         }
         await import(appURL);
         await until(()=>$('connection').textContent==='已连接' && document.querySelector('#conversation article button')?.textContent==='从此处分支');
-        assert.equal(document.querySelectorAll('#conversation article button').length, 2);
+        assert.equal(document.querySelectorAll('#conversation article button').length, 4);
         document.querySelector('#conversation article button').click();
         await until(()=>$('conversation').textContent.includes('alpha')===false && [...$('sessions').children].some(node=>node.textContent==='分支：A'));
         assert.equal(calls.some(call=>String(call.path).endsWith('/branches')), true);
@@ -465,6 +526,65 @@ def test_browser_archive_keeps_the_visible_turn() -> None:
         $('archive').click();
         await until(()=>$('archive').textContent==='恢复' && $('send').disabled && $('conversation').textContent.includes('已收到：alpha'));
         assert.equal([...$('sessions').children].some(node=>node.textContent==='A（已归档）'), true);
+        window.dispatchEvent(new window.Event('pagehide'));
+        await window.happyDOM.abort();
+    '''
+    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
+                            cwd=Path(__file__).parents[1])
+    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+def test_browser_compaction_keeps_the_original_turn() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node unavailable")
+    web = Path(__file__).parents[1] / "src/amazme_backend/web"
+    snapshot = Snapshot(session_id="a", stream_id="stream-a", seq="1", state="ready", events=[], requests=[
+        Receipt(request_id="r1", text="alpha", status="succeeded", answer="已收到：alpha", kind="root")])
+    script = "const appURL=" + json.dumps(browser_module()) + ";\n"
+    script += "const html=" + json.dumps((web / "index.html").read_text()) + ";\n"
+    script += "const snap=" + snapshot.model_dump_json() + ";\n" + r'''
+        import assert from 'node:assert/strict';
+        import {Window} from 'happy-dom';
+        const window = new Window({url:'http://127.0.0.1:1234/'});
+        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
+        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
+        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
+        globalThis.fetch = async (path, options={})=>{
+          if(path==='/api/v1/bootstrap') return response(identity);
+          if(path==='/api/v1/health') return response({state:'ready',identity});
+          if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A',archived:false}]});
+          const parts=path.split('/');
+          if(parts[5]==='attachments' && (options.method||'GET')==='DELETE') return response({detached:true});
+          if(parts[5]==='attachments') return response({attachment_id:'binding',session_id:parts[4],build_id:'build',host_epoch:1},201);
+          if(parts[5]==='snapshot') return response(snap);
+          if(parts[5]==='compactions') {
+            const body=JSON.parse(options.body);
+            assert.equal(body.through_request_id,'r1');
+            assert.ok(body.compaction_id);
+            return response({compaction_id:body.compaction_id,through_request_id:'r1',basis:'abc',message_count:2,summary:'已压缩 alpha'},201);
+          }
+          throw Error('unexpected '+path);
+        };
+        globalThis.WebSocket = class {
+          constructor() { queueMicrotask(()=>this.onopen?.()); }
+          send(raw) {
+            const frame=JSON.parse(raw);
+            if(frame.kind!=='hello') return;
+            queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot:snap,batches:[],stream_id:snap.stream_id,binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
+          }
+          close() {}
+        };
+        const $=id=>document.getElementById(id);
+        async function until(check) {
+          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
+          throw Error('timed out '+$('error').textContent+' '+$('connection').textContent);
+        }
+        await import(appURL);
+        await until(()=>$('conversation').textContent.includes('alpha') && [...document.querySelectorAll('button')].some(node=>node.textContent==='压缩上下文'));
+        [...document.querySelectorAll('button')].find(node=>node.textContent==='压缩上下文').click();
+        await until(()=>$('compaction').textContent.includes('已压缩 alpha') && $('conversation').textContent.includes('已收到：alpha'));
         window.dispatchEvent(new window.Event('pagehide'));
         await window.happyDOM.abort();
     '''

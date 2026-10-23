@@ -235,6 +235,55 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/compactions": {
+      "post": {
+        "summary": "Compact",
+        "operationId": "compact_api_v1_sessions__session__compactions_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompactSession"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Compaction"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/attachments": {
       "post": {
         "summary": "Attach",
@@ -1054,6 +1103,68 @@
         ],
         "title": "Cleanup"
       },
+      "CompactSession": {
+        "properties": {
+          "compaction_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "title": "Compaction Id"
+          },
+          "through_request_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "title": "Through Request Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "compaction_id",
+          "through_request_id"
+        ],
+        "title": "CompactSession"
+      },
+      "Compaction": {
+        "properties": {
+          "compaction_id": {
+            "type": "string",
+            "title": "Compaction Id"
+          },
+          "through_request_id": {
+            "type": "string",
+            "title": "Through Request Id"
+          },
+          "basis": {
+            "type": "string",
+            "title": "Basis"
+          },
+          "message_count": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Message Count"
+          },
+          "summary": {
+            "type": "string",
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Summary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "compaction_id",
+          "through_request_id",
+          "basis",
+          "message_count",
+          "summary"
+        ],
+        "title": "Compaction"
+      },
       "CompleteUpdate": {
         "properties": {
           "update_id": {
@@ -1251,7 +1362,8 @@
               "approval",
               "children",
               "effect",
-              "freeze"
+              "freeze",
+              "compaction"
             ],
             "title": "Kind"
           },
@@ -1893,6 +2005,11 @@
             "type": "integer",
             "title": "Pending",
             "default": 0
+          },
+          "compaction": {
+            "type": "string",
+            "title": "Compaction",
+            "default": ""
           }
         },
         "additionalProperties": false,

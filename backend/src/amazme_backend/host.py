@@ -28,6 +28,8 @@ from .contracts import (
     BranchSession,
     Cancel,
     Cleanup,
+    Compaction,
+    CompactSession,
     CompleteUpdate,
     CreateSession,
     EffectResolution,
@@ -36,6 +38,7 @@ from .contracts import (
     Health,
     HostFence,
     Identity,
+    Message,
     Model,
     PrepareUpdate,
     ProcessLease,
@@ -58,7 +61,15 @@ from .contracts import (
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
-from .storage import TERMINAL, SessionStore, read_settled_root, remove_session_directory, session_database
+from .providers import summarize
+from .storage import (
+    TERMINAL,
+    SessionStore,
+    compaction_basis,
+    read_settled_root,
+    remove_session_directory,
+    session_database,
+)
 from .transport import app_factory
 
 
@@ -364,6 +375,33 @@ class Host:
             for receipt in (await worker.snapshot()).requests:
                 if receipt.kind == "root" and receipt.status not in TERMINAL and not receipt.cancel_requested:
                     await worker.cancel(receipt.request_id, fence)
+        finally:
+            await worker.db.close()
+
+    async def compact_session(self, session: str, value: CompactSession) -> Compaction:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        source = next(item for item in (await self.sessions()).sessions if item.session_id == session)
+        if source.archived:
+            raise BackendError("session_archived")
+        path = session_database(self.profile.path, session)
+        if not path.is_file():
+            raise BackendError("compaction_unsettled")
+        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                             approval_policy=self.profile.config.approval_policy, require_existing=True)
+        try:
+            await worker.initialize()
+            payloads = await worker.message_payloads(value.through_request_id)
+            if not payloads:
+                raise BackendError("compaction_unsettled")
+            basis = compaction_basis(payloads)
+            # Summarize before the commit. A failed summary does not replace or delete history.
+            summary = await summarize(self.profile.config.provider, [
+                Message.model_validate_json(payload) for payload in payloads])
+            return await worker.commit_compaction(value.compaction_id, value.through_request_id, summary, basis)
         finally:
             await worker.db.close()
 
@@ -972,6 +1010,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session}/archive")
     async def archive(session: str, value: ArchiveSession) -> Session:
         return await owner.archive_session(session, value.archived)
+
+    @app.post("/api/v1/sessions/{session}/compactions", status_code=201)
+    async def compact(session: str, value: CompactSession) -> Compaction:
+        return await owner.compact_session(session, value)
 
     @app.post("/api/v1/sessions/{session}/attachments", status_code=201)
     async def attach(session: str) -> Attachment:

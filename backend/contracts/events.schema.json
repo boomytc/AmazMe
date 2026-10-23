@@ -185,7 +185,8 @@
             "approval",
             "children",
             "effect",
-            "freeze"
+            "freeze",
+            "compaction"
           ],
           "title": "Kind",
           "type": "string"
@@ -458,6 +459,11 @@
           "default": 0,
           "title": "Pending",
           "type": "integer"
+        },
+        "compaction": {
+          "default": "",
+          "title": "Compaction",
+          "type": "string"
         }
       },
       "required": [

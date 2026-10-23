@@ -124,7 +124,8 @@ class ToolResult(Model):
 
 class Event(Model):
     seq: str
-    kind: Literal["accepted", "status", "preview", "message", "tool", "cleanup", "approval", "children", "effect", "freeze"]
+    kind: Literal["accepted", "status", "preview", "message", "tool", "cleanup", "approval", "children", "effect",
+                  "freeze", "compaction"]
     request_id: str
     text: str
     receipt: Receipt | None = None
@@ -147,6 +148,7 @@ class Snapshot(Model):
     previews: list[Preview] = Field(default_factory=lambda: list[Preview]())
     next_wake_ms: int = 0
     pending: int = 0
+    compaction: str = ""
 
 
 class Session(Model):
@@ -168,6 +170,19 @@ class BranchSession(Model):
 
 class ArchiveSession(Model):
     archived: bool
+
+
+class CompactSession(Model):
+    compaction_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    through_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+
+
+class Compaction(Model):
+    compaction_id: str
+    through_request_id: str
+    basis: str
+    message_count: int = Field(ge=1)
+    summary: str = Field(min_length=1, max_length=16000)
 
 
 class EventList(Model):
