@@ -41,7 +41,7 @@ describe("package distribution entrypoints", () => {
 		});
 	});
 
-	test("publishes the default interactive runtime reached by SDK main", () => {
+	test("ships the durable modules the SDK still compiles and omits the removed runtime entry", () => {
 		const directory = createTempDir("amazme-distribution-");
 		try {
 			const npmCli = process.env.npm_execpath;
@@ -67,17 +67,14 @@ describe("package distribution entrypoints", () => {
 				),
 			);
 			const paths = packed[0].files.map((file) => file.path);
-			for (const name of [
-				"interactive",
-				"runtime",
-				"harness-setup",
-				"tui",
-				"sessions",
-				"session-surface",
-				"conversation-view",
-			]) {
+			for (const name of ["runtime", "harness-setup", "sessions", "session-surface", "conversation-view"]) {
 				expect(paths).toContain(`dist/durable/${name}.js`);
 			}
+			for (const name of ["interactive", "tui", "print", "import", "json-events", "mcp-menu", "screen-restore"]) {
+				expect(paths).not.toContain(`dist/durable/${name}.js`);
+			}
+			expect(paths).not.toContain("dist/host/commands.js");
+			expect(paths).not.toContain("dist/modes/rpc/durable-rpc.js");
 			expect(paths.some((path) => path.startsWith("dist/experimental/"))).toBe(false);
 		} finally {
 			rmSync(directory, { recursive: true, force: true });

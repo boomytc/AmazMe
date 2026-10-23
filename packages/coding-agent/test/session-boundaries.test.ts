@@ -2,11 +2,8 @@ import { existsSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { runDurableTui } from "../src/durable/tui.ts";
 import { main } from "../src/main.ts";
 import { createTempDir } from "./temp-dir.ts";
-
-vi.mock("../src/durable/tui.ts", () => ({ runDurableTui: vi.fn() }));
 
 describe("interactive storage selection boundary", () => {
 	let directory: string;
@@ -23,7 +20,6 @@ describe("interactive storage selection boundary", () => {
 		vi.stubEnv("AMAZME_STARTUP_BENCHMARK", "0");
 		vi.spyOn(process, "cwd").mockReturnValue(cwd);
 		for (const stream of streams) Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
-		vi.mocked(runDurableTui).mockClear();
 	});
 
 	afterEach(async () => {
@@ -50,7 +46,6 @@ describe("interactive storage selection boundary", () => {
 		await expect(main(["--offline", ...args])).rejects.toBe(rejected);
 		expect(exit).toHaveBeenCalledWith(1);
 		expect(error.mock.calls.flat().join("\n")).toContain(diagnostic);
-		expect(runDurableTui).not.toHaveBeenCalled();
 		expect(existsSync(profile)).toBe(false);
 	});
 });

@@ -7,7 +7,6 @@ import { Client } from "@amazme/client";
 import { createWebSocketTransportFactory } from "@amazme/client/websocket";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { webLaunchLines } from "../src/host/commands.ts";
 import { buildBootManifest, injectBootManifest, requestLanguages, serveDocument } from "../src/host/web/boot.ts";
 import type { WebBootManifest } from "@amazme/web";
 import { readPageDocument } from "@amazme/web/assets";
@@ -235,11 +234,8 @@ describe("web host", () => {
 			await client.connect();
 			expect(client.hello).toMatchObject({ serverId: host.serverId });
 			await client.dispose();
-
-			const launched = webLaunchLines(host);
-			expect(launched[0]).toBe(`Web: ${host.url}`);
-			expect(launched[1]).toBe("Mode: source");
-			expect(launched.join("\n")).toContain(host.webSocketUrl);
+			expect(host.mode).toBe("source");
+			expect(host.webSocketUrl.length).toBeGreaterThan(0);
 		},
 		60_000,
 	);

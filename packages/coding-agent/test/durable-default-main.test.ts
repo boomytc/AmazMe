@@ -3,16 +3,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTempDir } from "./temp-dir.ts";
 
-vi.mock("../src/durable/print.ts", () => ({
-	runDurablePrint: vi.fn(async () => 0),
-}));
 vi.mock("../src/python-headless.ts", () => ({
 	runPythonHeadless: vi.fn(async () => 0),
 }));
 
 import { main } from "../src/main.ts";
 import { runPythonHeadless } from "../src/python-headless.ts";
-import { runDurablePrint } from "../src/durable/print.ts";
 
 describe("default headless runtime", () => {
 	let directory: string;
@@ -28,7 +24,6 @@ describe("default headless runtime", () => {
 		vi.stubEnv("AMAZME_CODING_AGENT_DIR", profile);
 		vi.spyOn(process, "cwd").mockReturnValue(cwd);
 		for (const stream of [process.stdin, process.stdout]) Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
-		vi.mocked(runDurablePrint).mockClear();
 		vi.mocked(runPythonHeadless).mockClear();
 		vi.stubEnv("AMAZME_DURABLE_TUI", "");
 	});
@@ -48,14 +43,12 @@ describe("default headless runtime", () => {
 		await main(["--offline", "--print", "hello"]);
 		expect(runPythonHeadless).toHaveBeenCalledOnce();
 		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello", workspace: "primary" });
-		expect(runDurablePrint).not.toHaveBeenCalled();
 	});
 
 	it("uses the Python host for JSON mode", async () => {
 		await main(["--offline", "--mode", "json", "hello"]);
 		expect(runPythonHeadless).toHaveBeenCalledOnce();
 		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "json", prompt: "hello", workspace: "primary" });
-		expect(runDurablePrint).not.toHaveBeenCalled();
 	});
 
 	it("keeps the Python host for print when AMAZME_DURABLE_TUI is set", async () => {
@@ -63,6 +56,5 @@ describe("default headless runtime", () => {
 		await main(["--offline", "--print", "hello"]);
 		expect(runPythonHeadless).toHaveBeenCalledOnce();
 		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello", workspace: "primary" });
-		expect(runDurablePrint).not.toHaveBeenCalled();
 	});
 });

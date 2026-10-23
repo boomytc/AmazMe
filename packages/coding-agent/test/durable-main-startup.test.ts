@@ -1,14 +1,10 @@
 import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runDurableInteractive } from "../src/durable/interactive.ts";
-import { runDurableTui } from "../src/durable/tui.ts";
 import { main } from "../src/main.ts";
 import { runOwnedPythonInteractive } from "../src/python-session-tui.ts";
 import { createTempDir } from "./temp-dir.ts";
 
-vi.mock("../src/durable/tui.ts", () => ({ runDurableTui: vi.fn() }));
-vi.mock("../src/durable/interactive.ts", () => ({ runDurableInteractive: vi.fn(async () => {}) }));
 vi.mock("../src/python-session-tui.ts", () => ({
 	runOwnedPythonInteractive: vi.fn(async () => {}),
 	runPythonSessionTui: vi.fn(async () => {}),
@@ -45,8 +41,6 @@ describe("main's default interactive startup", () => {
 			Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
 		await main([]);
 		expect(runOwnedPythonInteractive).toHaveBeenCalledWith({ workspace: "primary", cwd });
-		expect(runDurableTui).not.toHaveBeenCalled();
-		expect(runDurableInteractive).not.toHaveBeenCalled();
 	});
 
 	it("keeps the Python host when AMAZME_DURABLE_TUI is set", async () => {
@@ -63,6 +57,5 @@ describe("main's default interactive startup", () => {
 			Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
 		await main([]);
 		expect(runOwnedPythonInteractive).toHaveBeenCalledWith({ workspace: "primary", cwd });
-		expect(runDurableInteractive).not.toHaveBeenCalled();
 	});
 });
