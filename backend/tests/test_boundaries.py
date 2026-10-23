@@ -1,8 +1,11 @@
 import ast
 import base64
 import json
+import os
 import shlex
 import stat
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,8 +55,44 @@ def test_maximum_file_content_fits_all_transport_and_gate_boundaries(content):
     tool = RunTool(session_id="s", worker_id="w", execution_epoch=1, build_id="b", call_id="c", **command.model_dump())
     assert len(tool.model_dump_json().encode()) < 262144
     assert len(json.dumps({"command": tool.command, "uid": 501, "gid": 20}).encode()) < 262144
-    payload = shlex.split(command.command)[-1]
-    assert json.loads(base64.b64decode(payload))["content"] == content
+    tokens = shlex.split(command.command)
+    assert tokens[-1] == "/workspace"
+    assert json.loads(base64.b64decode(tokens[-2]))["content"] == content
+
+
+def _run_file_tool(root: Path, call: ToolCall) -> subprocess.CompletedProcess[str]:
+    tokens = shlex.split(command_for(call).command)
+    return subprocess.run([sys.executable, "-I", "-c", tokens[3], tokens[4], str(root)],
+                          capture_output=True, text=True, check=False)
+
+
+def test_guest_file_tool_does_not_follow_links_out_of_the_workspace(tmp_path: Path) -> None:
+    root = tmp_path / "work"
+    root.mkdir()
+    (root / "note.txt").write_text("alpha\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    (root / "escape").symlink_to(outside / "secret.txt")
+    escaped = _run_file_tool(root, ToolCall(id="read", name="read_file", arguments='{"path":"escape"}'))
+    assert escaped.returncode != 0 and "workspace_path_escape" in escaped.stderr
+    assert (outside / "secret.txt").read_text() == "secret"
+    read = _run_file_tool(root, ToolCall(id="read", name="read_file", arguments='{"path":"note.txt"}'))
+    assert read.returncode == 0 and "alpha" in read.stdout
+    (root / "via").symlink_to(root, target_is_directory=True)
+    linked = _run_file_tool(root, ToolCall(
+        id="write", name="write_file", arguments='{"path":"via/child.txt","content":"no"}'))
+    assert linked.returncode != 0 and "workspace_symlink" in linked.stderr
+    assert not (root / "child.txt").exists()
+    os.link(root / "note.txt", root / "linked.txt")
+    hard = _run_file_tool(root, ToolCall(
+        id="write", name="write_file", arguments='{"path":"note.txt","content":"beta\\n"}'))
+    assert hard.returncode != 0 and "workspace_hardlink" in hard.stderr
+    assert (root / "note.txt").read_text() == "alpha\n"
+    (root / "linked.txt").unlink()
+    saved = _run_file_tool(root, ToolCall(
+        id="write", name="write_file", arguments='{"path":"note.txt","content":"beta\\n"}'))
+    assert saved.returncode == 0 and (root / "note.txt").read_text() == "beta\n"
 
 
 def test_fixed_native_owners_cannot_reexec_or_unlock_lifetime_descriptors():

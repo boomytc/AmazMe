@@ -68,26 +68,87 @@ from .session_domain import (
 from .storage import SessionStore, now_ms, session_database
 from .transport import app_factory
 
+_FILE_TOOL = """# Runs inside the granted workspace mount.
+import base64, json, os, pathlib, sys
+v = json.loads(base64.b64decode(sys.argv[1]))
+root = pathlib.Path(sys.argv[2]).resolve()
+raw = pathlib.Path(v["path"])
+parts = [part for part in raw.parts if part != "."]
+if raw.is_absolute() or not parts or ".." in parts:
+    raise SystemExit("invalid_workspace_path")
+current = root
+for part in parts[:-1]:
+    current = current / part
+    if current.is_symlink() or (current.exists() and (not current.is_dir() or not current.resolve().is_relative_to(root))):
+        raise SystemExit("workspace_symlink")
+    if not current.exists():
+        if v["mode"] != "write":
+            raise SystemExit("workspace_not_directory")
+        current.mkdir(0o755)
+target = current / parts[-1]
+if v["mode"] == "read":
+    if target.is_symlink():
+        dest = target.resolve()
+        if not dest.is_relative_to(root) or not dest.is_file():
+            raise SystemExit("workspace_path_escape")
+        target = dest
+    elif not target.is_file() or not target.resolve().is_relative_to(root):
+        raise SystemExit("workspace_not_file")
+    print(target.read_text()[:65536])
+else:
+    if target.is_symlink():
+        raise SystemExit("workspace_symlink")
+    if target.exists() and not target.is_file():
+        raise SystemExit("workspace_not_file")
+    if target.is_file() and target.stat().st_nlink > 1:
+        raise SystemExit("workspace_hardlink")
+    flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
+    previous = target.read_bytes() if target.is_file() else b""
+    if not target.exists():
+        flags |= os.O_CREAT | os.O_EXCL
+    fd = os.open(target, flags, 0o644)
+    try:
+        os.ftruncate(fd, 0)
+        view = memoryview(v["content"].encode())
+        offset = 0
+        while offset < len(view):
+            count = os.write(fd, view[offset:])
+            if count <= 0:
+                raise SystemExit("workspace_write_failed")
+            offset += count
+        os.fsync(fd)
+    except BaseException:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.ftruncate(fd, 0)
+            os.write(fd, previous)
+            os.fsync(fd)
+        except OSError:
+            pass
+        raise
+    finally:
+        os.close(fd)
+    print("written")
+"""
+
 
 def command_for(call: ToolCall) -> Command:
     if call.name == "shell":
         return Shell.model_validate_json(call.arguments)
     if call.name == "read_file":
-        value = ReadFile.model_validate_json(call.arguments)
-        action = "print(p.read_text()[:65536])"
-        data = value.model_dump()
+        value: ReadFile | WriteFile = ReadFile.model_validate_json(call.arguments)
+        mode = "read"
     elif call.name == "write_file":
         value = WriteFile.model_validate_json(call.arguments)
-        action = "p.parent.mkdir(parents=True,exist_ok=True); p.write_text(v['content']); print('written')"
-        data = value.model_dump()
+        mode = "write"
     else:
         raise BackendError("not_an_execution_tool")
     if Path(value.path).is_absolute() or ".." in Path(value.path).parts:
         raise BackendError("invalid_workspace_path")
-    script = ("import base64,json,pathlib,sys; v=json.loads(base64.b64decode(sys.argv[1])); p=pathlib.Path('/workspace',v['path']).resolve(); "
-              "assert p.is_relative_to('/workspace'), 'path escapes workspace'; " + action)
+    data = value.model_dump()
+    data["mode"] = mode
     payload = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
-    return Command(command="python -I -c " + shlex.quote(script) + " " + payload)
+    return Command(command="python -I -c " + shlex.quote(_FILE_TOOL) + " " + payload + " /workspace")
 
 
 class Worker:
