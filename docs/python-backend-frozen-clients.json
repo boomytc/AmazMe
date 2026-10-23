@@ -1,0 +1,12 @@
+{
+  "executable": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-clients/package-5xggd2k2/AmazMe Python 0.1.0/amazme-backend",
+  "build_id": "6d4ba35edcfd8e8f7f00241883c168f70d87320eeff9a7f35ecd62b2164c7c47",
+  "protocol": "amazme-http/1",
+  "sdk": "passed",
+  "cli": "passed",
+  "rpc": "passed",
+  "tui_pids": [
+    8037,
+    8077
+  ]
+}
