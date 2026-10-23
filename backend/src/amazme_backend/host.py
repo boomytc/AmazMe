@@ -16,7 +16,7 @@ from urllib.parse import quote
 import httpx
 import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -147,6 +147,7 @@ from .host_store import Delivery, HostStore, ServiceRecord
 from .manage import bundle_digest, bundle_text, contains_secret, transcript_digest
 from .manage import digest as content_digest
 from .memories import match_memories, remember
+from .page_boot import boot_page
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
@@ -2200,6 +2201,11 @@ def application(owner: Host) -> FastAPI:
         owner.closing = True
         owner.stop.set()
         return owner.identity("stopping")
+
+    @app.get("/", response_class=HTMLResponse)
+    @app.get("/index.html", response_class=HTMLResponse)
+    def page() -> str:
+        return boot_page(owner.identity(), owner.origin)
 
     app.mount("/", StaticFiles(directory=Path(__file__).with_name("web"), html=True), name="web")
     return app

@@ -1,5 +1,12 @@
 import {validate} from "/contract.js";
 
+const bootRecord = globalThis.__AMAZME_BOOT__;
+if (typeof document !== "undefined" && bootRecord && bootRecord.app && bootRecord.app.name && bootRecord.app.version) {
+  document.title = `${bootRecord.app.name} ${bootRecord.app.version}`;
+  document.documentElement.dataset.protocol = String(bootRecord.protocol || "");
+  document.documentElement.dataset.host = bootRecord.server && bootRecord.server.id ? String(bootRecord.server.id) : "";
+}
+
 const terminal = new Set(["succeeded", "cancelled", "interrupted", "failed", "unknown"]);
 const labels = {queued:"等待执行",running:"执行中",waiting_approval:"等待审批",waiting_children:"等待子任务",waiting_time:"等待计划时间",waiting_host:"等待恢复",cancelling:"正在清理",cleaning:"正在清理",blocked:"等待清理",succeeded:"已完成",cancelled:"已取消",interrupted:"运行中断",failed:"失败",unknown:"结果未知，未自动重试"};
 const states = {ready:"可执行",recovering:"恢复中",blocked:"等待清理",stopping:"正在停止",frozen:"更新冻结"};
