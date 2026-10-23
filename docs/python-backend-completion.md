@@ -83,7 +83,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | 会话归档 | P3 | `POST /api/v1/sessions/{id}/archive`；页面「归档 / 恢复」 | 部分通过 | `test_session_branch.py` 的归档用例和 happy-dom | `1af60222`。不在 A/B 安装包里，也还没有真实 Chrome。历史不删除；未开始的任务变为已取消 |
 | 上下文压缩、过期结果拒绝、压缩失败保留原历史 | P3 | `POST /api/v1/sessions/{id}/compactions`；页面「压缩上下文」 | 部分通过 | `test_session_branch.py` 的压缩用例和 happy-dom | `8c9cee19`。摘要走当前供应商。依据不一致拒绝写入。失败不删原消息。还不在 A/B 包和真实 Chrome 里 |
 | 切换会话 | P2 Web | 侧栏 | 已通过 | `verify_client.py` 的 A-B-A | 分支后的切换有 happy-dom 测试，还没有进 Chrome 报告 |
-| 文件浏览、编辑、diff、受检写入 | P3 | `GET /api/v1/files`、`GET/POST /api/v1/files/content`；页面「工作区文件」 | 部分通过 | `backend/tests/test_workspace_files.py` | `0ebbe95`。授予目录内可进入子目录、读取文本、按摘要写入并看到 diff。拒绝越界符号链接、符号链接目录、硬链接、无权限、过期摘要和更新冻结。超过 200 项会标明截断，超过 1MiB 或非文本不能写入。多工作区映射未做。VM 内的 `read_file` / `write_file` 仍走原来的客户机脚本 |
+| 文件浏览、编辑、diff、受检写入 | P3 | `GET /api/v1/files`、`GET/POST /api/v1/files/content`；页面「工作区文件」 | 部分通过 | `backend/tests/test_workspace_files.py`；`test_boundaries.py` 会执行客户机脚本 | `0ebbe95` 页面按摘要写入。`9e2defe` 的客户机 `read_file` / `write_file` 拒绝越界符号链接、符号链接目录和硬链接，但工具写入仍不要求摘要，也会补齐缺失的父目录。多工作区映射未做。这两次提交都不在 A/B 安装包里 |
 | 多工作区与统一路径映射 | P3 | init 只有一个 workspace | 未通过 | 无 | 显式宿主/guest 映射。不默认挂载 HOME、钥匙串或 SSH agent |
 | PTY、终端输入、resize、输出背压 | P3 | 无 | 未通过 | 无 | Linux PTY，经监督器 |
 | 工作区持久依赖卷和固定工具镜像 | P1 资源 / P4 分发 | 构建期离线镜像 | 部分通过 | P1 运行记录 | 运行时不临时拉镜像。完整离线首启属 P4 |
@@ -117,6 +117,6 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 
 ## 下一步
 
-1. 工作区文件浏览和受检写入在 `0ebbe95`。该提交的 Ruff、Pyright 和 pytest 311 通过。A/B 安装包仍是 `d5cefaf`。
+1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
 2. 模型目录已能保存端点、代理和请求头。OAuth 仍未做。多工作区、PTY、MCP 和 SSH 未做。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
