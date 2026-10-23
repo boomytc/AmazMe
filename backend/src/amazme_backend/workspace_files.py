@@ -25,12 +25,14 @@ class FileEntry(Model):
 
 class FileList(Model):
     path: str
+    guest_path: str = ""
     entries: list[FileEntry]
     truncated: bool = False
 
 
 class FileContent(Model):
     path: str
+    guest_path: str = ""
     digest: str
     content: str
     truncated: bool = False

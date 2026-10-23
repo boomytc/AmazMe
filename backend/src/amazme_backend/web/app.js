@@ -476,10 +476,22 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
-  let fileDir = "", filePath = "", fileDigest = "";
+  let fileDir = "", filePath = "", fileDigest = "", fileWorkspace = "";
   const fileJoin = (dir, name) => dir ? `${dir}/${name}` : name;
+  async function loadWorkspaces() {
+    const listed = await api("/api/v1/workspaces");
+    $("workspace-list").replaceChildren(...listed.workspaces.map(item => button(item.primary ? "主工作区" : item.name, () => {
+      fileWorkspace = item.primary ? "" : item.name;
+      fileDir = item.primary ? "" : `grant/${item.name}`;
+      filePath = "";
+      void loadFiles().catch(error);
+    })));
+    const current = listed.workspaces.find(item => (item.primary && !fileWorkspace) || item.name === fileWorkspace);
+    if (current) $("workspace-guest").textContent = current.guest_path;
+  }
   async function loadFiles() {
     const listing = await api(fileDir ? `/api/v1/files?path=${encodeURIComponent(fileDir)}` : "/api/v1/files");
+    if (listing.guest_path) $("workspace-guest").textContent = listing.guest_path;
     const nodes = [];
     if (fileDir) nodes.push(button("上级", () => { fileDir = fileDir.split("/").slice(0, -1).join("/"); void loadFiles().catch(error); }));
     for (const item of listing.entries) {
@@ -496,7 +508,20 @@ function startClient() {
     $("file-save").disabled = file.truncated;
     $("file-diff").textContent = file.truncated ? "文件过大，只显示前一部分" : "";
   }
-  $("files").addEventListener("toggle", () => { if ($("files").open) void loadFiles().catch(error); });
+  $("files").addEventListener("toggle", () => { if ($("files").open) void loadWorkspaces().then(loadFiles).catch(error); });
+  $("workspace-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!identity || health?.state !== "ready") return;
+    try {
+      const created = await api("/api/v1/workspaces", "POST", {name: $("workspace-name").value, host_path: $("workspace-path").value}, current);
+      fileWorkspace = created.name;
+      fileDir = `grant/${created.name}`;
+      $("workspace-guest").textContent = created.guest_path;
+      await loadWorkspaces();
+      await loadFiles();
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   let terminalId = "";
   async function showTerminal(view) {
     $("terminal-output").textContent = view.output || "";
@@ -505,7 +530,7 @@ function startClient() {
   $("terminal").addEventListener("toggle", () => {
     if (!$("terminal").open || !selected || !identity || health?.state !== "ready") return;
     terminalId = crypto.randomUUID().replaceAll("-", "");
-    api(`/api/v1/sessions/${selected}/terminals`, "POST", {terminal_id: terminalId, command: "sh", cols: 80, rows: 24}, current)
+    api(`/api/v1/sessions/${selected}/terminals`, "POST", {terminal_id: terminalId, command: "sh", cols: 80, rows: 24, workspace: fileWorkspace}, current)
       .then(showTerminal).catch(error);
   });
   $("terminal-form").onsubmit = async event => {

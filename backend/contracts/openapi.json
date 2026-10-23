@@ -65,6 +65,103 @@
         }
       }
     },
+    "/api/v1/workspaces": {
+      "get": {
+        "summary": "Workspaces",
+        "operationId": "workspaces_api_v1_workspaces_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add Workspace",
+        "operationId": "add_workspace_api_v1_workspaces_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGrantView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workspaces/{name}": {
+      "delete": {
+        "summary": "Remove Workspace",
+        "operationId": "remove_workspace_api_v1_workspaces__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Remove Workspace Api V1 Workspaces  Name  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/files": {
       "get": {
         "summary": "Files",
@@ -2680,6 +2777,11 @@
             "type": "string",
             "title": "Path"
           },
+          "guest_path": {
+            "type": "string",
+            "title": "Guest Path",
+            "default": ""
+          },
           "digest": {
             "type": "string",
             "title": "Digest"
@@ -2732,6 +2834,11 @@
           "path": {
             "type": "string",
             "title": "Path"
+          },
+          "guest_path": {
+            "type": "string",
+            "title": "Guest Path",
+            "default": ""
           },
           "entries": {
             "items": {
@@ -4160,6 +4267,11 @@
             "minimum": 1.0,
             "title": "Rows",
             "default": 24
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -4561,6 +4673,74 @@
           "build_id"
         ],
         "title": "WorkerInfo"
+      },
+      "WorkspaceGrantRequest": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,31}$",
+            "title": "Name"
+          },
+          "host_path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Host Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "host_path"
+        ],
+        "title": "WorkspaceGrantRequest"
+      },
+      "WorkspaceGrantView": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "host_path": {
+            "type": "string",
+            "title": "Host Path"
+          },
+          "guest_path": {
+            "type": "string",
+            "title": "Guest Path"
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "host_path",
+          "guest_path"
+        ],
+        "title": "WorkspaceGrantView"
+      },
+      "WorkspaceList": {
+        "properties": {
+          "workspaces": {
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceGrantView"
+            },
+            "type": "array",
+            "title": "Workspaces"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workspaces"
+        ],
+        "title": "WorkspaceList"
       }
     }
   }

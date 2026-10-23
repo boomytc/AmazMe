@@ -85,6 +85,7 @@ from .pty_session import PtyClient, pty_container
 from .remote_session import RemoteClient
 from .transport import app_factory
 from .vm import VM
+from .workspace_map import container_binds, grant_names, guest_path
 
 
 class ExecutionDB:
@@ -305,6 +306,9 @@ class Supervisor:
               PRAGMA user_version=2;
               COMMIT;
             """)
+            columns = {str(row[1]) for row in db.execute("PRAGMA table_info(terminals)")}
+            if columns and "workspace" not in columns:
+                db.execute("ALTER TABLE terminals ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
             return db.execute("SELECT * FROM control WHERE id=1").fetchone()
         old = await self.db.call(init)
         # This is independent of Host's first ACK and precedes VM/worker side effects.
@@ -668,7 +672,7 @@ class Supervisor:
                     "Image": self.vm.image_id, "Cmd": ["python", "-I", "-c", self.gate],
                     "OpenStdin": True, "StdinOnce": True, "AttachStdin": True, "AttachStdout": True,
                     "AttachStderr": True, "Tty": False, "Labels": labels,
-                    "HostConfig": {"Binds": ["/workspace:/workspace:" + ("ro" if value.effect == "read" else "rw")],
+                    "HostConfig": {"Binds": container_binds(grant_names(self.profile.path), readonly=value.effect == "read"),
                         "NetworkMode": "none", "ReadonlyRootfs": True, "CapDrop": ["ALL"], "CapAdd": ["SETUID", "SETGID"],
                         "SecurityOpt": ["no-new-privileges"], "PidsLimit": 64, "Memory": 268435456,
                         "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=67108864"},
@@ -1235,7 +1239,7 @@ class Supervisor:
             (value.server_id, value.session_id, value.command)), write=True)
         labels = {"amazme.profile": self.profile.config.profile_id, "amazme.mcp": value.server_id,
                   "amazme.supervisor": self.instance}
-        spec = mcp_container(self.mcp_gate, self.vm.image_id, labels)
+        spec = mcp_container(self.mcp_gate, self.vm.image_id, labels, container_binds(grant_names(self.profile.path), readonly=False))
         name = "am-" + hashlib.sha256(("mcp:" + value.server_id).encode()).hexdigest()[:40]
         try:
             response = await self.vm.http.post("/containers/create", params={"name": name}, json=spec)
@@ -1804,17 +1808,22 @@ class Supervisor:
         self._admit()
         existing = await self._terminal_row(value.terminal_id)
         if existing is not None:
-            if (existing["session"], existing["command"], int(existing["cols"]), int(existing["rows"])) != (
-                value.session_id, value.command, value.cols, value.rows
+            if (existing["session"], existing["command"], int(existing["cols"]), int(existing["rows"]), str(existing["workspace"])) != (
+                value.session_id, value.command, value.cols, value.rows, value.workspace
             ):
                 raise BackendError("terminal_conflict")
             return self._view(existing)
+        if value.workspace:
+            guest_path(value.workspace)
+            if value.workspace not in grant_names(self.profile.path):
+                raise BackendError("workspace_not_found", status=404)
         await self.db.call(lambda db: db.execute(
-            "INSERT INTO terminals(id,session,command,cols,rows,phase) VALUES(?,?,?,?,?,'running')",
-            (value.terminal_id, value.session_id, value.command, value.cols, value.rows)), write=True)
+            "INSERT INTO terminals(id,session,command,cols,rows,phase,workspace) VALUES(?,?,?,?,?,'running',?)",
+            (value.terminal_id, value.session_id, value.command, value.cols, value.rows, value.workspace)), write=True)
         labels = {"amazme.profile": self.profile.config.profile_id, "amazme.terminal": value.terminal_id,
                   "amazme.supervisor": self.instance}
-        spec = pty_container(self.pty_gate, self.vm.image_id, labels)
+        spec = pty_container(self.pty_gate, self.vm.image_id, labels,
+                             container_binds(grant_names(self.profile.path), readonly=False))
         name = "am-" + hashlib.sha256(value.terminal_id.encode()).hexdigest()[:40]
         try:
             response = await self.vm.http.post("/containers/create", params={"name": name}, json=spec)
@@ -1828,7 +1837,8 @@ class Supervisor:
             if container is None or not container.State.Running or container.Config.Labels != labels:
                 raise BackendError("container_identity_mismatch", status=503)
             client = await self.connect_gate(cid, spec)
-            await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), value.cols, value.rows)
+            cwd = guest_path(value.workspace) if value.workspace else ""
+            await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), value.cols, value.rows, cwd)
         except Exception as error:
             await self._mark_terminal_unknown(value.terminal_id)
             if not isinstance(error, BackendError):

@@ -120,6 +120,7 @@ class HostStore:
                 CREATE TABLE IF NOT EXISTS updates(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
                   id TEXT UNIQUE NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS restarts(at INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS workspace_grants(name TEXT PRIMARY KEY, host_path TEXT NOT NULL);
                 PRAGMA user_version=2;
             """)
             # Format 2 already shipped without branch columns. Adding them keeps every existing row.
@@ -154,6 +155,39 @@ class HostStore:
         return await self._call(lambda db: SessionList(sessions=[
             self._session(row) for row in db.execute(
                 "SELECT id,title,parent_id,fork_request_id,archived FROM sessions ORDER BY rowid")]))
+
+    async def workspace_grants(self) -> list[tuple[str, str]]:
+        def operation(db: sqlite3.Connection) -> list[tuple[str, str]]:
+            try:
+                rows = db.execute("SELECT name, host_path FROM workspace_grants ORDER BY name").fetchall()
+            except sqlite3.OperationalError:
+                return []
+            return [(str(row[0]), str(row[1])) for row in rows]
+        return await self._call(operation)
+
+    async def add_workspace_grant(self, name: str, host_path: str) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            if db.execute("SELECT count(*) FROM workspace_grants").fetchone()[0] >= 8:
+                raise BackendError("workspace_capacity", status=429)
+            current = db.execute("SELECT host_path FROM workspace_grants WHERE name=?", (name,)).fetchone()
+            if current is not None and str(current[0]) != host_path:
+                raise BackendError("workspace_conflict")
+            used = db.execute("SELECT name FROM workspace_grants WHERE host_path=?", (host_path,)).fetchone()
+            if used is not None and str(used[0]) != name:
+                raise BackendError("workspace_conflict")
+            db.execute("INSERT INTO workspace_grants(name, host_path) VALUES(?,?) ON CONFLICT(name) DO NOTHING",
+                       (name, host_path))
+        await self.transaction(operation)
+
+    async def remove_workspace_grant(self, name: str) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            if db.execute("DELETE FROM workspace_grants WHERE name=?", (name,)).rowcount != 1:
+                raise BackendError("workspace_not_found", status=404)
+        await self.transaction(operation)
 
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         def operation(db: sqlite3.Connection) -> Session:

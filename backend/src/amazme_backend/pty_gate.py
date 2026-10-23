@@ -46,7 +46,18 @@ def _send(kind: int, payload: bytes = b"") -> None:
     _write_all(1, frame(kind, payload))
 
 
-def _child(slave: int, uid: int, gid: int, command: str) -> None:
+def _allowed_cwd(value: object) -> str:
+    if not isinstance(value, str) or not value or len(value) > 64 or ".." in value or "\0" in value:
+        raise SystemExit(125)
+    if value == "/workspace":
+        return value
+    name = value.removeprefix("/grant/")
+    if value.startswith("/grant/") and name and "/" not in name and name != "." and name.isascii() and name.replace("-", "").isalnum() and name[0].isalpha() and name.islower():
+        return value
+    raise SystemExit(125)
+
+
+def _child(slave: int, uid: int, gid: int, command: str, cwd: str) -> None:
     try:
         os.setsid()
         os.dup2(slave, 0)
@@ -55,7 +66,11 @@ def _child(slave: int, uid: int, gid: int, command: str) -> None:
         if slave > 2:
             os.close(slave)
         os.closerange(3, 64)
-        if os.path.isdir("/workspace"):
+        if cwd:
+            if not os.path.isdir(cwd):
+                os._exit(125)
+            os.chdir(cwd)
+        elif os.path.isdir("/workspace"):
             os.chdir("/workspace")
         try:
             os.setgroups([])
@@ -112,7 +127,8 @@ def main() -> int:
                 permit = json.loads(payload)
                 command, uid, gid = permit["command"], permit["uid"], permit["gid"]
                 cols, rows = permit["cols"], permit["rows"]
-                if (set(permit) != {"command", "uid", "gid", "cols", "rows"}
+                cwd = _allowed_cwd(permit["cwd"]) if "cwd" in permit else ""
+                if (set(permit) - {"cwd"} != {"command", "uid", "gid", "cols", "rows"}
                         or type(uid) is not int or type(gid) is not int or uid <= 0 or gid < 0
                         or not isinstance(command, str) or not command or len(command) > 16000 or "\0" in command
                         or type(cols) is not int or type(rows) is not int):
@@ -125,7 +141,7 @@ def main() -> int:
             child = os.fork()
             if child == 0:
                 os.close(master)
-                _child(slave, uid, gid, command)
+                _child(slave, uid, gid, command, cwd)
             os.close(slave)
             credit()
             return

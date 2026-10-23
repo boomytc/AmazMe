@@ -6,7 +6,6 @@ import json
 import logging
 import shlex
 import time
-from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
@@ -67,6 +66,7 @@ from .session_domain import (
 )
 from .storage import SessionStore, now_ms, session_database
 from .transport import app_factory
+from .workspace_map import PRIMARY, grant_names, guest_path, split_client_path
 
 _FILE_TOOL = """# Runs inside the granted workspace mount.
 import base64, json, os, pathlib, sys
@@ -132,7 +132,7 @@ else:
 """
 
 
-def command_for(call: ToolCall) -> Command:
+def command_for(call: ToolCall, grants: list[str] | None = None) -> Command:
     if call.name == "shell":
         return Shell.model_validate_json(call.arguments)
     if call.name == "read_file":
@@ -143,12 +143,16 @@ def command_for(call: ToolCall) -> Command:
         mode = "write"
     else:
         raise BackendError("not_an_execution_tool")
-    if Path(value.path).is_absolute() or ".." in Path(value.path).parts:
+    name, inner = split_client_path(value.path)
+    if not inner:
         raise BackendError("invalid_workspace_path")
+    if name != PRIMARY and name not in (grants or []):
+        raise BackendError("workspace_not_found", status=404)
     data = value.model_dump()
+    data["path"] = inner
     data["mode"] = mode
     payload = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
-    return Command(command="python -I -c " + shlex.quote(_FILE_TOOL) + " " + payload + " /workspace")
+    return Command(command="python -I -c " + shlex.quote(_FILE_TOOL) + " " + payload + " " + shlex.quote(guest_path(name)))
 
 
 class Worker:
@@ -403,7 +407,7 @@ class Worker:
             cleanup = await self.supervisor.call("POST", "/epochs/close", Cleanup, action.lease)
             return EpochClosed(action.request_id, action.lease, cleanup)
         if isinstance(action, ToolInvocation):
-            command = command_for(action.call)
+            command = command_for(action.call, grant_names(self.profile.path))
             result = await self.supervisor.call("POST", "/tools/run", ToolResult, RunTool(
                 **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
                 command=command.command, timeout_seconds=command.timeout_seconds,

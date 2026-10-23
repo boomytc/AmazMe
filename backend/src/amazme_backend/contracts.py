@@ -249,6 +249,7 @@ class OpenTerminal(HostFence):
     command: str = Field(min_length=1, max_length=16000)
     cols: int = Field(default=80, ge=1, le=200)
     rows: int = Field(default=24, ge=1, le=80)
+    workspace: str = ""
 
 
 class TerminalInput(HostFence):
@@ -275,6 +276,23 @@ class TerminalOpen(Model):
     command: str = Field(min_length=1, max_length=16000)
     cols: int = Field(default=80, ge=1, le=200)
     rows: int = Field(default=24, ge=1, le=80)
+    workspace: str = ""
+
+
+class WorkspaceGrantRequest(Model):
+    name: str = Field(pattern=r"^[a-z][a-z0-9-]{0,31}$")
+    host_path: str = Field(min_length=1, max_length=1024)
+
+
+class WorkspaceGrantView(Model):
+    name: str
+    host_path: str
+    guest_path: str
+    primary: bool = False
+
+
+class WorkspaceList(Model):
+    workspaces: list[WorkspaceGrantView]
 
 
 class TerminalType(Model):

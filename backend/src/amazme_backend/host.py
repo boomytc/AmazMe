@@ -96,6 +96,9 @@ from .contracts import (
     WorkerActivity,
     WorkerInfo,
     WorkerSpec,
+    WorkspaceGrantRequest,
+    WorkspaceGrantView,
+    WorkspaceList,
 )
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
@@ -111,7 +114,17 @@ from .storage import (
     session_database,
 )
 from .transport import app_factory
-from .workspace_files import FileChange, FileContent, FileList, FileWrite, list_files, read_file, write_file
+from .workspace_files import (
+    FileChange,
+    FileContent,
+    FileEntry,
+    FileList,
+    FileWrite,
+    list_files,
+    read_file,
+    write_file,
+)
+from .workspace_map import PRIMARY, check_grant_directory, client_path, guest_path, split_client_path
 
 
 class Login(Model):
@@ -365,19 +378,77 @@ class Host:
     def workspace_root(self) -> Path:
         return Path(self.profile.config.workspace)
 
-    def list_workspace(self, relative: str = "") -> FileList:
+    async def workspaces(self) -> WorkspaceList:
         self._admit()
-        return list_files(self.workspace_root(), relative)
+        primary = self.workspace_root()
+        grants = [WorkspaceGrantView(name=name, host_path=host, guest_path=guest_path(name))
+                  for name, host in await self.store.workspace_grants()]
+        return WorkspaceList(workspaces=[
+            WorkspaceGrantView(name=PRIMARY, host_path=str(primary), guest_path="/workspace", primary=True),
+            *grants,
+        ])
 
-    def read_workspace(self, relative: str) -> FileContent:
+    async def add_workspace(self, value: WorkspaceGrantRequest) -> WorkspaceGrantView:
         self._admit()
-        return read_file(self.workspace_root(), relative)
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        if value.name in {PRIMARY, "grant"}:
+            raise BackendError("invalid_workspace_name")
+        guest_path(value.name)
+        host = check_grant_directory(Path(value.host_path), self.profile.path, self.workspace_root())
+        await self.store.add_workspace_grant(value.name, str(host))
+        return WorkspaceGrantView(name=value.name, host_path=str(host), guest_path=guest_path(value.name))
+
+    async def remove_workspace(self, name: str) -> None:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        if name == PRIMARY:
+            raise BackendError("workspace_grant_forbidden")
+        await self.store.remove_workspace_grant(name)
+
+    async def _mapped_root(self, relative: str) -> tuple[str, str, Path]:
+        name, inner = split_client_path(relative)
+        if name == "grant":
+            raise BackendError("workspace_not_file")
+        if name == PRIMARY:
+            return name, inner, self.workspace_root()
+        grants = dict(await self.store.workspace_grants())
+        host = grants.get(name)
+        if host is None:
+            raise BackendError("workspace_not_found", status=404)
+        return name, inner, Path(host)
+
+    async def list_workspace(self, relative: str = "") -> FileList:
+        self._admit()
+        name, inner = split_client_path(relative)
+        if name == "grant":
+            grants = await self.store.workspace_grants()
+            return FileList(path="grant", guest_path="/grant", entries=[
+                FileEntry(name=item, kind="dir", size=0) for item, _host in grants
+            ])
+        root_name, inner, root = await self._mapped_root(relative)
+        listing = list_files(root, inner)
+        listing.path = client_path(root_name, inner)
+        listing.guest_path = guest_path(root_name) if not inner else guest_path(root_name) + "/" + inner
+        return listing
+
+    async def read_workspace(self, relative: str) -> FileContent:
+        self._admit()
+        name, inner, root = await self._mapped_root(relative)
+        content = read_file(root, inner)
+        content.path = client_path(name, content.path)
+        content.guest_path = guest_path(name) + "/" + inner
+        return content
 
     async def write_workspace(self, value: FileWrite) -> FileChange:
         self._admit()
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
-        return write_file(self.workspace_root(), value)
+        name, inner, root = await self._mapped_root(value.path)
+        changed = write_file(root, value.model_copy(update={"path": inner}))
+        changed.path = client_path(name, inner)
+        return changed
 
     def _terminal_fence(self, session_id: str, terminal_id: str) -> TerminalQuery:
         return TerminalQuery(host_epoch=self.fence.host_epoch, build_id=self.build,
@@ -389,7 +460,8 @@ class Host:
             raise BackendError("update_frozen", status=503)
         return await self.supervisor.call("POST", "/pty/open", TerminalView, OpenTerminal(
             host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
-            terminal_id=value.terminal_id, command=value.command, cols=value.cols, rows=value.rows))
+            terminal_id=value.terminal_id, command=value.command, cols=value.cols, rows=value.rows,
+            workspace=value.workspace))
 
     async def type_terminal(self, session_id: str, terminal_id: str, value: TerminalType) -> TerminalView:
         self._admit()
@@ -1209,13 +1281,26 @@ def application(owner: Host) -> FastAPI:
     async def bootstrap() -> Identity:
         return owner.identity((await owner.health()).state)
 
+    @app.get("/api/v1/workspaces")
+    async def workspaces() -> WorkspaceList:
+        return await owner.workspaces()
+
+    @app.post("/api/v1/workspaces")
+    async def add_workspace(value: WorkspaceGrantRequest) -> WorkspaceGrantView:
+        return await owner.add_workspace(value)
+
+    @app.delete("/api/v1/workspaces/{name}")
+    async def remove_workspace(name: str) -> dict[str, bool]:
+        await owner.remove_workspace(name)
+        return {"removed": True}
+
     @app.get("/api/v1/files")
     async def files(path: str = "") -> FileList:
-        return owner.list_workspace(path)
+        return await owner.list_workspace(path)
 
     @app.get("/api/v1/files/content")
     async def file_content(path: str) -> FileContent:
-        return owner.read_workspace(path)
+        return await owner.read_workspace(path)
 
     @app.post("/api/v1/files/content")
     async def file_write(value: FileWrite) -> FileChange:

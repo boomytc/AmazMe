@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .common import Profile, lock, private_write, resource_root
 from .contracts import BackendError, Model
+from .workspace_map import load_grants, vm_mounts
 
 
 class DockerState(BaseModel):
@@ -249,7 +250,7 @@ class VM:
             "images": [{"location": str(self.resources / "base.img.gz"), "arch": "aarch64",
                         "digest": "sha256:" + self.manifest.files["base.img.gz"]}],
             "mountType": "virtiofs",
-            "mounts": [{"location": self.profile.config.workspace, "mountPoint": "/workspace", "writable": True}],
+            "mounts": vm_mounts(self.profile.config.workspace, load_grants(self.profile.path) if isinstance(getattr(self.profile, "path", None), Path) else []),
             "ssh": {"loadDotSSHPubKeys": False, "forwardAgent": False},
             "containerd": {"system": False, "user": False},
             "provision": [{"mode": "dependency", "skipDefaultDependencyResolution": True,

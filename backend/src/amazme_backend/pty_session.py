@@ -29,8 +29,11 @@ class PtyClient:
         self.exit_code: int | None = None
         self.pending_output = False
 
-    def permit(self, command: str, uid: int, gid: int, cols: int, rows: int) -> None:
-        body = json.dumps({"command": command, "uid": uid, "gid": gid, "cols": cols, "rows": rows}).encode()
+    def permit(self, command: str, uid: int, gid: int, cols: int, rows: int, cwd: str = "") -> None:
+        payload: dict[str, object] = {"command": command, "uid": uid, "gid": gid, "cols": cols, "rows": rows}
+        if cwd:
+            payload["cwd"] = cwd
+        body = json.dumps(payload).encode()
         self._send(PERMIT, body)
         self.pump(2, lambda: self.credit > 0)
         if self.credit <= 0:
@@ -106,7 +109,7 @@ class PtyClient:
             self.pending_output = bool(payload[4])
 
 
-def pty_container(gate_source: str, image: str, labels: dict[str, str]) -> dict[str, object]:
+def pty_container(gate_source: str, image: str, labels: dict[str, str], binds: list[str] | None = None) -> dict[str, object]:
     if "os.openpty" not in gate_source or "waitpid" not in gate_source:
         raise BackendError("pty_gate_missing")
     return {
@@ -120,7 +123,7 @@ def pty_container(gate_source: str, image: str, labels: dict[str, str]) -> dict[
         "Tty": False,
         "Labels": labels,
         "HostConfig": {
-            "Binds": ["/workspace:/workspace:rw"],
+            "Binds": binds or ["/workspace:/workspace:rw"],
             "NetworkMode": "none",
             "ReadonlyRootfs": True,
             "CapDrop": ["ALL"],
