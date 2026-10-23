@@ -520,6 +520,41 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let mcpServer = "", mcpCall = "", mcpDigest = "";
+  function showMcp(view) {
+    $("mcp-tools").replaceChildren(...(view.tools || []).map(tool => button(tool.name, () => {
+      mcpCall = crypto.randomUUID().replaceAll("-", "");
+      api(`/api/v1/sessions/${selected}/mcp/${mcpServer}/calls`, "POST", {call_id: mcpCall, name: tool.name, arguments: {text: "hi"}}, current)
+        .then(call => { mcpDigest = call.digest; $("mcp-approval").textContent = call.phase === "waiting_approval" ? "等待批准" : call.result; })
+        .catch(error);
+    })));
+    if (view.exit_code !== null && view.exit_code !== undefined) $("mcp-result").textContent = `退出 ${view.exit_code}`;
+  }
+  $("mcp-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    mcpServer = crypto.randomUUID().replaceAll("-", "");
+    try {
+      showMcp(await api(`/api/v1/sessions/${selected}/mcp`, "POST", {server_id: mcpServer, command: $("mcp-command").value}, current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("mcp-approval").onclick = async () => {
+    if (!mcpServer || !mcpCall || !mcpDigest) return;
+    try {
+      const call = await api(`/api/v1/sessions/${selected}/mcp/${mcpServer}/calls/${mcpCall}/decision`, "POST",
+        {decision_id: crypto.randomUUID().replaceAll("-", ""), approve: true, digest: mcpDigest}, current);
+      $("mcp-result").textContent = call.result;
+      $("mcp-approval").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("mcp-cancel").onclick = async () => {
+    if (!mcpServer) return;
+    try {
+      showMcp(await api(`/api/v1/sessions/${selected}/mcp/${mcpServer}/cancel`, "POST",
+        {server_id: mcpServer, command: $("mcp-command").value}, current));
+    } catch (failure) { error(failure); }
+  };
   $("terminal-resize").onclick = async () => {
     if (!terminalId || !selected) return;
     try {

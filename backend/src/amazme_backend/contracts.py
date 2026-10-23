@@ -275,6 +275,64 @@ class TerminalSize(Model):
     rows: int = Field(ge=1, le=80)
 
 
+class McpOpen(Model):
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+
+
+class OpenMcp(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+
+
+class McpTool(Model):
+    name: str
+    description: str = ""
+
+
+class McpView(Model):
+    server_id: str
+    phase: Literal["ready", "exited", "unknown"]
+    exit_code: int | None = None
+    tools: list[McpTool]
+    clean: bool
+
+
+class McpCallRequest(Model):
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    name: str = Field(min_length=1, max_length=64)
+    arguments: dict[str, str] = Field(default_factory=dict)
+
+
+class McpCall(Model):
+    call_id: str
+    server_id: str
+    name: str
+    phase: Literal["waiting_approval", "done", "denied", "unknown", "conflict"]
+    result: str = ""
+    digest: str
+
+
+class McpDecision(Model):
+    decision_id: str = Field(min_length=1, max_length=64)
+    approve: bool
+    digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class McpCallEnvelope(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    call: McpCallRequest
+
+
+class McpDecisionEnvelope(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    decision: McpDecision
+
+
 class TerminalView(Model):
     terminal_id: str
     cols: int

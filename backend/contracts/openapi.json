@@ -393,6 +393,238 @@
         }
       }
     },
+    "/api/v1/sessions/{session_id}/mcp": {
+      "post": {
+        "summary": "Open Mcp",
+        "operationId": "open_mcp_api_v1_sessions__session_id__mcp_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpOpen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/mcp/{server_id}/calls": {
+      "post": {
+        "summary": "Request Mcp",
+        "operationId": "request_mcp_api_v1_sessions__session_id__mcp__server_id__calls_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpCallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpCall"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/mcp/{server_id}/calls/{call_id}/decision": {
+      "post": {
+        "summary": "Decide Mcp",
+        "operationId": "decide_mcp_api_v1_sessions__session_id__mcp__server_id__calls__call_id__decision_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Server Id"
+            }
+          },
+          {
+            "name": "call_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Call Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpCall"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/mcp/{server_id}/cancel": {
+      "post": {
+        "summary": "Cancel Mcp",
+        "operationId": "cancel_mcp_api_v1_sessions__session_id__mcp__server_id__cancel_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "server_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Server Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpOpen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/models": {
       "get": {
         "summary": "Models",
@@ -2143,6 +2375,197 @@
           "token"
         ],
         "title": "Login"
+      },
+      "McpCall": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "server_id": {
+            "type": "string",
+            "title": "Server Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "waiting_approval",
+              "done",
+              "denied",
+              "unknown",
+              "conflict"
+            ],
+            "title": "Phase"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "default": ""
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "server_id",
+          "name",
+          "phase",
+          "digest"
+        ],
+        "title": "McpCall"
+      },
+      "McpCallRequest": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Call Id"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "arguments": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Arguments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "name"
+        ],
+        "title": "McpCallRequest"
+      },
+      "McpDecision": {
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Decision Id"
+          },
+          "approve": {
+            "type": "boolean",
+            "title": "Approve"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision_id",
+          "approve",
+          "digest"
+        ],
+        "title": "McpDecision"
+      },
+      "McpOpen": {
+        "properties": {
+          "server_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Server Id"
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Command"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "server_id",
+          "command"
+        ],
+        "title": "McpOpen"
+      },
+      "McpTool": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "McpTool"
+      },
+      "McpView": {
+        "properties": {
+          "server_id": {
+            "type": "string",
+            "title": "Server Id"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "exited",
+              "unknown"
+            ],
+            "title": "Phase"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/McpTool"
+            },
+            "type": "array",
+            "title": "Tools"
+          },
+          "clean": {
+            "type": "boolean",
+            "title": "Clean"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "server_id",
+          "phase",
+          "tools",
+          "clean"
+        ],
+        "title": "McpView"
       },
       "ModelCatalog": {
         "properties": {
