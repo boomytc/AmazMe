@@ -15,7 +15,7 @@ import { createSourcePluginLoader } from "../src/core/plugins/loader.ts";
 import { openPluginRuntime } from "../src/core/plugins/runtime.ts";
 import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import { durableToolSelection } from "../src/core/tool-selection.ts";
-import { ForkManagementDoc, withConversationAdmission } from "../src/durable/fork-management.ts";
+import { ForkManagementDoc, withConversationAdmission } from "../src/core/fork-admission.ts";
 import { Commands } from "../src/host/services/commands.ts";
 import { Conversations } from "../src/host/services/conversations.ts";
 import { openWorkerTestServices } from "./native-host-support.ts";

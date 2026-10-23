@@ -20,7 +20,7 @@ import { createUnixListener, getUnixSocketPath } from "@amazme/server/unix";
 import lockfile from "proper-lockfile";
 import type { AuthInput } from "../cli/host/command-options.ts";
 import { CONFIG_DIR_NAME, getAgentDir, getSettingsPath } from "../config.ts";
-import { createCodingSettings } from "../durable/harness-setup.ts";
+import { createCodingSettings } from "../core/hosted-settings.ts";
 import { ProjectTrustStore } from "../core/trust-manager.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { closeWhenSignaled } from "../utils/shutdown-signals.ts";

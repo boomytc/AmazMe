@@ -11,7 +11,7 @@ import { ModelScope } from "../../core/model-scope.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import { AgentRuntime } from "../../core/plugins/agent-runtime.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
-import { initialThinkingLevel } from "../../durable/harness-setup.ts";
+import { initialThinkingLevel } from "../../core/hosted-settings.ts";
 import { Conversations } from "./conversations.ts";
 import type { Models as ModelsService, ModelsState } from "./models.ts";
 import { Models } from "./models.ts";

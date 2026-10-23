@@ -93,6 +93,8 @@ npm test --workspace @amazme/evals
 
 `with_docs` includes those files and uses the unchanged default prompt.
 
+`createCodingAgentHarness().run` rejects with `old_session_runtime_removed` before it selects a model or creates a directory. It does not call `createDurableSession`. Documentation evals do not run on the Python session yet.
+
 Both variants install the same local workspace tarballs. Existing npm overrides ensure coding-agent's internal AmazMe dependencies also come from the current repository rather than the registry. Documentation and source files from internal dependency packages are removed symmetrically so they cannot act as alternate instructions. Startup validates the image allowlist and verifies that the installed coding-agent package resolves from `dist/`. Eval definitions, evaluator helpers, fixtures, and Vitest configuration are root-owned and unreadable after the harness permanently drops to an unprivileged UID. Each run receives a new home, agent directory, workspace, session directory, and container filesystem.
 
 Documentation evals allow only `read`, `write`, `edit`, `grep`, `find`, and `ls` by default. They do not expose shell or web-search tools. Provider traffic still requires container network access, so Docker alone cannot prove that arbitrary code written by an agent never uses the network.

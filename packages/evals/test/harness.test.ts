@@ -1,8 +1,10 @@
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { buildSystemPrompt, getDocsPath, getExamplesPath, getReadmePath } from "@amazme/coding-agent";
 import { describe, expect, it, vi } from "vitest";
 import {
 	applyIsolatedEnvironment,
+	createCodingAgentHarness,
 	createDocumentationEvalHarness,
 	DOCUMENTATION_EVAL_TOOLS,
 	excludeDocumentation,
@@ -115,5 +117,23 @@ describe("documentation variant", () => {
 
 	it("rejects documentation harnesses outside the container sandbox", () => {
 		expect(() => createDocumentationEvalHarness()).toThrow("isolated container sandbox");
+	});
+});
+
+describe("coding agent harness run", () => {
+	it("refuses the old durable session before selecting a model", async () => {
+		const source = readFileSync(new URL("../src/harness.ts", import.meta.url), "utf8");
+		expect(source.includes("createDurableSession")).toBe(false);
+		const home = process.env.HOME;
+		const harness = createCodingAgentHarness();
+		await expect(
+			harness.run("hello", {
+				artifacts: {},
+				setArtifact() {
+					throw new Error("artifacts are not part of the refusal");
+				},
+			}),
+		).rejects.toThrow("old_session_runtime_removed");
+		expect(process.env.HOME).toBe(home);
 	});
 });

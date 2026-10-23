@@ -71,7 +71,7 @@ import { SlashCommands } from "../src/core/plugins/slash-commands.ts";
 import {
 	ForkManagementDoc,
 	withConversationAdmission,
-} from "../src/durable/fork-management.ts";
+} from "../src/core/fork-admission.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const cleanups: Array<() => void | Promise<void>> = [];

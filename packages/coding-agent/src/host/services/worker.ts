@@ -16,7 +16,7 @@ import type { ModelRuntime } from "../../core/model-runtime.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { ResourceLoader } from "../../core/resource-loader.ts";
-import { configureHarnessHttp, refreshCodingProjectTrust } from "../../durable/harness-setup.ts";
+import { configureHarnessHttp, refreshCodingProjectTrust } from "../../core/hosted-settings.ts";
 import { createAgentExtensionsFacet } from "../../core/plugins/agent-extensions.ts";
 import { AgentRuntime, createAgentRuntime } from "../../core/plugins/agent-runtime.ts";
 import { Conversations } from "./conversations.ts";

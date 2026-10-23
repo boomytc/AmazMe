@@ -14,7 +14,7 @@ import { createAgentController } from "../src/core/plugins/agent-controller-prov
 import { type ConversationsState, IDLE_LANE } from "../src/durable/conversation-view.ts";
 import { createConversationsService } from "../src/host/services/conversations-provider.ts";
 import { navigateTree, readReturnPoints, readSummaries } from "../src/durable/session-surface.ts";
-import { abortArchivedForks, createForkArchiveGate, ForkManagementDoc, parseConversationId } from "../src/durable/fork-management.ts";
+import { abortArchivedForks, createForkArchiveGate, ForkManagementDoc, parseConversationId } from "../src/core/fork-admission.ts";
 import { pendingResponse } from "./experimental-durable-support.ts";
 import { formatRestartCount } from "../src/durable/restart-count.ts";
 import { createTempDir } from "./temp-dir.ts";

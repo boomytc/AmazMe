@@ -2,7 +2,7 @@ import type { Context } from "@amazme/chord";
 import type { ImageContent, TextContent } from "@amazme/ai";
 import { ConversationBusy } from "@amazme/durable";
 import type { Conversation, ConversationId, Harness, SubmissionId, UserInput } from "@amazme/durable";
-import { assertConversationWritable, ForkArchivedError, withConversationAdmission } from "../../durable/fork-management.ts";
+import { assertConversationWritable, ForkArchivedError, withConversationAdmission } from "../fork-admission.ts";
 import type {
 	AgentController as AgentControllerService,
 	AgentOperationError,

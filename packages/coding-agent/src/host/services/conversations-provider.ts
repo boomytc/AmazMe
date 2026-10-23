@@ -21,7 +21,7 @@ import type { AgentCompactionRequest, AgentOperationResponse, AgentPromptRequest
 import type { AgentOperationError } from "../../core/plugins/agent-controller.ts";
 import { createAgentController } from "../../core/plugins/agent-controller-provider.ts";
 import { Conversations } from "./conversations.ts";
-import { assertConversationWritable, changeForkMetadata, ForkManagementDoc, ownedConversationIds, parseConversationId, stopArchivedForkWork, ForkArchivedError, withConversationAdmission, withForkMutation } from "../../durable/fork-management.ts";
+import { assertConversationWritable, changeForkMetadata, ForkManagementDoc, ownedConversationIds, parseConversationId, stopArchivedForkWork, ForkArchivedError, withConversationAdmission, withForkMutation } from "../../core/fork-admission.ts";
 import { type ConversationsState, type HistoryPage, IDLE_LANE, type LaneStatus, type LeaveResult, type ReturnPoint, type TaskSummary } from "../../durable/conversation-view.ts";
 import { finiteRestartLimit } from "../../durable/restart-count.ts";
 

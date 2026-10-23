@@ -39,7 +39,7 @@ import { ModelRuntime } from "../core/model-runtime.ts";
 import type { AgentOperationError } from "../core/plugins/agent-controller.ts";
 import { describePluginManifests } from "../core/plugins/info.ts";
 import { durableToolSelection } from "../core/tool-selection.ts";
-import { abortArchivedForks } from "../durable/fork-management.ts";
+import { abortArchivedForks } from "../core/fork-admission.ts";
 import {
 	configureHarnessHttp,
 	createCodingRegistry,

@@ -2,7 +2,7 @@ import type { Context, JsonValue } from "@amazme/chord";
 import { StringEnum, Type } from "@amazme/ai";
 import { AssistantEntry, configure, defineExtension, defineTool, InboxDoc, LiveDoc, ToolTask } from "@amazme/durable";
 import type { ConversationId, Cursor, Extension, TaskId, ToolExecutionApi, ToolTaskInput, Tx } from "@amazme/durable";
-import { parseConversationId } from "./fork-management.ts";
+import { parseConversationId } from "../core/fork-admission.ts";
 import { SubagentOwner, SubagentRun } from "./subagent-run.ts";
 import type { SubagentResult } from "./subagent-run.ts";
 

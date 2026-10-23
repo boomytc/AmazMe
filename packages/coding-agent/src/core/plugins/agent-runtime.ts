@@ -1,7 +1,7 @@
 import { localService } from "@amazme/protocol/services";
 import type { Context } from "@amazme/chord";
 import type { Conversation, ConversationId, Harness } from "@amazme/durable";
-import { assertConversationWritable, withConversationAdmission } from "../../durable/fork-management.ts";
+import { assertConversationWritable, withConversationAdmission } from "../fork-admission.ts";
 
 /** Trusted in-process plugins share the selected conversation's existing kernel. Never published over RPC. */
 export interface AgentRuntime {

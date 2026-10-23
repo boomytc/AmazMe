@@ -26,7 +26,7 @@ import { generateBranchSummary, type GenerateBranchSummaryOptions } from "../cor
 import { COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX } from "../core/messages.ts";
 import type { SessionEntry } from "../core/jsonl-transcript.ts";
 import type { ConversationRole, ConversationSummary, HistoryPage, LaneStatus, ReturnPoint } from "./conversation-view.ts";
-import { archivedForkInScope, ForkManagementDoc } from "./fork-management.ts";
+import { archivedForkInScope, ForkManagementDoc } from "../core/fork-admission.ts";
 
 /** How many conversations or entries one scan page holds. Callers loop until the scan is exhausted. */
 const SCAN_PAGE = 256;

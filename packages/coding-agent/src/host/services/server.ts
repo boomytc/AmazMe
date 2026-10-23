@@ -11,7 +11,7 @@ import type { RoutedServerServiceAttachment, RoutedServerServiceHost } from "@am
 import type { SettingsManager } from "../../core/settings-manager.ts";
 import type { PluginRuntime } from "../../core/plugins/runtime.ts";
 import { collectDiagnostics, type DiagnosticOptions } from "../../core/local-diagnostics.ts";
-import { loadCodingResources } from "../../durable/harness-setup.ts";
+import { loadCodingResources } from "../../core/hosted-settings.ts";
 import { listProjectFolders } from "../project-catalog.ts";
 import { Diagnostics } from "./diagnostics.ts";
 import { Plugins, PresentationPlugins, type Plugins as PluginsService } from "./plugins.ts";

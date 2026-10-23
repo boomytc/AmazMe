@@ -7,7 +7,7 @@ import { ModelRuntime } from "../../core/model-runtime.ts";
 import { ModelScope } from "../../core/model-scope.ts";
 import { ProviderLogin } from "../../core/provider-login.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
-import { createCodingSettings, findInitialAgentModel } from "../../durable/harness-setup.ts";
+import { createCodingSettings, findInitialAgentModel } from "../../core/hosted-settings.ts";
 import type { ModelRef, ModelsState } from "./models.ts";
 import type { CatalogModel, ModelCatalog, ModelCatalogState, ProviderConnection } from "./model-catalog.ts";
 

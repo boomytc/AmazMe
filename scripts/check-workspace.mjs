@@ -313,7 +313,6 @@ export const sourceTempDirAllowlist = {
 	"packages/env/src/ssh.ts": "SSH host-key scratch directory",
 	"packages/chord/src/manager.ts": "local IPC socket path",
 	"packages/tui/src/tui-main-screen.ts": "crash log fallback when no log directory is set",
-	"packages/evals/src/harness.ts": "eval workspaces and cache sweep",
 };
 
 /**
