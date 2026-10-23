@@ -85,7 +85,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | 切换会话 | P2 Web | 侧栏 | 已通过 | `verify_client.py` 的 A-B-A | 分支后的切换有 happy-dom 测试，还没有进 Chrome 报告 |
 | 文件浏览、编辑、diff、受检写入 | P3 | `GET /api/v1/files`、`GET/POST /api/v1/files/content`；页面「工作区文件」 | 部分通过 | `backend/tests/test_workspace_files.py`；`test_boundaries.py` 会执行客户机脚本 | `0ebbe95` 页面按摘要写入。`9e2defe` 的客户机 `read_file` / `write_file` 拒绝越界符号链接、符号链接目录和硬链接，但工具写入仍不要求摘要，也会补齐缺失的父目录。多工作区映射未做。这两次提交都不在 A/B 安装包里 |
 | 多工作区与统一路径映射 | P3 | init 只有一个 workspace | 未通过 | 无 | 显式宿主/guest 映射。不默认挂载 HOME、钥匙串或 SSH agent |
-| PTY、终端输入、resize、输出背压 | P3 | 无 | 未通过 | 无 | Linux PTY，经监督器 |
+| PTY、终端输入、resize、输出背压 | P3 | `POST /api/v1/sessions/{id}/terminals`；页面「终端」 | 部分通过 | `backend/tests/test_pty.py` 会执行客户机脚本，并经监督器打开同一条命令 | `6dcdc47`。输出超过窗口后不再转发，直到客户端授信。退出码只来自 waitpid，连接断开保持 unknown。容器规格无网络、不分配 Docker TTY。本机测试直接跑该 PID 1 脚本，没有在 Lima 里再跑一遍。Docker 桥接代码未对真实 daemon 验收 |
 | 工作区持久依赖卷和固定工具镜像 | P1 资源 / P4 分发 | 构建期离线镜像 | 部分通过 | P1 运行记录 | 运行时不临时拉镜像。完整离线首启属 P4 |
 | SSH / 远端 daemon | P3 | 无 | 未通过 | 无 | 断线不把远端判成已停止 |
 | MCP 连接、目录、审批、取消 | P3 | 无 | 未通过 | 无 | MCP 不能代替其他插件能力 |
@@ -118,5 +118,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
-2. 模型目录已能保存端点、代理和请求头。OAuth 仍未做。多工作区、PTY、MCP 和 SSH 未做。
+2. 终端 PTY 在 `6dcdc47`。OAuth 仍未做。多工作区、MCP 和 SSH 未做。PTY 还没有真实 Linux 容器验收。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
