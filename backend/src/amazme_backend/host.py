@@ -27,7 +27,10 @@ from .contracts import (
     BackendError,
     BranchSession,
     Cancel,
+    CancelCode,
     Cleanup,
+    CodeRun,
+    CodeView,
     Compaction,
     CompactSession,
     CompleteUpdate,
@@ -49,6 +52,7 @@ from .contracts import (
     Model,
     ModelCatalog,
     ModelSettings,
+    OpenCode,
     OpenMcp,
     OpenRemote,
     OpenTerminal,
@@ -415,6 +419,19 @@ class Host:
         return OpenRemote(host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
                           remote_id=value.remote_id, host=value.host, host_key=value.host_key,
                           daemon_id=daemon_identity(), generation=value.generation, endpoint=value.endpoint)
+
+    async def run_code(self, session_id: str, value: CodeRun) -> CodeView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        return await self.supervisor.call("POST", "/code/run", CodeView, OpenCode(
+            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
+            run_id=value.run_id, source=value.source))
+
+    async def cancel_code(self, session_id: str, run_id: str) -> CodeView:
+        self._admit()
+        return await self.supervisor.call("POST", "/code/cancel", CodeView, CancelCode(
+            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id, run_id=run_id))
 
     async def open_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
         self._admit()
@@ -1152,6 +1169,14 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session_id}/terminals/{terminal_id}/read")
     async def read_terminal(session_id: str, terminal_id: str) -> TerminalView:
         return await owner.read_terminal(session_id, terminal_id)
+
+    @app.post("/api/v1/sessions/{session_id}/code")
+    async def run_code(session_id: str, value: CodeRun) -> CodeView:
+        return await owner.run_code(session_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/code/{run_id}/cancel")
+    async def cancel_code(session_id: str, run_id: str) -> CodeView:
+        return await owner.cancel_code(session_id, run_id)
 
     @app.post("/api/v1/sessions/{session_id}/remotes")
     async def open_remote(session_id: str, value: RemoteOpen) -> RemoteView:

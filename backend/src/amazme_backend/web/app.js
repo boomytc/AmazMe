@@ -548,6 +548,25 @@ function startClient() {
       $("mcp-approval").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let codeRun = "";
+  $("code-run").onclick = async () => {
+    if (!selected || !identity || health?.state !== "ready") return;
+    codeRun = crypto.randomUUID().replaceAll("-", "");
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/code`, "POST", {run_id: codeRun, source: $("code-source").value}, current);
+      $("code-result").textContent = view.phase === "success" ? view.value : view.phase;
+      $("code-state").textContent = view.phase === "success" ? view.state : "";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("code-cancel").onclick = async () => {
+    if (!codeRun || !selected) return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/code/${codeRun}/cancel`, "POST", {}, current);
+      $("code-result").textContent = view.phase;
+      if (view.phase !== "success") $("code-state").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   let remoteId = "";
   const remoteState = {connected:"已连接",disconnected:"已断开，远端未证明停止",blocked:"身份不符，已阻塞"};
   function remoteBody() {

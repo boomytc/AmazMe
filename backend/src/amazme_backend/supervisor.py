@@ -12,6 +12,7 @@ import secrets
 import socket
 import sqlite3
 import stat
+import threading
 import time
 from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
@@ -22,10 +23,13 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 
+from .codemode_run import json_object, run_codemode
 from .common import Peer, Profile, build_id, child_command, lock, private_write, unix_listener
 from .contracts import (
     BackendError,
+    CancelCode,
     Cleanup,
+    CodeView,
     EffectHold,
     EpochHealth,
     FreezeSupervisor,
@@ -39,6 +43,7 @@ from .contracts import (
     McpDecisionEnvelope,
     McpTool,
     McpView,
+    OpenCode,
     OpenMcp,
     OpenRemote,
     OpenTerminal,
@@ -198,6 +203,8 @@ class Supervisor:
         self.terminals: dict[str, PtyClient] = {}
         self.mcp_clients: dict[str, McpClient] = {}
         self.remote_clients: dict[str, RemoteClient] = {}
+        self.code_cancels: dict[str, threading.Event] = {}
+        self.code_cancel_ids: set[str] = set()
         self.terminal_bridges: dict[str, asyncio.Task[None]] = {}
         self.instance = instance or secrets.token_hex(16)
         self.process_lease = process_lease
@@ -281,6 +288,9 @@ class Supervisor:
                 endpoint TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS remote_calls(id TEXT PRIMARY KEY,remote TEXT NOT NULL,command TEXT NOT NULL,
                 phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '');
+              CREATE TABLE IF NOT EXISTS code_runs(id TEXT PRIMARY KEY,session TEXT NOT NULL,source TEXT NOT NULL,
+                phase TEXT NOT NULL,value TEXT NOT NULL DEFAULT '',committed INTEGER NOT NULL DEFAULT 0);
+              CREATE TABLE IF NOT EXISTS code_state(session TEXT PRIMARY KEY,document TEXT NOT NULL);
               PRAGMA user_version=2;
               COMMIT;
             """)
@@ -1341,6 +1351,89 @@ class Supervisor:
         assert current is not None
         return self._mcp_view(current)
 
+    async def run_code(self, value: OpenCode) -> CodeView:
+        self.check_host(value)
+        self._admit()
+        existing = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
+        if existing is not None:
+            if existing["session"] != value.session_id or existing["source"] != value.source:
+                raise BackendError("codemode_conflict")
+            return await self._code_view_with_state(existing)
+        await self._code_blocked(value.session_id)
+        await self.db.call(lambda db: db.execute(
+            "INSERT INTO code_runs(id,session,source,phase) VALUES(?,?,?,'unknown')",
+            (value.run_id, value.session_id, value.source)), write=True)
+        saved = await self.db.call(lambda db: db.execute(
+            "SELECT document FROM code_state WHERE session=?", (value.session_id,)).fetchone())
+        loaded: object = json.loads(str(saved["document"])) if saved else {}
+        state = json_object(loaded)
+        event = threading.Event()
+        if value.run_id in self.code_cancel_ids:
+            event.set()
+        self.code_cancels[value.run_id] = event
+        try:
+            outcome = await asyncio.to_thread(run_codemode, value.source, state, cancel=event)
+        finally:
+            self.code_cancels.pop(value.run_id, None)
+        kept = outcome.state
+        if outcome.phase == "success" and kept is not None:
+            document = json.dumps(kept, ensure_ascii=False, sort_keys=True)
+            payload = json.dumps(outcome.value, ensure_ascii=False) if outcome.value is not None else "null"
+
+            def commit(db: sqlite3.Connection) -> None:
+                db.execute("UPDATE code_runs SET phase='success',value=?,committed=1 WHERE id=?", (payload, value.run_id))
+                db.execute("INSERT INTO code_state(session,document) VALUES(?,?) ON CONFLICT(session) DO UPDATE SET document=excluded.document",
+                           (value.session_id, document))
+
+            await self.db.call(commit, write=True)
+        else:
+            await self.db.call(lambda db: db.execute(
+                "UPDATE code_runs SET phase=?,committed=0 WHERE id=?", (outcome.phase, value.run_id)), write=True)
+        current = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
+        assert current is not None
+        return await self._code_view_with_state(current)
+
+    async def _code_blocked(self, session_id: str) -> None:
+        blocked = await self.db.call(lambda db: db.execute(
+            "SELECT 1 FROM code_runs WHERE session=? AND phase='unknown'", (session_id,)).fetchone())
+        if blocked is not None:
+            raise BackendError("execution_cleanup_pending", status=503)
+
+    async def _code_view_with_state(self, row: sqlite3.Row) -> CodeView:
+        phase = str(row["phase"])
+        if phase not in {"success", "failed", "cancelled", "unknown", "conflict"}:
+            phase = "unknown"
+        state = ""
+        if int(row["committed"]):
+            saved = await self.db.call(lambda db: db.execute(
+                "SELECT document FROM code_state WHERE session=?", (row["session"],)).fetchone())
+            state = "" if saved is None else str(saved["document"])
+        return CodeView(run_id=str(row["id"]), phase=phase, value=str(row["value"]), state=state)  # type: ignore[arg-type]
+
+    async def cancel_code(self, value: CancelCode) -> CodeView:
+        self.check_host(value)
+        self.code_cancel_ids.add(value.run_id)
+        event = self.code_cancels.get(value.run_id)
+        if event is not None:
+            event.set()
+        for _ in range(50):
+            row = await self.db.call(lambda db: db.execute(
+                "SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id, value.session_id)).fetchone())
+            if row is None:
+                await asyncio.sleep(0.05)
+                continue
+            event = self.code_cancels.get(value.run_id)
+            if event is not None and not event.is_set():
+                event.set()
+            if str(row["phase"]) != "unknown":
+                return await self._code_view_with_state(row)
+            await asyncio.sleep(0.05)
+        missing = await self.db.call(lambda db: db.execute(
+            "SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id, value.session_id)).fetchone())
+        if missing is None:
+            raise BackendError("codemode_not_found", status=404)
+        return await self._code_view_with_state(missing)
+
     def _remote_view(self, row: sqlite3.Row) -> RemoteView:
         phase = str(row["phase"])
         if phase not in {"connected", "disconnected", "blocked"}:
@@ -1743,6 +1836,8 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/pty/read")(owner.read_terminal)
     app.post("/mcp/open")(owner.open_mcp)
     app.post("/mcp/cancel")(owner.cancel_mcp)
+    app.post("/code/run")(owner.run_code)
+    app.post("/code/cancel")(owner.cancel_code)
     app.post("/remotes/open")(owner.open_remote)
     app.post("/remotes/reconnect")(owner.reconnect_remote)
     app.post("/remotes/disconnect")(owner.disconnect_remote)

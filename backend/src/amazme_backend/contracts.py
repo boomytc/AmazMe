@@ -333,6 +333,29 @@ class McpDecisionEnvelope(HostFence):
     decision: McpDecision
 
 
+class CodeRun(Model):
+    run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    source: str = Field(min_length=1, max_length=8000)
+
+
+class OpenCode(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    source: str = Field(min_length=1, max_length=8000)
+
+
+class CancelCode(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class CodeView(Model):
+    run_id: str
+    phase: Literal["success", "failed", "cancelled", "unknown", "conflict"]
+    value: str = ""
+    state: str = ""
+
+
 class RemoteOpen(Model):
     remote_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     host: str = Field(min_length=1, max_length=200)
