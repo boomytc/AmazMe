@@ -1757,6 +1757,30 @@ class Host:
         await self.store.demand(value.session_id)
         return await self.health()
 
+    async def stop_owned_supervisor(self) -> None:
+        """Persist supervisor shutdown before any caller treats the host as stopped."""
+        async with self.service_lock:
+            if not self.initialized:
+                return
+            service = await self.store.service()
+            if service is None or service.state == "stopped":
+                return
+            if exited(service.process_lease):
+                service.state = "stopped"
+                await self.store.save_service(service)
+                return
+            identity = await self._await_service(service)
+            self._check_supervisor(identity, service)
+            service.state = "stopping"
+            await self.store.save_service(service)
+            await self.supervisor.call(
+                "POST", "/shutdown", Identity,
+                HostFence(host_epoch=self.fence.host_epoch, build_id=service.build_id),
+            )
+            await wait_exited(service.process_lease, 30)
+            service.state = "stopped"
+            await self.store.save_service(service)
+
     async def close(self) -> None:
         self.closing = True
         self.stop.set()
@@ -1765,19 +1789,7 @@ class Host:
             with contextlib.suppress(asyncio.CancelledError):
                 await self.background
         try:
-            async with self.service_lock:
-                if self.initialized:
-                    service = await self.store.service()
-                    if service and not exited(service.process_lease):
-                        identity = await self._await_service(service)
-                        self._check_supervisor(identity, service)
-                        service.state = "stopping"
-                        await self.store.save_service(service)
-                        await self.supervisor.call("POST", "/shutdown", Identity,
-                            HostFence(host_epoch=self.fence.host_epoch, build_id=service.build_id))
-                        await wait_exited(service.process_lease, 30)
-                        service.state = "stopped"
-                        await self.store.save_service(service)
+            await self.stop_owned_supervisor()
         finally:
             for _, peer in self.worker_peers.values():
                 await peer.close()
@@ -2202,6 +2214,7 @@ def application(owner: Host) -> FastAPI:
         if value != owner.fence:
             raise BackendError("stale_host_epoch")
         owner.closing = True
+        await owner.stop_owned_supervisor()
         owner.stop.set()
         return owner.identity("stopping")
 

@@ -119,6 +119,7 @@ describe("packaged python backend", () => {
 		expect(request.url).toBe("http://127.0.0.1:4310/control/shutdown");
 		expect(request.headers.Authorization).toBe(`Bearer ${CONTROL}`);
 		expect(request.body).toBe(JSON.stringify({ host_epoch: 3, build_id: BUILD }));
+		expect(request.timeoutMs).toBeGreaterThanOrEqual(60_000);
 		expect(request.body).not.toContain(WEB);
 		expect(() => pythonShutdownRequest(ready(), WEB, WEB)).toThrow(/control token/);
 	});

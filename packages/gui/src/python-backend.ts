@@ -180,16 +180,21 @@ export function readControlToken(profile: string): string {
 	return token;
 }
 
+/** Covers the host's 30s supervisor-exit wait and the shutdown request that precedes it. */
+export const PYTHON_SHUTDOWN_TIMEOUT_MS = 60_000;
+
 export function pythonShutdownRequest(ready: PythonReady, controlToken: string, webToken: string): {
 	readonly url: string;
 	readonly headers: { readonly Authorization: string; readonly "content-type": "application/json" };
 	readonly body: string;
+	readonly timeoutMs: number;
 } {
 	distinctTokens(controlToken, webToken);
 	return {
 		url: `${ready.origin}/control/shutdown`,
 		headers: { Authorization: `Bearer ${controlToken}`, "content-type": "application/json" },
 		body: JSON.stringify({ host_epoch: ready.hostEpoch, build_id: ready.buildId }),
+		timeoutMs: PYTHON_SHUTDOWN_TIMEOUT_MS,
 	};
 }
 

@@ -105,7 +105,7 @@ async function stopPythonBackend(): Promise<void> {
 	try {
 		const request = pythonShutdownRequest(ready, readControlToken(pythonProfile), pythonWebToken);
 		const response = await fetch(request.url, {
-			method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(15_000),
+			method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(request.timeoutMs),
 		});
 		await response.body?.cancel();
 	} catch (error: unknown) {
