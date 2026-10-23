@@ -308,9 +308,14 @@ function startServe(command: string, profile: string): Promise<string> {
 	});
 }
 
-/** Start or attach to the local Python host. Leaving the screen does not stop it. */
-export async function runOwnedPythonInteractive(options: { readonly workspace: string; readonly cwd: string }): Promise<void> {
-	if (!options.workspace) fail("workspace_required");
+/** Attach to an explicit host, or start the local one without deleting an existing profile. */
+export async function connectPythonHost(options: {
+	readonly cwd: string;
+	readonly url?: string;
+	readonly token?: string;
+}): Promise<{ url: string; token: string }> {
+	if ((options.url === undefined) !== (options.token === undefined)) fail("python_target_required");
+	if (options.url && options.token) return { url: options.url, token: options.token };
 	const command = backendCommand();
 	const profile = join(getAgentDir(), "python-host");
 	const tokenPath = join(profile, "web.token");
@@ -342,6 +347,12 @@ export async function runOwnedPythonInteractive(options: { readonly workspace: s
 	}
 	const existing = await liveUrl(readyPath, tokenPath);
 	const url = existing || (await startServe(command, profile));
-	const token = readFileSync(tokenPath, "utf8").trim();
-	await runPythonSessionTui({ url, token, workspace: options.workspace });
+	return { url, token: readFileSync(tokenPath, "utf8").trim() };
+}
+
+/** Start or attach to the local Python host. Leaving the screen does not stop it. */
+export async function runOwnedPythonInteractive(options: { readonly workspace: string; readonly cwd: string }): Promise<void> {
+	if (!options.workspace) fail("workspace_required");
+	const host = await connectPythonHost({ cwd: options.cwd });
+	await runPythonSessionTui({ url: host.url, token: host.token, workspace: options.workspace });
 }

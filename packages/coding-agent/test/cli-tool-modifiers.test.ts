@@ -65,7 +65,7 @@ describe("compiled CLI tool selection", () => {
 	const options = () => ({
 		cwd: directory,
 		timeout: 15_000,
-		env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_OFFLINE: "1" },
+		env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_DURABLE_TUI: "1", AMAZME_OFFLINE: "1" },
 	});
 
 	it("passes edited defaults to the real compiled provider request", async () => {

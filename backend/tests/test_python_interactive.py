@@ -299,3 +299,94 @@ async def test_default_interactive_starts_python_and_leave_keeps_the_host(tmp_pa
         if profile.is_dir():
             subprocess.run([sys.executable, "-m", "amazme_backend", "stop", "--profile", str(profile)],
                            check=False, capture_output=True, text=True, timeout=40)
+
+
+def _headless_env(tmp_path: Path) -> dict[str, str]:
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    wrapper = bin_dir / "amazme-backend"
+    if not wrapper.exists():
+        wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} -m amazme_backend \"$@\"\n")
+        wrapper.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    env["AMAZME_CODING_AGENT_DIR"] = str(tmp_path / "agent")
+    env.pop("AMAZME_OFFLINE", None)
+    env.pop("AMAZME_PYTHON_BACKEND", None)
+    env.pop("AMAZME_DURABLE_TUI", None)
+    return env
+
+
+def _run_cli(tmp_path: Path, cwd: Path, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    assert CLI.is_file(), "build @amazme/coding-agent before this test"
+    return subprocess.run(
+        [NODE, str(CLI), *args], cwd=cwd, env=_headless_env(tmp_path), input=stdin,
+        capture_output=True, text=True, timeout=60)
+
+
+async def test_print_json_and_rpc_use_the_python_host(tmp_path: Path) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    profile = tmp_path / "agent" / "python-host"
+    try:
+        printed = _run_cli(tmp_path, cwd, "--print", "你好")
+        assert printed.returncode == 0, printed.stderr
+        assert printed.stdout.strip() == "已收到：你好"
+        token = (profile / "web.token").read_text().strip()
+        url = str(json.loads((profile / "ready.json").read_text())["url"])
+        assert token not in printed.stdout and token not in printed.stderr
+        encoded = _run_cli(tmp_path, cwd, "--mode", "json", "--workspace", "primary", "你好")
+        assert encoded.returncode == 0, encoded.stderr
+        body = json.loads(encoded.stdout)
+        assert body["status"] == "succeeded"
+        assert body["answer"] == "已收到：你好"
+        assert body["workspace"] == "primary"
+        assert len(str(body["session_id"])) == 32
+        assert token not in encoded.stdout and token not in encoded.stderr
+        created = _run_cli(tmp_path, cwd, "--mode", "rpc", stdin=json.dumps({
+            "jsonrpc": "2.0", "id": "c", "method": "session.create",
+            "params": {"workspace": "primary", "title": "命令"},
+        }) + "\n")
+        assert created.returncode == 0, created.stderr
+        session_id = str(json.loads(created.stdout)["result"]["session_id"])
+        assert token not in created.stdout
+        future = int(time.time() * 1000) + 60_000
+        async with Client(url, token) as client:
+            attachment = await client.attach(session_id)
+        held = _run_cli(tmp_path, cwd, "--mode", "rpc", stdin=json.dumps({
+            "jsonrpc": "2.0", "id": "s", "method": "request.submit",
+            "params": {
+                "session_id": session_id, "workspace": "primary",
+                "attachment_id": attachment.attachment_id, "request_id": "held",
+                "text": "稍后", "not_before_ms": future,
+            },
+        }) + "\n")
+        assert held.returncode == 0, held.stderr
+        receipt = json.loads(held.stdout)["result"]
+        assert receipt["status"] in {"queued", "waiting_time"}
+        released = _run_cli(tmp_path, cwd, "--mode", "rpc", stdin=json.dumps({
+            "jsonrpc": "2.0", "id": "r", "method": "session.release",
+            "params": {"session_id": session_id, "attachment_id": attachment.attachment_id},
+        }) + "\n")
+        assert json.loads(released.stdout)["result"] == {"detached": True, "cancelled": False}
+        async with Client(url, token) as client:
+            still = await client.request(session_id=session_id, request_id="held")
+            assert still.status == receipt["status"]
+            assert still.cancel_requested is False
+            fresh = await client.attach(session_id)
+            await client.cancel(
+                session_id=session_id, workspace="primary", attachment_id=fresh.attachment_id,
+                request_id="held")
+        mismatched = _run_cli(tmp_path, cwd, "--mode", "rpc", stdin=json.dumps({
+            "jsonrpc": "2.0", "id": "m", "method": "request.submit",
+            "params": {
+                "session_id": session_id, "workspace": "other",
+                "attachment_id": "none", "request_id": "nope", "text": "不要",
+            },
+        }) + "\n")
+        assert json.loads(mismatched.stdout)["error"]["message"] == "workspace_mismatch"
+        assert token not in mismatched.stdout and token not in mismatched.stderr
+    finally:
+        if profile.is_dir():
+            subprocess.run([sys.executable, "-m", "amazme_backend", "stop", "--profile", str(profile)],
+                           check=False, capture_output=True, text=True, timeout=40)

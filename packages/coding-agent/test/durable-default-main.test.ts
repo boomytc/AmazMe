@@ -6,8 +6,12 @@ import { createTempDir } from "./temp-dir.ts";
 vi.mock("../src/durable/print.ts", () => ({
 	runDurablePrint: vi.fn(async () => 0),
 }));
+vi.mock("../src/python-headless.ts", () => ({
+	runPythonHeadless: vi.fn(async () => 0),
+}));
 
 import { main } from "../src/main.ts";
+import { runPythonHeadless } from "../src/python-headless.ts";
 import { runDurablePrint } from "../src/durable/print.ts";
 
 describe("default headless runtime", () => {
@@ -25,6 +29,8 @@ describe("default headless runtime", () => {
 		vi.spyOn(process, "cwd").mockReturnValue(cwd);
 		for (const stream of [process.stdin, process.stdout]) Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
 		vi.mocked(runDurablePrint).mockClear();
+		vi.mocked(runPythonHeadless).mockClear();
+		vi.stubEnv("AMAZME_DURABLE_TUI", "");
 	});
 
 	afterEach(async () => {
@@ -38,15 +44,17 @@ describe("default headless runtime", () => {
 		await rm(directory, { recursive: true, force: true });
 	});
 
-	it("uses Durable for a new print session when the runtime is not selected", async () => {
+	it("uses the Python host for a new print session", async () => {
 		await main(["--offline", "--print", "hello"]);
-		expect(runDurablePrint).toHaveBeenCalledOnce();
-		expect(vi.mocked(runDurablePrint).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", initialMessage: "hello" });
+		expect(runPythonHeadless).toHaveBeenCalledOnce();
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello", workspace: "primary" });
+		expect(runDurablePrint).not.toHaveBeenCalled();
 	});
 
-	it("uses Durable for JSON mode by default", async () => {
+	it("uses the Python host for JSON mode", async () => {
 		await main(["--offline", "--mode", "json", "hello"]);
-		expect(runDurablePrint).toHaveBeenCalledOnce();
-		expect(vi.mocked(runDurablePrint).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "json", initialMessage: "hello" });
+		expect(runPythonHeadless).toHaveBeenCalledOnce();
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "json", prompt: "hello", workspace: "primary" });
+		expect(runDurablePrint).not.toHaveBeenCalled();
 	});
 });

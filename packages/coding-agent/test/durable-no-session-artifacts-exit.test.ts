@@ -151,7 +151,7 @@ describe.skipIf(process.platform === "win32")("--no-session artifact directory o
 			],
 			{
 				cwd: directory,
-				env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_OFFLINE: "1", TMPDIR: temp },
+				env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_DURABLE_TUI: "1", AMAZME_OFFLINE: "1", TMPDIR: temp },
 				stdio: [mode === "print" ? "ignore" : "pipe", "pipe", "pipe"],
 			},
 		);

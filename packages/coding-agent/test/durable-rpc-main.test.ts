@@ -6,8 +6,12 @@ import { createTempDir } from "./temp-dir.ts";
 vi.mock("../src/modes/rpc/durable-rpc.ts", () => ({
 	runDurableRpc: vi.fn(async () => undefined),
 }));
+vi.mock("../src/python-headless.ts", () => ({
+	runPythonHeadless: vi.fn(async () => 0),
+}));
 
 import { main } from "../src/main.ts";
+import { runPythonHeadless } from "../src/python-headless.ts";
 import { runDurableRpc } from "../src/modes/rpc/durable-rpc.ts";
 
 describe("durable RPC entry wiring", () => {
@@ -23,6 +27,8 @@ describe("durable RPC entry wiring", () => {
 		vi.stubEnv("AMAZME_CODING_AGENT_DIR", profile);
 		vi.spyOn(process, "cwd").mockReturnValue(cwd);
 		vi.mocked(runDurableRpc).mockClear();
+		vi.mocked(runPythonHeadless).mockClear();
+		vi.stubEnv("AMAZME_DURABLE_TUI", "");
 	});
 
 	afterEach(async () => {
@@ -31,9 +37,10 @@ describe("durable RPC entry wiring", () => {
 		await rm(directory, { recursive: true, force: true });
 	});
 
-	it("opens RPC on the durable runtime", async () => {
+	it("opens RPC on the Python host", async () => {
 		await main(["--offline", "--mode", "rpc", "--no-session", "--no-extensions", "--no-mcp"]);
-		expect(runDurableRpc).toHaveBeenCalledOnce();
-		expect(vi.mocked(runDurableRpc).mock.calls[0]?.[0]).toMatchObject({ cwd, noSession: true, noExtensions: true, noMcp: true });
+		expect(runPythonHeadless).toHaveBeenCalledOnce();
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "rpc", workspace: "primary" });
+		expect(runDurableRpc).not.toHaveBeenCalled();
 	});
 });

@@ -113,6 +113,7 @@ describe.skipIf(process.platform === "win32")("durable explicit session", () => 
 		const env: NodeJS.ProcessEnv = {
 			...process.env,
 			AMAZME_CODING_AGENT_DIR: profile,
+			AMAZME_DURABLE_TUI: "1",
 			AMAZME_OFFLINE: "1",
 		};
 		if (options.cliSessionDir === false) delete env[ENV_SESSION_DIR];

@@ -547,6 +547,21 @@ export async function main(args: string[]) {
 		...(parsed.noTools ? { noTools: "all" as const } : parsed.noBuiltinTools ? { noTools: "builtin" as const } : {}),
 		noMcp: parsed.noMcp === true || parsed.noExtensions === true,
 	};
+	if (process.env.AMAZME_DURABLE_TUI !== "1") {
+		const prompt = [initialMessage, ...parsed.messages].filter((item): item is string => item !== undefined && item.length > 0).join("\n");
+		const { runPythonHeadless } = await import("./python-headless.ts");
+		const exitCode = await runPythonHeadless({
+			mode: appMode === "rpc" ? "rpc" : appMode === "json" ? "json" : "text",
+			workspace: parsed.workspace || "primary",
+			cwd: effectiveCwd,
+			...(parsed.pythonUrl === undefined ? {} : { url: parsed.pythonUrl }),
+			...(parsed.pythonToken === undefined ? {} : { token: parsed.pythonToken }),
+			prompt,
+		});
+		restoreStdout();
+		if (exitCode !== 0) process.exitCode = exitCode;
+		return;
+	}
 	if (appMode === "rpc") {
 		const { runDurableRpc } = await import("./modes/rpc/durable-rpc.ts");
 		await runDurableRpc(durableOptions);

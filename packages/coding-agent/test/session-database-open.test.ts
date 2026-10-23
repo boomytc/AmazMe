@@ -230,7 +230,7 @@ describe.skipIf(process.platform === "win32")("CLI with a session database that 
 	async function runCli(cwd: string, agentDir: string, args: readonly string[]) {
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd,
-			env: { ...process.env, AMAZME_CODING_AGENT_DIR: agentDir, AMAZME_OFFLINE: "1", NO_COLOR: "1" },
+			env: { ...process.env, AMAZME_CODING_AGENT_DIR: agentDir, AMAZME_DURABLE_TUI: "1", AMAZME_OFFLINE: "1", NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";

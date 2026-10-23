@@ -132,7 +132,7 @@ describe.skipIf(process.platform === "win32")("durable print signal shutdown", (
 			],
 			{
 				cwd: directory,
-				env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_OFFLINE: "1" },
+				env: { ...process.env, AMAZME_CODING_AGENT_DIR: profile, AMAZME_DURABLE_TUI: "1", AMAZME_OFFLINE: "1" },
 				stdio: ["ignore", "pipe", "pipe"],
 			},
 		);
