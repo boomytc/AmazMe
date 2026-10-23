@@ -198,6 +198,23 @@ function startClient() {
     $("pending-count").textContent = model ? `待处理 ${model.pending}${model.next_wake_ms ? ` · 下次唤醒 ${new Date(model.next_wake_ms).toLocaleString()}` : ""}` : "";
     controls();
   }
+  async function branchAt(connection, requestId) {
+    if (!owns(connection) || !writable()) return;
+    const key = `branch:${connection.session}:${requestId}`;
+    if (running.has(key)) return;
+    running.add(key); controls();
+    try {
+      const value = await api(`/api/v1/sessions/${connection.session}/branches`, "POST", {request_id: requestId}, connection, connection.identity);
+      if (!owns(connection)) return;
+      await load();
+      await select(value.session_id);
+    } catch (failure) {
+      if (owns(connection)) error(failure);
+    } finally {
+      running.delete(key);
+      if (owns(connection)) controls();
+    }
+  }
   function render() {
     const connection = current, model = connection?.model;
     $("conversation").replaceChildren(...(model?.requests || []).map(row => {
@@ -209,6 +226,9 @@ function startClient() {
       if (row.children.length) article.append(element("div", `子任务：${row.children.map(id => {
         const child = model.requests.find(item => item.request_id === id); return `${id.slice(0,8)}（${labels[child?.status] || "记录已归档"}）`;
       }).join("、")}`, "children"));
+      if (row.kind === "root" && row.status === "succeeded") {
+        article.append(button("从此处分支", () => void branchAt(connection, row.request_id), !writable()));
+      }
       return article;
     }));
     $("tools").textContent = (model?.events || []).map(event => toolText(event.text)).join("\n\n").slice(-64000);

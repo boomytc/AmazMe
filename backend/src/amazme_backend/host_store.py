@@ -110,7 +110,8 @@ class HostStore:
                 CREATE TABLE IF NOT EXISTS services(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
                   instance TEXT UNIQUE NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,
-                  wanted INTEGER NOT NULL DEFAULT 0,next_check INTEGER NOT NULL DEFAULT 0);
+                  wanted INTEGER NOT NULL DEFAULT 0,next_check INTEGER NOT NULL DEFAULT 0,
+                  parent_id TEXT NOT NULL DEFAULT '',fork_request_id TEXT NOT NULL DEFAULT '');
                 CREATE TABLE IF NOT EXISTS deliveries(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
                   id TEXT UNIQUE NOT NULL,session TEXT NOT NULL,kind TEXT NOT NULL,digest TEXT NOT NULL,
                   payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',receipt TEXT NOT NULL DEFAULT '',
@@ -120,6 +121,12 @@ class HostStore:
                 CREATE TABLE IF NOT EXISTS restarts(at INTEGER NOT NULL);
                 PRAGMA user_version=2;
             """)
+            # Format 2 already shipped without branch columns. Adding them keeps every existing row.
+            present = {str(row[1]) for row in db.execute("PRAGMA table_info(sessions)")}
+            if "parent_id" not in present:
+                db.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''")
+            if "fork_request_id" not in present:
+                db.execute("ALTER TABLE sessions ADD COLUMN fork_request_id TEXT NOT NULL DEFAULT ''")
         await self._call(create)
         def begin(db: sqlite3.Connection) -> int:
             db.execute("UPDATE control SET epoch=epoch+1 WHERE id=1")
@@ -137,7 +144,9 @@ class HostStore:
 
     async def sessions(self) -> SessionList:
         return await self._call(lambda db: SessionList(sessions=[
-            Session(session_id=str(row[0]), title=str(row[1])) for row in db.execute("SELECT id,title FROM sessions ORDER BY rowid")]))
+            Session(session_id=str(row["id"]), title=str(row["title"]), parent_id=str(row["parent_id"]),
+                    fork_request_id=str(row["fork_request_id"]))
+            for row in db.execute("SELECT id,title,parent_id,fork_request_id FROM sessions ORDER BY rowid")]))
 
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         def operation(db: sqlite3.Connection) -> Session:
@@ -148,6 +157,29 @@ class HostStore:
             db.execute("INSERT INTO sessions(id,title) VALUES(?,?)", (session_id, value.title))
             return Session(session_id=session_id, title=value.title)
         return await self.transaction(operation)
+
+    async def create_branch(self, session_id: str, parent_id: str, fork_request_id: str, title: str) -> Session:
+        def operation(db: sqlite3.Connection) -> Session:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            if not db.execute("SELECT 1 FROM sessions WHERE id=?", (parent_id,)).fetchone():
+                raise BackendError("session_not_found", status=404)
+            if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
+                raise BackendError("session_capacity", status=429)
+            db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id) VALUES(?,?,?,?)",
+                       (session_id, title, parent_id, fork_request_id))
+            return Session(session_id=session_id, title=title, parent_id=parent_id, fork_request_id=fork_request_id)
+        return await self.transaction(operation)
+
+    async def discard_unopened_branch(self, session_id: str) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            row = db.execute("SELECT parent_id FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if row is None:
+                return
+            if not str(row[0]) or db.execute("SELECT 1 FROM deliveries WHERE session=?", (session_id,)).fetchone():
+                raise BackendError("branch_discard_refused")
+            db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+        await self.transaction(operation)
 
     async def exists(self, session: str) -> bool:
         return await self._call(lambda db: db.execute("SELECT 1 FROM sessions WHERE id=?", (session,)).fetchone() is not None)

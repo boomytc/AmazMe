@@ -65,7 +65,7 @@ from .session_domain import (
     ToolObserved,
     ToolReturned,
 )
-from .storage import SessionStore, now_ms
+from .storage import SessionStore, now_ms, session_database
 from .transport import app_factory
 
 
@@ -98,7 +98,7 @@ class Worker:
         self.frozen_on_start = frozen
         self.validation = validation
         self.faults = Faults(profile.path, "worker", instance, enabled=profile.config.testing)
-        self.store = SessionStore(profile.path / "sessions" / session / "session.sqlite", session,
+        self.store = SessionStore(session_database(profile.path, session), session,
                                   build=self.build, config=profile.config.provider,
                                   approval_policy=profile.config.approval_policy, faults=self.faults,
                                   require_existing=require_existing, instance=instance)

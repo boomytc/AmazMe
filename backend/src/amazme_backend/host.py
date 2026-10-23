@@ -24,6 +24,7 @@ from .contracts import (
     ApprovalEnvelope,
     Attachment,
     BackendError,
+    BranchSession,
     Cancel,
     Cleanup,
     CompleteUpdate,
@@ -56,6 +57,7 @@ from .contracts import (
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
+from .storage import SessionStore, read_settled_root, remove_session_directory, session_database
 from .transport import app_factory
 
 
@@ -310,6 +312,35 @@ class Host:
     async def create_session(self, value: CreateSession) -> Session:
         self._admit()
         return await self.store.create_session(secrets.token_hex(16), value)
+
+    async def branch_session(self, parent: str, value: BranchSession) -> Session:
+        self._admit()
+        if not await self.store.exists(parent):
+            raise BackendError("session_not_found", status=404)
+        parent_path = session_database(self.profile.path, parent)
+        read_settled_root(parent_path, value.request_id)
+        source = next(item for item in (await self.sessions()).sessions if item.session_id == parent)
+        title = value.title.strip() or f"分支：{source.title}"
+        child_id = secrets.token_hex(16)
+        created = await self.store.create_branch(child_id, parent, value.request_id, title[:100])
+        directory = session_database(self.profile.path, child_id).parent
+        child: SessionStore | None = None
+        try:
+            directory.mkdir(parents=True, mode=0o700)
+            child = SessionStore(directory / "session.sqlite", child_id, build=self.build,
+                                 config=self.profile.config.provider,
+                                 approval_policy=self.profile.config.approval_policy)
+            await child.initialize()
+            await child.import_settled_root(parent_path, value.request_id)
+        except Exception:
+            if child is not None:
+                await child.db.close()
+                child = None
+            await self.store.discard_unopened_branch(child_id)
+            remove_session_directory(directory)
+            raise
+        await child.db.close()
+        return created
 
     async def reader(self, session: str) -> ReadPeer:
         self._admit()
@@ -908,6 +939,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions", status_code=201)
     async def create(value: CreateSession) -> Session:
         return await owner.create_session(value)
+
+    @app.post("/api/v1/sessions/{session}/branches", status_code=201)
+    async def branch(session: str, value: BranchSession) -> Session:
+        return await owner.branch_session(session, value)
 
     @app.post("/api/v1/sessions/{session}/attachments", status_code=201)
     async def attach(session: str) -> Attachment:

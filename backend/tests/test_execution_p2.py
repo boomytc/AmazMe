@@ -1385,3 +1385,25 @@ async def test_vm_checks_longest_ssh_socket_byte_budget_before_writes(vm_path_pr
             assert f"{total} bytes" in error.value.message and "< 104" in error.value.message
             assert not (home / ".amazme-vm").exists()
             assert not (vm_path_profile.path / "vm.json").exists()
+
+
+async def test_shutdown_releases_control_before_waiting_for_a_worker(owner, monkeypatch):
+    info, reservation = await worker(owner)
+    observed: list[bool] = []
+
+    async def peer(worker_info, method, path, body):
+        return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id,
+                        instance_id=worker_info.worker_id, pid=info.pid, role="worker",
+                        host_epoch=owner.host_epoch, fingerprint=owner.build)
+
+    async def wait(lease, timeout=5):
+        observed.append(owner.control.locked())
+        if not reservation.stream.closed:
+            owner.reservations.remove(reservation)
+            reservation.close()
+
+    monkeypatch.setattr(owner, "_peer_identity", peer)
+    monkeypatch.setattr("amazme_backend.supervisor.wait_exited", wait)
+    result = await owner.shutdown(HostFence(build_id=owner.build, host_epoch=owner.host_epoch))
+    assert observed and observed[0] is False
+    assert result.role == "supervisor" and result.state != "blocked"

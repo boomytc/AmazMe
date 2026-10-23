@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import json
+import re
 import secrets
 import shutil
 import sqlite3
@@ -62,6 +63,65 @@ from .session_domain import (
 )
 
 TERMINAL = frozenset({"succeeded", "cancelled", "interrupted", "failed", "unknown"})
+_SESSION_ID = re.compile(r"^[a-f0-9]{32}$")
+_SESSION_FILES = frozenset({"session.sqlite", "session.sqlite-wal", "session.sqlite-shm"})
+
+
+def session_database(profile: Path, session: str) -> Path:
+    if _SESSION_ID.fullmatch(session) is None:
+        raise BackendError("invalid_session")
+    return profile / "sessions" / session / "session.sqlite"
+
+
+def remove_session_directory(directory: Path) -> None:
+    if not directory.exists():
+        return
+    if not directory.is_dir():
+        raise BackendError("branch_cleanup_refused")
+    names = {item.name for item in directory.iterdir()}
+    if not names <= _SESSION_FILES:
+        raise BackendError("branch_cleanup_refused")
+    for name in sorted(names):
+        (directory / name).unlink()
+    directory.rmdir()
+
+
+def read_settled_root(path: Path, request_id: str) -> tuple[str, Receipt, list[tuple[str, str]], str]:
+    """Read one settled root turn. The caller copies it; this connection never writes."""
+    if not path.is_file():
+        raise BackendError("branch_point_missing", status=404)
+    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        try:
+            row = connection.execute("SELECT digest, payload FROM requests WHERE id=?", (request_id,)).fetchone()
+        except sqlite3.Error as exc:
+            raise BackendError("branch_point_missing", status=404) from exc
+        if row is None:
+            raise BackendError("branch_point_missing", status=404)
+        try:
+            receipt = Receipt.model_validate_json(row[1])
+            messages = [
+                (str(key), str(payload)) for key, payload in connection.execute(
+                    "SELECT message_key, payload FROM messages WHERE request_id=? ORDER BY ordinal", (request_id,))
+            ]
+            run_row = connection.execute("SELECT payload FROM runs WHERE request_id=?", (request_id,)).fetchone()
+            run = Run.model_validate_json(run_row[0]) if run_row else None
+            for _, payload in messages:
+                Message.model_validate_json(payload)
+        except (ValueError, sqlite3.Error) as exc:
+            raise BackendError("storage_corrupt", status=503) from exc
+        if receipt.kind != "root" or receipt.request_id != request_id:
+            raise BackendError("branch_point_not_root")
+        settled = (receipt.status == "succeeded" and receipt.decision is not None
+                   and receipt.decision.status == "succeeded" and messages and run is not None
+                   and run.request_id == request_id and run.lease is None
+                   and not run.opening and not run.cleanup_required)
+        if not settled:
+            raise BackendError("branch_point_unsettled")
+        assert run_row is not None
+        return str(row[0]), receipt, messages, str(run_row[0])
+    finally:
+        connection.close()
 PENDING_LIMIT = 128
 RETAIN_BATCHES = 256
 RETAIN_BYTES = 2 * 1024 * 1024
@@ -1124,6 +1184,27 @@ class SessionStore:
 
     async def messages(self, request_id: str) -> list[Message]:
         return await self.db.call(lambda db: self._messages(db, request_id))
+
+    async def import_settled_root(self, parent: Path, request_id: str) -> Receipt:
+        """Copy one settled root into an empty session. No lease, effect, or approval is copied."""
+        copied_digest, receipt, messages, run_payload = read_settled_root(parent, request_id)
+
+        def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
+            count = int(db.execute("SELECT count(*) FROM requests").fetchone()[0])
+            existing = db.execute("SELECT digest FROM requests WHERE id=?", (request_id,)).fetchone()
+            if count:
+                if count == 1 and existing is not None and str(existing[0]) == copied_digest:
+                    return self._request(db, request_id)
+                raise BackendError("branch_target_not_empty")
+            db.execute("INSERT INTO requests(id,digest,payload) VALUES(?,?,?)",
+                       (request_id, copied_digest, receipt.model_dump_json()))
+            db.execute("INSERT INTO runs(request_id,payload) VALUES(?,?)", (request_id, run_payload))
+            for key, payload in messages:
+                self._message(db, c, request_id, key, Message.model_validate_json(payload))
+            c.emit("status", request_id, "branched", receipt=receipt.model_copy(deep=True))
+            return receipt
+
+        return await self._tx(operation)
 
     @staticmethod
     def _pending_ids(db: sqlite3.Connection) -> set[str]:

@@ -152,10 +152,17 @@ class Snapshot(Model):
 class Session(Model):
     session_id: str
     title: str
+    parent_id: str = ""
+    fork_request_id: str = ""
 
 
 class SessionList(Model):
     sessions: list[Session]
+
+
+class BranchSession(Model):
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    title: str = Field(default="", max_length=100)
 
 
 class EventList(Model):

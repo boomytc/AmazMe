@@ -137,6 +137,55 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/branches": {
+      "post": {
+        "summary": "Branch",
+        "operationId": "branch_api_v1_sessions__session__branches_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BranchSession"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/attachments": {
       "post": {
         "summary": "Attach",
@@ -867,6 +916,29 @@
           "build_id"
         ],
         "title": "Attachment"
+      },
+      "BranchSession": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "title": "Request Id"
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Title",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id"
+        ],
+        "title": "BranchSession"
       },
       "Cleanup": {
         "properties": {
@@ -1647,6 +1719,16 @@
           "title": {
             "type": "string",
             "title": "Title"
+          },
+          "parent_id": {
+            "type": "string",
+            "title": "Parent Id",
+            "default": ""
+          },
+          "fork_request_id": {
+            "type": "string",
+            "title": "Fork Request Id",
+            "default": ""
           }
         },
         "additionalProperties": false,
