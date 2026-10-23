@@ -14,13 +14,10 @@ async function run(): Promise<void> {
 		if (role === "server") await (await import("./host/server.ts")).runServerProcess(args);
 		else if (role === "session-worker") await (await import("./host/session-worker.ts")).runSessionWorkerProcess(args);
 		else if (role === "coordinator") await (await import("./host/coordinator.ts")).runCoordinatorProcess(args);
-		else if (args[0] === "web") {
+		else if (args[0] === "web" || args[0] === "server" || args[0] === "client") {
 			console.error("old_web_host_removed");
 			console.error("网页由 Python 后端提供，不再启动旧宿主");
 			process.exitCode = 1;
-		} else if (args[0] === "server" || args[0] === "client") {
-			await (await import("./host/commands.ts")).runHostCommand(args);
-			if (args[0] === "client") process.exit(process.exitCode ?? 0);
 		} else await (await import("./main.ts")).main(args);
 	} catch (error) {
 		console.error(error instanceof Error ? error.message : String(error));

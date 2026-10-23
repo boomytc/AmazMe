@@ -10,7 +10,7 @@ import { ensureCoordinator, type CoordinatorStartupLease } from "../src/host/coo
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "../src/cli.ts");
+const cliPath = resolve(__dirname, "support/legacy-host-cli.ts");
 const serverId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 // macOS sun_path holds 103 bytes and the runner TMPDIR is deep; tests that bind sockets themselves use /tmp.
 const shortTmp = "/tmp";

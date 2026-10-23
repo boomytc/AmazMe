@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "../src/cli.ts");
+const cliPath = resolve(__dirname, "support/legacy-host-cli.ts");
 const serverId = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
 
 describe.skipIf(process.platform === "win32")("server SIGTERM", () => {

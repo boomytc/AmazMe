@@ -259,15 +259,10 @@ export async function main(args: string[]) {
 		return;
 	}
 
-	if (args[0] === "import") {
-		const { runImportCommand } = await import("./durable/import.ts");
-		process.exitCode = await runImportCommand(args.slice(1));
-		return;
-	}
-
-	if (args[0] === "export") {
-		const { runExportCommand } = await import("./durable/export.ts");
-		process.exitCode = await runExportCommand(args.slice(1));
+	if (args[0] === "import" || args[0] === "export") {
+		console.error("old_session_migration_removed");
+		console.error("不迁移旧会话，请使用 Python 后端的新格式");
+		process.exitCode = 1;
 		return;
 	}
 

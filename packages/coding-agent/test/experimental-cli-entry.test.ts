@@ -42,19 +42,21 @@ function runEntry(experimental: boolean, version = false) {
 }
 
 describe("formal CLI dispatch", () => {
-	it("validates host commands without requiring experiment flags", () => {
+	it("refuses the old server command without opening a host", () => {
 		const result = runEntry(false);
 		expect(result.status, result.stderr).toBe(1);
-		expect(result.stderr).toContain("Invalid --server-id");
+		expect(result.stderr).toContain("old_web_host_removed");
+		expect(result.stderr).not.toContain("Invalid --server-id");
 	});
 	it("keeps version metadata available without opening a host", () => {
 		const result = runEntry(false, true);
 		expect(result.status, result.stderr).toBe(0);
 		expect(result.stdout.trim()).toBe(VERSION);
 	});
-	it("uses the same host dispatch when other experiments are enabled", () => {
+	it("refuses the old server command when other experiments are enabled", () => {
 		const result = runEntry(true);
 		expect(result.status, result.stderr).toBe(1);
-		expect(result.stderr).toContain("Invalid --server-id");
+		expect(result.stderr).toContain("old_web_host_removed");
+		expect(result.stderr).not.toContain("Invalid --server-id");
 	});
 });
