@@ -137,6 +137,16 @@ class SearchResults(Model):
     hits: list[SearchHit]
 
 
+class UsageReport(Model):
+    """Token totals already stored with model completions. No price is configured, so this is not a bill."""
+
+    session_id: str
+    model_calls: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    priced: Literal[False] = False
+
+
 class Command(Model):
     command: str = Field(min_length=1, max_length=196608)
     timeout_seconds: int = Field(default=30, ge=1, le=120)

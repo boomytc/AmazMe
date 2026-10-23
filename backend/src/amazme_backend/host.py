@@ -129,6 +129,7 @@ from .contracts import (
     TerminalView,
     UpdateModelSettings,
     UpdateRecord,
+    UsageReport,
     WebCallRequest,
     WebCallView,
     WebPolicy,
@@ -1155,6 +1156,21 @@ class Host:
         finally:
             await worker.db.close()
 
+    async def session_usage(self, session: str) -> UsageReport:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        path = session_database(self.profile.path, session)
+        if not path.is_file():
+            return UsageReport(session_id=session)
+        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                             approval_policy=self.profile.config.approval_policy, require_existing=True)
+        try:
+            await worker.initialize()
+            return await worker.usage()
+        finally:
+            await worker.db.close()
+
     async def _plugin_work_pending(self) -> bool:
         for session in (await self.sessions()).sessions:
             path = session_database(self.profile.path, session.session_id)
@@ -2149,6 +2165,10 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/sessions/{session_id}/search")
     async def search_session(session_id: str, q: str) -> SearchResults:
         return await owner.search_session(session_id, q)
+
+    @app.get("/api/v1/sessions/{session_id}/usage")
+    async def session_usage(session_id: str) -> UsageReport:
+        return await owner.session_usage(session_id)
 
     @app.get("/api/v1/sessions/{session}/snapshot")
     async def snapshot(session: str) -> Snapshot:

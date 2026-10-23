@@ -39,6 +39,7 @@ from .contracts import (
     Snapshot,
     Submit,
     ToolCall,
+    UsageReport,
     WebCallView,
     WebPolicy,
     WorkerActivity,
@@ -1788,6 +1789,26 @@ class SessionStore:
                     message = Message.model_validate_json(body)
                     hits.extend(_search_text(str(request_id), ordinal, message.role, message.content, needle))
             return hits[:50]
+
+        return await self.db.call(operation)
+
+    async def usage(self) -> UsageReport:
+        """Sum tokens from finished model steps. In-progress calls and tool results are not usage."""
+
+        def operation(db: sqlite3.Connection) -> UsageReport:
+            calls = 0
+            input_tokens = 0
+            output_tokens = 0
+            for (payload,) in db.execute("SELECT payload FROM steps"):
+                step = Step.model_validate_json(str(payload))
+                if step.kind != "model" or step.phase not in {"result", "applied"} or not step.result:
+                    continue
+                completion = Completion.model_validate_json(step.result)
+                calls += 1
+                input_tokens += completion.input_tokens
+                output_tokens += completion.output_tokens
+            return UsageReport(session_id=self.session_id, model_calls=calls,
+                               input_tokens=input_tokens, output_tokens=output_tokens)
 
         return await self.db.call(operation)
 

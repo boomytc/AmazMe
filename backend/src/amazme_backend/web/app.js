@@ -871,6 +871,15 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  $("usage-load").onclick = async () => {
+    if (!selected) return;
+    try {
+      const usage = await api(`/api/v1/sessions/${selected}/usage`);
+      if (usage.priced) throw new Error("用量还不能计价");
+      $("usage-report").textContent = `${usage.model_calls} 次模型调用 · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 未计价`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   async function loadProjects() {
     const list = await api("/api/v1/projects");
     $("manage-projects").textContent = list.projects.length

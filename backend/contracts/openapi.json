@@ -2975,6 +2975,45 @@
         }
       }
     },
+    "/api/v1/sessions/{session_id}/usage": {
+      "get": {
+        "summary": "Session Usage",
+        "operationId": "session_usage_api_v1_sessions__session_id__usage_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageReport"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/snapshot": {
       "get": {
         "summary": "Snapshot",
@@ -3480,6 +3519,42 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/index.html": {
+      "get": {
+        "summary": "Page",
+        "operationId": "page_index_html_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/": {
+      "get": {
+        "summary": "Page",
+        "operationId": "page__get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
                 }
               }
             }
@@ -6920,6 +6995,45 @@
           "cancel_work"
         ],
         "title": "UpdateRecord"
+      },
+      "UsageReport": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Model Calls",
+            "default": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "priced": {
+            "type": "boolean",
+            "const": false,
+            "title": "Priced",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id"
+        ],
+        "title": "UsageReport",
+        "description": "Token totals already stored with model completions. No price is configured, so this is not a bill."
       },
       "ValidationError": {
         "properties": {
