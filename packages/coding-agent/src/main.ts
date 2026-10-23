@@ -30,7 +30,7 @@ import { buildInitialMessage } from "./cli/initial-message.ts";
 import { listModels } from "./cli/list-models.ts";
 import { createProjectTrustContext } from "./cli/project-trust.ts";
 import { shouldRunFirstTimeSetup, showFirstTimeSetup } from "./cli/startup-ui.ts";
-import { APP_COMMAND, ENV_SESSION_DIR, getAgentDir, getPackageDir, VERSION } from "./config.ts";
+import { APP_COMMAND, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
 import { exportFromFile } from "./core/export-html/index.ts";
 import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
@@ -42,7 +42,6 @@ import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { ProjectTrustStore } from "./core/trust-manager.ts";
 import { loadMcpCommand } from "./extensions/mcp/cli.lazy.ts";
-import { resolveExplicitSession } from "./durable/sessions.ts";
 import { runMigrations } from "./migrations.ts";
 import { setThemeJsonValidator } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
@@ -351,24 +350,12 @@ export async function main(args: string[]) {
 		process.exit(1);
 	}
 
-	// An explicit session owns the project context: settings, trust, tools, and resources come from its recorded cwd.
-	const sessionDirOption = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
-	let explicitSession: { directory: string; cwd: string } | undefined;
 	if (parsed.session !== undefined) {
-		try {
-			// Session lookup is the documented pre-trust use of the project's sessionDir setting.
-			const lookupSessionDir = sessionDirOption ?? SettingsManager.create(cwd, agentDir).getSessionDir();
-			explicitSession = await resolveExplicitSession(
-				cwd,
-				parsed.session,
-				lookupSessionDir === undefined ? {} : { sessionDir: lookupSessionDir },
-			);
-		} catch (error) {
-			console.error(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
-			process.exit(1);
-		}
+		console.error("old_session_migration_removed");
+		console.error("不迁移旧会话，请使用 Python 后端的新格式");
+		process.exit(1);
 	}
-	const effectiveCwd = explicitSession?.cwd ?? cwd;
+	const effectiveCwd = cwd;
 
 	// Run migrations against the selected project so opening a session never migrates the launch directory.
 	runMigrations(effectiveCwd);

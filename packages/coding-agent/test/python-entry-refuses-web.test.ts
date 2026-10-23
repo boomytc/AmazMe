@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,19 @@ describe("shipped CLI does not start the old web host", () => {
 		expect(result.code).not.toBe(0);
 		expect(result.stderr).toContain("old_web_host_removed");
 		expect(result.stdout).not.toContain("Web: http");
+	});
+
+	it("refuses --session before opening an old session database", async () => {
+		expect(existsSync(cli)).toBe(true);
+		const directory = createTempDir("amazme-session-removed-");
+		directories.push(directory);
+		const profile = join(directory, "profile");
+		const sessionFile = join(directory, "not-a-session.log");
+		writeFileSync(sessionFile, "{\"type\":\"event\"}\n");
+		const result = await runCli(directory, profile, ["--session", sessionFile, "-p", "hi"]);
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("old_session_migration_removed");
+		expect(readFileSync(sessionFile, "utf8")).toBe("{\"type\":\"event\"}\n");
 	});
 
 	it.each(["import", "export"] as const)("refuses old session %s without reading a session file", async (command) => {

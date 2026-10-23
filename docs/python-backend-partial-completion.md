@@ -21,7 +21,7 @@
 | 当前源码 B | `.artifacts/python-backend-head/package-4qxl9x82/AmazMe Python 0.1.0` | `a9667286a889153a1d55d77d6e39c529d867a60d8d4b7a89868fc2b7e30be331` | ad-hoc onedir |
 | 更新源 | `.artifacts` 中的 `package-fe7_msbu` | `a44cf603121570ffcb1037fcb331ba3bb6b22d106555ddda367aa7157e41a73e` | ad-hoc onedir |
 | 更新目标 | `package-syyayj_m` | `0169b95e3e5f724e096d7a7fae3b5cf47c517c44d9ee41b097664514db9df06b` | ad-hoc onedir |
-| 桌面预览 DMG | `.artifacts/python-backend-sign/desktop/AmazMe-0.3.4-macos-arm64.dmg` | 应用版本 0.3.4，不是 Python build_id | Developer ID，已公证并 staple |
+| 桌面预览 DMG | `.artifacts/python-backend-sign/desktop/AmazMe-macos-arm64.dmg` | 应用版本见 packages/gui/package.json，不是 Python build_id | Developer ID，已公证并 staple |
 
 A/B 的 34 项和 Chrome 6 项对应源码 `9b83b083`，不是更早的 `d5cefaf` 包。DMG 的钉住后 SHA256 是 `e0bfad05a4e6ff619d9ce862fd07c57f1fb1190928545c3e88a1ebf24fea84fb`。
 
@@ -64,7 +64,7 @@ A/B 的 34 项和 Chrome 6 项对应源码 `9b83b083`，不是更早的 `d5cefaf
 - Linux 宿主，真实 OpenSSH，cua-driver 和 macOS TCC。
 - 付费网页调用、用量账单、文件 artifact、周期定时规则、通用工作流、记忆向量。
 - 浏览器地址不带会话和工作区时仍会选中第一项。
-- 产品交互、print、JSON、RPC、桌面 `boot`、`web`、`server`、`client`、`import` 和 `export` 不再进入旧 TS 运行时。能启动的公证 DMG 是 `.artifacts/python-backend-sign/desktop-boot/AmazMe-0.3.4-macos-arm64.dmg`，不含 `@amazme/coding-agent`。提交 `73a6e978-4364-415c-a319-0d0f6ddbda17`，SHA256 `232e851afe15c8879cc7a6c6acec5697fa6d3c9ee24c7f0b24ed5916a42c33f0`。`desktop-current` 那份签完后服务起不来。更早的 `python-desktop` DMG 仍含旧宿主。旧模块仍被直接测试引用，所以不删。
+- 产品交互、print、JSON、RPC、桌面 `boot`、`web`、`server`、`client`、`import` 和 `export` 不再进入旧 TS 运行时。能启动的公证 DMG 是 `.artifacts/python-backend-sign/desktop-boot/AmazMe-macos-arm64.dmg`，不含 `@amazme/coding-agent`。提交 `73a6e978-4364-415c-a319-0d0f6ddbda17`，SHA256 `232e851afe15c8879cc7a6c6acec5697fa6d3c9ee24c7f0b24ed5916a42c33f0`。`desktop-current` 那份签完后服务起不来。更早的 `python-desktop` DMG 仍含旧宿主。旧模块仍被直接测试引用，所以不删。
 - Python onedir 没有 Developer ID 公证和 staple。已公证的是仍含旧 TS 宿主的桌面预览 DMG。
 - 正式安装的 Codemode 已改用包内 Node。其他未打包的入口如果再从 PATH 找 Node，进程树检查会拒绝。Python onedir 还没有公证。
 - 34 项矩阵对应 `9b83b083`，不是公证 DMG。

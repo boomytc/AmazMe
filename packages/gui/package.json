@@ -1,6 +1,6 @@
 {
 	"name": "@amazme/gui",
-	"version": "0.3.4",
+	"version": "0.1.0",
 	"private": true,
 	"type": "module",
 	"description": "Electron window for the packaged AmazMe Python backend",

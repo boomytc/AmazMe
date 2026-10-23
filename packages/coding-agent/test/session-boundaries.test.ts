@@ -39,7 +39,7 @@ describe("interactive storage selection boundary", () => {
 
 	it.each([
 		[["--fork", "source-session"], "Unknown option --fork"],
-		[["--session", "terminal.jsonl"], "No durable session matches"],
+		[["--session", "terminal.jsonl"], "old_session_migration_removed"],
 		[["--session-id", "stable-session-id"], "Unknown option --session-id"],
 		[["--no-session", "--continue"], "--no-session cannot be combined"],
 		[["--no-session", "--resume"], "--no-session cannot be combined"],

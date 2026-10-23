@@ -30,7 +30,7 @@ import {
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "support/legacy-durable-cli.ts");
+const cliPath = resolve(__dirname, "../src/cli.ts");
 const SESSION_NAME = "1760000000000-00000000-0000-4000-8000-000000000001";
 
 /** Open `path` the way hosts do: under its session directory's lock, released again afterwards. */
@@ -230,7 +230,7 @@ describe.skipIf(process.platform === "win32")("CLI with a session database that 
 	async function runCli(cwd: string, agentDir: string, args: readonly string[]) {
 		const child = spawn(process.execPath, ["--import", sourceResolverUrl, cliPath, ...args], {
 			cwd,
-			env: { ...process.env, AMAZME_CODING_AGENT_DIR: agentDir, AMAZME_DURABLE_TUI: "1", AMAZME_OFFLINE: "1", NO_COLOR: "1" },
+			env: { ...process.env, AMAZME_CODING_AGENT_DIR: agentDir, AMAZME_OFFLINE: "1", NO_COLOR: "1" },
 			stdio: ["ignore", "pipe", "pipe"],
 		});
 		let stdout = "";
@@ -247,35 +247,25 @@ describe.skipIf(process.platform === "win32")("CLI with a session database that 
 	}
 
 	test.each(BROKEN_SESSION_DATABASES)(
-		"$fixture: --continue and --session exit non-zero with a readable message and leave the files alone",
+		"$fixture: product --session refuses the old database and leaves the files alone",
 		async ({ fixture }) => {
 			const scratch = await realpath(createTempDir("amazme-session-db-cli-"));
 			const agentDir = join(scratch, "agent");
 			const sessionsDir = join(scratch, "sessions");
-			// The session root for this cwd; `--continue` picks the newest session in it.
 			const project = join(scratch, "project");
 			await mkdir(project);
 			const cwd = await realpath(project);
 			const root = join(sessionsDir, createHash("sha256").update(cwd).digest("hex").slice(0, 24));
 			const directory = join(root, SESSION_NAME);
-			const path = await writeBrokenSessionDatabase(directory, fixture);
+			await writeBrokenSessionDatabase(directory, fixture);
 			const before = await snapshotDirectory(sessionsDir);
-
-			for (const args of [
-				["--session-dir", sessionsDir, "--continue", "-p", "hello"],
-				["--session", directory, "-p", "hello"],
-			]) {
-				const result = await runCli(cwd, agentDir, args);
-				expect(result.code, result.stderr).toBe(1);
-				expect(result.stderr).toContain(`Cannot open session database ${path}`);
-				expect(result.stderr).toMatch(/Reason: .+/u);
-				expect(result.stderr).toMatch(/What to do: .+/u);
-				expect(result.stderr).not.toMatch(/^\s+at /mu);
-				expect(result.stderr).not.toContain("ExperimentalWarning");
-				// No new session directory, and every file byte-identical (no new `-wal`/`-shm`).
-				expect(await snapshotDirectory(sessionsDir)).toEqual(before);
-				expect(await readdir(root)).toEqual([SESSION_NAME]);
-			}
+			const result = await runCli(cwd, agentDir, ["--session", directory, "-p", "hello"]);
+			expect(result.code, result.stderr).toBe(1);
+			expect(result.stderr).toContain("old_session_migration_removed");
+			expect(result.stderr).not.toContain("Cannot open session database");
+			expect(result.stderr).not.toMatch(/^\s+at /mu);
+			expect(await snapshotDirectory(sessionsDir)).toEqual(before);
+			expect(await readdir(root)).toEqual([SESSION_NAME]);
 		},
 		120_000,
 	);
