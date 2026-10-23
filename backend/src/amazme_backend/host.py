@@ -165,6 +165,7 @@ from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
 from .rpc import RpcCall, handle_rpc
+from .session_ops import SessionOps, SessionRelay
 from .storage import (
     TERMINAL,
     SessionStore,
@@ -711,13 +712,7 @@ class Host:
         path = session_database(self.profile.path, session)
         if not path.is_file():
             return []
-        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
-                             approval_policy=self.profile.config.approval_policy, require_existing=True)
-        try:
-            await worker.initialize()
-            return await worker.transcript()
-        finally:
-            await worker.db.close()
+        return await self._read_session(session, lambda store: store.transcript())
 
     async def save_project(self, value: ProjectWrite) -> ProjectView:
         self._admit()
@@ -870,17 +865,9 @@ class Host:
         for item in bundle.sessions:
             await self._require_workspace(item.workspace)
             await self.store.ensure_import_session(item.session_id, item.title, item.workspace, item.project_id)
-            path = session_database(self.profile.path, item.session_id)
-            if not path.parent.exists():
-                path.parent.mkdir(parents=True, mode=0o700)
-            worker = SessionStore(path, item.session_id, build=self.build, config=self.profile.config.provider,
-                                 approval_policy=self.profile.config.approval_policy)
-            try:
-                await worker.initialize()
-                await worker.import_transcript([(message.request_id, message.role, message.content)
-                                                for message in item.messages])
-            finally:
-                await worker.db.close()
+            messages = [(message.request_id, message.role, message.content) for message in item.messages]
+            await self._with_session(
+                item.session_id, lambda store: store.import_transcript(messages), require_active=False)
         return ImportResult(format="amazme-export/1", sessions=len(bundle.sessions), created=created)
 
     async def save_memory(self, value: MemoryWrite) -> MemoryView:
@@ -941,8 +928,22 @@ class Host:
             return AutomationTick()
         return AutomationTick(fired=self._automation(row))
 
-    async def _with_session[T](self, session: str, operation: Callable[[SessionStore], Awaitable[T]], *,
-                                require_active: bool = True) -> T:
+    def _session_store(self, path: Path, session: str, *, read_only: bool) -> SessionStore:
+        return SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                            approval_policy=self.profile.config.approval_policy,
+                            read_only=read_only, require_existing=read_only)
+
+    async def _read_session[T](self, session: str, operation: Callable[[SessionStore], Awaitable[T]]) -> T:
+        path = session_database(self.profile.path, session)
+        store = self._session_store(path, session, read_only=True)
+        try:
+            await store.initialize()
+            return await operation(store)
+        finally:
+            await store.db.close()
+
+    async def _with_session[T](self, session: str, operation: Callable[[SessionOps], Awaitable[T]], *,
+                                require_active: bool = True, write: bool = True) -> T:
         self._admit()
         if require_active and await self.store.active_update():
             raise BackendError("update_frozen", status=503)
@@ -954,10 +955,29 @@ class Host:
         path = session_database(self.profile.path, session)
         if not path.parent.exists():
             path.parent.mkdir(parents=True, mode=0o700)
-        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
-                             approval_policy=self.profile.config.approval_policy)
+        read_only = not write and path.is_file()
+        worker = self._session_store(path, session, read_only=read_only)
         try:
             await worker.initialize()
+        except BackendError as exc:
+            await worker.db.close()
+            if exc.code != "session_locked":
+                raise
+            if not write:
+                if not path.is_file():
+                    raise
+                reader = self._session_store(path, session, read_only=True)
+                try:
+                    await reader.initialize()
+                    return await operation(reader)
+                finally:
+                    await reader.db.close()
+            service = await self.store.service()
+            if service is None or exited(service.process_lease):
+                raise
+            # The session worker already owns the library. Send the write to that process.
+            return await operation(SessionRelay(await self.worker(session)))
+        try:
             return await operation(worker)
         finally:
             await worker.db.close()
@@ -967,7 +987,8 @@ class Host:
             session, lambda store: store.open_workflow(value.workflow_id, value.check, value.correction_limit))
 
     async def workflow(self, session: str, workflow_id: str) -> WorkflowView:
-        return await self._with_session(session, lambda store: store.workflow(workflow_id), require_active=False)
+        return await self._with_session(
+            session, lambda store: store.workflow(workflow_id), require_active=False, write=False)
 
     async def resume_workflow(self, session: str, workflow_id: str) -> WorkflowView:
         return await self._with_session(
@@ -978,7 +999,7 @@ class Host:
             session, lambda store: store.record_verdict(workflow_id, value.verdict_id, value.passed))
 
     async def cancel_workflow(self, session: str, workflow_id: str) -> WorkflowView:
-        async def operation(store: SessionStore) -> WorkflowView:
+        async def operation(store: SessionOps) -> WorkflowView:
             view = await store.workflow(workflow_id)
             await store.cancel(view.parent_id, HostFence(host_epoch=await store.host_epoch(), build_id=self.build))
             return await store.workflow(workflow_id)
@@ -999,10 +1020,10 @@ class Host:
         return await self._with_session(session, lambda store: store.save_web_policy(saved))
 
     async def web_policy(self, session: str) -> WebPolicy:
-        return await self._with_session(session, lambda store: store.web_policy(), require_active=False)
+        return await self._with_session(session, lambda store: store.web_policy(), require_active=False, write=False)
 
     async def _web_question(self, session: str) -> str:
-        async def read(store: SessionStore) -> str:
+        async def read(store: SessionOps) -> str:
             roots = [item for item in (await store.snapshot()).requests if item.kind == "root"]
             if not roots:
                 return ""
@@ -1010,7 +1031,7 @@ class Host:
             text = next((item.content for item in reversed(messages)
                          if item.role == "user" and item.content.strip()), roots[-1].text)
             return original_question(text)
-        return await self._with_session(session, read, require_active=False)
+        return await self._with_session(session, read, require_active=False, write=False)
 
     async def web_call(self, session: str, value: WebCallRequest) -> WebCallView:
         question = ""
@@ -1044,7 +1065,8 @@ class Host:
         return await self._with_session(session, lambda store: store.save_computer_policy(value))
 
     async def computer_policy(self, session: str) -> ComputerPolicy:
-        return await self._with_session(session, lambda store: store.computer_policy(), require_active=False)
+        return await self._with_session(
+            session, lambda store: store.computer_policy(), require_active=False, write=False)
 
     async def _park_driver(self, session: str, driver: ComputerDriver) -> int | None:
         self.computer_drivers.pop(session, None)
@@ -1054,7 +1076,7 @@ class Host:
         policy = await self.computer_policy(session)
         if not policy.enabled:
             raise BackendError("computer_disabled")
-        if await self._with_session(session, lambda store: store.computer_blocked()):
+        if await self._with_session(session, lambda store: store.computer_blocked(), write=False):
             raise BackendError("computer_blocked")
         if not await self._computer_enter(session):
             raise BackendError("computer_busy")
@@ -1099,12 +1121,14 @@ class Host:
             raise BackendError("computer_disabled")
         body = json.dumps({"capture_id": value.capture_id, "x": value.x, "y": value.y},
                           sort_keys=True, separators=(",", ":"))
-        found = await self._with_session(session, lambda store: store.find_computer_action(value.action_id, body))
+        found = await self._with_session(
+            session, lambda store: store.find_computer_action(value.action_id, body), write=False)
         if found is not None:
             return found
-        if await self._with_session(session, lambda store: store.computer_blocked()):
+        if await self._with_session(session, lambda store: store.computer_blocked(), write=False):
             raise BackendError("computer_blocked")
-        capture = await self._with_session(session, lambda store: store.latest_computer_capture())
+        capture = await self._with_session(
+            session, lambda store: store.latest_computer_capture(), write=False)
         if (capture is None or capture.capture_id != value.capture_id
                 or time.time_ns() // 1_000_000 - capture.observed_ms > policy.max_age_ms):
             raise BackendError("computer_stale")
@@ -1145,7 +1169,8 @@ class Host:
         if driver is not None:
             code = await self._park_driver(session, driver)
             await self._with_session(session, lambda store: store.note_computer_exit(code))
-        blocked, exit_code, proof = await self._with_session(session, lambda store: store.computer_runtime())
+        blocked, exit_code, proof = await self._with_session(
+            session, lambda store: store.computer_runtime(), write=False)
         if not blocked:
             return ComputerCleanup(cleared=True, proof=proof)
         if exit_code is None:
@@ -1192,13 +1217,8 @@ class Host:
         path = session_database(self.profile.path, session)
         if not path.is_file():
             return SearchResults(query=query.strip(), hits=[])
-        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
-                             approval_policy=self.profile.config.approval_policy, require_existing=True)
-        try:
-            await worker.initialize()
-            return SearchResults(query=query.strip(), hits=await worker.search(query))
-        finally:
-            await worker.db.close()
+        hits = await self._read_session(session, lambda store: store.search(query))
+        return SearchResults(query=query.strip(), hits=hits)
 
     async def session_usage(self, session: str) -> UsageReport:
         self._admit()
@@ -1207,13 +1227,7 @@ class Host:
         path = session_database(self.profile.path, session)
         if not path.is_file():
             return UsageReport(session_id=session, priced=True, cost_micro_usd=0)
-        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
-                             approval_policy=self.profile.config.approval_policy, require_existing=True)
-        try:
-            await worker.initialize()
-            return await worker.usage()
-        finally:
-            await worker.db.close()
+        return await self._read_session(session, lambda store: store.usage())
 
     async def session_diagnostic(self, session: str) -> SessionDiagnostic:
         self._admit()
@@ -1222,27 +1236,16 @@ class Host:
         path = session_database(self.profile.path, session)
         if not path.is_file():
             return SessionDiagnostic(session_id=session, present=False, state="absent")
-        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
-                             approval_policy=self.profile.config.approval_policy, require_existing=True)
-        try:
-            await worker.initialize()
-            return await worker.diagnostic()
-        finally:
-            await worker.db.close()
+        return await self._read_session(session, lambda store: store.diagnostic())
 
     async def _plugin_work_pending(self) -> bool:
         for session in (await self.sessions()).sessions:
             path = session_database(self.profile.path, session.session_id)
             if not path.is_file():
                 continue
-            worker = SessionStore(path, session.session_id, build=self.build, config=self.profile.config.provider,
-                                 approval_policy=self.profile.config.approval_policy, require_existing=True)
-            try:
-                await worker.initialize()
-                if any(item.status not in TERMINAL for item in (await worker.snapshot()).requests):
-                    return True
-            finally:
-                await worker.db.close()
+            snapshot = await self._read_session(session.session_id, lambda store: store.snapshot())
+            if any(item.status not in TERMINAL for item in snapshot.requests):
+                return True
         return False
 
     async def register_plugin(self, value: PluginDraft) -> PluginView:
@@ -1283,16 +1286,14 @@ class Host:
         path = session_database(self.profile.path, session)
         if not path.is_file():
             return
-        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
-                             approval_policy=self.profile.config.approval_policy, require_existing=True)
-        try:
-            await worker.initialize()
-            fence = HostFence(host_epoch=await worker.host_epoch(), build_id=self.build)
-            for receipt in (await worker.snapshot()).requests:
+
+        async def operation(store: SessionOps) -> None:
+            fence = HostFence(host_epoch=await store.host_epoch(), build_id=self.build)
+            for receipt in (await store.snapshot()).requests:
                 if receipt.kind == "root" and receipt.status not in TERMINAL and not receipt.cancel_requested:
-                    await worker.cancel(receipt.request_id, fence)
-        finally:
-            await worker.db.close()
+                    await store.cancel(receipt.request_id, fence)
+
+        await self._with_session(session, operation, require_active=False)
 
     async def compact_session(self, session: str, value: CompactSession) -> Compaction:
         self._admit()
@@ -1306,20 +1307,16 @@ class Host:
         path = session_database(self.profile.path, session)
         if not path.is_file():
             raise BackendError("compaction_unsettled")
-        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
-                             approval_policy=self.profile.config.approval_policy, require_existing=True)
-        try:
-            await worker.initialize()
-            payloads = await worker.message_payloads(value.through_request_id)
-            if not payloads:
-                raise BackendError("compaction_unsettled")
-            basis = compaction_basis(payloads)
-            # Summarize before the commit. A failed summary does not replace or delete history.
-            summary = await summarize(self.profile.config.provider, [
-                Message.model_validate_json(payload) for payload in payloads])
-            return await worker.commit_compaction(value.compaction_id, value.through_request_id, summary, basis)
-        finally:
-            await worker.db.close()
+        payloads = await self._read_session(session, lambda store: store.message_payloads(value.through_request_id))
+        if not payloads:
+            raise BackendError("compaction_unsettled")
+        basis = compaction_basis(payloads)
+        # Summarize before the commit. A failed summary does not replace or delete history.
+        summary = await summarize(self.profile.config.provider, [
+            Message.model_validate_json(payload) for payload in payloads])
+        return await self._with_session(
+            session, lambda store: store.commit_compaction(
+                value.compaction_id, value.through_request_id, summary, basis))
 
     async def reader(self, session: str) -> ReadPeer:
         self._admit()

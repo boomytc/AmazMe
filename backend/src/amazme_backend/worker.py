@@ -72,6 +72,7 @@ from .session_domain import (
     WebRetrieval,
     WebReturned,
 )
+from .session_ops import SessionOp, SessionOpResult, run_session_op
 from .storage import SessionStore, now_ms, session_database
 from .transport import app_factory
 from .web_tools import execute_web_call
@@ -567,6 +568,10 @@ def application(owner: Worker) -> FastAPI:
     @app.get("/snapshot")
     async def snapshot() -> Snapshot:
         return await owner.store.snapshot(owner.state)
+
+    @app.post("/session-ops")
+    async def session_ops(value: SessionOp) -> SessionOpResult:
+        return SessionOpResult(payload=await run_session_op(owner.store, value.name, value.payload))
 
     @app.get("/events")
     async def events(after: int = 0, stream_id: str = "") -> Replay:

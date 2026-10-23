@@ -139,7 +139,7 @@ async def owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lease: ProcessL
 
 async def parent_store(owner: Host) -> SessionStore:
     path = session_database(owner.profile.path, PARENT)
-    path.parent.mkdir(parents=True, mode=0o700)
+    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
     store = SessionStore(path, PARENT, build=owner.build, approval_policy="auto", instance="parent-worker")
     await store.initialize()
     await store.fence(fence_for(owner.build))
@@ -282,11 +282,14 @@ async def test_archive_keeps_history_and_refuses_new_work(owner: Host) -> None:
         await finish(parent, "alpha", "r1", owner.build)
         await parent.accept(Submit(request_id="queued", text="not started"), fence_for(owner.build))
         preserved = await message_payloads(parent)
+        await parent.db.close()
         archived = await owner.archive_session(PARENT, True)
+        parent = await parent_store(owner)
         assert archived.archived is True
         assert await message_payloads(parent) == preserved
         assert (await parent.get("r1")).status == "succeeded" and (await parent.get("r1")).text == "alpha"
         assert (await parent.get("queued")).status == "cancelled"
+        await parent.db.close()
         assert (await owner.archive_session(PARENT, True)).archived is True
         with pytest.raises(BackendError, match="session_archived"):
             await owner.store.enqueue(PARENT, "submit", "fresh", Submit(request_id="fresh", text="later"))
@@ -295,6 +298,7 @@ async def test_archive_keeps_history_and_refuses_new_work(owner: Host) -> None:
         await owner.store.demand(PARENT)
         assert PARENT not in await owner.store.due()
         assert (await owner.archive_session(PARENT, False)).archived is False
+        parent = await parent_store(owner)
         await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
         action = await Driver(parent).until(ModelInvocation)
         assert isinstance(action, ModelInvocation)
@@ -336,10 +340,14 @@ async def test_compaction_replaces_context_and_keeps_original_messages(owner: Ho
     try:
         await finish(parent, "alpha", "r1", owner.build)
         original = await message_payloads(parent)
+        await parent.db.close()
         created = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+        parent = await parent_store(owner)
         assert created.summary and await message_payloads(parent) == original
         assert (await parent.snapshot()).compaction == created.summary
+        await parent.db.close()
         again = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+        parent = await parent_store(owner)
         assert again == created
         stale = compaction_basis(["not-the-history"])
         with pytest.raises(BackendError, match="compaction_expired"):
@@ -383,7 +391,9 @@ async def test_archived_session_cannot_compact(owner: Host) -> None:
     try:
         await finish(parent, "alpha", "r1", owner.build)
         original = await message_payloads(parent)
+        await parent.db.close()
         await owner.archive_session(PARENT, True)
+        parent = await parent_store(owner)
         with pytest.raises(BackendError, match="session_archived"):
             await owner.compact_session(PARENT, CompactSession(compaction_id="c-arch", through_request_id="r1"))
         assert await message_payloads(parent) == original
@@ -619,7 +629,9 @@ async def test_search_reads_only_this_sessions_durable_text(owner: Host) -> None
         assert any("gamma only" in hit.excerpt for hit in await other.search("gamma"))
         with pytest.raises(BackendError, match="search_query"):
             await parent.search("   ")
+        await parent.db.close()
         await owner.archive_session(PARENT, True)
+        parent = await parent_store(owner)
         assert any("alpha token" in hit.excerpt for hit in await parent.search("alpha"))
         listed = await owner.search_session(PARENT, "alpha")
         assert any("alpha token" in hit.excerpt for hit in listed.hits)

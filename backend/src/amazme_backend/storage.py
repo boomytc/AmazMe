@@ -11,8 +11,9 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal
+from typing import IO, Literal
 
+from .common import lock
 from .contracts import (
     Approval,
     ApprovalDecision,
@@ -85,7 +86,9 @@ _PUBLIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 def _public_code(value: str) -> str:
     return value if _PUBLIC_CODE.fullmatch(value) else "unlisted"
 _SESSION_ID = re.compile(r"^[a-f0-9]{32}$")
-_SESSION_FILES = frozenset({"session.sqlite", "session.sqlite-wal", "session.sqlite-shm"})
+_SESSION_FILES = frozenset({
+    "session.sqlite", "session.sqlite-wal", "session.sqlite-shm", "session.lock",
+})
 
 
 def compaction_basis(payloads: list[str]) -> str:
@@ -186,17 +189,30 @@ def correction_text(attempt: int) -> str:
 
 
 class Database:
-    def __init__(self, path: Path, *, require_existing: bool = False,
+    def __init__(self, path: Path, *, require_existing: bool = False, read_only: bool = False,
                  preflight: Callable[[sqlite3.Connection], None] | None = None):
         self.path = path
         self.require_existing = require_existing
+        self.read_only = read_only
         self.preflight = preflight
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="sqlite-owner")
         self.connection: sqlite3.Connection | None = None
+        self.lock_file: IO[str] | None = None
         self.closed = False
         self.failure: str = ""
         self.identity: tuple[int, int] | None = None
         self.file_size = 0
+
+    def _acquire_session_lock(self) -> None:
+        """One writer owns session.sqlite. The lock is a sibling file, not the database inode."""
+        if self.read_only or self.lock_file is not None or self.path.name != "session.sqlite":
+            return
+        try:
+            self.lock_file = lock(self.path.with_name("session.lock"))
+        except BlockingIOError as exc:
+            raise BackendError("session_locked", status=409) from exc
+        except OSError as exc:
+            raise BackendError("session_lock_refused", status=409) from exc
 
     def _validate_file(self, *, initialized: bool = True) -> None:
         info = self.path.stat()
@@ -217,6 +233,26 @@ class Database:
                     self.identity = (info.st_dev, info.st_ino)
                 if self.require_existing and (not exists or self.path.stat().st_size == 0):
                     raise BackendError("storage_missing", status=503)
+                if self.read_only:
+                    if not exists or self.path.stat().st_size == 0:
+                        raise BackendError("storage_missing", status=503)
+                    opened = sqlite3.connect(self.path.resolve().as_uri() + "?mode=ro", uri=True, isolation_level=None)
+                    try:
+                        opened.row_factory = sqlite3.Row
+                        opened.execute("PRAGMA query_only=ON")
+                        opened.execute("PRAGMA foreign_keys=ON")
+                        info = self.path.stat()
+                        self.identity = (info.st_dev, info.st_ino)
+                        self.file_size = info.st_size
+                        self._preflight(opened)
+                    except BaseException:
+                        opened.close()
+                        raise
+                    self.connection = opened
+                    self._validate_file()
+                    result = operation(self.connection)
+                    self._validate_file()
+                    return result
                 if exists and self.path.stat().st_size:
                     # SQLite may create/rebuild SHM even with mode=ro. Probe a private copy
                     # including committed WAL pages, never the evidence files themselves.
@@ -233,6 +269,8 @@ class Database:
                             probe.close()
                 if exists:
                     self._validate_file(initialized=False)
+                # Preflight has already refused a bad file. Take the lock before creating or writing.
+                self._acquire_session_lock()
                 self.connection = sqlite3.connect(self.path.resolve().as_uri() + ("?mode=rw" if exists else "?mode=rwc"),
                                                   uri=True, isolation_level=None)
                 if self.identity is None:
@@ -278,6 +316,9 @@ class Database:
             if self.connection is not None:
                 self.connection.close()
                 self.connection = None
+            if self.lock_file is not None:
+                self.lock_file.close()
+                self.lock_file = None
         try:
             await asyncio.get_running_loop().run_in_executor(self.pool, close_connection)
         finally:
@@ -324,8 +365,9 @@ def _search_text(request_id: str, ordinal: int, role: Literal["user", "assistant
 class SessionStore:
     def __init__(self, path: Path, session_id: str, *, build: str = "test-build",
                  config: ProviderConfig | None = None, approval_policy: str = "mutations",
-                 faults: Faults | None = None, require_existing: bool = False, instance: str = ""):
-        self.db = Database(path, require_existing=require_existing, preflight=self._preflight)
+                 faults: Faults | None = None, require_existing: bool = False, read_only: bool = False,
+                 instance: str = ""):
+        self.db = Database(path, require_existing=require_existing, read_only=read_only, preflight=self._preflight)
         self.instance = instance or secrets.token_hex(16)
         self.session_id, self.build = session_id, build
         self.config = config or ProviderConfig(provider="faux")
@@ -367,6 +409,10 @@ class SessionStore:
             raise BackendError("storage_corrupt", status=503)
 
     async def initialize(self) -> None:
+        if self.db.read_only:
+            await self.db.call(lambda _db: None)
+            return
+
         def operation(db: sqlite3.Connection) -> None:
             db.executescript("""
                 BEGIN IMMEDIATE;

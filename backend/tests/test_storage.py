@@ -217,13 +217,23 @@ async def test_valid_wal_preflight_reads_committed_pages(tmp_path: Path) -> None
     await first.initialize()
     await first.fence(FENCE)
     await first.accept(Submit(request_id="wal", text="committed"), FENCE)
-    reopened = SessionStore(path, "session", require_existing=True)
+    reader = SessionStore(path, "session", require_existing=True, read_only=True)
+    writer = SessionStore(path, "session", require_existing=True)
     try:
-        await reopened.initialize()
-        assert (await reopened.get("wal")).text == "committed"
+        await reader.initialize()
+        assert (await reader.get("wal")).text == "committed"
+        with pytest.raises(BackendError, match="session_locked"):
+            await writer.initialize()
     finally:
-        await reopened.db.close()
+        await writer.db.close()
+        await reader.db.close()
         await first.db.close()
+    follower = SessionStore(path, "session", require_existing=True)
+    try:
+        await follower.initialize()
+        assert (await follower.get("wal")).text == "committed"
+    finally:
+        await follower.db.close()
 
 
 async def test_logical_corruption_is_rejected_before_writable_open(store: SessionStore) -> None:
