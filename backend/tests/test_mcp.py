@@ -249,13 +249,13 @@ def test_browser_approves_an_mcp_call() -> None:
     app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
     session = "d" * 32
     digest = "ab" * 32
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
+    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\nconst boundSession=" + json.dumps(session) + ";\n" + r'''
         import assert from 'node:assert/strict';
         import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
+        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session='+boundSession+'&workspace=primary'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
         globalThis.fetch = async (path, options={})=>{

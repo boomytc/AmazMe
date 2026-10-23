@@ -562,10 +562,10 @@ def test_browser_connection_ownership_and_safe_retry_without_browser():
     script = "const appURL=" + json.dumps(browser_module()) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
         import assert from 'node:assert/strict';
         import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
+        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const snapshots = Object.fromEntries(['a','b'].map(id=>[id, {session_id:id,stream_id:'stream-'+id,seq:'0',state:'ready',requests:[],events:[],approvals:[],effects:[],previews:[],pending:0,next_wake_ms:0}]));
         const calls = [], attachments = new Map(), sockets = [];
         let count = 0, heldReply = null, holdSubmission = true, failSubmission = false, healthState = 'ready', loseResolution = true;

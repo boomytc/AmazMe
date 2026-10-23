@@ -417,10 +417,10 @@ def test_browser_branches_from_the_selected_turn() -> None:
     script += "const childSnapshot=" + child_snapshot.model_dump_json() + ";\n" + r'''
         import assert from 'node:assert/strict';
         import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
+        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',protocol:'amazme-http/1'};
+        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1',protocol:'amazme-http/1'};
         const calls = [];
         let branched = false, count = 0;
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
@@ -486,10 +486,10 @@ def test_browser_archive_keeps_the_visible_turn() -> None:
     script += "const snap=" + snapshot.model_dump_json() + ";\n" + r'''
         import assert from 'node:assert/strict';
         import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
+        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         let archived = false;
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         globalThis.fetch = async (path, options={})=>{
@@ -548,10 +548,10 @@ def test_browser_compaction_keeps_the_original_turn() -> None:
     script += "const snap=" + snapshot.model_dump_json() + ";\n" + r'''
         import assert from 'node:assert/strict';
         import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
+        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         globalThis.fetch = async (path, options={})=>{
           if(path==='/api/v1/bootstrap') return response(identity);
@@ -644,10 +644,10 @@ def test_browser_searches_the_selected_session() -> None:
     script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
         import assert from 'node:assert/strict';
         import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
+        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=''' + session + r'''&workspace=primary'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
         globalThis.fetch = async (path, options={})=>{

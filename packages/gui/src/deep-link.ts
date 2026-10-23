@@ -1,5 +1,6 @@
 /** Names carried in a desktop window URL. The page binds this session and workspace, not the first row. */
 export interface WindowAddress {
+	readonly hostId?: string;
 	readonly sessionId?: string;
 	readonly workspace?: string;
 	readonly fresh?: boolean;
@@ -12,13 +13,16 @@ export interface WindowAddress {
  * session in the named workspace instead of attaching to whichever conversation is first.
  */
 export function withWindowTarget(pageUrl: string, target: WindowAddress = {}): string {
+	const hostId = target.hostId?.trim();
 	const sessionId = target.sessionId?.trim();
 	const workspace = target.workspace?.trim();
+	const namesHost = hostId !== undefined && hostId.length > 0;
 	const namesSession = sessionId !== undefined && sessionId.length > 0;
 	const namesWorkspace = workspace !== undefined && workspace.length > 0;
-	if (!namesSession && !namesWorkspace && target.fresh !== true) return pageUrl;
+	if (!namesHost && !namesSession && !namesWorkspace && target.fresh !== true) return pageUrl;
 	try {
 		const url = new URL(pageUrl);
+		if (namesHost) url.searchParams.set("host", hostId);
 		if (namesSession) url.searchParams.set("session", sessionId);
 		if (namesWorkspace) url.searchParams.set("workspace", workspace);
 		if (target.fresh === true) url.searchParams.set("new", "1");

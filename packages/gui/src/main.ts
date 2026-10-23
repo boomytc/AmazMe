@@ -307,7 +307,7 @@ async function refreshApplicationMenu(): Promise<void> {
 				applicationMenuTemplate(process.platform, locale, {
 					newSession: () => send("new-session"),
 					newWindow: () => {
-						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, { workspace: "primary", fresh: true });
+						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: "primary", fresh: true }));
 					},
 					settings: () => send("settings"),
 					updates: () => { void updates?.show(); },
@@ -574,6 +574,11 @@ async function announceApprovals(title: string, count: number, target: BrowserWi
 	}
 }
 
+function pythonWindow(target: WindowAddress): WindowAddress {
+	const hostId = host?.pythonReady()?.profileId;
+	return hostId === undefined || hostId.length === 0 ? target : { ...target, hostId };
+}
+
 async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<void> {
 	hostPageUrl ??= pageUrl;
 	const addressed = withWindowTarget(pageUrl, target);
@@ -758,7 +763,7 @@ async function boot(): Promise<void> {
 		}
 	}
 	const namedSession = deepLinkSession?.trim();
-	await openWindow(pageUrl, namedSession ? { sessionId: namedSession } : { workspace: "primary", fresh: true });
+	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: "primary" } : { workspace: "primary", fresh: true }));
 	if (!SMOKE && !notices.quitting) {
 		const target = dirname(dirname(dirname(process.execPath)));
 		if (process.argv.includes("--amazme-update-job")) {
@@ -806,13 +811,13 @@ async function initializeDesktop(): Promise<void> {
 		const fresh = argv.some((arg) => arg === "--amazme-new-window");
 		if (fresh && hostPageUrl !== undefined) {
 			process.stdout.write("desktop window requested\n");
-			void openWindow(hostPageUrl, { workspace: "primary", fresh: true });
+			void openWindow(hostPageUrl, pythonWindow({ workspace: "primary", fresh: true }));
 			return;
 		}
 		showWindow();
 	});
 	app.on("activate", () => {
-		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl, { workspace: "primary", fresh: true });
+		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: "primary", fresh: true }));
 		else showWindow();
 	});
 	app.on("window-all-closed", () => {

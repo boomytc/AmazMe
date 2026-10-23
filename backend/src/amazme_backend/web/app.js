@@ -337,17 +337,15 @@ function startClient() {
   function namedTarget() {
     const params = new URLSearchParams(location.search);
     return {
+      host: (params.get("host") || "").trim(),
       session: (params.get("session") || "").trim(),
       workspace: (params.get("workspace") || "").trim(),
       fresh: params.get("new") === "1",
     };
   }
-  function addressedWindow() {
-    const params = new URLSearchParams(location.search);
-    return params.has("session") || params.has("workspace") || params.has("new");
-  }
-  function rememberWindow(sessionId, workspace) {
+  function rememberWindow(sessionId, workspace, host) {
     const url = new URL(location.href);
+    url.searchParams.set("host", host);
     url.searchParams.set("session", sessionId);
     url.searchParams.set("workspace", workspace);
     url.searchParams.delete("new");
@@ -355,31 +353,36 @@ function startClient() {
   }
   async function bindWindow(sessions) {
     const target = namedTarget();
+    if (!target.host || !target.workspace || (!target.session && !target.fresh)) {
+      throw new Error("请在地址中写明宿主、会话和工作区");
+    }
+    if (!identity || identity.profile_id !== target.host) throw new Error("链接的宿主不一致");
     if (target.fresh && !target.session) {
-      const workspace = target.workspace || "primary";
-      const created = await api("/api/v1/sessions", "POST", {title:"窗口任务", workspace});
-      const bound = created.workspace || workspace;
-      if (bound !== workspace) throw new Error("新建会话的工作区不一致");
-      rememberWindow(created.session_id, bound);
-      if (namedTarget().fresh || namedTarget().session !== created.session_id) throw new Error("窗口地址没有写上新会话");
+      const created = await api("/api/v1/sessions", "POST", {title:"窗口任务", workspace: target.workspace});
+      const bound = created.workspace || target.workspace;
+      if (bound !== target.workspace) throw new Error("新建会话的工作区不一致");
+      rememberWindow(created.session_id, bound, target.host);
+      if (namedTarget().fresh || namedTarget().session !== created.session_id || namedTarget().host !== target.host) {
+        throw new Error("窗口地址没有写上新会话");
+      }
       await load();
       return;
     }
-    if (target.session) {
-      const match = sessions.find(item => item.session_id === target.session);
-      if (!match) throw new Error("链接的会话不存在");
-      const workspace = match.workspace || "primary";
-      if (target.workspace && target.workspace !== workspace) throw new Error("链接的工作区与会话不一致");
-      rememberWindow(match.session_id, workspace);
-      if (selected !== match.session_id) await select(match.session_id);
-      return;
-    }
-    if (!selected && sessions.length) {
-      await select(sessions.some(item => item.session_id === pending?.target) ? pending.target : sessions[0].session_id);
-    }
+    const match = sessions.find(item => item.session_id === target.session);
+    if (!match) throw new Error("链接的会话不存在");
+    const workspace = match.workspace || "primary";
+    if (target.workspace !== workspace) throw new Error("链接的工作区与会话不一致");
+    rememberWindow(match.session_id, workspace, target.host);
+    if (selected !== match.session_id) await select(match.session_id);
   }
   async function select(id, resume = false) {
-    if (addressedWindow()) rememberWindow(id, sessionWorkspaces.get(id) || namedTarget().workspace || "primary");
+    const workspace = sessionWorkspaces.get(id) || namedTarget().workspace;
+    const host = identity?.profile_id || "";
+    if (!host || !workspace) throw new Error("请在地址中写明宿主、会话和工作区");
+    const named = namedTarget();
+    if (named.host && named.host !== host) throw new Error("链接的宿主不一致");
+    if (named.workspace && named.workspace !== workspace) throw new Error("链接的工作区与会话不一致");
+    rememberWindow(id, workspace, host);
     if (selected) drafts.set(selected, $("prompt").value);
     const cached = resume && current?.session === id ? current.model : null;
     if (selected !== id) {
@@ -481,7 +484,7 @@ function startClient() {
       sessionWorkspaces.set(item.session_id, item.workspace || "primary");
     }
     $("sessions").replaceChildren(...value.sessions.map(item => button(item.archived ? `${item.title}（已归档）` : item.title, () => void select(item.session_id))));
-    await bindWindow(value.sessions);
+    try { await bindWindow(value.sessions); } catch (failure) { error(failure); }
     renderHealth();
   }
   async function runAction(key, connection, path, body) {
@@ -1049,10 +1052,13 @@ function startClient() {
   $("create").onclick = async () => {
     $("create").disabled = true;
     try {
-      const workspace = namedTarget().workspace || sessionWorkspaces.get(selected) || "primary";
+      const workspace = namedTarget().workspace || "primary";
       const value = await api("/api/v1/sessions", "POST", {title:"工作区任务", workspace});
+      const bound = value.workspace || workspace;
+      if (!identity?.profile_id) throw new Error("请在地址中写明宿主、会话和工作区");
+      rememberWindow(value.session_id, bound, identity.profile_id);
       await load();
-      await select(value.session_id);
+      if (selected !== value.session_id) await select(value.session_id);
     }
     catch (failure) { error(failure); } finally { controls(); }
   };

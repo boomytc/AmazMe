@@ -24,6 +24,9 @@ describe("withWindowTarget", () => {
 		expect(withWindowTarget("http://127.0.0.1:5000/", { sessionId: "abc", workspace: "primary" })).toBe(
 			"http://127.0.0.1:5000/?session=abc&workspace=primary",
 		);
+		expect(withWindowTarget("http://127.0.0.1:5000/", { hostId: "host-1", workspace: "primary", fresh: true })).toBe(
+			"http://127.0.0.1:5000/?host=host-1&workspace=primary&new=1",
+		);
 	});
 
 	test("leaves a bare host URL and a bad URL unchanged", () => {

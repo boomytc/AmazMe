@@ -38,6 +38,7 @@ def test_window_url_binds_its_own_session_and_pagehide_does_not_cancel() -> None
             "mismatch": _module("mismatch"),
             "missing": _module("missing"),
             "bare": _module("bare"),
+            "wrong": _module("wrong"),
         }) + ";\n"
         "const ids=" + json.dumps({"a": SESSION_A, "b": SESSION_B, "c": SESSION_C}) + ";\n"
         + r"""
@@ -52,7 +53,7 @@ def test_window_url_binds_its_own_session_and_pagehide_does_not_cancel() -> None
           const window = new Window({url});
           window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
           const calls=[];
-          const identity={build_id:'build',host_epoch:1,state:'ready'};
+          const identity={build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
           const response=(value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
           globalThis.window=window;
           globalThis.document=window.document;
@@ -107,8 +108,9 @@ def test_window_url_binds_its_own_session_and_pagehide_does_not_cancel() -> None
           return calls.filter(call=>call.method==='POST' && call.path.endsWith('/attachments')).map(call=>call.path.split('/')[4]);
         }
         async function main() {
-        const fresh=await open('fresh','http://127.0.0.1:1234/?new=1&workspace=primary');
+        const fresh=await open('fresh','http://127.0.0.1:1234/?host=host-1&new=1&workspace=primary');
         await until(()=>$('connection').textContent==='已连接');
+        assert.equal(new URL(location.href).searchParams.get('host'), 'host-1');
         assert.equal(new URL(location.href).searchParams.get('session'), ids.c);
         assert.equal(new URL(location.href).searchParams.get('workspace'), 'primary');
         assert.equal(new URL(location.href).searchParams.get('new'), null);
@@ -118,27 +120,38 @@ def test_window_url_binds_its_own_session_and_pagehide_does_not_cancel() -> None
         assert.equal(fresh.calls.some(call=>call.path.includes('/cancel')), false);
         await fresh.window.happyDOM.abort();
 
-        const named=await open('named','http://127.0.0.1:1234/?session='+ids.b+'&workspace=primary');
+        const named=await open('named','http://127.0.0.1:1234/?host=host-1&session='+ids.b+'&workspace=primary');
         await until(()=>$('connection').textContent==='已连接');
         assert.deepEqual(attachments(named.calls), [ids.b]);
         assert.equal(new URL(location.href).searchParams.get('session'), ids.b);
         await named.window.happyDOM.abort();
 
-        const mismatch=await open('mismatch','http://127.0.0.1:1234/?session='+ids.b+'&workspace=docs');
+        const mismatch=await open('mismatch','http://127.0.0.1:1234/?host=host-1&session='+ids.b+'&workspace=docs');
         await until(()=>$('error').textContent.includes('工作区'));
         assert.deepEqual(attachments(mismatch.calls), []);
         await mismatch.window.happyDOM.abort();
 
-        const missing=await open('missing','http://127.0.0.1:1234/?session='+'d'.repeat(32)+'&workspace=primary');
+        const missing=await open('missing','http://127.0.0.1:1234/?host=host-1&session='+'d'.repeat(32)+'&workspace=primary');
         await until(()=>$('error').textContent.includes('会话不存在'));
         assert.deepEqual(attachments(missing.calls), []);
         await missing.window.happyDOM.abort();
 
         const bare=await open('bare','http://127.0.0.1:1234/');
+        await until(()=>$('error').textContent.includes('宿主'));
+        assert.notEqual($('connection').textContent, '已连接');
+        assert.deepEqual(attachments(bare.calls), []);
+        bare.window.document.querySelectorAll('#sessions button')[1].click();
         await until(()=>$('connection').textContent==='已连接');
-        assert.deepEqual(attachments(bare.calls), [ids.a]);
-        assert.equal(new URL(location.href).search, '');
+        assert.equal(new URL(location.href).searchParams.get('host'), 'host-1');
+        assert.equal(new URL(location.href).searchParams.get('session'), ids.b);
+        assert.equal(new URL(location.href).searchParams.get('workspace'), 'primary');
+        assert.deepEqual(attachments(bare.calls), [ids.b]);
         await bare.window.happyDOM.abort();
+
+        const wrong=await open('wrong','http://127.0.0.1:1234/?host=other&session='+ids.a+'&workspace=primary');
+        await until(()=>$('error').textContent.includes('宿主'));
+        assert.deepEqual(attachments(wrong.calls), []);
+        await wrong.window.happyDOM.abort();
         console.log('window binding verified');
         process.exit(0);
         }
