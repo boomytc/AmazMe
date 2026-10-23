@@ -3014,6 +3014,45 @@
         }
       }
     },
+    "/api/v1/sessions/{session_id}/diagnostics": {
+      "get": {
+        "summary": "Session Diagnostic",
+        "operationId": "session_diagnostic_api_v1_sessions__session_id__diagnostics_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDiagnostic"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/snapshot": {
       "get": {
         "summary": "Snapshot",
@@ -6382,6 +6421,62 @@
         ],
         "title": "Session"
       },
+      "SessionDiagnostic": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "present": {
+            "type": "boolean",
+            "title": "Present"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "absent",
+              "ready",
+              "blocked",
+              "stopping",
+              "frozen"
+            ],
+            "title": "State"
+          },
+          "blocked_code": {
+            "type": "string",
+            "title": "Blocked Code",
+            "default": ""
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Failed",
+            "default": 0
+          },
+          "unknown": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unknown",
+            "default": 0
+          },
+          "error_codes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Error Codes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "present",
+          "state"
+        ],
+        "title": "SessionDiagnostic",
+        "description": "Persisted session state. Error text that is not a short code is replaced before it leaves."
+      },
       "SessionList": {
         "properties": {
           "sessions": {
@@ -7020,11 +7115,33 @@
             "title": "Output Tokens",
             "default": 0
           },
+          "priced_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Priced Calls",
+            "default": 0
+          },
+          "unpriced_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unpriced Calls",
+            "default": 0
+          },
           "priced": {
             "type": "boolean",
-            "const": false,
             "title": "Priced",
             "default": false
+          },
+          "cost_micro_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Micro Usd"
           }
         },
         "additionalProperties": false,
@@ -7033,7 +7150,7 @@
           "session_id"
         ],
         "title": "UsageReport",
-        "description": "Token totals already stored with model completions. No price is configured, so this is not a bill."
+        "description": "Token totals and catalog cost already stored with finished model calls.\n\n``priced`` is true only when every finished call had a catalog rate. A partial sum is not returned\nas ``cost_micro_usd``. One micro-USD is one millionth of a US dollar; the stored product truncates."
       },
       "ValidationError": {
         "properties": {

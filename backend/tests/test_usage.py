@@ -60,7 +60,7 @@ async def _finish_prompt(host: Host, session: str, request_id: str, text: str) -
         await store.db.close()
 
 
-async def test_usage_totals_follow_visible_answers_and_have_no_price(tmp_path: Path) -> None:
+async def test_usage_totals_follow_visible_answers_and_the_faux_catalog_price(tmp_path: Path) -> None:
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
@@ -75,14 +75,16 @@ async def test_usage_totals_follow_visible_answers_and_have_no_price(tmp_path: P
             empty = await client.get(f"/api/v1/sessions/{session}/usage")
             assert empty.status_code == 200
             assert empty.json() == {
-                "session_id": session, "model_calls": 0, "input_tokens": 0, "output_tokens": 0, "priced": False}
+                "session_id": session, "model_calls": 0, "input_tokens": 0, "output_tokens": 0,
+                "priced_calls": 0, "unpriced_calls": 0, "priced": True, "cost_micro_usd": 0}
             first = await _finish_prompt(host, session, "one", "你好")
             assert first.decision is not None and first.decision.answer
             once = (await client.get(f"/api/v1/sessions/{session}/usage")).json()
             assert once["model_calls"] == 1
             assert once["input_tokens"] == len("你好")
             assert once["output_tokens"] == len(first.decision.answer)
-            assert once["priced"] is False and "cost" not in once
+            assert once["priced"] is True and once["cost_micro_usd"] == 0
+            assert once["unpriced_calls"] == 0
             assert KEY not in json.dumps(once)
             second = await _finish_prompt(host, session, "two", "再来")
             assert second.decision is not None and second.decision.answer
@@ -91,12 +93,31 @@ async def test_usage_totals_follow_visible_answers_and_have_no_price(tmp_path: P
             # The second call sees the first user text, its visible answer, and the new text.
             assert twice["input_tokens"] == once["input_tokens"] + len("你好") + len(first.decision.answer) + len("再来")
             assert twice["output_tokens"] == len(first.decision.answer) + len(second.decision.answer)
-            assert twice["priced"] is False
+            assert twice["priced"] is True and twice["cost_micro_usd"] == 0
     finally:
         await host.store.db.close()
 
 
-def test_page_shows_unpriced_usage_for_the_selected_session() -> None:
+def test_deepseek_flash_price_matches_the_published_catalog() -> None:
+    from decimal import Decimal
+
+    from amazme_backend.providers import catalog_price, token_cost_micro
+
+    catalog = json.loads((Path(__file__).parents[2] / "packages/ai/src/providers/data/deepseek.json").read_text())
+    rates = catalog["openai-completions"]["chat:deepseek-flash"]["cost"]
+    price = catalog_price("deepseek", "deepseek-flash")
+    assert price is not None
+    assert price == (
+        int(Decimal(str(rates["input"])) * 1_000_000),
+        int(Decimal(str(rates["output"])) * 1_000_000),
+    )
+    assert catalog_price("faux", "faux") == (0, 0)
+    assert catalog_price("faux", "deepseek-flash") == (0, 0)
+    assert catalog_price("deepseek", "custom-endpoint") is None
+    assert token_cost_micro(2, 6, price[0], price[1]) == (2 * price[0] + 6 * price[1]) // 1_000_000
+
+
+def test_page_shows_usage_and_diagnostics_for_the_selected_session() -> None:
     node = shutil.which("node")
     if node is None:
         raise AssertionError("node unavailable")
@@ -125,7 +146,8 @@ def test_page_shows_unpriced_usage_for_the_selected_session() -> None:
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'工作区',archived:false}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1});
-          if(path.endsWith('/usage')) { seen.push(path); return response({session_id:''' + json.dumps(session) + r''',model_calls:2,input_tokens:4,output_tokens:9,priced:false}); }
+          if(path.endsWith('/usage')) { seen.push(path); return response({session_id:''' + json.dumps(session) + r''',model_calls:1,input_tokens:2,output_tokens:6,priced_calls:1,unpriced_calls:0,priced:true,cost_micro_usd:0}); }
+          if(path.endsWith('/diagnostics')) { seen.push(path); return response({session_id:''' + json.dumps(session) + r''',present:true,state:'ready',blocked_code:'',failed:0,unknown:0,error_codes:[]}); }
           throw Error('unexpected '+method+' '+path);
         };
         const $=id=>document.getElementById(id);
@@ -136,9 +158,12 @@ def test_page_shows_unpriced_usage_for_the_selected_session() -> None:
         await import(appURL);
         await until(()=>$('sessions').textContent.includes('工作区'));
         $('usage-load').click();
-        await until(()=>$('usage-report').textContent.includes('未计价'));
-        assert.equal($('usage-report').textContent, '2 次模型调用 · 输入 4 · 输出 9 · 未计价');
-        assert.deepEqual(seen, [''' + json.dumps(f"/api/v1/sessions/{session}/usage") + r''']);
+        await until(()=>$('usage-report').textContent.includes('美元'));
+        assert.equal($('usage-report').textContent, '1 次模型调用 · 输入 2 · 输出 6 · 0.000000 美元');
+        $('diagnostic-load').click();
+        await until(()=>$('diagnostic-report').textContent.includes('ready'));
+        assert.equal($('diagnostic-report').textContent, 'ready · 失败 0 · 未知 0 · 无');
+        assert.deepEqual(seen, [''' + json.dumps(f"/api/v1/sessions/{session}/usage") + r''', ''' + json.dumps(f"/api/v1/sessions/{session}/diagnostics") + r''']);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

@@ -115,6 +115,44 @@ class Completion(Model):
     response_id: str
     input_tokens: int = 0
     output_tokens: int = 0
+    # Micro-USD per million tokens from the catalog at completion time. None means this call is not priced.
+    price_input_micro_per_million: int | None = None
+    price_output_micro_per_million: int | None = None
+
+
+# Published rates, in micro-USD per million tokens. deepseek-flash matches
+# packages/ai/src/providers/data/deepseek.json. faux matches the zero rates on the local faux model.
+# Cache rates are not applied: completions do not record cache tokens.
+_PRICE_MICRO_PER_MILLION: dict[tuple[str, str], tuple[int, int]] = {
+    ("faux", "faux"): (0, 0),
+    ("deepseek", "deepseek-flash"): (300_000, 1_200_000),
+}
+
+
+def catalog_price(provider: str, model: str) -> tuple[int, int] | None:
+    """Return the catalog rate for the provider that actually answered.
+
+    A faux completion is local and free even when the stored model name was left at its default.
+    """
+    if provider == "faux":
+        return (0, 0)
+    return _PRICE_MICRO_PER_MILLION.get((provider, model))
+
+
+def token_cost_micro(input_tokens: int, output_tokens: int, input_rate: int, output_rate: int) -> int:
+    if min(input_tokens, output_tokens, input_rate, output_rate) < 0:
+        raise BackendError("invalid_usage")
+    return (input_tokens * input_rate + output_tokens * output_rate) // 1_000_000
+
+
+def with_catalog_price(config: ProviderConfig, completion: Completion) -> Completion:
+    price = catalog_price(config.provider, config.model)
+    if price is None:
+        return completion
+    return completion.model_copy(update={
+        "price_input_micro_per_million": price[0],
+        "price_output_micro_per_million": price[1],
+    })
 
 
 @dataclass
@@ -206,15 +244,17 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
                 call = ToolCall(id=identity, name="shell",
                                 arguments=Shell(command=commands[len(results)], timeout_seconds=120).model_dump_json())
         if call:
-            yield Completion(message=Message(role="assistant", content="", tool_calls=[call]),
-                             response_id=identity, input_tokens=len(prompt), output_tokens=1)
+            yield with_catalog_price(config, Completion(
+                message=Message(role="assistant", content="", tool_calls=[call]),
+                response_id=identity, input_tokens=len(prompt), output_tokens=1))
             return
         text = results[-1].content if results else "已收到：" + prompt
         for offset in range(0, len(text), 64):
             await asyncio.sleep(0.01)
             yield text[offset:offset + 64]
-        yield Completion(message=Message(role="assistant", content=text), response_id=identity,
-                         input_tokens=sum(len(m.content) for m in messages), output_tokens=len(text))
+        yield with_catalog_price(config, Completion(
+            message=Message(role="assistant", content=text), response_id=identity,
+            input_tokens=sum(len(m.content) for m in messages), output_tokens=len(text)))
         return
     calls: dict[int, PendingCall] = {}
     text = ""
@@ -263,7 +303,8 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
             parsed.append(ToolCall.model_validate({"id": pending_call.id, "name": pending_call.name, "arguments": pending_call.arguments}))
         if any(not call.id for call in parsed) or len({call.id for call in parsed}) != len(parsed):
             raise BackendError("invalid_tool_calls")
-        yield Completion(message=Message(role="assistant", content=text, tool_calls=parsed),
-                         response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens)
+        yield with_catalog_price(config, Completion(
+            message=Message(role="assistant", content=text, tool_calls=parsed),
+            response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens))
     finally:
         await http.aclose()

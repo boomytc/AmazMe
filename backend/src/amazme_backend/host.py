@@ -109,6 +109,7 @@ from .contracts import (
     RetireSupervisor,
     SearchResults,
     Session,
+    SessionDiagnostic,
     SessionList,
     SettingsUpdate,
     ShareMessage,
@@ -1162,12 +1163,27 @@ class Host:
             raise BackendError("session_not_found", status=404)
         path = session_database(self.profile.path, session)
         if not path.is_file():
-            return UsageReport(session_id=session)
+            return UsageReport(session_id=session, priced=True, cost_micro_usd=0)
         worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
                              approval_policy=self.profile.config.approval_policy, require_existing=True)
         try:
             await worker.initialize()
             return await worker.usage()
+        finally:
+            await worker.db.close()
+
+    async def session_diagnostic(self, session: str) -> SessionDiagnostic:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        path = session_database(self.profile.path, session)
+        if not path.is_file():
+            return SessionDiagnostic(session_id=session, present=False, state="absent")
+        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                             approval_policy=self.profile.config.approval_policy, require_existing=True)
+        try:
+            await worker.initialize()
+            return await worker.diagnostic()
         finally:
             await worker.db.close()
 
@@ -2169,6 +2185,10 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/sessions/{session_id}/usage")
     async def session_usage(session_id: str) -> UsageReport:
         return await owner.session_usage(session_id)
+
+    @app.get("/api/v1/sessions/{session_id}/diagnostics")
+    async def session_diagnostic(session_id: str) -> SessionDiagnostic:
+        return await owner.session_diagnostic(session_id)
 
     @app.get("/api/v1/sessions/{session}/snapshot")
     async def snapshot(session: str) -> Snapshot:

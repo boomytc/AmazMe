@@ -871,12 +871,27 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  function money(micro) {
+    const whole = Math.trunc(micro / 1000000);
+    const frac = String(Math.abs(micro % 1000000)).padStart(6, "0");
+    return `${whole}.${frac} 美元`;
+  }
   $("usage-load").onclick = async () => {
     if (!selected) return;
     try {
       const usage = await api(`/api/v1/sessions/${selected}/usage`);
-      if (usage.priced) throw new Error("用量还不能计价");
-      $("usage-report").textContent = `${usage.model_calls} 次模型调用 · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 未计价`;
+      const tokens = `${usage.model_calls} 次模型调用 · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens}`;
+      $("usage-report").textContent = usage.priced ? `${tokens} · ${money(usage.cost_micro_usd)}` : `${tokens} · 未计价`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("diagnostic-load").onclick = async () => {
+    if (!selected) return;
+    try {
+      const report = await api(`/api/v1/sessions/${selected}/diagnostics`);
+      const codes = report.error_codes.length ? report.error_codes.join(",") : "无";
+      const blocked = report.blocked_code ? ` · ${report.blocked_code}` : "";
+      $("diagnostic-report").textContent = `${report.state} · 失败 ${report.failed} · 未知 ${report.unknown} · ${codes}${blocked}`;
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };

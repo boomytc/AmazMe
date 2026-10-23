@@ -36,6 +36,7 @@ from .contracts import (
     Receipt,
     Replay,
     SearchHit,
+    SessionDiagnostic,
     Snapshot,
     Submit,
     ToolCall,
@@ -48,7 +49,7 @@ from .contracts import (
     WorkflowView,
 )
 from .faults import Faults
-from .providers import Completion, stored_provider
+from .providers import Completion, stored_provider, token_cost_micro
 from .session_domain import (
     Action,
     CloseEpoch,
@@ -76,6 +77,11 @@ from .session_domain import (
 )
 
 TERMINAL = frozenset({"succeeded", "cancelled", "interrupted", "failed", "unknown"})
+_PUBLIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+
+
+def _public_code(value: str) -> str:
+    return value if _PUBLIC_CODE.fullmatch(value) else "unlisted"
 _SESSION_ID = re.compile(r"^[a-f0-9]{32}$")
 _SESSION_FILES = frozenset({"session.sqlite", "session.sqlite-wal", "session.sqlite-shm"})
 
@@ -1799,6 +1805,9 @@ class SessionStore:
             calls = 0
             input_tokens = 0
             output_tokens = 0
+            priced_calls = 0
+            unpriced_calls = 0
+            cost = 0
             for (payload,) in db.execute("SELECT payload FROM steps"):
                 step = Step.model_validate_json(str(payload))
                 if step.kind != "model" or step.phase not in {"result", "applied"} or not step.result:
@@ -1807,8 +1816,52 @@ class SessionStore:
                 calls += 1
                 input_tokens += completion.input_tokens
                 output_tokens += completion.output_tokens
-            return UsageReport(session_id=self.session_id, model_calls=calls,
-                               input_tokens=input_tokens, output_tokens=output_tokens)
+                pin = completion.price_input_micro_per_million
+                pout = completion.price_output_micro_per_million
+                if pin is None or pout is None:
+                    unpriced_calls += 1
+                    continue
+                priced_calls += 1
+                cost += token_cost_micro(completion.input_tokens, completion.output_tokens, pin, pout)
+            priced = unpriced_calls == 0
+            return UsageReport(
+                session_id=self.session_id, model_calls=calls, input_tokens=input_tokens,
+                output_tokens=output_tokens, priced_calls=priced_calls, unpriced_calls=unpriced_calls,
+                priced=priced, cost_micro_usd=cost if priced else None)
+
+        return await self.db.call(operation)
+
+    async def diagnostic(self) -> SessionDiagnostic:
+        """Read persisted session state. Free-form errors stay in the database."""
+
+        def operation(db: sqlite3.Connection) -> SessionDiagnostic:
+            blocked_raw = self._meta(db, "blocked")
+            state: Literal["ready", "blocked", "stopping", "frozen"]
+            if blocked_raw:
+                state = "blocked"
+            elif self._meta(db, "stopping"):
+                state = "stopping"
+            elif self._meta(db, "freeze_id"):
+                state = "frozen"
+            else:
+                state = "ready"
+            failed = 0
+            unknown = 0
+            codes: set[str] = set()
+            for (payload,) in db.execute("SELECT payload FROM requests"):
+                receipt = Receipt.model_validate_json(str(payload))
+                if receipt.decision is None:
+                    continue
+                if receipt.decision.status == "failed":
+                    failed += 1
+                elif receipt.decision.status == "unknown":
+                    unknown += 1
+                if receipt.decision.error:
+                    codes.add(_public_code(receipt.decision.error))
+            return SessionDiagnostic(
+                session_id=self.session_id, present=True, state=state,
+                blocked_code=_public_code(blocked_raw) if blocked_raw else "",
+                failed=failed, unknown=unknown, error_codes=sorted(codes))
 
         return await self.db.call(operation)
 

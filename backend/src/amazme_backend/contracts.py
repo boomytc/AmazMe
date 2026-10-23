@@ -138,13 +138,32 @@ class SearchResults(Model):
 
 
 class UsageReport(Model):
-    """Token totals already stored with model completions. No price is configured, so this is not a bill."""
+    """Token totals and catalog cost already stored with finished model calls.
+
+    ``priced`` is true only when every finished call had a catalog rate. A partial sum is not returned
+    as ``cost_micro_usd``. One micro-USD is one millionth of a US dollar; the stored product truncates.
+    """
 
     session_id: str
     model_calls: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
-    priced: Literal[False] = False
+    priced_calls: int = Field(default=0, ge=0)
+    unpriced_calls: int = Field(default=0, ge=0)
+    priced: bool = False
+    cost_micro_usd: int | None = None
+
+
+class SessionDiagnostic(Model):
+    """Persisted session state. Error text that is not a short code is replaced before it leaves."""
+
+    session_id: str
+    present: bool
+    state: Literal["absent", "ready", "blocked", "stopping", "frozen"]
+    blocked_code: str = ""
+    failed: int = Field(default=0, ge=0)
+    unknown: int = Field(default=0, ge=0)
+    error_codes: list[str] = Field(default_factory=list)
 
 
 class Command(Model):
