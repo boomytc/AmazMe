@@ -24,7 +24,8 @@ def test_generated_event_contracts_do_not_drift():
 
 
 def test_business_modules_cannot_spawn_native_processes():
-    permitted = {"host.py", "supervisor.py", "vm.py", "gate.py"}
+    # gate.py and pty_gate.py run as container PID 1. Other business modules must not fork or exec.
+    permitted = {"host.py", "supervisor.py", "vm.py", "gate.py", "pty_gate.py"}
     for path in (ROOT / "src/amazme_backend").glob("*.py"):
         if path.name in permitted:
             continue
@@ -98,7 +99,7 @@ def test_guest_file_tool_does_not_follow_links_out_of_the_workspace(tmp_path: Pa
 def test_fixed_native_owners_cannot_reexec_or_unlock_lifetime_descriptors():
     forbidden = {"fork", "forkpty", "execv", "execve", "execl", "execvp", "execvpe", "posix_spawn", "posix_spawnp"}
     for path in (ROOT / "src/amazme_backend").glob("*.py"):
-        if path.name == "gate.py":
+        if path.name in {"gate.py", "pty_gate.py"}:
             continue
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):

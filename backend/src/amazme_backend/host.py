@@ -42,6 +42,7 @@ from .contracts import (
     Model,
     ModelCatalog,
     ModelSettings,
+    OpenTerminal,
     PrepareUpdate,
     ProcessLease,
     Receipt,
@@ -55,6 +56,13 @@ from .contracts import (
     Submission,
     Submit,
     SupervisorHealth,
+    TerminalInput,
+    TerminalOpen,
+    TerminalQuery,
+    TerminalResize,
+    TerminalSize,
+    TerminalType,
+    TerminalView,
     UpdateModelSettings,
     UpdateRecord,
     WorkerActivity,
@@ -341,6 +349,32 @@ class Host:
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
         return write_file(self.workspace_root(), value)
+
+    def _terminal_fence(self, session_id: str, terminal_id: str) -> TerminalQuery:
+        return TerminalQuery(host_epoch=self.fence.host_epoch, build_id=self.build,
+                             session_id=session_id, terminal_id=terminal_id)
+
+    async def open_terminal(self, session_id: str, value: TerminalOpen) -> TerminalView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        return await self.supervisor.call("POST", "/pty/open", TerminalView, OpenTerminal(
+            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
+            terminal_id=value.terminal_id, command=value.command, cols=value.cols, rows=value.rows))
+
+    async def type_terminal(self, session_id: str, terminal_id: str, value: TerminalType) -> TerminalView:
+        self._admit()
+        return await self.supervisor.call("POST", "/pty/input", TerminalView, TerminalInput(
+            **self._terminal_fence(session_id, terminal_id).model_dump(), input_id=value.input_id, data=value.data))
+
+    async def resize_terminal(self, session_id: str, terminal_id: str, value: TerminalSize) -> TerminalView:
+        self._admit()
+        return await self.supervisor.call("POST", "/pty/resize", TerminalView, TerminalResize(
+            **self._terminal_fence(session_id, terminal_id).model_dump(), cols=value.cols, rows=value.rows))
+
+    async def read_terminal(self, session_id: str, terminal_id: str) -> TerminalView:
+        self._admit()
+        return await self.supervisor.call("POST", "/pty/read", TerminalView, self._terminal_fence(session_id, terminal_id))
 
     def model_catalog(self) -> ModelCatalog:
         self._admit()
@@ -1037,6 +1071,22 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/files/content")
     async def file_write(value: FileWrite) -> FileChange:
         return await owner.write_workspace(value)
+
+    @app.post("/api/v1/sessions/{session_id}/terminals")
+    async def open_terminal(session_id: str, value: TerminalOpen) -> TerminalView:
+        return await owner.open_terminal(session_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/terminals/{terminal_id}/input")
+    async def type_terminal(session_id: str, terminal_id: str, value: TerminalType) -> TerminalView:
+        return await owner.type_terminal(session_id, terminal_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/terminals/{terminal_id}/resize")
+    async def resize_terminal(session_id: str, terminal_id: str, value: TerminalSize) -> TerminalView:
+        return await owner.resize_terminal(session_id, terminal_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/terminals/{terminal_id}/read")
+    async def read_terminal(session_id: str, terminal_id: str) -> TerminalView:
+        return await owner.read_terminal(session_id, terminal_id)
 
     @app.get("/api/v1/models")
     async def models() -> ModelCatalog:

@@ -497,6 +497,35 @@ function startClient() {
     $("file-diff").textContent = file.truncated ? "文件过大，只显示前一部分" : "";
   }
   $("files").addEventListener("toggle", () => { if ($("files").open) void loadFiles().catch(error); });
+  let terminalId = "";
+  async function showTerminal(view) {
+    $("terminal-output").textContent = view.output || "";
+    if (view.exit_code !== null && view.exit_code !== undefined) $("terminal-output").textContent += `\n[退出 ${view.exit_code}]`;
+  }
+  $("terminal").addEventListener("toggle", () => {
+    if (!$("terminal").open || !selected || !identity || health?.state !== "ready") return;
+    terminalId = crypto.randomUUID().replaceAll("-", "");
+    api(`/api/v1/sessions/${selected}/terminals`, "POST", {terminal_id: terminalId, command: "sh", cols: 80, rows: 24}, current)
+      .then(showTerminal).catch(error);
+  });
+  $("terminal-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!terminalId || !selected) return;
+    const typed = $("terminal-input").value;
+    try {
+      await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/input`, "POST",
+        {input_id: crypto.randomUUID().replaceAll("-", ""), data: `${typed}\n`}, current);
+      showTerminal(await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/read`, "POST", {}, current));
+      $("terminal-input").value = "";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("terminal-resize").onclick = async () => {
+    if (!terminalId || !selected) return;
+    try {
+      showTerminal(await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/resize`, "POST", {cols: 100, rows: 40}, current));
+    } catch (failure) { error(failure); }
+  };
   $("file-save").onclick = async () => {
     if (!filePath || !identity || health?.state !== "ready") return;
     try {

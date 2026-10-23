@@ -180,6 +180,219 @@
         }
       }
     },
+    "/api/v1/sessions/{session_id}/terminals": {
+      "post": {
+        "summary": "Open Terminal",
+        "operationId": "open_terminal_api_v1_sessions__session_id__terminals_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalOpen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/terminals/{terminal_id}/input": {
+      "post": {
+        "summary": "Type Terminal",
+        "operationId": "type_terminal_api_v1_sessions__session_id__terminals__terminal_id__input_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "terminal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Terminal Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalType"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/terminals/{terminal_id}/resize": {
+      "post": {
+        "summary": "Resize Terminal",
+        "operationId": "resize_terminal_api_v1_sessions__session_id__terminals__terminal_id__resize_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "terminal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Terminal Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TerminalSize"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/terminals/{terminal_id}/read": {
+      "post": {
+        "summary": "Read Terminal",
+        "operationId": "read_terminal_api_v1_sessions__session_id__terminals__terminal_id__read_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "terminal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Terminal Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/models": {
       "get": {
         "summary": "Models",
@@ -2537,6 +2750,147 @@
           "boot_id"
         ],
         "title": "SupervisorHealth"
+      },
+      "TerminalOpen": {
+        "properties": {
+          "terminal_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Terminal Id"
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Command"
+          },
+          "cols": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Cols",
+            "default": 80
+          },
+          "rows": {
+            "type": "integer",
+            "maximum": 80.0,
+            "minimum": 1.0,
+            "title": "Rows",
+            "default": 24
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "terminal_id",
+          "command"
+        ],
+        "title": "TerminalOpen"
+      },
+      "TerminalSize": {
+        "properties": {
+          "cols": {
+            "type": "integer",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Cols"
+          },
+          "rows": {
+            "type": "integer",
+            "maximum": 80.0,
+            "minimum": 1.0,
+            "title": "Rows"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "cols",
+          "rows"
+        ],
+        "title": "TerminalSize"
+      },
+      "TerminalType": {
+        "properties": {
+          "input_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Input Id"
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Data"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input_id",
+          "data"
+        ],
+        "title": "TerminalType"
+      },
+      "TerminalView": {
+        "properties": {
+          "terminal_id": {
+            "type": "string",
+            "title": "Terminal Id"
+          },
+          "cols": {
+            "type": "integer",
+            "title": "Cols"
+          },
+          "rows": {
+            "type": "integer",
+            "title": "Rows"
+          },
+          "queued": {
+            "type": "integer",
+            "title": "Queued"
+          },
+          "written": {
+            "type": "integer",
+            "title": "Written"
+          },
+          "exit_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exit Code"
+          },
+          "output": {
+            "type": "string",
+            "title": "Output"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "running",
+              "exited",
+              "unknown"
+            ],
+            "title": "Phase"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "terminal_id",
+          "cols",
+          "rows",
+          "queued",
+          "written",
+          "output",
+          "phase"
+        ],
+        "title": "TerminalView"
       },
       "ToolCall": {
         "properties": {

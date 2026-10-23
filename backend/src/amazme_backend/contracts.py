@@ -231,6 +231,61 @@ class HostFence(Model):
     build_id: str
 
 
+class OpenTerminal(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+    cols: int = Field(default=80, ge=1, le=200)
+    rows: int = Field(default=24, ge=1, le=80)
+
+
+class TerminalInput(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    input_id: str = Field(min_length=1, max_length=64)
+    data: str = Field(max_length=4000)
+
+
+class TerminalResize(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    cols: int = Field(ge=1, le=200)
+    rows: int = Field(ge=1, le=80)
+
+
+class TerminalQuery(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class TerminalOpen(Model):
+    terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+    cols: int = Field(default=80, ge=1, le=200)
+    rows: int = Field(default=24, ge=1, le=80)
+
+
+class TerminalType(Model):
+    input_id: str = Field(min_length=1, max_length=64)
+    data: str = Field(max_length=4000)
+
+
+class TerminalSize(Model):
+    cols: int = Field(ge=1, le=200)
+    rows: int = Field(ge=1, le=80)
+
+
+class TerminalView(Model):
+    terminal_id: str
+    cols: int
+    rows: int
+    queued: int
+    written: int
+    exit_code: int | None = None
+    output: str
+    phase: Literal["running", "exited", "unknown"]
+
+
 class WorkerSpec(HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     purpose: Literal["business", "validation"] = "business"

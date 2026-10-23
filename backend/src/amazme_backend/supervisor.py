@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import os
 import secrets
+import socket
 import sqlite3
 import stat
 import time
@@ -30,6 +31,7 @@ from .contracts import (
     HostFence,
     Identity,
     Lease,
+    OpenTerminal,
     ProcessLease,
     Recovery,
     ResolveEffect,
@@ -37,6 +39,10 @@ from .contracts import (
     RunTool,
     StopWorker,
     SupervisorHealth,
+    TerminalInput,
+    TerminalQuery,
+    TerminalResize,
+    TerminalView,
     ToolLookup,
     ToolObservation,
     ToolResult,
@@ -47,6 +53,8 @@ from .contracts import (
 from .docker_channel import GateChannel
 from .faults import Faults
 from .processes import ProcessReservation, exited, wait_exited
+from .pty_gate import WINDOW
+from .pty_session import PtyClient, pty_container
 from .transport import app_factory
 from .vm import VM
 
@@ -169,6 +177,9 @@ class Supervisor:
         self.profile = profile
         self.build = build_id()
         self.gate = Path(__file__).with_name("gate.py").read_text()
+        self.pty_gate = Path(__file__).with_name("pty_gate.py").read_text()
+        self.terminals: dict[str, PtyClient] = {}
+        self.terminal_bridges: dict[str, asyncio.Task[None]] = {}
         self.instance = instance or secrets.token_hex(16)
         self.process_lease = process_lease
         self.initialized_marker = profile.path / "execution.initialized"
@@ -234,6 +245,12 @@ class Supervisor:
               CREATE TABLE IF NOT EXISTS budgets(session TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS recoveries(id TEXT PRIMARY KEY,session TEXT NOT NULL,state TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS thaws(id TEXT PRIMARY KEY,build TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS terminals(id TEXT PRIMARY KEY,session TEXT NOT NULL,
+                command TEXT NOT NULL,cols INTEGER NOT NULL,rows INTEGER NOT NULL,
+                queued INTEGER NOT NULL DEFAULT 0,written INTEGER NOT NULL DEFAULT 0,
+                exit_code INTEGER,output TEXT NOT NULL DEFAULT '',phase TEXT NOT NULL,cid TEXT NOT NULL DEFAULT '');
+              CREATE TABLE IF NOT EXISTS terminal_inputs(id TEXT PRIMARY KEY,terminal TEXT NOT NULL,
+                data TEXT NOT NULL,accepted INTEGER NOT NULL);
               PRAGMA user_version=2;
               COMMIT;
             """)
@@ -1123,7 +1140,191 @@ class Supervisor:
                 if not self.db.failed:
                     await self._set_blocked(self.blocked)
 
+    async def _terminal_row(self, terminal_id: str) -> sqlite3.Row | None:
+        return await self.db.call(lambda db: db.execute("SELECT * FROM terminals WHERE id=?", (terminal_id,)).fetchone())
+
+    def _view(self, row: sqlite3.Row) -> TerminalView:
+        phase = row["phase"]
+        if phase not in {"running", "exited", "unknown"}:
+            phase = "unknown"
+        return TerminalView(terminal_id=str(row["id"]), cols=int(row["cols"]), rows=int(row["rows"]),
+                            queued=int(row["queued"]), written=int(row["written"]),
+                            exit_code=None if row["exit_code"] is None else int(row["exit_code"]),
+                            output=str(row["output"]), phase=phase)
+
+    async def _store_terminal(self, client: PtyClient, terminal_id: str, *, cols: int, rows: int, phase: str) -> None:
+        output = client.output.decode(errors="replace")[-WINDOW:]
+
+        def save(db: sqlite3.Connection) -> None:
+            db.execute("UPDATE terminals SET queued=?,written=?,output=?,cols=?,rows=?,phase=?,"
+                       "exit_code=CASE WHEN ? IS NULL THEN exit_code ELSE ? END WHERE id=?",
+                       (client.queued, client.written, output, cols, rows, phase, client.exit_code,
+                        client.exit_code, terminal_id))
+
+        await self.db.call(save, write=True)
+
+    async def connect_gate(self, cid: str, spec: dict[str, object]) -> PtyClient:
+        del spec
+        channel = await GateChannel.attach(self.vm.socket, cid)
+        left, right = socket.socketpair()
+        self.terminal_bridges[cid] = asyncio.create_task(self._bridge_pty(channel, right))
+        return PtyClient(left)
+
+    async def _bridge_pty(self, channel: GateChannel, sock: socket.socket) -> None:
+        loop = asyncio.get_running_loop()
+        sock.setblocking(False)
+
+        async def outward() -> None:
+            while True:
+                try:
+                    header = await channel.reader.readexactly(8)
+                except asyncio.IncompleteReadError:
+                    return
+                if header[0] not in (1, 2) or header[1:4] != b"\0\0\0":
+                    return
+                remaining = int.from_bytes(header[4:], "big")
+                if remaining > 16 * 1024 * 1024:
+                    return
+                while remaining:
+                    chunk = await channel.reader.readexactly(min(remaining, 8192))
+                    remaining -= len(chunk)
+                    if header[0] == 1:
+                        await loop.sock_sendall(sock, chunk)
+
+        async def inward() -> None:
+            while True:
+                data = await loop.sock_recv(sock, 8192)
+                if not data:
+                    return
+                channel.writer.write(data)
+                await channel.writer.drain()
+
+        try:
+            await asyncio.gather(outward(), inward())
+        finally:
+            sock.close()
+            await channel.close()
+
+    async def open_terminal(self, value: OpenTerminal) -> TerminalView:
+        self.check_host(value)
+        self._admit()
+        existing = await self._terminal_row(value.terminal_id)
+        if existing is not None:
+            if (existing["session"], existing["command"], int(existing["cols"]), int(existing["rows"])) != (
+                value.session_id, value.command, value.cols, value.rows
+            ):
+                raise BackendError("terminal_conflict")
+            return self._view(existing)
+        await self.db.call(lambda db: db.execute(
+            "INSERT INTO terminals(id,session,command,cols,rows,phase) VALUES(?,?,?,?,?,'running')",
+            (value.terminal_id, value.session_id, value.command, value.cols, value.rows)), write=True)
+        labels = {"amazme.profile": self.profile.config.profile_id, "amazme.terminal": value.terminal_id,
+                  "amazme.supervisor": self.instance}
+        spec = pty_container(self.pty_gate, self.vm.image_id, labels)
+        name = "am-" + hashlib.sha256(value.terminal_id.encode()).hexdigest()[:40]
+        try:
+            response = await self.vm.http.post("/containers/create", params={"name": name}, json=spec)
+            response.raise_for_status()
+            cid = str(response.json()["Id"])
+            await self.db.call(lambda db: db.execute(
+                "UPDATE terminals SET cid=? WHERE id=?", (cid, value.terminal_id)), write=True)
+            started = await self.vm.http.post(f"/containers/{cid}/start")
+            started.raise_for_status()
+            container = await self.vm.inspect(cid)
+            if container is None or not container.State.Running or container.Config.Labels != labels:
+                raise BackendError("container_identity_mismatch", status=503)
+            client = await self.connect_gate(cid, spec)
+            await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), value.cols, value.rows)
+        except Exception as error:
+            await self._mark_terminal_unknown(value.terminal_id)
+            if not isinstance(error, BackendError):
+                raise BackendError("pty_start_failed", status=503) from error
+            raise
+        self.terminals[value.terminal_id] = client
+        await self._store_terminal(client, value.terminal_id, cols=value.cols, rows=value.rows, phase="running")
+        row = await self._terminal_row(value.terminal_id)
+        assert row is not None
+        return self._view(row)
+
+    async def write_terminal(self, value: TerminalInput) -> TerminalView:
+        self.check_host(value)
+        self._admit()
+        row = await self._terminal_row(value.terminal_id)
+        if row is None or row["session"] != value.session_id:
+            raise BackendError("terminal_not_found", status=404)
+        if row["phase"] != "running" or row["exit_code"] is not None:
+            raise BackendError("terminal_not_running")
+        previous = await self.db.call(lambda db: db.execute(
+            "SELECT data FROM terminal_inputs WHERE id=?", (value.input_id,)).fetchone())
+        if previous is not None:
+            if str(previous["data"]) != value.data:
+                raise BackendError("terminal_input_conflict")
+            return self._view(row)
+        client = self.terminals.get(value.terminal_id)
+        if client is None:
+            await self._mark_terminal_unknown(value.terminal_id)
+            raise BackendError("terminal_channel_lost", status=503)
+        encoded = value.data.encode()
+        before = client.written + client.queued
+        await asyncio.to_thread(client.send_input, encoded)
+        await asyncio.to_thread(client.pump, 0.5, lambda: client.written + client.queued >= before + len(encoded))
+        accepted = client.written + client.queued - before
+        await self.db.call(lambda db: db.execute(
+            "INSERT INTO terminal_inputs(id,terminal,data,accepted) VALUES(?,?,?,?)",
+            (value.input_id, value.terminal_id, value.data, accepted)), write=True)
+        await self._store_terminal(client, value.terminal_id, cols=int(row["cols"]), rows=int(row["rows"]), phase="running")
+        current = await self._terminal_row(value.terminal_id)
+        assert current is not None
+        return self._view(current)
+
+    async def resize_terminal(self, value: TerminalResize) -> TerminalView:
+        self.check_host(value)
+        self._admit()
+        row = await self._terminal_row(value.terminal_id)
+        if row is None or row["session"] != value.session_id:
+            raise BackendError("terminal_not_found", status=404)
+        client = self.terminals.get(value.terminal_id)
+        if client is None or row["phase"] != "running":
+            raise BackendError("terminal_not_running")
+        await asyncio.to_thread(client.resize, value.cols, value.rows)
+        await self._store_terminal(client, value.terminal_id, cols=value.cols, rows=value.rows, phase="running")
+        current = await self._terminal_row(value.terminal_id)
+        assert current is not None
+        return self._view(current)
+
+    async def read_terminal(self, value: TerminalQuery) -> TerminalView:
+        self.check_host(value)
+        session_id, terminal_id = value.session_id, value.terminal_id
+        row = await self._terminal_row(terminal_id)
+        if row is None or row["session"] != session_id:
+            raise BackendError("terminal_not_found", status=404)
+        client = self.terminals.get(terminal_id)
+        if client is None:
+            return self._view(row)
+        try:
+            if client.exit_code is None:
+                await asyncio.to_thread(client.grant, WINDOW)
+            await asyncio.to_thread(client.pump, 0.3)
+        except (OSError, BackendError):
+            await self._mark_terminal_unknown(terminal_id)
+            current = await self._terminal_row(terminal_id)
+            assert current is not None
+            return self._view(current)
+        phase = "exited" if client.exit_code is not None else str(row["phase"])
+        await self._store_terminal(client, terminal_id, cols=int(row["cols"]), rows=int(row["rows"]), phase=phase)
+        current = await self._terminal_row(terminal_id)
+        assert current is not None
+        return self._view(current)
+
+    async def _mark_terminal_unknown(self, terminal_id: str) -> None:
+        await self.db.call(lambda db: db.execute(
+            "UPDATE terminals SET phase='unknown' WHERE id=? AND exit_code IS NULL", (terminal_id,)), write=True)
+
     async def close(self) -> None:
+        for bridge in self.terminal_bridges.values():
+            bridge.cancel()
+        if self.terminal_bridges:
+            await asyncio.gather(*self.terminal_bridges.values(), return_exceptions=True)
         if self.monitor_task:
             self.monitor_task.cancel()
             await asyncio.gather(self.monitor_task, return_exceptions=True)
@@ -1150,6 +1351,10 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     async def close(value: Lease) -> Cleanup:
         return await owner.cleanup(value.session_id, value)
 
+    app.post("/pty/open")(owner.open_terminal)
+    app.post("/pty/input")(owner.write_terminal)
+    app.post("/pty/resize")(owner.resize_terminal)
+    app.post("/pty/read")(owner.read_terminal)
     app.post("/tools/run")(owner.run_tool)
     app.post("/tools/lookup")(owner.lookup_tool)
     app.post("/effects/resolve")(owner.resolve_effect)
