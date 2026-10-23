@@ -125,6 +125,18 @@ class Message(Model):
     provider_response_id: str = ""
 
 
+class SearchHit(Model):
+    request_id: str
+    ordinal: int = Field(ge=0)
+    role: Literal["user", "assistant", "tool"]
+    excerpt: str
+
+
+class SearchResults(Model):
+    query: str
+    hits: list[SearchHit]
+
+
 class Command(Model):
     command: str = Field(min_length=1, max_length=196608)
     timeout_seconds: int = Field(default=30, ge=1, le=120)

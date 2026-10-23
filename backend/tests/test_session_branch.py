@@ -594,3 +594,94 @@ def test_browser_compaction_keeps_the_original_turn() -> None:
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
                             cwd=Path(__file__).parents[1])
     assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+async def test_search_reads_only_this_sessions_durable_text(owner: Host) -> None:
+    parent = await parent_store(owner)
+    other_id = "b" * 32
+    await owner.store.create_session(other_id, CreateSession(title="另一会话"))
+    other_path = session_database(owner.profile.path, other_id)
+    other_path.parent.mkdir(parents=True, mode=0o700)
+    other = SessionStore(other_path, other_id, build=owner.build, approval_policy="auto", instance="other-worker")
+    await other.initialize()
+    await other.fence(fence_for(owner.build))
+    try:
+        await finish(parent, "alpha token", "r1", owner.build)
+        await parent.accept(Submit(request_id="r2", text="Straße"), fence_for(owner.build))
+        await other.accept(Submit(request_id="g1", text="gamma only"), fence_for(owner.build))
+        found = await parent.search("ALPHA")
+        assert found and all(hit.request_id == "r1" for hit in found)
+        assert any("alpha token" in hit.excerpt for hit in found)
+        folded = await parent.search("strasse")
+        assert any(hit.request_id == "r2" and "Straße" in hit.excerpt for hit in folded)
+        assert await parent.search("%") == []
+        assert await other.search("alpha") == []
+        assert any("gamma only" in hit.excerpt for hit in await other.search("gamma"))
+        with pytest.raises(BackendError, match="search_query"):
+            await parent.search("   ")
+        await owner.archive_session(PARENT, True)
+        assert any("alpha token" in hit.excerpt for hit in await parent.search("alpha"))
+        listed = await owner.search_session(PARENT, "alpha")
+        assert any("alpha token" in hit.excerpt for hit in listed.hits)
+        assert (await owner.search_session(other_id, "alpha")).hits == []
+    finally:
+        await parent.db.close()
+        await other.db.close()
+
+
+def test_browser_searches_the_selected_session() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node unavailable")
+    web = Path(__file__).parents[1] / "src/amazme_backend/web"
+    contract = (web / "contract.js").read_text().split("\n", 1)[1]
+    schema = Stream.model_json_schema()
+    contract = "const root = " + json.dumps(schema) + ";\n" + contract
+    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
+    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
+    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
+    session = "d" * 32
+    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
+        import assert from 'node:assert/strict';
+        import {Window} from 'happy-dom';
+        const window = new Window({url:'http://127.0.0.1:1234/'});
+        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
+        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
+        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
+        const seen = [];
+        globalThis.fetch = async (path, options={})=>{
+          const method = options.method || 'GET';
+          if(path==='/api/v1/bootstrap') return response(identity);
+          if(path==='/api/v1/health') return response({state:'ready',identity});
+          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
+          if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'工作区',archived:false}]});
+          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1});
+          if(path.includes('/search')) {
+            const query = new URL(path, 'http://127.0.0.1').searchParams.get('q');
+            seen.push(path.split('?')[0] + ' ' + query);
+            if(query==='alpha') return response({query, hits:[{request_id:'r1', ordinal:0, role:'user', excerpt:'alpha token'}]});
+            return response({query, hits:[]});
+          }
+          throw Error('unexpected '+method+' '+path);
+        };
+        const $=id=>document.getElementById(id);
+        async function until(check) {
+          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
+          throw Error('timed out '+$('error').textContent);
+        }
+        await import(appURL);
+        await until(()=>$('sessions').textContent.includes('工作区'));
+        $('history-query').value = 'alpha';
+        $('history-form').requestSubmit();
+        await until(()=>$('history-results').textContent==='alpha token');
+        $('history-query').value = 'nope';
+        $('history-form').requestSubmit();
+        await until(()=>$('history-results').textContent==='没有匹配');
+        assert.deepEqual(seen, [''' + json.dumps(f"/api/v1/sessions/{session}/search alpha") + r''', ''' + json.dumps(f"/api/v1/sessions/{session}/search nope") + r''']);
+        window.happyDOM && await window.happyDOM.abort();
+        process.exit(0);
+    '''
+    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
+                            cwd=Path(__file__).parents[1])
+    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]

@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Literal
 
 from .contracts import (
     Approval,
@@ -31,6 +32,7 @@ from .contracts import (
     ProviderConfig,
     Receipt,
     Replay,
+    SearchHit,
     Snapshot,
     Submit,
     ToolCall,
@@ -257,6 +259,27 @@ class Changes:
 
     def hit(self, point: str, request_id: str = "", call_id: str = "") -> None:
         self.hooks.append((point, request_id, call_id))
+
+
+def _fold_index(content: str, target: int) -> int:
+    count = 0
+    for index, char in enumerate(content):
+        if count >= target:
+            return index
+        count += len(char.casefold())
+    return len(content)
+
+
+def _search_text(request_id: str, ordinal: int, role: Literal["user", "assistant", "tool"],
+                 content: str, needle: str) -> list[SearchHit]:
+    index = content.casefold().find(needle)
+    if index < 0:
+        return []
+    start = _fold_index(content, index)
+    end = _fold_index(content, index + len(needle))
+    left = max(0, start - 40)
+    right = min(len(content), end + 40)
+    return [SearchHit(request_id=request_id, ordinal=ordinal, role=role, excerpt=content[left:right])]
 
 
 class SessionStore:
@@ -1252,6 +1275,35 @@ class SessionStore:
 
     async def message_payloads(self, request_id: str) -> list[str]:
         return await self.db.call(lambda db: self._payloads(db, request_id))
+
+    async def search(self, query: str) -> list[SearchHit]:
+        text = query.strip()
+        if not text or len(text) > 200:
+            raise BackendError("search_query")
+        needle = text.casefold()
+
+        def operation(db: sqlite3.Connection) -> list[SearchHit]:
+            hits: list[SearchHit] = []
+            rows = db.execute(
+                "SELECT id, payload FROM requests ORDER BY ordinal")
+            messages = db.execute(
+                "SELECT request_id, ordinal, payload FROM messages ORDER BY rowid")
+            grouped: dict[str, list[tuple[int, str]]] = {}
+            for request_id, ordinal, payload in messages:
+                grouped.setdefault(str(request_id), []).append((int(ordinal), str(payload)))
+            for request_id, payload in rows:
+                if len(hits) >= 50:
+                    break
+                receipt = Receipt.model_validate_json(str(payload))
+                hits.extend(_search_text(str(request_id), 0, "user", receipt.text, needle))
+                for ordinal, body in sorted(grouped.get(str(request_id), [])):
+                    if len(hits) >= 50:
+                        break
+                    message = Message.model_validate_json(body)
+                    hits.extend(_search_text(str(request_id), ordinal, message.role, message.content, needle))
+            return hits[:50]
+
+        return await self.db.call(operation)
 
     async def import_settled_root(self, parent: Path, request_id: str) -> Receipt:
         """Copy one settled root into an empty session. No lease, effect, or approval is copied."""

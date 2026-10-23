@@ -548,6 +548,18 @@ function startClient() {
       $("mcp-approval").textContent = "";
     } catch (failure) { error(failure); }
   };
+  $("history-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected) return;
+    const query = $("history-query").value.trim();
+    try {
+      const found = await api(`/api/v1/sessions/${selected}/search?q=${encodeURIComponent(query)}`);
+      $("history-results").textContent = found.hits.length
+        ? found.hits.map(hit => hit.excerpt).join("\n")
+        : "没有匹配";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   let codeRun = "";
   $("code-run").onclick = async () => {
     if (!selected || !identity || health?.state !== "ready") return;

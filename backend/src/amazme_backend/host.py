@@ -66,6 +66,7 @@ from .contracts import (
     RemoteView,
     ResolutionEnvelope,
     RetireSupervisor,
+    SearchResults,
     Session,
     SessionList,
     Snapshot,
@@ -506,6 +507,21 @@ class Host:
             raise
         await child.db.close()
         return created
+
+    async def search_session(self, session: str, query: str) -> SearchResults:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        path = session_database(self.profile.path, session)
+        if not path.is_file():
+            return SearchResults(query=query.strip(), hits=[])
+        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                             approval_policy=self.profile.config.approval_policy, require_existing=True)
+        try:
+            await worker.initialize()
+            return SearchResults(query=query.strip(), hits=await worker.search(query))
+        finally:
+            await worker.db.close()
 
     async def archive_session(self, session: str, archived: bool) -> Session:
         self._admit()
@@ -1272,6 +1288,10 @@ def application(owner: Host) -> FastAPI:
         owner.attachments.pop(identity, None)
         owner.attachment_seen.pop(identity, None)
         return {"detached": True}
+
+    @app.get("/api/v1/sessions/{session_id}/search")
+    async def search_session(session_id: str, q: str) -> SearchResults:
+        return await owner.search_session(session_id, q)
 
     @app.get("/api/v1/sessions/{session}/snapshot")
     async def snapshot(session: str) -> Snapshot:
