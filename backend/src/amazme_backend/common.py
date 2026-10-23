@@ -124,6 +124,8 @@ class Profile:
             "model": provider.model,
             "api_key": provider.api_key.get_secret_value(),
             "max_tokens": provider.max_tokens,
+            "proxy": provider.proxy,
+            "headers": provider.headers,
         }
         private_write(self.path / "config.json", json.dumps(raw))
         self.reload_provider()

@@ -1,16 +1,18 @@
 import asyncio
 import hashlib
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+import httpx2
 from openai import AsyncOpenAI
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionMessageParam,
     ChatCompletionToolParam,
 )
-from pydantic import TypeAdapter
+from pydantic import SecretStr, TypeAdapter
 
 from .contracts import (
     BackendError,
@@ -31,29 +33,78 @@ CATALOG = (
     CatalogModel(provider="faux", model="faux", label="本地确定性", endpoint_editable=False),
     CatalogModel(provider="deepseek", model="deepseek-flash", label="DeepSeek Flash", endpoint_editable=True),
 )
+_FORBIDDEN_HEADERS = {
+    "authorization", "cookie", "host", "content-length", "transfer-encoding", "connection",
+    "proxy-authorization", "x-api-key",
+}
+
+
+def redact_proxy(proxy: str) -> str:
+    if not proxy:
+        return ""
+    parts = urlsplit(proxy)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    if parts.port:
+        host = f"{host}:{parts.port}"
+    return f"{parts.scheme}://{host}"
+
+
+def stored_provider(config: ProviderConfig) -> ProviderConfig:
+    """Drop credentials before a run record or event is written."""
+    return config.model_copy(update={"api_key": SecretStr(""), "proxy": redact_proxy(config.proxy), "headers": {}})
+
+
+def _normalize_proxy(current: str, requested: str) -> str:
+    raw = requested.strip()
+    if not raw:
+        return ""
+    if raw == redact_proxy(current):
+        return current
+    parts = urlsplit(raw)
+    if parts.scheme not in {"http", "https"} or not parts.hostname or parts.query or parts.fragment:
+        raise BackendError("invalid_proxy")
+    return parts.geturl()
+
+
+def _clean_headers(headers: dict[str, str]) -> dict[str, str]:
+    if len(headers) > 16:
+        raise BackendError("too_many_headers")
+    cleaned: dict[str, str] = {}
+    for name, value in headers.items():
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,64}", name) or name.lower() in _FORBIDDEN_HEADERS:
+            raise BackendError("invalid_header")
+        if not value or len(value) > 512 or "\r" in value or "\n" in value:
+            raise BackendError("invalid_header")
+        cleaned[name] = value
+    return cleaned
 
 
 def public_settings(config: ProviderConfig) -> ModelSettings:
     return ModelSettings(provider=config.provider, model=config.model, base_url=config.base_url,
-                         max_tokens=config.max_tokens, key_configured=bool(config.api_key.get_secret_value()))
+                         max_tokens=config.max_tokens, key_configured=bool(config.api_key.get_secret_value()),
+                         proxy=redact_proxy(config.proxy), headers=dict(config.headers))
 
 
 def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> ProviderConfig:
     """Return the next provider config. The stored API key is kept and never taken from the request."""
+    transport = {
+        "proxy": _normalize_proxy(current.proxy, requested.proxy),
+        "headers": _clean_headers(requested.headers),
+        "max_tokens": requested.max_tokens,
+    }
     if requested.provider == "faux":
         if requested.model != "faux":
             raise BackendError("model_not_available")
-        return current.model_copy(update={
-            "provider": "faux", "model": "faux", "base_url": "", "max_tokens": requested.max_tokens,
-        })
+        return current.model_copy(update={"provider": "faux", "model": "faux", "base_url": "", **transport})
     if not current.api_key.get_secret_value():
         raise BackendError("provider_not_configured")
     parts = urlsplit(requested.base_url.strip())
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
         raise BackendError("invalid_model_endpoint")
     return current.model_copy(update={
-        "provider": "deepseek", "model": requested.model, "base_url": parts.geturl(),
-        "max_tokens": requested.max_tokens,
+        "provider": "deepseek", "model": requested.model, "base_url": parts.geturl(), **transport,
     })
 
 
@@ -158,44 +209,49 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
     response_id = ""
     input_tokens = output_tokens = 0
     finished = False
-    async with AsyncOpenAI(api_key=config.api_key.get_secret_value(), base_url=config.base_url,
-                           max_retries=0, timeout=60) as client:
-        response = await client.chat.completions.create(
-            model=config.model, messages=provider_messages(messages), tools=tool_definitions(),
-            max_tokens=config.max_tokens, stream=True, stream_options={"include_usage": True},
-            extra_body={"thinking": {"type": "disabled"}},
-        )
-        async with response:
-            async for chunk in response:
-                response_id = chunk.id
-                if chunk.usage:
-                    input_tokens, output_tokens = chunk.usage.prompt_tokens, chunk.usage.completion_tokens
-                for choice in chunk.choices:
-                    if choice.delta.content:
-                        text += choice.delta.content
-                        if len(text) > 64000:
-                            raise BackendError("model_output_limit")
-                        yield choice.delta.content
-                    for delta in choice.delta.tool_calls or []:
-                        pending_call = calls.setdefault(delta.index, PendingCall())
-                        if delta.id:
-                            pending_call.id += delta.id
-                        if delta.function:
-                            pending_call.name += delta.function.name or ""
-                            pending_call.arguments += delta.function.arguments or ""
-                        if len(calls) > 16 or sum(len(c.arguments) + len(c.id) + len(c.name) for c in calls.values()) > 64000:
-                            raise BackendError("tool_argument_limit")
-                    if choice.finish_reason:
-                        if choice.finish_reason not in {"stop", "tool_calls"}:
-                            raise BackendError("model_incomplete", choice.finish_reason)
-                        finished = True
-    if not finished:
-        raise BackendError("model_stream_interrupted")
-    parsed: list[ToolCall] = []
-    for index in sorted(calls):
-        pending_call = calls[index]
-        parsed.append(ToolCall.model_validate({"id": pending_call.id, "name": pending_call.name, "arguments": pending_call.arguments}))
-    if any(not call.id for call in parsed) or len({call.id for call in parsed}) != len(parsed):
-        raise BackendError("invalid_tool_calls")
-    yield Completion(message=Message(role="assistant", content=text, tool_calls=parsed),
-                     response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens)
+    http = httpx2.AsyncClient(proxy=config.proxy or None, trust_env=False, timeout=60)
+    try:
+        async with AsyncOpenAI(api_key=config.api_key.get_secret_value(), base_url=config.base_url,
+                               max_retries=0, timeout=60, default_headers=config.headers or None,
+                               http_client=http) as client:
+            response = await client.chat.completions.create(
+                model=config.model, messages=provider_messages(messages), tools=tool_definitions(),
+                max_tokens=config.max_tokens, stream=True, stream_options={"include_usage": True},
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            async with response:
+                async for chunk in response:
+                    response_id = chunk.id
+                    if chunk.usage:
+                        input_tokens, output_tokens = chunk.usage.prompt_tokens, chunk.usage.completion_tokens
+                    for choice in chunk.choices:
+                        if choice.delta.content:
+                            text += choice.delta.content
+                            if len(text) > 64000:
+                                raise BackendError("model_output_limit")
+                            yield choice.delta.content
+                        for delta in choice.delta.tool_calls or []:
+                            pending_call = calls.setdefault(delta.index, PendingCall())
+                            if delta.id:
+                                pending_call.id += delta.id
+                            if delta.function:
+                                pending_call.name += delta.function.name or ""
+                                pending_call.arguments += delta.function.arguments or ""
+                            if len(calls) > 16 or sum(len(item.arguments) + len(item.id) + len(item.name) for item in calls.values()) > 64000:
+                                raise BackendError("tool_argument_limit")
+                        if choice.finish_reason:
+                            if choice.finish_reason not in {"stop", "tool_calls"}:
+                                raise BackendError("model_incomplete", choice.finish_reason)
+                            finished = True
+        if not finished:
+            raise BackendError("model_stream_interrupted")
+        parsed: list[ToolCall] = []
+        for index in sorted(calls):
+            pending_call = calls[index]
+            parsed.append(ToolCall.model_validate({"id": pending_call.id, "name": pending_call.name, "arguments": pending_call.arguments}))
+        if any(not call.id for call in parsed) or len({call.id for call in parsed}) != len(parsed):
+            raise BackendError("invalid_tool_calls")
+        yield Completion(message=Message(role="assistant", content=text, tool_calls=parsed),
+                         response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens)
+    finally:
+        await http.aclose()

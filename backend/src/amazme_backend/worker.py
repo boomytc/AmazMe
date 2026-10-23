@@ -310,7 +310,10 @@ class Worker:
             raise BackendError("validation_worker")
         if isinstance(action, ModelInvocation):
             self.profile.reload_provider()
-            config = action.config.model_copy(update={"api_key": self.profile.config.provider.api_key})
+            live = self.profile.config.provider
+            config = action.config.model_copy(update={
+                "api_key": live.api_key, "proxy": live.proxy, "headers": dict(live.headers),
+            })
             answer = ""
             completion: Completion | None = None
             preview_seq = 0

@@ -38,7 +38,7 @@ from .contracts import (
     WorkerState,
 )
 from .faults import Faults
-from .providers import Completion
+from .providers import Completion, stored_provider
 from .session_domain import (
     Action,
     CloseEpoch,
@@ -463,7 +463,7 @@ class SessionStore:
         db.execute("INSERT INTO requests(id,digest,payload) VALUES(?,?,?)",
                    (value.request_id, digest(value.model_dump_json()), receipt.model_dump_json()))
         # Store public provider configuration only. Credentials remain in Profile.
-        config = self.config.model_copy(update={"api_key": self.config.api_key.__class__("")})
+        config = stored_provider(self.config)
         self._save_run(db, Run(request_id=value.request_id, config=config, depth=depth))
         c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
         c.hit("accepted", receipt.request_id)

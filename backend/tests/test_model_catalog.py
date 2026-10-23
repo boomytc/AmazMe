@@ -13,6 +13,7 @@ from amazme_backend.contracts import (
     BackendError,
     CreateSession,
     HostFence,
+    Message,
     ProcessLease,
     Stream,
     Submission,
@@ -20,6 +21,7 @@ from amazme_backend.contracts import (
     UpdateModelSettings,
 )
 from amazme_backend.host import Host, application
+from amazme_backend.providers import stream
 from amazme_backend.worker import Worker
 
 SECRET = "sk-catalog-secret"
@@ -27,10 +29,12 @@ PARENT = "c" * 32
 
 
 def write_profile(path: Path, *, provider: str = "deepseek", model: str = "deepseek-flash",
-                  base_url: str = "https://api.deepseek.com", key: str = SECRET) -> None:
+                  base_url: str = "https://api.deepseek.com", key: str = SECRET,
+                  proxy: str = "", headers: dict[str, str] | None = None) -> None:
     private_write(path / "config.json", json.dumps({
         "format": 2, "profile_id": "catalog", "workspace": str(path), "resources": "unused",
-        "provider": {"provider": provider, "model": model, "base_url": base_url, "api_key": key, "max_tokens": 2048},
+        "provider": {"provider": provider, "model": model, "base_url": base_url, "api_key": key,
+                     "max_tokens": 2048, "proxy": proxy, "headers": headers or {}},
     }))
     private_write(path / "control.token", "private-control")
     private_write(path / "web.token", "web-only")
@@ -103,17 +107,72 @@ async def test_worker_submit_uses_the_reloaded_model_without_the_key(tmp_path: P
     fence = HostFence(host_epoch=1, build_id=build)
     await worker.store.fence(fence)
     write_profile(tmp_path, provider="deepseek", model="deepseek-chat",
-                  base_url="https://gateway.example/v1", key=SECRET)
+                  base_url="https://gateway.example/v1", key=SECRET,
+                  proxy="http://user:pw@127.0.0.1:9", headers={"X-Project": "demo"})
     try:
         receipt = await worker.submit(Submission(**fence.model_dump(), value=Submit(request_id="turn", text="hello")))
         assert receipt.status == "queued"
         payload = await worker.store.db.call(lambda db: db.execute(
             "SELECT payload FROM runs WHERE request_id='turn'").fetchone()[0])
         assert "deepseek-chat" in payload and "https://gateway.example/v1" in payload
-        assert SECRET not in payload and "api_key" in payload
+        assert SECRET not in payload and "pw" not in payload and "demo" not in payload
     finally:
         await worker.store.db.close()
         await worker.supervisor.close()
+
+
+async def test_proxy_password_is_kept_but_not_published_or_recorded(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
+    saved = await owner.update_model(UpdateModelSettings(
+        provider="deepseek", model="deepseek-flash", base_url="https://api.deepseek.com",
+        proxy="http://user:pw@127.0.0.1:9", headers={"X-Project": "demo"}))
+    assert saved.proxy == "http://127.0.0.1:9" and "pw" not in saved.model_dump_json()
+    assert saved.headers == {"X-Project": "demo"}
+    stored = json.loads((owner.profile.path / "config.json").read_text())["provider"]
+    assert stored["proxy"] == "http://user:pw@127.0.0.1:9" and stored["headers"] == {"X-Project": "demo"}
+    again = await owner.update_model(UpdateModelSettings(
+        provider="deepseek", model="deepseek-flash", base_url="https://api.deepseek.com",
+        proxy=saved.proxy, headers={"X-Project": "demo"}))
+    assert again.proxy == saved.proxy
+    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["proxy"] == stored["proxy"]
+    with pytest.raises(BackendError, match="invalid_proxy"):
+        await owner.update_model(UpdateModelSettings(
+            provider="deepseek", model="deepseek-flash", base_url="https://api.deepseek.com",
+            proxy="http://user:pw@127.0.0.1:9/path?token=secret"))
+    with pytest.raises(BackendError, match="invalid_header"):
+        await owner.update_model(UpdateModelSettings(
+            provider="deepseek", model="deepseek-flash", base_url="https://api.deepseek.com",
+            headers={"Authorization": "secret"}))
+    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["proxy"] == stored["proxy"]
+    captured: dict[str, object] = {}
+
+    class FakeHTTP:
+        def __init__(self, **kwargs: object) -> None:
+            captured["http"] = kwargs
+
+        async def aclose(self) -> None:
+            captured["closed"] = True
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs: object) -> None:
+            captured["openai"] = kwargs
+
+        async def __aenter__(self) -> "FakeOpenAI":
+            raise BackendError("stop-before-network")
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr("amazme_backend.providers.httpx2.AsyncClient", FakeHTTP)
+    monkeypatch.setattr("amazme_backend.providers.AsyncOpenAI", FakeOpenAI)
+    with pytest.raises(BackendError, match="stop-before-network"):
+        async for _item in stream(owner.profile.config.provider, [Message(role="user", content="hi")]):
+            pass
+    http_kwargs = captured["http"]
+    openai_kwargs = captured["openai"]
+    assert isinstance(http_kwargs, dict) and isinstance(openai_kwargs, dict)
+    assert http_kwargs["proxy"] == "http://user:pw@127.0.0.1:9" and http_kwargs["trust_env"] is False
+    assert openai_kwargs["default_headers"] == {"X-Project": "demo"}
+    assert captured["closed"] is True
 
 
 async def test_model_route_returns_the_saved_choice(owner: Host) -> None:
@@ -162,6 +221,8 @@ def test_browser_saves_the_selected_catalog_model() -> None:
             const body=JSON.parse(options.body);
             assert.equal(body.provider,'faux');
             assert.equal(body.model,'faux');
+            assert.equal(body.proxy,'http://127.0.0.1:9');
+            assert.deepEqual(body.headers,{'X-Project':'demo'});
             assert.equal(options.headers['x-amazme-build'],'build');
             current={provider:'faux',model:'faux',base_url:'',max_tokens:body.max_tokens,key_configured:true};
             return response(current);
@@ -177,6 +238,8 @@ def test_browser_saves_the_selected_catalog_model() -> None:
         await until(()=>$('model-choice').selectedOptions[0]?.textContent==='DeepSeek Flash');
         $('model-choice').value='faux\nfaux';
         $('model-choice').onchange();
+        $('model-proxy').value='http://127.0.0.1:9';
+        $('model-headers').value='X-Project: demo';
         assert.equal($('model-endpoint').disabled, true);
         await $('model-form').onsubmit({preventDefault(){}});
         await until(()=>$('model-choice').value==='faux\nfaux' && $('model-endpoint').value==='' && $('model-endpoint').disabled===true);

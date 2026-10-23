@@ -76,7 +76,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | 用户操作 | 阶段 | 入口 | 状态 | 测试 / 运行 | 未通过与下一步 |
 | --- | --- | --- | --- | --- | --- |
 | 文本、工具流、终止与 faux usage | P1/P2 | `providers.stream`，faux 与 DeepSeek Flash | 部分通过 | faux 单测；P1 有一次真实 DeepSeek | 推理签名、缓存、费用和其余供应商未做。真实供应商只用已经授权的凭据 |
-| 模型目录、选择、自定义端点 | P3 | `GET/POST /api/v1/models`；侧栏「保存模型」 | 部分通过 | `backend/tests/test_model_catalog.py` | `2a81e20f`。目录是 faux 与 DeepSeek。DeepSeek 可改 https 端点和模型名。响应不含 API key。代理和附加请求头未做 |
+| 模型目录、选择、自定义端点、代理和请求头 | P3 | `GET/POST /api/v1/models`；侧栏模型表单 | 部分通过 | `backend/tests/test_model_catalog.py` | 目录是 faux 与 DeepSeek。DeepSeek 可改 https 端点。代理密码不进回执和会话记录。请求头有数量和名称限制。OAuth 未做 |
 | API key | P1 | `provider.json`，不进普通日志 | 部分通过 | 配置加载 | 刷新、轮换和登出竞争未做 |
 | OAuth、单一刷新管理者、取消期间 token 落盘 | P3 | 无 | 未通过 | 无 | 按供应商要求的 client ID、回调和请求身份实现。缺账号时保持未验收并继续无关功能 |
 | 图片、分类 | P3 | 无 | 未通过 | 无 | 按产品里实际有的能力做，不按枚举注册名称 |
@@ -118,5 +118,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 当前源码已重新 `uv build`。Ruff、Pyright 和 pytest 294 通过。A/B 安装包仍是 `d5cefaf`，不覆盖这次分支。
-2. 模型目录已能选择 faux 或 DeepSeek 并保存端点。代理、附加请求头和 OAuth 仍未做。
+2. 模型目录已能保存端点、代理和请求头。OAuth 仍未做。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。

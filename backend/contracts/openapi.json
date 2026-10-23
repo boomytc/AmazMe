@@ -1730,6 +1730,18 @@
           "key_configured": {
             "type": "boolean",
             "title": "Key Configured"
+          },
+          "proxy": {
+            "type": "string",
+            "title": "Proxy",
+            "default": ""
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers"
           }
         },
         "additionalProperties": false,
@@ -2338,6 +2350,19 @@
             "minimum": 32.0,
             "title": "Max Tokens",
             "default": 2048
+          },
+          "proxy": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Proxy",
+            "default": ""
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers"
           }
         },
         "additionalProperties": false,

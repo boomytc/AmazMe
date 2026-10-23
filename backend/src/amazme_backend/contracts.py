@@ -15,6 +15,8 @@ class ProviderConfig(Model):
     model: str = "deepseek-flash"
     api_key: SecretStr = SecretStr("")
     max_tokens: int = Field(default=2048, ge=32, le=8192)
+    proxy: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
 
 
 class CatalogModel(Model):
@@ -30,6 +32,8 @@ class ModelSettings(Model):
     base_url: str
     max_tokens: int
     key_configured: bool
+    proxy: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
 
 
 class ModelCatalog(Model):
@@ -42,6 +46,8 @@ class UpdateModelSettings(Model):
     model: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     base_url: str = Field(default="", max_length=300)
     max_tokens: int = Field(default=2048, ge=32, le=8192)
+    proxy: str = Field(default="", max_length=300)
+    headers: dict[str, str] = Field(default_factory=dict)
 
 
 class ProfileConfig(Model):

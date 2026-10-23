@@ -406,6 +406,8 @@ function startClient() {
     select.value = key;
     endpoint.value = current.base_url;
     endpoint.disabled = current.provider !== "deepseek";
+    $("model-proxy").value = current.proxy || "";
+    $("model-headers").value = Object.entries(current.headers || {}).map(([name, value]) => `${name}: ${value}`).join("\n");
     select.onchange = () => {
       const editable = select.value.split("\n")[0] === "deepseek";
       endpoint.disabled = !editable;
@@ -443,17 +445,34 @@ function startClient() {
     try { await api("/auth", "POST", {token:$("token").value}); $("token").value = ""; await load(); }
     catch (failure) { error(failure); }
   };
+  function headerMap(text) {
+    const headers = {};
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const split = trimmed.indexOf(":");
+      if (split <= 0) throw new Error("请求头需要“名称: 值”");
+      headers[trimmed.slice(0, split).trim()] = trimmed.slice(split + 1).trim();
+    }
+    return headers;
+  }
   $("model-form").onsubmit = async event => {
     event.preventDefault();
     if (!identity || health?.state !== "ready") return;
     const [provider, model] = $("model-choice").value.split("\n");
     const maxTokens = Number($("model-form").dataset.maxTokens || 2048);
+    let headers;
+    try { headers = headerMap($("model-headers").value); }
+    catch (failure) { error(failure); return; }
     try {
       const saved = await api("/api/v1/models", "POST", {
         provider, model, base_url: $("model-endpoint").value, max_tokens: maxTokens,
+        proxy: $("model-proxy").value, headers,
       });
       $("model-endpoint").value = saved.base_url;
       $("model-endpoint").disabled = saved.provider !== "deepseek";
+      $("model-proxy").value = saved.proxy || "";
+      $("model-headers").value = Object.entries(saved.headers || {}).map(([name, value]) => `${name}: ${value}`).join("\n");
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
