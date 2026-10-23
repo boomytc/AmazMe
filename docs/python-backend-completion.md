@@ -93,7 +93,8 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | 已批准的原生桌面动作 | P3 | 无 | 未通过 | 无 | 独立驱动，并证明退出和资源归属。不做任意 macOS shell |
 | 插件身份、配置、入口、受管生命周期 | P3 | `POST /api/v1/plugins`；页面「插件」 | 部分通过 | `backend/tests/test_plugins.py` 运行固定入口，并经监督器登记、调用和重新加载 | `268556a`。入口只有 stamp，由监督器启动，许可里没有命令或 SQLite。同一调用不重复写入，内容冲突拒绝。没有退出证明时不能再调用。worker 还持有旧插件指纹时不能更换。定时等待等未结束任务会挡住登记和重新加载，原任务文本保留。这不是 MCP。入口还没放进 Linux 客户机，也不在 A/B 包里 |
 | 历史搜索 | P3 | `GET /api/v1/sessions/{id}/search`；页面「历史」 | 部分通过 | `test_session_branch.py` 的搜索用例和 happy-dom | `6fc70d5`。只查当前会话已落盘的任务文本和消息。`%` 按字面匹配。归档后仍可搜。不注入记忆，也不搜索其他会话。还不在 A/B 包和真实 Chrome 里 |
-| memory、checkpoint、automation、workflows、web 工具、computer-use | P3 | 无 | 未通过 | 无 | 按方案第 6.3 节逐项做。付费调用不盲目重放。历史搜索不代替这些能力 |
+| 记忆发现与上下文注入 | P3 | `POST /api/v1/memories`；页面「记忆」 | 部分通过 | `backend/tests/test_memories.py` 保存记忆，并由 `Worker.perform` 注入模型输入 | `da0240c`。记忆按工作区保存。只有与用户原文相配、且属于该会话工作区的记忆会放进模型上下文。同一 ID 的不同内容冲突，原文保留。匹配是子串，不是语义检索。还不在 A/B 包里 |
+| checkpoint、automation、workflows、web 工具、computer-use | P3 | 无 | 未通过 | 无 | 按方案第 6.3 节逐项做。付费调用不盲目重放。历史搜索和记忆注入不代替这些能力 |
 | 项目、设置、搜索、反馈、分享、artifact、模型管理、导入导出 | P3 | 无 | 未通过 | 无 | 只处理新格式。不读旧 TS 数据 |
 | 使用量、费用、诊断；日志不漏凭据 | P3 | 健康与错误码 | 部分通过 | 预算耗尽快照测试 | 费用和诊断面未做。凭据继续不进普通日志 |
 | Web 完整产品 | P3 | `backend/src/amazme_backend/web` | 部分通过 | `verify_client.py` 6 项；分支按钮有 happy-dom | 管理面、分支的真实 Chrome、多窗口还没做 |
@@ -119,5 +120,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
-2. 多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 和记忆注入未做。插件入口和额外工作区都还没在 Lima 里验收。
+2. 工作区记忆注入在 `da0240c`。多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth、checkpoint、automation、workflows、web 工具和 computer-use 未做。插件入口和额外工作区都还没在 Lima 里验收。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
