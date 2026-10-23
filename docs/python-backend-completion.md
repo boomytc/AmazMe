@@ -88,7 +88,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | PTY、终端输入、resize、输出背压 | P3 | `POST /api/v1/sessions/{id}/terminals`；页面「终端」 | 部分通过 | `backend/tests/test_pty.py` 会执行客户机脚本，并经监督器打开同一条命令 | `6dcdc47`。输出超过窗口后不再转发，直到客户端授信。退出码只来自 waitpid，连接断开保持 unknown。容器规格无网络、不分配 Docker TTY。本机测试直接跑该 PID 1 脚本，没有在 Lima 里再跑一遍。Docker 桥接代码未对真实 daemon 验收 |
 | 工作区持久依赖卷和固定工具镜像 | P1 资源 / P4 分发 | 构建期离线镜像 | 部分通过 | P1 运行记录 | 运行时不临时拉镜像。完整离线首启属 P4 |
 | SSH / 远端 daemon | P3 | 无 | 未通过 | 无 | 断线不把远端判成已停止 |
-| MCP 连接、目录、审批、取消 | P3 | 无 | 未通过 | 无 | MCP 不能代替其他插件能力 |
+| MCP 连接、目录、审批、取消 | P3 | `POST /api/v1/sessions/{id}/mcp`；页面「MCP」 | 部分通过 | `backend/tests/test_mcp.py` 执行客户机脚本，并经监督器打开同一条命令 | `7719860`。stdio 服务在客户机里。目录来自 tools/list。调用先落成等待批准，批准后才转发，同一 ID 的不同参数冲突。停止后的退出码来自 waitpid，清理失败会挡住下一个 MCP。OAuth 未做。本机没有在 Lima 里再跑。MCP 不代替其他插件 |
 | Codemode 受控 JS | P3 | 无 | 未通过 | 无 | 不暴露任意宿主文件和网络 |
 | 已批准的原生桌面动作 | P3 | 无 | 未通过 | 无 | 独立驱动，并证明退出和资源归属。不做任意 macOS shell |
 | 插件身份、配置、入口、受管生命周期 | P3 | 无 | 未通过 | 无 | 插件不能写 SQLite，也不能绕过监督器 |
@@ -118,5 +118,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
-2. 终端 PTY 在 `6dcdc47`。OAuth 仍未做。多工作区、MCP 和 SSH 未做。PTY 还没有真实 Linux 容器验收。
+2. MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。两者都还没有真实 Linux 容器验收。OAuth、多工作区和 SSH 未做。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
