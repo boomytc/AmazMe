@@ -30,7 +30,7 @@ import {
 import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
-import { withSessionDeepLink } from "./deep-link.ts";
+import { withWindowTarget, type WindowAddress } from "./deep-link.ts";
 import { attentionOnTitle } from "./title.ts";
 import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
@@ -220,7 +220,7 @@ async function refreshApplicationMenu(): Promise<void> {
 				applicationMenuTemplate(process.platform, locale, {
 					newSession: () => send("new-session"),
 					newWindow: () => {
-						if (hostPageUrl !== undefined) void openWindow(hostPageUrl);
+						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, { workspace: "primary", fresh: true });
 					},
 					settings: () => send("settings"),
 					updates: () => { void updates?.show(); },
@@ -487,10 +487,10 @@ async function announceApprovals(title: string, count: number, target: BrowserWi
 	}
 }
 
-async function openWindow(pageUrl: string, sessionId: string | undefined = undefined): Promise<void> {
+async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<void> {
 	hostPageUrl ??= pageUrl;
-	const target = withSessionDeepLink(pageUrl, sessionId);
-	const origin = new URL(target).origin;
+	const addressed = withWindowTarget(pageUrl, target);
+	const origin = new URL(addressed).origin;
 	nextWindowPartition += 1;
 	const created = new BrowserWindow({
 		width: 1440,
@@ -512,7 +512,7 @@ async function openWindow(pageUrl: string, sessionId: string | undefined = undef
 		},
 	});
 	windows.add(created);
-	pageUrls.set(created.id, target);
+	pageUrls.set(created.id, addressed);
 	void refreshApplicationMenu();
 	created.on("closed", () => {
 		windows.delete(created);
@@ -568,13 +568,16 @@ async function openWindow(pageUrl: string, sessionId: string | undefined = undef
 		return { action: "deny" };
 	});
 	if (pythonWebToken.length > 0) {
-		const cookie = pairingCookie(target, pythonWebToken);
+		const cookieUrl = new URL(addressed);
+		cookieUrl.search = "";
+		cookieUrl.hash = "";
+		const cookie = pairingCookie(cookieUrl.href, pythonWebToken);
 		await created.webContents.session.cookies.set(cookie);
 		const stored = await created.webContents.session.cookies.get({ url: cookie.url, name: "amazme" });
 		if (!stored.some((item) => item.value === pythonWebToken)) throw new Error("desktop pairing cookie was not stored");
 	}
 	try {
-		await created.loadURL(target);
+		await created.loadURL(addressed);
 	} catch (error: unknown) {
 		// The did-fail-load handler owns the dialog. Rejecting here would look like a host failure.
 		console.error(error instanceof Error ? error.message : String(error));
@@ -662,7 +665,8 @@ async function boot(): Promise<void> {
 		},
 	});
 	const pageUrl = await host.start();
-	await openWindow(pageUrl, deepLinkSession);
+	const namedSession = deepLinkSession?.trim();
+	await openWindow(pageUrl, namedSession ? { sessionId: namedSession } : { workspace: "primary", fresh: true });
 	if (!SMOKE && !notices.quitting) {
 		const target = dirname(dirname(dirname(process.execPath)));
 		if (process.argv.includes("--amazme-update-job")) {
@@ -706,9 +710,17 @@ async function initializeDesktop(): Promise<void> {
 		process.stdout.write("desktop update stale lock recovered\n");
 	} else if (!app.requestSingleInstanceLock()) { app.quit(); return; }
 
-	app.on("second-instance", showWindow);
+	app.on("second-instance", (_event, argv) => {
+		const fresh = argv.some((arg) => arg === "--amazme-new-window");
+		if (fresh && hostPageUrl !== undefined) {
+			process.stdout.write("desktop window requested\n");
+			void openWindow(hostPageUrl, { workspace: "primary", fresh: true });
+			return;
+		}
+		showWindow();
+	});
 	app.on("activate", () => {
-		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl);
+		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl, { workspace: "primary", fresh: true });
 		else showWindow();
 	});
 	app.on("window-all-closed", () => {

@@ -334,7 +334,52 @@ function startClient() {
     } catch (failure) { if (owns(connection)) error(failure); }
     finally { connection.refreshing = false; }
   }
+  function namedTarget() {
+    const params = new URLSearchParams(location.search);
+    return {
+      session: (params.get("session") || "").trim(),
+      workspace: (params.get("workspace") || "").trim(),
+      fresh: params.get("new") === "1",
+    };
+  }
+  function addressedWindow() {
+    const params = new URLSearchParams(location.search);
+    return params.has("session") || params.has("workspace") || params.has("new");
+  }
+  function rememberWindow(sessionId, workspace) {
+    const url = new URL(location.href);
+    url.searchParams.set("session", sessionId);
+    url.searchParams.set("workspace", workspace);
+    url.searchParams.delete("new");
+    if (url.href !== location.href) history.replaceState(null, "", url.href);
+  }
+  async function bindWindow(sessions) {
+    const target = namedTarget();
+    if (target.fresh && !target.session) {
+      const workspace = target.workspace || "primary";
+      const created = await api("/api/v1/sessions", "POST", {title:"窗口任务", workspace});
+      const bound = created.workspace || workspace;
+      if (bound !== workspace) throw new Error("新建会话的工作区不一致");
+      rememberWindow(created.session_id, bound);
+      if (namedTarget().fresh || namedTarget().session !== created.session_id) throw new Error("窗口地址没有写上新会话");
+      await load();
+      return;
+    }
+    if (target.session) {
+      const match = sessions.find(item => item.session_id === target.session);
+      if (!match) throw new Error("链接的会话不存在");
+      const workspace = match.workspace || "primary";
+      if (target.workspace && target.workspace !== workspace) throw new Error("链接的工作区与会话不一致");
+      rememberWindow(match.session_id, workspace);
+      if (selected !== match.session_id) await select(match.session_id);
+      return;
+    }
+    if (!selected && sessions.length) {
+      await select(sessions.some(item => item.session_id === pending?.target) ? pending.target : sessions[0].session_id);
+    }
+  }
   async function select(id, resume = false) {
+    if (addressedWindow()) rememberWindow(id, sessionWorkspaces.get(id) || namedTarget().workspace || "primary");
     if (selected) drafts.set(selected, $("prompt").value);
     const cached = resume && current?.session === id ? current.model : null;
     if (selected !== id) {
@@ -436,7 +481,7 @@ function startClient() {
       sessionWorkspaces.set(item.session_id, item.workspace || "primary");
     }
     $("sessions").replaceChildren(...value.sessions.map(item => button(item.archived ? `${item.title}（已归档）` : item.title, () => void select(item.session_id))));
-    if (!selected && value.sessions.length) await select(value.sessions.some(item => item.session_id === pending?.target) ? pending.target : value.sessions[0].session_id);
+    await bindWindow(value.sessions);
     renderHealth();
   }
   async function runAction(key, connection, path, body) {
@@ -1003,7 +1048,12 @@ function startClient() {
   };
   $("create").onclick = async () => {
     $("create").disabled = true;
-    try { const value = await api("/api/v1/sessions", "POST", {title:"工作区任务"}); await load(); await select(value.session_id); }
+    try {
+      const workspace = namedTarget().workspace || sessionWorkspaces.get(selected) || "primary";
+      const value = await api("/api/v1/sessions", "POST", {title:"工作区任务", workspace});
+      await load();
+      await select(value.session_id);
+    }
     catch (failure) { error(failure); } finally { controls(); }
   };
   $("composer").onsubmit = async event => {
