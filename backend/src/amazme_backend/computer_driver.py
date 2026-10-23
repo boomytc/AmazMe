@@ -4,6 +4,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import cast
 
 DISPLAYS = {
     "unconfigured": (False, False, 0, 0, 1, 1),
@@ -20,9 +21,15 @@ def reply(payload: dict[str, object]) -> None:
     sys.stdout.flush()
 
 
+def as_record(value: object) -> dict[str, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return {str(key): item for key, item in cast(dict[object, object], value).items()}
+
+
 def main() -> None:
-    permit = json.loads(sys.stdin.readline() or "{}")
-    scenario = permit.get("scenario") if isinstance(permit, dict) else None
+    permit = as_record(json.loads(sys.stdin.readline() or "{}"))
+    scenario = permit.get("scenario") if permit is not None else None
     if not isinstance(scenario, str) or scenario not in DISPLAYS:
         sys.exit(2)
     accessibility, screen, raw_width, raw_height, orientation, scale = DISPLAYS[scenario]
@@ -33,8 +40,8 @@ def main() -> None:
     current = ""
     record = Path("computer-actions.jsonl")
     for line in sys.stdin:
-        message = json.loads(line)
-        if not isinstance(message, dict):
+        message = as_record(json.loads(line))
+        if message is None:
             sys.exit(2)
         op = message.get("op")
         if op == "stop":
@@ -57,7 +64,7 @@ def main() -> None:
             continue
         if scenario == "hold":
             time.sleep(0.25)
-        point = {"op": "act", "capture_id": current, "x": message.get("x"), "y": message.get("y")}
+        point: dict[str, object] = {"op": "act", "capture_id": current, "x": message.get("x"), "y": message.get("y")}
         with record.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(point, separators=(",", ":")) + "\n")
         reply({"op": "acted", "x": point["x"], "y": point["y"]})
