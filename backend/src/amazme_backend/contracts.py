@@ -315,6 +315,36 @@ class AutomationTick(Model):
     fired: AutomationView | None = None
 
 
+class WorkflowChild(Model):
+    request_id: str
+    role: Literal["check", "correction"]
+    text: str
+    status: Status = "queued"
+
+
+class WorkflowOpen(Model):
+    workflow_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    check: str = Field(min_length=1, max_length=16000)
+    correction_limit: int = Field(default=1, ge=0, le=8)
+
+
+class WorkflowVerdict(Model):
+    verdict_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    passed: bool
+
+
+class WorkflowView(Model):
+    workflow_id: str
+    session_id: str
+    stage: Literal["check", "correction", "passed", "exhausted", "cancelled"]
+    correction_limit: int = Field(ge=0, le=8)
+    attempts: int = Field(ge=0)
+    parent_id: str
+    parent_status: Status = "waiting_children"
+    check: str
+    children: list[WorkflowChild] = Field(default_factory=lambda: list[WorkflowChild]())
+
+
 class HostFence(Model):
     host_epoch: int
     build_id: str

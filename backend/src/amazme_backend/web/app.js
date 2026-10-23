@@ -337,6 +337,7 @@ function startClient() {
   async function select(id, resume = false) {
     if (selected) drafts.set(selected, $("prompt").value);
     const cached = resume && current?.session === id ? current.model : null;
+    if (selected !== id) { workflowId = ""; workflowView = null; }
     retire(); selected = id; const binding = ++generation;
     const connection = {generation:binding, session:id, ready:false, model:cached, ws:null, attachment:null};
     current = connection; connecting = true;
@@ -576,6 +577,60 @@ function startClient() {
         {decision_id: crypto.randomUUID().replaceAll("-", ""), approve: true, digest: mcpDigest}, current);
       $("mcp-result").textContent = call.result;
       $("mcp-approval").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  let workflowId = "", workflowView = null;
+  function showWorkflow(view) {
+    workflowView = view;
+    const children = (view.children || []).map(item => `${item.role}:${item.status}`).join(",");
+    $("workflow-state").textContent = `${view.stage} · ${view.attempts} · ${children}`;
+  }
+  $("workflow-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    workflowId = workflowId || crypto.randomUUID().replaceAll("-", "");
+    try {
+      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows`, "POST", {
+        workflow_id: workflowId, check: $("workflow-check").value,
+        correction_limit: Number($("workflow-limit").value),
+      }, current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  async function verdict(passed) {
+    if (!selected || !workflowId || !identity || health?.state !== "ready") return;
+    try {
+      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/verdicts`, "POST", {
+        verdict_id: crypto.randomUUID().replaceAll("-", ""), passed,
+      }, current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  }
+  $("workflow-fail").onclick = () => void verdict(false);
+  $("workflow-pass").onclick = () => void verdict(true);
+  $("workflow-resume").onclick = async () => {
+    if (!selected || !workflowId || !identity) return;
+    try {
+      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/resume`, "POST", {}, current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("workflow-cancel").onclick = async () => {
+    if (!selected || !workflowId || !identity || health?.state !== "ready") return;
+    try {
+      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/cancel`, "POST", {}, current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("workflow-cancel-child").onclick = async () => {
+    if (!selected || !workflowId || !workflowView || !identity || health?.state !== "ready") return;
+    const child = (workflowView.children || []).find(item => item.status !== "succeeded" && item.status !== "cancelled"
+      && item.status !== "failed" && item.status !== "interrupted" && item.status !== "unknown") || workflowView.children.at(-1);
+    if (!child) return;
+    try {
+      showWorkflow(await api(
+        `/api/v1/sessions/${selected}/workflows/${workflowId}/children/${child.request_id}/cancel`, "POST", {}, current));
+      $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   let automationId = "";

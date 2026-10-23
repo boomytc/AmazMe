@@ -110,6 +110,9 @@ from .contracts import (
     WorkerActivity,
     WorkerInfo,
     WorkerSpec,
+    WorkflowOpen,
+    WorkflowVerdict,
+    WorkflowView,
     WorkspaceGrantRequest,
     WorkspaceGrantView,
     WorkspaceList,
@@ -710,6 +713,53 @@ class Host:
         if row is None:
             return AutomationTick()
         return AutomationTick(fired=self._automation(row))
+
+    async def _with_session[T](self, session: str, operation: Callable[[SessionStore], Awaitable[T]], *,
+                                require_active: bool = True) -> T:
+        self._admit()
+        if require_active and await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        source = next(item for item in (await self.sessions()).sessions if item.session_id == session)
+        if require_active and source.archived:
+            raise BackendError("session_archived")
+        path = session_database(self.profile.path, session)
+        if not path.parent.exists():
+            path.parent.mkdir(parents=True, mode=0o700)
+        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                             approval_policy=self.profile.config.approval_policy)
+        try:
+            await worker.initialize()
+            return await operation(worker)
+        finally:
+            await worker.db.close()
+
+    async def open_workflow(self, session: str, value: WorkflowOpen) -> WorkflowView:
+        return await self._with_session(
+            session, lambda store: store.open_workflow(value.workflow_id, value.check, value.correction_limit))
+
+    async def workflow(self, session: str, workflow_id: str) -> WorkflowView:
+        return await self._with_session(session, lambda store: store.workflow(workflow_id), require_active=False)
+
+    async def resume_workflow(self, session: str, workflow_id: str) -> WorkflowView:
+        return await self._with_session(
+            session, lambda store: store.resume_workflow(workflow_id), require_active=False)
+
+    async def record_verdict(self, session: str, workflow_id: str, value: WorkflowVerdict) -> WorkflowView:
+        return await self._with_session(
+            session, lambda store: store.record_verdict(workflow_id, value.verdict_id, value.passed))
+
+    async def cancel_workflow(self, session: str, workflow_id: str) -> WorkflowView:
+        async def operation(store: SessionStore) -> WorkflowView:
+            view = await store.workflow(workflow_id)
+            await store.cancel(view.parent_id, HostFence(host_epoch=await store.host_epoch(), build_id=self.build))
+            return await store.workflow(workflow_id)
+        return await self._with_session(session, operation)
+
+    async def cancel_workflow_child(self, session: str, workflow_id: str, request_id: str) -> WorkflowView:
+        return await self._with_session(
+            session, lambda store: store.cancel_workflow_child(workflow_id, request_id))
 
     async def branch_session(self, parent: str, value: BranchSession) -> Session:
         self._admit()
@@ -1454,6 +1504,30 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/automations/tick")
     async def tick_automations() -> AutomationTick:
         return await owner.tick_automations()
+
+    @app.post("/api/v1/sessions/{session}/workflows")
+    async def open_workflow(session: str, value: WorkflowOpen) -> WorkflowView:
+        return await owner.open_workflow(session, value)
+
+    @app.get("/api/v1/sessions/{session}/workflows/{workflow_id}")
+    async def workflow(session: str, workflow_id: str) -> WorkflowView:
+        return await owner.workflow(session, workflow_id)
+
+    @app.post("/api/v1/sessions/{session}/workflows/{workflow_id}/verdicts")
+    async def record_verdict(session: str, workflow_id: str, value: WorkflowVerdict) -> WorkflowView:
+        return await owner.record_verdict(session, workflow_id, value)
+
+    @app.post("/api/v1/sessions/{session}/workflows/{workflow_id}/resume")
+    async def resume_workflow(session: str, workflow_id: str) -> WorkflowView:
+        return await owner.resume_workflow(session, workflow_id)
+
+    @app.post("/api/v1/sessions/{session}/workflows/{workflow_id}/cancel")
+    async def cancel_workflow(session: str, workflow_id: str) -> WorkflowView:
+        return await owner.cancel_workflow(session, workflow_id)
+
+    @app.post("/api/v1/sessions/{session}/workflows/{workflow_id}/children/{request_id}/cancel")
+    async def cancel_workflow_child(session: str, workflow_id: str, request_id: str) -> WorkflowView:
+        return await owner.cancel_workflow_child(session, workflow_id, request_id)
 
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:

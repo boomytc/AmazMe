@@ -38,6 +38,8 @@ from .contracts import (
     ToolCall,
     WorkerActivity,
     WorkerState,
+    WorkflowChild,
+    WorkflowView,
 )
 from .faults import Faults
 from .providers import Completion, stored_provider
@@ -144,6 +146,20 @@ def now_ms() -> int:
 
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
+
+
+def workflow_body(check: str, correction_limit: int) -> str:
+    return json.dumps({"check": check, "correction_limit": correction_limit},
+                      ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def verdict_body(verdict_id: str, passed: bool) -> str:
+    return json.dumps({"passed": passed, "verdict_id": verdict_id},
+                      ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def correction_text(attempt: int) -> str:
+    return f"修正第{attempt}次。上一阶段未通过。只处理这次修正。"
 
 
 class Database:
@@ -358,6 +374,12 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS previews(request_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS batches(seq INTEGER PRIMARY KEY,payload TEXT NOT NULL,bytes INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS compactions(id TEXT PRIMARY KEY,basis TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS workflows(
+                  id TEXT PRIMARY KEY,digest TEXT NOT NULL,parent_id TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS workflows_parent ON workflows(parent_id);
+                CREATE TABLE IF NOT EXISTS workflow_verdicts(
+                  workflow_id TEXT NOT NULL,verdict_id TEXT NOT NULL,digest TEXT NOT NULL,passed INTEGER NOT NULL,
+                  PRIMARY KEY(workflow_id,verdict_id));
             """)
             for key, value in {"stream_id": secrets.token_hex(16), "revision": "0", "host_epoch": "0",
                                "freeze_id": "", "stopping": "", "blocked": "", "driver_id": "", "execution_epoch": "0"}.items():
@@ -560,6 +582,166 @@ class SessionStore:
             raise BackendError("request_not_found", status=404)
         return await self.db.call(operation)
 
+    def _workflow_row(self, db: sqlite3.Connection, workflow_id: str) -> tuple[str, WorkflowView]:
+        row = db.execute("SELECT digest,payload FROM workflows WHERE id=?", (workflow_id,)).fetchone()
+        if row is None:
+            raise BackendError("workflow_not_found", status=404)
+        return str(row[0]), WorkflowView.model_validate_json(row[1])
+
+    def _refresh_workflow(self, db: sqlite3.Connection, view: WorkflowView) -> WorkflowView:
+        children = [child.model_copy(update={"status": self._request(db, child.request_id).status})
+                    for child in view.children]
+        parent = self._request(db, view.parent_id)
+        return view.model_copy(update={"children": children, "parent_status": parent.status})
+
+    @staticmethod
+    def _save_workflow(db: sqlite3.Connection, view: WorkflowView) -> None:
+        db.execute("UPDATE workflows SET payload=? WHERE id=?", (view.model_dump_json(), view.workflow_id))
+
+    def _workflow_parent(self, db: sqlite3.Connection, request_id: str) -> WorkflowView | None:
+        row = db.execute("SELECT payload FROM workflows WHERE parent_id=?", (request_id,)).fetchone()
+        if row is None:
+            return None
+        return WorkflowView.model_validate_json(row[0])
+
+    def _mark_workflow_cancelled(self, db: sqlite3.Connection, request_id: str) -> None:
+        view = self._workflow_parent(db, request_id)
+        if view is None or view.stage == "cancelled":
+            return
+        self._save_workflow(db, view.model_copy(update={"stage": "cancelled"}))
+
+    def _finish_workflow_parent(self, db: sqlite3.Connection, c: Changes, request_id: str) -> None:
+        view = self._workflow_parent(db, request_id)
+        if view is None or view.stage not in {"passed", "exhausted", "cancelled"}:
+            return
+        parent = self._request(db, view.parent_id)
+        if parent.decision or parent.status in TERMINAL:
+            return
+        if any(self._request(db, child.request_id).status not in TERMINAL for child in view.children):
+            return
+        if view.stage == "passed":
+            decision = Decision(status="succeeded", answer="workflow_passed")
+        elif view.stage == "exhausted":
+            decision = Decision(status="failed", error="workflow_exhausted")
+        else:
+            decision = Decision(status="cancelled")
+        self._decide(db, c, parent, decision)
+        self._settle(db, c, parent)
+
+    def _park_or_settle_workflow(self, db: sqlite3.Connection, c: Changes, request: Receipt,
+                                 view: WorkflowView) -> Action:
+        if view.stage in {"passed", "exhausted", "cancelled"} and all(
+                self._request(db, child.request_id).status in TERMINAL for child in view.children):
+            self._finish_workflow_parent(db, c, request.request_id)
+            return Continue()
+        return Park("children")
+
+    def _add_workflow_child(self, db: sqlite3.Connection, c: Changes, view: WorkflowView, *,
+                            role: Literal["check", "correction"], text: str, child_id: str) -> WorkflowView:
+        if len(self._pending_ids(db)) + 1 > PENDING_LIMIT:
+            raise BackendError("queue_full", status=429)
+        self._new_request(db, c, Submit(request_id=child_id, text=text), parent_id=view.parent_id, depth=1)
+        self._message(db, c, child_id, "input", Message(role="user", content=text))
+        parent = self._request(db, view.parent_id)
+        parent.children = [*parent.children, child_id]
+        if parent.status not in TERMINAL and not parent.decision:
+            parent.status = "waiting_children"
+        self._save_request(db, c, parent)
+        child = WorkflowChild(request_id=child_id, role=role, text=text, status="queued")
+        return view.model_copy(update={"children": [*view.children, child]})
+
+    async def open_workflow(self, workflow_id: str, check: str, correction_limit: int) -> WorkflowView:
+        text = check.strip()
+        if not text:
+            raise BackendError("workflow_check_empty")
+        if correction_limit < 0 or correction_limit > 8:
+            raise BackendError("workflow_limit")
+
+        def operation(db: sqlite3.Connection, c: Changes) -> WorkflowView:
+            key = digest(workflow_body(text, correction_limit))
+            row = db.execute("SELECT digest,payload FROM workflows WHERE id=?", (workflow_id,)).fetchone()
+            if row:
+                if str(row[0]) != key:
+                    raise BackendError("workflow_conflict")
+                return self._refresh_workflow(db, WorkflowView.model_validate_json(row[1]))
+            if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
+                raise BackendError("worker_frozen")
+            if self._meta(db, "blocked"):
+                raise BackendError("worker_blocked", status=503)
+            if len(self._pending_ids(db)) + 2 > PENDING_LIMIT:
+                raise BackendError("queue_full", status=429)
+            parent_id = digest(f"{self.session_id}:{workflow_id}:parent")
+            child_id = digest(f"{self.session_id}:{workflow_id}:check")
+            parent = self._new_request(db, c, Submit(request_id=parent_id, text=f"工作流 {workflow_id}"))
+            self._new_request(db, c, Submit(request_id=child_id, text=text), parent_id=parent_id, depth=1)
+            self._message(db, c, child_id, "input", Message(role="user", content=text))
+            parent.children = [child_id]
+            parent.status = "waiting_children"
+            self._save_request(db, c, parent)
+            view = WorkflowView(
+                workflow_id=workflow_id, session_id=self.session_id, stage="check",
+                correction_limit=correction_limit, attempts=0, parent_id=parent_id,
+                parent_status="waiting_children", check=text,
+                children=[WorkflowChild(request_id=child_id, role="check", text=text, status="queued")])
+            db.execute("INSERT INTO workflows(id,digest,parent_id,payload) VALUES(?,?,?,?)",
+                       (workflow_id, key, parent_id, view.model_dump_json()))
+            return view
+        return await self._tx(operation)
+
+    async def workflow(self, workflow_id: str) -> WorkflowView:
+        def operation(db: sqlite3.Connection) -> WorkflowView:
+            return self._refresh_workflow(db, self._workflow_row(db, workflow_id)[1])
+        return await self.db.call(operation)
+
+    async def resume_workflow(self, workflow_id: str) -> WorkflowView:
+        def operation(db: sqlite3.Connection, _c: Changes) -> WorkflowView:
+            return self._refresh_workflow(db, self._workflow_row(db, workflow_id)[1])
+        return await self._tx(operation)
+
+    async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool) -> WorkflowView:
+        def operation(db: sqlite3.Connection, c: Changes) -> WorkflowView:
+            view = self._workflow_row(db, workflow_id)[1]
+            key = digest(verdict_body(verdict_id, passed))
+            existing = db.execute(
+                "SELECT digest FROM workflow_verdicts WHERE workflow_id=? AND verdict_id=?",
+                (workflow_id, verdict_id)).fetchone()
+            if existing:
+                if str(existing[0]) != key:
+                    raise BackendError("verdict_conflict")
+                return self._refresh_workflow(db, view)
+            if view.stage in {"passed", "exhausted", "cancelled"}:
+                raise BackendError("workflow_settled")
+            if not passed:
+                corrections = [child for child in view.children if child.role == "correction"]
+                if corrections and self._request(db, corrections[-1].request_id).status not in TERMINAL:
+                    raise BackendError("workflow_busy")
+                if view.attempts >= view.correction_limit:
+                    view = view.model_copy(update={"stage": "exhausted"})
+                else:
+                    attempt = view.attempts + 1
+                    prompt = correction_text(attempt)
+                    child_id = digest(f"{self.session_id}:{workflow_id}:correction:{attempt}")
+                    view = self._add_workflow_child(
+                        db, c, view, role="correction", text=prompt, child_id=child_id)
+                    view = view.model_copy(update={"stage": "correction", "attempts": attempt})
+            else:
+                view = view.model_copy(update={"stage": "passed"})
+            db.execute("INSERT INTO workflow_verdicts(workflow_id,verdict_id,digest,passed) VALUES(?,?,?,?)",
+                       (workflow_id, verdict_id, key, int(passed)))
+            self._save_workflow(db, view)
+            self._finish_workflow_parent(db, c, view.parent_id)
+            return self._refresh_workflow(db, view)
+        return await self._tx(operation)
+
+    async def cancel_workflow_child(self, workflow_id: str, request_id: str) -> WorkflowView:
+        def operation(db: sqlite3.Connection, c: Changes) -> WorkflowView:
+            view = self._workflow_row(db, workflow_id)[1]
+            if not any(child.request_id == request_id for child in view.children):
+                raise BackendError("workflow_child_mismatch")
+            self._cancel_tree(db, c, request_id)
+            return self._refresh_workflow(db, self._workflow_row(db, workflow_id)[1])
+        return await self._tx(operation)
+
     def _cancel_tree(self, db: sqlite3.Connection, c: Changes, request_id: str) -> None:
         descendants = {request_id}
         all_requests = self._requests(db)
@@ -576,6 +758,7 @@ class SessionStore:
             else:
                 r.status = "cancelling"
                 self._save_request(db, c, r)
+        self._mark_workflow_cancelled(db, request_id)
 
     async def cancel(self, request_id: str, fence: HostFence) -> Receipt:
         def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
@@ -588,6 +771,7 @@ class SessionStore:
                 db.execute("INSERT INTO cancellations VALUES(?,?)", (request_id, tombstone.model_dump_json()))
                 c.emit("status", request_id, "cancel_tombstone", receipt=tombstone)
             self._cancel_tree(db, c, request_id)
+            self._finish_workflow_parent(db, c, request_id)
             row = db.execute("SELECT payload FROM requests WHERE id=?", (request_id,)).fetchone()
             return Receipt.model_validate_json(row[0] if row else db.execute(
                 "SELECT payload FROM cancellations WHERE id=?", (request_id,)).fetchone()[0])
@@ -973,6 +1157,10 @@ class SessionStore:
                 return Continue()
         if run.lease:
             return CloseEpoch(request.request_id, run.lease)
+        # A workflow parent waits for an independent verdict. It must not claim and copy session history.
+        held = self._workflow_parent(db, request.request_id)
+        if held is not None and not request.decision:
+            return self._park_or_settle_workflow(db, c, request, held)
         if len([s for s in steps if s.kind == "model"]) >= 32:
             self._decide(db, c, request, Decision(status="failed", error="model_round_limit"))
             return Continue()
