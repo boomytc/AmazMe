@@ -91,7 +91,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | MCP 连接、目录、审批、取消 | P3 | `POST /api/v1/sessions/{id}/mcp`；页面「MCP」 | 部分通过 | `backend/tests/test_mcp.py` 执行客户机脚本，并经监督器打开同一条命令 | `7719860`。stdio 服务在客户机里。目录来自 tools/list。调用先落成等待批准，批准后才转发，同一 ID 的不同参数冲突。停止后的退出码来自 waitpid，清理失败会挡住下一个 MCP。OAuth 未做。本机没有在 Lima 里再跑。MCP 不代替其他插件 |
 | Codemode 受控 JS | P3 | `POST /api/v1/sessions/{id}/code`；页面「脚本」 | 部分通过 | `backend/tests/test_codemode.py` 运行 QuickJS helper、监督器提交/取消，以及页面脚本 | `6319c3f`。成功才提交状态。失败、超时、取消和没有退出证明都不提交。没有 waitpid 时，同一会话不能再开新脚本，同一 run id 不重放。已发生的工具副作用不回滚。helper 是本机 node 上的固定 QuickJS 程序，没有放进 Linux 客户机，也不在 A/B 安装包里。不暴露任意宿主文件和网络 |
 | 已批准的原生桌面动作 | P3 | 无 | 未通过 | 无 | 独立驱动，并证明退出和资源归属。不做任意 macOS shell |
-| 插件身份、配置、入口、受管生命周期 | P3 | `POST /api/v1/plugins`；页面「插件」 | 部分通过 | `backend/tests/test_plugins.py` 运行固定入口，并经监督器登记、调用和重新加载 | `268556a`。入口只有 stamp，由监督器启动，许可里没有命令或 SQLite。同一调用不重复写入，内容冲突拒绝。没有退出证明时不能再调用。worker 还持有旧插件指纹时不能更换。定时等待等未结束任务会挡住登记和重新加载，原任务文本保留。这不是 MCP。入口还没放进 Linux 客户机，也不在 A/B 包里 |
+| 插件身份、配置、入口、受管生命周期 | P3 | `POST /api/v1/plugins`、`GET /api/v1/plugins`；页面「插件」 | 部分通过 | `backend/tests/test_plugins.py` 运行固定入口，并经监督器登记、调用和重新加载 | `268556a`。打开插件面板会读取已保存的插件，`244820e`。入口只有 stamp，由监督器启动，许可里没有命令或 SQLite。同一调用不重复写入，内容冲突拒绝。没有退出证明时不能再调用。worker 还持有旧插件指纹时不能更换。定时等待等未结束任务会挡住登记和重新加载，原任务文本保留。这不是 MCP。入口还没放进 Linux 客户机，也不在 A/B 包里 |
 | 历史搜索 | P3 | `GET /api/v1/sessions/{id}/search`；页面「历史」 | 部分通过 | `test_session_branch.py` 的搜索用例和 happy-dom | `6fc70d5`。只查当前会话已落盘的任务文本和消息。`%` 按字面匹配。归档后仍可搜。不注入记忆，也不搜索其他会话。还不在 A/B 包和真实 Chrome 里 |
 | 记忆发现与上下文注入 | P3 | `POST /api/v1/memories`；页面「记忆」 | 部分通过 | `backend/tests/test_memories.py` 保存记忆，并由 `Worker.perform` 注入模型输入 | `da0240c`。记忆按工作区保存。只有与用户原文相配、且属于该会话工作区的记忆会放进模型上下文。同一 ID 的不同内容冲突，原文保留。匹配是子串，不是语义检索。还不在 A/B 包里 |
 | 文件检查点、预览和选择性恢复 | P3 | `POST /api/v1/checkpoints`；页面「保存检查点 / 预览 / 恢复」 | 部分通过 | `backend/tests/test_checkpoints.py` 写入前备份、预览不改文件、按摘要恢复 | `25fc14e`。受检写入前记下原内容。预览只给出差异。恢复只改这一条路径，且必须对上当前摘要；不符则磁盘内容不变。客户机里的 `write_file` 还不会自动产生检查点。还不在 A/B 包里 |
@@ -124,5 +124,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
-2. 项目列表读取在 `318ea95`，分享正文读取在 `5de3d5c`，项目、反馈、分享和导入导出在 `b74e2d3`。OAuth 仍没有消费者。模型网页工具在 `42db378`，仍没有真实付费调用。桌面观察在 `fe73248`，用的是固定协议驱动，不是 cua-driver，也没有真实 TCC。网页搜索和抓取的页面调用在 `4d30ac2`。工作流在 `e9bb34e`。定时任务在 `189a130`。文件检查点在 `25fc14e`。工作区记忆注入在 `da0240c`。多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 未做。插件入口、额外工作区和客户机文件检查点都还没在 Lima 里验收。工作流还不是通用阶段图。
+2. 项目列表读取在 `318ea95`，分享正文读取在 `5de3d5c`，项目、反馈、分享和导入导出在 `b74e2d3`。OAuth 仍没有消费者。模型网页工具在 `42db378`，仍没有真实付费调用。桌面观察在 `fe73248`，用的是固定协议驱动，不是 cua-driver，也没有真实 TCC。网页搜索和抓取的页面调用在 `4d30ac2`。工作流在 `e9bb34e`。定时任务在 `189a130`。文件检查点在 `25fc14e`。工作区记忆注入在 `da0240c`。多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`，打开面板读取已保存插件在 `244820e`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 未做。插件入口、额外工作区和客户机文件检查点都还没在 Lima 里验收。工作流还不是通用阶段图。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
