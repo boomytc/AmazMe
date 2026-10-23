@@ -304,8 +304,6 @@ export function checkVersionLiterals(repoRoot, files) {
 export const sourceTempDirAllowlist = {
 	"packages/coding-agent/src/durable/sessions.ts":
 		"--no-session artifact directory, removed on release and on process exit",
-	"packages/coding-agent/src/durable/export.ts": "export scratch directory, removed in finally",
-	"packages/coding-agent/src/durable/runtime.ts": "/share upload scratch directory",
 	"packages/coding-agent/src/host/services/share-command.ts": "/share upload scratch directory",
 	"packages/coding-agent/src/modes/interactive/external-editor.ts": "external editor scratch file",
 	"packages/coding-agent/src/utils/clipboard.ts": "WSL clipboard hand-off file",

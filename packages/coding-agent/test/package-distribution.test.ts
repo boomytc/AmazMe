@@ -67,10 +67,10 @@ describe("package distribution entrypoints", () => {
 				),
 			);
 			const paths = packed[0].files.map((file) => file.path);
-			for (const name of ["runtime", "harness-setup", "sessions", "session-surface", "conversation-view"]) {
+			for (const name of ["harness-setup", "sessions", "session-surface", "conversation-view"]) {
 				expect(paths).toContain(`dist/durable/${name}.js`);
 			}
-			for (const name of ["interactive", "tui", "print", "import", "json-events", "mcp-menu", "screen-restore"]) {
+			for (const name of ["runtime", "export", "interactive", "tui", "print", "import", "json-events", "mcp-menu", "screen-restore"]) {
 				expect(paths).not.toContain(`dist/durable/${name}.js`);
 			}
 			expect(paths).not.toContain("dist/host/commands.js");

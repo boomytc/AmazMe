@@ -62,6 +62,15 @@ describe("share command", () => {
 		expect(seen).toEqual(["gist", "radius"]);
 	});
 
+	test("refuses the old durable export when no replacement writer is supplied", async () => {
+		const command = createShareCommand({
+			conversation: conversation(),
+			cwd: "/project",
+			destination: () => "gist",
+		});
+		await expect(command.run("", BACKGROUND_CONTEXT)).rejects.toThrow("old_session_migration_removed");
+	});
+
 	test("throws the uploader's reason so the command runner can show it", async () => {
 		const command = createShareCommand(
 			options(async (): Promise<ShareOutcome> => ({

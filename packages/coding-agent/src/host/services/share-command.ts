@@ -11,7 +11,6 @@ import {
 	type ShareDestination,
 	type ShareOutcome,
 } from "../../core/session-share.ts";
-import { writeDurableExport } from "../../durable/export.ts";
 import type { ModelRuntime } from "../../core/model-runtime.ts";
 
 export interface ShareCommandOptions {
@@ -49,30 +48,16 @@ export function createShareCommand(options: ShareCommandOptions) {
 		name: "share",
 		description: "Share this session (Radius or private gist)",
 		async run(_args: string, context: Context): Promise<{ readonly note: string }> {
+			if (options.exportEntries === undefined) {
+				throw new Error("old_session_migration_removed\n不迁移旧会话，请使用 Python 后端的新格式");
+			}
 			const directory = await mkdtemp(join(tmpdir(), "amazme-share-"));
 			const jsonlFile = join(directory, "session.jsonl");
 			const htmlFile = join(directory, "session.html");
 			try {
 				const view = await options.conversation.viewState(context);
-				const entries = view.value.entries;
 				view.dispose();
-				if (options.exportEntries !== undefined) {
-					await options.exportEntries({ jsonlFile, htmlFile });
-				} else {
-					const id = String(options.conversation.id);
-					await writeDurableExport(entries, {
-						id,
-						cwd: options.cwd,
-						output: jsonlFile,
-						format: "jsonl",
-					});
-					await writeDurableExport(entries, {
-						id,
-						cwd: options.cwd,
-						output: htmlFile,
-						format: "html",
-					});
-				}
+				await options.exportEntries({ jsonlFile, htmlFile });
 				const destination = options.destination();
 				const outcome = await (options.share ?? shareFilesToUrl)({
 					jsonlFile,
