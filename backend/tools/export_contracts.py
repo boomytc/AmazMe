@@ -2,8 +2,10 @@
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 from amazme_backend.contracts import Stream
+from amazme_backend.host import Host, application
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,6 +39,10 @@ def main():
     source += "\n\n".join(f"export type {name} = {ts(value)};" for name, value in definitions.items())
     source += "\n\nexport type Stream = " + ts(schema) + ";\n"
     (target / "events.d.ts").write_text(source)
+    # Route construction does not start actors or access a profile. Runtime evidence
+    # separately compares the live server's schema to this generated contract.
+    (target / "openapi.json").write_text(json.dumps(application(Mock(spec=Host)).openapi(),
+                                                   indent=2, ensure_ascii=False) + "\n")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,71 @@
+{
+  "phase": "P2 partial acceptance",
+  "full_p2_accepted": false,
+  "date": "2026-10-23",
+  "source_checks": {
+    "pytest": 284,
+    "ruff": "passed",
+    "pyright": "0 errors",
+    "wheel_sdist": "passed",
+    "workspace_check": "passed"
+  },
+  "builds": [
+    {
+      "executable": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-p2/package-elc1r9vp/AmazMe Python 0.1.0/amazme-backend",
+      "build_id": "97834ab4d684f5f970a14550f42a02995aca724dd5969f0c45a20b27f8b92fc8"
+    }
+  ],
+  "runtime_cases": [
+    {
+      "case": "host.lost_delivery",
+      "status": "passed",
+      "assertions": [
+        "delivery lost ACK keeps original acceptance",
+        "delivery retry has exactly one external effect",
+        "one durable acceptance event",
+        "no duplicated tool-result message",
+        "each epoch has an exact durable cleanup proof",
+        "case ended without unresolved effect holds",
+        "case ended with healthy Host"
+      ],
+      "report": "/tmp/am2-8ei0wbd3/cases/host.lost_delivery.json",
+      "sha256": "641e1d8bb234b1519f69d78730cf62591e05f48605f3989d7174dce9c77f61c3"
+    },
+    {
+      "case": "storage.commit_crash",
+      "status": "passed",
+      "assertions": [
+        "uncommitted receipt is invisible to another SQLite reader",
+        "uncommitted acceptance produced no effect",
+        "durable Host intent retries rolled-back acceptance exactly once",
+        "one durable acceptance event",
+        "no duplicated tool-result message",
+        "each epoch has an exact durable cleanup proof",
+        "case ended without unresolved effect holds",
+        "case ended with healthy Host"
+      ],
+      "report": "/tmp/am2-8ei0wbd3/cases/storage.commit_crash.json",
+      "sha256": "89addf62d3db9c726e7f818eec8cb54e67e189951ee75ebe81b8d4f7959f8d92"
+    },
+    {
+      "case": "events.ack_resync",
+      "status": "passed",
+      "assertions": [
+        "stream starts from a complete snapshot",
+        "unacknowledged subscriber cannot block persisted business work",
+        "stalled subscriber is bounded and disconnected",
+        "lost ACK reconnect replays complete transactions",
+        "a gap ACK is rejected",
+        "foreign/expired stream cursor receives a new authoritative snapshot",
+        "case ended without unresolved effect holds",
+        "case ended with healthy Host"
+      ],
+      "report": "/tmp/am2-8ei0wbd3/cases/events.ack_resync.json",
+      "sha256": "c7033f01d964e543e4d8f84297bc7ea64a740ccf08e767ecb772c2084141f75b"
+    }
+  ],
+  "cleanup": "passed",
+  "report": "/tmp/am2-8ei0wbd3/report.json",
+  "report_sha256": "f48c72408b51059b3fae38888d957f1c393eaa0523e3469b18984f229b0fcef7",
+  "remaining": "28 matrix cases including two-build update, real browser, and acceptance gaps in handoff"
+}

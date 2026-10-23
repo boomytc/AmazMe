@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -8,8 +9,19 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionToolParam,
 )
+from pydantic import TypeAdapter
 
-from .contracts import BackendError, Message, Model, ProviderConfig, ReadFile, Shell, ToolCall, WriteFile
+from .contracts import (
+    BackendError,
+    DelegateTasks,
+    Message,
+    Model,
+    ProviderConfig,
+    ReadFile,
+    Shell,
+    ToolCall,
+    WriteFile,
+)
 
 
 class Completion(Model):
@@ -31,6 +43,7 @@ def tool_definitions() -> list[ChatCompletionToolParam]:
         {"type": "function", "function": {"name": "shell", "description": "Execute a Linux shell command in the granted workspace. Network disabled. Commands may have side effects; never retry an unknown result.", "parameters": Shell.model_json_schema()}},
         {"type": "function", "function": {"name": "read_file", "description": "Read a relative UTF-8 workspace file.", "parameters": ReadFile.model_json_schema()}},
         {"type": "function", "function": {"name": "write_file", "description": "Write a relative UTF-8 workspace file.", "parameters": WriteFile.model_json_schema()}},
+        {"type": "function", "function": {"name": "delegate_task", "description": "Delegate up to eight required independent tasks. Wait for their results before completing.", "parameters": DelegateTasks.model_json_schema()}},
     ]
 
 
@@ -58,19 +71,37 @@ def provider_messages(messages: list[Message]) -> list[ChatCompletionMessagePara
 
 
 async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterator[str | Completion]:
+    if not messages or not any(message.role == "user" for message in messages):
+        raise BackendError("missing_user_context")
     if config.provider == "faux":
-        last = messages[-1]
-        if last.role == "user" and last.content.startswith("/shell "):
-            yield Completion(message=Message(role="assistant", content="", tool_calls=[
-                ToolCall(id="faux-" + __import__("secrets").token_hex(8), name="shell",
-                         arguments=Shell(command=last.content[7:], timeout_seconds=120).model_dump_json())
-            ]), response_id="faux")
+        user_index = max(i for i, message in enumerate(messages) if message.role == "user")
+        prompt = messages[user_index].content
+        results = [message for message in messages[user_index + 1:] if message.role == "tool"]
+        call: ToolCall | None = None
+        identity = "faux-" + hashlib.sha256("".join(m.model_dump_json() for m in messages).encode()).hexdigest()[:24]
+        if prompt.startswith("/shell ") and not results:
+            call = ToolCall(id=identity, name="shell",
+                            arguments=Shell(command=prompt[7:], timeout_seconds=120).model_dump_json())
+        elif prompt.startswith("/delegate ") and not results:
+            tasks = DelegateTasks(tasks=TypeAdapter(list[str]).validate_json(prompt[10:]))
+            call = ToolCall(id=identity, name="delegate_task", arguments=tasks.model_dump_json())
+        elif prompt.startswith("/sequence "):
+            commands = TypeAdapter(list[str]).validate_json(prompt[10:])
+            if not commands or len(commands) > 24:
+                raise BackendError("invalid_faux_sequence")
+            if len(results) < len(commands):
+                call = ToolCall(id=identity, name="shell",
+                                arguments=Shell(command=commands[len(results)], timeout_seconds=120).model_dump_json())
+        if call:
+            yield Completion(message=Message(role="assistant", content="", tool_calls=[call]),
+                             response_id=identity, input_tokens=len(prompt), output_tokens=1)
             return
-        text = last.content if last.role == "tool" else "已收到：" + last.content
-        for chunk in [text[i:i+16] for i in range(0, len(text), 16)]:
+        text = results[-1].content if results else "已收到：" + prompt
+        for offset in range(0, len(text), 64):
             await asyncio.sleep(0.01)
-            yield chunk
-        yield Completion(message=Message(role="assistant", content=text), response_id="faux")
+            yield text[offset:offset + 64]
+        yield Completion(message=Message(role="assistant", content=text), response_id=identity,
+                         input_tokens=sum(len(m.content) for m in messages), output_tokens=len(text))
         return
     calls: dict[int, PendingCall] = {}
     text = ""
@@ -96,13 +127,13 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
                             raise BackendError("model_output_limit")
                         yield choice.delta.content
                     for delta in choice.delta.tool_calls or []:
-                        call = calls.setdefault(delta.index, PendingCall())
+                        pending_call = calls.setdefault(delta.index, PendingCall())
                         if delta.id:
-                            call.id += delta.id
+                            pending_call.id += delta.id
                         if delta.function:
-                            call.name += delta.function.name or ""
-                            call.arguments += delta.function.arguments or ""
-                        if len(calls) > 16 or sum(len(c.arguments) + len(c.id) for c in calls.values()) > 64000:
+                            pending_call.name += delta.function.name or ""
+                            pending_call.arguments += delta.function.arguments or ""
+                        if len(calls) > 16 or sum(len(c.arguments) + len(c.id) + len(c.name) for c in calls.values()) > 64000:
                             raise BackendError("tool_argument_limit")
                     if choice.finish_reason:
                         if choice.finish_reason not in {"stop", "tool_calls"}:
@@ -112,7 +143,9 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
         raise BackendError("model_stream_interrupted")
     parsed: list[ToolCall] = []
     for index in sorted(calls):
-        call = calls[index]
-        parsed.append(ToolCall.model_validate({"id": call.id, "name": call.name, "arguments": call.arguments}))
+        pending_call = calls[index]
+        parsed.append(ToolCall.model_validate({"id": pending_call.id, "name": pending_call.name, "arguments": pending_call.arguments}))
+    if any(not call.id for call in parsed) or len({call.id for call in parsed}) != len(parsed):
+        raise BackendError("invalid_tool_calls")
     yield Completion(message=Message(role="assistant", content=text, tool_calls=parsed),
                      response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens)

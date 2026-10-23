@@ -54,3 +54,22 @@ def test_maximum_file_content_fits_all_transport_and_gate_boundaries(content):
     assert len(json.dumps({"command": tool.command, "uid": 501, "gid": 20}).encode()) < 262144
     payload = shlex.split(command.command)[-1]
     assert json.loads(base64.b64decode(payload))["content"] == content
+
+
+def test_fixed_native_owners_cannot_reexec_or_unlock_lifetime_descriptors():
+    forbidden = {"fork", "forkpty", "execv", "execve", "execl", "execvp", "execvpe", "posix_spawn", "posix_spawnp"}
+    for path in (ROOT / "src/amazme_backend").glob("*.py"):
+        if path.name == "gate.py":
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                name = node.func.attr if isinstance(node.func, ast.Attribute) else ""
+                assert name not in forbidden, (path, name)
+            if isinstance(node, ast.Attribute):
+                assert node.attr != "LOCK_UN", path
+        if path.name == "processes.py":
+            retain = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "retain_inherited")
+            for node in ast.walk(retain):
+                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                    assert node.func.attr not in {"close", "fdopen", "dup2", "closerange", "close_range"}

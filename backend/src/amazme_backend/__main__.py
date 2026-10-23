@@ -11,6 +11,7 @@ import httpx
 
 from .common import Profile, lock, private_write, resource_root
 from .contracts import ProviderConfig
+from .processes import retain_inherited
 
 
 def main() -> None:
@@ -21,6 +22,12 @@ def main() -> None:
     parser.add_argument("--provider-config", type=Path)
     parser.add_argument("--session")
     parser.add_argument("--instance")
+    parser.add_argument("--lifetime-fd", type=int)
+    parser.add_argument("--require-existing-store", action="store_true")
+    parser.add_argument("--frozen", action="store_true")
+    parser.add_argument("--validation", action="store_true")
+    parser.add_argument("--approval-policy", choices=["auto", "mutations", "all"], default="mutations")
+    parser.add_argument("--test-mode", action="store_true")
     parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
     os.umask(0o077)
@@ -32,7 +39,8 @@ def main() -> None:
             parser.error("workspace must be a directory")
         provider = ProviderConfig.model_validate_json(args.provider_config.read_bytes())
         args.profile.mkdir(parents=True, mode=0o700, exist_ok=False)
-        config = {"format": 1, "profile_id": secrets.token_hex(16), "workspace": str(workspace),
+        config = {"format": 2, "profile_id": secrets.token_hex(16), "workspace": str(workspace),
+                  "approval_policy": args.approval_policy, "testing": args.test_mode,
                   "resources": str(resource_root()), "provider": {**provider.model_dump(), "api_key": provider.api_key.get_secret_value()}}
         private_write(args.profile / "config.json", json.dumps(config))
         private_write(args.profile / "control.token", secrets.token_hex(32))
@@ -45,12 +53,18 @@ def main() -> None:
         asyncio.run(serve(profile, args.port))
     elif args.mode == "supervisor":
         from .supervisor import serve
-        asyncio.run(serve(profile))
+        if not args.instance or args.lifetime_fd is None:
+            parser.error("supervisor requires --instance and --lifetime-fd")
+        lease = retain_inherited(args.lifetime_fd, profile.path, "supervisor", args.instance)
+        asyncio.run(serve(profile, args.instance, lease, require_existing=args.require_existing_store))
     elif args.mode == "worker":
         from .worker import serve
-        if not args.session or not args.instance:
-            parser.error("worker requires --session and --instance")
-        asyncio.run(serve(profile, args.session, args.instance))
+        if not args.session or not args.instance or args.lifetime_fd is None:
+            parser.error("worker requires --session, --instance and --lifetime-fd")
+        retain_inherited(args.lifetime_fd, profile.path, "worker", args.instance)
+        asyncio.run(serve(profile, args.session, args.instance,
+                          frozen=args.frozen, validation=args.validation,
+                          require_existing=args.require_existing_store))
     elif args.mode == "pair":
         print((profile.path / "web.token").read_text().strip())
     elif args.mode == "stop":

@@ -8,7 +8,7 @@ import socket
 import stat
 import sys
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
 
 import httpx
 from pydantic import BaseModel, ValidationError
@@ -115,8 +115,10 @@ class Profile:
     def worker_socket(self, session: str) -> Path:
         return self.socket("w-" + hashlib.sha256(session.encode()).hexdigest()[:16])
 
-    def identity(self, instance: str, build: str) -> Identity:
-        return Identity(build_id=build, profile_id=self.config.profile_id, instance_id=instance, pid=os.getpid())
+    def identity(self, instance: str, build: str, *, role: Literal["host", "supervisor", "worker"] = "host",
+                 state: str = "ready", host_epoch: int = 0) -> Identity:
+        return Identity(build_id=build, profile_id=self.config.profile_id, instance_id=instance, pid=os.getpid(),
+                        role=role, state=state, host_epoch=host_epoch, fingerprint=build)
 
 
 def child_command(*args: str) -> list[str]:

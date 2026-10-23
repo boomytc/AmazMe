@@ -1,0 +1,477 @@
+--- a/cmd/limactl/main.go
++++ b/cmd/limactl/main.go
+@@ -16,6 +16,7 @@
+ 	"github.com/spf13/cobra"
+ 
+ 	"github.com/lima-vm/lima/v2/cmd/yq"
++	_ "github.com/lima-vm/lima/v2/pkg/amazmelease"
+ 	"github.com/lima-vm/lima/v2/pkg/debugutil"
+ 	"github.com/lima-vm/lima/v2/pkg/driver/external/server"
+ 	"github.com/lima-vm/lima/v2/pkg/fsutil"
+--- a/pkg/instance/start.go
++++ b/pkg/instance/start.go
+@@ -19,6 +19,7 @@
+ 	"github.com/lima-vm/go-qcow2reader"
+ 	"github.com/sirupsen/logrus"
+ 
++	"github.com/lima-vm/lima/v2/pkg/amazmelease"
+ 	"github.com/lima-vm/lima/v2/pkg/autostart"
+ 	"github.com/lima-vm/lima/v2/pkg/cacheutil"
+ 	"github.com/lima-vm/lima/v2/pkg/driver"
+@@ -216,6 +217,9 @@
+ //
+ // StartWithPaths calls Prepare by itself, so you do not need to call Prepare manually before calling Start.
+ func StartWithPaths(ctx context.Context, inst *limatype.Instance, launchHostAgentForeground, showProgress bool, limactl, guestAgent string) error {
++	if amazmelease.Active() && launchHostAgentForeground {
++		return fmt.Errorf("AmazMe managed startup cannot exec the foreground hostagent")
++	}
+ 	haPIDPath := filepath.Join(inst.Dir, filenames.HostAgentPID)
+ 	// ReadPIDFile removes the PID file when it was left behind by a process that is not
+ 	// running anymore, or by a previous boot of the host.
+@@ -286,6 +290,9 @@
+ 		}
+ 		args = append(args, inst.Name)
+ 		haCmd = exec.CommandContext(ctx, limactl, args...)
++		if err := amazmelease.AttachStartup(haCmd); err != nil {
++			return err
++		}
+ 
+ 		haCmd.SysProcAttr = executil.BackgroundSysProcAttr
+ 
+@@ -303,6 +310,8 @@
+ 		} else if err := haCmd.Start(); err != nil {
+ 			return err
+ 		}
++	} else if amazmelease.Active() {
++		return fmt.Errorf("AmazMe managed startup cannot delegate to autostart")
+ 	} else if err = autostart.RequestStart(ctx, inst); err != nil {
+ 		return fmt.Errorf("failed to request start via autostart manager: %w", err)
+ 	}
+--- a/pkg/hostagent/hostagent.go
++++ b/pkg/hostagent/hostagent.go
+@@ -28,6 +28,7 @@
+ 	"google.golang.org/grpc/codes"
+ 	"google.golang.org/grpc/status"
+ 
++	"github.com/lima-vm/lima/v2/pkg/amazmelease"
+ 	"github.com/lima-vm/lima/v2/pkg/autostart"
+ 	"github.com/lima-vm/lima/v2/pkg/cidata"
+ 	"github.com/lima-vm/lima/v2/pkg/driver"
+@@ -519,6 +520,9 @@
+ 		}
+ 		stRunning.Running = true
+ 		a.emitEvent(ctx, events.Event{Status: stRunning})
++		if err := amazmelease.Running(); err != nil {
++			logrus.WithError(err).Fatal("cannot release AmazMe startup lease")
++		}
+ 	}()
+ 	// wait for either the driver to stop or a signal to shut down
+ 	select {
+--- /dev/null
++++ b/pkg/amazmelease/lease_darwin.go
+@@ -0,0 +1,142 @@
++// SPDX-License-Identifier: Apache-2.0
++
++// Package amazmelease retains the managed CLI's mutation lease through the
++// hostagent's startup handoff. Ordinary Lima invocations remain unchanged.
++package amazmelease
++
++import (
++	"fmt"
++	"os"
++	"os/exec"
++	"strconv"
++	"strings"
++	"sync"
++
++	"golang.org/x/sys/unix"
++)
++
++const Protocol = "amazme-mutation-startup/1"
++const mutationEnv = "AMAZME_MUTATION_LEASE_FD"
++const startupEnv = "AMAZME_STARTUP_LEASE_FD"
++const probeEnv = "AMAZME_LEASE_PROTOCOL_PROBE"
++
++type lease struct {
++	mutation *os.File
++	startup int
++	released sync.Once
++	releaseErr error
++}
++
++var processLease *lease
++
++func init() {
++	var err error
++	processLease, err = consumeEnvironment()
++	if err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		os.Exit(125)
++	}
++	probe := os.Getenv(probeEnv)
++	if err := os.Unsetenv(probeEnv); err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		os.Exit(125)
++	}
++	if probe == "1" {
++		fmt.Fprintln(os.Stdout, Protocol)
++		os.Exit(0)
++	}
++}
++
++func consumeEnvironment() (*lease, error) {
++	mutation, hasMutation := os.LookupEnv(mutationEnv)
++	startup, hasStartup := os.LookupEnv(startupEnv)
++	if err := os.Unsetenv(mutationEnv); err != nil {
++		return nil, err
++	}
++	if err := os.Unsetenv(startupEnv); err != nil {
++		return nil, err
++	}
++	if hasMutation && hasStartup {
++		return nil, fmt.Errorf("AmazMe lease has conflicting roles")
++	}
++	l := &lease{startup: -1}
++	if !hasMutation && !hasStartup {
++		return l, nil
++	}
++	value := mutation
++	if hasStartup {
++		value = startup
++	}
++	fd, err := strconv.Atoi(value)
++	if err != nil || fd < 3 {
++		return nil, fmt.Errorf("invalid AmazMe lease descriptor")
++	}
++	var info unix.Stat_t
++	if err := unix.Fstat(fd, &info); err != nil {
++		return nil, err
++	}
++	if info.Mode & unix.S_IFMT != unix.S_IFREG || info.Uid != uint32(os.Geteuid()) {
++		return nil, fmt.Errorf("invalid AmazMe lease file")
++	}
++	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
++	if err != nil {
++		return nil, err
++	}
++	if _, err := unix.FcntlInt(uintptr(fd), unix.F_SETFD, flags | unix.FD_CLOEXEC); err != nil {
++		return nil, err
++	}
++	if hasMutation {
++		// A global reference prevents finalization; only kernel CLI exit closes it.
++		l.mutation = os.NewFile(uintptr(fd), "amazme-mutation-lease")
++	} else {
++		l.startup = fd
++	}
++	return l, nil
++}
++
++// Active identifies the managed path, including after startup handoff.
++func Active() bool {
++	return processLease.mutation != nil || processLease.startup >= 0
++}
++
++// AttachStartup is called before the one permitted background hostagent spawn.
++func AttachStartup(cmd *exec.Cmd) error {
++	return processLease.attachStartup(cmd)
++}
++
++func (l *lease) attachStartup(cmd *exec.Cmd) error {
++	if l.startup >= 0 {
++		return fmt.Errorf("AmazMe hostagent cannot launch another instance")
++	}
++	if l.mutation == nil {
++		return nil
++	}
++	fd := 3 + len(cmd.ExtraFiles)
++	env := make([]string, 0, len(cmd.Environ()) + 1)
++	for _, entry := range cmd.Environ() {
++		key, _, _ := strings.Cut(entry, "=")
++		if key != mutationEnv && key != startupEnv && key != probeEnv {
++			env = append(env, entry)
++		}
++	}
++	cmd.Env = append(env, startupEnv + "=" + strconv.Itoa(fd))
++	cmd.ExtraFiles = append(cmd.ExtraFiles, l.mutation)
++	return nil
++}
++
++// Running releases only the hostagent's startup duplicate, after its VM has
++// started and its registered control path owns all further stop/exit behavior.
++func Running() error {
++	return processLease.running()
++}
++
++func (l *lease) running() error {
++	if l.startup < 0 {
++		return nil
++	}
++	l.released.Do(func() {
++		// LOCK_UN would also revoke the CLI's shared open-file-description lock.
++		l.releaseErr = unix.Close(l.startup)
++	})
++	return l.releaseErr
++}
+--- /dev/null
++++ b/pkg/amazmelease/lease_other.go
+@@ -0,0 +1,24 @@
++//go:build !darwin
++
++// SPDX-License-Identifier: Apache-2.0
++
++package amazmelease
++
++import (
++	"fmt"
++	"os"
++	"os/exec"
++)
++
++func init() {
++	for _, key := range []string{"AMAZME_MUTATION_LEASE_FD", "AMAZME_STARTUP_LEASE_FD", "AMAZME_LEASE_PROTOCOL_PROBE"} {
++		if _, present := os.LookupEnv(key); present {
++			fmt.Fprintln(os.Stderr, "AmazMe managed mutation leases require Darwin")
++			os.Exit(125)
++		}
++	}
++}
++
++func Active() bool { return false }
++func AttachStartup(_ *exec.Cmd) error { return nil }
++func Running() error { return nil }
+--- /dev/null
++++ b/pkg/amazmelease/lease_darwin_test.go
+@@ -0,0 +1,233 @@
++// SPDX-License-Identifier: Apache-2.0
++
++package amazmelease
++
++import (
++	"bufio"
++	"context"
++	"fmt"
++	"io"
++	"os"
++	"os/exec"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	"golang.org/x/sys/unix"
++)
++
++func fixture(ctx context.Context, mode string) *exec.Cmd {
++	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestAmazMeFixture$")
++	for _, entry := range os.Environ() {
++		key, _, _ := strings.Cut(entry, "=")
++		if key != mutationEnv && key != startupEnv && key != probeEnv && key != "AMAZME_TEST_MODE" {
++			cmd.Env = append(cmd.Env, entry)
++		}
++	}
++	cmd.Env = append(cmd.Env, "AMAZME_TEST_MODE=" + mode)
++	return cmd
++}
++
++func line(t *testing.T, reader *bufio.Reader, expected string) {
++	t.Helper()
++	result := make(chan string, 1)
++	go func() { value, _ := reader.ReadString('\n'); result <- strings.TrimSpace(value) }()
++	select {
++	case value := <-result:
++		if value != expected { t.Fatalf("wanted %q, got %q", expected, value) }
++	case <-time.After(10 * time.Second):
++		t.Fatalf("timeout waiting for %q", expected)
++	}
++}
++
++func lockedFile(t *testing.T) *os.File {
++	t.Helper()
++	f, err := os.CreateTemp(t.TempDir(), "operation")
++	if err != nil { t.Fatal(err) }
++	t.Cleanup(func() { f.Close() })
++	if err := unix.Flock(int(f.Fd()), unix.LOCK_EX | unix.LOCK_NB); err != nil { t.Fatal(err) }
++	return f
++}
++
++func lockState(t *testing.T, path string, held bool) {
++	t.Helper()
++	fd, err := unix.Open(path, unix.O_RDWR | unix.O_CLOEXEC, 0)
++	if err != nil { t.Fatal(err) }
++	defer unix.Close(fd)
++	err = unix.Flock(fd, unix.LOCK_EX | unix.LOCK_NB)
++	if held && err != unix.EWOULDBLOCK { t.Fatalf("lease was released early: %v", err) }
++	if !held && err != nil { t.Fatalf("lease leaked after handoff: %v", err) }
++}
++
++func TestAmazMeProtocolProbe(t *testing.T) {
++	ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
++	defer cancel()
++	cmd := fixture(ctx, "unexpected")
++	cmd.Env = append(cmd.Env, probeEnv + "=1")
++	output, err := cmd.CombinedOutput()
++	if err != nil || string(output) != Protocol + "\n" { t.Fatalf("probe: %q %v", output, err) }
++}
++
++func TestAmazMeInvalidLeaseFailsBeforeCommand(t *testing.T) {
++	for _, variable := range []string{mutationEnv, startupEnv} {
++		for _, value := range []string{"", "invalid", "0", "2", "999999"} {
++			t.Run(variable + "/" + value, func(t *testing.T) {
++				ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
++				defer cancel()
++				cmd := fixture(ctx, "unexpected")
++				cmd.Env = append(cmd.Env, variable + "=" + value)
++				output, err := cmd.CombinedOutput()
++				exit, ok := err.(*exec.ExitError)
++				if !ok || exit.ExitCode() != 125 { t.Fatalf("accepted invalid fd: %q %v", output, err) }
++			})
++		}
++	}
++}
++
++func TestAmazMeConflictingRolesAndNonFileFailClosed(t *testing.T) {
++	for _, conflict := range []bool{false, true} {
++		ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
++		read, write, err := os.Pipe()
++		if err != nil { t.Fatal(err) }
++		cmd := fixture(ctx, "unexpected")
++		cmd.ExtraFiles = []*os.File{read}
++		cmd.Env = append(cmd.Env, mutationEnv + "=3")
++		if conflict { cmd.Env = append(cmd.Env, startupEnv + "=3") }
++		output, err := cmd.CombinedOutput()
++		read.Close(); write.Close(); cancel()
++		exit, ok := err.(*exec.ExitError)
++		if !ok || exit.ExitCode() != 125 { t.Fatalf("accepted invalid lease: %q %v", output, err) }
++	}
++}
++
++func TestAmazMeStartupLeaseSurvivesCLIDeathAndThenReleases(t *testing.T) {
++	for _, finish := range []string{"running", "abort"} {
++		t.Run(finish, func(t *testing.T) {
++			ctx, cancel := context.WithTimeout(context.Background(), 20 * time.Second)
++			defer cancel()
++			file := lockedFile(t)
++			input, control, err := os.Pipe()
++			if err != nil { t.Fatal(err) }
++			output, writer, err := os.Pipe()
++			if err != nil { t.Fatal(err) }
++			defer input.Close(); defer control.Close(); defer output.Close(); defer writer.Close()
++			cmd := fixture(ctx, "cli")
++			cmd.ExtraFiles = []*os.File{file, input, writer}
++			cmd.Env = append(cmd.Env, mutationEnv + "=3", "AMAZME_TEST_LEASE_PATH=" + file.Name())
++			cmd.Stderr = os.Stderr
++			cliOutput, err := cmd.StdoutPipe()
++			if err != nil { t.Fatal(err) }
++			if err := cmd.Start(); err != nil { t.Fatal(err) }
++			defer cmd.Process.Kill()
++			file.Close(); input.Close(); writer.Close()
++			line(t, bufio.NewReader(cliOutput), "spawned")
++			// Kill the CLI before waiting for any hostagent registration/Running ACK.
++			if err := cmd.Process.Kill(); err != nil { t.Fatal(err) }
++			_ = cmd.Wait()
++			lockState(t, file.Name(), true)
++			haOutput := bufio.NewReader(output)
++			line(t, haOutput, "startup")
++			if _, err := fmt.Fprintln(control, finish); err != nil { t.Fatal(err) }
++			if finish == "running" {
++				line(t, haOutput, "running")
++				lockState(t, file.Name(), false)
++				if _, err := fmt.Fprintln(control, "running"); err != nil { t.Fatal(err) }
++				line(t, haOutput, "running")
++				fmt.Fprintln(control, "exit")
++			}
++			control.Close()
++			drained := make(chan struct{})
++			go func() { io.Copy(io.Discard, haOutput); close(drained) }()
++			select {
++			case <-drained:
++			case <-ctx.Done(): t.Fatal("hostagent fixture did not exit")
++			}
++			lockState(t, file.Name(), false)
++		})
++	}
++}
++
++func TestAmazMeReleaseClosesOnlyStartupDuplicateOnce(t *testing.T) {
++	file := lockedFile(t)
++	fd, err := unix.Dup(int(file.Fd()))
++	if err != nil { t.Fatal(err) }
++	l := &lease{startup: fd}
++	if err := l.running(); err != nil { t.Fatal(err) }
++	lockState(t, file.Name(), true)
++	newFD, err := unix.Open("/dev/null", unix.O_RDONLY | unix.O_CLOEXEC, 0)
++	if err != nil { t.Fatal(err) }
++	if newFD != fd {
++		defer unix.Close(newFD)
++		if err := unix.Dup2(newFD, fd); err != nil { t.Fatal(err) }
++	}
++	defer unix.Close(fd)
++	if err := l.running(); err != nil { t.Fatal(err) }
++	var info unix.Stat_t
++	if err := unix.Fstat(fd, &info); err != nil { t.Fatal("repeated Running closed a reused fd", err) }
++	file.Close()
++	lockState(t, file.Name(), false)
++}
++
++func TestAmazMeFailedChildStartKeepsMutationLease(t *testing.T) {
++	file := lockedFile(t)
++	l := &lease{mutation: file, startup: -1}
++	cmd := exec.Command("/nonexistent-amazme-executable")
++	if err := l.attachStartup(cmd); err != nil { t.Fatal(err) }
++	if err := cmd.Start(); err == nil { t.Fatal("unexpected child") }
++	if err := l.running(); err != nil { t.Fatal(err) }
++	lockState(t, file.Name(), true)
++	if err := (&lease{startup: 99}).attachStartup(cmd); err == nil { t.Fatal("nested hostagent startup accepted") }
++}
++
++// This fixture uses real exec and flock, but never launches Lima or a VM.
++func TestAmazMeFixture(t *testing.T) {
++	mode := os.Getenv("AMAZME_TEST_MODE")
++	if mode == "" { return }
++	if _, exists := os.LookupEnv(mutationEnv); exists { t.Fatal("mutation env leaked") }
++	if _, exists := os.LookupEnv(startupEnv); exists { t.Fatal("startup env leaked") }
++	switch mode {
++	case "cli":
++		for _, fd := range []int{4, 5} { unix.CloseOnExec(fd) }
++		input, output := os.NewFile(4, "startup-input"), os.NewFile(5, "startup-output")
++		child := fixture(context.Background(), "startup")
++		child.Stdin, child.Stdout, child.Stderr = input, output, os.Stderr
++		dummy, err := os.Open("/dev/null")
++		if err != nil { t.Fatal(err) }
++		child.ExtraFiles = []*os.File{dummy} // Verify remapping when ExtraFiles is nonempty.
++		if err := AttachStartup(child); err != nil { t.Fatal(err) }
++		if err := child.Start(); err != nil { t.Fatal(err) }
++		fmt.Println("spawned")
++		for { time.Sleep(time.Hour) }
++	case "startup":
++		fd := processLease.startup
++		flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0)
++		if err != nil || flags & unix.FD_CLOEXEC == 0 { t.Fatalf("startup lease not protected: %v", err) }
++		ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
++		defer cancel()
++		grandchild := fixture(ctx, "inspect")
++		grandchild.Env = append(grandchild.Env, "AMAZME_TEST_CHECK_FD=" + strconv.Itoa(fd))
++		if output, err := grandchild.CombinedOutput(); err != nil { t.Fatalf("descendant inherited lease: %s %v", output, err) }
++		fmt.Println("startup")
++		input := bufio.NewScanner(os.Stdin)
++		for input.Scan() {
++			switch input.Text() {
++			case "running":
++				if err := Running(); err != nil { t.Fatal(err) }
++				fmt.Println("running")
++			case "abort": os.Exit(23)
++			case "exit": return
++			default: t.Fatal("unknown fixture command")
++			}
++		}
++	case "inspect":
++		fd, err := strconv.Atoi(os.Getenv("AMAZME_TEST_CHECK_FD"))
++		if err != nil { t.Fatal(err) }
++		var actual, original unix.Stat_t
++		if err := unix.Stat(os.Getenv("AMAZME_TEST_LEASE_PATH"), &original); err != nil { t.Fatal(err) }
++		if unix.Fstat(fd, &actual) == nil && actual.Dev == original.Dev && actual.Ino == original.Ino {
++			t.Fatal("exec descendant inherited the lease inode")
++		}
++	default: t.Fatal("command ran after invalid lease/probe")
++	}
++}

@@ -1,5 +1,6 @@
 """Build an immutable onedir with its interpreter, VM manager, engine image and Web client."""
 
+import argparse
 import hashlib
 import json
 import secrets
@@ -13,7 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main() -> None:
-    parent = ROOT.parent / ".artifacts/python-backend-p1"
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output-root", type=Path, default=ROOT.parent / ".artifacts/python-backend-p2")
+    args = parser.parse_args()
+    parent = args.output_root.resolve()
     parent.mkdir(parents=True, exist_ok=True)
     output = Path(tempfile.mkdtemp(prefix="package-", dir=parent))
     entry = output / "entrypoint.py"

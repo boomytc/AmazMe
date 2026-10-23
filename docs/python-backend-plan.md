@@ -1,6 +1,6 @@
 # Python 后端建设方案
 
-功能参考基线：2026-10-23，`dev@42ff02ec6d2b49b7c6c139e1b3ef549af5b2e9f9`，现有产品版本 0.3.4。新产品线从 0.1.0 起步。
+功能参考基线：2026-10-23，`dev@42ff02ec6d2b49b7c6c139e1b3ef549af5b2e9f9`；现有产品版本见 [package.json](../package.json)。新产品线从 0.1.0 起步。
 
 **结论：按全新 Python 后端建设。旧实现只提供产品功能和可观察行为参考，不承担旧接口、插件、历史数据或内部结构的兼容成本。**
 
@@ -353,7 +353,7 @@ macOS 的解释器、扩展、helper 和应用按 Developer ID/hardened runtime 
 | P3：全客户端与产品功能 | Web/Electron/TUI/CLI/RPC/SDK、新宿主/远端路由、分支/压缩、管理面板、其余模型及扩展能力 | 产品功能清单逐项闭环；实现和协议按新契约，不比较旧内部结构 |
 | P4：完整安装与收尾 | 完整签名安装产物、平台/供应商实测、性能验证和旧业务依赖清理 | 干净环境独立运行；无 TS 业务内核依赖；功能、安全及生命周期门槛通过 |
 
-截至本轮：`backend/` 已实现 P0/P1 的 Web、DeepSeek Flash、VM shell/read_file/write_file、事务去重、取消/重启和本机独立 onedir 闭环，提供公开 OpenAPI、事件 schema 与生成 TS 声明。实际构建、测试和边界见 [P0/P1 运行记录](python-backend-p1-evidence.md)。P2–P4 的完整任务/审批、故障组合、既有客户端和签名分发仍待建设；选型原型与产品运行证据分别保留。
+截至本轮：`backend/` 已完成 P0/P1 的 Web、DeepSeek Flash、VM shell/read_file/write_file 和本机独立 onedir 闭环，证据见 [P0/P1 运行记录](python-backend-p1-evidence.md)。P2 的持久化、审批/子工作、状态重同步、接管及更新协议已实现并进入运行验收，完整故障矩阵尚未通过，不标记 P2 完成。当前成果、证据限制和接手命令见 [P2 阶段交接](python-backend-p2-handoff.md)。P3/P4 的既有客户端和签名分发仍待建设。
 
 首批为 P0 + P1 的一个垂直闭环，不先铺开四套独立原型或全量插件。版本检查和清理屏障从 P1 的接口/进程骨架就存在；P2 补强接管与更新组合场景，不是到 P2 才发现版本约束。
 

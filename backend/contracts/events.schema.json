@@ -1,5 +1,172 @@
 {
   "$defs": {
+    "Approval": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "call": {
+          "$ref": "#/$defs/ToolCall"
+        },
+        "build_id": {
+          "title": "Build Id",
+          "type": "string"
+        },
+        "proposal_digest": {
+          "title": "Proposal Digest",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "approved",
+            "denied",
+            "consumed",
+            "expired"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "request_id",
+        "run_id",
+        "call_id",
+        "call",
+        "build_id",
+        "proposal_digest",
+        "revision",
+        "state"
+      ],
+      "title": "Approval",
+      "type": "object"
+    },
+    "CommitBatch": {
+      "additionalProperties": false,
+      "properties": {
+        "stream_id": {
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "string"
+        },
+        "base_revision": {
+          "title": "Base Revision",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "title": "Events",
+          "type": "array"
+        }
+      },
+      "required": [
+        "stream_id",
+        "seq",
+        "base_revision",
+        "revision",
+        "events"
+      ],
+      "title": "CommitBatch",
+      "type": "object"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "succeeded",
+            "cancelled",
+            "interrupted",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "answer": {
+          "default": "",
+          "title": "Answer",
+          "type": "string"
+        },
+        "error": {
+          "default": "",
+          "title": "Error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "EffectHold": {
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "request_id": {
+          "default": "",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "resource_clean": {
+          "title": "Resource Clean",
+          "type": "boolean"
+        },
+        "reconciled": {
+          "default": false,
+          "title": "Reconciled",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "call_id",
+        "session_id",
+        "reason",
+        "resource_clean"
+      ],
+      "title": "EffectHold",
+      "type": "object"
+    },
     "Event": {
       "additionalProperties": false,
       "properties": {
@@ -14,7 +181,11 @@
             "preview",
             "message",
             "tool",
-            "cleanup"
+            "cleanup",
+            "approval",
+            "children",
+            "effect",
+            "freeze"
           ],
           "title": "Kind",
           "type": "string"
@@ -26,6 +197,39 @@
         "text": {
           "title": "Text",
           "type": "string"
+        },
+        "receipt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Receipt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Approval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -35,6 +239,40 @@
         "text"
       ],
       "title": "Event",
+      "type": "object"
+    },
+    "Preview": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        },
+        "preview_seq": {
+          "title": "Preview Seq",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "run_id",
+        "generation",
+        "preview_seq",
+        "text"
+      ],
+      "title": "Preview",
       "type": "object"
     },
     "Receipt": {
@@ -52,7 +290,13 @@
           "enum": [
             "queued",
             "running",
+            "waiting_approval",
+            "waiting_children",
+            "waiting_time",
+            "waiting_host",
             "cancelling",
+            "cleaning",
+            "blocked",
             "succeeded",
             "cancelled",
             "interrupted",
@@ -76,6 +320,64 @@
           "default": "0",
           "title": "Accepted Revision",
           "type": "string"
+        },
+        "revision": {
+          "default": "0",
+          "title": "Revision",
+          "type": "string"
+        },
+        "run_id": {
+          "default": "",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "default": "",
+          "title": "Parent Id",
+          "type": "string"
+        },
+        "kind": {
+          "default": "root",
+          "enum": [
+            "root",
+            "child",
+            "steer"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "generation": {
+          "default": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "cancel_requested": {
+          "default": false,
+          "title": "Cancel Requested",
+          "type": "boolean"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "children": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Children",
+          "type": "array"
+        },
+        "not_before_ms": {
+          "default": 0,
+          "title": "Not Before Ms",
+          "type": "integer"
         }
       },
       "required": [
@@ -106,7 +408,8 @@
             "recovering",
             "ready",
             "blocked",
-            "stopping"
+            "stopping",
+            "frozen"
           ],
           "title": "State",
           "type": "string"
@@ -124,6 +427,37 @@
           },
           "title": "Events",
           "type": "array"
+        },
+        "approvals": {
+          "items": {
+            "$ref": "#/$defs/Approval"
+          },
+          "title": "Approvals",
+          "type": "array"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/EffectHold"
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "previews": {
+          "items": {
+            "$ref": "#/$defs/Preview"
+          },
+          "title": "Previews",
+          "type": "array"
+        },
+        "next_wake_ms": {
+          "default": 0,
+          "title": "Next Wake Ms",
+          "type": "integer"
+        },
+        "pending": {
+          "default": 0,
+          "title": "Pending",
+          "type": "integer"
         }
       },
       "required": [
@@ -135,6 +469,36 @@
         "events"
       ],
       "title": "Snapshot",
+      "type": "object"
+    },
+    "ToolCall": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "enum": [
+            "shell",
+            "read_file",
+            "write_file",
+            "delegate_task"
+          ],
+          "title": "Name",
+          "type": "string"
+        },
+        "arguments": {
+          "title": "Arguments",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "arguments"
+      ],
+      "title": "ToolCall",
       "type": "object"
     }
   },
@@ -151,12 +515,32 @@
       ],
       "default": null
     },
-    "events": {
+    "batches": {
       "items": {
-        "$ref": "#/$defs/Event"
+        "$ref": "#/$defs/CommitBatch"
       },
-      "title": "Events",
+      "title": "Batches",
       "type": "array"
+    },
+    "stream_id": {
+      "default": "",
+      "title": "Stream Id",
+      "type": "string"
+    },
+    "binding_id": {
+      "default": "",
+      "title": "Binding Id",
+      "type": "string"
+    },
+    "build_id": {
+      "default": "",
+      "title": "Build Id",
+      "type": "string"
+    },
+    "resync": {
+      "default": "",
+      "title": "Resync",
+      "type": "string"
     }
   },
   "title": "Stream",

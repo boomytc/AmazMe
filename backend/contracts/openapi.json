@@ -65,6 +65,24 @@
         }
       }
     },
+    "/api/v1/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_api_v1_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions": {
       "get": {
         "summary": "Sessions",
@@ -102,6 +120,97 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}/attachments": {
+      "post": {
+        "summary": "Attach",
+        "operationId": "attach_api_v1_sessions__session__attachments_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Attachment"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}/attachments/{identity}": {
+      "delete": {
+        "summary": "Detach",
+        "operationId": "detach_api_v1_sessions__session__attachments__identity__delete",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          },
+          {
+            "name": "identity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identity"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Detach Api V1 Sessions  Session  Attachments  Identity  Delete"
                 }
               }
             }
@@ -303,6 +412,296 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/approvals": {
+      "post": {
+        "summary": "Approve",
+        "operationId": "approve_api_v1_sessions__session__approvals_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalDecision"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}/effects/resolve": {
+      "post": {
+        "summary": "Resolve",
+        "operationId": "resolve_api_v1_sessions__session__effects_resolve_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EffectResolution"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control/updates/prepare": {
+      "post": {
+        "summary": "Prepare",
+        "operationId": "prepare_control_updates_prepare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control/updates/{identity}/resume": {
+      "post": {
+        "summary": "Resume",
+        "operationId": "resume_control_updates__identity__resume_post",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identity"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control/updates/complete": {
+      "post": {
+        "summary": "Complete",
+        "operationId": "complete_control_updates_complete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CompleteUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control/updates/{identity}": {
+      "get": {
+        "summary": "Update",
+        "operationId": "update_control_updates__identity__get",
+        "parameters": [
+          {
+            "name": "identity",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Identity"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateRecord"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control/recover": {
+      "post": {
+        "summary": "Recover",
+        "operationId": "recover_control_recover_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Recovery"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/control/shutdown": {
       "post": {
         "summary": "Shutdown",
@@ -344,6 +743,201 @@
   },
   "components": {
     "schemas": {
+      "Approval": {
+        "properties": {
+          "approval_id": {
+            "type": "string",
+            "title": "Approval Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "call": {
+            "$ref": "#/components/schemas/ToolCall"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "proposal_digest": {
+            "type": "string",
+            "title": "Proposal Digest"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "consumed",
+              "expired"
+            ],
+            "title": "State"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "approval_id",
+          "request_id",
+          "run_id",
+          "call_id",
+          "call",
+          "build_id",
+          "proposal_digest",
+          "revision",
+          "state"
+        ],
+        "title": "Approval"
+      },
+      "ApprovalDecision": {
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Decision Id"
+          },
+          "approval_id": {
+            "type": "string",
+            "title": "Approval Id"
+          },
+          "expected_revision": {
+            "type": "string",
+            "title": "Expected Revision"
+          },
+          "proposal_digest": {
+            "type": "string",
+            "title": "Proposal Digest"
+          },
+          "approve": {
+            "type": "boolean",
+            "title": "Approve"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision_id",
+          "approval_id",
+          "expected_revision",
+          "proposal_digest",
+          "approve"
+        ],
+        "title": "ApprovalDecision"
+      },
+      "Attachment": {
+        "properties": {
+          "attachment_id": {
+            "type": "string",
+            "title": "Attachment Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "host_epoch": {
+            "type": "integer",
+            "title": "Host Epoch"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "attachment_id",
+          "session_id",
+          "host_epoch",
+          "build_id"
+        ],
+        "title": "Attachment"
+      },
+      "Cleanup": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "execution_epoch": {
+            "type": "integer",
+            "title": "Execution Epoch"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "clean",
+              "blocked"
+            ],
+            "title": "State"
+          },
+          "containers": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Containers"
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason",
+            "default": ""
+          },
+          "proof_id": {
+            "type": "string",
+            "title": "Proof Id",
+            "default": ""
+          },
+          "vm_id": {
+            "type": "string",
+            "title": "Vm Id",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "execution_epoch",
+          "state",
+          "containers"
+        ],
+        "title": "Cleanup"
+      },
+      "CompleteUpdate": {
+        "properties": {
+          "update_id": {
+            "type": "string",
+            "title": "Update Id"
+          },
+          "expected_revision": {
+            "type": "string",
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "update_id",
+          "expected_revision"
+        ],
+        "title": "CompleteUpdate"
+      },
       "CreateSession": {
         "properties": {
           "title": {
@@ -351,12 +945,158 @@
             "maxLength": 100,
             "minLength": 1,
             "title": "Title",
-            "default": "\u65b0\u4f1a\u8bdd"
+            "default": "新会话"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "CreateSession"
+      },
+      "Decision": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "cancelled",
+              "interrupted",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          },
+          "answer": {
+            "type": "string",
+            "title": "Answer",
+            "default": ""
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "Decision"
+      },
+      "EffectHold": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "default": ""
+          },
+          "reason": {
+            "type": "string",
+            "title": "Reason"
+          },
+          "resource_clean": {
+            "type": "boolean",
+            "title": "Resource Clean"
+          },
+          "reconciled": {
+            "type": "boolean",
+            "title": "Reconciled",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "session_id",
+          "reason",
+          "resource_clean"
+        ],
+        "title": "EffectHold"
+      },
+      "EffectResolution": {
+        "properties": {
+          "resolution_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Resolution Id"
+          },
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "applied",
+              "not_applied"
+            ],
+            "title": "Outcome"
+          },
+          "evidence": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Evidence"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "resolution_id",
+          "call_id",
+          "outcome",
+          "evidence"
+        ],
+        "title": "EffectResolution"
+      },
+      "EpochHealth": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "worker_id": {
+            "type": "string",
+            "title": "Worker Id"
+          },
+          "execution_epoch": {
+            "type": "integer",
+            "title": "Execution Epoch"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "cleanup": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cleanup"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "worker_id",
+          "execution_epoch",
+          "state"
+        ],
+        "title": "EpochHealth"
       },
       "Event": {
         "properties": {
@@ -372,7 +1112,11 @@
               "preview",
               "message",
               "tool",
-              "cleanup"
+              "cleanup",
+              "approval",
+              "children",
+              "effect",
+              "freeze"
             ],
             "title": "Kind"
           },
@@ -383,6 +1127,36 @@
           "text": {
             "type": "string",
             "title": "Text"
+          },
+          "receipt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Receipt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "approval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Approval"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "preview": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Preview"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -407,6 +1181,69 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "Health": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "recovering",
+              "frozen",
+              "blocked"
+            ],
+            "title": "State"
+          },
+          "supervisor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SupervisorHealth"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "update": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateRecord"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pending_deliveries": {
+            "type": "integer",
+            "title": "Pending Deliveries",
+            "default": 0
+          },
+          "errors": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Errors"
+          },
+          "supervisors": {
+            "items": {
+              "$ref": "#/components/schemas/ServiceInfo"
+            },
+            "type": "array",
+            "title": "Supervisors"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "identity",
+          "state"
+        ],
+        "title": "Health"
       },
       "HostFence": {
         "properties": {
@@ -459,6 +1296,32 @@
             "type": "integer",
             "title": "Host Epoch",
             "default": 0
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "host",
+              "supervisor",
+              "worker"
+            ],
+            "title": "Role",
+            "default": "host"
+          },
+          "state": {
+            "type": "string",
+            "title": "State",
+            "default": "ready"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint",
+            "default": ""
+          },
+          "storage_format": {
+            "type": "integer",
+            "const": 2,
+            "title": "Storage Format",
+            "default": 2
           }
         },
         "additionalProperties": false,
@@ -487,6 +1350,111 @@
         ],
         "title": "Login"
       },
+      "PrepareUpdate": {
+        "properties": {
+          "update_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Update Id"
+          },
+          "target_build": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Target Build"
+          },
+          "cancel_work": {
+            "type": "boolean",
+            "title": "Cancel Work",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "update_id",
+          "target_build"
+        ],
+        "title": "PrepareUpdate"
+      },
+      "Preview": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "preview_seq": {
+            "type": "string",
+            "title": "Preview Seq"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "run_id",
+          "generation",
+          "preview_seq",
+          "text"
+        ],
+        "title": "Preview"
+      },
+      "ProcessLease": {
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "host",
+              "worker",
+              "supervisor"
+            ],
+            "title": "Role"
+          },
+          "profile_path": {
+            "type": "string",
+            "title": "Profile Path"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "device": {
+            "type": "integer",
+            "title": "Device"
+          },
+          "inode": {
+            "type": "integer",
+            "title": "Inode"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "instance_id",
+          "role",
+          "profile_path",
+          "path",
+          "device",
+          "inode"
+        ],
+        "title": "ProcessLease"
+      },
       "Receipt": {
         "properties": {
           "request_id": {
@@ -502,7 +1470,13 @@
             "enum": [
               "queued",
               "running",
+              "waiting_approval",
+              "waiting_children",
+              "waiting_time",
+              "waiting_host",
               "cancelling",
+              "cleaning",
+              "blocked",
               "succeeded",
               "cancelled",
               "interrupted",
@@ -525,6 +1499,63 @@
             "type": "string",
             "title": "Accepted Revision",
             "default": "0"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision",
+            "default": "0"
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id",
+            "default": ""
+          },
+          "parent_id": {
+            "type": "string",
+            "title": "Parent Id",
+            "default": ""
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "root",
+              "child",
+              "steer"
+            ],
+            "title": "Kind",
+            "default": "root"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation",
+            "default": 0
+          },
+          "cancel_requested": {
+            "type": "boolean",
+            "title": "Cancel Requested",
+            "default": false
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Decision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "children": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Children"
+          },
+          "not_before_ms": {
+            "type": "integer",
+            "title": "Not Before Ms",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -535,6 +1566,77 @@
           "status"
         ],
         "title": "Receipt"
+      },
+      "Recovery": {
+        "properties": {
+          "host_epoch": {
+            "type": "integer",
+            "title": "Host Epoch"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "recovery_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Recovery Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host_epoch",
+          "build_id",
+          "recovery_id"
+        ],
+        "title": "Recovery"
+      },
+      "ServiceInfo": {
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "title": "Instance Id"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "process_lease": {
+            "$ref": "#/components/schemas/ProcessLease"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "running",
+              "stopping",
+              "stopped",
+              "unknown"
+            ],
+            "title": "State"
+          },
+          "pid": {
+            "type": "integer",
+            "title": "Pid",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "instance_id",
+          "build_id",
+          "process_lease",
+          "state"
+        ],
+        "title": "ServiceInfo"
       },
       "Session": {
         "properties": {
@@ -592,7 +1694,8 @@
               "recovering",
               "ready",
               "blocked",
-              "stopping"
+              "stopping",
+              "frozen"
             ],
             "title": "State"
           },
@@ -609,6 +1712,37 @@
             },
             "type": "array",
             "title": "Events"
+          },
+          "approvals": {
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            },
+            "type": "array",
+            "title": "Approvals"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/components/schemas/EffectHold"
+            },
+            "type": "array",
+            "title": "Effects"
+          },
+          "previews": {
+            "items": {
+              "$ref": "#/components/schemas/Preview"
+            },
+            "type": "array",
+            "title": "Previews"
+          },
+          "next_wake_ms": {
+            "type": "integer",
+            "title": "Next Wake Ms",
+            "default": 0
+          },
+          "pending": {
+            "type": "integer",
+            "title": "Pending",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -637,6 +1771,28 @@
             "maxLength": 16000,
             "minLength": 1,
             "title": "Text"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "queue",
+              "steer",
+              "reject_busy"
+            ],
+            "title": "Mode",
+            "default": "queue"
+          },
+          "target_run_id": {
+            "type": "string",
+            "title": "Target Run Id",
+            "default": ""
+          },
+          "not_before_ms": {
+            "type": "integer",
+            "maximum": 253402300799000.0,
+            "minimum": 0.0,
+            "title": "Not Before Ms",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -646,6 +1802,172 @@
           "text"
         ],
         "title": "Submit"
+      },
+      "SupervisorHealth": {
+        "properties": {
+          "identity": {
+            "$ref": "#/components/schemas/Identity"
+          },
+          "registry_revision": {
+            "type": "string",
+            "title": "Registry Revision"
+          },
+          "freeze_id": {
+            "type": "string",
+            "title": "Freeze Id",
+            "default": ""
+          },
+          "workers": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerInfo"
+            },
+            "type": "array",
+            "title": "Workers"
+          },
+          "epochs": {
+            "items": {
+              "$ref": "#/components/schemas/EpochHealth"
+            },
+            "type": "array",
+            "title": "Epochs"
+          },
+          "effects": {
+            "items": {
+              "$ref": "#/components/schemas/EffectHold"
+            },
+            "type": "array",
+            "title": "Effects"
+          },
+          "vm_id": {
+            "type": "string",
+            "title": "Vm Id"
+          },
+          "boot_id": {
+            "type": "string",
+            "title": "Boot Id"
+          },
+          "blocked": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Blocked"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "identity",
+          "registry_revision",
+          "workers",
+          "epochs",
+          "vm_id",
+          "boot_id"
+        ],
+        "title": "SupervisorHealth"
+      },
+      "ToolCall": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "name": {
+            "type": "string",
+            "enum": [
+              "shell",
+              "read_file",
+              "write_file",
+              "delegate_task"
+            ],
+            "title": "Name"
+          },
+          "arguments": {
+            "type": "string",
+            "title": "Arguments"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "arguments"
+        ],
+        "title": "ToolCall"
+      },
+      "UpdateRecord": {
+        "properties": {
+          "update_id": {
+            "type": "string",
+            "title": "Update Id"
+          },
+          "source_build": {
+            "type": "string",
+            "title": "Source Build"
+          },
+          "target_build": {
+            "type": "string",
+            "title": "Target Build"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "freezing",
+              "retiring",
+              "prepared",
+              "validating",
+              "completed"
+            ],
+            "title": "Phase"
+          },
+          "revision": {
+            "type": "string",
+            "title": "Revision"
+          },
+          "cancel_work": {
+            "type": "boolean",
+            "title": "Cancel Work"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          },
+          "roster": {
+            "items": {
+              "$ref": "#/components/schemas/WorkerInfo"
+            },
+            "type": "array",
+            "title": "Roster"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkerInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "activated": {
+            "type": "boolean",
+            "title": "Activated",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "update_id",
+          "source_build",
+          "target_build",
+          "phase",
+          "revision",
+          "cancel_work"
+        ],
+        "title": "UpdateRecord"
       },
       "ValidationError": {
         "properties": {
@@ -686,6 +2008,93 @@
           "type"
         ],
         "title": "ValidationError"
+      },
+      "WorkerInfo": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "worker_id": {
+            "type": "string",
+            "title": "Worker Id"
+          },
+          "pid": {
+            "type": "integer",
+            "title": "Pid"
+          },
+          "socket": {
+            "type": "string",
+            "title": "Socket"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "process_lease": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProcessLease"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "starting",
+              "ready",
+              "frozen",
+              "stopping",
+              "stopped",
+              "blocked",
+              "unknown"
+            ],
+            "title": "State",
+            "default": "starting"
+          },
+          "execution_epoch": {
+            "type": "integer",
+            "title": "Execution Epoch",
+            "default": 0
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint",
+            "default": ""
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "business",
+              "validation"
+            ],
+            "title": "Purpose",
+            "default": "business"
+          },
+          "host_epoch": {
+            "type": "integer",
+            "title": "Host Epoch",
+            "default": 0
+          },
+          "storage_ready": {
+            "type": "boolean",
+            "title": "Storage Ready",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "worker_id",
+          "pid",
+          "socket",
+          "build_id"
+        ],
+        "title": "WorkerInfo"
       }
     }
   }

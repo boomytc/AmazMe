@@ -60,5 +60,6 @@ def app_factory(token: str = "") -> FastAPI:
 
     @app.exception_handler(BackendError)
     async def backend_error(_request: Request, error: BackendError) -> JSONResponse:
-        return JSONResponse(ErrorBody(code=error.code, message=error.message).model_dump(), status_code=error.status)
+        return JSONResponse(ErrorBody(code=error.code, message=error.message,
+                                      retryable=error.status in {429, 503, 504}).model_dump(), status_code=error.status)
     return app

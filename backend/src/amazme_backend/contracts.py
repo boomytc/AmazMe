@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -16,11 +18,13 @@ class ProviderConfig(Model):
 
 
 class ProfileConfig(Model):
-    format: Literal[1] = 1
+    format: Literal[2] = 2
     profile_id: str
     workspace: str
     resources: str
     provider: ProviderConfig
+    approval_policy: Literal["auto", "mutations", "all"] = "mutations"
+    testing: bool = False
 
 
 class Identity(Model):
@@ -31,14 +35,29 @@ class Identity(Model):
     instance_id: str
     pid: int
     host_epoch: int = 0
+    role: Literal["host", "supervisor", "worker"] = "host"
+    state: str = "ready"
+    fingerprint: str = ""
+    storage_format: Literal[2] = 2
 
 
 class Submit(Model):
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     text: str = Field(min_length=1, max_length=16000)
+    mode: Literal["queue", "steer", "reject_busy"] = "queue"
+    target_run_id: str = ""
+    not_before_ms: int = Field(default=0, ge=0, le=253402300799000)
 
 
-Status = Literal["queued", "running", "cancelling", "succeeded", "cancelled", "interrupted", "failed", "unknown"]
+TerminalStatus = Literal["succeeded", "cancelled", "interrupted", "failed", "unknown"]
+Status = Literal["queued", "running", "waiting_approval", "waiting_children", "waiting_time", "waiting_host",
+                 "cancelling", "cleaning", "blocked", "succeeded", "cancelled", "interrupted", "failed", "unknown"]
+
+
+class Decision(Model):
+    status: TerminalStatus
+    answer: str = ""
+    error: str = ""
 
 
 class Receipt(Model):
@@ -48,11 +67,20 @@ class Receipt(Model):
     answer: str = ""
     error: str = ""
     accepted_revision: str = "0"
+    revision: str = "0"
+    run_id: str = ""
+    parent_id: str = ""
+    kind: Literal["root", "child", "steer"] = "root"
+    generation: int = 0
+    cancel_requested: bool = False
+    decision: Decision | None = None
+    children: list[str] = Field(default_factory=lambda: list[str]())
+    not_before_ms: int = 0
 
 
 class ToolCall(Model):
     id: str
-    name: Literal["shell", "read_file", "write_file"]
+    name: Literal["shell", "read_file", "write_file", "delegate_task"]
     arguments: str
 
 
@@ -81,6 +109,10 @@ class WriteFile(ReadFile):
     content: str = Field(max_length=32000)
 
 
+class DelegateTasks(Model):
+    tasks: list[str] = Field(min_length=1, max_length=8)
+
+
 class ToolResult(Model):
     call_id: str
     exit_code: int
@@ -92,12 +124,15 @@ class ToolResult(Model):
 
 class Event(Model):
     seq: str
-    kind: Literal["accepted", "status", "preview", "message", "tool", "cleanup"]
+    kind: Literal["accepted", "status", "preview", "message", "tool", "cleanup", "approval", "children", "effect", "freeze"]
     request_id: str
     text: str
+    receipt: Receipt | None = None
+    approval: Approval | None = None
+    preview: Preview | None = None
 
 
-WorkerState = Literal["recovering", "ready", "blocked", "stopping"]
+WorkerState = Literal["recovering", "ready", "blocked", "stopping", "frozen"]
 
 
 class Snapshot(Model):
@@ -107,6 +142,11 @@ class Snapshot(Model):
     state: WorkerState
     requests: list[Receipt]
     events: list[Event]
+    approvals: list[Approval] = Field(default_factory=lambda: list[Approval]())
+    effects: list[EffectHold] = Field(default_factory=lambda: list[EffectHold]())
+    previews: list[Preview] = Field(default_factory=lambda: list[Preview]())
+    next_wake_ms: int = 0
+    pending: int = 0
 
 
 class Session(Model):
@@ -133,6 +173,8 @@ class HostFence(Model):
 
 class WorkerSpec(HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    purpose: Literal["business", "validation"] = "business"
+    frozen: bool = False
 
 
 class Lease(Model):
@@ -140,10 +182,13 @@ class Lease(Model):
     worker_id: str
     execution_epoch: int
     build_id: str
+    supervisor_id: str = ""
 
 
 class RunTool(Lease, Command):
     call_id: str
+    request_id: str = ""
+    effect: Literal["read", "write"] = "write"
 
 
 class Cleanup(Model):
@@ -152,6 +197,8 @@ class Cleanup(Model):
     state: Literal["clean", "blocked"]
     containers: list[str]
     reason: str = ""
+    proof_id: str = ""
+    vm_id: str = ""
 
 
 class WorkerInfo(Model):
@@ -160,26 +207,251 @@ class WorkerInfo(Model):
     pid: int
     socket: str
     build_id: str
+    process_lease: ProcessLease | None = None
+    state: Literal["starting", "ready", "frozen", "stopping", "stopped", "blocked", "unknown"] = "starting"
+    execution_epoch: int = 0
+    fingerprint: str = ""
+    purpose: Literal["business", "validation"] = "business"
+    host_epoch: int = 0
+    storage_ready: bool = False
 
 
 class WorkerRequest(Model):
     session_id: str
     worker_id: str
     build_id: str
+    storage_ready: bool = False
 
 
 class StopWorker(WorkerSpec):
     worker_id: str
+    execution_epoch: int = 0
+    reason: Literal["shutdown", "recovery", "update"] = "shutdown"
 
 
 class Stream(Model):
     snapshot: Snapshot | None = None
-    events: list[Event] = Field(default_factory=lambda: list[Event]())
+    batches: list[CommitBatch] = Field(default_factory=lambda: list[CommitBatch]())
+    stream_id: str = ""
+    binding_id: str = ""
+    build_id: str = ""
+    resync: str = ""
 
 
 class ErrorBody(Model):
     code: str
     message: str
+    request_id: str = ""
+    retryable: bool = False
+
+
+class ProcessLease(Model):
+    instance_id: str
+    role: Literal["host", "worker", "supervisor"]
+    profile_path: str
+    path: str
+    device: int
+    inode: int
+
+
+class Preview(Model):
+    request_id: str
+    run_id: str
+    generation: int
+    preview_seq: str
+    text: str
+
+
+class Approval(Model):
+    approval_id: str
+    request_id: str
+    run_id: str
+    call_id: str
+    call: ToolCall
+    build_id: str
+    proposal_digest: str
+    revision: str
+    state: Literal["pending", "approved", "denied", "consumed", "expired"]
+
+
+class ApprovalDecision(Model):
+    decision_id: str = Field(min_length=1, max_length=128)
+    approval_id: str
+    expected_revision: str
+    proposal_digest: str
+    approve: bool
+
+
+class EffectHold(Model):
+    call_id: str
+    session_id: str
+    request_id: str = ""
+    reason: str
+    resource_clean: bool
+    reconciled: bool = False
+
+
+class EffectResolution(Model):
+    resolution_id: str = Field(min_length=1, max_length=128)
+    call_id: str
+    outcome: Literal["applied", "not_applied"]
+    evidence: str = Field(min_length=1, max_length=4000)
+
+
+class ResolveEffect(WorkerRequest):
+    resolution: EffectResolution
+
+
+class ToolLookup(WorkerRequest):
+    call_id: str
+
+
+class ToolObservation(Model):
+    call_id: str
+    state: Literal["not_found", "pending", "completed", "unknown"]
+    result: ToolResult | None = None
+    resource_clean: bool = False
+
+
+class CommitBatch(Model):
+    stream_id: str
+    seq: str
+    base_revision: str
+    revision: str
+    events: list[Event]
+
+
+class Replay(Model):
+    stream_id: str
+    seq: str
+    batches: list[CommitBatch]
+    resync: bool = False
+
+
+class StreamHello(Model):
+    kind: Literal["hello"] = "hello"
+    binding_id: str = Field(min_length=1, max_length=128)
+    stream_id: str = ""
+    after: str = Field(default="0", pattern=r"^(0|[1-9][0-9]{0,17})$")
+    build_id: str
+
+
+class StreamAck(Model):
+    kind: Literal["ack"] = "ack"
+    binding_id: str
+    stream_id: str
+    seq: str = Field(pattern=r"^(0|[1-9][0-9]{0,17})$")
+
+
+class Submission(HostFence):
+    value: Submit
+
+
+class Cancel(HostFence):
+    request_id: str
+
+
+class ApprovalEnvelope(HostFence):
+    value: ApprovalDecision
+
+
+class ResolutionEnvelope(HostFence):
+    value: EffectResolution
+
+
+class FreezeWorker(HostFence):
+    freeze_id: str
+    cancel_work: bool = False
+
+
+class WorkerActivity(Model):
+    pending: int
+    runnable: bool
+    next_wake_ms: int
+    state: WorkerState
+
+
+class FreezeSupervisor(HostFence):
+    freeze_id: str
+    expected_revision: str = ""
+
+
+class RetireSupervisor(HostFence):
+    freeze_id: str
+
+
+class EpochHealth(Model):
+    session_id: str
+    worker_id: str
+    execution_epoch: int
+    state: str
+    cleanup: Cleanup | None = None
+
+
+class SupervisorHealth(Model):
+    identity: Identity
+    registry_revision: str
+    freeze_id: str = ""
+    workers: list[WorkerInfo]
+    epochs: list[EpochHealth]
+    effects: list[EffectHold] = Field(default_factory=lambda: list[EffectHold]())
+    vm_id: str
+    boot_id: str
+    blocked: list[str] = Field(default_factory=lambda: list[str]())
+
+
+class Recovery(HostFence):
+    recovery_id: str = Field(min_length=1, max_length=128)
+    session_id: str = ""
+
+
+class PrepareUpdate(Model):
+    update_id: str = Field(min_length=1, max_length=128)
+    target_build: str = Field(pattern=r"^[a-f0-9]{64}$")
+    cancel_work: bool = False
+
+
+class UpdateRecord(Model):
+    update_id: str
+    source_build: str
+    target_build: str
+    phase: Literal["freezing", "retiring", "prepared", "validating", "completed"]
+    revision: str
+    cancel_work: bool
+    error: str = ""
+    roster: list[WorkerInfo] = Field(default_factory=lambda: list[WorkerInfo]())
+    validation: WorkerInfo | None = None
+    activated: bool = False
+
+
+class CompleteUpdate(Model):
+    update_id: str
+    expected_revision: str
+
+
+class Health(Model):
+    identity: Identity
+    state: Literal["ready", "recovering", "frozen", "blocked"]
+    supervisor: SupervisorHealth | None = None
+    update: UpdateRecord | None = None
+    pending_deliveries: int = 0
+    errors: list[str] = Field(default_factory=lambda: list[str]())
+    supervisors: list[ServiceInfo] = Field(default_factory=lambda: list[ServiceInfo]())
+
+
+class ServiceInfo(Model):
+    instance_id: str
+    build_id: str
+    process_lease: ProcessLease
+    state: Literal["starting", "running", "stopping", "stopped", "unknown"]
+    pid: int = 0
+
+
+class Attachment(Model):
+    attachment_id: str
+    session_id: str
+    host_epoch: int
+    build_id: str
 
 
 class BackendError(Exception):

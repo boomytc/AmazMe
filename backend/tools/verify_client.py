@@ -1,165 +1,183 @@
-"""Exercise ambiguous replies, reconnect and conversation ownership in real Chrome."""
+"""P2 real-browser identity/retry proof; UI-only fault injection is explicitly labeled."""
 
 import argparse
-import json
 import sys
 import tempfile
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
-from verify_runtime import ROOT, Runtime, daemon_command, until
+from verify_runtime import ROOT, Runtime, until
+from verify_web import approve_and_finish, assert_protocol, configure_approvals, finish, login, observe
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", type=Path)
     args = parser.parse_args()
-    parent = ROOT / ".artifacts/python-backend-p1"
+    parent = ROOT / ".artifacts/python-backend-p2"
     parent.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="client-", dir=parent))
     provider = root / "faux.json"
     provider.write_text('{"provider":"faux"}')
     command = [str(args.executable.resolve())] if args.executable else [sys.executable, "-m", "amazme_backend"]
     runtime = Runtime(command, root, provider)
-    report = {"status": "running", "root": str(root), "checks": []}
+    report = {"status":"running", "root":str(root), "checks":[]}
     try:
+        configure_approvals(runtime)
         runtime.start()
         report["identity"] = runtime.ready
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(channel="chrome", headless=True)
-            context = browser.new_context(viewport={"width": 1440, "height": 1000})
-            page = context.new_page()
-            page.add_init_script("""(() => {
-                const Original = window.WebSocket;
-                window.testSockets = [];
-                window.WebSocket = class extends Original {
-                    constructor(...args) { super(...args); window.testSockets.push(this); }
-                };
-            })()""")
-            errors = []
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            page.goto(runtime.ready["url"])
-            page.get_by_label("输入本机配对码").fill((runtime.profile / "web.token").read_text())
-            page.get_by_role("button", name="连接", exact=True).click()
-            expect(page.locator("#login")).to_be_hidden()
-            page.locator("#create").click()
-            expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
-
-            ids = []
-
-            def lose_reply(route):
-                ids.append(route.request.post_data_json["request_id"])
-                response = route.fetch()
-                assert response.status == 202
-                route.abort("failed")
-
-            page.route("**/submissions", lose_reply)
-            page.locator("#prompt").fill("/shell printf x >> browser-once.txt")
-            page.locator("#send").click()
-            expect(page.locator("#error")).to_contain_text("沿用原请求 ID")
-            page.unroute("**/submissions", lose_reply)
-            page.reload()
-            expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
-            expect(page.locator("#prompt")).to_have_value("/shell printf x >> browser-once.txt")
-            with page.expect_request("**/submissions") as retry:
-                page.locator("#send").click()
-            assert retry.value.post_data_json["request_id"] == ids[0]
-            expect(page.locator("#send")).to_be_enabled()
-            expect(page.locator("#conversation .status").last).to_contain_text("已完成", timeout=30000)
-            assert (runtime.workspace / "browser-once.txt").read_text() == "x"
-            report["checks"].append("accepted reply lost, reload and same-ID retry produced one effect")
-
-            # Hold only the reply in the client; the real HTTP submission still commits.
-            page.evaluate("""() => {
-                const original = window.fetch;
-                window.fetch = async (...args) => {
-                    const result = await original(...args);
-                    if (String(args[0]).endsWith('/submissions'))
-                        await new Promise(resolve => { window.releaseSubmission = resolve; });
-                    return result;
-                };
-            }""")
-            page.locator("#prompt").fill("/shell printf bound > bound.txt")
-            page.locator("#send").click()
-            until(lambda: page.evaluate("() => typeof window.releaseSubmission === 'function'"), bool)
-            page.locator("#create").click()
-            expect(page.locator("#sessions button")).to_have_count(2)
-            expect(page.locator("#connection")).to_have_text("已连接")
-            expect(page.locator("#conversation article")).to_have_count(0)
-            page.locator("#prompt").fill("第二个会话的草稿")
-            page.evaluate("window.releaseSubmission()")
-            expect(page.locator("#send")).to_be_enabled()
-            expect(page.locator("#prompt")).to_have_value("第二个会话的草稿")
-            page.locator("#sessions button").first.click()
-            expect(page.locator("#conversation article")).to_have_count(2)
-            expect(page.locator("#prompt")).to_have_value("")
-            until(lambda: (runtime.workspace / "bound.txt").exists(), bool)
-            report["checks"].append("late submission reply preserved the other conversation draft")
-
-            context.set_offline(True)
-            page.evaluate("() => window.testSockets.forEach(socket => socket.close())")
-            expect(page.locator("#connection")).to_have_text("正在重连")
-            page.wait_for_timeout(3200)
-            context.set_offline(False)
-            # Explicit reload is unnecessary: the client retries until both HTTP and WS recover.
-            expect(page.locator("#connection")).to_have_text("已连接", timeout=15000)
-            expect(page.locator("#conversation article")).to_have_count(2)
-            expect(page.locator("#tools")).to_contain_text("bound.txt")
-            report["checks"].append("offline reconnect restored receipts and tool snapshot")
-
-            page.reload()
-            expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
-            page.route("**/submissions", lambda route: route.fulfill(status=422, content_type="application/json", body='{"message":"rejected"}'))
-            page.locator("#prompt").fill("bad input")
-            page.locator("#send").click()
-            expect(page.locator("#error")).to_have_text("rejected")
-            assert page.evaluate("sessionStorage.getItem('pending')") is None
-            page.unroute("**/submissions")
-            page.locator("#prompt").fill("/shell printf corrected > corrected.txt")
-            page.locator("#send").click()
-            expect(page.locator("#conversation article")).to_have_count(3)
-            expect(page.locator("#conversation .status").last).to_contain_text("已完成", timeout=30000)
-            assert (runtime.workspace / "corrected.txt").read_text() == "corrected"
-            assert not errors, errors
-            report["checks"].append("definitive rejection allowed a corrected new submission")
-            page.locator("#prompt").fill("/shell " + daemon_command("live-cleanup.log"))
-            page.locator("#send").click()
-            marker = runtime.workspace / "live-cleanup.log"
-            until(lambda: marker.stat().st_size if marker.exists() else 0, lambda size: size > 4)
-            session = runtime.client.get("/api/v1/sessions").json()["sessions"][0]["session_id"]
-            control = Path(runtime.worker(session)[2]).parent / "vm/execution/sock/docker.sock"
-            held = control.with_name("docker.held.sock")
-            control.rename(held)
+            context = browser.new_context(viewport={"width":1440, "height":1000})
             try:
-                page.wait_for_timeout(6000)
-                page.locator("#cancel").click()
-                expect(page.locator("#state")).to_have_text("等待清理", timeout=15000)
-                expect(page.locator("#conversation .status").last).to_contain_text("正在清理")
-                expect(page.locator("#conversation .status").last).to_contain_text("execution_cleanup_pending")
-                report["checks"].append("cleanup failure reached the visible page without reload")
+                page = context.new_page()
+                page.add_init_script("""(() => {
+                    const Original = window.WebSocket;
+                    window.testSockets = [];
+                    window.WebSocket = class extends Original {
+                        constructor(...args) { super(...args); window.testSockets.push(this); }
+                    };
+                })()""")
+                errors, sent, received, _, writes = observe(page)
+                login(page, runtime)
+                page.locator("#create").click()
+                expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
+                ids = []
+
+                def lose_reply(route):
+                    ids.append(route.request.post_data_json["request_id"])
+                    response = route.fetch()
+                    assert response.status == 202, response.text()
+                    route.abort("failed")
+
+                page.route("**/submissions", lose_reply)
+                page.locator("#prompt").fill("/shell printf x >> browser-once.txt")
+                page.locator("#send").click()
+                expect(page.locator("#error")).to_contain_text("沿用原请求 ID")
+                page.unroute("**/submissions", lose_reply)
+                page.reload()
+                expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
+                expect(page.locator("#prompt")).to_have_value("/shell printf x >> browser-once.txt")
+                with page.expect_request("**/submissions") as retry:
+                    page.locator("#send").click()
+                assert retry.value.post_data_json["request_id"] == ids[0]
+                approve_and_finish(page)
+                assert (runtime.workspace / "browser-once.txt").read_text() == "x"
+                report["checks"].append("accepted reply lost; reload and same-ID retry caused one approved effect")
+
+                page.evaluate("""() => {
+                    const original = window.fetch;
+                    let once = true;
+                    window.fetch = async (...args) => {
+                        const result = await original(...args);
+                        if (once && String(args[0]).endsWith('/submissions')) {
+                            once = false;
+                            await new Promise(resolve => { window.releaseSubmission = resolve; });
+                        }
+                        return result;
+                    };
+                }""")
+                page.locator("#prompt").fill("/shell printf bound > bound.txt")
+                with page.expect_request("**/submissions") as held:
+                    page.locator("#send").click()
+                until(lambda: page.evaluate("() => typeof window.releaseSubmission === 'function'"), bool)
+                page.locator("#create").click()
+                expect(page.locator("#sessions button")).to_have_count(2)
+                expect(page.locator("#connection")).to_have_text("已连接")
+                expect(page.locator("#conversation article")).to_have_count(0)
+                page.locator("#prompt").fill("第二个会话的草稿")
+                page.locator("#sessions button").first.click()
+                expect(page.locator("#connection")).to_have_text("已连接")
+                page.evaluate("window.releaseSubmission()")
+                expect(page.locator("#send")).to_be_enabled()
+                expect(page.locator("#prompt")).to_have_value("/shell printf bound > bound.txt")
+                assert page.evaluate("JSON.parse(sessionStorage.getItem('pending')).request_id") == held.value.post_data_json["request_id"]
+                with page.expect_request("**/submissions") as retry:
+                    page.locator("#send").click()
+                assert retry.value.post_data_json["request_id"] == held.value.post_data_json["request_id"]
+                approve_and_finish(page)
+                assert (runtime.workspace / "bound.txt").read_text() == "bound"
+                page.locator("#sessions button").nth(1).click()
+                expect(page.locator("#connection")).to_have_text("已连接")
+                expect(page.locator("#prompt")).to_have_value("第二个会话的草稿")
+                page.locator("#sessions button").first.click()
+                expect(page.locator("#connection")).to_have_text("已连接")
+                report["checks"].append("A-B-A late reply preserved both draft ownership and original retry ID")
+
+                context.set_offline(True)
+                page.evaluate("() => window.testSockets.forEach(socket => socket.close())")
+                expect(page.locator("#connection")).to_have_text("正在重连")
+                expect(page.locator("#send")).to_be_disabled()
+                page.wait_for_timeout(1500)
+                context.set_offline(False)
+                expect(page.locator("#connection")).to_have_text("已连接", timeout=45000)
+                expect(page.locator("#conversation article")).to_have_count(2)
+                expect(page.locator("#tools")).to_contain_text("bound.txt")
+                report["checks"].append("offline reconnect obtained a fresh attachment and restored the full session")
+
+                page.locator("#prompt").fill("/shell printf a >> approval-once.txt")
+                page.locator("#send").click()
+                expect(page.locator("#approvals article")).to_have_count(1)
+                decisions = []
+
+                def lose_approval(route):
+                    decisions.append(route.request.post_data_json["decision_id"])
+                    response = route.fetch()
+                    assert response.status == 202, response.text()
+                    route.abort("failed")
+
+                page.route("**/approvals", lose_approval)
+                page.locator("#approvals").get_by_role("button", name="批准", exact=True).click()
+                expect(page.locator("#action-retries")).to_contain_text("审批")
+                expect(page.locator("#conversation .status").last).to_contain_text("已完成", timeout=120000)
+                page.unroute("**/approvals", lose_approval)
+                page.reload()
+                expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
+                with page.expect_request("**/approvals") as retried:
+                    page.locator("#action-retries button").click()
+                assert retried.value.post_data_json["decision_id"] == decisions[0]
+                expect(page.locator("#action-retries button")).to_have_count(0)
+                assert (runtime.workspace / "approval-once.txt").read_text() == "a"
+                report["checks"].append("lost approval response retained the same decision ID across reload")
+
+                page.route("**/submissions", lambda route: route.fulfill(status=422, content_type="application/json", body='{"message":"rejected"}'))
+                page.locator("#prompt").fill("bad input")
+                page.locator("#send").click()
+                expect(page.locator("#error")).to_have_text("rejected")
+                assert page.evaluate("sessionStorage.getItem('pending')") is None
+                page.unroute("**/submissions")
+                report["checks"].append("definitive rejection released the pending request for editing")
+
+                def frozen_health(route):
+                    response = route.fetch()
+                    value = response.json()
+                    value["state"] = "frozen"
+                    route.fulfill(response=response, json=value)
+
+                page.route("**/api/v1/health", frozen_health)
+                expect(page.locator("#recovery")).to_contain_text("普通网页无法解除冻结", timeout=10000)
+                expect(page.locator("#send")).to_be_disabled()
+                expect(page.get_by_role("button", name="完成更新")).to_have_count(0)
+                # This is a real auth rejection, without the private control credential.
+                response = context.request.post(runtime.ready["url"] + "/control/updates/complete",
+                                                data={"update_id":"forbidden", "expected_revision":"0"},
+                                                headers={"Origin":runtime.ready["url"]})
+                assert response.status == 401
+                page.unroute("**/api/v1/health", frozen_health)
+                report["checks"].append("injected frozen health disabled writes; real browser credential could not complete update")
+                assert_protocol(sent, received, writes, runtime.ready["build_id"])
+                assert not errors, errors
+                report.update(page_errors=errors, browser=browser.version)
+                page.screenshot(path=str(root / "client.png"), full_page=True)
             finally:
-                held.rename(control)
-            assert not errors, errors
-            report["page_errors"] = errors
-            report["browser"] = browser.version
-            context.close()
-            browser.close()
+                context.close()
+                browser.close()
         report["status"] = "passed"
     except BaseException as error:
-        report["status"] = "failed"
-        report["error"] = f"{type(error).__name__}: {error}"
+        report.update(status="failed", error=f"{type(error).__name__}: {error}")
         raise
     finally:
-        try:
-            runtime.close()
-            report["cleanup"] = "browser, owned services and VM closed"
-        except BaseException as error:
-            report["status"] = "failed"
-            report["cleanup_error"] = f"{type(error).__name__}: {error}"
-            raise
-        finally:
-            (root / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-            print(root / "report.json", flush=True)
+        finish(runtime, root, report)
 
 
 if __name__ == "__main__":

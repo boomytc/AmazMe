@@ -1,36 +1,74 @@
-# P0/P1 实现边界
+# Python 后端的状态与进程所有权
 
-用户先以 `amazme-backend init --profile … --workspace … --provider-config …` 创建空白配置，
-再 `amazme-backend serve --profile …` 打开 Web 客户端。创建会话后提交请求，查看流式文本、
-工具命令与结果，可取消并在重启后继续。VM shell 只访问 init 时明确授予的目录。
+用户创建独立 profile、授权一个工作区，再启动 Host，通过 Web 提交、审批、取消和恢复任务。
+Host、会话 worker、执行监督器分别拥有自己的数据库；只有监督器可以创建执行资源。
+业务调用与执行资源清理分别保存，成功回执不能替代进程和容器退出证明。
 
-采用 HTTP over UDS 候选 A：Host 与 worker 各有自己的 API，执行监督器仅负责资源，
-不转送业务请求。Pydantic 模型是边界真源，连接和数据库事务由拥有者封装。
-借用候选 B 的深接口：worker 只请求 `open/run/close`，不自己协调 create/register/permit。
-JSON RPC 单中心方案增加路由、帧解析与队列调度，不作为首版实现。
-两份候选及独立评审保留于 `.artifacts/python-backend-p1/design-{a,b,review}.md`。
-
-| 模块 | 所有权与公共入口 |
+| 模块 | 拥有的状态与边界 |
 | --- | --- |
-| contracts | API、身份、会话、工具、清理回执的严格模型及 schema |
-| storage | 专属线程 SQLite；接纳、状态及 outbox 同事务 |
-| supervisor | 独立监督器；host fencing、worker 句柄、执行代际、容器台账、清理回执 |
-| vm | 固定包内 Lima/VZ/Docker 和镜像；执行资源的系统适配入口 |
-| worker | 每会话 worker，独占会话写锁；模型循环、工具意图、恢复与取消 |
-| providers | OpenAI SDK 后的 DeepSeek 适配；faux 仅用于确定性测试 |
-| host | profile 锁、Host 元数据、认证/Origin、会话代理、REST/WS、静态 Web |
+| contracts | 严格 Pydantic 边界、身份、回执、快照、事务批次与健康清单 |
+| host_store / host | profile 锁、Host 代际、持久投递意图、调度需求、监督器实例台账、更新状态；认证与客户端绑定 |
+| storage / session_domain | 每会话独占 SQLite；输入、运行、稳定步骤、上下文、审批、子工作、取消意图及同事务事件批次 |
+| worker | 一个会话检查点驱动器；执行领域动作并采纳结果；不创建宿主子进程 |
+| supervisor | 所有 worker 实例、执行 epoch、工具 scope、未知效果、重启预算与资源清理证明 |
+| vm / docker_channel / gate | 包内 Lima/VZ 与固定镜像、VM 停止证明、监督器独占的 Docker stdin 通道、受信任容器 PID 1 |
+| processes | spawn 前创建并登记的继承 flock；子进程直到内核退出才释放；核对 inode 防止替换伪造退出 |
+| streams / web | attachment 与连接身份、完整事务批次、ACK、有界重放、过期游标重新取快照 |
+| providers | DeepSeek SDK 适配；确定性 faux 用于故障验证 |
 
-监督器串行化每会话的准入和资源变更，但不在执行等待时持有控制锁。
-worker 分配、Host 接管与停止由同一控制锁串行化，启动中句柄也占有槽位；
-停止和失联先撤销 worker 身份，迟到调用不能再次开启执行。Host 的缓存连接按会话串行建立并验证实例身份。
-取消先封闭代际，再等待在途创建/放行收敛和整个容器退出；未确认时保持 blocked。
-worker 的生命周期任务持有租约，取消只中断其内部模型/工具任务；取得租约和关闭租约不被重复取消打断。
-取得租约的回复丢失也保持 blocked。工具执行任务独立于 HTTP 等待者，完成回调负责回收容量。
-Host 退出只发送带 host_epoch 的控制消息，不凭缓存 PID 杀已接管的进程。
-容器 init 通过运行时私有 stdin 收到许可后才启动 shell；用户命令降为普通 UID。
-每个工具 scope 使用独立容器，统一归属 execution_epoch，代际清理汇总全部 scope。
-显式停止等待服务锁释放；删除 VM 必须同时持有 Host、监督器和会话写锁，运行中不可绕过生命周期入口删除。
+P2 继续使用 HTTP over UDS，状态表是恢复权威。曾比较“归一化检查点”和“操作日志驱动 reducer”两种设计，
+选择前者，避免将事件投递记录变成第二份执行状态；采用后者的取消墓碑、完整审批摘要和更新激活重验约束。
+候选与交叉评审保留在 `.artifacts/python-backend-p2/design-{a,b,judge}.md`。
 
-P0/P1 先提供一个明确授权工作区、Web 客户端、DeepSeek 非推理流与 read/write/shell 工具。
-完整多工作区、PTY、审批交互、插件、账号 OAuth 和全更新矩阵按定稿后续阶段扩展。
-认证、取消、写锁、构建身份、进程清理与离线包内执行资源属于本阶段，不能延期。
+## 持久投递与会话推进
+
+Host 先保存稳定投递 ID，再向 worker 送交包含当前 Host 代际的业务体。只有 worker 将输入、去重记录、
+状态和事务批次一起提交后，Host 才确认接受。Host 丢失回复时重发同一投递；两份 SQLite 不模拟跨库事务。
+传输代际不参与业务内容摘要。重复同 ID/同内容返回原回执，不同内容拒绝。
+
+会话运行将模型意图、模型结果与使用量、工具意图和结果分别检查点化。未取得确定结果的调用不会盲目重放；
+工具可向监督器查询原稳定调用 ID。业务 decision 落盘后只推进清理，清理证明到达后才发布终态。
+queue、steer、reject_busy、定时唤醒和取消意图均持久；一个请求的取消不会删除其他排队输入。
+
+审批绑定调用参数、运行上下文、待应用引导、策略、构建和审批 revision。等待审批释放执行 epoch；
+旧审批不能授权变更后的命令。子工作使用同一会话库中的独立上下文，父请求必须等待所有必要子工作结算；
+失败和取消向后代传播，不能凭一个模型响应提前成功。
+
+数据库通过专属线程执行完整事务，等待外部调用不占事务。存储失败关闭准入，损坏、不支持或已初始化后
+丢失的数据库在写入前拒绝；P2 使用新格式 2，不迁移 P1 或旧 TS 数据。
+
+## 执行与退出证明
+
+Host 和监督器在 spawn 前保存进程预约。固定子进程继承同一 open-file description 的锁，父进程只关闭自己的
+副本，不执行 LOCK_UN。PID 只用于诊断；清理依赖原 inode 的实际释放和会话 writer 锁，不依赖 PID 存活猜测。
+历史 stopping/unknown 实例保留在台账，不能被新实例覆盖。自动恢复有持久预算，耗尽后需显式恢复。
+
+每个工具使用独立容器，先持久记录确定性名称和 scope，再创建、登记、启动、放行。监督器直接持有 Docker
+hijack socket，避免执行 CLI 在监督器死亡后继续持有许可通道。容器 PID 1 只接受一次私有 stdin 许可；
+用户命令降权后进入 Linux shell。通道断开或收到额外输入即撤销，PID 1 退出终止整个 PID namespace。
+
+正常清理只处理目标 epoch，其他会话继续执行。scope 无法确认、监督器替换或 VM 代际变化时，通过受管 VM
+整体停止取得新的证明。固定 Lima 的变更命令继承 operation 锁，派生的 hostagent 在启动到 Running 之间持有独立副本，
+交接完成只关闭自己的副本，之后的 exec 子进程不继承。停止验证与台账封闭保持同一屏障；没有停止证明
+则保持 blocked。未知写入在整个 profile 上阻止后续冲突写入，允许只读诊断；显式核对结果需要已完成资源清理
+和证据，保留原 unknown 历史，不改写为成功。
+
+## 接管、更新与客户端
+
+同构建 Host 接管先持久提高代际，并要求每个幸存 worker 对自己的本地持久 fence 确认。停止命令也比较本地
+fence，避免向正在恢复的监督器反向查询造成死锁。旧 Host 的迟到停止不能越过新代际。
+
+同版本号下不同 build_id 仍需更换全部不匹配参与者。更新保存 update_id 与源/目标构建，冻结入口和调度，
+取得全部 worker、epoch 和监督器退出证明，再校验目标构建。验证 worker 解析会话库、验证空 epoch 的清理回执并握手、退出，
+其运行模式始终禁止调用模型和工具，即使收到会话解冻命令也不会执行业务。更新要求取消时，
+它只查询历史结果并采纳清理回执，结算已持久的取消意图；未知外部结果保留 unknown。
+
+完成记录和 activated 是两个持久事实。私有 complete 重新检查完整台账及验证回执，解除会话冻结，
+在全部验证 worker 退出后释放监督器冻结，再标记激活。中途崩溃不会因为普通浏览器连上而自动解冻。
+私有更新凭据不交给 Web。
+
+客户端写入携带 build、Host 代际和会话 attachment。WS hello 绑定 attachment、构建和持久游标；每次只发送
+一个有界帧，必须 ACK 完整批次水位，错误/过期游标重新取一致快照。慢客户端不会阻塞事务提交，
+释放 attachment 不取消已接纳的持久工作。预览携带运行代际，最终状态以持久批次和快照为准。
+
+P2 的实际验证与限制以运行记录为准；PTY、多工作区、OAuth、插件、既有 Electron/TUI 适配和签名分发属于后续阶段。

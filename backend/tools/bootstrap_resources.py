@@ -12,11 +12,11 @@ from amazme_backend.vm import VM
 
 
 async def main() -> None:
-    root = Path(__file__).resolve().parents[2] / ".artifacts/python-backend-p1"
+    root = Path(__file__).resolve().parents[2] / ".artifacts/python-backend-p2"
     root.mkdir(parents=True, exist_ok=True)
     p = Path(tempfile.mkdtemp(prefix="hydrate-", dir=root))
     (p / "workspace").mkdir()
-    private_write(p / "config.json", json.dumps({"format": 1, "profile_id": secrets.token_hex(16),
+    private_write(p / "config.json", json.dumps({"format": 2, "profile_id": secrets.token_hex(16),
                   "workspace": str(p / "workspace"), "resources": str(resource_root()), "provider": {"provider": "faux"}}))
     private_write(p / "control.token", secrets.token_hex(32))
     print(p, flush=True)
