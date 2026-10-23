@@ -20,24 +20,14 @@ import {
 import { createForkArchiveGate } from "../core/fork-admission.ts";
 import type { ResourceLoader } from "../core/resource-loader.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
+import { createDurableCodemode } from "../durable/codemode.ts";
+import { createContextCleanup } from "../durable/insights/context-cleanup.ts";
+import { createPolicyEnv } from "../durable/insights/execution-policy.ts";
+import { createRunPolicy } from "../durable/insights/run-policy.ts";
+import { createWorkspaceReview } from "../durable/insights/workspace-review.ts";
+import { createPiPrompt } from "../durable/prompt.ts";
+import { createToolResultImages } from "../durable/tool-result-images.ts";
 import { ensureTool } from "../utils/tools-manager.ts";
-import { createDurableCodemode } from "./codemode.ts";
-import { createContextCleanup } from "./insights/context-cleanup.ts";
-import { createPolicyEnv } from "./insights/execution-policy.ts";
-import { createRunPolicy } from "./insights/run-policy.ts";
-import { createWorkspaceReview } from "./insights/workspace-review.ts";
-import { createPiPrompt } from "./prompt.ts";
-import { createToolResultImages } from "./tool-result-images.ts";
-
-export {
-	configureHarnessHttp,
-	createCodingSettings,
-	findInitialAgentModel,
-	initialThinkingLevel,
-	loadCodingResources,
-	refreshCodingProjectTrust,
-} from "../core/hosted-settings.ts";
-export type { CodingResourceOptions, InitialModel } from "../core/hosted-settings.ts";
 
 /** Harness settings read at every use from pi's settings as loaded at startup. */
 export function createHarnessSettings(

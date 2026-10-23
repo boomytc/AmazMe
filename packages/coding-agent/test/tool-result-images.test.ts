@@ -11,7 +11,7 @@ import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { describe, expect, it } from "vitest";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
-import { createCodingRegistry } from "../src/durable/harness-setup.ts";
+import { createCodingRegistry } from "../src/host/session-registry.ts";
 import type { ToolResultContent } from "../src/utils/tool-result-images.ts";
 import { normalizeToolResultImages } from "../src/utils/tool-result-images.ts";
 import { createTempDir } from "./temp-dir.ts";

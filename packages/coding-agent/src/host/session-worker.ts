@@ -42,14 +42,16 @@ import { durableToolSelection } from "../core/tool-selection.ts";
 import { abortArchivedForks } from "../core/fork-admission.ts";
 import {
 	configureHarnessHttp,
-	createCodingRegistry,
 	createCodingSettings,
-	createHarnessSettings,
-	ExecutionEnvs,
 	findInitialAgentModel,
 	loadCodingResources,
 	refreshCodingProjectTrust,
-} from "../durable/harness-setup.ts";
+} from "../core/hosted-settings.ts";
+import {
+	createCodingRegistry,
+	createHarnessSettings,
+	ExecutionEnvs,
+} from "./session-registry.ts";
 import {
 	applyDurableMcpSelection,
 	type DurableMcp,

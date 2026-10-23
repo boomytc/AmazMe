@@ -41,8 +41,6 @@ SDK 与 Durable 将现有 `httpIdleTimeoutMs` 同时用于 Models 的流空闲�
 | --- | --- |
 | `interactive.ts` | CLI/SDK 交互入口及打开、运行、关闭 |
 | `sessions.ts` | 工作目录会话选择、存储路径和文件锁 |
-| `runtime.ts` | 模型运行时、Harness、环境和控制器 |
-| `harness-setup.ts` | 共用设置、工具注册和初始模型选择 |
 | `prompt.ts` | 工具、规则、AGENTS.md、技能及工作目录提示 |
 | `subagent.ts`、`subagent-run.ts` | 同一子会话的创建、发现、继续与每次输入的精确取消 |
 | `tui.ts` | TUI 呈现与键盘交互 |

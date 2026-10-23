@@ -16,7 +16,11 @@ function typescriptFiles(directory: string): string[] {
 
 describe("host service durable boundary", () => {
 	test("administration services do not import the old session modules", () => {
-		const paths = [...typescriptFiles(join(hostRoot, "services")), join(hostRoot, "server.ts")];
+		const paths = [
+			...typescriptFiles(join(hostRoot, "services")),
+			join(hostRoot, "server.ts"),
+			join(hostRoot, "session-worker.ts"),
+		];
 		const hits: string[] = [];
 		for (const path of paths) {
 			const source = readFileSync(path, "utf8");
