@@ -1,0 +1,39 @@
+{
+  "source": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/package-fe7_msbu/AmazMe Python 0.1.0",
+  "moved": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/AmazMe Python 0.1.0",
+  "build_id": "a44cf603121570ffcb1037fcb331ba3bb6b22d106555ddda367aa7157e41a73e",
+  "clean_path": "/usr/bin:/bin:/usr/sbin:/sbin",
+  "offline_enforcement": "not proven; sandbox-exec still allowed https://example.com",
+  "runs": [
+    {
+      "pid": 71495,
+      "ready_s": 4.104,
+      "rss_kb": 174144,
+      "protocol": "amazme-http/1",
+      "build_id": "a44cf603121570ffcb1037fcb331ba3bb6b22d106555ddda367aa7157e41a73e",
+      "role": "host",
+      "sockets": [
+        "127.0.0.1:58751"
+      ],
+      "commands": [
+        "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/AmazMe Python 0.1.0/amazme-backend serve --profile /Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/work space 1/profile --port 0",
+        "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/AmazMe Python 0.1.0/amazme-backend supervisor --profile /Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/work space 1/profile --instance 64986cb98d792eafd214bd0c75ad1274 --lifetime-fd 12"
+      ]
+    },
+    {
+      "pid": 71632,
+      "ready_s": 1.364,
+      "rss_kb": 173840,
+      "protocol": "amazme-http/1",
+      "build_id": "a44cf603121570ffcb1037fcb331ba3bb6b22d106555ddda367aa7157e41a73e",
+      "role": "host",
+      "sockets": [
+        "127.0.0.1:58777"
+      ],
+      "commands": [
+        "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/AmazMe Python 0.1.0/amazme-backend serve --profile /Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/work space 2/profile --port 0",
+        "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/AmazMe Python 0.1.0/amazme-backend supervisor --profile /Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/relocated with space/bundle tjt8zudc/work space 2/profile --instance 04fc05162ea593a27032067d728948f2 --lifetime-fd 12"
+      ]
+    }
+  ]
+}
