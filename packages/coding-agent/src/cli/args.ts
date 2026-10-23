@@ -49,6 +49,10 @@ export interface Args {
 	listModels?: string | true;
 	offline?: boolean;
 	tuiMode?: TuiMode;
+	/** Explicit Python host. Interactive mode uses this instead of the old runtime. */
+	pythonUrl?: string;
+	pythonToken?: string;
+	workspace?: string;
 	verbose?: boolean;
 	projectTrustOverride?: boolean;
 	messages: string[];
@@ -233,6 +237,16 @@ export function parseArgs(args: string[]): Args {
 					message: `Invalid TUI mode "${mode}". Valid values: regular, fullscreen`,
 				});
 			}
+		} else if (arg === "--python-url" || arg === "--python-token" || arg === "--workspace") {
+			const value = args[i + 1];
+			if (value === undefined || value.startsWith("-")) {
+				result.diagnostics.push({ type: "error", message: `${arg} requires a value` });
+			} else {
+				i++;
+				if (arg === "--python-url") result.pythonUrl = value;
+				else if (arg === "--python-token") result.pythonToken = value;
+				else result.workspace = value;
+			}
 		} else if (arg === "--verbose") {
 			result.verbose = true;
 		} else if (arg === "--approve" || arg === "-a") {
@@ -339,6 +353,9 @@ ${chalk.bold("Options:")}
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Show startup resource counts (overrides quietStartup)
   --tui-mode <mode>              TUI mode: fullscreen (default) or regular
+  --python-url <url>             Python host for interactive mode
+  --python-token <token>         Web token for that host
+  --workspace <name>             Session workspace, required with --python-url
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as AMAZME_OFFLINE=1)

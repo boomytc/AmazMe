@@ -1,0 +1,210 @@
+"""The amazme interactive entry uses the Python host and releases its binding on exit."""
+
+import fcntl
+import json
+import os
+import pty
+import re
+import select
+import struct
+import subprocess
+import sys
+import termios
+import time
+from pathlib import Path
+from typing import cast
+
+from amazme_backend.contracts import BackendError
+from amazme_backend.sdk import Client
+
+ROOT = Path(__file__).resolve().parents[2]
+CLI = ROOT / "packages" / "coding-agent" / "dist" / "cli.js"
+NODE = os.environ.get("AMAZME_NODE", "node")
+FROZEN = os.environ.get("AMAZME_FROZEN_BACKEND", "")
+TOKEN_FILE = "web.token"
+MARKER = re.compile(r"会话:([a-f0-9]{32}) 绑定:([a-f0-9]{32}) 工作区:primary")
+
+
+def _serve(tmp_path: Path) -> tuple[subprocess.Popen[bytes], str, Path]:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    profile = tmp_path / "profile"
+    provider = tmp_path / "provider.json"
+    provider.write_text(json.dumps({
+        "provider": "faux", "model": "faux", "base_url": "", "api_key": "",
+        "max_tokens": 2048, "proxy": "", "headers": {},
+    }))
+    backend = [FROZEN] if FROZEN else [sys.executable, "-m", "amazme_backend"]
+    init = subprocess.run(
+        [*backend, "init", "--profile", str(profile),
+         "--workspace", str(workspace), "--provider-config", str(provider)],
+        check=False, capture_output=True, text=True)
+    assert init.returncode == 0, init.stderr
+    err_path = tmp_path / "serve.err"
+    err_file = err_path.open("wb")
+    proc = subprocess.Popen(
+        [*backend, "serve", "--profile", str(profile), "--port", "0"],
+        stdout=subprocess.PIPE, stderr=err_file)
+    err_file.close()
+    assert proc.stdout is not None
+    ready = _ready(proc, time.monotonic() + 30)
+    if "url" not in ready:
+        proc.kill()
+        proc.wait(timeout=10)
+        raise AssertionError(err_path.read_text(errors="replace")[-2000:])
+    return proc, str(ready["url"]), profile
+
+
+def _ready(proc: subprocess.Popen[bytes], deadline: float) -> dict[str, object]:
+    assert proc.stdout is not None
+    fd = proc.stdout.fileno()
+    os.set_blocking(fd, False)
+    pending = ""
+    while time.monotonic() < deadline:
+        if proc.poll() is not None and not pending:
+            break
+        readable, _, _ = select.select([fd], [], [], 0.05)
+        if not readable:
+            continue
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            if proc.poll() is not None:
+                break
+            continue
+        pending += chunk.decode()
+        if "\n" not in pending:
+            continue
+        line, pending = pending.split("\n", 1)
+        if not line.startswith("{"):
+            continue
+        loaded = json.loads(line)
+        if isinstance(loaded, dict) and "url" in loaded:
+            return {str(key): value for key, value in cast(dict[object, object], loaded).items()}
+    return {}
+
+
+def _stop(proc: subprocess.Popen[bytes], profile: Path) -> None:
+    backend = [FROZEN] if FROZEN else [sys.executable, "-m", "amazme_backend"]
+    subprocess.run([*backend, "stop", "--profile", str(profile)],
+                   check=False, capture_output=True, text=True, timeout=40)
+    try:
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+    if proc.stdout is not None:
+        proc.stdout.close()
+
+
+def _open_ui(url: str, token: str, home: Path) -> tuple[subprocess.Popen[bytes], int]:
+    assert CLI.is_file(), "build @amazme/coding-agent before this test"
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
+    env = os.environ.copy()
+    env["AMAZME_AGENT_DIR"] = str(home)
+    env.pop("AMAZME_OFFLINE", None)
+    proc = subprocess.Popen(
+        [NODE, str(CLI), "--python-url", url, "--python-token", token, "--workspace", "primary"],
+        stdin=slave, stdout=slave, stderr=slave, close_fds=True, env=env)
+    os.close(slave)
+    return proc, master
+
+
+def _collect(master: int, proc: subprocess.Popen[bytes], buf: str, needle: str, deadline: float) -> str:
+    while time.monotonic() < deadline and needle not in buf:
+        readable, _, _ = select.select([master], [], [], 0.05)
+        if readable:
+            chunk = os.read(master, 4096)
+            if not chunk:
+                break
+            buf += chunk.decode("utf-8", "replace")
+            continue
+        if proc.poll() is not None:
+            break
+    return buf
+
+
+def _close(proc: subprocess.Popen[bytes], master: int) -> None:
+    if proc.poll() is None:
+        try:
+            os.write(master, b"\x03")
+        except OSError:
+            proc.kill()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+    os.close(master)
+
+
+async def _rejects(action, code: str) -> None:
+    try:
+        await action()
+    except BackendError as exc:
+        assert exc.code == code
+    else:
+        raise AssertionError(code + " was accepted")
+
+
+async def test_amazme_interactive_uses_python_and_quit_releases(tmp_path: Path) -> None:
+    proc, url, profile = _serve(tmp_path)
+    token = (profile / TOKEN_FILE).read_text().strip()
+    future = int(time.time() * 1000) + 60_000
+    ui: subprocess.Popen[bytes] | None = None
+    master = -1
+    try:
+        ui, master = _open_ui(url, token, tmp_path / "agent")
+        screen = _collect(master, ui, "", "绑定:", time.monotonic() + 20)
+        found = MARKER.search(screen)
+        assert found is not None, screen[-2000:]
+        session_id, attachment_id = found.group(1), found.group(2)
+        assert token not in screen
+        async with Client(url, token) as client:
+            other = await client.attach(session_id)
+            parked = await client.submit(
+                session_id=session_id, workspace="primary", attachment_id=other.attachment_id,
+                request_id="parked", text="等一下", not_before_ms=future)
+            assert parked.cancel_requested is False
+        os.write(master, b"\x03")
+        screen = _collect(master, ui, screen, "已松开绑定", time.monotonic() + 10)
+        assert "已松开绑定" in screen, screen[-2000:]
+        assert ui.wait(timeout=10) == 0
+        async with Client(url, token) as client:
+            still = await client.request(session_id=session_id, request_id="parked")
+            assert still.status == parked.status
+            assert still.cancel_requested is False
+            await _rejects(lambda: client.submit(
+                session_id=session_id, workspace="primary", attachment_id=attachment_id,
+                request_id="after-quit", text="再来"), "stale_client_binding")
+            fresh = await client.attach(session_id)
+            await client.cancel(
+                session_id=session_id, workspace="primary", attachment_id=fresh.attachment_id,
+                request_id="parked")
+        os.close(master)
+        master = -1
+        first_pid = ui.pid
+
+        ui, master = _open_ui(url, token, tmp_path / "agent")
+        assert ui.pid != first_pid
+        screen = _collect(master, ui, "", "绑定:", time.monotonic() + 20)
+        second = MARKER.search(screen)
+        assert second is not None, screen[-2000:]
+        assert second.group(1) != session_id
+        os.write(master, "你好\r".encode())
+        screen = _collect(master, ui, screen, "已收到：你好", time.monotonic() + 30)
+        assert "已收到：你好" in screen, screen[-2000:]
+        assert token not in screen
+        os.write(master, b"\x03")
+        screen = _collect(master, ui, screen, "已松开绑定", time.monotonic() + 10)
+        assert "已松开绑定" in screen
+        assert ui.wait(timeout=10) == 0
+        os.close(master)
+        master = -1
+        ui = None
+    finally:
+        if ui is not None and master >= 0:
+            _close(ui, master)
+        elif master >= 0:
+            os.close(master)
+        _stop(proc, profile)

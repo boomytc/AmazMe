@@ -334,6 +334,19 @@ export async function main(args: string[]) {
 		for (const option of parsed.unknownFlags.keys()) console.error(chalk.red(`Error: Unknown option --${option}. Use ${APP_COMMAND} --help.`));
 		process.exit(1);
 	}
+	if (parsed.pythonUrl !== undefined || parsed.pythonToken !== undefined || parsed.workspace !== undefined) {
+		if (parsed.help) {
+			printHelp();
+			return;
+		}
+		if (!parsed.pythonUrl || !parsed.pythonToken || !parsed.workspace || appMode !== "interactive") {
+			console.error(!parsed.pythonUrl || !parsed.pythonToken || !parsed.workspace ? "python_target_required" : "python_target_requires_tty");
+			process.exit(1);
+		}
+		const { runPythonSessionTui } = await import("./python-session-tui.ts");
+		await runPythonSessionTui({ url: parsed.pythonUrl, token: parsed.pythonToken, workspace: parsed.workspace });
+		return;
+	}
 	if (plainMetadata && parsed.help) {
 		printHelp();
 		return;

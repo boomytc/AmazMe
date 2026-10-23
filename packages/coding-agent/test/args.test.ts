@@ -442,6 +442,20 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("python host flags", () => {
+		test("names the host, token, and workspace", () => {
+			const result = parseArgs(["--python-url", "http://127.0.0.1:9", "--python-token", "secret", "--workspace", "primary"]);
+			expect(result.pythonUrl).toBe("http://127.0.0.1:9");
+			expect(result.pythonToken).toBe("secret");
+			expect(result.workspace).toBe("primary");
+			expect(result.unknownFlags.size).toBe(0);
+		});
+
+		test("requires a value", () => {
+			expect(parseArgs(["--workspace"]).diagnostics).toEqual([{ type: "error", message: "--workspace requires a value" }]);
+		});
+	});
+
 	describe("tool flags", () => {
 		test("parses --no-tools flag", () => {
 			const result = parseArgs(["--no-tools"]);
