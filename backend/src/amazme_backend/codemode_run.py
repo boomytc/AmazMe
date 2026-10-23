@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 import threading
 from pathlib import Path
 from typing import Literal, cast
 
+from .common import resource_root
 from .contracts import BackendError
 
 HELPER = Path(__file__).with_name("codemode_helper.mjs")
@@ -71,15 +71,26 @@ def _finish(outcome: CodemodeOutcome, code: int | None, cancel: threading.Event 
     return outcome
 
 
+def bundled_node() -> Path:
+    """The Node binary shipped beside the backend. A PATH lookup is never a substitute."""
+    root = resource_root().resolve()
+    candidate = root / "node" / "bin" / "node"
+    if candidate.is_symlink() or not candidate.is_file() or not os.access(candidate, os.X_OK):
+        raise BackendError("codemode_runtime_missing", status=503)
+    if not candidate.resolve().is_relative_to(root):
+        raise BackendError("codemode_runtime_missing", status=503)
+    return candidate
+
+
 def run_codemode(source: str, state: dict[str, object], *, mark_path: Path | None = None,
                  timeout_ms: int = DEFAULT_TIMEOUT_MS, cancel: threading.Event | None = None) -> CodemodeOutcome:
     if len(source) > SOURCE_LIMIT:
         raise BackendError("codemode_source_limit")
-    node = shutil.which("node")
-    if node is None or not HELPER.is_file():
+    node = bundled_node()
+    if not HELPER.is_file():
         raise BackendError("codemode_runtime_missing", status=503)
     process = subprocess.Popen(
-        [node, str(HELPER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        [str(node), str(HELPER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         start_new_session=True, text=True,
     )
     stdin = process.stdin

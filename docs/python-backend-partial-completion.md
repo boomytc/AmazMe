@@ -37,11 +37,11 @@ A/B 的 34 项和 Chrome 6 项对应源码 `9b83b083`，不是更早的 `d5cefaf
 
 ## 系统运行时检查
 
-`backend/tools/verify_relocated_bundle.py` 在 serve 用的 seatbelt 里拒绝包外的 python、python3、python3.*、node、colima 和 docker，并允许包内同名文件。`backend/tests/test_relocated_runtime.py` 用编译出的小程序验证这条规则：`/usr/bin/python3`、包外的 `node` 和 `python3.12` 无法执行，包内名为 docker 的程序可以执行。网络证明仍在另一份不含这条拒绝的配置上，公网 `1.1.1.1:443` 是 Operation not permitted，本机 `127.0.0.1:9` 是 Connection refused。
+离线证明仍是 deny-default：公网 `1.1.1.1:443` 为 Operation not permitted，本机 `127.0.0.1:9` 为 Connection refused。带虚拟机的 seatbelt 改为允许默认，因为 deny-default 会让 Virtualization.framework 发不出沙箱扩展。它仍拒绝 `/usr/bin/python3` 和 Homebrew 的 node、docker、colima。包内同名程序可以执行。进程树另外拒绝任何包外的这些名字。
 
 现场报告 `docs/python-backend-head-runtime.json`：源包 `package-yboxdh3i`，build_id `f3b24e92d590c7343c3d04a76b48e2dffe6d0e2142edb45980e74d56805c0cd8`，复制到带空格的 `bundle xq7p0mae`。两次 serve 的协议都是 `amazme-http/1`，`forbidden_runtime` 为空，pid 42759 和 42871 已退出。PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`。映像里的解释器是包内 `_internal/Python.framework`，不是系统 Python。
 
-这次没有执行 shell、MCP、插件或 Codemode。Codemode 仍通过 `shutil.which("node")` 找 Node。包内 `resources/docker` 和 `limactl` 这次没有出现在进程树里。seatbelt 拒绝的是进程出站和上述执行，不是拔掉网线。
+随后的包 `package-4vcvcbxo` 把 Node 和 QuickJS helper 放进安装目录，Codemode 不再调用 `shutil.which("node")`。`docs/python-backend-node-runtime.json` 记录了包内 Node、包内 limactl 上的 shell 和 MCP。
 
 ## 自动测试和客户端
 
@@ -66,7 +66,7 @@ A/B 的 34 项和 Chrome 6 项对应源码 `9b83b083`，不是更早的 `d5cefaf
 - 浏览器地址不带会话和工作区时仍会选中第一项。
 - `AMAZME_DURABLE_TUI=1` 和找不到 Python 后端时的桌面启动仍会进入旧 TS 运行时。引用还在，所以不删。
 - Python onedir 没有 Developer ID 公证和 staple。已公证的是仍含旧 TS 宿主的桌面预览 DMG。
-- 正式安装还不保证不调用系统 Node。Codemode 仍查找 PATH 上的 node。
+- 正式安装的 Codemode 已改用包内 Node。其他未打包的入口如果再从 PATH 找 Node，进程树检查会拒绝。Python onedir 还没有公证。
 - 34 项矩阵对应 `9b83b083`，不是公证 DMG。
 
 ## 清理

@@ -22,6 +22,15 @@ def resource_root() -> Path:
     return Path(__file__).resolve().parents[2] / "resources"
 
 
+IDENTITY_SUFFIXES = {".py", ".html", ".js", ".css", ".json", ".mjs"}
+
+
+def source_identity_files() -> list[Path]:
+    """Source bytes that define a build, including the JS helper and plugin gate."""
+    root = Path(__file__).parent
+    return [path for path in sorted(root.rglob("*")) if path.is_file() and path.suffix in IDENTITY_SUFFIXES]
+
+
 def build_id() -> str:
     if getattr(sys, "frozen", False):
         root = Path(sys.executable).resolve().parent
@@ -40,9 +49,8 @@ def build_id() -> str:
         return manifest.build_id
     root = Path(__file__).parent
     h = hashlib.sha256()
-    for p in sorted(root.rglob("*")):
-        if p.is_file() and p.suffix in {".py", ".html", ".js", ".css", ".json"}:
-            h.update(str(p.relative_to(root)).encode() + p.read_bytes())
+    for path in source_identity_files():
+        h.update(str(path.relative_to(root)).encode() + path.read_bytes())
     h.update((root.parents[1] / "uv.lock").read_bytes())
     manifest = resource_root() / "manifest.json"
     if manifest.exists():

@@ -49,17 +49,19 @@ def test_runtime_profile_blocks_system_names_and_allows_the_bundle_copy(tmp_path
             check=False, capture_output=True, text=True)
 
     denied_python = run("/usr/bin/python3", "-c", "print(1)")
-    denied_node = run(outside, "no")
-    denied_version = run(named, "no")
+    denied_node = run("/opt/homebrew/bin/node", "-e", "console.log(1)")
+    denied_docker = run("/opt/homebrew/bin/docker", "--version")
+    denied_colima = run("/opt/homebrew/bin/colima", "version")
     allowed = run(bundled, "ok")
+    outside_run = run(outside, "no")
     assert denied_python.returncode != 0
     assert "Operation not permitted" in denied_python.stderr
-    assert denied_node.returncode != 0
-    assert "Operation not permitted" in denied_node.stderr
-    assert denied_version.returncode != 0
-    assert "Operation not permitted" in denied_version.stderr
+    assert denied_node.returncode != 0 and "Operation not permitted" in denied_node.stderr
+    assert denied_docker.returncode != 0 and "Operation not permitted" in denied_docker.stderr
+    assert denied_colima.returncode != 0 and "Operation not permitted" in denied_colima.stderr
     assert allowed.returncode == 0, allowed.stderr
     assert allowed.stdout.strip() == "ok"
+    assert outside_run.returncode == 0
     assert is_forbidden_runtime("/usr/bin/python3", bundle)
     assert is_forbidden_runtime("/opt/homebrew/bin/colima", bundle)
     assert is_forbidden_runtime("/opt/homebrew/bin/docker", bundle)

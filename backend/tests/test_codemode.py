@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import shutil
+import tempfile
 import threading
 from pathlib import Path
 
@@ -11,6 +13,48 @@ from amazme_backend.codemode_run import CodemodeOutcome, run_codemode
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import BackendError, CancelCode, OpenCode
 from amazme_backend.supervisor import Supervisor
+
+OFFICIAL_NODE = Path.home() / "Library/Caches/amazme-release/node-v22.23.3-darwin-arm64/bin/node"
+
+
+@pytest.fixture(scope="session")
+def codemode_resources() -> Path:
+    if not OFFICIAL_NODE.is_file():
+        raise RuntimeError("official Node binary is missing")
+    root = Path(tempfile.mkdtemp(prefix="amazme-node-"))
+    dest = root / "node" / "bin" / "node"
+    dest.parent.mkdir(parents=True)
+    shutil.copy2(OFFICIAL_NODE, dest)
+    dest.chmod(0o755)
+    return root
+
+
+@pytest.fixture(autouse=True)
+def bundled_runtime(codemode_resources: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("amazme_backend.codemode_run.resource_root", lambda: codemode_resources)
+
+
+def test_path_node_is_not_used(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    marker = tmp_path / "used-path"
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake = fake_bin / "node"
+    fake.write_text(f"#!/bin/sh\nprintf used > {marker}\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", str(fake_bin))
+    outcome = run_codemode("return 1;", {"k": 1})
+    assert outcome.phase == "success" and outcome.value == 1
+    assert not marker.exists()
+
+
+def test_symlink_outside_the_bundle_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "resources"
+    dest = root / "node" / "bin"
+    dest.mkdir(parents=True)
+    (dest / "node").symlink_to("/bin/echo")
+    monkeypatch.setattr("amazme_backend.codemode_run.resource_root", lambda: root)
+    with pytest.raises(BackendError, match="codemode_runtime_missing"):
+        run_codemode("return 1;", {"k": 1})
 
 
 def test_success_commits_state_and_failure_does_not(tmp_path: Path) -> None:
