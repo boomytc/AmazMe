@@ -92,7 +92,8 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | Codemode 受控 JS | P3 | `POST /api/v1/sessions/{id}/code`；页面「脚本」 | 部分通过 | `backend/tests/test_codemode.py` 运行 QuickJS helper、监督器提交/取消，以及页面脚本 | `6319c3f`。成功才提交状态。失败、超时、取消和没有退出证明都不提交。没有 waitpid 时，同一会话不能再开新脚本，同一 run id 不重放。已发生的工具副作用不回滚。helper 是本机 node 上的固定 QuickJS 程序，没有放进 Linux 客户机，也不在 A/B 安装包里。不暴露任意宿主文件和网络 |
 | 已批准的原生桌面动作 | P3 | 无 | 未通过 | 无 | 独立驱动，并证明退出和资源归属。不做任意 macOS shell |
 | 插件身份、配置、入口、受管生命周期 | P3 | 无 | 未通过 | 无 | 插件不能写 SQLite，也不能绕过监督器 |
-| history / memory、checkpoint、automation、workflows、web 工具、computer-use | P3 | 无 | 未通过 | 无 | 按方案第 6.3 节逐项做。付费调用不盲目重放 |
+| 历史搜索 | P3 | `GET /api/v1/sessions/{id}/search`；页面「历史」 | 部分通过 | `test_session_branch.py` 的搜索用例和 happy-dom | `6fc70d5`。只查当前会话已落盘的任务文本和消息。`%` 按字面匹配。归档后仍可搜。不注入记忆，也不搜索其他会话。还不在 A/B 包和真实 Chrome 里 |
+| memory、checkpoint、automation、workflows、web 工具、computer-use | P3 | 无 | 未通过 | 无 | 按方案第 6.3 节逐项做。付费调用不盲目重放。历史搜索不代替这些能力 |
 | 项目、设置、搜索、反馈、分享、artifact、模型管理、导入导出 | P3 | 无 | 未通过 | 无 | 只处理新格式。不读旧 TS 数据 |
 | 使用量、费用、诊断；日志不漏凭据 | P3 | 健康与错误码 | 部分通过 | 预算耗尽快照测试 | 费用和诊断面未做。凭据继续不进普通日志 |
 | Web 完整产品 | P3 | `backend/src/amazme_backend/web` | 部分通过 | `verify_client.py` 6 项；分支按钮有 happy-dom | 管理面、分支的真实 Chrome、多窗口还没做 |
@@ -118,5 +119,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
-2. Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 和多工作区未做。
+2. 当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth、插件、多工作区和记忆注入未做。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
