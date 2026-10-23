@@ -337,7 +337,11 @@ function startClient() {
   async function select(id, resume = false) {
     if (selected) drafts.set(selected, $("prompt").value);
     const cached = resume && current?.session === id ? current.model : null;
-    if (selected !== id) { workflowId = ""; workflowView = null; }
+    if (selected !== id) {
+      workflowId = ""; workflowView = null;
+      $("web-state").textContent = "";
+      $("web-enabled").checked = false;
+    }
     retire(); selected = id; const binding = ++generation;
     const connection = {generation:binding, session:id, ready:false, model:cached, ws:null, attachment:null};
     current = connection; connecting = true;
@@ -577,6 +581,26 @@ function startClient() {
         {decision_id: crypto.randomUUID().replaceAll("-", ""), approve: true, digest: mcpDigest}, current);
       $("mcp-result").textContent = call.result;
       $("mcp-approval").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("web-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/web`, "POST", {enabled: $("web-enabled").checked}, current);
+      $("web-state").textContent = view.enabled ? "已启用" : "已关闭";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("web-search").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/web/calls`, "POST", {
+        call_id: crypto.randomUUID().replaceAll("-", ""), kind: "search", query: $("web-query").value,
+      }, current);
+      $("web-state").textContent = `${view.phase} · ${view.error || view.result}`;
+      $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   let workflowId = "", workflowView = null;

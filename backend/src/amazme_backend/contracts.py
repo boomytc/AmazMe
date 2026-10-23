@@ -345,6 +345,33 @@ class WorkflowView(Model):
     children: list[WorkflowChild] = Field(default_factory=lambda: list[WorkflowChild]())
 
 
+class WebPolicy(Model):
+    enabled: bool = False
+    base_url: str = "https://api.deepseek.com/v1/tools"
+    count: int = Field(default=10, ge=1, le=50)
+    send_original_question: bool = True
+    timeout_ms: int = Field(default=30000, ge=1, le=300000)
+    max_response_bytes: int = Field(default=2097152, ge=1, le=16777216)
+    max_content_chars: int = Field(default=20000, ge=1, le=200000)
+
+
+class WebCallRequest(Model):
+    call_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    kind: Literal["search", "fetch"]
+    query: str = ""
+    url: str = ""
+    count: int | None = Field(default=None, ge=1, le=50)
+
+
+class WebCallView(Model):
+    call_id: str
+    session_id: str
+    kind: Literal["search", "fetch"]
+    phase: Literal["unknown", "done", "failed"]
+    error: str = ""
+    result: str = ""
+
+
 class HostFence(Model):
     host_epoch: int
     build_id: str

@@ -36,6 +36,8 @@ from .contracts import (
     Snapshot,
     Submit,
     ToolCall,
+    WebCallView,
+    WebPolicy,
     WorkerActivity,
     WorkerState,
     WorkflowChild,
@@ -380,6 +382,9 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS workflow_verdicts(
                   workflow_id TEXT NOT NULL,verdict_id TEXT NOT NULL,digest TEXT NOT NULL,passed INTEGER NOT NULL,
                   PRIMARY KEY(workflow_id,verdict_id));
+                CREATE TABLE IF NOT EXISTS web_policies(id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS web_calls(
+                  id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
             """)
             for key, value in {"stream_id": secrets.token_hex(16), "revision": "0", "host_epoch": "0",
                                "freeze_id": "", "stopping": "", "blocked": "", "driver_id": "", "execution_epoch": "0"}.items():
@@ -740,6 +745,64 @@ class SessionStore:
                 raise BackendError("workflow_child_mismatch")
             self._cancel_tree(db, c, request_id)
             return self._refresh_workflow(db, self._workflow_row(db, workflow_id)[1])
+        return await self._tx(operation)
+
+    def _web_policy(self, db: sqlite3.Connection) -> WebPolicy:
+        row = db.execute("SELECT payload FROM web_policies WHERE id='policy'").fetchone()
+        if row is None:
+            return WebPolicy()
+        return WebPolicy.model_validate_json(row[0])
+
+    def _web_call(self, db: sqlite3.Connection, call_id: str) -> WebCallView:
+        row = db.execute("SELECT payload FROM web_calls WHERE id=?", (call_id,)).fetchone()
+        if row is None:
+            raise BackendError("web_call_not_found", status=404)
+        return WebCallView.model_validate_json(row[0])
+
+    async def web_policy(self) -> WebPolicy:
+        return await self.db.call(self._web_policy)
+
+    async def save_web_policy(self, value: WebPolicy) -> WebPolicy:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> WebPolicy:
+            if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
+                raise BackendError("worker_frozen")
+            payload = value.model_dump_json()
+            db.execute(
+                "INSERT INTO web_policies(id,digest,payload) VALUES('policy',?,?) "
+                "ON CONFLICT(id) DO UPDATE SET digest=excluded.digest,payload=excluded.payload",
+                (digest(payload), payload))
+            return value
+        return await self._tx(operation)
+
+    async def begin_web_call(self, call_id: str, kind: Literal["search", "fetch"], body: str) -> tuple[WebCallView, bool]:
+        """Reserve one paid call. An existing row is returned and must not be sent again."""
+        def operation(db: sqlite3.Connection, _changes: Changes) -> tuple[WebCallView, bool]:
+            key = digest(body)
+            row = db.execute("SELECT digest,payload FROM web_calls WHERE id=?", (call_id,)).fetchone()
+            if row:
+                if str(row[0]) != key:
+                    raise BackendError("web_call_conflict")
+                return WebCallView.model_validate_json(row[1]), False
+            if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
+                raise BackendError("worker_frozen")
+            view = WebCallView(call_id=call_id, session_id=self.session_id, kind=kind, phase="unknown")
+            db.execute("INSERT INTO web_calls(id,digest,payload) VALUES(?,?,?)",
+                       (call_id, key, view.model_dump_json()))
+            return view, True
+        return await self._tx(operation)
+
+    async def settle_web_call(self, call_id: str, phase: Literal["unknown", "done", "failed"],
+                              error: str, result: str) -> WebCallView:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> WebCallView:
+            current = self._web_call(db, call_id)
+            if current.phase != "unknown":
+                return current
+            current.phase = phase
+            current.error = error
+            current.result = result
+            db.execute("UPDATE web_calls SET payload=? WHERE id=? AND json_extract(payload,'$.phase')='unknown'",
+                       (current.model_dump_json(), call_id))
+            return self._web_call(db, call_id)
         return await self._tx(operation)
 
     def _cancel_tree(self, db: sqlite3.Connection, c: Changes, request_id: str) -> None:

@@ -107,6 +107,9 @@ from .contracts import (
     TerminalView,
     UpdateModelSettings,
     UpdateRecord,
+    WebCallRequest,
+    WebCallView,
+    WebPolicy,
     WorkerActivity,
     WorkerInfo,
     WorkerSpec,
@@ -132,6 +135,14 @@ from .storage import (
     session_database,
 )
 from .transport import app_factory
+from .web_tools import (
+    fetch_result,
+    original_question,
+    read_web,
+    search_result,
+    validate_base_url,
+    validate_fetch_url,
+)
 from .workspace_files import (
     FileChange,
     FileContent,
@@ -194,6 +205,7 @@ class Host:
         self.attachments: dict[str, Attachment] = {}
         self.attachment_seen: dict[str, float] = {}
         self.faults = Faults(profile.path, "host", self.instance, enabled=profile.config.testing)
+        self.web_client: httpx.AsyncClient | None = None
 
     @property
     def storage_failed(self) -> bool:
@@ -760,6 +772,107 @@ class Host:
     async def cancel_workflow_child(self, session: str, workflow_id: str, request_id: str) -> WorkflowView:
         return await self._with_session(
             session, lambda store: store.cancel_workflow_child(workflow_id, request_id))
+
+    def _web_key(self) -> str:
+        provider = self.profile.config.provider
+        if provider.provider != "deepseek":
+            return ""
+        return provider.api_key.get_secret_value()
+
+    async def save_web_policy(self, session: str, value: WebPolicy) -> WebPolicy:
+        saved = value.model_copy(update={"base_url": validate_base_url(value.base_url)})
+        return await self._with_session(session, lambda store: store.save_web_policy(saved))
+
+    async def web_policy(self, session: str) -> WebPolicy:
+        return await self._with_session(session, lambda store: store.web_policy(), require_active=False)
+
+    async def _web_question(self, session: str) -> str:
+        async def read(store: SessionStore) -> str:
+            roots = [item for item in (await store.snapshot()).requests if item.kind == "root"]
+            if not roots:
+                return ""
+            messages = await store.messages(roots[-1].request_id)
+            text = next((item.content for item in reversed(messages)
+                         if item.role == "user" and item.content.strip()), roots[-1].text)
+            return original_question(text)
+        return await self._with_session(session, read, require_active=False)
+
+    async def _dispatch_web(self, endpoint: str, body: dict[str, object], key: str,
+                            policy: WebPolicy) -> tuple[str, int, bytes]:
+        owns = self.web_client is None
+        client = self.web_client or httpx.AsyncClient(follow_redirects=False)
+        try:
+            async with client.stream(
+                "POST", endpoint, json=body, headers={
+                    "authorization": f"Bearer {key}", "content-type": "application/json", "accept": "application/json",
+                }, timeout=policy.timeout_ms / 1000,
+            ) as response:
+                if 300 <= response.status_code < 400:
+                    await response.aclose()
+                    return "redirect", response.status_code, b""
+                if response.status_code >= 400:
+                    await response.aclose()
+                    return "http", response.status_code, b""
+                raw = await read_web(response, policy.max_response_bytes)
+                if raw is None:
+                    return "limit", response.status_code, b""
+                return "ok", response.status_code, raw
+        except httpx.TransportError:
+            return "transport", 0, b""
+        finally:
+            if owns:
+                await client.aclose()
+
+    async def web_call(self, session: str, value: WebCallRequest) -> WebCallView:
+        policy = await self.web_policy(session)
+        if not policy.enabled:
+            raise BackendError("web_disabled")
+        if not self._web_key():
+            raise BackendError("web_credential_missing")
+        search_count = policy.count
+        if value.kind == "search":
+            query = value.query.strip()
+            if not query or len(list(query)) > 128:
+                raise BackendError("web_query")
+            search_count = min(policy.count, value.count if value.count is not None else policy.count)
+            outbound: dict[str, object] = {"query": query, "count": search_count, "need_content": False}
+            if policy.send_original_question:
+                question = await self._web_question(session)
+                if question:
+                    outbound["ori_question"] = question
+            endpoint = policy.base_url + "/search"
+        else:
+            query = ""
+            target = validate_fetch_url(value.url)
+            outbound = {"url": target}
+            endpoint = policy.base_url + "/fetch"
+        canonical = json.dumps({"count": value.count, "kind": value.kind, "query": query, "url": value.url},
+                               sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        view, send = await self._with_session(
+            session, lambda store: store.begin_web_call(value.call_id, value.kind, canonical))
+        if not send:
+            return view
+        outcome, status, raw = await self._dispatch_web(endpoint, outbound, self._web_key(), policy)
+        phase: Literal["unknown", "done", "failed"] = "unknown"
+        error, result = "", ""
+        if outcome == "ok":
+            try:
+                parsed = json.loads(raw)
+                result = (search_result(parsed, search_count, policy.max_content_chars) if value.kind == "search"
+                          else fetch_result(parsed, str(outbound["url"]), policy.max_content_chars))
+                phase = "done"
+            except (json.JSONDecodeError, BackendError):
+                error = "web_invalid_response"
+        elif outcome == "redirect":
+            phase, error = "failed", "web_redirect"
+        elif outcome == "http":
+            phase, error = "failed", f"web_http_{status}"
+        elif outcome == "limit":
+            error = "web_response_limit"
+        else:
+            error = "web_transport"
+        return await self._with_session(
+            session, lambda store: store.settle_web_call(value.call_id, phase, error, result))
 
     async def branch_session(self, parent: str, value: BranchSession) -> Session:
         self._admit()
@@ -1528,6 +1641,18 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session}/workflows/{workflow_id}/children/{request_id}/cancel")
     async def cancel_workflow_child(session: str, workflow_id: str, request_id: str) -> WorkflowView:
         return await owner.cancel_workflow_child(session, workflow_id, request_id)
+
+    @app.get("/api/v1/sessions/{session}/web")
+    async def web_policy(session: str) -> WebPolicy:
+        return await owner.web_policy(session)
+
+    @app.post("/api/v1/sessions/{session}/web")
+    async def save_web_policy(session: str, value: WebPolicy) -> WebPolicy:
+        return await owner.save_web_policy(session, value)
+
+    @app.post("/api/v1/sessions/{session}/web/calls")
+    async def web_call(session: str, value: WebCallRequest) -> WebCallView:
+        return await owner.web_call(session, value)
 
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:

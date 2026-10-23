@@ -1,0 +1,255 @@
+"""Web calls stay off until enabled, and an unknown paid call is not sent again."""
+
+import base64
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import httpx
+import pytest
+
+from amazme_backend.common import Profile, private_write
+from amazme_backend.contracts import CreateSession, HostFence, ProcessLease, Submit
+from amazme_backend.host import Host, application
+from amazme_backend.storage import SessionStore, session_database
+
+SESSION = "a" * 32
+KEY = "sk-test-not-real"
+SECRET_HEADER = "header-secret"
+
+
+def _host(tmp_path: Path, *, provider: str = "deepseek") -> Host:
+    private_write(tmp_path / "config.json", json.dumps({
+        "format": 2, "profile_id": "web", "workspace": str(tmp_path / "primary"), "resources": "unused",
+        "provider": {
+            "provider": provider, "base_url": "https://chat.example", "model": "deepseek-flash",
+            "api_key": KEY if provider == "deepseek" else "", "proxy": "http://127.0.0.1:9",
+            "headers": {"X-Project": SECRET_HEADER},
+        }}))
+    (tmp_path / "primary").mkdir()
+    private_write(tmp_path / "control.token", "private-control")
+    private_write(tmp_path / "web.token", "web-only")
+    host = Host(Profile(tmp_path))
+    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.origin = "http://127.0.0.1:12345"
+    return host
+
+
+def _handler(seen: list[httpx.Request]) -> httpx.MockTransport:
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if b"transport" in request.content:
+            raise httpx.ConnectError("down")
+        if b"oversize" in request.content:
+            return httpx.Response(200, content=b'{"results":[]}' + b"x" * 80,
+                                 headers={"content-type": "application/json"})
+        if b"redirect-me" in request.content:
+            return httpx.Response(302, headers={"location": "https://evil.example/paid"})
+        if b"charge" in request.content:
+            return httpx.Response(402, json={"error": KEY})
+        return httpx.Response(200, json={"results": [
+            {"url": "https://example.com/a", "title": "A", "snippet": "s", "date": None}]})
+    return httpx.MockTransport(handle)
+
+
+async def _ready(host: Host, client: httpx.AsyncClient) -> None:
+    attached = await client.post(f"/api/v1/sessions/{SESSION}/attachments")
+    assert attached.status_code == 201
+    client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+    saved = await client.post(f"/api/v1/sessions/{SESSION}/web", json={
+        "enabled": True, "base_url": "https://tools.example/v1/tools", "send_original_question": True})
+    assert saved.status_code == 200
+    assert saved.json()["base_url"] == "https://tools.example/v1/tools"
+    assert KEY not in saved.text
+
+
+async def test_web_call_does_not_forward_chat_secrets_or_replay_unknown(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    seen: list[httpx.Request] = []
+    host.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    await host.store.create_session(SESSION, CreateSession(title="网页"))
+    path = session_database(tmp_path, SESSION)
+    path.parent.mkdir(parents=True, mode=0o700)
+    seeded = SessionStore(path, SESSION, build=host.build)
+    await seeded.initialize()
+    try:
+        await seeded.accept(Submit(request_id="root", text="用户原话"), HostFence(host_epoch=0, build_id=host.build))
+    finally:
+        await seeded.db.close()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
+            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
+            "x-amazme-epoch": str(host.fence.host_epoch),
+        }) as client:
+            attached = await client.post(f"/api/v1/sessions/{SESSION}/attachments")
+            assert attached.status_code == 201
+            client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+            blocked = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "early", "kind": "search", "query": "项目结构"})
+            assert blocked.status_code == 409 and blocked.json()["code"] == "web_disabled"
+            assert seen == []
+            leaked = await client.post(f"/api/v1/sessions/{SESSION}/web", json={
+                "enabled": True, "base_url": "https://user:pass@tools.example/v1/tools"})
+            assert leaked.status_code == 409 and leaked.json()["code"] == "web_address"
+            await _ready(host, client)
+            extra = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "extra", "kind": "search", "query": "项目结构", "api_key": KEY,
+                "base_url": "https://evil.example"})
+            assert extra.status_code == 422 and seen == []
+            first = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "search-1", "kind": "search", "query": "项目结构"})
+            assert first.status_code == 200 and first.json()["phase"] == "done"
+            assert KEY not in first.text and SECRET_HEADER not in first.text
+            assert "https://example.com/a" in first.json()["result"]
+            sent = seen[0]
+            assert str(sent.url) == "https://tools.example/v1/tools/search"
+            assert sent.headers["authorization"] == f"Bearer {KEY}"
+            assert "x-project" not in {name.lower() for name in sent.headers}
+            assert SECRET_HEADER not in sent.headers.values()
+            assert json.loads(sent.content)["ori_question"] == "用户原话"
+            assert "chat.example" not in str(sent.url)
+            again = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "search-1", "kind": "search", "query": "项目结构"})
+            assert again.status_code == 200 and again.json()["result"] == first.json()["result"]
+            changed = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "search-1", "kind": "search", "query": "另一句"})
+            assert changed.status_code == 409 and changed.json()["code"] == "web_call_conflict"
+            assert len(seen) == 1
+            dropped = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "drop", "kind": "search", "query": "transport"})
+            assert dropped.status_code == 200 and dropped.json()["phase"] == "unknown"
+            assert dropped.json()["error"] == "web_transport"
+            retry = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "drop", "kind": "search", "query": "transport"})
+            assert retry.json()["phase"] == "unknown" and len(seen) == 2
+            charged = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "paid", "kind": "search", "query": "charge"})
+            assert charged.json()["phase"] == "failed" and charged.json()["error"] == "web_http_402"
+            assert KEY not in charged.text
+            await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "paid", "kind": "search", "query": "charge"})
+            assert len(seen) == 3
+            await client.post(f"/api/v1/sessions/{SESSION}/web", json={
+                "enabled": True, "base_url": "https://tools.example/v1/tools", "max_response_bytes": 16})
+            huge = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "big", "kind": "search", "query": "oversize"})
+            assert huge.json()["phase"] == "unknown" and huge.json()["error"] == "web_response_limit"
+            await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "big", "kind": "search", "query": "oversize"})
+            bounced = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "bounce", "kind": "fetch", "url": "https://example.com/redirect-me"})
+            assert bounced.json()["phase"] == "failed" and bounced.json()["error"] == "web_redirect"
+            await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "bounce", "kind": "fetch", "url": "https://example.com/redirect-me"})
+            assert len(seen) == 5
+            nested = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "nested", "kind": "fetch", "url": "https://user:pass@example.com/a"})
+            assert nested.status_code == 409 and nested.json()["code"] == "web_address"
+            assert len(seen) == 5
+        reopened = SessionStore(path, SESSION, build=host.build, require_existing=True)
+        await reopened.initialize()
+        try:
+            restored, send = await reopened.begin_web_call(
+                "drop", "search", json.dumps(
+                    {"count": None, "kind": "search", "query": "transport", "url": ""},
+                    sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+            assert send is False and restored.phase == "unknown" and restored.error == "web_transport"
+        finally:
+            await reopened.db.close()
+    finally:
+        await host.web_client.aclose()
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+async def test_web_call_without_a_deepseek_key_sends_nothing(tmp_path: Path) -> None:
+    host = _host(tmp_path, provider="faux")
+    seen: list[httpx.Request] = []
+    host.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    await host.store.create_session(SESSION, CreateSession(title="无钥匙"))
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
+            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
+            "x-amazme-epoch": str(host.fence.host_epoch),
+        }) as client:
+            attached = await client.post(f"/api/v1/sessions/{SESSION}/attachments")
+            client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+            saved = await client.post(f"/api/v1/sessions/{SESSION}/web", json={"enabled": True})
+            assert saved.status_code == 200 and saved.json()["enabled"] is True
+            missing = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "none", "kind": "search", "query": "项目结构"})
+            assert missing.status_code == 409 and missing.json()["code"] == "web_credential_missing"
+            assert seen == [] and KEY not in missing.text
+    finally:
+        await host.web_client.aclose()
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+def test_browser_enables_web_for_the_selected_session() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node unavailable")
+    web = Path(__file__).parents[1] / "src/amazme_backend/web"
+    contract = (web / "contract.js").read_text().split("\n", 1)[1]
+    schema = __import__("amazme_backend.contracts", fromlist=["Stream"]).Stream.model_json_schema()
+    contract = "const root = " + json.dumps(schema) + ";\n" + contract
+    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
+    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
+    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
+    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
+        import assert from 'node:assert/strict';
+        import {Window} from 'happy-dom';
+        const window = new Window({url:'http://127.0.0.1:1234/'});
+        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
+        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
+        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
+        const seen = [];
+        const session = ''' + json.dumps(SESSION) + r''';
+        globalThis.fetch = async (path, options={})=>{
+          const method = options.method || 'GET';
+          const body = options.body ? JSON.parse(options.body) : {};
+          if(path==='/api/v1/bootstrap') return response(identity);
+          if(path==='/api/v1/health') return response({state:'ready',identity});
+          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
+          if(path==='/api/v1/sessions') return response({sessions:[{session_id:session,title:'工作区',archived:false,workspace:'primary'}]});
+          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:session,build_id:'build',host_epoch:1});
+          if(path===`/api/v1/sessions/${session}/web` && method==='POST') {
+            seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+String(body.enabled));
+            return response({enabled:true,base_url:'https://api.deepseek.com/v1/tools',count:10,send_original_question:true,timeout_ms:30000,max_response_bytes:2097152,max_content_chars:20000});
+          }
+          if(path===`/api/v1/sessions/${session}/web/calls` && method==='POST') {
+            seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+body.query);
+            return response({call_id:body.call_id,session_id:session,kind:'search',phase:'done',error:'',result:'{"sources":[]}'});
+          }
+          throw Error('unexpected '+method+' '+path);
+        };
+        const $=id=>document.getElementById(id);
+        async function until(check) {
+          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
+          throw Error('timed out '+$('error').textContent);
+        }
+        await import(appURL);
+        await until(()=>$('sessions').textContent.includes('工作区'));
+        $('web-enabled').checked = true;
+        $('web-form').requestSubmit();
+        await until(()=>$('web-state').textContent.includes('已启用'));
+        $('web-query').value = '项目结构';
+        $('web-search').requestSubmit();
+        await until(()=>$('web-state').textContent.includes('done'));
+        assert.equal(seen[0], `/api/v1/sessions/${session}/web ["enabled"] true`);
+        assert.equal(seen[1], `/api/v1/sessions/${session}/web/calls ["call_id","kind","query"] 项目结构`);
+        window.happyDOM && await window.happyDOM.abort();
+        process.exit(0);
+    '''
+    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
+                            cwd=Path(__file__).parents[1])
+    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
