@@ -200,3 +200,79 @@ async def test_tui_quit_releases_binding_and_second_launch_shows_the_answer(tmp_
         elif master >= 0:
             os.close(master)
         _stop(proc, profile)
+
+
+async def test_two_terminals_keep_their_own_sessions(tmp_path: Path) -> None:
+    proc, url, profile = _serve(tmp_path)
+    token = (profile / TOKEN_FILE).read_text().strip()
+    future = int(time.time() * 1000) + 60_000
+    first: subprocess.Popen[bytes] | None = None
+    second: subprocess.Popen[bytes] | None = None
+    master_a = -1
+    master_b = -1
+    try:
+        first, master_a = _open_tui(url, token)
+        second, master_b = _open_tui(url, token)
+        assert first.pid != second.pid
+        screen_a = _collect(master_a, first, "", "绑定:", time.monotonic() + 20)
+        screen_b = _collect(master_b, second, "", "绑定:", time.monotonic() + 20)
+        found_a = MARKER.search(screen_a)
+        found_b = MARKER.search(screen_b)
+        assert found_a is not None, screen_a[-1500:]
+        assert found_b is not None, screen_b[-1500:]
+        session_a, attachment_a = found_a.group(1), found_a.group(2)
+        session_b, attachment_b = found_b.group(1), found_b.group(2)
+        assert session_a != session_b
+        assert token not in screen_a and token not in screen_b
+        async with Client(url, token) as client:
+            other = await client.attach(session_a)
+            parked = await client.submit(
+                session_id=session_a, workspace="primary", attachment_id=other.attachment_id,
+                request_id="parked-a", text="等一下", not_before_ms=future)
+            assert parked.cancel_requested is False
+        os.write(master_a, b"\x03")
+        screen_a = _collect(master_a, first, screen_a, "已松开绑定", time.monotonic() + 10)
+        assert "已松开绑定" in screen_a
+        assert first.wait(timeout=10) == 0
+        assert second.poll() is None
+        async with Client(url, token) as client:
+            still = await client.request(session_id=session_a, request_id="parked-a")
+            assert still.status == parked.status
+            assert still.cancel_requested is False
+            await _rejects(lambda: client.submit(
+                session_id=session_a, workspace="primary", attachment_id=attachment_a,
+                request_id="after-a", text="再来"), "stale_client_binding")
+        os.write(master_b, "你好\r".encode())
+        screen_b = _collect(master_b, second, screen_b, "已收到：你好", time.monotonic() + 30)
+        assert "已收到：你好" in screen_b, screen_b[-1500:]
+        assert token not in screen_b
+        os.write(master_b, b"\x03")
+        screen_b = _collect(master_b, second, screen_b, "已松开绑定", time.monotonic() + 10)
+        assert "已松开绑定" in screen_b
+        assert second.wait(timeout=10) == 0
+        async with Client(url, token) as client:
+            await _rejects(lambda: client.submit(
+                session_id=session_b, workspace="primary", attachment_id=attachment_b,
+                request_id="after-b", text="再来"), "stale_client_binding")
+            fresh = await client.attach(session_a)
+            await client.cancel(
+                session_id=session_a, workspace="primary", attachment_id=fresh.attachment_id,
+                request_id="parked-a")
+            done = await client.wait(session_id=session_a, request_id="parked-a")
+            assert done.status == "cancelled"
+        first = None
+        second = None
+        os.close(master_a)
+        os.close(master_b)
+        master_a = -1
+        master_b = -1
+    finally:
+        if first is not None and master_a >= 0:
+            _close_tui(first, master_a)
+        elif master_a >= 0:
+            os.close(master_a)
+        if second is not None and master_b >= 0:
+            _close_tui(second, master_b)
+        elif master_b >= 0:
+            os.close(master_b)
+        _stop(proc, profile)
