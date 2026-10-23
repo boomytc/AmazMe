@@ -1,6 +1,6 @@
 # Python 后端重构验收台账
 
-日期：2026-10-23。分支 `dev`。本文件按用户能完成的操作记录状态，并随实现更新。四类状态分开，不能互相冒充：
+日期：2026-10-24。分支 `dev`。本文件按用户能完成的操作记录状态，并随实现更新。四类状态分开，不能互相冒充：
 
 1. **P2 代码和协议**：持久化、生命周期、故障注入和 faux 客户端。已跑过的才算通过。
 2. **P2 环境**：真实文件系统空间耗尽、宿主睡眠/唤醒、物理断电。模拟不能算通过。
@@ -103,9 +103,9 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | 使用量、费用、诊断；日志不漏凭据 | P3 | 健康与错误码 | 部分通过 | 预算耗尽快照测试 | 费用和诊断面未做。凭据继续不进普通日志 |
 | Web 完整产品 | P3 | `backend/src/amazme_backend/web` | 部分通过 | `verify_client.py` 6 项；分支按钮有 happy-dom | 管理面、分支的真实 Chrome、多窗口还没做 |
 | Electron 启动包内 Python、配对、退出、更新 | P3/P4 | `node packages/gui/dist/start.js`；`AMAZME_PYTHON_BACKEND` 或 `Resources/amazme-backend/amazme-backend` | 部分通过 | `packages/gui/test/python-desktop.live.test.ts` 用真实 Electron 入口把当前 onedir 拉起两次；`docs/python-backend-electron-launch.json` | `55b0173` 接上启动参数。`bef9f14` 把配对码写进该窗口的会话，并让关窗不调用退出。现场两次启动的 build_id 是 `5df74527eb72fdf034f4e3be2d9aef23a4393f8109d74506fbf3c8ed34b1f830`，宿主 pid 分别是 42463 和 42565。两次登录框都已隐藏。关窗后该 pid 仍在，明确退出后该 pid 消失，旁边的 sleep 进程还在。更新冻结仍要求 64 位目标 build，否则不冻结。还没有公证。 |
-| CLI 与非交互 | P3 | `amazme-backend` 的 init/serve/pair/stop/destroy-vm | 部分通过 | 矩阵使用这些命令 | 不是产品 CLI。输出要断言内容 |
-| RPC | P3 | 无 | 未通过 | 无 | 新契约，显式宿主、会话和工作区 |
-| 异步 SDK | P3 | 无 | 未通过 | 无 | 释放绑定不等于取消任务 |
+| CLI 与非交互 | P3 | `python -m amazme_backend client` 的 create、submit、release、cancel、rpc。服务命令仍是 init、serve、pair、stop、destroy-vm | 部分通过 | `backend/tests/test_client.py` 启动真实 `serve`，再跑 `client` 子命令 | `77101bd`。命令必须带 `--url` 和 `--token`。`submit` 等到 faux 回答 `已收到：你好` 才以 0 退出。`release` 之后原任务仍在等待，旧绑定再提交会被拒绝。工作区不一致时退出码是 1，stderr 只有 `workspace_mismatch`。令牌不出现在输出里。这不是冻结 onedir 里的命令，也没有覆盖文件、终端或远端 |
+| RPC | P3 | `POST /api/v1/rpc` | 部分通过 | 同上。SDK 和命令行都打到这条路由 | `77101bd`。`session.create`、`session.release`、`request.submit`、`request.cancel` 都要带会话。提交和取消还要带工作区，与会话记录不一致就拒绝，并且不执行。`session.release` 只丢掉绑定，回执是 detached，cancelled 为 false。未知方法返回 JSON-RPC 错误。还不在 A/B 包里 |
+| 异步 SDK | P3 | `amazme_backend.sdk.Client` | 部分通过 | 同上 | `77101bd`。创建、绑定、提交、取消、等待和 RPC 都指向显式 URL。松开绑定不会把等待中的任务改成取消；随后用旧绑定写入会得到 `stale_client_binding`。工作区不一致由服务端拒绝。还不在 A/B 包里 |
 | TUI | P3 | 现有 TUI 仍接旧后端 | 未通过 | 无 | 桌面宽窗。至少一次真实会话操作 |
 | 多窗口、多宿主、绑定代际 | P3 | Web 有 A-B-A 草稿测试 | 部分通过 | `test_streams_p2.py` 的所有权测试；`verify_client.py` | Electron/TUI/远端还没有 |
 
@@ -124,5 +124,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
-2. 桌面用真实 Electron 入口把包内 Python 拉起两次的记录在 `bef9f14`，build_id `5df74527eb72fdf034f4e3be2d9aef23a4393f8109d74506fbf3c8ed34b1f830`。还没有公证。项目列表读取在 `318ea95`，分享正文读取在 `5de3d5c`，项目、反馈、分享和导入导出在 `b74e2d3`。OAuth 仍没有消费者。模型网页工具在 `42db378`，打开面板读取策略在 `97f8fe6`，仍没有真实付费调用。桌面观察在 `fe73248`，用的是固定协议驱动，不是 cua-driver，也没有真实 TCC。网页搜索和抓取的页面调用在 `4d30ac2`。工作流在 `e9bb34e`。定时任务在 `189a130`。文件检查点在 `25fc14e`。工作区记忆注入在 `da0240c`。多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`，打开面板读取已保存插件在 `244820e`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 未做。插件入口、额外工作区和客户机文件检查点都还没在 Lima 里验收。工作流还不是通用阶段图。
+2. 命令行、JSON-RPC 和异步 SDK 在 `77101bd`。真实 `python -m amazme_backend serve` 上，松开绑定不取消等待任务，错工作区被拒绝，命令行提交得到 faux 回答。还没有在冻结 onedir 里跑这组命令。桌面用真实 Electron 入口把包内 Python 拉起两次的记录在 `bef9f14`，build_id `5df74527eb72fdf034f4e3be2d9aef23a4393f8109d74506fbf3c8ed34b1f830`。还没有公证。项目列表读取在 `318ea95`，分享正文读取在 `5de3d5c`，项目、反馈、分享和导入导出在 `b74e2d3`。OAuth 仍没有消费者。模型网页工具在 `42db378`，打开面板读取策略在 `97f8fe6`，仍没有真实付费调用。桌面观察在 `fe73248`，用的是固定协议驱动，不是 cua-driver，也没有真实 TCC。网页搜索和抓取的页面调用在 `4d30ac2`。工作流在 `e9bb34e`。定时任务在 `189a130`。文件检查点在 `25fc14e`。工作区记忆注入在 `da0240c`。多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`，打开面板读取已保存插件在 `244820e`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 未做。插件入口、额外工作区和客户机文件检查点都还没在 Lima 里验收。工作流还不是通用阶段图。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
