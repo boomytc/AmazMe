@@ -22,6 +22,7 @@ from .common import Peer, Profile, build_id, child_command, lock, private_write,
 from .contracts import (
     ApprovalDecision,
     ApprovalEnvelope,
+    ArchiveSession,
     Attachment,
     BackendError,
     BranchSession,
@@ -57,7 +58,7 @@ from .contracts import (
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
-from .storage import SessionStore, read_settled_root, remove_session_directory, session_database
+from .storage import TERMINAL, SessionStore, read_settled_root, remove_session_directory, session_database
 from .transport import app_factory
 
 
@@ -320,6 +321,8 @@ class Host:
         parent_path = session_database(self.profile.path, parent)
         read_settled_root(parent_path, value.request_id)
         source = next(item for item in (await self.sessions()).sessions if item.session_id == parent)
+        if source.archived:
+            raise BackendError("session_archived")
         title = value.title.strip() or f"分支：{source.title}"
         child_id = secrets.token_hex(16)
         created = await self.store.create_branch(child_id, parent, value.request_id, title[:100])
@@ -341,6 +344,28 @@ class Host:
             raise
         await child.db.close()
         return created
+
+    async def archive_session(self, session: str, archived: bool) -> Session:
+        self._admit()
+        updated = await self.store.set_archived(session, archived)
+        if archived:
+            await self._cancel_unstarted(session)
+        return updated
+
+    async def _cancel_unstarted(self, session: str) -> None:
+        path = session_database(self.profile.path, session)
+        if not path.is_file():
+            return
+        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                             approval_policy=self.profile.config.approval_policy, require_existing=True)
+        try:
+            await worker.initialize()
+            fence = HostFence(host_epoch=await worker.host_epoch(), build_id=self.build)
+            for receipt in (await worker.snapshot()).requests:
+                if receipt.kind == "root" and receipt.status not in TERMINAL and not receipt.cancel_requested:
+                    await worker.cancel(receipt.request_id, fence)
+        finally:
+            await worker.db.close()
 
     async def reader(self, session: str) -> ReadPeer:
         self._admit()
@@ -943,6 +968,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session}/branches", status_code=201)
     async def branch(session: str, value: BranchSession) -> Session:
         return await owner.branch_session(session, value)
+
+    @app.post("/api/v1/sessions/{session}/archive")
+    async def archive(session: str, value: ArchiveSession) -> Session:
+        return await owner.archive_session(session, value.archived)
 
     @app.post("/api/v1/sessions/{session}/attachments", status_code=201)
     async def attach(session: str) -> Attachment:

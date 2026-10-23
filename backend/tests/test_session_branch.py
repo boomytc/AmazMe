@@ -246,8 +246,8 @@ async def test_branch_columns_keep_existing_session_rows(tmp_path: Path, lease: 
     try:
         await reopened.initialize("host-2", "a" * 64, lease)
         listed = await reopened.sessions()
-        assert [(item.session_id, item.title, item.parent_id, item.fork_request_id) for item in listed.sessions] == [
-            (PARENT, "保留", "", "")]
+        assert [(item.session_id, item.title, item.parent_id, item.fork_request_id, item.archived)
+                for item in listed.sessions] == [(PARENT, "保留", "", "", False)]
     finally:
         await reopened.db.close()
 
@@ -273,6 +273,61 @@ async def test_branch_route_returns_the_child_session(owner: Host) -> None:
         listed = await client.get("/api/v1/sessions")
         assert any(item["session_id"] == body["session_id"] and item["fork_request_id"] == "r1"
                    for item in listed.json()["sessions"])
+
+
+async def test_archive_keeps_history_and_refuses_new_work(owner: Host) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+        await parent.accept(Submit(request_id="queued", text="not started"), fence_for(owner.build))
+        preserved = await message_payloads(parent)
+        archived = await owner.archive_session(PARENT, True)
+        assert archived.archived is True
+        assert await message_payloads(parent) == preserved
+        assert (await parent.get("r1")).status == "succeeded" and (await parent.get("r1")).text == "alpha"
+        assert (await parent.get("queued")).status == "cancelled"
+        assert (await owner.archive_session(PARENT, True)).archived is True
+        with pytest.raises(BackendError, match="session_archived"):
+            await owner.store.enqueue(PARENT, "submit", "fresh", Submit(request_id="fresh", text="later"))
+        with pytest.raises(BackendError, match="session_archived"):
+            await owner.branch_session(PARENT, BranchSession(request_id="r1"))
+        await owner.store.demand(PARENT)
+        assert PARENT not in await owner.store.due()
+        assert (await owner.archive_session(PARENT, False)).archived is False
+        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
+        action = await Driver(parent).until(ModelInvocation)
+        assert isinstance(action, ModelInvocation)
+        context = "\n".join(message.content for message in action.messages)
+        assert "alpha" in context and "later" in context
+    finally:
+        await parent.db.close()
+
+
+async def test_archive_route_rejects_work_and_keeps_the_turn(owner: Host) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+    finally:
+        await parent.db.close()
+    pending = await owner.store.enqueue(PARENT, "submit", "queued", Submit(request_id="queued", text="wait"))
+    app = application(owner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=owner.origin,
+                                  headers={"Authorization": "Bearer web-only", "x-amazme-build": owner.build,
+                                           "x-amazme-epoch": str(owner.fence.host_epoch)}) as client:
+        attached = await client.post(f"/api/v1/sessions/{PARENT}/attachments")
+        client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+        response = await client.post(f"/api/v1/sessions/{PARENT}/archive", json={"archived": True})
+        assert response.status_code == 200 and response.json()["archived"] is True
+        listed = await client.get("/api/v1/sessions")
+        assert any(item["session_id"] == PARENT and item["archived"] is True for item in listed.json()["sessions"])
+    assert pending.delivery_id not in {item.delivery_id for item in await owner.store.pending(PARENT)}
+    reopened = SessionStore(session_database(owner.profile.path, PARENT), PARENT, build=owner.build,
+                            require_existing=True)
+    await reopened.initialize()
+    try:
+        assert (await reopened.get("r1")).answer
+    finally:
+        await reopened.db.close()
 
 
 def browser_module() -> str:
@@ -349,6 +404,67 @@ def test_browser_branches_from_the_selected_turn() -> None:
         document.querySelector('#conversation article button').click();
         await until(()=>$('conversation').textContent.includes('alpha')===false && [...$('sessions').children].some(node=>node.textContent==='分支：A'));
         assert.equal(calls.some(call=>String(call.path).endsWith('/branches')), true);
+        window.dispatchEvent(new window.Event('pagehide'));
+        await window.happyDOM.abort();
+    '''
+    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
+                            cwd=Path(__file__).parents[1])
+    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+def test_browser_archive_keeps_the_visible_turn() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node unavailable")
+    web = Path(__file__).parents[1] / "src/amazme_backend/web"
+    snapshot = Snapshot(session_id="a", stream_id="stream-a", seq="1", state="ready", events=[], requests=[
+        Receipt(request_id="r1", text="alpha", status="succeeded", answer="已收到：alpha", kind="root")])
+    script = "const appURL=" + json.dumps(browser_module()) + ";\n"
+    script += "const html=" + json.dumps((web / "index.html").read_text()) + ";\n"
+    script += "const snap=" + snapshot.model_dump_json() + ";\n" + r'''
+        import assert from 'node:assert/strict';
+        import {Window} from 'happy-dom';
+        const window = new Window({url:'http://127.0.0.1:1234/'});
+        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
+        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
+        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        let archived = false;
+        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
+        globalThis.fetch = async (path, options={})=>{
+          if(path==='/api/v1/bootstrap') return response(identity);
+          if(path==='/api/v1/health') return response({state:'ready',identity});
+          if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A',parent_id:'',fork_request_id:'',archived}]});
+          const parts=path.split('/');
+          if(parts[5]==='attachments' && (options.method||'GET')==='DELETE') return response({detached:true});
+          if(parts[5]==='attachments') return response({attachment_id:'binding',session_id:parts[4],build_id:'build',host_epoch:1},201);
+          if(parts[5]==='snapshot') return response(snap);
+          if(parts[5]==='archive') {
+            assert.equal(JSON.parse(options.body).archived, true);
+            archived = true;
+            return response({session_id:'a',title:'A',parent_id:'',fork_request_id:'',archived:true});
+          }
+          throw Error('unexpected '+path);
+        };
+        globalThis.WebSocket = class {
+          constructor() { queueMicrotask(()=>this.onopen?.()); }
+          send(raw) {
+            const frame=JSON.parse(raw);
+            if(frame.kind!=='hello') return;
+            queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot:snap,batches:[],stream_id:snap.stream_id,binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
+          }
+          close() {}
+        };
+        const $=id=>document.getElementById(id);
+        async function until(check) {
+          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
+          throw Error('timed out '+$('error').textContent+' '+$('connection').textContent);
+        }
+        await import(appURL);
+        await until(()=>$('connection').textContent==='已连接' && $('conversation').textContent.includes('alpha'));
+        assert.equal($('archive').textContent, '归档');
+        $('archive').click();
+        await until(()=>$('archive').textContent==='恢复' && $('send').disabled && $('conversation').textContent.includes('已收到：alpha'));
+        assert.equal([...$('sessions').children].some(node=>node.textContent==='A（已归档）'), true);
         window.dispatchEvent(new window.Event('pagehide'));
         await window.happyDOM.abort();
     '''

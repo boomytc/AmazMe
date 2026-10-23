@@ -154,6 +154,7 @@ class Session(Model):
     title: str
     parent_id: str = ""
     fork_request_id: str = ""
+    archived: bool = False
 
 
 class SessionList(Model):
@@ -163,6 +164,10 @@ class SessionList(Model):
 class BranchSession(Model):
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     title: str = Field(default="", max_length=100)
+
+
+class ArchiveSession(Model):
+    archived: bool
 
 
 class EventList(Model):

@@ -186,6 +186,55 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/archive": {
+      "post": {
+        "summary": "Archive",
+        "operationId": "archive_api_v1_sessions__session__archive_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveSession"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/attachments": {
       "post": {
         "summary": "Attach",
@@ -887,6 +936,20 @@
           "approve"
         ],
         "title": "ApprovalDecision"
+      },
+      "ArchiveSession": {
+        "properties": {
+          "archived": {
+            "type": "boolean",
+            "title": "Archived"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "archived"
+        ],
+        "title": "ArchiveSession"
       },
       "Attachment": {
         "properties": {
@@ -1729,6 +1792,11 @@
             "type": "string",
             "title": "Fork Request Id",
             "default": ""
+          },
+          "archived": {
+            "type": "boolean",
+            "title": "Archived",
+            "default": false
           }
         },
         "additionalProperties": false,

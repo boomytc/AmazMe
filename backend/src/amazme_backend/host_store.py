@@ -111,7 +111,8 @@ class HostStore:
                   instance TEXT UNIQUE NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL,
                   wanted INTEGER NOT NULL DEFAULT 0,next_check INTEGER NOT NULL DEFAULT 0,
-                  parent_id TEXT NOT NULL DEFAULT '',fork_request_id TEXT NOT NULL DEFAULT '');
+                  parent_id TEXT NOT NULL DEFAULT '',fork_request_id TEXT NOT NULL DEFAULT '',
+                  archived INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS deliveries(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
                   id TEXT UNIQUE NOT NULL,session TEXT NOT NULL,kind TEXT NOT NULL,digest TEXT NOT NULL,
                   payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',receipt TEXT NOT NULL DEFAULT '',
@@ -127,6 +128,8 @@ class HostStore:
                 db.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''")
             if "fork_request_id" not in present:
                 db.execute("ALTER TABLE sessions ADD COLUMN fork_request_id TEXT NOT NULL DEFAULT ''")
+            if "archived" not in present:
+                db.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
         await self._call(create)
         def begin(db: sqlite3.Connection) -> int:
             db.execute("UPDATE control SET epoch=epoch+1 WHERE id=1")
@@ -142,11 +145,15 @@ class HostStore:
             return int(db.execute("SELECT port FROM control WHERE id=1").fetchone()[0])
         return await self._call(operation)
 
+    @staticmethod
+    def _session(row: sqlite3.Row) -> Session:
+        return Session(session_id=str(row["id"]), title=str(row["title"]), parent_id=str(row["parent_id"]),
+                       fork_request_id=str(row["fork_request_id"]), archived=bool(row["archived"]))
+
     async def sessions(self) -> SessionList:
         return await self._call(lambda db: SessionList(sessions=[
-            Session(session_id=str(row["id"]), title=str(row["title"]), parent_id=str(row["parent_id"]),
-                    fork_request_id=str(row["fork_request_id"]))
-            for row in db.execute("SELECT id,title,parent_id,fork_request_id FROM sessions ORDER BY rowid")]))
+            self._session(row) for row in db.execute(
+                "SELECT id,title,parent_id,fork_request_id,archived FROM sessions ORDER BY rowid")]))
 
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         def operation(db: sqlite3.Connection) -> Session:
@@ -205,8 +212,11 @@ class HostStore:
                 if existing["digest"] != digest:
                     raise BackendError("request_conflict")
                 return self._delivery(existing)
-            if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session,)).fetchone():
+            row = db.execute("SELECT archived FROM sessions WHERE id=?", (session,)).fetchone()
+            if row is None:
                 raise BackendError("session_not_found", status=404)
+            if kind == "submit" and int(row[0]):
+                raise BackendError("session_archived")
             if kind not in {"cancel", "resolve"} and db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]:
                 raise BackendError("update_frozen", status=503)
             if db.execute("SELECT count(*) FROM deliveries WHERE state='pending'").fetchone()[0] >= 128:
@@ -236,13 +246,32 @@ class HostStore:
             "SELECT * FROM deliveries WHERE state='pending' AND (? IS NULL OR session=?) ORDER BY ordinal LIMIT 128",
             (session, session))])
 
+    async def set_archived(self, session_id: str, archived: bool) -> Session:
+        def operation(db: sqlite3.Connection) -> Session:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            current = db.execute(
+                "SELECT id,title,parent_id,fork_request_id,archived FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if current is None:
+                raise BackendError("session_not_found", status=404)
+            db.execute("UPDATE sessions SET archived=? WHERE id=?", (int(archived), session_id))
+            if archived:
+                db.execute("UPDATE sessions SET wanted=0,next_check=0 WHERE id=?", (session_id,))
+                db.execute(
+                    "UPDATE deliveries SET state='rejected',error_code='session_archived',error_status=409 "
+                    "WHERE session=? AND kind='submit' AND state='pending'", (session_id,))
+            return self._session(db.execute(
+                "SELECT id,title,parent_id,fork_request_id,archived FROM sessions WHERE id=?", (session_id,)).fetchone())
+        return await self.transaction(operation)
+
     async def activity(self, session: str, activity: WorkerActivity) -> None:
         wanted = activity.runnable or activity.next_wake_ms > 0
         check = now_ms() + 500 if activity.runnable else activity.next_wake_ms
         await self._call(lambda db: db.execute("UPDATE sessions SET wanted=?,next_check=? WHERE id=?", (int(wanted), check, session)))
 
     async def demand(self, session: str = "") -> None:
-        await self._call(lambda db: db.execute("UPDATE sessions SET wanted=1,next_check=0 WHERE ?='' OR id=?", (session, session)))
+        await self._call(lambda db: db.execute(
+            "UPDATE sessions SET wanted=1,next_check=0 WHERE archived=0 AND (?='' OR id=?)", (session, session)))
 
     async def due(self) -> list[str]:
         return await self._call(lambda db: [str(row[0]) for row in db.execute(

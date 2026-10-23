@@ -145,8 +145,10 @@ function startClient() {
   catch { sessionStorage.removeItem("pending"); sessionStorage.removeItem("actions"); }
   function savePending(value) { pending = value; if (value) sessionStorage.setItem("pending", JSON.stringify(value)); else sessionStorage.removeItem("pending"); }
   function saveActions() { sessionStorage.setItem("actions", JSON.stringify(actions)); }
+  const archived = new Map();
   const owns = connection => current === connection && connection.generation === generation;
-  const writable = () => Boolean(current?.ready && health?.state === "ready" && current.model?.state === "ready");
+  const archivedNow = () => Boolean(archived.get(selected));
+  const writable = () => Boolean(current?.ready && health?.state === "ready" && current.model?.state === "ready" && !archivedNow());
   function error(value) { $("error").textContent = value.message || String(value); }
   async function api(path, method = "GET", body, connection = null, fence = identity) {
     const headers = {};
@@ -187,6 +189,8 @@ function startClient() {
     $("prompt").readOnly = pending?.target === selected;
     $("mode").disabled = Boolean(pending?.target === selected) || !writable();
     $("cancel").disabled = !root || !current?.ready || health?.state === "frozen" || current?.model?.state === "frozen";
+    $("archive").disabled = !current?.ready || health?.state !== "ready" || current?.model?.state === "frozen";
+    $("archive").textContent = archivedNow() ? "恢复" : "归档";
   }
   function renderHealth() {
     const model = current?.model;
@@ -360,7 +364,9 @@ function startClient() {
   async function load() {
     identity = await api("/api/v1/bootstrap"); health = {state:identity.state}; $("login").hidden = true;
     const value = await api("/api/v1/sessions");
-    $("sessions").replaceChildren(...value.sessions.map(item => button(item.title, () => void select(item.session_id))));
+    archived.clear();
+    for (const item of value.sessions) archived.set(item.session_id, Boolean(item.archived));
+    $("sessions").replaceChildren(...value.sessions.map(item => button(item.archived ? `${item.title}（已归档）` : item.title, () => void select(item.session_id))));
     if (!selected && value.sessions.length) await select(value.sessions.some(item => item.session_id === pending?.target) ? pending.target : value.sessions[0].session_id);
     renderHealth();
   }
@@ -420,6 +426,22 @@ function startClient() {
         if (bindingErrors.has(failure.code)) reconnect(connection);
       }
     } finally { running.delete(key); if (current?.session === target) controls(); }
+  };
+  $("archive").onclick = async () => {
+    const connection = current;
+    if (!owns(connection) || !connection.ready || health?.state !== "ready") return;
+    const next = !archived.get(connection.session);
+    $("archive").disabled = true;
+    try {
+      const value = await api(`/api/v1/sessions/${connection.session}/archive`, "POST", {archived: next}, connection, connection.identity);
+      if (!owns(connection)) return;
+      archived.set(value.session_id, Boolean(value.archived));
+      await load();
+    } catch (failure) {
+      if (owns(connection)) error(failure);
+    } finally {
+      if (owns(connection)) controls();
+    }
   };
   $("cancel").onclick = () => {
     const row = current?.model.requests.find(item => item.kind === "root" && !terminal.has(item.status));
