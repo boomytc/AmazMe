@@ -116,7 +116,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | 移动安装目录、路径含空格、受控 PATH、离线首次启动 | 部分通过 | P1 onedir 记录 | 最终树还要重做。不依赖系统 Python、Node、Colima、Docker CLI |
 | 构建身份覆盖代码、依赖、插件、helper 和执行资源 | 部分通过 | `build_id()` 覆盖当前 bundle 文件 | 插件和 helper 还没有 |
 | 桌面私有更新衔接冻结、验证、激活 | 部分通过 | 后端更新协议已在矩阵通过 | Electron 尚未调用它 |
-| Developer ID、hardened runtime、公证、staple、Gatekeeper | 未验收 | `packages/gui/README.md` 的本机步骤。禁止 `npm run release` | 用本机已有凭据。缺哪一项就记哪一项，不用 ad-hoc 顶替 |
+| Developer ID、hardened runtime、公证、staple、Gatekeeper | 未验收 | `packages/gui/README.md` 的本机步骤。禁止 `npm run release` | `~/.config/amazme/release.env` 里的团队 ID、Key ID、Issuer ID 和 p8 路径都有值，Issuer 是 UUID，Key ID 只有字母数字，p8 文件在。钥匙串里有 2 个 Developer ID Application，没有一个属于这份配置里的团队。不能改用别的团队顶上。还没有签名产物 |
 | Linux 宿主组合 | 未验收 | 无本机环境记录 | 没有环境就保持未验收 |
 | 冷/热启动、RSS、提交延迟、事件规模、历史加载、取消到真实退出 | 未验收 | 无 | 最终安装产物上测量 |
 | 删除旧 TS 业务依赖 | 未通过 | TS 源码仍在，作为呈现和参考 | 替代路径通过且无引用之后再删。保留仍有用的 UI、客户端运行时和受控 JS helper |
@@ -126,3 +126,4 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
 2. 两个终端同时在线的隔离在 `eae6735`。终端入口在 `d4367e2`。真实 `serve` 上启动两次：第一次离开不取消另一客户端的等待任务，第二次看到 faux 回答。旧 `amazme` 交互模式还没有改接。Electron 多窗口还没有。命令行、JSON-RPC 和异步 SDK 在 `77101bd`。真实 `python -m amazme_backend serve` 上，松开绑定不取消等待任务，错工作区被拒绝，命令行提交得到 faux 回答。还没有在冻结 onedir 里跑这组命令。桌面用真实 Electron 入口把包内 Python 拉起两次的记录在 `bef9f14`，build_id `5df74527eb72fdf034f4e3be2d9aef23a4393f8109d74506fbf3c8ed34b1f830`。还没有公证。项目列表读取在 `318ea95`，分享正文读取在 `5de3d5c`，项目、反馈、分享和导入导出在 `b74e2d3`。OAuth 仍没有消费者。模型网页工具在 `42db378`，打开面板读取策略在 `97f8fe6`，仍没有真实付费调用。桌面观察在 `fe73248`，用的是固定协议驱动，不是 cua-driver，也没有真实 TCC。网页搜索和抓取的页面调用在 `4d30ac2`。工作流在 `e9bb34e`。定时任务在 `189a130`。文件检查点在 `25fc14e`。工作区记忆注入在 `da0240c`。多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`，打开面板读取已保存插件在 `244820e`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 未做。插件入口、额外工作区和客户机文件检查点都还没在 Lima 里验收。工作流还不是通用阶段图。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
+4. 公证凭证文件在，但钥匙串里的 Developer ID Application 都不属于 `release.env` 里的团队。签名停在这里，不用 ad-hoc 或别的团队代替，也不运行 `npm run release`。Pyright 在 `20c145f` 之后是 0 错误。
