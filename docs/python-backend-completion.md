@@ -113,7 +113,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 
 | 用户操作 | 状态 | 入口 | 未通过与下一步 |
 | --- | --- | --- | --- |
-| 移动安装目录、路径含空格、受控 PATH、离线首次启动 | 部分通过 | `backend/tools/verify_relocated_bundle.py`；报告 `docs/python-backend-relocated.json` | 当前包 `package-fe7_msbu` 被复制到带空格的目录后再启动两次，build_id `a44cf603121570ffcb1037fcb331ba3bb6b22d106555ddda367aa7157e41a73e`，协议 `amazme-http/1`。PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`。进程都在挪走的目录里，套接字只有 127.0.0.1。两次到 ready 用了 4.104 秒和 1.364 秒，当时宿主加监督器的 RSS 是 174144 KB 和 173840 KB。pid 71495 和 71632 都已退出。这还不是带会话和工具的性能记录。`sandbox-exec` 仍能访问 https://example.com，所以离线首次启动还没证明。最终树上还要再做一次。这次只看到启动进程是包内 `amazme-backend`，还没有覆盖会调用系统 Python、Node、Colima 或 Docker CLI 的路径 |
+| 移动安装目录、路径含空格、受控 PATH、离线首次启动 | 部分通过 | `backend/tools/verify_relocated_bundle.py`；报告 `docs/python-backend-relocated.json` | `b76ad5d` 把当前包 `package-fe7_msbu` 复制到带空格的目录后再启动两次，build_id `a44cf603121570ffcb1037fcb331ba3bb6b22d106555ddda367aa7157e41a73e`，协议 `amazme-http/1`。PATH 只有 `/usr/bin:/bin:/usr/sbin:/sbin`。进程都在挪走的目录里，套接字只有 127.0.0.1。两次到 ready 用了 4.104 秒和 1.364 秒，当时宿主加监督器的 RSS 是 174144 KB 和 173840 KB。pid 71495 和 71632 都已退出。这还不是带会话和工具的性能记录。`sandbox-exec` 仍能访问 https://example.com，所以离线首次启动还没证明。最终树上还要再做一次。这次只看到启动进程是包内 `amazme-backend`，还没有覆盖会调用系统 Python、Node、Colima 或 Docker CLI 的路径 |
 | 构建身份覆盖代码、依赖、插件、helper 和执行资源 | 部分通过 | `build_id()` 覆盖当前 bundle 文件 | 插件和 helper 还没有 |
 | 桌面私有更新衔接冻结、验证、激活 | 部分通过 | 后端更新协议已在矩阵通过 | Electron 尚未调用它 |
 | Developer ID、hardened runtime、公证、staple、Gatekeeper | 未验收 | `packages/gui/README.md` 的本机步骤。禁止 `npm run release` | `~/.config/amazme/release.env` 里的团队 ID、Key ID、Issuer ID 和 p8 路径都有值，Issuer 是 UUID，Key ID 只有字母数字，p8 文件在。钥匙串里有 2 个 Developer ID Application，没有一个属于这份配置里的团队。不能改用别的团队顶上。还没有签名产物 |
