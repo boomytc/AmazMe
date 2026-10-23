@@ -19,6 +19,9 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "client":
         from .client_cmd import run_client
         raise SystemExit(run_client(sys.argv[2:]))
+    if len(sys.argv) > 1 and sys.argv[1] == "tui":
+        from .tui import run_tui
+        raise SystemExit(run_tui(sys.argv[2:]))
     parser = argparse.ArgumentParser(prog="amazme-backend")
     parser.add_argument("mode", choices=["init", "serve", "worker", "supervisor", "stop", "pair", "destroy-vm"])
     parser.add_argument("--profile", type=Path, required=True)
