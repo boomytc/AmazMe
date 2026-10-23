@@ -130,12 +130,18 @@ export function webLaunchLines(
 
 /** Host commands share the formal CLI, with lazy dispatch from its entrypoint. */
 export async function runHostCommand(args: string[]): Promise<boolean> {
-	if (args[0] !== "server" && args[0] !== "client" && args[0] !== "web") {
+	if (args[0] === "web") {
+		console.error("old_web_host_removed");
+		console.error("网页由 Python 后端提供，不再启动旧宿主");
+		process.exitCode = 1;
+		return true;
+	}
+	if (args[0] !== "server" && args[0] !== "client") {
 		return false;
 	}
 	if (args.includes("--help") || args.includes("-h")) {
 		console.log(
-			`Usage: amazme ${args[0]} [options]\n\nHost and client commands use the installed runtime.\nserver: --server-id <uuid> --session-dir <path> --model <provider/model> -e <plugin>\nweb: --port <0-65535> --server-id <uuid> --session-dir <path> -e <plugin>\nclient: --connect <unix:///path|radius://uuid> --session-id <id> [prompt]`,
+			`Usage: amazme ${args[0]} [options]\n\nHost and client commands use the installed runtime.\nserver: --server-id <uuid> --session-dir <path> --model <provider/model> -e <plugin>\nclient: --connect <unix:///path|radius://uuid> --session-id <id> [prompt]`,
 		);
 		return true;
 	}

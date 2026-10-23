@@ -16,7 +16,7 @@
 
 ## 还不能删
 
-- `packages/coding-agent/src/cli.ts` 仍能执行 `web`、`server` 和 `client`。这不是桌面或默认 TUI 的启动路径，桌面安装包也不再携带这个包。
+- `packages/coding-agent/src/cli.ts` 的 `web` 直接拒绝，不再进入旧网页宿主。`server` 和 `client` 仍会执行旧宿主命令。桌面安装包不再携带这个包。
 - `packages/coding-agent/src/main.ts` 的 `import` 和 `export` 子命令仍调用 `durable/import.ts` 和 `durable/export.ts`。
 - `packages/coding-agent/src/durable/` 仍被上面的子命令和直接测试引用。测试里的 `test/support/legacy-durable-cli.ts` 只给这些测试启动旧会话，产品 `cli.js` 不调用它。
 - 已经公证的桌面 DMG 仍是旧打包结果，里面还有 `@amazme/coding-agent`。当前打包脚本还没有拿去重新签名公证。

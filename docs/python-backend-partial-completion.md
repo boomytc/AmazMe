@@ -64,7 +64,7 @@ A/B 的 34 项和 Chrome 6 项对应源码 `9b83b083`，不是更早的 `d5cefaf
 - Linux 宿主，真实 OpenSSH，cua-driver 和 macOS TCC。
 - 付费网页调用、用量账单、文件 artifact、周期定时规则、通用工作流、记忆向量。
 - 浏览器地址不带会话和工作区时仍会选中第一项。
-- 产品交互、print、JSON、RPC 和桌面 `boot` 不再进入旧 TS 运行时。`amazme web`、`import`/`export` 仍在 coding-agent 源码里。已公证 DMG 还没按新打包脚本重做，所以那份产物里仍有 `@amazme/coding-agent`。引用还在，所以不删。
+- 产品交互、print、JSON、RPC、桌面 `boot` 和 `amazme web` 不再进入旧 TS 运行时。`server` / `client` 和 `import`/`export` 仍在 coding-agent 源码里。已公证 DMG 还没按新打包脚本重做，所以那份产物里仍有 `@amazme/coding-agent`。引用还在，所以不删。
 - Python onedir 没有 Developer ID 公证和 staple。已公证的是仍含旧 TS 宿主的桌面预览 DMG。
 - 正式安装的 Codemode 已改用包内 Node。其他未打包的入口如果再从 PATH 找 Node，进程树检查会拒绝。Python onedir 还没有公证。
 - 34 项矩阵对应 `9b83b083`，不是公证 DMG。
