@@ -1,0 +1,15 @@
+{
+  "lima_version": "limactl version 2.2.1",
+  "vm_type": "vz",
+  "arch": "aarch64",
+  "cpus": 2,
+  "memory_mib": 2048,
+  "root_disk_gib": 20,
+  "data_disk_gib": 10,
+  "host_mounts": [],
+  "forward_ssh_agent": false,
+  "base_image_sha256": "1fc0354f4f99734ce3886628cc7af8b0437c1a1d391b126bd09cba0df35ee53f",
+  "base_image_bytes": 332354401,
+  "lima_config_sha256": "8ac5a2e26ab45cc5b92202f80a71d637e1f7b515c0f5e9cae8cf31ce4b0c4903",
+  "override_sha256": "ac440d5e6e130acbc7ebb0daa8d7b9d62de99689fef3c3240d60e0d46d4c9461"
+}

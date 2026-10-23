@@ -1,0 +1,87 @@
+{
+  "status": "passed",
+  "checks": {
+    "auth_limits_host_lock": true,
+    "active_vm_deletion_rejected": true,
+    "concurrent_dedup": {
+      "requests": 16,
+      "effects": 1,
+      "receipt": {
+        "request_id": "dedup",
+        "text": "/shell printf x >> once.txt; cat once.txt",
+        "status": "succeeded",
+        "answer": "{\"call_id\":\"9b4ec34f41a5e77198e97ebfb6f29cb67a835820cef0bb1f1ea3eb68c988bb1e\",\"exit_code\":0,\"stdout\":\"x\",\"stderr\":\"\",\"truncated\":false,\"container_id\":\"b784fed69a6c94f3b6bf811b2b2a715c3adf1cb13c1b7b8399d503d35726133e\"}",
+        "error": "",
+        "accepted_revision": "1"
+      }
+    },
+    "cancel_detached_descendants": {
+      "cleanup": {
+        "session_id": "c6145f416c06896bb1ad43b7ace0804f",
+        "execution_epoch": 3,
+        "state": "clean",
+        "containers": [
+          "ad19c0af1939c6a2f43a96ee1fca8ffcffbbbef539ac2fa880673a52aec6c5cf"
+        ],
+        "reason": ""
+      },
+      "stable_bytes": 14,
+      "next_execution": "succeeded",
+      "repeat_cancels": 24
+    },
+    "worker_sigkill": {
+      "cleanup": {
+        "session_id": "c6145f416c06896bb1ad43b7ace0804f",
+        "execution_epoch": 5,
+        "state": "clean",
+        "containers": [
+          "22a101ee743dbd6c5d587dbf6886f8f572bf3a27097a86f061649e3a952a186b"
+        ],
+        "reason": ""
+      },
+      "recovered": {
+        "request_id": "kill",
+        "text": "/shell python -I -c 'import os,time\nend=time.monotonic()+90\nif os.fork()==0:\n os.setsid()\n if os.fork()!=0:os._exit(0)\n with open('\"'\"'killed.log'\"'\"','\"'\"'a'\"'\"',buffering=1) as f:\n  while time.monotonic()<end:\n   f.write('\"'\"'x\\n'\"'\"');f.flush();os.fsync(f.fileno());time.sleep(.03)\n os._exit(0)\nwhile time.monotonic()<end:time.sleep(.1)\n'",
+        "status": "unknown",
+        "answer": "",
+        "error": "process_interrupted",
+        "accepted_revision": "56"
+      },
+      "stable_bytes": 24,
+      "replacement": "deff6c8e6d0e6e3bc24935ecc244eb14"
+    },
+    "host_takeover": {
+      "same_worker": true,
+      "effects": 1,
+      "old_epoch": 1,
+      "new_epoch": 2,
+      "stale_stop": 409,
+      "build_mismatch": 409
+    },
+    "max_file_payload": {
+      "characters": 32000,
+      "bytes": 64001,
+      "exact_round_trip": true
+    },
+    "cleanup_blocked_admission": {
+      "state": "blocked",
+      "new_submission_http": 503,
+      "old_effects_still_active": true,
+      "false_cancelled_status": false
+    },
+    "failed_start_releases_owned_services": true,
+    "full_stop_restart": true
+  },
+  "root": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-p1/runtime-qcihhisq",
+  "identity": {
+    "url": "http://127.0.0.1:53243",
+    "version": "0.1.0",
+    "protocol": "amazme-http/1",
+    "build_id": "605e4f7a091f0d5ba9cd888ca3f9bf7a0ef88585864e9db580be8cf8cabf3753",
+    "profile_id": "fb76c628a7b53fc9f38f86e67053a9b9",
+    "instance_id": "ed5ad858da5676fe780c093bde9b856a",
+    "pid": 55432,
+    "host_epoch": 1
+  },
+  "cleanup": "owned services stopped and VM deleted"
+}

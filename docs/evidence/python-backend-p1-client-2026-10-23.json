@@ -1,0 +1,24 @@
+{
+  "status": "passed",
+  "root": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-p1/client-oh10223t",
+  "checks": [
+    "accepted reply lost, reload and same-ID retry produced one effect",
+    "late submission reply preserved the other conversation draft",
+    "offline reconnect restored receipts and tool snapshot",
+    "definitive rejection allowed a corrected new submission",
+    "cleanup failure reached the visible page without reload"
+  ],
+  "identity": {
+    "url": "http://127.0.0.1:53242",
+    "version": "0.1.0",
+    "protocol": "amazme-http/1",
+    "build_id": "605e4f7a091f0d5ba9cd888ca3f9bf7a0ef88585864e9db580be8cf8cabf3753",
+    "profile_id": "4554749240b1f0a11a1fead1825fbe57",
+    "instance_id": "29f835be2cc2196f40bd4038fe799ffa",
+    "pid": 55431,
+    "host_epoch": 1
+  },
+  "page_errors": [],
+  "browser": "155.0.8059.85",
+  "cleanup": "browser, owned services and VM closed"
+}

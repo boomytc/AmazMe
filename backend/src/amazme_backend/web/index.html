@@ -1,0 +1,7 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AmazMe</title><link rel="stylesheet" href="/style.css"></head>
+<body><aside><h1>AmazMe <small>0.1.0</small></h1><p class="muted">Python · Linux 工作区</p><button id="create">新建会话</button><nav id="sessions"></nav><p id="connection" role="status">未连接</p></aside>
+<main><header><h2 id="title">工作区助手</h2><span id="state"></span></header>
+<form id="login"><label for="token">输入本机配对码</label><input id="token" type="password" autocomplete="off" required><button>连接</button><p class="muted">在启动终端运行 pair 命令获取配对码。</p></form>
+<section id="conversation" aria-live="polite"></section><details><summary>工具与执行记录</summary><pre id="tools"></pre></details>
+<form id="composer"><label for="prompt">任务</label><textarea id="prompt" rows="4" placeholder="描述任务；文件和命令仅作用于已授权工作区" required></textarea><div><button id="send">发送</button><button id="cancel" type="button">取消当前任务</button></div></form><p id="error" role="alert"></p></main><script type="module" src="/app.js"></script></body></html>

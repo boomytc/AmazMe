@@ -1,0 +1,35 @@
+[project]
+name = "amazme-backend"
+version = "0.1.0"
+requires-python = ">=3.13,<3.14"
+dependencies = ["fastapi==0.161.1", "uvicorn==0.54.0", "pydantic==2.14.1", "httpx==0.28.1", "websockets==17.3", "openai", "pyyaml"]
+
+[project.scripts]
+amazme-backend = "amazme_backend.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = ["ruff==0.17.2", "pyright", "pytest", "pytest-asyncio", "pyinstaller==6.22.3", "types-PyYAML", "playwright"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/amazme_backend"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 110
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+venvPath = "."
+venv = ".venv"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

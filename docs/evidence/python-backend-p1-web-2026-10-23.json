@@ -1,0 +1,76 @@
+{
+  "status": "passed",
+  "root": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-p1/browser-5qtoylhv",
+  "identity": {
+    "url": "http://127.0.0.1:53241",
+    "version": "0.1.0",
+    "protocol": "amazme-http/1",
+    "build_id": "605e4f7a091f0d5ba9cd888ca3f9bf7a0ef88585864e9db580be8cf8cabf3753",
+    "profile_id": "a100dd757189224de163fb001f12ecbc",
+    "instance_id": "b0261ac0496f5a3958ec6cc8af440153",
+    "pid": 55430,
+    "host_epoch": 1
+  },
+  "browser": "155.0.8059.85",
+  "websocket_event_counts": {
+    "accepted": 2,
+    "status": 4,
+    "message": 8,
+    "preview": 69,
+    "tool": 6
+  },
+  "page_errors": [],
+  "screenshot": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-p1/browser-5qtoylhv/web.png",
+  "provider_response_ids": [
+    "f3cdfbe1-666d-49da-81f7-2793ad79efac",
+    "7e94cdf2-673f-41a3-adf2-2abed311aa9e",
+    "46b9a3b3-ffb8-44cf-ad22-2d09c9da7526",
+    "29baa06d-605e-4f1d-bd7a-0602386bb857",
+    "833d24b3-62df-4c79-8a73-39016ffef4e3"
+  ],
+  "tools": [
+    {
+      "call_id": "9a2e0917fd9095ac83c8b66a7143aa8c15b20b899484b14fd3c13c4814dfa4a4",
+      "exit_code": 0,
+      "stdout": "AMAZME_REAL_VM_OK\n",
+      "stderr": "",
+      "truncated": false,
+      "container_id": "6674d9f54d761a2a77b97fd5cf9ea639421834c390935aebb1fa9c099b754166"
+    },
+    {
+      "call_id": "4a6a8285a1187ac72add157e7d4be2783ef0b3ad67789d03335f300374dc0d42",
+      "exit_code": 0,
+      "stdout": "written\n",
+      "stderr": "",
+      "truncated": false,
+      "container_id": "400ffe4f80f7466b497946ad96d48e34ffe449f83258743d251581d4bf43ab2c"
+    },
+    {
+      "call_id": "72df2618be10bc71d28ce5a3babfa74abbed60d36a7a1cb3c9e2051bda178ecf",
+      "exit_code": 0,
+      "stdout": "恢复后继续\n",
+      "stderr": "",
+      "truncated": false,
+      "container_id": "c9b8f799960770ec028725da238a276c90b1cc70c07730196e6eeb4f72ab360c"
+    }
+  ],
+  "requests": [
+    {
+      "request_id": "77ebe62c-802d-4138-88af-ddf4f0ceed6d",
+      "text": "请调用 shell 工具执行这一条命令：printf 'AMAZME_REAL_VM_OK\\n' > real-proof.txt; cat real-proof.txt。必须实际执行，完成后简短报告读到的内容。",
+      "status": "succeeded",
+      "answer": "命令已实际执行（exit code 0）。读到的内容为：\n\n```\nAMAZME_REAL_VM_OK\n```\n\n已写入 `/workspace/real-proof.txt`。",
+      "error": "",
+      "accepted_revision": "1"
+    },
+    {
+      "request_id": "7e2e4e7e-128a-4a28-8cbe-af3797ea7ec1",
+      "text": "请使用 write_file 工具把中文“恢复后继续”写入 continued.txt，再使用 read_file 读取它并报告内容。",
+      "status": "succeeded",
+      "answer": "已用 write_file 写入 `continued.txt`，再用 read_file 读回，内容为：\n\n```\n恢复后继续\n```",
+      "error": "",
+      "accepted_revision": "48"
+    }
+  ],
+  "cleanup": "browser, owned services and VM closed"
+}

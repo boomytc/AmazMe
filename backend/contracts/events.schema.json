@@ -1,0 +1,164 @@
+{
+  "$defs": {
+    "Event": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "title": "Seq",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "accepted",
+            "status",
+            "preview",
+            "message",
+            "tool",
+            "cleanup"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "seq",
+        "kind",
+        "request_id",
+        "text"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "Receipt": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "cancelling",
+            "succeeded",
+            "cancelled",
+            "interrupted",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "answer": {
+          "default": "",
+          "title": "Answer",
+          "type": "string"
+        },
+        "error": {
+          "default": "",
+          "title": "Error",
+          "type": "string"
+        },
+        "accepted_revision": {
+          "default": "0",
+          "title": "Accepted Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "text",
+        "status"
+      ],
+      "title": "Receipt",
+      "type": "object"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "stream_id": {
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "recovering",
+            "ready",
+            "blocked",
+            "stopping"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "requests": {
+          "items": {
+            "$ref": "#/$defs/Receipt"
+          },
+          "title": "Requests",
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "title": "Events",
+          "type": "array"
+        }
+      },
+      "required": [
+        "session_id",
+        "stream_id",
+        "seq",
+        "state",
+        "requests",
+        "events"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "snapshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Snapshot"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "events": {
+      "items": {
+        "$ref": "#/$defs/Event"
+      },
+      "title": "Events",
+      "type": "array"
+    }
+  },
+  "title": "Stream",
+  "type": "object"
+}
