@@ -64,7 +64,7 @@ A/B 的 34 项和 Chrome 6 项对应源码 `9b83b083`，不是更早的 `d5cefaf
 - Linux 宿主，真实 OpenSSH，cua-driver 和 macOS TCC。
 - 付费网页调用、用量账单、文件 artifact、周期定时规则、通用工作流、记忆向量。
 - 浏览器地址不带会话和工作区时仍会选中第一项。
-- 产品交互、print、JSON、RPC、桌面 `boot`、`web`、`server`、`client`、`import` 和 `export` 不再进入旧 TS 运行时。新公证 DMG `.artifacts/python-backend-sign/desktop-current/AmazMe-0.3.4-macos-arm64.dmg` 不含 `@amazme/coding-agent`。提交 `9f05224d-b733-4284-b720-14644be20e87`，SHA256 `c1a256cda805b2358b781b5a993f6ee9bafa7f07291833c0465719facf303740`。更早的 `python-desktop` DMG 仍含旧宿主。旧模块仍被直接测试引用，所以不删。
+- 产品交互、print、JSON、RPC、桌面 `boot`、`web`、`server`、`client`、`import` 和 `export` 不再进入旧 TS 运行时。能启动的公证 DMG 是 `.artifacts/python-backend-sign/desktop-boot/AmazMe-0.3.4-macos-arm64.dmg`，不含 `@amazme/coding-agent`。提交 `73a6e978-4364-415c-a319-0d0f6ddbda17`，SHA256 `232e851afe15c8879cc7a6c6acec5697fa6d3c9ee24c7f0b24ed5916a42c33f0`。`desktop-current` 那份签完后服务起不来。更早的 `python-desktop` DMG 仍含旧宿主。旧模块仍被直接测试引用，所以不删。
 - Python onedir 没有 Developer ID 公证和 staple。已公证的是仍含旧 TS 宿主的桌面预览 DMG。
 - 正式安装的 Codemode 已改用包内 Node。其他未打包的入口如果再从 PATH 找 Node，进程树检查会拒绝。Python onedir 还没有公证。
 - 34 项矩阵对应 `9b83b083`，不是公证 DMG。

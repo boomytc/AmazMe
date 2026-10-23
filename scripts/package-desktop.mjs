@@ -240,7 +240,14 @@ async function main() {
 			recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE,
 		});
 	}
-	await signApp(appDirectory, signing);
+	await signApp(appDirectory, signing, async () => {
+		const bundle = join(appDirectory, "Contents", "Resources", "amazme-backend");
+		if (!existsSync(join(bundle, "build.json"))) return;
+		const python = join(repoRoot, "backend/.venv/bin/python");
+		execFileSync(python, ["-c", "import sys; from pathlib import Path; from amazme_backend.common import rewrite_frozen_manifest; print(rewrite_frozen_manifest(Path(sys.argv[1])))", bundle], {
+			cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "inherit", "inherit"],
+		});
+	});
 	console.log(`Built ${appDirectory}`);
 	console.log(`Version ${manifest.app.version} · Node ${manifest.node} · Electron ${manifest.electron}`);
 	console.log(signing.kind === "ad-hoc" ? "Signed ad-hoc (no hardened runtime)" : `Signed with Developer ID, team ${signing.teamId}`);

@@ -134,10 +134,11 @@ export function resolveSigning({ keychain, teamId, entitlements }) {
 	return { kind: "developer-id", entitlements, keychain, identity, teamId };
 }
 
-export async function signApp(appDirectory, signing) {
+export async function signApp(appDirectory, signing, beforeSeal) {
 	for (const path of signingOrder(await collectSignableCode(appDirectory))) {
 		tool("codesign", codesignArguments(signing, join(appDirectory, path)));
 	}
+	if (beforeSeal !== undefined) await beforeSeal();
 	tool("codesign", codesignArguments(signing, appDirectory));
 	tool("codesign", ["--verify", "--deep", "--strict", appDirectory]);
 	if (signing.kind === "developer-id") assertTeam(appDirectory, signing.teamId);

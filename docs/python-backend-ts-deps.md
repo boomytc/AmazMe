@@ -19,7 +19,7 @@
 - `packages/coding-agent/src/cli.ts` 的 `web`、`server` 和 `client` 直接拒绝，不再进入旧宿主。桌面安装包不再携带这个包。
 - `packages/coding-agent/src/main.ts` 的 `import` 和 `export` 直接拒绝，不再调用 `durable/import.ts` 和 `durable/export.ts`。这两个模块仍被直接测试引用。
 - `packages/coding-agent/src/durable/` 和 `host/commands.ts` 仍被直接测试引用。`test/support/legacy-durable-cli.ts` 和 `legacy-host-cli.ts` 只给这些测试启动旧会话或旧宿主，产品 `cli.js` 不调用它们。`cli.ts` 仍识别内部进程角色，用户命令到不了那里。
-- 旧的已公证 DMG `.artifacts/python-backend-sign/python-desktop/` 仍含 `@amazme/coding-agent`。当前脚本打出的 `.artifacts/python-backend-sign/desktop-current/AmazMe-0.3.4-macos-arm64.dmg` 不含它。公证 Accepted，提交 `9f05224d-b733-4284-b720-14644be20e87`。staple 和 Gatekeeper 通过。钉住后的 SHA256 是 `c1a256cda805b2358b781b5a993f6ee9bafa7f07291833c0465719facf303740`。里面的 Python onedir 仍是 `fad52a18…`，不是这次 HEAD 重新打的后端。
+- 旧的已公证 DMG `.artifacts/python-backend-sign/python-desktop/` 仍含 `@amazme/coding-agent`。`desktop-current` 不含旧宿主，但签名改写了 Mach-O，服务启动失败。`desktop-boot/AmazMe-0.3.4-macos-arm64.dmg` 在签完内层后重写了冻结清单。公证 Accepted，提交 `73a6e978-4364-415c-a319-0d0f6ddbda17`。钉住后的 SHA256 是 `232e851afe15c8879cc7a6c6acec5697fa6d3c9ee24c7f0b24ed5916a42c33f0`。签名后的 build_id 是 `a561427495a15b41f35449d5124d81623b8ed3312daf7f082aca6b652f30b477`。已签名应用 smoke 退出码 0，Python 就绪协议是 `amazme-http/1`。页面对象 `__AMAZME_BOOT__` 仍是空的。
 - `@amazme/web` 的呈现、TUI 组件和受控 JS helper 不是旧业务内核。`@amazme/durable` 留在桌面包里，是因为页面壳的值导入还需要它，不是因为还要启动旧宿主。
 
 删除要等这些剩余入口没有产品调用，并且替代路径已经通过。在那之前保持未通过。
