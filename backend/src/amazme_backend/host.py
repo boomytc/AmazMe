@@ -55,11 +55,17 @@ from .contracts import (
     ComputerPolicy,
     CreateSession,
     EffectResolution,
+    ExportBundle,
+    ExportMessage,
+    ExportSession,
+    FeedbackView,
+    FeedbackWrite,
     FreezeSupervisor,
     FreezeWorker,
     Health,
     HostFence,
     Identity,
+    ImportResult,
     McpCall,
     McpCallEnvelope,
     McpCallRequest,
@@ -88,6 +94,10 @@ from .contracts import (
     PluginView,
     PrepareUpdate,
     ProcessLease,
+    ProductSettings,
+    ProjectList,
+    ProjectView,
+    ProjectWrite,
     Receipt,
     Recovery,
     ReloadPlugin,
@@ -100,6 +110,10 @@ from .contracts import (
     SearchResults,
     Session,
     SessionList,
+    SettingsUpdate,
+    ShareMessage,
+    ShareView,
+    ShareWrite,
     Snapshot,
     StopWorker,
     Submission,
@@ -130,6 +144,8 @@ from .contracts import (
 )
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
+from .manage import bundle_digest, bundle_text, contains_secret, transcript_digest
+from .manage import digest as content_digest
 from .memories import match_memories, remember
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
@@ -679,6 +695,153 @@ class Host:
         self._admit()
         await self._require_workspace(value.workspace)
         return await self.store.create_session(secrets.token_hex(16), value)
+
+    def _provider_secret(self) -> str:
+        return self.profile.config.provider.api_key.get_secret_value()
+
+    async def _open_transcript(self, session: str) -> list[tuple[str, str, str]]:
+        path = session_database(self.profile.path, session)
+        if not path.is_file():
+            return []
+        worker = SessionStore(path, session, build=self.build, config=self.profile.config.provider,
+                             approval_policy=self.profile.config.approval_policy, require_existing=True)
+        try:
+            await worker.initialize()
+            return await worker.transcript()
+        finally:
+            await worker.db.close()
+
+    async def save_project(self, value: ProjectWrite) -> ProjectView:
+        self._admit()
+        project_id, name = await self.store.save_project(value.project_id, value.name.strip())
+        return ProjectView(project_id=project_id, name=name)
+
+    async def projects(self) -> ProjectList:
+        self._admit()
+        return ProjectList(projects=[ProjectView(project_id=project_id, name=name)
+                                     for project_id, name in await self.store.projects()])
+
+    async def product_settings(self) -> ProductSettings:
+        self._admit()
+        name, revision = await self.store.product_settings()
+        return ProductSettings(display_name=name, revision=revision)
+
+    async def save_product_settings(self, value: SettingsUpdate) -> ProductSettings:
+        self._admit()
+        name, revision = await self.store.save_product_settings(value.display_name.strip(), value.expected_revision)
+        return ProductSettings(display_name=name, revision=revision)
+
+    async def save_feedback(self, value: FeedbackWrite) -> FeedbackView:
+        self._admit()
+        text = value.text.strip()
+        if contains_secret(text, self._provider_secret()):
+            raise BackendError("feedback_secret")
+        if value.session_id:
+            if not await self.store.exists(value.session_id):
+                raise BackendError("session_not_found", status=404)
+        key = content_digest(json.dumps({"session_id": value.session_id, "text": text},
+                                        sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+        feedback_id, session_id, stored = await self.store.save_feedback(value.feedback_id, value.session_id, text, key)
+        return FeedbackView(feedback_id=feedback_id, session_id=session_id, text=stored)
+
+    async def share_session(self, session: str, value: ShareWrite) -> ShareView:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        messages = await self._open_transcript(session)
+        key = transcript_digest(messages)
+        current = await self.store.share_record(value.share_id)
+        if current is not None and current != (key, session):
+            raise BackendError("share_conflict")
+        if contains_secret("\n".join(content for _request, _role, content in messages), self._provider_secret()):
+            raise BackendError("share_secret")
+        view = ShareView(share_id=value.share_id, session_id=session, digest=key, messages=[
+            ShareMessage.model_validate({"request_id": request_id, "role": role, "content": content})
+            for request_id, role, content in messages])
+        payload = await self.store.save_share(value.share_id, session, view.digest, view.model_dump_json())
+        return ShareView.model_validate_json(payload)
+
+    async def read_share(self, session: str, share_id: str) -> ShareView:
+        self._admit()
+        return ShareView.model_validate_json(await self.store.read_share(share_id, session))
+
+    async def export_bundle(self) -> ExportBundle:
+        self._admit()
+        projects = await self.projects()
+        name, revision = await self.store.product_settings()
+        feedback = [FeedbackView(feedback_id=feedback_id, session_id=session_id, text=text)
+                    for feedback_id, session_id, text in await self.store.feedback_rows()]
+        sessions: list[ExportSession] = []
+        for item in (await self.sessions()).sessions:
+            messages = await self._open_transcript(item.session_id)
+            sessions.append(ExportSession(
+                session_id=item.session_id, title=item.title, project_id=item.project_id, workspace=item.workspace,
+                messages=[ExportMessage.model_validate({"request_id": request_id, "role": role, "content": content})
+                          for request_id, role, content in messages if content]))
+        bundle = ExportBundle(format="amazme-export/1", projects=projects.projects, sessions=sessions,
+                             feedback=feedback, settings=ProductSettings(display_name=name, revision=revision))
+        if contains_secret(bundle_text(bundle), self._provider_secret()):
+            raise BackendError("export_secret")
+        return bundle.model_copy(update={"digest": bundle_digest(bundle)})
+
+    async def import_bundle(self, bundle: ExportBundle) -> ImportResult:
+        self._admit()
+        if bundle.format != "amazme-export/1":
+            raise BackendError("import_format")
+        if bundle.digest != bundle_digest(bundle):
+            raise BackendError("import_digest")
+        if contains_secret(bundle_text(bundle), self._provider_secret()):
+            raise BackendError("import_secret")
+        if len(bundle.sessions) > 32 or len(bundle.projects) > 32 or len(bundle.feedback) > 32:
+            raise BackendError("import_capacity", status=429)
+        existing = {item.session_id: item for item in (await self.sessions()).sessions}
+        known_projects = {project.project_id: project.name for project in (await self.projects()).projects}
+        for project in bundle.projects:
+            current = known_projects.get(project.project_id)
+            if current is not None and current != project.name:
+                raise BackendError("import_conflict")
+        current_name, current_revision = await self.store.product_settings()
+        if bundle.settings.display_name and current_revision and current_name != bundle.settings.display_name:
+            raise BackendError("import_conflict")
+        known_feedback = {feedback_id: (session_id, text) for feedback_id, session_id, text in await self.store.feedback_rows()}
+        for item in bundle.feedback:
+            current = known_feedback.get(item.feedback_id)
+            if current is not None and current != (item.session_id, item.text):
+                raise BackendError("import_conflict")
+        created = 0
+        for item in bundle.sessions:
+            incoming = [(message.request_id, message.role, message.content) for message in item.messages]
+            record = existing.get(item.session_id)
+            if record is None:
+                created += 1
+                continue
+            current = await self._open_transcript(item.session_id)
+            if (record.title != item.title or record.workspace != item.workspace or record.project_id != item.project_id
+                    or transcript_digest(current) != transcript_digest(incoming)):
+                raise BackendError("import_conflict")
+        for project in bundle.projects:
+            await self.store.save_project(project.project_id, project.name)
+        if bundle.settings.display_name and current_revision == 0:
+            await self.store.save_product_settings(bundle.settings.display_name, 0)
+        for item in bundle.feedback:
+            key = content_digest(json.dumps({"session_id": item.session_id, "text": item.text},
+                                            sort_keys=True, separators=(",", ":"), ensure_ascii=False))
+            await self.store.save_feedback(item.feedback_id, item.session_id, item.text, key)
+        for item in bundle.sessions:
+            await self._require_workspace(item.workspace)
+            await self.store.ensure_import_session(item.session_id, item.title, item.workspace, item.project_id)
+            path = session_database(self.profile.path, item.session_id)
+            if not path.parent.exists():
+                path.parent.mkdir(parents=True, mode=0o700)
+            worker = SessionStore(path, item.session_id, build=self.build, config=self.profile.config.provider,
+                                 approval_policy=self.profile.config.approval_policy)
+            try:
+                await worker.initialize()
+                await worker.import_transcript([(message.request_id, message.role, message.content)
+                                                for message in item.messages])
+            finally:
+                await worker.db.close()
+        return ImportResult(format="amazme-export/1", sessions=len(bundle.sessions), created=created)
 
     async def save_memory(self, value: MemoryWrite) -> MemoryView:
         self._admit()
@@ -1940,6 +2103,42 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions", status_code=201)
     async def create(value: CreateSession) -> Session:
         return await owner.create_session(value)
+
+    @app.get("/api/v1/projects")
+    async def projects() -> ProjectList:
+        return await owner.projects()
+
+    @app.post("/api/v1/projects")
+    async def save_project(value: ProjectWrite) -> ProjectView:
+        return await owner.save_project(value)
+
+    @app.get("/api/v1/settings")
+    async def product_settings() -> ProductSettings:
+        return await owner.product_settings()
+
+    @app.post("/api/v1/settings")
+    async def save_product_settings(value: SettingsUpdate) -> ProductSettings:
+        return await owner.save_product_settings(value)
+
+    @app.post("/api/v1/feedback")
+    async def save_feedback(value: FeedbackWrite) -> FeedbackView:
+        return await owner.save_feedback(value)
+
+    @app.post("/api/v1/sessions/{session}/shares")
+    async def share_session(session: str, value: ShareWrite) -> ShareView:
+        return await owner.share_session(session, value)
+
+    @app.get("/api/v1/sessions/{session}/shares/{share_id}")
+    async def read_share(session: str, share_id: str) -> ShareView:
+        return await owner.read_share(session, share_id)
+
+    @app.get("/api/v1/export")
+    async def export_bundle() -> ExportBundle:
+        return await owner.export_bundle()
+
+    @app.post("/api/v1/import")
+    async def import_bundle(value: ExportBundle) -> ImportResult:
+        return await owner.import_bundle(value)
 
     @app.post("/api/v1/sessions/{session}/branches", status_code=201)
     async def branch(session: str, value: BranchSession) -> Session:

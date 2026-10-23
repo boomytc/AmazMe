@@ -791,6 +791,71 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let manageProject = "";
+  $("manage-project").onsubmit = async event => {
+    event.preventDefault();
+    if (!identity || health?.state !== "ready") return;
+    manageProject = manageProject || crypto.randomUUID().replaceAll("-", "");
+    try {
+      const project = await api("/api/v1/projects", "POST", {project_id: manageProject, name: $("manage-project-name").value}, current);
+      const session = await api("/api/v1/sessions", "POST", {title: project.name, project_id: project.project_id}, current);
+      await load();
+      await select(session.session_id);
+      $("manage-state").textContent = `${project.project_id} · ${session.session_id}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("manage-settings").onsubmit = async event => {
+    event.preventDefault();
+    if (!identity || health?.state !== "ready") return;
+    try {
+      const currentSettings = await api("/api/v1/settings");
+      const saved = await api("/api/v1/settings", "POST", {
+        display_name: $("manage-name").value, expected_revision: currentSettings.revision,
+      }, current);
+      $("manage-state").textContent = `${saved.display_name} · ${saved.revision}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("manage-feedback").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    try {
+      const saved = await api("/api/v1/feedback", "POST", {
+        feedback_id: crypto.randomUUID().replaceAll("-", ""), session_id: selected, text: $("manage-feedback-text").value,
+      }, current);
+      $("manage-state").textContent = saved.session_id;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("manage-share").onclick = async () => {
+    if (!selected || !identity || health?.state !== "ready") return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/shares`, "POST", {
+        share_id: crypto.randomUUID().replaceAll("-", ""),
+      }, current);
+      $("manage-state").textContent = `${view.session_id} · ${view.digest.slice(0, 8)}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("manage-export").onclick = async () => {
+    try {
+      const bundle = await api("/api/v1/export");
+      $("manage-import-text").value = JSON.stringify(bundle);
+      $("manage-state").textContent = bundle.format;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("manage-import").onsubmit = async event => {
+    event.preventDefault();
+    if (!identity || health?.state !== "ready") return;
+    try {
+      const bundle = JSON.parse($("manage-import-text").value);
+      const result = await api("/api/v1/import", "POST", bundle, current);
+      $("manage-state").textContent = `${result.format} · ${result.created}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   let codeRun = "";
   $("code-run").onclick = async () => {
     if (!selected || !identity || health?.state !== "ready") return;

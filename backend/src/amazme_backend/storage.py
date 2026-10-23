@@ -1654,6 +1654,44 @@ class SessionStore:
     async def message_payloads(self, request_id: str) -> list[str]:
         return await self.db.call(lambda db: self._payloads(db, request_id))
 
+    def _transcript(self, db: sqlite3.Connection) -> list[tuple[str, str, str]]:
+        rows = db.execute(
+            "SELECT m.request_id, m.payload FROM messages m JOIN requests r ON r.id=m.request_id "
+            "ORDER BY r.ordinal, m.ordinal").fetchall()
+        result: list[tuple[str, str, str]] = []
+        for request_id, payload in rows:
+            message = Message.model_validate_json(payload)
+            result.append((str(request_id), message.role, message.content))
+        return result
+
+    async def transcript(self) -> list[tuple[str, str, str]]:
+        return await self.db.call(self._transcript)
+
+    async def import_transcript(self, messages: list[tuple[str, str, str]]) -> None:
+        def operation(db: sqlite3.Connection, c: Changes) -> None:
+            existing = self._transcript(db)
+            if existing:
+                if existing != messages:
+                    raise BackendError("import_conflict")
+                return
+            grouped: dict[str, list[tuple[str, str]]] = {}
+            order: list[str] = []
+            for request_id, role, content in messages:
+                if request_id not in grouped:
+                    order.append(request_id)
+                    grouped[request_id] = []
+                grouped[request_id].append((role, content))
+            for request_id in order:
+                items = grouped[request_id]
+                text = next((content for role, content in items if role == "user"), items[0][1])
+                receipt = self._new_request(db, c, Submit(request_id=request_id, text=text[:16000]))
+                for index, (role, content) in enumerate(items):
+                    message = Message.model_validate({"role": role, "content": content})
+                    self._message(db, c, request_id, f"import:{index}", message)
+                self._decide(db, c, receipt, Decision(status="succeeded", answer=""))
+                self._settle(db, c, receipt)
+        await self._tx(operation)
+
     async def search(self, query: str) -> list[SearchHit]:
         text = query.strip()
         if not text or len(text) > 200:

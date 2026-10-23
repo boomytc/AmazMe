@@ -129,6 +129,14 @@ class HostStore:
                   workspace TEXT NOT NULL, text TEXT NOT NULL, zone TEXT NOT NULL, local TEXT NOT NULL,
                   fold INTEGER NOT NULL, due_ms INTEGER NOT NULL, phase TEXT NOT NULL,
                   delivery_id TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, name TEXT NOT NULL, digest TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS project_sessions(session TEXT PRIMARY KEY, project TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS product_settings(id INTEGER PRIMARY KEY, display_name TEXT NOT NULL,
+                  revision INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, session TEXT NOT NULL,
+                  text TEXT NOT NULL, digest TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS shares(id TEXT PRIMARY KEY, session TEXT NOT NULL,
+                  digest TEXT NOT NULL, payload TEXT NOT NULL);
                 PRAGMA user_version=2;
             """)
             # Format 2 already shipped without branch columns. Adding them keeps every existing row.
@@ -157,15 +165,25 @@ class HostStore:
         return await self._call(operation)
 
     @staticmethod
+    def _session_sql(tail: str) -> str:
+        return (
+            "SELECT s.id AS id,s.title AS title,s.parent_id AS parent_id,"
+            "s.fork_request_id AS fork_request_id,s.archived AS archived,s.workspace AS workspace,"
+            "coalesce(p.project,'') AS project_id FROM sessions s "
+            "LEFT JOIN project_sessions p ON p.session=s.id " + tail
+        )
+
+    @staticmethod
     def _session(row: sqlite3.Row) -> Session:
+        keys = set(row.keys())
+        project_id = str(row["project_id"]) if "project_id" in keys else ""
         return Session(session_id=str(row["id"]), title=str(row["title"]), parent_id=str(row["parent_id"]),
                        fork_request_id=str(row["fork_request_id"]), archived=bool(row["archived"]),
-                       workspace=str(row["workspace"] or "primary"))
+                       workspace=str(row["workspace"] or "primary"), project_id=project_id)
 
     async def sessions(self) -> SessionList:
         return await self._call(lambda db: SessionList(sessions=[
-            self._session(row) for row in db.execute(
-                "SELECT id,title,parent_id,fork_request_id,archived,workspace FROM sessions ORDER BY rowid")]))
+            self._session(row) for row in db.execute(self._session_sql("ORDER BY s.rowid"))]))
 
     async def workspace_grants(self) -> list[tuple[str, str]]:
         def operation(db: sqlite3.Connection) -> list[tuple[str, str]]:
@@ -329,8 +347,13 @@ class HostStore:
             if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
                 raise BackendError("session_capacity", status=429)
             workspace = value.workspace or "primary"
+            project_id = value.project_id
+            if project_id and db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
+                raise BackendError("project_not_found", status=404)
             db.execute("INSERT INTO sessions(id,title,workspace) VALUES(?,?,?)", (session_id, value.title, workspace))
-            return Session(session_id=session_id, title=value.title, workspace=workspace)
+            if project_id:
+                db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
+            return Session(session_id=session_id, title=value.title, workspace=workspace, project_id=project_id)
         return await self.transaction(operation)
 
     async def create_branch(self, session_id: str, parent_id: str, fork_request_id: str, title: str) -> Session:
@@ -343,10 +366,14 @@ class HostStore:
             if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
                 raise BackendError("session_capacity", status=429)
             workspace = str(parent[0] or "primary")
+            project = db.execute("SELECT project FROM project_sessions WHERE session=?", (parent_id,)).fetchone()
+            project_id = str(project[0]) if project else ""
             db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id,workspace) VALUES(?,?,?,?,?)",
                        (session_id, title, parent_id, fork_request_id, workspace))
+            if project_id:
+                db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
             return Session(session_id=session_id, title=title, parent_id=parent_id,
-                           fork_request_id=fork_request_id, workspace=workspace)
+                           fork_request_id=fork_request_id, workspace=workspace, project_id=project_id)
         return await self.transaction(operation)
 
     async def discard_unopened_branch(self, session_id: str) -> None:
@@ -421,9 +448,7 @@ class HostStore:
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
-            current = db.execute(
-                "SELECT id,title,parent_id,fork_request_id,archived,workspace FROM sessions WHERE id=?",
-                (session_id,)).fetchone()
+            current = db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone()
             if current is None:
                 raise BackendError("session_not_found", status=404)
             db.execute("UPDATE sessions SET archived=? WHERE id=?", (int(archived), session_id))
@@ -432,9 +457,7 @@ class HostStore:
                 db.execute(
                     "UPDATE deliveries SET state='rejected',error_code='session_archived',error_status=409 "
                     "WHERE session=? AND kind='submit' AND state='pending'", (session_id,))
-            return self._session(db.execute(
-                "SELECT id,title,parent_id,fork_request_id,archived,workspace FROM sessions WHERE id=?",
-                (session_id,)).fetchone())
+            return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
         return await self.transaction(operation)
 
     async def activity(self, session: str, activity: WorkerActivity) -> None:
@@ -605,3 +628,110 @@ class HostStore:
                 db.execute("UPDATE updates SET payload=? WHERE id=?", (value.model_dump_json(), identity))
             return value
         return await self.transaction(operation)
+
+    async def save_project(self, project_id: str, name: str) -> tuple[str, str]:
+        key = hashlib.sha256(name.encode()).hexdigest()
+
+        def operation(db: sqlite3.Connection) -> tuple[str, str]:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute("SELECT digest,name FROM projects WHERE id=?", (project_id,)).fetchone()
+            if row is not None:
+                if str(row[0]) != key:
+                    raise BackendError("project_conflict")
+                return project_id, str(row[1])
+            db.execute("INSERT INTO projects(id,name,digest) VALUES(?,?,?)", (project_id, name, key))
+            return project_id, name
+        return await self.transaction(operation)
+
+    async def projects(self) -> list[tuple[str, str]]:
+        return await self._call(lambda db: [(str(row[0]), str(row[1])) for row in db.execute(
+            "SELECT id,name FROM projects ORDER BY rowid")])
+
+    async def product_settings(self) -> tuple[str, int]:
+        def operation(db: sqlite3.Connection) -> tuple[str, int]:
+            row = db.execute("SELECT display_name,revision FROM product_settings WHERE id=1").fetchone()
+            if row is None:
+                return "", 0
+            return str(row[0]), int(row[1])
+        return await self._call(operation)
+
+    async def save_product_settings(self, name: str, expected: int) -> tuple[str, int]:
+        def operation(db: sqlite3.Connection) -> tuple[str, int]:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute("SELECT display_name,revision FROM product_settings WHERE id=1").fetchone()
+            current = int(row[1]) if row else 0
+            if current != expected:
+                raise BackendError("settings_conflict")
+            revision = current + 1
+            db.execute(
+                "INSERT INTO product_settings(id,display_name,revision) VALUES(1,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,revision=excluded.revision",
+                (name, revision))
+            return name, revision
+        return await self.transaction(operation)
+
+    async def save_feedback(self, feedback_id: str, session_id: str, text: str, key: str) -> tuple[str, str, str]:
+        def operation(db: sqlite3.Connection) -> tuple[str, str, str]:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute("SELECT digest,session,text FROM feedback WHERE id=?", (feedback_id,)).fetchone()
+            if row is not None:
+                if str(row[0]) != key:
+                    raise BackendError("feedback_conflict")
+                return feedback_id, str(row[1]), str(row[2])
+            db.execute("INSERT INTO feedback(id,session,text,digest) VALUES(?,?,?,?)",
+                       (feedback_id, session_id, text, key))
+            return feedback_id, session_id, text
+        return await self.transaction(operation)
+
+    async def feedback_rows(self) -> list[tuple[str, str, str]]:
+        return await self._call(lambda db: [(str(row[0]), str(row[1]), str(row[2])) for row in db.execute(
+            "SELECT id,session,text FROM feedback ORDER BY rowid")])
+
+    async def save_share(self, share_id: str, session_id: str, key: str, payload: str) -> str:
+        def operation(db: sqlite3.Connection) -> str:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute("SELECT digest,session,payload FROM shares WHERE id=?", (share_id,)).fetchone()
+            if row is not None:
+                if str(row[0]) != key or str(row[1]) != session_id:
+                    raise BackendError("share_conflict")
+                return str(row[2])
+            db.execute("INSERT INTO shares(id,session,digest,payload) VALUES(?,?,?,?)",
+                       (share_id, session_id, key, payload))
+            return payload
+        return await self.transaction(operation)
+
+    async def share_record(self, share_id: str) -> tuple[str, str] | None:
+        def operation(db: sqlite3.Connection) -> tuple[str, str] | None:
+            row = db.execute("SELECT digest,session FROM shares WHERE id=?", (share_id,)).fetchone()
+            if row is None:
+                return None
+            return str(row[0]), str(row[1])
+        return await self._call(operation)
+
+    async def read_share(self, share_id: str, session_id: str) -> str:
+        def operation(db: sqlite3.Connection) -> str:
+            row = db.execute("SELECT payload FROM shares WHERE id=? AND session=?", (share_id, session_id)).fetchone()
+            if row is None:
+                raise BackendError("share_not_found", status=404)
+            return str(row[0])
+        return await self._call(operation)
+
+    async def ensure_import_session(self, session_id: str, title: str, workspace: str, project_id: str) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            if project_id and db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
+                raise BackendError("import_conflict")
+            row = db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if row is None:
+                db.execute("INSERT INTO sessions(id,title,workspace) VALUES(?,?,?)", (session_id, title, workspace))
+            if project_id:
+                db.execute(
+                    "INSERT INTO project_sessions(session,project) VALUES(?,?) "
+                    "ON CONFLICT(session) DO NOTHING",
+                    (session_id, project_id))
+        await self.transaction(operation)

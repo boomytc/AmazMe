@@ -203,6 +203,7 @@ class Session(Model):
     fork_request_id: str = ""
     archived: bool = False
     workspace: str = "primary"
+    project_id: str = ""
 
 
 class SessionList(Model):
@@ -238,6 +239,89 @@ class EventList(Model):
 class CreateSession(Model):
     title: str = Field(default="新会话", min_length=1, max_length=100)
     workspace: str = "primary"
+    project_id: str = ""
+
+
+class ProjectWrite(Model):
+    project_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    name: str = Field(min_length=1, max_length=80)
+
+
+class ProjectView(Model):
+    project_id: str
+    name: str
+
+
+class ProjectList(Model):
+    projects: list[ProjectView] = Field(default_factory=lambda: list[ProjectView]())
+
+
+class ProductSettings(Model):
+    display_name: str = ""
+    revision: int = 0
+
+
+class SettingsUpdate(Model):
+    display_name: str = Field(min_length=1, max_length=80)
+    expected_revision: int = Field(ge=0)
+
+
+class FeedbackWrite(Model):
+    feedback_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    session_id: str = ""
+    text: str = Field(min_length=1, max_length=4000)
+
+
+class FeedbackView(Model):
+    feedback_id: str
+    session_id: str
+    text: str
+
+
+class ShareWrite(Model):
+    share_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class ShareMessage(Model):
+    request_id: str
+    role: Literal["user", "assistant", "tool"]
+    content: str
+
+
+class ShareView(Model):
+    share_id: str
+    session_id: str
+    digest: str
+    messages: list[ShareMessage] = Field(default_factory=lambda: list[ShareMessage]())
+
+
+class ExportMessage(Model):
+    request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    role: Literal["user", "assistant", "tool"]
+    content: str = Field(min_length=1, max_length=16000)
+
+
+class ExportSession(Model):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    title: str = Field(min_length=1, max_length=100)
+    project_id: str = ""
+    workspace: str = "primary"
+    messages: list[ExportMessage] = Field(default_factory=lambda: list[ExportMessage]())
+
+
+class ExportBundle(Model):
+    format: str = Field(min_length=1, max_length=64)
+    digest: str = ""
+    projects: list[ProjectView] = Field(default_factory=lambda: list[ProjectView]())
+    sessions: list[ExportSession] = Field(default_factory=lambda: list[ExportSession]())
+    feedback: list[FeedbackView] = Field(default_factory=lambda: list[FeedbackView]())
+    settings: ProductSettings = Field(default_factory=ProductSettings)
+
+
+class ImportResult(Model):
+    format: Literal["amazme-export/1"]
+    sessions: int
+    created: int
 
 
 class MemoryWrite(Model):
