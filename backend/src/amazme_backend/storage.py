@@ -1805,6 +1805,9 @@ class SessionStore:
             calls = 0
             input_tokens = 0
             output_tokens = 0
+            cache_read_tokens = 0
+            cache_write_tokens = 0
+            signatures = 0
             priced_calls = 0
             unpriced_calls = 0
             cost = 0
@@ -1816,17 +1819,29 @@ class SessionStore:
                 calls += 1
                 input_tokens += completion.input_tokens
                 output_tokens += completion.output_tokens
+                cache_read_tokens += completion.cache_read_tokens
+                cache_write_tokens += completion.cache_write_tokens
+                if completion.message.reasoning_signature:
+                    signatures += 1
                 pin = completion.price_input_micro_per_million
                 pout = completion.price_output_micro_per_million
-                if pin is None or pout is None:
+                pcr = completion.price_cache_read_micro_per_million
+                pcw = completion.price_cache_write_micro_per_million
+                cache_priced = pcr is not None and pcw is not None
+                if pin is None or pout is None or ((completion.cache_read_tokens or completion.cache_write_tokens) and not cache_priced):
                     unpriced_calls += 1
                     continue
                 priced_calls += 1
-                cost += token_cost_micro(completion.input_tokens, completion.output_tokens, pin, pout)
+                cost += token_cost_micro(
+                    completion.input_tokens, completion.output_tokens,
+                    completion.cache_read_tokens, completion.cache_write_tokens,
+                    (pin, pout, pcr or 0, pcw or 0))
             priced = unpriced_calls == 0
             return UsageReport(
                 session_id=self.session_id, model_calls=calls, input_tokens=input_tokens,
-                output_tokens=output_tokens, priced_calls=priced_calls, unpriced_calls=unpriced_calls,
+                output_tokens=output_tokens, cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens, reasoning_signatures=signatures,
+                priced_calls=priced_calls, unpriced_calls=unpriced_calls,
                 priced=priced, cost_micro_usd=cost if priced else None)
 
         return await self.db.call(operation)

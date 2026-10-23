@@ -7115,6 +7115,24 @@
             "title": "Output Tokens",
             "default": 0
           },
+          "cache_read_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Write Tokens",
+            "default": 0
+          },
+          "reasoning_signatures": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Reasoning Signatures",
+            "default": 0
+          },
           "priced_calls": {
             "type": "integer",
             "minimum": 0.0,

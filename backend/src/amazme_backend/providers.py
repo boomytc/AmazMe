@@ -1,14 +1,15 @@
 import asyncio
 import hashlib
+import json
 import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from typing import cast
 from urllib.parse import urlsplit
 
 import httpx2
 from openai import AsyncOpenAI
 from openai.types.chat import (
-    ChatCompletionAssistantMessageParam,
     ChatCompletionMessageParam,
     ChatCompletionToolParam,
 )
@@ -115,34 +116,51 @@ class Completion(Model):
     response_id: str
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
     # Micro-USD per million tokens from the catalog at completion time. None means this call is not priced.
     price_input_micro_per_million: int | None = None
     price_output_micro_per_million: int | None = None
+    price_cache_read_micro_per_million: int | None = None
+    price_cache_write_micro_per_million: int | None = None
 
 
-# Published rates, in micro-USD per million tokens. deepseek-flash matches
-# packages/ai/src/providers/data/deepseek.json. faux matches the zero rates on the local faux model.
-# Cache rates are not applied: completions do not record cache tokens.
-_PRICE_MICRO_PER_MILLION: dict[tuple[str, str], tuple[int, int]] = {
-    ("faux", "faux"): (0, 0),
-    ("deepseek", "deepseek-flash"): (300_000, 1_200_000),
+# Published rates, in micro-USD per million tokens: input, output, cache read, cache write.
+# deepseek-flash matches packages/ai/src/providers/data/deepseek.json.
+# faux matches the zero rates on the local faux model.
+_PRICE_MICRO_PER_MILLION: dict[tuple[str, str], tuple[int, int, int, int]] = {
+    ("faux", "faux"): (0, 0, 0, 0),
+    ("deepseek", "deepseek-flash"): (300_000, 1_200_000, 6_000, 0),
 }
+_SIGNATURE_LIMIT = 65536
 
 
-def catalog_price(provider: str, model: str) -> tuple[int, int] | None:
+def catalog_price(provider: str, model: str) -> tuple[int, int, int, int] | None:
     """Return the catalog rate for the provider that actually answered.
 
     A faux completion is local and free even when the stored model name was left at its default.
     """
     if provider == "faux":
-        return (0, 0)
+        return (0, 0, 0, 0)
     return _PRICE_MICRO_PER_MILLION.get((provider, model))
 
 
-def token_cost_micro(input_tokens: int, output_tokens: int, input_rate: int, output_rate: int) -> int:
-    if min(input_tokens, output_tokens, input_rate, output_rate) < 0:
+def token_cost_micro(
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_write_tokens: int,
+    rates: tuple[int, int, int, int],
+) -> int:
+    if min(input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, *rates) < 0:
         raise BackendError("invalid_usage")
-    return (input_tokens * input_rate + output_tokens * output_rate) // 1_000_000
+    input_rate, output_rate, cache_read_rate, cache_write_rate = rates
+    return (
+        input_tokens * input_rate
+        + output_tokens * output_rate
+        + cache_read_tokens * cache_read_rate
+        + cache_write_tokens * cache_write_rate
+    ) // 1_000_000
 
 
 def with_catalog_price(config: ProviderConfig, completion: Completion) -> Completion:
@@ -152,7 +170,65 @@ def with_catalog_price(config: ProviderConfig, completion: Completion) -> Comple
     return completion.model_copy(update={
         "price_input_micro_per_million": price[0],
         "price_output_micro_per_million": price[1],
+        "price_cache_read_micro_per_million": price[2],
+        "price_cache_write_micro_per_million": price[3],
     })
+
+
+def _model_extra(value: object) -> dict[str, object]:
+    extra = getattr(value, "model_extra", None)
+    if not isinstance(extra, dict):
+        return {}
+    return cast(dict[str, object], extra)
+
+
+def _present_count(value: object) -> int | None:
+    """None means the provider omitted the count. Zero is a real count."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise BackendError("invalid_usage")
+    return value
+
+
+def read_stream_usage(usage: object) -> tuple[int, int, int, int]:
+    """Split a provider usage object into fresh input, output, cache read, and cache write.
+
+    Cached tokens are not also billed as fresh input. An explicit
+    ``prompt_tokens_details.cached_tokens``, including zero, wins over DeepSeek's
+    ``prompt_cache_hit_tokens`` and a top-level ``cached_tokens``.
+    """
+    prompt = _present_count(getattr(usage, "prompt_tokens", None)) or 0
+    output = _present_count(getattr(usage, "completion_tokens", None)) or 0
+    details = getattr(usage, "prompt_tokens_details", None)
+    cached: int | None = None
+    written = 0
+    if details is not None:
+        cached = _present_count(getattr(details, "cached_tokens", None))
+        written_count = _present_count(getattr(details, "cache_write_tokens", None))
+        written = 0 if written_count is None else written_count
+    if cached is None:
+        extra = _model_extra(usage)
+        for key in ("prompt_cache_hit_tokens", "cached_tokens"):
+            if key not in extra:
+                continue
+            cached = _present_count(extra[key])
+            if cached is not None:
+                break
+    if cached is None:
+        cached = 0
+    if min(prompt, output, cached, written) < 0 or cached + written > prompt:
+        raise BackendError("invalid_usage")
+    return prompt - cached - written, output, cached, written
+
+
+def read_reasoning_details(delta: object) -> list[object]:
+    """Return provider reasoning_details unchanged. Encrypted entries are not inspected."""
+    extra = _model_extra(delta)
+    details = extra.get("reasoning_details")
+    if not isinstance(details, list):
+        return []
+    return cast(list[object], details)
 
 
 @dataclass
@@ -173,7 +249,29 @@ def tool_definitions() -> list[ChatCompletionToolParam]:
     ]
 
 
-def provider_messages(messages: list[Message]) -> list[ChatCompletionMessageParam]:
+def reasoning_signature(details: list[object]) -> str:
+    if not details:
+        return ""
+    encoded = json.dumps(details, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded) > _SIGNATURE_LIMIT:
+        raise BackendError("reasoning_signature_limit")
+    return encoded
+
+
+def replay_reasoning_details(signature: str) -> list[object]:
+    """Restore a stored signature without rewriting its entries."""
+    if not signature:
+        return []
+    try:
+        details = json.loads(signature)
+    except json.JSONDecodeError:
+        raise BackendError("invalid_reasoning_signature") from None
+    if not isinstance(details, list):
+        raise BackendError("invalid_reasoning_signature")
+    return cast(list[object], details)
+
+
+def provider_messages(messages: list[Message], provider: str = "") -> list[ChatCompletionMessageParam]:
     result: list[ChatCompletionMessageParam] = [{"role": "system", "content": (
         "You are AmazMe. Use the provided tools when asked to inspect or modify the workspace. "
         "Commands execute in a Linux container at /workspace, not native macOS. "
@@ -188,13 +286,17 @@ def provider_messages(messages: list[Message]) -> list[ChatCompletionMessagePara
         elif message.role == "tool":
             result.append({"role": "tool", "content": message.content, "tool_call_id": message.tool_call_id})
         else:
-            assistant: ChatCompletionAssistantMessageParam = {"role": "assistant", "content": message.content}
+            assistant: dict[str, object] = {"role": "assistant", "content": message.content}
             if message.tool_calls:
                 assistant["tool_calls"] = [
                     {"id": call.id, "type": "function", "function": {"name": call.name, "arguments": call.arguments}}
                     for call in message.tool_calls
                 ]
-            result.append(assistant)
+            if message.reasoning_signature:
+                assistant["reasoning_details"] = replay_reasoning_details(message.reasoning_signature)
+            if provider == "deepseek":
+                assistant.setdefault("reasoning_content", "")
+            result.append(assistant)  # type: ignore[arg-type]
     return result
 
 
@@ -259,7 +361,8 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
     calls: dict[int, PendingCall] = {}
     text = ""
     response_id = ""
-    input_tokens = output_tokens = 0
+    input_tokens = output_tokens = cache_read_tokens = cache_write_tokens = 0
+    signature: list[object] = []
     finished = False
     http = httpx2.AsyncClient(proxy=config.proxy or None, trust_env=False, timeout=60)
     try:
@@ -267,7 +370,7 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
                                max_retries=0, timeout=60, default_headers=config.headers or None,
                                http_client=http) as client:
             response = await client.chat.completions.create(
-                model=config.model, messages=provider_messages(messages), tools=tool_definitions(),
+                model=config.model, messages=provider_messages(messages, config.provider), tools=tool_definitions(),
                 max_tokens=config.max_tokens, stream=True, stream_options={"include_usage": True},
                 extra_body={"thinking": {"type": "disabled"}},
             )
@@ -275,8 +378,9 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
                 async for chunk in response:
                     response_id = chunk.id
                     if chunk.usage:
-                        input_tokens, output_tokens = chunk.usage.prompt_tokens, chunk.usage.completion_tokens
+                        input_tokens, output_tokens, cache_read_tokens, cache_write_tokens = read_stream_usage(chunk.usage)
                     for choice in chunk.choices:
+                        signature.extend(read_reasoning_details(choice.delta))
                         if choice.delta.content:
                             text += choice.delta.content
                             if len(text) > 64000:
@@ -304,7 +408,8 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
         if any(not call.id for call in parsed) or len({call.id for call in parsed}) != len(parsed):
             raise BackendError("invalid_tool_calls")
         yield with_catalog_price(config, Completion(
-            message=Message(role="assistant", content=text, tool_calls=parsed),
-            response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens))
+            message=Message(role="assistant", content=text, tool_calls=parsed, reasoning_signature=reasoning_signature(signature)),
+            response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens))
     finally:
         await http.aclose()

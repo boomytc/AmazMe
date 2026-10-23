@@ -123,6 +123,8 @@ class Message(Model):
     tool_calls: list[ToolCall] = Field(default_factory=lambda: list[ToolCall]())
     tool_call_id: str = ""
     provider_response_id: str = ""
+    # Opaque provider replay data. Ordinary usage and logs do not include this text.
+    reasoning_signature: str = ""
 
 
 class SearchHit(Model):
@@ -148,6 +150,9 @@ class UsageReport(Model):
     model_calls: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    reasoning_signatures: int = Field(default=0, ge=0)
     priced_calls: int = Field(default=0, ge=0)
     unpriced_calls: int = Field(default=0, ge=0)
     priced: bool = False

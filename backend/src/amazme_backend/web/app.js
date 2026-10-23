@@ -880,7 +880,7 @@ function startClient() {
     if (!selected) return;
     try {
       const usage = await api(`/api/v1/sessions/${selected}/usage`);
-      const tokens = `${usage.model_calls} 次模型调用 · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens}`;
+      const tokens = `${usage.model_calls} 次模型调用 · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 缓存读 ${usage.cache_read_tokens} · 缓存写 ${usage.cache_write_tokens} · 推理签名 ${usage.reasoning_signatures}`;
       $("usage-report").textContent = usage.priced ? `${tokens} · ${money(usage.cost_micro_usd)}` : `${tokens} · 未计价`;
       $("error").textContent = "";
     } catch (failure) { error(failure); }
