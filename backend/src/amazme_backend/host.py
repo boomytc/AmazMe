@@ -159,14 +159,7 @@ from .storage import (
     session_database,
 )
 from .transport import app_factory
-from .web_tools import (
-    fetch_result,
-    original_question,
-    read_web,
-    search_result,
-    validate_base_url,
-    validate_fetch_url,
-)
+from .web_tools import execute_web_call, original_question, validate_base_url
 from .workspace_files import (
     FileChange,
     FileContent,
@@ -972,82 +965,15 @@ class Host:
             return original_question(text)
         return await self._with_session(session, read, require_active=False)
 
-    async def _dispatch_web(self, endpoint: str, body: dict[str, object], key: str,
-                            policy: WebPolicy) -> tuple[str, int, bytes]:
-        owns = self.web_client is None
-        client = self.web_client or httpx.AsyncClient(follow_redirects=False)
-        try:
-            async with client.stream(
-                "POST", endpoint, json=body, headers={
-                    "authorization": f"Bearer {key}", "content-type": "application/json", "accept": "application/json",
-                }, timeout=policy.timeout_ms / 1000,
-            ) as response:
-                if 300 <= response.status_code < 400:
-                    await response.aclose()
-                    return "redirect", response.status_code, b""
-                if response.status_code >= 400:
-                    await response.aclose()
-                    return "http", response.status_code, b""
-                raw = await read_web(response, policy.max_response_bytes)
-                if raw is None:
-                    return "limit", response.status_code, b""
-                return "ok", response.status_code, raw
-        except httpx.TransportError:
-            return "transport", 0, b""
-        finally:
-            if owns:
-                await client.aclose()
-
     async def web_call(self, session: str, value: WebCallRequest) -> WebCallView:
-        policy = await self.web_policy(session)
-        if not policy.enabled:
-            raise BackendError("web_disabled")
-        if not self._web_key():
-            raise BackendError("web_credential_missing")
-        search_count = policy.count
+        question = ""
         if value.kind == "search":
-            query = value.query.strip()
-            if not query or len(list(query)) > 128:
-                raise BackendError("web_query")
-            search_count = min(policy.count, value.count if value.count is not None else policy.count)
-            outbound: dict[str, object] = {"query": query, "count": search_count, "need_content": False}
-            if policy.send_original_question:
+            policy = await self.web_policy(session)
+            if policy.enabled and policy.send_original_question and self._web_key():
                 question = await self._web_question(session)
-                if question:
-                    outbound["ori_question"] = question
-            endpoint = policy.base_url + "/search"
-        else:
-            query = ""
-            target = validate_fetch_url(value.url)
-            outbound = {"url": target}
-            endpoint = policy.base_url + "/fetch"
-        canonical = json.dumps({"count": value.count, "kind": value.kind, "query": query, "url": value.url},
-                               sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        view, send = await self._with_session(
-            session, lambda store: store.begin_web_call(value.call_id, value.kind, canonical))
-        if not send:
-            return view
-        outcome, status, raw = await self._dispatch_web(endpoint, outbound, self._web_key(), policy)
-        phase: Literal["unknown", "done", "failed"] = "unknown"
-        error, result = "", ""
-        if outcome == "ok":
-            try:
-                parsed = json.loads(raw)
-                result = (search_result(parsed, search_count, policy.max_content_chars) if value.kind == "search"
-                          else fetch_result(parsed, str(outbound["url"]), policy.max_content_chars))
-                phase = "done"
-            except (json.JSONDecodeError, BackendError):
-                error = "web_invalid_response"
-        elif outcome == "redirect":
-            phase, error = "failed", "web_redirect"
-        elif outcome == "http":
-            phase, error = "failed", f"web_http_{status}"
-        elif outcome == "limit":
-            error = "web_response_limit"
-        else:
-            error = "web_transport"
         return await self._with_session(
-            session, lambda store: store.settle_web_call(value.call_id, phase, error, result))
+            session, lambda store: execute_web_call(
+                store, value, key=self._web_key(), question=question, client=self.web_client))
 
     async def _computer_enter(self, session: str) -> bool:
         async with self.computer_mu:

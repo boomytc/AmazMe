@@ -69,6 +69,8 @@ from .session_domain import (
     ToolInvocation,
     ToolObserved,
     ToolReturned,
+    WebRetrieval,
+    WebReturned,
     normalized_call,
 )
 
@@ -1278,6 +1280,27 @@ class SessionStore:
         run = self._run(db, request.request_id)
         steps = self._steps(db, request.request_id)
         for step in steps:
+            web_intent = step.kind == "tool" and step.phase == "intent" and step.call and step.call.name in {
+                "web_search", "web_fetch"}
+            if web_intent:
+                row = db.execute("SELECT payload FROM web_calls WHERE id=?", (step.step_id,)).fetchone()
+                if row:
+                    held = WebCallView.model_validate_json(row[0])
+                    if held.phase == "unknown":
+                        step.phase = "unknown"
+                        self._save_step(db, step)
+                        self._decide(db, c, request, Decision(
+                            status="cancelled" if request.cancel_requested else "unknown",
+                            error=held.error or "web_transport"))
+                        c.emit("tool", request.request_id, held.error or "web_transport")
+                        return Continue()
+                if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
+                    return Park("frozen")
+                if request.cancel_requested and not request.decision:
+                    self._decide(db, c, request, Decision(status="cancelled"))
+                    return Continue()
+                assert step.call is not None
+                return WebRetrieval(step.step_id, request.request_id, request.generation, step.call)
             if step.kind == "tool" and step.phase == "intent":
                 return QueryTool(step.step_id, request.request_id, request.generation)
         if request.cancel_requested and not request.decision:
@@ -1329,6 +1352,16 @@ class SessionStore:
                 if step.call.name == "delegate_task":
                     self._delegate(db, c, request, step)
                     return Continue()
+                if step.call.name in {"web_search", "web_fetch"}:
+                    # The call id is the step id. No epoch: the supervisor cannot prove a paid HTTP call.
+                    self._consume(db, c, step)
+                    step.phase, step.generation = "intent", request.generation
+                    self._save_step(db, step)
+                    request.status = "running"
+                    self._save_request(db, c, request)
+                    c.emit("tool", request.request_id, step.model_dump_json())
+                    c.hit("web_intent", request.request_id, step.step_id)
+                    return WebRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if not run.lease:
                     run.opening = True
                     self._save_run(db, run)
@@ -1419,13 +1452,41 @@ class SessionStore:
             db.execute("UPDATE effects SET payload=? WHERE id=?", (hold.model_dump_json(), hold.call_id))
             c.emit("effect", hold.request_id, hold.model_dump_json())
             return
+        if isinstance(observation, WebReturned):
+            action = observation.invocation
+            request = self._request(db, action.request_id)
+            step = self._step(db, action.step_id)
+            if (request.generation != action.generation or step.phase != "intent"
+                    or step.request_id != request.request_id or step.call is None
+                    or step.call.name not in {"web_search", "web_fetch"}):
+                raise BackendError("stale_generation")
+            if observation.phase == "refused":
+                step.phase = "applied"
+                self._save_step(db, step)
+                self._decide(db, c, request, Decision(status="failed", error=observation.error or "web_disabled"))
+                c.emit("tool", request.request_id, observation.error or "web_disabled")
+                return
+            if observation.phase == "unknown":
+                step.phase = "unknown"
+                self._save_step(db, step)
+                self._decide(db, c, request, Decision(
+                    status="cancelled" if request.cancel_requested else "unknown",
+                    error=observation.error or "web_transport"))
+                c.emit("tool", request.request_id, observation.error or "web_transport")
+                return
+            step.result = observation.result if observation.phase == "done" else observation.error
+            step.phase = "result"
+            self._save_step(db, step)
+            c.emit("tool", request.request_id, step.model_dump_json())
+            c.hit("web_result", request.request_id, step.step_id)
+            return
         if isinstance(observation, Failed):
             action = observation.action
             if isinstance(action, (CloseEpoch, OpenEpoch, QueryTool, ReconcileEffect)):
                 self._set_meta(db, "blocked", observation.error)
                 c.emit("cleanup", action.request_id, observation.error)
                 return
-            if isinstance(action, (ModelInvocation, ToolInvocation)):
+            if isinstance(action, (ModelInvocation, ToolInvocation, WebRetrieval)):
                 request = self._request(db, action.request_id)
                 step = self._step(db, action.step_id)
                 if request.generation != action.generation or step.request_id != request.request_id or step.phase != "intent":
@@ -1435,6 +1496,15 @@ class SessionStore:
                     self._save_step(db, step)
                     self._decide(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
                                                          error=observation.error))
+                elif isinstance(action, WebRetrieval):
+                    row = db.execute("SELECT payload FROM web_calls WHERE id=?", (action.step_id,)).fetchone()
+                    step.phase = "unknown"
+                    self._save_step(db, step)
+                    if row:
+                        self._decide(db, c, request, Decision(status="unknown", error=observation.error or "web_transport"))
+                    else:
+                        self._decide(db, c, request, Decision(
+                            status="cancelled" if request.cancel_requested else "failed", error=observation.error))
                 # Tool failures are queried; a transport exception says nothing about effects.
                 return
             raise BackendError("invalid_failed_action")

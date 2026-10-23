@@ -21,22 +21,36 @@ from .contracts import (
     ToolCall,
     ToolObservation,
     ToolResult,
+    WebFetch,
+    WebSearch,
     WriteFile,
 )
 from .providers import Completion
+from .web_tools import validate_fetch_url
 
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
         value = WriteFile.model_validate_json(call.arguments)
-    else:
+    elif call.name == "delegate_task":
         value = DelegateTasks.model_validate_json(call.arguments)
         if any(not task or len(task) > 16000 for task in value.tasks):
             raise BackendError("invalid_child_input")
+    elif call.name == "web_search":
+        parsed = WebSearch.model_validate_json(call.arguments)
+        query = parsed.query.strip()
+        if not query or len(list(query)) > 128:
+            raise BackendError("web_query")
+        value = parsed.model_copy(update={"query": query})
+    elif call.name == "web_fetch":
+        parsed_fetch = WebFetch.model_validate_json(call.arguments)
+        value = parsed_fetch.model_copy(update={"url": validate_fetch_url(parsed_fetch.url)})
+    else:
+        raise BackendError("not_an_execution_tool")
     if isinstance(value, ReadFile):
         path = PurePosixPath(value.path)
         if path.is_absolute() or ".." in path.parts:
@@ -122,7 +136,17 @@ class ReconcileEffect:
     resolution: EffectResolution
 
 
-type Action = Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect
+@dataclass(frozen=True)
+class WebRetrieval:
+    """A paid web call owned by the session worker. It never opens an execution epoch."""
+
+    step_id: str
+    request_id: str
+    generation: int
+    call: ToolCall
+
+
+type Action = Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect | WebRetrieval
 
 
 @dataclass(frozen=True)
@@ -174,4 +198,15 @@ class Previewed:
     preview: Preview
 
 
-type Observation = ModelReturned | ToolReturned | ToolObserved | EpochOpened | EpochClosed | EffectResolved | Failed | Previewed
+@dataclass(frozen=True)
+class WebReturned:
+    invocation: WebRetrieval
+    phase: Literal["unknown", "done", "failed", "refused"]
+    error: str = ""
+    result: str = ""
+
+
+type Observation = (
+    ModelReturned | ToolReturned | ToolObserved | EpochOpened | EpochClosed | EffectResolved | Failed | Previewed
+    | WebReturned
+)

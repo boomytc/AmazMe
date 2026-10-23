@@ -10,9 +10,36 @@ import httpx
 import pytest
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import CreateSession, HostFence, ProcessLease, Submit
+from amazme_backend.contracts import (
+    BackendError,
+    CreateSession,
+    HostFence,
+    Message,
+    ProcessLease,
+    ProviderConfig,
+    Submit,
+    ToolCall,
+    WebFetch,
+    WebPolicy,
+    WebSearch,
+)
 from amazme_backend.host import Host, application
+from amazme_backend.providers import Completion, stream
+from amazme_backend.session_domain import (
+    CloseEpoch,
+    Continue,
+    ModelInvocation,
+    ModelReturned,
+    OpenEpoch,
+    Park,
+    QueryTool,
+    ToolInvocation,
+    WebRetrieval,
+    WebReturned,
+)
 from amazme_backend.storage import SessionStore, session_database
+from amazme_backend.web_tools import dispatch_web
+from amazme_backend.worker import Worker, command_for
 
 SESSION = "a" * 32
 KEY = "sk-test-not-real"
@@ -253,3 +280,170 @@ def test_browser_enables_web_for_the_selected_session() -> None:
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
                             cwd=Path(__file__).parents[1])
     assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+def _model_transport(seen: list[httpx.Request]) -> httpx.MockTransport:
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if b"transport" in request.content:
+            raise httpx.ConnectError("down")
+        if request.url.path.endswith("/fetch"):
+            return httpx.Response(200, json={"title": "T", "content": "正文"})
+        return httpx.Response(200, json={"results": [
+            {"url": "https://example.com/a", "title": "A", "snippet": "s", "date": None}]})
+    return httpx.MockTransport(handle)
+
+
+async def _complete(messages: list[Message]) -> Completion:
+    found: Completion | None = None
+    async for item in stream(ProviderConfig(provider="faux"), messages):
+        if isinstance(item, Completion):
+            found = item
+    assert found is not None
+    return found
+
+
+async def _until_idle(worker: Worker, seen: list[httpx.Request]) -> None:
+    for _ in range(30):
+        action = await worker.store.advance()
+        if isinstance(action, Park):
+            return
+        if isinstance(action, Continue):
+            continue
+        if isinstance(action, (OpenEpoch, ToolInvocation, QueryTool, CloseEpoch)):
+            raise AssertionError(type(action).__name__)
+        if isinstance(action, ModelInvocation):
+            await worker.store.advance(ModelReturned(action, await _complete(action.messages)))
+            continue
+        if isinstance(action, WebRetrieval):
+            before = len(seen)
+            outcome = await worker.perform(action)
+            assert isinstance(outcome, WebReturned)
+            await worker.perform(action)
+            sent = 0 if outcome.phase == "refused" else 1
+            assert len(seen) == before + sent
+            if outcome.phase == "unknown":
+                resumed = await worker.store.advance()
+                assert isinstance(resumed, Continue) and len(seen) == before + sent
+                continue
+            await worker.store.advance(outcome)
+            continue
+        raise AssertionError(type(action).__name__)
+    raise AssertionError("turn did not settle")
+
+
+async def test_model_web_tool_stays_out_of_the_vm_and_does_not_replay(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    (tmp_path / "sessions" / SESSION).mkdir(parents=True)
+    worker = Worker(host.profile, SESSION, "worker-web")
+    await worker.store.initialize()
+    fence = HostFence(host_epoch=1, build_id=worker.build)
+    await worker.store.fence(fence)
+    seen: list[httpx.Request] = []
+    worker.web_client = httpx.AsyncClient(transport=_model_transport(seen), follow_redirects=False)
+    try:
+        await worker.store.accept(Submit(request_id="off", text="/web 项目结构"), fence)
+        await _until_idle(worker, seen)
+        assert seen == []
+        off = next(item for item in (await worker.store.snapshot()).requests if item.request_id == "off")
+        assert off.status == "failed" and off.error == "web_disabled"
+        calls = await worker.store.db.call(lambda db: db.execute("SELECT COUNT(*) FROM web_calls").fetchone()[0])
+        assert calls == 0
+        await worker.store.save_web_policy(WebPolicy(
+            enabled=True, base_url="https://tools.example/v1/tools", send_original_question=True))
+        await worker.store.accept(Submit(request_id="search", text="/web 项目结构"), fence)
+        await _until_idle(worker, seen)
+        assert len(seen) == 1
+        sent = seen[0]
+        assert str(sent.url) == "https://tools.example/v1/tools/search"
+        assert sent.headers["authorization"] == f"Bearer {KEY}"
+        assert "x-project" not in {name.lower() for name in sent.headers}
+        assert SECRET_HEADER not in sent.headers.values()
+        body = json.loads(sent.content)
+        assert body["query"] == "项目结构" and body["ori_question"] == "/web 项目结构"
+        assert "chat.example" not in str(sent.url) and KEY not in sent.content.decode()
+        messages = await worker.store.messages("search")
+        assert [item.role for item in messages] == ["user", "assistant", "tool", "assistant"]
+        assert messages[1].tool_calls[0].name == "web_search"
+        assert messages[2].tool_call_id == messages[1].tool_calls[0].id
+        assert "https://example.com/a" in messages[2].content and messages[3].content == messages[2].content
+        assert KEY not in messages[2].content and SECRET_HEADER not in messages[2].content
+        search_receipt = next(item for item in (await worker.store.snapshot()).requests if item.request_id == "search")
+        assert search_receipt.status == "succeeded" and search_receipt.answer == messages[2].content
+        assert KEY not in search_receipt.answer
+        await worker.store.accept(Submit(request_id="page", text="/fetch https://example.com/doc"), fence)
+        await _until_idle(worker, seen)
+        assert len(seen) == 2 and str(seen[1].url) == "https://tools.example/v1/tools/fetch"
+        assert json.loads(seen[1].content) == {"url": "https://example.com/doc"}
+        fetched = await worker.store.messages("page")
+        page_tool = next(item for item in reversed(fetched) if item.role == "tool")
+        assert "正文" in page_tool.content and KEY not in page_tool.content
+        assert fetched[-1].role == "assistant" and fetched[-1].content == page_tool.content
+        await worker.store.accept(Submit(request_id="lost", text="/web transport"), fence)
+        await _until_idle(worker, seen)
+        assert len(seen) == 3
+        lost = next(item for item in (await worker.store.snapshot()).requests if item.request_id == "lost")
+        assert lost.status == "unknown" and lost.error == "web_transport"
+        payloads = await worker.store.db.call(
+            lambda db: [json.loads(row[0]) for row in db.execute("SELECT payload FROM web_calls")])
+        assert any(item["phase"] == "unknown" and item["error"] == "web_transport" for item in payloads)
+        assert all(KEY not in json.dumps(item) for item in payloads)
+        runs = await worker.store.db.call(lambda db: [row[0] for row in db.execute("SELECT payload FROM runs")])
+        assert all("supervisor_id" not in row for row in runs)
+    finally:
+        await worker.web_client.aclose()
+        await worker.store.db.close()
+        await worker.supervisor.close()
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+async def test_model_web_tool_without_a_key_does_not_reserve_a_call(tmp_path: Path) -> None:
+    host = _host(tmp_path, provider="faux")
+    (tmp_path / "sessions" / SESSION).mkdir(parents=True)
+    worker = Worker(host.profile, SESSION, "worker-web")
+    await worker.store.initialize()
+    fence = HostFence(host_epoch=1, build_id=worker.build)
+    await worker.store.fence(fence)
+    seen: list[httpx.Request] = []
+    worker.web_client = httpx.AsyncClient(transport=_model_transport(seen), follow_redirects=False)
+    try:
+        await worker.store.save_web_policy(WebPolicy(enabled=True, base_url="https://tools.example/v1/tools"))
+        await worker.store.accept(Submit(request_id="none", text="/web 项目结构"), fence)
+        await _until_idle(worker, seen)
+        assert seen == []
+        receipt = next(item for item in (await worker.store.snapshot()).requests if item.request_id == "none")
+        assert receipt.status == "failed" and receipt.error == "web_credential_missing"
+        calls = await worker.store.db.call(lambda db: db.execute("SELECT COUNT(*) FROM web_calls").fetchone()[0])
+        assert calls == 0
+    finally:
+        await worker.web_client.aclose()
+        await worker.store.db.close()
+        await worker.supervisor.close()
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+def test_web_tools_are_not_container_commands() -> None:
+    search = ToolCall(id="call", name="web_search", arguments=WebSearch(query="项目结构").model_dump_json())
+    fetch = ToolCall(id="call", name="web_fetch", arguments=WebFetch(url="https://example.com/a").model_dump_json())
+    for call in (search, fetch):
+        with pytest.raises(BackendError, match="not_an_execution_tool"):
+            command_for(call)
+
+
+async def test_dispatch_opens_a_client_without_the_chat_proxy(monkeypatch: pytest.MonkeyPatch) -> None:
+    opened: list[dict[str, object]] = []
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"results": []}))
+    real = httpx.AsyncClient
+
+    def factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        opened.append(dict(kwargs))
+        return real(transport=transport, follow_redirects=bool(kwargs.get("follow_redirects", False)))
+
+    monkeypatch.setattr("amazme_backend.web_tools.httpx.AsyncClient", factory)
+    outcome, status, _raw = await dispatch_web(
+        "https://tools.example/v1/tools/search", {"query": "q", "count": 1, "need_content": False},
+        KEY, WebPolicy(enabled=True, base_url="https://tools.example/v1/tools", max_response_bytes=1000), None)
+    assert outcome == "ok" and status == 200
+    assert opened == [{"follow_redirects": False}]

@@ -1,12 +1,12 @@
 """DeepSeek web search and fetch. Chat headers and proxies are not forwarded."""
 
 import json
-from typing import cast
+from typing import Literal, Protocol, cast
 from urllib.parse import urlsplit
 
 import httpx
 
-from .contracts import BackendError
+from .contracts import BackendError, WebCallRequest, WebCallView, WebPolicy
 
 DEFAULT_WEB_BASE = "https://api.deepseek.com/v1/tools"
 WebOutcome = str
@@ -100,6 +100,96 @@ def fetch_result(payload: object, url: str, max_chars: int) -> str:
     if kept_title:
         result["title"] = kept_title
     return json.dumps(result, ensure_ascii=False, separators=(",", ":"))
+
+
+class WebCaller(Protocol):
+    async def web_policy(self) -> WebPolicy: ...
+
+    async def begin_web_call(self, call_id: str, kind: Literal["search", "fetch"],
+                             body: str) -> tuple[WebCallView, bool]: ...
+
+    async def settle_web_call(self, call_id: str, phase: Literal["unknown", "done", "failed"],
+                              error: str, result: str) -> WebCallView: ...
+
+
+async def dispatch_web(endpoint: str, body: dict[str, object], key: str, policy: WebPolicy,
+                       client: httpx.AsyncClient | None) -> tuple[str, int, bytes]:
+    """POST one paid call. The chat proxy and extra headers are not available here."""
+    owns = client is None
+    http = client or httpx.AsyncClient(follow_redirects=False)
+    try:
+        async with http.stream(
+            "POST", endpoint, json=body, headers={
+                "authorization": f"Bearer {key}", "content-type": "application/json", "accept": "application/json",
+            }, timeout=policy.timeout_ms / 1000,
+        ) as response:
+            if 300 <= response.status_code < 400:
+                await response.aclose()
+                return "redirect", response.status_code, b""
+            if response.status_code >= 400:
+                await response.aclose()
+                return "http", response.status_code, b""
+            raw = await read_web(response, policy.max_response_bytes)
+            if raw is None:
+                return "limit", response.status_code, b""
+            return "ok", response.status_code, raw
+    except httpx.TransportError:
+        return "transport", 0, b""
+    finally:
+        if owns:
+            await http.aclose()
+
+
+async def execute_web_call(store: WebCaller, value: WebCallRequest, *, key: str, question: str,
+                           client: httpx.AsyncClient | None) -> WebCallView:
+    """Reserve the call before sending. A disabled policy or a missing key leaves no row."""
+    policy = await store.web_policy()
+    if not policy.enabled:
+        raise BackendError("web_disabled")
+    if not key:
+        raise BackendError("web_credential_missing")
+    search_count = policy.count
+    if value.kind == "search":
+        query = value.query.strip()
+        if not query or len(list(query)) > 128:
+            raise BackendError("web_query")
+        search_count = min(policy.count, value.count if value.count is not None else policy.count)
+        outbound: dict[str, object] = {"query": query, "count": search_count, "need_content": False}
+        if policy.send_original_question:
+            clipped = original_question(question)
+            if clipped:
+                outbound["ori_question"] = clipped
+        endpoint = policy.base_url + "/search"
+    else:
+        query = ""
+        target = validate_fetch_url(value.url)
+        outbound = {"url": target}
+        endpoint = policy.base_url + "/fetch"
+    canonical = json.dumps({"count": value.count, "kind": value.kind, "query": query, "url": value.url},
+                           sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    view, send = await store.begin_web_call(value.call_id, value.kind, canonical)
+    if not send:
+        return view
+    outcome, status, raw = await dispatch_web(endpoint, outbound, key, policy, client)
+    phase: Literal["unknown", "done", "failed"] = "unknown"
+    error, result = "", ""
+    if outcome == "ok":
+        try:
+            parsed = json.loads(raw)
+            result = (search_result(parsed, search_count, policy.max_content_chars) if value.kind == "search"
+                      else fetch_result(parsed, str(outbound["url"]), policy.max_content_chars))
+            phase = "done"
+        except (json.JSONDecodeError, BackendError):
+            error = "web_invalid_response"
+    elif outcome == "redirect":
+        phase, error = "failed", "web_redirect"
+    elif outcome == "http":
+        phase, error = "failed", f"web_http_{status}"
+    elif outcome == "limit":
+        error = "web_response_limit"
+    else:
+        error = "web_transport"
+    return await store.settle_web_call(value.call_id, phase, error, result)
 
 
 async def read_web(response: httpx.Response, max_bytes: int) -> bytes | None:

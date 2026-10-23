@@ -6668,7 +6668,9 @@
               "shell",
               "read_file",
               "write_file",
-              "delegate_task"
+              "delegate_task",
+              "web_search",
+              "web_fetch"
             ],
             "title": "Name"
           },

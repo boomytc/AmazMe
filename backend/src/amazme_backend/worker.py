@@ -7,6 +7,7 @@ import logging
 import shlex
 import time
 
+import httpx
 import uvicorn
 from fastapi import FastAPI
 
@@ -38,6 +39,9 @@ from .contracts import (
     ToolLookup,
     ToolObservation,
     ToolResult,
+    WebCallRequest,
+    WebFetch,
+    WebSearch,
     WorkerActivity,
     WorkerRequest,
     WorkerState,
@@ -65,9 +69,12 @@ from .session_domain import (
     ToolInvocation,
     ToolObserved,
     ToolReturned,
+    WebRetrieval,
+    WebReturned,
 )
 from .storage import SessionStore, now_ms, session_database
 from .transport import app_factory
+from .web_tools import execute_web_call
 from .workspace_map import PRIMARY, grant_names, guest_path, split_client_path
 
 _FILE_TOOL = """# Runs inside the granted workspace mount.
@@ -184,6 +191,7 @@ class Worker:
         self.storage_ready = False
         self.stop_requested = False
         self.dispatch_lock = asyncio.Lock()
+        self.web_client: httpx.AsyncClient | None = None
 
     async def identity(self) -> Identity:
         return self.profile.identity(self.instance, self.build, role="worker", state=self.state,
@@ -277,7 +285,7 @@ class Worker:
 
     def _interrupt(self) -> None:
         # Open/close/reconciliation boundaries are never cancelled with business work.
-        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation)):
+        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval)):
             self.run_task.cancel()
 
     async def cancel(self, value: Cancel) -> Receipt:
@@ -285,7 +293,7 @@ class Worker:
         self.last_demand = time.monotonic()
         async with self.dispatch_lock:
             receipt = await self.store.cancel(value.request_id, value)
-            if isinstance(self.current, (ModelInvocation, ToolInvocation)):
+            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval)):
                 current = await self.store.get(self.current.request_id)
                 if current.cancel_requested:
                     self._interrupt()
@@ -377,6 +385,32 @@ class Worker:
         workspace = session_workspace(self.profile.path, self.session)
         return inject_memories(messages, relevant_memories(self.profile.path, workspace, query))
 
+    async def _retrieve_web(self, action: WebRetrieval) -> WebReturned:
+        self._use_current_provider()
+        live = self.store.config
+        key = live.api_key.get_secret_value() if live.provider == "deepseek" else ""
+        if action.call.name == "web_search":
+            args = WebSearch.model_validate_json(action.call.arguments)
+            value = WebCallRequest(call_id=action.step_id, kind="search", query=args.query, count=args.count)
+        elif action.call.name == "web_fetch":
+            fetched = WebFetch.model_validate_json(action.call.arguments)
+            value = WebCallRequest(call_id=action.step_id, kind="fetch", url=fetched.url)
+        else:
+            raise BackendError("not_an_execution_tool")
+        messages = await self.store.messages(action.request_id)
+        question = next((item.content for item in reversed(messages)
+                         if item.role == "user" and item.content.strip()), "")
+        try:
+            view = await execute_web_call(
+                self.store, value, key=key, question=question, client=self.web_client)
+        except BackendError as exc:
+            if exc.code in {"web_disabled", "web_credential_missing"}:
+                return WebReturned(action, "refused", exc.code)
+            raise
+        if view.call_id != action.step_id:
+            raise BackendError("tool_result_identity_mismatch")
+        return WebReturned(action, view.phase, view.error, view.result)
+
     async def perform(self, action: Action) -> Observation:
         if self.validation:
             raise BackendError("validation_worker")
@@ -414,6 +448,8 @@ class Worker:
         if isinstance(action, CloseEpoch):
             cleanup = await self.supervisor.call("POST", "/epochs/close", Cleanup, action.lease)
             return EpochClosed(action.request_id, action.lease, cleanup)
+        if isinstance(action, WebRetrieval):
+            return await self._retrieve_web(action)
         if isinstance(action, ToolInvocation):
             command = command_for(action.call, grant_names(self.profile.path))
             result = await self.supervisor.call("POST", "/tools/run", ToolResult, RunTool(

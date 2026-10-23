@@ -113,7 +113,7 @@ class Receipt(Model):
 
 class ToolCall(Model):
     id: str
-    name: Literal["shell", "read_file", "write_file", "delegate_task"]
+    name: Literal["shell", "read_file", "write_file", "delegate_task", "web_search", "web_fetch"]
     arguments: str
 
 
@@ -156,6 +156,15 @@ class WriteFile(ReadFile):
 
 class DelegateTasks(Model):
     tasks: list[str] = Field(min_length=1, max_length=8)
+
+
+class WebSearch(Model):
+    query: str = Field(min_length=1, max_length=512)
+    count: int | None = Field(default=None, ge=1, le=50)
+
+
+class WebFetch(Model):
+    url: str = Field(min_length=1, max_length=8192)
 
 
 class ToolResult(Model):

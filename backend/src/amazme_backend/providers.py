@@ -26,6 +26,8 @@ from .contracts import (
     Shell,
     ToolCall,
     UpdateModelSettings,
+    WebFetch,
+    WebSearch,
     WriteFile,
 )
 
@@ -128,6 +130,8 @@ def tool_definitions() -> list[ChatCompletionToolParam]:
         {"type": "function", "function": {"name": "read_file", "description": "Read a relative UTF-8 workspace file.", "parameters": ReadFile.model_json_schema()}},
         {"type": "function", "function": {"name": "write_file", "description": "Write a relative UTF-8 workspace file.", "parameters": WriteFile.model_json_schema()}},
         {"type": "function", "function": {"name": "delegate_task", "description": "Delegate up to eight required independent tasks. Wait for their results before completing.", "parameters": DelegateTasks.model_json_schema()}},
+        {"type": "function", "function": {"name": "web_search", "description": "Search through the saved web policy. It stays off until the user enables that policy, does not run in the workspace container, and an unknown result must not be retried.", "parameters": WebSearch.model_json_schema()}},
+        {"type": "function", "function": {"name": "web_fetch", "description": "Fetch one http(s) page through the saved web policy. It stays off until the user enables that policy, does not run in the workspace container, and an unknown result must not be retried.", "parameters": WebFetch.model_json_schema()}},
     ]
 
 
@@ -135,7 +139,9 @@ def provider_messages(messages: list[Message]) -> list[ChatCompletionMessagePara
     result: list[ChatCompletionMessageParam] = [{"role": "system", "content": (
         "You are AmazMe. Use the provided tools when asked to inspect or modify the workspace. "
         "Commands execute in a Linux container at /workspace, not native macOS. "
-        "Only the granted workspace persists. Network is disabled. Report actual tool results. "
+        "Only the granted workspace persists. Shell network is disabled. "
+        "web_search and web_fetch use the saved web policy and do not run in the container. "
+        "Report actual tool results. "
         "Never claim a command ran unless a tool result confirms it. Keep answers concise."
     )}]
     for message in messages:
@@ -186,6 +192,12 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
         elif prompt.startswith("/delegate ") and not results:
             tasks = DelegateTasks(tasks=TypeAdapter(list[str]).validate_json(prompt[10:]))
             call = ToolCall(id=identity, name="delegate_task", arguments=tasks.model_dump_json())
+        elif prompt.startswith("/web ") and not results:
+            call = ToolCall(id=identity, name="web_search",
+                            arguments=WebSearch(query=prompt[5:].strip()).model_dump_json())
+        elif prompt.startswith("/fetch ") and not results:
+            call = ToolCall(id=identity, name="web_fetch",
+                            arguments=WebFetch(url=prompt[7:].strip()).model_dump_json())
         elif prompt.startswith("/sequence "):
             commands = TypeAdapter(list[str]).validate_json(prompt[10:])
             if not commands or len(commands) > 24:

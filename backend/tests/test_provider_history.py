@@ -42,6 +42,21 @@ async def test_faux_sequence_has_stable_context_bound_ids_and_usage() -> None:
     assert not final.message.tool_calls and final.message.content == "two"
 
 
+async def test_faux_web_tools_stop_after_one_result() -> None:
+    search = await completion([Message(role="user", content="/web 项目结构")])
+    call = search.message.tool_calls[0]
+    assert call.name == "web_search" and json.loads(call.arguments)["query"] == "项目结构"
+    fetched = await completion([Message(role="user", content="/fetch https://example.com/a")])
+    assert fetched.message.tool_calls[0].name == "web_fetch"
+    names = [tool["function"]["name"] for tool in tool_definitions()]
+    assert "web_search" in names and "web_fetch" in names
+    done = await completion([
+        Message(role="user", content="/web 项目结构"), search.message,
+        Message(role="tool", content='{"sources":[]}', tool_call_id=call.id),
+    ])
+    assert not done.message.tool_calls and done.message.content == '{"sources":[]}'
+
+
 async def test_faux_delegate_and_tool_schema_agree() -> None:
     result = await completion([Message(role="user", content='/delegate ["first", "second"]')])
     call = result.message.tool_calls[0]
