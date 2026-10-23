@@ -35,8 +35,8 @@ import lockfile from "proper-lockfile";
 import Type, { type Static } from "typebox";
 import { Check } from "typebox/value";
 import { getClientIdentity } from "../core/client-identity.ts";
-import { ModelRuntime } from "../core/model-runtime.ts";
 import type { AgentOperationError } from "../core/plugins/agent-controller.ts";
+import { ModelRuntime } from "../core/model-runtime.ts";
 import { describePluginManifests } from "../core/plugins/info.ts";
 import { durableToolSelection } from "../core/tool-selection.ts";
 import { abortArchivedForks } from "../core/fork-admission.ts";
@@ -47,34 +47,26 @@ import {
 	loadCodingResources,
 	refreshCodingProjectTrust,
 } from "../core/hosted-settings.ts";
+import { openSessionStorage } from "../durable/session-database.ts";
+import {
+	lockSessionDatabase,
+	type SessionLease,
+} from "../durable/session-lease.ts";
+import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
+import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
+import { ProjectCatalog } from "./project-catalog.ts";
+import { createApprovalGate } from "./services/approvals-provider.ts";
 import {
 	createCodingRegistry,
 	createHarnessSettings,
 	ExecutionEnvs,
 } from "./session-registry.ts";
 import {
-	applyDurableMcpSelection,
-	type DurableMcp,
-	openDurableMcp,
-} from "../durable/mcp.ts";
-import {
-	findSessionOpenError,
-	lockSessionDatabase,
-	openSessionStorage,
-	type SessionLease,
-	SessionOpenErrorDataSchema,
-} from "../durable/session-database.ts";
-import { Subagent } from "../durable/subagent.ts";
-import { COORDINATOR_PROTOCOL_VERSION } from "./coordinator.ts";
-import { createSessionPluginFacetLoader } from "./plugins/bundled.ts";
-import {
 	consumeInternalProcessRole,
 	encodeControlLine,
 	isDirectInternalProcessEntry,
 	MAX_CONTROL_LINE_BYTES,
 } from "./process.ts";
-import { ProjectCatalog } from "./project-catalog.ts";
-import { createApprovalGate } from "./services/approvals-provider.ts";
 import { SessionLifecycle } from "./services/session-lifecycle.ts";
 import {
 	createSessionWorkerServices,
@@ -217,7 +209,19 @@ export const SessionWorkerEventSchema = Type.Union([
 		sessionKey: Type.String(),
 		message: Type.String(),
 		/** Present when the Session database exists but cannot be opened; the server rebuilds the typed error. */
-		sessionOpenError: Type.Optional(SessionOpenErrorDataSchema),
+		sessionOpenError: Type.Optional(Type.Object({
+			kind: Type.Union([
+				Type.Literal("newer-schema"),
+				Type.Literal("migration-failed"),
+				Type.Literal("invalid-schema"),
+				Type.Literal("not-a-database"),
+				Type.Literal("corrupt"),
+			]),
+			path: Type.String({ minLength: 1 }),
+			detail: Type.String(),
+			version: Type.Optional(Type.Integer({ minimum: 0 })),
+			supportedVersion: Type.Optional(Type.Integer({ minimum: 0 })),
+		})),
 	}),
 	Type.Object({
 		type: Type.Literal("demand_applied"),
@@ -1044,7 +1048,7 @@ export async function runSessionWorkerWithHarness(
 		}
 		await run(options, createHarness);
 	} catch (error) {
-		const openError = findSessionOpenError(error);
+		const openError = sessionOpenErrorOf(error);
 		const message = openError?.message ?? (error instanceof Error ? error.message : String(error));
 		const token = process.env[SESSION_WORKER_CONTROL_TOKEN_ENV];
 		const encodedSessionKey = process.env[SESSION_WORKER_SESSION_KEY_ENV];
@@ -1062,6 +1066,35 @@ export async function runSessionWorkerWithHarness(
 		}
 		throw error;
 	}
+}
+
+type SessionOpenErrorJson = {
+	kind: "newer-schema" | "migration-failed" | "invalid-schema" | "not-a-database" | "corrupt";
+	path: string;
+	detail: string;
+	version?: number;
+	supportedVersion?: number;
+};
+
+function sessionOpenErrorOf(error: unknown): (Error & { toJSON(): SessionOpenErrorJson }) | undefined {
+	const pending = [error];
+	const seen = new Set<unknown>();
+	while (pending.length > 0) {
+		const current = pending.shift();
+		if (current === undefined || current === null || seen.has(current)) continue;
+		seen.add(current);
+		if (
+			current instanceof Error &&
+			current.name === "SessionOpenError" &&
+			"toJSON" in current &&
+			typeof current.toJSON === "function"
+		) {
+			return current as Error & { toJSON(): SessionOpenErrorJson };
+		}
+		if (current instanceof AggregateError) pending.push(...current.errors);
+		if (current instanceof Error) pending.push(current.cause);
+	}
+	return undefined;
 }
 
 export async function createCodingAgentHarness(
@@ -1151,9 +1184,7 @@ export async function createCodingAgentHarness(
 			}),
 		);
 	}
-	// The durable runtime installs this tool beside its registry; the Session worker is the same
-	// agent, so a session opened here can delegate to a subagent the way the TUI's does.
-	registry.install(Subagent);
+	// Subagents and MCP stay on the Python backend. This worker only opens the legacy test harness.
 	// The approval gate is a tool hook, so it belongs to the registry the Harness takes.
 	const approvalGate = createApprovalGate({
 		mode: async () => {
@@ -1165,16 +1196,7 @@ export async function createCodingAgentHarness(
 	});
 	registry.install(approvalGate.extension);
 	let harness: Harness | undefined;
-	let mcp: DurableMcp | undefined;
 	try {
-		const activeMcp = await openDurableMcp({
-			registry,
-			cwd,
-			settings: settingsManager,
-			models: modelRuntime,
-			report: (error) => console.error(error),
-		});
-		mcp = activeMcp;
 		harness = await Harness.open(
 			await openSessionStorage(lease),
 			{
@@ -1210,16 +1232,13 @@ export async function createCodingAgentHarness(
 			},
 			init: async (tx, id) => {
 				const agent = await tx.doc(AgentDoc, id);
-				agent.tools = activeMcp.selection(
-					durableToolSelection(
-						{},
-						settingsManager.getDefaultTools(),
-						settingsManager.getSettings().defaultTools,
-					),
+				agent.tools = durableToolSelection(
+					{},
+					settingsManager.getDefaultTools(),
+					settingsManager.getSettings().defaultTools,
 				);
 			},
 		});
-		await applyDurableMcpSelection(mcp, conversation, TODO_CONTEXT);
 		return {
 			admission,
 			executionEnv: envs.env({
@@ -1237,16 +1256,10 @@ export async function createCodingAgentHarness(
 			modelRuntime,
 			settingsManager,
 			resources,
-			mcp: activeMcp.management,
-			alignConversation: (conversation, reloadContext) =>
-				applyDurableMcpSelection(activeMcp, conversation, reloadContext),
+			alignConversation: async () => {},
 			facetLoader: createSessionPluginFacetLoader(options.pluginManifestPaths),
 			cleanup: async (context) => {
-				try {
-					await mcp?.close();
-				} finally {
-					await envs.cleanup(context);
-				}
+				await envs.cleanup(context);
 			},
 		};
 	} catch (error) {
@@ -1254,11 +1267,7 @@ export async function createCodingAgentHarness(
 			try {
 				await harness?.close(TODO_CONTEXT);
 			} finally {
-				try {
-					await mcp?.close();
-				} finally {
-					await envs.cleanup(TODO_CONTEXT);
-				}
+				await envs.cleanup(TODO_CONTEXT);
 			}
 		} catch (cleanupError) {
 			throw new AggregateError(

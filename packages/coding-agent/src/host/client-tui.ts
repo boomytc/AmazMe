@@ -2,11 +2,9 @@ import { sourceFacets } from "./services/connection.ts";
 import { createServiceHost, serviceFacet, type ServiceValue, disposeResources } from "@amazme/protocol/services";
 import { resolve } from "node:path";
 import type { Host, Facet, FacetLoader, JsonValue } from "@amazme/chord";
-import { BACKGROUND_CONTEXT, withAbortSignal } from "@amazme/chord/context";
+import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import type { AgentState, ConversationView, EntryRecord } from "@amazme/durable";
 import { CombinedAutocompleteProvider, type Component, Container, isFocusable, type SelectItem, SelectList, setKeybindings, Text, type TUI } from "@amazme/tui";
-import { manageProviderAuth } from "../durable/provider-menu.ts";
-import { ListSelector } from "../modes/interactive/components/list-selector.ts";
 import { keyText } from "../modes/interactive/components/keybinding-hints.ts";
 import { ScopedModelsSelectorComponent } from "../modes/interactive/components/scoped-models-selector.ts";
 import { Models } from "./services/models.ts";
@@ -15,7 +13,24 @@ import { getAgentDir } from "../config.ts";
 import { KeybindingsManager } from "../core/keybindings.ts";
 import { DefaultResourceLoader } from "../core/resource-loader.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
-import { oldestPresentedEntryId, type TaskSummary } from "../durable/conversation-view.ts";
+interface PresentedTask {
+	id: string;
+	kind: string;
+	status: string;
+	blocked?: string;
+	restarts?: number;
+	restartLimit?: number | null;
+}
+
+function oldestPresentedEntryId(entries: readonly { id: string | number }[] | undefined): string | null {
+	let oldest: string | number | undefined;
+	for (const entry of entries ?? []) if (oldest === undefined || entry.id < oldest) oldest = entry.id;
+	return oldest === undefined ? null : String(oldest);
+}
+
+function formatRestartCount(restarts: number, limit: number | null | undefined): string {
+	return typeof limit === "number" && Number.isFinite(limit) ? `${restarts}/${limit}` : String(restarts);
+}
 import { createChatViewport } from "../modes/interactive/chat-viewport.ts";
 import { CustomEditor } from "../modes/interactive/components/custom-editor.ts";
 import { durablePromptShortcutLine } from "../modes/interactive/composer-contract.ts";
@@ -35,11 +50,21 @@ import { SlashCommands } from "../core/plugins/slash-commands.ts";
 import { createBuiltInSlashCommandsFacet } from "./services/slash-commands-provider.ts";
 import { createSlashCommandsRuntimeFacet } from "../core/plugins/command-registry.ts";
 import { liveOf, Transcript, type Transcript as TranscriptService } from "./services/transcript.ts";
-import { formatLane } from "../durable/session-surface.ts";
+function formatLane(lane: { role: string; label: string; run: string; detail: string }): string {
+	const role = lane.role === "main" ? "Main" : lane.role === "fork" ? "Fork" : "Subagent";
+	const name = lane.role === "main" ? role : `${role} · ${lane.label}`;
+	const run = lane.run === "idle" ? "idle"
+		: lane.run === "tool" ? `running ${lane.detail}`
+		: lane.run === "retrying" ? `retrying ${lane.detail}`
+		: lane.run === "compacting" ? `compacting (${lane.detail})`
+		: lane.run === "deferred" ? "waiting"
+		: lane.run === "working" ? "working"
+		: lane.run;
+	return `${name} · ${run}`;
+}
 import { Commands } from "./services/commands.ts";
 import { SessionInsights } from "./services/insights.ts";
 import { createInsightsCommandsFacet } from "./services/insights-commands.ts";
-import { formatRestartCount } from "../durable/restart-count.ts";
 import { sessionOpenErrorText } from "./session-database-error.ts";
 
 /** Commands owned by the terminal presentation, not by the worker. */
@@ -415,7 +440,7 @@ export class ExperimentalClientTui implements Component {
 	}
 
 	/** Tasks the restart limit parked: pending, and blocked for that reason. */
-	#parkedTasks(): readonly TaskSummary[] {
+	#parkedTasks(): readonly PresentedTask[] {
 		return (this.#conversations?.state.value?.tasks ?? []).filter(
 			(task) => task.status === "pending" && task.blocked === "restart_limit",
 		);
@@ -550,11 +575,6 @@ export class ExperimentalClientTui implements Component {
 			return this.#session === feature && this.#models === models && this.#sessionId === sessionId
 				&& attachment?.status === "attached" && attachment.sessionId === sessionId;
 		};
-		const context = () => {
-			owner.signal.throwIfAborted();
-			if (this.#closed || !sameTarget()) throw new Error("The authentication session changed");
-			return withAbortSignal(owner.signal, BACKGROUND_CONTEXT);
-		};
 		const mount = (component: Component) => {
 			if (owner.signal.aborted || this.#closed || !sameTarget()) return;
 			if (this.#authComponent && isFocusable(this.#authComponent)) this.#authComponent.focused = false;
@@ -562,30 +582,24 @@ export class ExperimentalClientTui implements Component {
 			if (isFocusable(component)) component.focused = true;
 			this.#rebuild();
 		};
-		const done = manageProviderAuth({
-			snapshot: () => sameTarget() ? models.state.value?.authentication ?? { providers: [], login: null } : { providers: [], login: null },
-			subscribe: (listener) => models.state.subscribe(listener),
-			startLogin: (id, method) => models.startLogin(id, method, context()),
-			submitPrompt: (id, promptId, value) => models.submitLoginPrompt(id, promptId, value, context()),
-			cancelLogin: (id) => sameTarget() ? models.cancelLogin(id, withAbortSignal(AbortSignal.timeout(5_000), BACKGROUND_CONTEXT)) : Promise.resolve(false),
-			logout: (id) => models.logout(id, context()) }, mode, provider, {
-			ui: this.#ui,
-			mount,
-			select: (title, items, confirm, cancel) => mount(new ListSelector(title, items, confirm, cancel)),
-			inform: (text, close) => {
-				const panel = new Container();
-				panel.addChild(new Text(text, 1, 1));
-				const back = new SelectList([{ value: "close", label: "Back to prompt" }], 1, selectTheme);
-				back.onSelect = close; back.onCancel = close;
-				panel.addChild(back);
-				mount({ render: width => panel.render(width), invalidate: () => panel.invalidate(), handleInput: data => back.handleInput(data) });
-			} }, owner.signal).then((result) => {
+		const target = provider === undefined ? "账号" : provider;
+		const notice = mode === "logout"
+			? `旧供应商菜单已移除。${target} 由 Python 后端管理。`
+			: `旧供应商菜单已移除。${target} 的登录由 Python 后端完成。`;
+		const done = Promise.resolve().then(() => {
 			if (this.#closed || this.#busy || !sameTarget()) return;
-			const login = models.state.value?.authentication?.login;
-			this.#status = result && "loggedOut" in result ? "Saved credentials removed; environment credentials remain available."
-				: result && "id" in result && login?.id === result.id
-					? login.error ?? (login.status === "done" ? "Signed in. Select a model with /model." : "Provider sign-in ended.")
-					: "Provider authentication ended.";
+			const panel = new Container();
+			panel.addChild(new Text(notice, 1, 1));
+			const back = new SelectList([{ value: "close", label: "Back to prompt" }], 1, selectTheme);
+			const close = () => {
+				this.#authComponent = undefined;
+				this.#rebuild();
+			};
+			back.onSelect = close;
+			back.onCancel = close;
+			panel.addChild(back);
+			mount({ render: width => panel.render(width), invalidate: () => panel.invalidate(), handleInput: data => back.handleInput(data) });
+			this.#status = notice;
 		}).finally(() => {
 			if (this.#authFlow?.controller !== owner) return;
 			this.#authComponent = undefined;

@@ -17,16 +17,10 @@ import {
 	createPowerShellTool,
 	type SearchProgramOptions,
 } from "@amazme/durable/tools";
+import { createPolicyEnv } from "../durable/insights/execution-policy.ts";
 import { createForkArchiveGate } from "../core/fork-admission.ts";
 import type { ResourceLoader } from "../core/resource-loader.ts";
 import { SettingsManager } from "../core/settings-manager.ts";
-import { createDurableCodemode } from "../durable/codemode.ts";
-import { createContextCleanup } from "../durable/insights/context-cleanup.ts";
-import { createPolicyEnv } from "../durable/insights/execution-policy.ts";
-import { createRunPolicy } from "../durable/insights/run-policy.ts";
-import { createWorkspaceReview } from "../durable/insights/workspace-review.ts";
-import { createPiPrompt } from "../durable/prompt.ts";
-import { createToolResultImages } from "../durable/tool-result-images.ts";
 import { ensureTool } from "../utils/tools-manager.ts";
 
 /** Harness settings read at every use from pi's settings as loaded at startup. */
@@ -62,7 +56,7 @@ export function createHarnessSettings(
 	};
 }
 
-/** A registry with Pi's coding tools and one resource-backed system prompt. */
+/** Coding tools for a caller that still builds a registry. Session execution itself is the Python backend. */
 export function createCodingRegistry(
 	settingsManager: SettingsManager,
 	cwd: string,
@@ -70,6 +64,8 @@ export function createCodingRegistry(
 	workspaces: () => Promise<readonly string[]> = async () => [cwd],
 	artifactDirectory?: string,
 ): Registry {
+	void resources;
+	void artifactDirectory;
 	const registry = createRegistry();
 	registry.install(
 		createCodingTools({
@@ -86,13 +82,6 @@ export function createCodingRegistry(
 		}),
 	);
 	registry.install(createForkArchiveGate());
-	registry.install(createDurableCodemode(settingsManager));
-	registry.install(createToolResultImages(settingsManager));
-	registry.install(createRunPolicy(settingsManager));
-	registry.install(createContextCleanup(settingsManager));
-	registry.install(
-		createWorkspaceReview(settingsManager, workspaces, artifactDirectory),
-	);
 	const program =
 		(name: "rg" | "fd"): SearchProgramOptions["program"] =>
 		async (api) => {
@@ -118,7 +107,6 @@ export function createCodingRegistry(
 			tools: [{ ...createPowerShellTool(), defaultActive: false }],
 		}),
 	);
-	registry.install(createPiPrompt(resources, cwd));
 	registry.install(
 		defineExtension({
 			name: "project-workspaces",
@@ -168,16 +156,8 @@ export class ExecutionEnvs {
 		let env = this.#envs.get(cwd);
 		if (env === undefined) {
 			env = this.#settings
-				? createPolicyEnv(
-						cwd,
-						this.#artifactDirectory,
-						this.#settings,
-						this.#workspaces,
-					)
-				: new NodeExecutionEnv({
-						cwd,
-						artifactDirectory: this.#artifactDirectory,
-					});
+				? createPolicyEnv(cwd, this.#artifactDirectory, this.#settings, this.#workspaces)
+				: new NodeExecutionEnv({ cwd, artifactDirectory: this.#artifactDirectory });
 			this.#envs.set(cwd, env);
 		}
 		return env;

@@ -11,6 +11,7 @@ import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { describe, expect, it } from "vitest";
 import type { ResourceLoader } from "../src/core/resource-loader.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
+import { createToolResultImages } from "../src/durable/tool-result-images.ts";
 import { createCodingRegistry } from "../src/host/session-registry.ts";
 import type { ToolResultContent } from "../src/utils/tool-result-images.ts";
 import { normalizeToolResultImages } from "../src/utils/tool-result-images.ts";
@@ -167,7 +168,9 @@ describe("coding registry tool-result image hook", () => {
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSkills: () => ({ skills: [] }),
 		} as unknown as ResourceLoader;
-		const extension = createCodingRegistry(settings, "/tmp", resources).snapshot().extension("tool-result-images");
+		const registry = createCodingRegistry(settings, "/tmp", resources);
+		registry.install(createToolResultImages(settings));
+		const extension = registry.snapshot().extension("tool-result-images");
 		const handlers = extension?.hooks?.[0]?.handlers as Partial<ToolHooks> | undefined;
 		const hook = handlers?.afterTool;
 		if (hook === undefined) throw new Error("coding registry does not normalize tool-result images");
@@ -232,6 +235,7 @@ describe("coding registry tool-result image hook", () => {
 			async () => [directory],
 			join(directory, "artifacts"),
 		);
+		registry.install(createToolResultImages(settings));
 		const original = [imageBlock(createPng(2400, 4800), "image/png")];
 		let nested: NestedToolExecutionResult | undefined;
 		registry.install(
@@ -357,6 +361,7 @@ describe("coding registry tool-result image hook", () => {
 			async () => [directory],
 			join(directory, "artifacts"),
 		);
+		registry.install(createToolResultImages(settings));
 		const original = [imageBlock(createPng(2400, 4800), "image/png")];
 		let nested: NestedToolExecutionResult | undefined;
 		registry.install(
@@ -446,6 +451,7 @@ describe("coding registry tool-result image hook", () => {
 			getSkills: () => ({ skills: [] }),
 		} as unknown as ResourceLoader;
 		const registry = createCodingRegistry(settings, directory, resources, async () => [directory], join(directory, "artifacts"));
+		registry.install(createToolResultImages(settings));
 		const original = [imageBlock(createPng(2400, 4800), "image/png")];
 		let nested: NestedToolExecutionResult | undefined;
 		registry.install(
