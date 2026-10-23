@@ -353,7 +353,7 @@ macOS 的解释器、扩展、helper 和应用按 Developer ID/hardened runtime 
 | P3：全客户端与产品功能 | Web/Electron/TUI/CLI/RPC/SDK、新宿主/远端路由、分支/压缩、管理面板、其余模型及扩展能力 | 产品功能清单逐项闭环；实现和协议按新契约，不比较旧内部结构 |
 | P4：完整安装与收尾 | 完整签名安装产物、平台/供应商实测、性能验证和旧业务依赖清理 | 干净环境独立运行；无 TS 业务内核依赖；功能、安全及生命周期门槛通过 |
 
-截至本轮：`backend/` 已完成 P0/P1 的 Web、DeepSeek Flash、VM shell/read_file/write_file 和本机独立 onedir 闭环，证据见 [P0/P1 运行记录](python-backend-p1-evidence.md)。P2 的故障注入矩阵和 faux Chrome 客户端验收已通过，见 [P2 交接](python-backend-p2-handoff.md)。物理磁盘耗尽、真实睡眠/断电和公证分发没有证据，因此不把 P2 标成方案定义下的全部完成，也不进入 P3。P4 的签名分发仍待建设。
+截至本轮：`backend/` 已完成 P0/P1 的 Web、DeepSeek Flash、VM shell/read_file/write_file 和本机独立 onedir 闭环，证据见 [P0/P1 运行记录](python-backend-p1-evidence.md)。P2 的故障注入矩阵和 faux Chrome 客户端验收已通过，见 [P2 交接](python-backend-p2-handoff.md)。这是 P2 的代码和协议门槛，通过后可以继续没有被环境挡住的 P3。物理磁盘耗尽、真实睡眠/断电和公证分发仍然没有证据，它们分别属于 P2 环境验收和 P4，不因此把 P2 标成全部完成，也不再当成进入 P3 的代码前置。逐项状态见 [重构验收台账](python-backend-completion.md)。
 
 首批为 P0 + P1 的一个垂直闭环，不先铺开四套独立原型或全量插件。版本检查和清理屏障从 P1 的接口/进程骨架就存在；P2 补强接管与更新组合场景，不是到 P2 才发现版本约束。
 
