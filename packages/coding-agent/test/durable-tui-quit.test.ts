@@ -11,7 +11,7 @@ import { openDurable } from "../src/durable/runtime.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "../src/cli.ts");
+const cliPath = resolve(__dirname, "support/legacy-durable-cli.ts");
 
 const ptyHelper = `
 import os, pty, select, signal, sys

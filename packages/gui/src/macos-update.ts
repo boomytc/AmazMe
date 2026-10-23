@@ -5,7 +5,7 @@ import { access, lstat, mkdir, mkdtemp, open, readFile, realpath, rm, writeFile 
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { desktopUpdateAsset, fetchDesktopManifest, githubReleaseResponse, type UpdateAsset, type UpdateManifest } from "@amazme/coding-agent/update-manifest";
+import { desktopUpdateAsset, fetchDesktopManifest, githubReleaseResponse, type UpdateAsset, type UpdateManifest } from "./update-manifest.ts";
 import type { DesktopUpdateIO, PreparedUpdate } from "./update-controller.ts";
 import { handoffUpdate } from "./update-handoff.ts";
 import { discardPreparedUpdate } from "./update-cleanup.ts";

@@ -8,8 +8,8 @@ import { SHUTDOWN_FORCE_EXIT_MESSAGE } from "../src/utils/shutdown-signals.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "../src/cli.ts");
-const mainSourceUrl = pathToFileURL(resolve(__dirname, "../src/main.ts")).href;
+const cliPath = resolve(__dirname, "support/legacy-durable-cli.ts");
+const mainSourceUrl = pathToFileURL(resolve(__dirname, "support/legacy-durable-main.ts")).href;
 const settingsManagerSourceUrl = pathToFileURL(resolve(__dirname, "../src/core/settings-manager.ts")).href;
 
 /**

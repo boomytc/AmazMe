@@ -43,4 +43,12 @@ describe("durable RPC entry wiring", () => {
 		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "rpc", workspace: "primary" });
 		expect(runDurableRpc).not.toHaveBeenCalled();
 	});
+
+	it("keeps RPC on the Python host when AMAZME_DURABLE_TUI is set", async () => {
+		vi.stubEnv("AMAZME_DURABLE_TUI", "1");
+		await main(["--offline", "--mode", "rpc", "--no-session", "--no-extensions", "--no-mcp"]);
+		expect(runPythonHeadless).toHaveBeenCalledOnce();
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "rpc", workspace: "primary" });
+		expect(runDurableRpc).not.toHaveBeenCalled();
+	});
 });

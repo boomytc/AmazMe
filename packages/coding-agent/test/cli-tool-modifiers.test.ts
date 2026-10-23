@@ -9,7 +9,7 @@ import { createTempDir } from "./temp-dir.ts";
 
 function execute(args: readonly string[], options: ExecFileOptions): Promise<{ stdout: string; stderr: string }> {
 	return new Promise((resolve, reject) => {
-		const child = execFile(process.execPath, args, { ...options, encoding: "utf8" }, (error, stdout, stderr) => {
+		const child = execFile(process.execPath, ["--import", sourceResolver, ...args], { ...options, encoding: "utf8" }, (error, stdout, stderr) => {
 			if (error) reject(Object.assign(error, { stdout, stderr }));
 			else resolve({ stdout, stderr });
 		});
@@ -17,10 +17,11 @@ function execute(args: readonly string[], options: ExecFileOptions): Promise<{ s
 		child.stdin?.end();
 	});
 }
-const cli = fileURLToPath(new URL("../dist/bundle/cli.js", import.meta.url));
+const sourceResolver = fileURLToPath(new URL("../src/source-resolver.ts", import.meta.url));
+const cli = fileURLToPath(new URL("./support/legacy-durable-cli.ts", import.meta.url));
 type Payload = { tools?: { function: { name: string } }[] };
 
-describe("compiled CLI tool selection", () => {
+describe("legacy durable CLI tool selection", () => {
 	let directory: string;
 	let profile: string;
 	let server: Server;

@@ -20,13 +20,8 @@ import {
 } from "electron";
 import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "./locale.ts";
 import { hostFailureCopy, quitDialogCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
-import { createHostSupervisor, spawnNodeChild, spawnWebHost, type HostStartupFailure, type HostSupervisor } from "./host.ts";
-import {
-	hostWorkingDirectory,
-	resolveHostCli,
-	resolveNodeExecutable,
-	webHostLaunch,
-} from "./launch.ts";
+import { createHostSupervisor, spawnNodeChild, type HostStartupFailure, type HostSupervisor } from "./host.ts";
+import { hostWorkingDirectory } from "./launch.ts";
 import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
@@ -49,6 +44,7 @@ import {
 	pythonUpdateAction,
 	pythonUpdateStatePath,
 	readControlToken,
+	requirePythonBackend,
 	resolvePythonBackend,
 	shouldStopSharedBackend,
 	windowCloseAction,
@@ -690,59 +686,40 @@ async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<
 
 async function boot(): Promise<void> {
 	app.dock?.setIcon(APP_ICON);
-	const pythonExecutable = resolvePythonBackend(process.env, process.resourcesPath);
+	const pythonExecutable = requirePythonBackend(resolvePythonBackend(process.env, process.resourcesPath));
 	const cwd = hostWorkingDirectory(process.env, process.cwd());
-	let launch: { readonly executable: string; readonly args: readonly string[]; readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly entries: readonly string[] };
-	let nodeLaunch: ReturnType<typeof webHostLaunch> | undefined;
-	if (pythonExecutable !== undefined) {
-		usingPythonBackend = true;
-		pythonProfile = join(app.getPath("userData"), "python-profile");
-		const provider = join(app.getPath("userData"), "faux-provider.json");
-		if (!existsSync(provider)) {
-			writeFileSync(provider, JSON.stringify({
-				provider: "faux", model: "faux", base_url: "", api_key: "", max_tokens: 2048, proxy: "", headers: {},
-			}));
-		}
-		const plan = desktopPythonBootPlan({
-			executable: pythonExecutable,
-			profile: pythonProfile,
-			workspace: cwd,
-			providerConfig: provider,
-			profileExists: existsSync(join(pythonProfile, "config.json")),
-			cwd,
-			env: process.env,
-		});
-		const missingPython = plan.entries.find((entry) => !existsSync(entry));
-		if (missingPython !== undefined) throw new Error(`desktop python backend is missing: ${missingPython}`);
-		for (const step of plan.preflight) {
-			const result = await execFileAsync(plan.executable, [...step.args], { cwd: plan.cwd, env: plan.env });
-			if (step.command === "pair") pythonWebToken = String(result.stdout).trim();
-		}
-		if (pythonWebToken.length === 0 || pythonWebToken === readControlToken(pythonProfile)) {
-			throw new Error("desktop python pairing did not return a web token");
-		}
-		launch = { executable: plan.executable, args: plan.serveArgs, cwd: plan.cwd, env: plan.env, entries: plan.entries };
-	} else {
-		const cliEntry = resolveHostCli();
-		nodeLaunch = webHostLaunch({
-			nodeExecutable: resolveNodeExecutable(process.env),
-			cliEntry,
-			cwd,
-			env: { ...process.env, AMAZME_DESKTOP_UPDATE_TOKEN: desktopUpdateToken },
-		});
-		launch = { executable: nodeLaunch.nodeExecutable, args: nodeLaunch.args, cwd: nodeLaunch.cwd, env: nodeLaunch.env, entries: [...nodeLaunch.entries] };
+	usingPythonBackend = true;
+	pythonProfile = join(app.getPath("userData"), "python-profile");
+	const provider = join(app.getPath("userData"), "faux-provider.json");
+	if (!existsSync(provider)) {
+		writeFileSync(provider, JSON.stringify({
+			provider: "faux", model: "faux", base_url: "", api_key: "", max_tokens: 2048, proxy: "", headers: {},
+		}));
 	}
-	const missing = launch.entries.find((entry) => !existsSync(entry));
-	if (missing !== undefined) {
-		throw new Error(`desktop host entry is missing: ${missing}`);
+	const plan = desktopPythonBootPlan({
+		executable: pythonExecutable,
+		profile: pythonProfile,
+		workspace: cwd,
+		providerConfig: provider,
+		profileExists: existsSync(join(pythonProfile, "config.json")),
+		cwd,
+		env: process.env,
+	});
+	const missingPython = plan.entries.find((entry) => !existsSync(entry));
+	if (missingPython !== undefined) throw new Error(`desktop python backend is missing: ${missingPython}`);
+	for (const step of plan.preflight) {
+		const result = await execFileAsync(plan.executable, [...step.args], { cwd: plan.cwd, env: plan.env });
+		if (step.command === "pair") pythonWebToken = String(result.stdout).trim();
 	}
+	if (pythonWebToken.length === 0 || pythonWebToken === readControlToken(pythonProfile)) {
+		throw new Error("desktop python pairing did not return a web token");
+	}
+	const launch = { executable: plan.executable, args: plan.serveArgs, cwd: plan.cwd, env: plan.env, entries: plan.entries };
 	const timeout = readinessTimeout();
 	host = createHostSupervisor({
 		spawnHost: () => {
-			const child = nodeLaunch !== undefined
-				? spawnWebHost(nodeLaunch)
-				: spawnNodeChild({ executable: launch.executable, args: launch.args, cwd: launch.cwd, env: launch.env });
-			if ((SMOKE || usingPythonBackend) && child.pid !== undefined) process.stdout.write(`desktop host pid: ${child.pid}\n`);
+			const child = spawnNodeChild({ executable: launch.executable, args: launch.args, cwd: launch.cwd, env: launch.env });
+			if (child.pid !== undefined) process.stdout.write(`desktop host pid: ${child.pid}\n`);
 			return child;
 		},
 		...(timeout === undefined ? {} : { readinessTimeoutMs: timeout }),
@@ -837,6 +814,11 @@ async function initializeDesktop(): Promise<void> {
 	app.whenReady().then(boot).catch((error: unknown) => {
 		const message = error instanceof Error ? error.message : String(error);
 		console.error(message);
+		if (SMOKE) {
+			process.stdout.write(`desktop backend refused: ${message}\n`);
+			app.exit(1);
+			return;
+		}
 		const failure: HostFailure = startupFailure ?? {
 			kind: "startup-error",
 			message,

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { CONFIG_DIR_NAME, ENV_AGENT_DIR, expandTildePath } from "@amazme/coding-agent/config";
+import { CONFIG_DIR_NAME, ENV_AGENT_DIR, expandTildePath } from "./agent-paths.ts";
 import { matchLocale, resolveLocale } from "@amazme/web/locale";
 import type { Locale } from "@amazme/web/locale";
 

@@ -1,6 +1,6 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { isNewerRelease } from "@amazme/coding-agent/update-manifest";
+import { isNewerRelease } from "./update-manifest.ts";
 import type { InstallJob } from "./macos-update.ts";
 
 export async function readInstallJob(directory: string): Promise<InstallJob> {

@@ -1,4 +1,4 @@
-import type { UpdateAsset, UpdateChannel, UpdateManifest } from "@amazme/coding-agent/update-manifest";
+import type { UpdateAsset, UpdateChannel, UpdateManifest } from "./update-manifest.ts";
 
 export type UpdateErrorCode = "network" | "manifest" | "source" | "integrity" | "signature" | "unsupported" | "permission" | "busy" | "install";
 export type UpdatePhase = "idle" | "checking" | "available" | "downloading" | "verifying" | "ready" | "installing" | "error";

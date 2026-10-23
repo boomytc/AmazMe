@@ -37,6 +37,14 @@ export function resolvePythonBackend(env: NodeJS.ProcessEnv, resourcesPath: stri
 	return existsSync(packaged) ? packaged : undefined;
 }
 
+/** The desktop has no other host. A missing backend is a startup failure, not a fallback. */
+export function requirePythonBackend(executable: string | undefined): string {
+	if (executable === undefined || executable.length === 0) {
+		throw new Error("桌面需要包内的 Python 后端");
+	}
+	return executable;
+}
+
 export function shouldStopSharedBackend(reason: "window-closed" | "explicit-quit"): boolean {
 	return reason === "explicit-quit";
 }

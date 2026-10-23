@@ -30,7 +30,7 @@ import {
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "../src/cli.ts");
+const cliPath = resolve(__dirname, "support/legacy-durable-cli.ts");
 const SESSION_NAME = "1760000000000-00000000-0000-4000-8000-000000000001";
 
 /** Open `path` the way hosts do: under its session directory's lock, released again afterwards. */

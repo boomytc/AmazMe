@@ -17,6 +17,7 @@ import {
 	pythonResumeUpdateRequest,
 	pythonShutdownRequest,
 	readControlToken,
+	requirePythonBackend,
 	resolvePythonBackend,
 	shouldStopSharedBackend,
 	windowCloseAction,
@@ -181,5 +182,7 @@ describe("packaged python backend", () => {
 		expect(resolvePythonBackend({}, join(dir, "resources"))).toBe(join(dir, "resources", "amazme-backend", "amazme-backend"));
 		expect(resolvePythonBackend({ AMAZME_PYTHON_BACKEND: "/explicit/amazme-backend" }, join(dir, "resources"))).toBe("/explicit/amazme-backend");
 		expect(resolvePythonBackend({}, undefined)).toBeUndefined();
+		expect(requirePythonBackend(resolvePythonBackend({}, join(dir, "resources")))).toBe(join(dir, "resources", "amazme-backend", "amazme-backend"));
+		expect(() => requirePythonBackend(resolvePythonBackend({}, undefined))).toThrow("桌面需要包内的 Python 后端");
 	});
 });

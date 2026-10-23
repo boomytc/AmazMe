@@ -1,43 +1,15 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { DESKTOP_PARENT_PIPE_ENV } from "@amazme/coding-agent/config";
 import { describe, expect, test } from "vitest";
-import { hostWorkingDirectory, resolveHostCli, resolveNodeExecutable, webHostLaunch } from "../src/launch.ts";
+import { hostWorkingDirectory } from "../src/launch.ts";
+import { requirePythonBackend } from "../src/python-backend.ts";
 
-const repositoryRoot = fileURLToPath(new URL("../../..", import.meta.url)).replace(/\/$/u, "");
-
-describe("web host launch", () => {
-	test("resolves the installed CLI through the application dependency", () => {
-		expect(resolveHostCli()).toMatch(/coding-agent\/dist\/bundle\/cli\.js$/);
-		expect(readFileSync(resolveHostCli(), "utf8").length).toBeGreaterThan(0);
+describe("desktop launch", () => {
+	test("requires the packaged Python backend and does not choose another host", () => {
+		expect(requirePythonBackend("/Apps/amazme-backend")).toBe("/Apps/amazme-backend");
+		expect(() => requirePythonBackend(undefined)).toThrow("桌面需要包内的 Python 后端");
+		expect(() => requirePythonBackend("")).toThrow("桌面需要包内的 Python 后端");
 	});
 
-	test("spawns the installed web command on an OS-assigned port", () => {
-		const launch = webHostLaunch({
-			nodeExecutable: "/usr/bin/node",
-			cliEntry: resolveHostCli(),
-			cwd: repositoryRoot,
-			env: { ELECTRON_RUN_AS_NODE: "1", PATH: "/usr/bin" },
-		});
-		expect(launch.nodeExecutable).toBe("/usr/bin/node");
-		expect(launch.cwd).toBe(repositoryRoot);
-		expect(launch.args).toEqual([resolveHostCli(), "web", "--port", "0"]);
-		expect(launch.env.AMAZME_EXPERIMENTAL).toBeUndefined();
-		expect(launch.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
-		expect(launch.env.PATH).toBe("/usr/bin");
-		expect(launch.env[DESKTOP_PARENT_PIPE_ENV]).toBe("1");
-		for (const entry of launch.entries) {
-			expect(readFileSync(entry, "utf8").length).toBeGreaterThan(0);
-		}
-	});
-
-	test("selects Node without using Electron's executable", () => {
-		expect(resolveNodeExecutable({ AMAZME_GUI_NODE: "/opt/node" })).toBe("/opt/node");
-		expect(resolveNodeExecutable({ npm_node_execpath: "/missing/node" })).toBe("node");
-		expect(resolveNodeExecutable({})).toBe("node");
-	});
-
-	test("runs the host in the launching directory unless a project is set", () => {
+	test("runs the backend in the launching directory unless a project is set", () => {
 		expect(hostWorkingDirectory({}, "/repo")).toBe("/repo");
 		expect(hostWorkingDirectory({ AMAZME_GUI_CWD: "/work" }, "/repo")).toBe("/work");
 	});

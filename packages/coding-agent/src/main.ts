@@ -1,10 +1,9 @@
 /**
- * Main entry point for the coding agent CLI.
- *
- * Interactive, print, JSON, and RPC all open a Durable session.
+ * Product CLI entry.
+ * Interactive, print, JSON, and RPC open the Python host.
+ * AMAZME_DURABLE_TUI does not select another runtime.
  */
 
-import { setTimeout as delay } from "node:timers/promises";
 import { type ImageContent } from "@amazme/ai";
 import chalk from "chalk";
 import { type Args, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
@@ -48,7 +47,6 @@ import { runMigrations } from "./migrations.ts";
 import { setThemeJsonValidator } from "./modes/interactive/theme/theme.ts";
 import { validateThemeJson } from "./modes/interactive/theme/theme-schema.ts";
 import { cleanupManagedInstall, handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
-import { isLocalPath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 /**
@@ -206,11 +204,6 @@ async function prepareInitialMessage(
 		stdinContent,
 	});
 }
-
-function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
-	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
-}
-
 
 export async function main(args: string[]) {
 	// Diagnostics precede install cleanup, settings locks, proxy setup, and credential initialization.
@@ -404,7 +397,7 @@ export async function main(args: string[]) {
 	}
 	if (nativeInteractive && parsed.verbose) startupSettingsManager.applyOverrides({ quietStartup: false });
 
-	if (nativeInteractive && process.env.AMAZME_DURABLE_TUI !== "1") {
+	if (nativeInteractive) {
 		if ((parsed.pythonUrl === undefined) !== (parsed.pythonToken === undefined)) {
 			console.error("python_target_required");
 			process.exit(1);
@@ -421,59 +414,8 @@ export async function main(args: string[]) {
 		return;
 	}
 
-	if (nativeInteractive) {
-		const { initialMessage, initialImages } = await prepareInitialMessage(parsed);
-		const projectTrusted = await resolveProjectTrusted({
-			cwd: effectiveCwd,
-			trustStore: new ProjectTrustStore(agentDir),
-			trustOverride: parsed.projectTrustOverride,
-			defaultProjectTrust: bootstrapSettingsManager.getDefaultProjectTrust(),
-			projectTrustContext: createProjectTrustContext({ cwd: effectiveCwd, mode: "interactive", settingsManager: startupSettingsManager, hasUI: true }),
-		});
-		startupSettingsManager.setProjectTrusted(projectTrusted);
-		const sessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
-		const { runDurableInteractive } = await import("./durable/interactive.ts");
-		await runDurableInteractive({
-			startupBenchmark,
-			...(startupBenchmark ? {} : { startupNotice: startUpdateCheck() }),
-			cwd: effectiveCwd,
-			continueSession: parsed.continue === true || parsed.resume === true,
-			noSession: parsed.noSession === true,
-			...(explicitSession === undefined ? {} : { sessionDirectory: explicitSession.directory }),
-			...(sessionDir === undefined ? {} : { sessionDir }),
-			...(sessionName === undefined ? {} : { name: sessionName }),
-			settingsManager: startupSettingsManager,
-			...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),
-			noExtensions: parsed.noExtensions === true,
-			...(parsed.systemPrompt === undefined ? {} : { systemPrompt: parsed.systemPrompt }),
-			...(parsed.appendSystemPrompt === undefined ? {} : { appendSystemPrompt: parsed.appendSystemPrompt }),
-			...(parsed.skills === undefined ? {} : { skills: resolveCliPaths(cwd, parsed.skills) }),
-			noSkills: parsed.noSkills === true,
-			noContextFiles: parsed.noContextFiles === true,
-			...(parsed.promptTemplates === undefined ? {} : { promptTemplates: resolveCliPaths(cwd, parsed.promptTemplates) }),
-			noPromptTemplates: parsed.noPromptTemplates === true,
-			...(parsed.themes === undefined ? {} : { themes: resolveCliPaths(cwd, parsed.themes) }),
-			noThemes: parsed.noThemes === true,
-			...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
-			...(parsed.model === undefined ? {} : { model: parsed.model }),
-			...(parsed.models === undefined ? {} : { models: parsed.models }),
-			...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),
-			...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
-			...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
-			...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
-			...(parsed.noTools ? { noTools: "all" as const } : parsed.noBuiltinTools ? { noTools: "builtin" as const } : {}),
-			noMcp: parsed.noMcp === true || parsed.noExtensions === true,
-			...(initialMessage === undefined ? {} : { initialMessage }),
-			...(initialImages === undefined ? {} : { initialImages }),
-			initialMessages: parsed.messages.slice(),
-		});
-		printTimings();
-		return;
-	}
-
 	let stdinContent: string | undefined;
 	let initialMessage: string | undefined;
-	let initialImages: ImageContent[] | undefined;
 	if (appMode !== "rpc") {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
@@ -482,7 +424,6 @@ export async function main(args: string[]) {
 		time("readPipedStdin");
 		const prepared = await prepareInitialMessage(parsed, stdinContent);
 		initialMessage = prepared.initialMessage;
-		initialImages = prepared.initialImages;
 		time("prepareInitialMessage");
 	}
 
@@ -516,76 +457,16 @@ export async function main(args: string[]) {
 		restoreStdout();
 		return;
 	}
-	const sessionDir = parsed.sessionDir ?? process.env[ENV_SESSION_DIR];
-	const continuing = parsed.continue === true || parsed.resume === true;
-	const durableOptions = {
-		settingsManager: startupSettingsManager,
+	const prompt = [initialMessage, ...parsed.messages].filter((item): item is string => item !== undefined && item.length > 0).join("\n");
+	const { runPythonHeadless } = await import("./python-headless.ts");
+	const exitCode = await runPythonHeadless({
+		mode: appMode === "rpc" ? "rpc" : appMode === "json" ? "json" : "text",
+		workspace: parsed.workspace || "primary",
 		cwd: effectiveCwd,
-		continueSession: continuing,
-		noSession: parsed.noSession === true,
-		...(explicitSession === undefined ? {} : { sessionDirectory: explicitSession.directory }),
-		...(sessionDir === undefined ? {} : { sessionDir }),
-		...(sessionName === undefined ? {} : { name: sessionName }),
-		...(parsed.extensions === undefined ? {} : { extensions: parsed.extensions }),
-		noExtensions: parsed.noExtensions === true,
-		...(parsed.systemPrompt === undefined ? {} : { systemPrompt: parsed.systemPrompt }),
-		...(parsed.appendSystemPrompt === undefined ? {} : { appendSystemPrompt: parsed.appendSystemPrompt }),
-		...(parsed.skills === undefined ? {} : { skills: resolveCliPaths(cwd, parsed.skills) }),
-		noSkills: parsed.noSkills === true,
-		noContextFiles: parsed.noContextFiles === true,
-		...(parsed.promptTemplates === undefined ? {} : { promptTemplates: resolveCliPaths(cwd, parsed.promptTemplates) }),
-		noPromptTemplates: parsed.noPromptTemplates === true,
-		...(parsed.themes === undefined ? {} : { themes: resolveCliPaths(cwd, parsed.themes) }),
-		noThemes: parsed.noThemes === true,
-		...(parsed.provider === undefined ? {} : { provider: parsed.provider }),
-		...(parsed.model === undefined ? {} : { model: parsed.model }),
-		...(parsed.models === undefined ? {} : { models: parsed.models }),
-		...(parsed.thinking === undefined ? {} : { thinkingLevel: parsed.thinking }),
-		...(parsed.apiKey === undefined ? {} : { apiKey: parsed.apiKey }),
-		...(parsed.tools === undefined ? {} : { tools: parsed.tools }),
-		...(parsed.excludeTools === undefined ? {} : { excludeTools: parsed.excludeTools }),
-		...(parsed.noTools ? { noTools: "all" as const } : parsed.noBuiltinTools ? { noTools: "builtin" as const } : {}),
-		noMcp: parsed.noMcp === true || parsed.noExtensions === true,
-	};
-	if (process.env.AMAZME_DURABLE_TUI !== "1") {
-		const prompt = [initialMessage, ...parsed.messages].filter((item): item is string => item !== undefined && item.length > 0).join("\n");
-		const { runPythonHeadless } = await import("./python-headless.ts");
-		const exitCode = await runPythonHeadless({
-			mode: appMode === "rpc" ? "rpc" : appMode === "json" ? "json" : "text",
-			workspace: parsed.workspace || "primary",
-			cwd: effectiveCwd,
-			...(parsed.pythonUrl === undefined ? {} : { url: parsed.pythonUrl }),
-			...(parsed.pythonToken === undefined ? {} : { token: parsed.pythonToken }),
-			prompt,
-		});
-		restoreStdout();
-		if (exitCode !== 0) process.exitCode = exitCode;
-		return;
-	}
-	if (appMode === "rpc") {
-		const { runDurableRpc } = await import("./modes/rpc/durable-rpc.ts");
-		await runDurableRpc(durableOptions);
-		return;
-	}
-	// Text print only, and only when a person watches stderr; JSON and pipes stay clean.
-	const updateNotice = appMode !== "json" && process.stderr.isTTY ? startUpdateCheck() : undefined;
-	const { runDurablePrint } = await import("./durable/print.ts");
-	const exitCode = await runDurablePrint({
-		...durableOptions,
-		mode: appMode === "json" ? "json" : "text",
-		...(initialMessage === undefined ? {} : { initialMessage }),
-		...(initialImages === undefined ? {} : { initialImages }),
-		messages: parsed.messages.slice(),
+		...(parsed.pythonUrl === undefined ? {} : { url: parsed.pythonUrl }),
+		...(parsed.pythonToken === undefined ? {} : { token: parsed.pythonToken }),
+		prompt,
 	});
 	restoreStdout();
-	// The check normally finished during the run; never hold the exit for it longer than 1.5s.
-	const message = updateNotice && (await Promise.race([updateNotice, delay(1500, undefined, { ref: false })]));
-	if (message) process.stderr.write(`${message}\n`);
 	if (exitCode !== 0) process.exitCode = exitCode;
-}
-
-async function startUpdateCheck(): Promise<string | undefined> {
-	const { checkForUpdate, formatUpdateNotice } = await import("./update-check.ts");
-	const notice = await checkForUpdate().catch(() => undefined);
-	return notice === undefined ? undefined : formatUpdateNotice(notice);
 }

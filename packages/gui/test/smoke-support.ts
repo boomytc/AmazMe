@@ -17,7 +17,7 @@ export function smokeEnvironment(scratch: string): NodeJS.ProcessEnv {
 		if (value !== undefined && !/KEY|TOKEN|PASSWORD|SECRET|CREDENTIAL|^AWS_|^AZURE_|^GOOGLE_|^ELECTRON_RUN_AS_NODE$/iu.test(key)) env[key] = value;
 	}
 	return { ...env, AMAZME_GUI_SMOKE: "1", AMAZME_GUI_SMOKE_DATA_DIR: scratch,
-		AMAZME_GUI_NODE: process.execPath, AMAZME_GUI_CWD: scratch,
+		AMAZME_GUI_CWD: scratch,
 		AMAZME_SERVER_DIR: join(scratch, "server"), AMAZME_CODING_AGENT_DIR: join(scratch, "agent"),
 		AMAZME_GUI_READY_TIMEOUT_MS: "120000" };
 }

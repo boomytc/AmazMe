@@ -57,4 +57,12 @@ describe("default headless runtime", () => {
 		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "json", prompt: "hello", workspace: "primary" });
 		expect(runDurablePrint).not.toHaveBeenCalled();
 	});
+
+	it("keeps the Python host for print when AMAZME_DURABLE_TUI is set", async () => {
+		vi.stubEnv("AMAZME_DURABLE_TUI", "1");
+		await main(["--offline", "--print", "hello"]);
+		expect(runPythonHeadless).toHaveBeenCalledOnce();
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello", workspace: "primary" });
+		expect(runDurablePrint).not.toHaveBeenCalled();
+	});
 });

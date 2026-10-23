@@ -32,6 +32,9 @@
 			"import": "./dist/typography.js"
 		}
 	},
+	"dependencies": {
+		"@amazme/durable": "0.3.4"
+	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "npm run clean && tsc -p tsconfig.build.json && shx cp -r src/page dist/page",
@@ -39,7 +42,6 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"devDependencies": {
-		"@amazme/durable": "0.3.4",
 		"happy-dom": "20.10.5"
 	}
 }

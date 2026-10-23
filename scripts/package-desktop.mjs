@@ -2,9 +2,9 @@
 /**
  * Assemble a movable macOS preview app.
  *
- * The app carries its own host (coding-agent), workspace runtime closure, and a pinned Node
- * binary. Nothing points at the checkout or at an installed Node, so the bundle can be moved
- * anywhere and launched by someone without a development environment.
+ * The window runtime is @amazme/gui and @amazme/web. The Python backend is added with
+ * --python-backend. This package does not include @amazme/coding-agent. A pinned Node binary
+ * remains for the update helper. Nothing points at the checkout.
  */
 import { execFileSync, spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -12,7 +12,7 @@ import { constants, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
 	createPackageArtifacts,
 	installPackageArtifacts,
@@ -23,6 +23,8 @@ import { macOSBundleVersion } from "../packages/gui/dist/macos-version.js";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const MANIFEST_NAME = "release-manifest.json";
+/** Runtime packages inside the desktop app. The old coding-agent host is not one of them. */
+export const DESKTOP_PACKAGES = ["@amazme/gui"];
 
 function argument(name) {
 	const index = process.argv.indexOf(name);
@@ -77,16 +79,15 @@ async function releaseManifest(electronVersion, packages, nodeExecutable) {
 async function stageHost(appDirectory) {
 	const runtime = join(appDirectory, "Contents", "Resources", "app");
 	const artifactsDirectory = join(appDirectory, "..", "artifacts");
-	const selected = ["@amazme/gui", "@amazme/coding-agent"];
+	const selected = DESKTOP_PACKAGES;
 	const lock = JSON.parse(await readFile(join(repoRoot, "package-lock.json"), "utf8"));
 	mkdirSync(runtime, { recursive: true });
 	const packed = createPackageArtifacts({ repoRoot, directory: artifactsDirectory, packageNames: selected });
 	installPackageArtifacts({ artifacts: packed, directory: runtime, packageNames: selected, dependencyLock: lock });
-	const host = join(runtime, "node_modules", "@amazme", "coding-agent", "dist", "bundle", "cli.js");
-	guard((await readdir(runtime)).includes("node_modules"), "Host runtime was not installed");
-	await writeFile(host, await readFile(host)); // Readable failure if the host entry is absent.
+	guard((await readdir(runtime)).includes("node_modules"), "Desktop runtime was not installed");
 	const gui = join(runtime, "node_modules", "@amazme", "gui", "dist", "main.js");
 	await writeFile(gui, await readFile(gui));
+	guard(!existsSync(join(runtime, "node_modules", "@amazme", "coding-agent")), "Desktop package must not include @amazme/coding-agent");
 	return runtime;
 }
 
@@ -110,8 +111,7 @@ async function finalizeBundle(appDirectory, manifest, nodeExecutable) {
 		[
 			'import { homedir } from "node:os";',
 			'import { join } from "node:path";',
-			"// The host must run on the bundled Node: the app may be moved, and no system Node is assumed.",
-			'process.env.AMAZME_GUI_NODE = join(process.resourcesPath, "node", "bin", "node");',
+			"// The update helper uses the bundled Node. The window does not start a Node business host.",
 			"process.env.INIT_CWD ??= homedir();",
 			'await import("./node_modules/@amazme/gui/dist/main.js");',
 			"",
@@ -126,7 +126,6 @@ async function smokeBundle(appDirectory) {
 	await cp(appDirectory, moved, { recursive: true, verbatimSymlinks: true });
 	const data = join(scratch, "data");
 	const env = { ...process.env, PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
-	delete env.AMAZME_GUI_NODE;
 	Object.assign(env, {
 		AMAZME_GUI_SMOKE: "1",
 		AMAZME_GUI_SMOKE_DATA_DIR: data,
@@ -137,6 +136,7 @@ async function smokeBundle(appDirectory) {
 	});
 	const child = spawn(join(moved, "Contents", "MacOS", "AmazMe"), ["--no-sandbox"], { env, stdio: ["ignore", "pipe", "pipe"] });
 	let output = "";
+	const expectsPython = existsSync(join(moved, "Contents", "Resources", "amazme-backend", "amazme-backend"));
 	const report = await new Promise((resolvePromise, reject) => {
 		const timer = setTimeout(() => reject(new Error(`Packaged app did not report within 180s:\n${output}`)), 180_000);
 		child.stdout.on("data", (chunk) => { output += String(chunk); });
@@ -144,6 +144,11 @@ async function smokeBundle(appDirectory) {
 		child.on("error", reject);
 		child.on("close", (code) => {
 			clearTimeout(timer);
+			if (!expectsPython) {
+				if (output.includes("桌面需要包内的 Python 后端")) resolvePromise("refused without python backend");
+				else reject(new Error(`Packaged app without Python backend did not refuse (${code}):\n${output}`));
+				return;
+			}
 			const line = output.split("\n").find((entry) => entry.startsWith("desktop smoke: "));
 			if (code !== 0 || line === undefined) reject(new Error(`Packaged app failed (${code}):\n${output}`));
 			else resolvePromise(line);
@@ -247,7 +252,10 @@ async function main() {
 	}
 }
 
-main().catch((error) => {
-	console.error(error instanceof Error ? error.message : String(error));
-	process.exitCode = 1;
-});
+const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+if (invokedDirectly) {
+	main().catch((error) => {
+		console.error(error instanceof Error ? error.message : String(error));
+		process.exitCode = 1;
+	});
+}

@@ -62,7 +62,6 @@ async function macosExecutable(electron: string): Promise<string> {
 		await writeFile(join(entry, "package.json"), JSON.stringify({ name: "AmazMe", version, type: "module", main: "main.mjs" }));
 		await writeFile(join(entry, "main.mjs"), [
 			'import { homedir } from "node:os";',
-			`process.env.AMAZME_GUI_NODE ??= ${JSON.stringify(process.execPath)};`,
 			"process.env.INIT_CWD ??= homedir();",
 			`await import(${JSON.stringify(pathToFileURL(join(packageDirectory, "dist", "main.js")).href)});`,
 			"",

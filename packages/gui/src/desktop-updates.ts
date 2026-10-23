@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { BrowserWindow, dialog, ipcMain } from "electron";
 import type { Locale } from "@amazme/web/locale";
 import { translate } from "@amazme/web/strings";
-import type { UpdateChannel } from "@amazme/coding-agent/update-manifest";
+import type { UpdateChannel } from "./update-manifest.ts";
 import { createUpdateController, type DesktopUpdateIO, type UpdateState } from "./update-controller.ts";
 import { createMacUpdateIO } from "./macos-update.ts";
 

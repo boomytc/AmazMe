@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "../src/cli.ts");
+const cliPath = resolve(__dirname, "support/legacy-durable-cli.ts");
 const sessionsUrl = pathToFileURL(resolve(__dirname, "../src/durable/sessions.ts")).href;
 const ARTIFACTS = "amazme-session-artifacts-";
 const ptyHangup = resolve(__dirname, "fixtures/pty-hangup.py");

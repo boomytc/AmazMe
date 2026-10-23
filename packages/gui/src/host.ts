@@ -1,7 +1,5 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { DESKTOP_PARENT_PIPE_ENV } from "@amazme/coding-agent/config";
-import type { WebHostLaunch } from "./launch.ts";
 import type { PythonReady } from "./python-backend.ts";
 import { createReadinessParser } from "./readiness.ts";
 
@@ -75,24 +73,15 @@ interface NodeChildOptions {
 	readonly env: NodeJS.ProcessEnv;
 }
 
-/** Spawn a Node process whose stdout and stderr the supervisor reads to completion. */
+/** Spawn the packaged backend. Stdin stays closed; shutdown uses a signal, not a parent pipe. */
 export function spawnNodeChild(options: NodeChildOptions): HostChild {
-	const spawnOptions = { cwd: options.cwd, env: options.env, windowsHide: true };
-	// Only a desktop-owned web host receives an open parent-lifetime pipe.
-	const child = options.env[DESKTOP_PARENT_PIPE_ENV] === "1"
-		? spawn(options.executable, [...options.args], { ...spawnOptions, stdio: ["pipe", "pipe", "pipe"] })
-		: spawn(options.executable, [...options.args], { ...spawnOptions, stdio: ["ignore", "pipe", "pipe"] });
-	return nodeChildAdapter(child);
-}
-
-/** The experimental `web` command. The page it prints is the one the window loads. */
-export function spawnWebHost(launch: WebHostLaunch): HostChild {
-	return spawnNodeChild({
-		executable: launch.nodeExecutable,
-		args: launch.args,
-		cwd: launch.cwd,
-		env: launch.env,
+	const child = spawn(options.executable, [...options.args], {
+		cwd: options.cwd,
+		env: options.env,
+		windowsHide: true,
+		stdio: ["ignore", "pipe", "pipe"],
 	});
+	return nodeChildAdapter(child);
 }
 
 function streamAdapter(stream: Readable): HostChild["stdout"] {

@@ -10,7 +10,7 @@ import { ENV_SESSION_DIR } from "../src/config.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolver.ts")).href;
-const cliPath = resolve(__dirname, "../src/cli.ts");
+const cliPath = resolve(__dirname, "support/legacy-durable-cli.ts");
 
 interface Run {
 	readonly code: number | null;
