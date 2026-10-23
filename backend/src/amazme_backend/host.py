@@ -48,6 +48,9 @@ from .contracts import (
     McpDecisionEnvelope,
     McpOpen,
     McpView,
+    MemoryList,
+    MemoryView,
+    MemoryWrite,
     Message,
     Model,
     ModelCatalog,
@@ -102,6 +105,7 @@ from .contracts import (
 )
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
+from .memories import match_memories, remember
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
@@ -554,9 +558,46 @@ class Host:
         self.profile.save_provider(chosen)
         return public_settings(self.profile.config.provider)
 
+    async def _require_workspace(self, name: str) -> None:
+        if name == PRIMARY:
+            return
+        guest_path(name)
+        if name not in {item for item, _host in await self.store.workspace_grants()}:
+            raise BackendError("workspace_not_found", status=404)
+
     async def create_session(self, value: CreateSession) -> Session:
         self._admit()
+        await self._require_workspace(value.workspace)
         return await self.store.create_session(secrets.token_hex(16), value)
+
+    async def save_memory(self, value: MemoryWrite) -> MemoryView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        text = value.text.strip()
+        digest = remember(value.workspace, text)
+        await self._require_workspace(value.workspace)
+        memory_id, workspace, stored = await self.store.save_memory(value.memory_id, value.workspace, text, digest)
+        return MemoryView(memory_id=memory_id, workspace=workspace, text=stored)
+
+    async def memories_for(self, workspace: str, query: str) -> MemoryList:
+        self._admit()
+        await self._require_workspace(workspace)
+        rows = await self.store.memory_rows()
+        if query.strip():
+            found = match_memories(rows, workspace, query)
+        else:
+            found = [MemoryView(memory_id=memory_id, workspace=item_workspace, text=text)
+                     for memory_id, item_workspace, text in rows if item_workspace == workspace][:50]
+        return MemoryList(workspace=workspace, memories=found)
+
+    async def injection_preview(self, session_id: str, query: str) -> MemoryList:
+        self._admit()
+        if not await self.store.exists(session_id):
+            raise BackendError("session_not_found", status=404)
+        session = next(item for item in (await self.sessions()).sessions if item.session_id == session_id)
+        found = match_memories(await self.store.memory_rows(), session.workspace, query)
+        return MemoryList(workspace=session.workspace, memories=found)
 
     async def branch_session(self, parent: str, value: BranchSession) -> Session:
         self._admit()
@@ -1280,6 +1321,18 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/bootstrap")
     async def bootstrap() -> Identity:
         return owner.identity((await owner.health()).state)
+
+    @app.post("/api/v1/memories")
+    async def save_memory(value: MemoryWrite) -> MemoryView:
+        return await owner.save_memory(value)
+
+    @app.get("/api/v1/memories")
+    async def memories(workspace: str = "primary", q: str = "") -> MemoryList:
+        return await owner.memories_for(workspace, q)
+
+    @app.get("/api/v1/sessions/{session_id}/memories")
+    async def session_memories(session_id: str, q: str = "") -> MemoryList:
+        return await owner.injection_preview(session_id, q)
 
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:

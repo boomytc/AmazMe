@@ -202,6 +202,7 @@ class Session(Model):
     parent_id: str = ""
     fork_request_id: str = ""
     archived: bool = False
+    workspace: str = "primary"
 
 
 class SessionList(Model):
@@ -236,6 +237,24 @@ class EventList(Model):
 
 class CreateSession(Model):
     title: str = Field(default="新会话", min_length=1, max_length=100)
+    workspace: str = "primary"
+
+
+class MemoryWrite(Model):
+    memory_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    workspace: str = "primary"
+    text: str = Field(min_length=1, max_length=500)
+
+
+class MemoryView(Model):
+    memory_id: str
+    workspace: str
+    text: str
+
+
+class MemoryList(Model):
+    workspace: str
+    memories: list[MemoryView]
 
 
 class HostFence(Model):

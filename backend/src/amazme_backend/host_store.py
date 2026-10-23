@@ -121,6 +121,8 @@ class HostStore:
                   id TEXT UNIQUE NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS restarts(at INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS workspace_grants(name TEXT PRIMARY KEY, host_path TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, workspace TEXT NOT NULL,
+                  text TEXT NOT NULL, digest TEXT NOT NULL);
                 PRAGMA user_version=2;
             """)
             # Format 2 already shipped without branch columns. Adding them keeps every existing row.
@@ -131,6 +133,8 @@ class HostStore:
                 db.execute("ALTER TABLE sessions ADD COLUMN fork_request_id TEXT NOT NULL DEFAULT ''")
             if "archived" not in present:
                 db.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            if "workspace" not in present:
+                db.execute("ALTER TABLE sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT 'primary'")
         await self._call(create)
         def begin(db: sqlite3.Connection) -> int:
             db.execute("UPDATE control SET epoch=epoch+1 WHERE id=1")
@@ -149,12 +153,13 @@ class HostStore:
     @staticmethod
     def _session(row: sqlite3.Row) -> Session:
         return Session(session_id=str(row["id"]), title=str(row["title"]), parent_id=str(row["parent_id"]),
-                       fork_request_id=str(row["fork_request_id"]), archived=bool(row["archived"]))
+                       fork_request_id=str(row["fork_request_id"]), archived=bool(row["archived"]),
+                       workspace=str(row["workspace"] or "primary"))
 
     async def sessions(self) -> SessionList:
         return await self._call(lambda db: SessionList(sessions=[
             self._session(row) for row in db.execute(
-                "SELECT id,title,parent_id,fork_request_id,archived FROM sessions ORDER BY rowid")]))
+                "SELECT id,title,parent_id,fork_request_id,archived,workspace FROM sessions ORDER BY rowid")]))
 
     async def workspace_grants(self) -> list[tuple[str, str]]:
         def operation(db: sqlite3.Connection) -> list[tuple[str, str]]:
@@ -189,27 +194,56 @@ class HostStore:
                 raise BackendError("workspace_not_found", status=404)
         await self.transaction(operation)
 
+    async def save_memory(self, memory_id: str, workspace: str, text: str, digest: str) -> tuple[str, str, str]:
+        def operation(db: sqlite3.Connection) -> tuple[str, str, str]:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute("SELECT workspace, text, digest FROM memories WHERE id=?", (memory_id,)).fetchone()
+            if row is not None:
+                if str(row[0]) != workspace or str(row[2]) != digest:
+                    raise BackendError("memory_conflict")
+                return memory_id, workspace, str(row[1])
+            if db.execute("SELECT count(*) FROM memories").fetchone()[0] >= 200:
+                raise BackendError("memory_capacity", status=429)
+            db.execute("INSERT INTO memories(id,workspace,text,digest) VALUES(?,?,?,?)",
+                       (memory_id, workspace, text, digest))
+            return memory_id, workspace, text
+        return await self.transaction(operation)
+
+    async def memory_rows(self) -> list[tuple[str, str, str]]:
+        def operation(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
+            try:
+                rows = db.execute("SELECT id, workspace, text FROM memories ORDER BY id").fetchall()
+            except sqlite3.OperationalError:
+                return []
+            return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
+        return await self._call(operation)
+
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
             if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
                 raise BackendError("session_capacity", status=429)
-            db.execute("INSERT INTO sessions(id,title) VALUES(?,?)", (session_id, value.title))
-            return Session(session_id=session_id, title=value.title)
+            workspace = value.workspace or "primary"
+            db.execute("INSERT INTO sessions(id,title,workspace) VALUES(?,?,?)", (session_id, value.title, workspace))
+            return Session(session_id=session_id, title=value.title, workspace=workspace)
         return await self.transaction(operation)
 
     async def create_branch(self, session_id: str, parent_id: str, fork_request_id: str, title: str) -> Session:
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
-            if not db.execute("SELECT 1 FROM sessions WHERE id=?", (parent_id,)).fetchone():
+            parent = db.execute("SELECT workspace FROM sessions WHERE id=?", (parent_id,)).fetchone()
+            if parent is None:
                 raise BackendError("session_not_found", status=404)
             if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
                 raise BackendError("session_capacity", status=429)
-            db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id) VALUES(?,?,?,?)",
-                       (session_id, title, parent_id, fork_request_id))
-            return Session(session_id=session_id, title=title, parent_id=parent_id, fork_request_id=fork_request_id)
+            workspace = str(parent[0] or "primary")
+            db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id,workspace) VALUES(?,?,?,?,?)",
+                       (session_id, title, parent_id, fork_request_id, workspace))
+            return Session(session_id=session_id, title=title, parent_id=parent_id,
+                           fork_request_id=fork_request_id, workspace=workspace)
         return await self.transaction(operation)
 
     async def discard_unopened_branch(self, session_id: str) -> None:
@@ -285,7 +319,8 @@ class HostStore:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
             current = db.execute(
-                "SELECT id,title,parent_id,fork_request_id,archived FROM sessions WHERE id=?", (session_id,)).fetchone()
+                "SELECT id,title,parent_id,fork_request_id,archived,workspace FROM sessions WHERE id=?",
+                (session_id,)).fetchone()
             if current is None:
                 raise BackendError("session_not_found", status=404)
             db.execute("UPDATE sessions SET archived=? WHERE id=?", (int(archived), session_id))
@@ -295,7 +330,8 @@ class HostStore:
                     "UPDATE deliveries SET state='rejected',error_code='session_archived',error_status=409 "
                     "WHERE session=? AND kind='submit' AND state='pending'", (session_id,))
             return self._session(db.execute(
-                "SELECT id,title,parent_id,fork_request_id,archived FROM sessions WHERE id=?", (session_id,)).fetchone())
+                "SELECT id,title,parent_id,fork_request_id,archived,workspace FROM sessions WHERE id=?",
+                (session_id,)).fetchone())
         return await self.transaction(operation)
 
     async def activity(self, session: str, activity: WorkerActivity) -> None:

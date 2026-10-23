@@ -22,6 +22,7 @@ from .contracts import (
     HostFence,
     Identity,
     Lease,
+    Message,
     Preview,
     ReadFile,
     Receipt,
@@ -43,6 +44,7 @@ from .contracts import (
     WriteFile,
 )
 from .faults import Faults
+from .memories import inject_memories, relevant_memories, session_workspace
 from .providers import Completion, stream
 from .session_domain import (
     Action,
@@ -370,6 +372,11 @@ class Worker:
         self.stop.set()
         return await self.identity()
 
+    async def model_input(self, messages: list[Message]) -> list[Message]:
+        query = next((item.content for item in reversed(messages) if item.role == "user"), "")
+        workspace = session_workspace(self.profile.path, self.session)
+        return inject_memories(messages, relevant_memories(self.profile.path, workspace, query))
+
     async def perform(self, action: Action) -> Observation:
         if self.validation:
             raise BackendError("validation_worker")
@@ -383,7 +390,8 @@ class Worker:
             completion: Completion | None = None
             preview_seq = 0
             last_preview = 0.0
-            async for item in stream(config, action.messages):
+            messages = await self.model_input(action.messages)
+            async for item in stream(config, messages):
                 if isinstance(item, Completion):
                     completion = item
                 else:

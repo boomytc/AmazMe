@@ -65,6 +65,141 @@
         }
       }
     },
+    "/api/v1/memories": {
+      "post": {
+        "summary": "Save Memory",
+        "operationId": "save_memory_api_v1_memories_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Memories",
+        "operationId": "memories_api_v1_memories_get",
+        "parameters": [
+          {
+            "name": "workspace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "primary",
+              "title": "Workspace"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/memories": {
+      "get": {
+        "summary": "Session Memories",
+        "operationId": "session_memories_api_v1_sessions__session_id__memories_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces": {
       "get": {
         "summary": "Workspaces",
@@ -2523,6 +2658,11 @@
             "minLength": 1,
             "title": "Title",
             "default": "新会话"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": "primary"
           }
         },
         "additionalProperties": false,
@@ -3260,6 +3400,79 @@
           "clean"
         ],
         "title": "McpView"
+      },
+      "MemoryList": {
+        "properties": {
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "memories": {
+            "items": {
+              "$ref": "#/components/schemas/MemoryView"
+            },
+            "type": "array",
+            "title": "Memories"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "workspace",
+          "memories"
+        ],
+        "title": "MemoryList"
+      },
+      "MemoryView": {
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "title": "Memory Id"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "memory_id",
+          "workspace",
+          "text"
+        ],
+        "title": "MemoryView"
+      },
+      "MemoryWrite": {
+        "properties": {
+          "memory_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Memory Id"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": "primary"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 500,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "memory_id",
+          "text"
+        ],
+        "title": "MemoryWrite"
       },
       "ModelCatalog": {
         "properties": {
@@ -4017,6 +4230,11 @@
             "type": "boolean",
             "title": "Archived",
             "default": false
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": "primary"
           }
         },
         "additionalProperties": false,

@@ -146,6 +146,7 @@ function startClient() {
   function savePending(value) { pending = value; if (value) sessionStorage.setItem("pending", JSON.stringify(value)); else sessionStorage.removeItem("pending"); }
   function saveActions() { sessionStorage.setItem("actions", JSON.stringify(actions)); }
   const archived = new Map();
+  const sessionWorkspaces = new Map();
   const owns = connection => current === connection && connection.generation === generation;
   const archivedNow = () => Boolean(archived.get(selected));
   const writable = () => Boolean(current?.ready && health?.state === "ready" && current.model?.state === "ready" && !archivedNow());
@@ -420,7 +421,11 @@ function startClient() {
     await loadModels();
     const value = await api("/api/v1/sessions");
     archived.clear();
-    for (const item of value.sessions) archived.set(item.session_id, Boolean(item.archived));
+    sessionWorkspaces.clear();
+    for (const item of value.sessions) {
+      archived.set(item.session_id, Boolean(item.archived));
+      sessionWorkspaces.set(item.session_id, item.workspace || "primary");
+    }
     $("sessions").replaceChildren(...value.sessions.map(item => button(item.archived ? `${item.title}（已归档）` : item.title, () => void select(item.session_id))));
     if (!selected && value.sessions.length) await select(value.sessions.some(item => item.session_id === pending?.target) ? pending.target : value.sessions[0].session_id);
     renderHealth();
@@ -571,6 +576,35 @@ function startClient() {
         {decision_id: crypto.randomUUID().replaceAll("-", ""), approve: true, digest: mcpDigest}, current);
       $("mcp-result").textContent = call.result;
       $("mcp-approval").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("memory").addEventListener("toggle", () => {
+    if (!$("memory").open || !selected) return;
+    const workspace = sessionWorkspaces.get(selected) || "primary";
+    api(`/api/v1/memories?workspace=${encodeURIComponent(workspace)}`).then(list => {
+      $("memory-list").textContent = list.memories.map(item => item.text).join("\n");
+    }).catch(error);
+  });
+  $("memory-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    const workspace = sessionWorkspaces.get(selected) || "primary";
+    try {
+      await api("/api/v1/memories", "POST", {
+        memory_id: crypto.randomUUID().replaceAll("-", ""), workspace, text: $("memory-text").value,
+      }, current);
+      const list = await api(`/api/v1/memories?workspace=${encodeURIComponent(workspace)}`);
+      $("memory-list").textContent = list.memories.map(item => item.text).join("\n");
+      $("memory-text").value = "";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("memory-preview").onclick = async () => {
+    if (!selected) return;
+    try {
+      const list = await api(`/api/v1/sessions/${selected}/memories?q=${encodeURIComponent($("prompt").value)}`);
+      $("memory-list").textContent = list.memories.length ? list.memories.map(item => item.text).join("\n") : "没有将注入的记忆";
+      $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   let pluginId = "";
