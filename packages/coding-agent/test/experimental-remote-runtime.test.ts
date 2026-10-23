@@ -1,6 +1,6 @@
 import { openTestHost } from "./native-host-support.ts";
 import { activationFacet, disposeResources } from "@amazme/protocol/services";
-import { lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHost, type Context } from "@amazme/chord";
@@ -33,6 +33,7 @@ import {
 	configureExperimentalWorkerModel,
 	createExperimentalSessions,
 	readExperimentalSessionState } from "./experimental-session-support.ts";
+import { readSession, sessionStoragePath } from "../src/host/session-catalog.ts";
 import { KeyedProbe } from "./fixtures/keyed-service.ts";
 import { createTempDir } from "./temp-dir.ts";
 
@@ -586,6 +587,9 @@ describe("experimental durable server composition", () => {
 		const result = await runClient({ command: "client", sessionId: "demo-1", prompt: "question" }, { directory });
 
 		expect(result).toMatchObject({ kind: "prompted", text: "deterministic remote answer" });
+		const metadata = await readSession(join(agentDir, "experimental", "sessions"), "demo-1");
+		expect(metadata).toBeDefined();
+		await expect(access(sessionStoragePath(metadata!))).rejects.toThrow();
 	});
 
 	test("replicates the transcript after consecutive prompts", async ({ onTestFinished }) => {

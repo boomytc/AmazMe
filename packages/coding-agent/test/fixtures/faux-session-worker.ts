@@ -1,11 +1,12 @@
 import type { Facet } from "@amazme/chord";
 import { Type } from "typebox";
-import { resolve } from "node:path";
+import { rm } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { BACKGROUND_CONTEXT } from "@amazme/chord/context";
 import { createModels, fauxAssistantMessage, fauxProvider } from "@amazme/ai";
 import { createRegistry, Harness } from "@amazme/durable";
-import { openSessionStorage } from "../../src/durable/session-database.ts";
+import { openNodeSqliteStorage } from "@amazme/durable/storage/sqlite/node";
 import { consumeInternalProcessRole } from "../../src/host/process.ts";
 import { runSessionWorkerWithHarness } from "../../src/host/session-worker.ts";
 import { KeyedProbe } from "./keyed-service.ts";
@@ -13,7 +14,7 @@ import { KeyedProbe } from "./keyed-service.ts";
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const role = consumeInternalProcessRole();
 	if (role !== "session-worker") throw new Error("Faux Session worker requires a session-worker invocation");
-	void runSessionWorkerWithHarness(process.argv.slice(2), async (lease, options) => {
+	void runSessionWorkerWithHarness(process.argv.slice(2), async (_lease, options) => {
 		if (options.provider !== "anthropic" || options.model !== "claude-sonnet-4-5") {
 			throw new Error(`Unexpected faux worker model: ${options.provider}/${options.model}`);
 		}
@@ -22,11 +23,23 @@ if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(
 		faux.setResponses([answer, answer]);
 		const models = createModels();
 		models.setProvider(faux.provider);
+		// Not the product session library. That file stays absent; Python owns it.
+		const storagePath = join(options.metadata.path, "faux-harness.sqlite");
 		const harness = await Harness.open(
-			await openSessionStorage(lease),
+			await openNodeSqliteStorage(storagePath),
 			{ models, registry: createRegistry() },
 			BACKGROUND_CONTEXT,
 		);
+		const closeHarness = harness.close.bind(harness);
+		harness.close = async (context) => {
+			try {
+				return await closeHarness(context);
+			} finally {
+				await rm(storagePath, { force: true });
+				await rm(`${storagePath}-wal`, { force: true });
+				await rm(`${storagePath}-shm`, { force: true });
+			}
+		};
 		const model = faux.getModel();
 		const conversation = await harness.root(BACKGROUND_CONTEXT, {
 			agent: { cwd: options.metadata.cwd, model: { provider: model.provider, modelId: model.id } } });
