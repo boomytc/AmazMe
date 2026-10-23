@@ -79,11 +79,11 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 
 | 用户操作 | 阶段 | 入口 | 状态 | 测试 / 运行 | 未通过与下一步 |
 | --- | --- | --- | --- | --- | --- |
-| 文本、工具流、终止与 faux usage | P1/P2 | `providers.stream`，faux 与 DeepSeek Flash | 部分通过 | faux 单测；P1 有一次真实 DeepSeek | 推理签名、缓存、费用和其余供应商未做。真实供应商只用已经授权的凭据 |
+| 文本、工具流、终止与 faux usage | P1/P2 | `providers.stream`，faux 与 DeepSeek Flash | 部分通过 | faux 单测；P1 有一次真实 DeepSeek | 推理签名和缓存费用在 `f3bd837`。其余供应商价格未做。真实供应商只用已经授权的凭据 |
 | 模型目录、选择、自定义端点、代理和请求头 | P3 | `GET/POST /api/v1/models`；侧栏模型表单 | 部分通过 | `backend/tests/test_model_catalog.py` | `0e9053cd`。目录是 faux 与 DeepSeek。DeepSeek 可改 https 端点。代理密码不进回执和会话记录。请求头有数量和名称限制。OAuth 未做 |
 | API key | P1 | `provider.json`，不进普通日志 | 部分通过 | 配置加载 | 刷新、轮换和登出竞争未做 |
 | OAuth、单一刷新管理者、取消期间 token 落盘 | P3 | 无 | 未通过 | 无 | 按供应商要求的 client ID、回调和请求身份实现。缺账号时保持未验收并继续无关功能 |
-| 图片、分类 | P3 | 无 | 未通过 | 无 | 按产品里实际有的能力做，不按枚举注册名称 |
+| 图片、分类 | P3 | `POST /api/v1/sessions/{id}/submissions` 的 `images`；页面「图片」；SDK `submit(images=)` | 部分通过 | `backend/tests/test_images.py` 落盘后用本地供应商流核对请求体，并用 happy-dom 发送所选文件 | 一次最多 8 张，每张不超过 8 MB，只接受 PNG、JPEG、WebP、GIF。图片字节存在用户消息上，下一次请求放进 `image_url`。回执只计张数。用量、快照和消息事件不含图片正文。错误的 base64 不会落盘。分类仍未做，也没有把图片交给真实视觉模型 |
 | 会话归档 | P3 | `POST /api/v1/sessions/{id}/archive`；页面「归档 / 恢复」 | 部分通过 | `test_session_branch.py` 的归档用例和 happy-dom | `1af60222`。不在 A/B 安装包里，也还没有真实 Chrome。历史不删除；未开始的任务变为已取消 |
 | 上下文压缩、过期结果拒绝、压缩失败保留原历史 | P3 | `POST /api/v1/sessions/{id}/compactions`；页面「压缩上下文」 | 部分通过 | `test_session_branch.py` 的压缩用例和 happy-dom | `8c9cee19`。摘要走当前供应商。依据不一致拒绝写入。失败不删原消息。还不在 A/B 包和真实 Chrome 里 |
 | 切换会话 | P2 Web | 侧栏 | 已通过 | `verify_client.py` 的 A-B-A | 分支后的切换有 happy-dom 测试，还没有进 Chrome 报告 |

@@ -29,6 +29,7 @@ from .contracts import (
     EffectResolution,
     Event,
     HostFence,
+    ImagePart,
     Message,
     Model,
     Preview,
@@ -47,6 +48,7 @@ from .contracts import (
     WorkerState,
     WorkflowChild,
     WorkflowView,
+    checked_images,
 )
 from .faults import Faults
 from .providers import Completion, stored_provider, token_cost_micro
@@ -156,6 +158,13 @@ SNAPSHOT_CHILD_BYTES = 512 * 1024
 
 def now_ms() -> int:
     return time.time_ns() // 1_000_000
+
+
+def event_message_text(message: Message) -> str:
+    """Event and snapshot text omit image bytes. The message row keeps them for the next provider call."""
+    if message.images:
+        message = message.model_copy(update={"images": []})
+    return message.model_dump_json()
 
 
 def digest(value: str) -> str:
@@ -405,6 +414,8 @@ class SessionStore:
                   id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS computer_runtime(
                   id TEXT PRIMARY KEY,blocked INTEGER NOT NULL,exit_code INTEGER,proof TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS prompt_images(
+                  request_id TEXT PRIMARY KEY REFERENCES requests(id),payload TEXT NOT NULL);
             """)
             for key, value in {"stream_id": secrets.token_hex(16), "revision": "0", "host_epoch": "0",
                                "freeze_id": "", "stopping": "", "blocked": "", "driver_id": "", "execution_epoch": "0"}.items():
@@ -512,26 +523,49 @@ class SessionStore:
             "SELECT payload FROM messages WHERE request_id=? ORDER BY ordinal", (request_id,))]
 
     @staticmethod
-    def _message(db: sqlite3.Connection, c: Changes, request_id: str, key: str, message: Message) -> None:
-        size = db.execute("SELECT coalesce(sum(length(CAST(payload AS BLOB))),0) FROM messages WHERE request_id=?",
-                          (request_id,)).fetchone()[0]
+    @staticmethod
+    def _text_bytes(payload: str) -> int:
+        message = Message.model_validate_json(payload)
+        return len(event_message_text(message).encode())
+
+    def _message(self, db: sqlite3.Connection, c: Changes, request_id: str, key: str, message: Message) -> None:
+        size = 0
+        for row in db.execute("SELECT payload FROM messages WHERE request_id=?", (request_id,)):
+            size += self._text_bytes(str(row[0]))
         payload = message.model_dump_json()
-        if size + len(payload.encode()) > CONTEXT_BYTES:
+        if size + len(event_message_text(message).encode()) > CONTEXT_BYTES:
             raise BackendError("context_limit")
         ordinal = db.execute("SELECT coalesce(max(ordinal),0)+1 FROM messages WHERE request_id=?", (request_id,)).fetchone()[0]
         changed = db.execute("INSERT OR IGNORE INTO messages VALUES(?,?,?,?)",
                              (request_id, ordinal, key, payload)).rowcount
         if changed:
-            c.emit("message", request_id, payload)
+            c.emit("message", request_id, event_message_text(message))
+
+    @staticmethod
+    def _save_images(db: sqlite3.Connection, request_id: str, images: list[ImagePart]) -> None:
+        checked_images(images)
+        if not images:
+            return
+        db.execute("INSERT INTO prompt_images(request_id,payload) VALUES(?,?)",
+                   (request_id, json.dumps([image.model_dump() for image in images], separators=(",", ":"))))
+
+    @staticmethod
+    def _load_images(db: sqlite3.Connection, request_id: str) -> list[ImagePart]:
+        row = db.execute("SELECT payload FROM prompt_images WHERE request_id=?", (request_id,)).fetchone()
+        if row is None:
+            return []
+        return [ImagePart.model_validate(item) for item in json.loads(str(row[0]))]
 
     def _new_request(self, db: sqlite3.Connection, c: Changes, value: Submit, *, parent_id: str = "",
                      depth: int = 0) -> Receipt:
         receipt = Receipt(request_id=value.request_id, run_id=value.request_id, text=value.text,
                           status="waiting_time" if value.not_before_ms > now_ms() else "queued",
                           parent_id=parent_id, kind="child" if parent_id else "root",
-                          accepted_revision=str(c.seq), revision=str(c.seq), not_before_ms=value.not_before_ms)
+                          accepted_revision=str(c.seq), revision=str(c.seq), not_before_ms=value.not_before_ms,
+                          image_count=len(value.images))
         db.execute("INSERT INTO requests(id,digest,payload) VALUES(?,?,?)",
                    (value.request_id, digest(value.model_dump_json()), receipt.model_dump_json()))
+        self._save_images(db, value.request_id, value.images)
         # Store public provider configuration only. Credentials remain in Profile.
         config = stored_provider(self.config)
         self._save_run(db, Run(request_id=value.request_id, config=config, depth=depth))
@@ -581,9 +615,10 @@ class SessionStore:
                     raise BackendError("steer_target_settled")
                 receipt = Receipt(request_id=value.request_id, run_id=target.run_id, parent_id=target.request_id,
                                   kind="steer", text=value.text, status="queued", accepted_revision=str(c.seq),
-                                  revision=str(c.seq))
+                                  revision=str(c.seq), image_count=len(value.images))
                 db.execute("INSERT INTO requests(id,digest,payload) VALUES(?,?,?)",
                            (value.request_id, digest(value.model_dump_json()), receipt.model_dump_json()))
+                self._save_images(db, value.request_id, value.images)
                 self._expire_approvals(db, c, target.request_id)
                 c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
                 c.hit("accepted", receipt.request_id)
@@ -1165,7 +1200,8 @@ class SessionStore:
                     history = payloads[matched.message_count:]
                 for index, payload in enumerate(history):
                     self._message(db, c, request.request_id, f"history:{index}", Message.model_validate_json(payload))
-        self._message(db, c, request.request_id, "input", Message(role="user", content=request.text))
+        self._message(db, c, request.request_id, "input", Message(
+            role="user", content=request.text, images=self._load_images(db, request.request_id)))
         request.status = "running"
         request.generation += 1
         self._save_request(db, c, request)
@@ -1396,7 +1432,8 @@ class SessionStore:
             return Continue()
         for steer in self._requests(db):
             if steer.kind == "steer" and steer.parent_id == request.request_id and steer.status not in TERMINAL:
-                self._message(db, c, request.request_id, "steer:" + steer.request_id, Message(role="user", content=steer.text))
+                self._message(db, c, request.request_id, "steer:" + steer.request_id, Message(
+                    role="user", content=steer.text, images=self._load_images(db, steer.request_id)))
                 self._decide(db, c, steer, Decision(status="succeeded", answer="steering_applied"))
                 self._settle(db, c, steer)
         ordinal = max((s.ordinal for s in steps), default=0) + 1
@@ -1982,8 +2019,11 @@ class SessionStore:
                     truncated = truncated or len(rows) > 8
                     accepted: list[Event] = []
                     for row in rows[:8]:
+                        text = str(row[0])
+                        if kind == "message":
+                            text = event_message_text(Message.model_validate_json(text))
                         event = Event.model_validate(dict(seq=seq, kind=kind, request_id=request.request_id,
-                                                          text=str(row[0])))
+                                                          text=text))
                         size = len(event.model_dump_json().encode())
                         if view_bytes + size > SNAPSHOT_VIEW_BYTES - 256:
                             truncated = True

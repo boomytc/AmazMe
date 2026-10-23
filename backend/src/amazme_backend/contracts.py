@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -74,12 +76,40 @@ class Identity(Model):
     storage_format: Literal[2] = 2
 
 
+IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
+IMAGE_MAX_BYTES = 8 * 1024 * 1024
+IMAGE_MAX_COUNT = 8
+_IMAGE_BASE64_MAX = (IMAGE_MAX_BYTES + 2) // 3 * 4
+
+
+class ImagePart(Model):
+    media_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"]
+    data_base64: str = Field(min_length=1, max_length=_IMAGE_BASE64_MAX)
+
+
+def checked_images(images: list[ImagePart]) -> list[ImagePart]:
+    """Reject a prompt image before it is stored or sent. The bytes stay out of ordinary events."""
+    if len(images) > IMAGE_MAX_COUNT:
+        raise BackendError("too_many_images")
+    for image in images:
+        try:
+            raw = base64.b64decode(image.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            raise BackendError("invalid_image") from None
+        if not raw:
+            raise BackendError("invalid_image")
+        if len(raw) > IMAGE_MAX_BYTES:
+            raise BackendError("image_too_large")
+    return images
+
+
 class Submit(Model):
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     text: str = Field(min_length=1, max_length=16000)
     mode: Literal["queue", "steer", "reject_busy"] = "queue"
     target_run_id: str = ""
     not_before_ms: int = Field(default=0, ge=0, le=253402300799000)
+    images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart](), max_length=IMAGE_MAX_COUNT)
 
 
 TerminalStatus = Literal["succeeded", "cancelled", "interrupted", "failed", "unknown"]
@@ -109,6 +139,7 @@ class Receipt(Model):
     decision: Decision | None = None
     children: list[str] = Field(default_factory=lambda: list[str]())
     not_before_ms: int = 0
+    image_count: int = Field(default=0, ge=0)
 
 
 class ToolCall(Model):
@@ -125,6 +156,7 @@ class Message(Model):
     provider_response_id: str = ""
     # Opaque provider replay data. Ordinary usage and logs do not include this text.
     reasoning_signature: str = ""
+    images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart](), max_length=IMAGE_MAX_COUNT)
 
 
 class SearchHit(Model):

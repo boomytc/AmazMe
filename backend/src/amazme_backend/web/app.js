@@ -251,7 +251,8 @@ function startClient() {
       const article = element("article"); article.dataset.requestId = row.request_id;
       const preview = model.previews.find(item => item.request_id === row.request_id && previewMatches(item, row));
       const text = row.answer || preview?.text || "";
-      article.append(element("div", `${row.kind === "child" ? "子任务 · " : row.kind === "steer" ? "引导 · " : ""}${row.text}`, "question"),
+      const attached = row.image_count ? ` · ${row.image_count} 张图片` : "";
+      article.append(element("div", `${row.kind === "child" ? "子任务 · " : row.kind === "steer" ? "引导 · " : ""}${row.text}${attached}`, "question"),
         element("div", text, "answer"), element("div", `${labels[row.status] || row.status}${row.error ? ` · ${row.error}` : ""}${preview && !row.answer ? " · 临时预览" : ""}`, "status"));
       if (row.children.length) article.append(element("div", `子任务：${row.children.map(id => {
         const child = model.requests.find(item => item.request_id === id); return `${id.slice(0,8)}（${labels[child?.status] || "记录已归档"}）`;
@@ -1093,6 +1094,35 @@ function startClient() {
     }
     catch (failure) { error(failure); } finally { controls(); }
   };
+  const imageTypes = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+  function readImage(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result || "");
+        const comma = text.indexOf(",");
+        resolve({media_type: file.type, data_base64: comma >= 0 ? text.slice(comma + 1) : text});
+      };
+      reader.onerror = () => reject(new Error("图片读取失败"));
+      reader.readAsDataURL(file);
+    });
+  }
+  async function chosenImages() {
+    const files = [...($("images").files || [])];
+    if (!files.length) return [];
+    if (files.length > 8) { error(new Error("一次最多 8 张图片")); return null; }
+    const images = [];
+    for (const file of files) {
+      if (!imageTypes.has(file.type)) { error(new Error("只能发送 PNG、JPEG、WebP 或 GIF")); return null; }
+      if (!file.size || file.size > 8 * 1024 * 1024) { error(new Error("图片超过 8 MB")); return null; }
+      images.push(await readImage(file));
+    }
+    return images;
+  }
+  $("images").onchange = () => {
+    const files = [...($("images").files || [])];
+    $("image-note").textContent = files.length ? files.map(file => file.name).join("、") : "";
+  };
   $("composer").onsubmit = async event => {
     event.preventDefault(); if (!writable()) return;
     const connection = current, target = connection.session, key = `submit:${target}`;
@@ -1102,13 +1132,17 @@ function startClient() {
       const mode = $("mode").value;
       const run = connection.model.requests.find(row => row.kind === "root" && row.run_id && !terminal.has(row.status));
       if (mode === "steer" && !run) { error(new Error("当前没有可以引导的任务")); return; }
-      savePending({target, request_id:crypto.randomUUID(), text:$("prompt").value, mode, target_run_id:mode === "steer" ? run.run_id : ""});
+      const images = await chosenImages();
+      if (!images) return;
+      savePending({target, request_id:crypto.randomUUID(), text:$("prompt").value, mode, target_run_id:mode === "steer" ? run.run_id : "", images});
     }
     if (pending.target !== target) { error(new Error("请切回原会话重试待确认的请求")); return; }
     const submitted = pending;
     running.add(key); $("error").textContent = ""; controls();
     try {
-      await api(`/api/v1/sessions/${target}/submissions`, "POST", {request_id:submitted.request_id, text:submitted.text, mode:submitted.mode || "queue", target_run_id:submitted.target_run_id || ""}, connection, connection.identity);
+      const body = {request_id:submitted.request_id, text:submitted.text, mode:submitted.mode || "queue", target_run_id:submitted.target_run_id || ""};
+      if (submitted.images?.length) body.images = submitted.images;
+      await api(`/api/v1/sessions/${target}/submissions`, "POST", body, connection, connection.identity);
       // A response owned by an old connection leaves the retry ID intact until the
       // current connection explicitly confirms it. It cannot turn a retained draft
       // into a new submission, including A -> B -> A navigation.
@@ -1116,6 +1150,8 @@ function startClient() {
         if (pending === submitted) savePending(null);
         if (drafts.get(target) === submitted.text) drafts.delete(target);
         if ($("prompt").value === submitted.text) $("prompt").value = "";
+        $("images").value = "";
+        $("image-note").textContent = "";
       }
     } catch (failure) {
       if (owns(connection) && definitive(failure) && pending === submitted) savePending(null);

@@ -5,7 +5,7 @@ from typing import cast
 
 import httpx
 
-from .contracts import Attachment, BackendError, ErrorBody, Identity, Receipt, Session, SessionList
+from .contracts import Attachment, BackendError, ErrorBody, Identity, ImagePart, Receipt, Session, SessionList
 
 
 class Client:
@@ -83,11 +83,14 @@ class Client:
             raise BackendError("workspace_mismatch")
 
     async def submit(self, *, session_id: str, workspace: str, attachment_id: str, request_id: str, text: str,
-                     not_before_ms: int = 0) -> Receipt:
+                     not_before_ms: int = 0, images: list[ImagePart] | None = None) -> Receipt:
         await self._require_workspace(session_id, workspace)
+        body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms}
+        if images:
+            body["images"] = [image.model_dump() for image in images]
         payload = await self._send(
             "POST", f"/api/v1/sessions/{session_id}/submissions",
-            json_body={"request_id": request_id, "text": text, "not_before_ms": not_before_ms},
+            json_body=body,
             headers=self._write(attachment_id))
         return Receipt.model_validate(payload)
 

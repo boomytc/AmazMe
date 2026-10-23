@@ -68,6 +68,7 @@ export type Receipt = {
   decision?: Decision | null;
   children?: Array<string>;
   not_before_ms?: number;
+  image_count?: number;
 };
 
 export type Snapshot = {

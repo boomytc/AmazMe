@@ -282,7 +282,18 @@ def provider_messages(messages: list[Message], provider: str = "") -> list[ChatC
     )}]
     for message in messages:
         if message.role == "user":
-            result.append({"role": "user", "content": message.content})
+            if message.images:
+                parts: list[dict[str, object]] = []
+                if message.content:
+                    parts.append({"type": "text", "text": message.content})
+                for image in message.images:
+                    parts.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:{image.media_type};base64,{image.data_base64}"},
+                    })
+                result.append({"role": "user", "content": parts})  # type: ignore[arg-type]
+            else:
+                result.append({"role": "user", "content": message.content})
         elif message.role == "tool":
             result.append({"role": "tool", "content": message.content, "tool_call_id": message.tool_call_id})
         else:

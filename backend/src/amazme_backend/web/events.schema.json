@@ -379,6 +379,12 @@
           "default": 0,
           "title": "Not Before Ms",
           "type": "integer"
+        },
+        "image_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Image Count",
+          "type": "integer"
         }
       },
       "required": [

@@ -5200,6 +5200,33 @@
         ],
         "title": "Identity"
       },
+      "ImagePart": {
+        "properties": {
+          "media_type": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/webp",
+              "image/gif"
+            ],
+            "title": "Media Type"
+          },
+          "data_base64": {
+            "type": "string",
+            "maxLength": 11184812,
+            "minLength": 1,
+            "title": "Data Base64"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "media_type",
+          "data_base64"
+        ],
+        "title": "ImagePart"
+      },
       "ImportResult": {
         "properties": {
           "format": {
@@ -6010,6 +6037,12 @@
             "type": "integer",
             "title": "Not Before Ms",
             "default": 0
+          },
+          "image_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Image Count",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -6715,6 +6748,14 @@
             "minimum": 0.0,
             "title": "Not Before Ms",
             "default": 0
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImagePart"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Images"
           }
         },
         "additionalProperties": false,
