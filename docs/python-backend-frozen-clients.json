@@ -6,7 +6,7 @@
   "cli": "passed",
   "rpc": "passed",
   "tui_pids": [
-    8037,
-    8077
+    32224,
+    32263
   ]
 }
