@@ -393,6 +393,229 @@
         }
       }
     },
+    "/api/v1/sessions/{session_id}/remotes": {
+      "post": {
+        "summary": "Open Remote",
+        "operationId": "open_remote_api_v1_sessions__session_id__remotes_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteOpen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/remotes/{remote_id}/reconnect": {
+      "post": {
+        "summary": "Reconnect Remote",
+        "operationId": "reconnect_remote_api_v1_sessions__session_id__remotes__remote_id__reconnect_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "remote_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Remote Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteOpen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/remotes/{remote_id}/disconnect": {
+      "post": {
+        "summary": "Disconnect Remote",
+        "operationId": "disconnect_remote_api_v1_sessions__session_id__remotes__remote_id__disconnect_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "remote_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Remote Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteOpen"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/remotes/{remote_id}/calls": {
+      "post": {
+        "summary": "Submit Remote",
+        "operationId": "submit_remote_api_v1_sessions__session_id__remotes__remote_id__calls_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "remote_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Remote Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteRun"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteCallView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/mcp": {
       "post": {
         "summary": "Open Mcp",
@@ -2885,6 +3108,166 @@
           "recovery_id"
         ],
         "title": "Recovery"
+      },
+      "RemoteCallView": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "done",
+              "conflict"
+            ],
+            "title": "Phase"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "phase"
+        ],
+        "title": "RemoteCallView"
+      },
+      "RemoteOpen": {
+        "properties": {
+          "remote_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Remote Id"
+          },
+          "host": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Host"
+          },
+          "host_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Host Key"
+          },
+          "generation": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Generation",
+            "default": 1
+          },
+          "endpoint": {
+            "type": "string",
+            "pattern": "^127\\.0\\.0\\.1:[0-9]{1,5}$",
+            "title": "Endpoint"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "remote_id",
+          "host",
+          "host_key",
+          "endpoint"
+        ],
+        "title": "RemoteOpen"
+      },
+      "RemoteRun": {
+        "properties": {
+          "remote_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Remote Id"
+          },
+          "host": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Host"
+          },
+          "host_key": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Host Key"
+          },
+          "generation": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Generation",
+            "default": 1
+          },
+          "endpoint": {
+            "type": "string",
+            "pattern": "^127\\.0\\.0\\.1:[0-9]{1,5}$",
+            "title": "Endpoint"
+          },
+          "call_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Call Id"
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Command"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "remote_id",
+          "host",
+          "host_key",
+          "endpoint",
+          "call_id",
+          "command"
+        ],
+        "title": "RemoteRun"
+      },
+      "RemoteView": {
+        "properties": {
+          "remote_id": {
+            "type": "string",
+            "title": "Remote Id"
+          },
+          "host": {
+            "type": "string",
+            "title": "Host"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "disconnected",
+              "blocked"
+            ],
+            "title": "Phase"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "remote_id",
+          "host",
+          "phase",
+          "generation"
+        ],
+        "title": "RemoteView"
       },
       "ServiceInfo": {
         "properties": {

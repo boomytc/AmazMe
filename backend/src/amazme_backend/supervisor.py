@@ -40,13 +40,18 @@ from .contracts import (
     McpTool,
     McpView,
     OpenMcp,
+    OpenRemote,
     OpenTerminal,
     ProcessLease,
     Recovery,
+    RemoteCallRequest,
+    RemoteCallView,
+    RemoteView,
     ResolveEffect,
     RetireSupervisor,
     RunTool,
     StopWorker,
+    SubmitRemote,
     SupervisorHealth,
     TerminalInput,
     TerminalQuery,
@@ -65,6 +70,7 @@ from .mcp_session import McpClient, mcp_container, mcp_digest
 from .processes import ProcessReservation, exited, wait_exited
 from .pty_gate import WINDOW
 from .pty_session import PtyClient, pty_container
+from .remote_session import RemoteClient
 from .transport import app_factory
 from .vm import VM
 
@@ -191,6 +197,7 @@ class Supervisor:
         self.mcp_gate = Path(__file__).with_name("mcp_gate.py").read_text()
         self.terminals: dict[str, PtyClient] = {}
         self.mcp_clients: dict[str, McpClient] = {}
+        self.remote_clients: dict[str, RemoteClient] = {}
         self.terminal_bridges: dict[str, asyncio.Task[None]] = {}
         self.instance = instance or secrets.token_hex(16)
         self.process_lease = process_lease
@@ -269,6 +276,11 @@ class Supervisor:
               CREATE TABLE IF NOT EXISTS mcp_calls(id TEXT PRIMARY KEY,server TEXT NOT NULL,name TEXT NOT NULL,
                 arguments TEXT NOT NULL,digest TEXT NOT NULL,phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '',
                 decision_id TEXT NOT NULL DEFAULT '',decision TEXT NOT NULL DEFAULT '');
+              CREATE TABLE IF NOT EXISTS remotes(id TEXT PRIMARY KEY,session TEXT NOT NULL,host TEXT NOT NULL,
+                host_key TEXT NOT NULL,daemon_id TEXT NOT NULL,generation INTEGER NOT NULL,phase TEXT NOT NULL,
+                endpoint TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS remote_calls(id TEXT PRIMARY KEY,remote TEXT NOT NULL,command TEXT NOT NULL,
+                phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '');
               PRAGMA user_version=2;
               COMMIT;
             """)
@@ -1329,6 +1341,191 @@ class Supervisor:
         assert current is not None
         return self._mcp_view(current)
 
+    def _remote_view(self, row: sqlite3.Row) -> RemoteView:
+        phase = str(row["phase"])
+        if phase not in {"connected", "disconnected", "blocked"}:
+            phase = "blocked"
+        return RemoteView(remote_id=str(row["id"]), host=str(row["host"]), phase=phase,  # type: ignore[arg-type]
+                          generation=int(row["generation"]))
+
+    def _remote_call(self, row: sqlite3.Row) -> RemoteCallView:
+        phase = str(row["phase"])
+        if phase not in {"unknown", "done", "conflict"}:
+            phase = "unknown"
+        return RemoteCallView(call_id=str(row["id"]), phase=phase, result=str(row["result"]))  # type: ignore[arg-type]
+
+    async def _remote_row(self, remote_id: str) -> sqlite3.Row | None:
+        return await self.db.call(lambda db: db.execute("SELECT * FROM remotes WHERE id=?", (remote_id,)).fetchone())
+
+    async def _unknown_remote(self, remote_id: str) -> bool:
+        row = await self.db.call(lambda db: db.execute(
+            "SELECT 1 FROM remote_calls WHERE remote=? AND phase='unknown'", (remote_id,)).fetchone())
+        return row is not None
+
+    def _hello_matches(self, row: sqlite3.Row, hello: dict[str, object]) -> bool:
+        return (hello.get("host_key") == row["host_key"] and hello.get("daemon_id") == row["daemon_id"]
+                and hello.get("generation") == int(row["generation"]))
+
+    async def _dial_remote(self, row: sqlite3.Row) -> RemoteClient | None:
+        try:
+            client = await asyncio.to_thread(RemoteClient.connect, str(row["endpoint"]))
+        except (OSError, BackendError):
+            await self.db.call(lambda db: db.execute(
+                "UPDATE remotes SET phase='disconnected' WHERE id=?", (row["id"],)), write=True)
+            return None
+        if not self._hello_matches(row, client.hello):
+            client.close()
+            await self.db.call(lambda db: db.execute(
+                "UPDATE remotes SET phase='blocked' WHERE id=?", (row["id"],)), write=True)
+            return None
+        self.remote_clients[str(row["id"])] = client
+        await self.db.call(lambda db: db.execute(
+            "UPDATE remotes SET phase='connected' WHERE id=?", (row["id"],)), write=True)
+        return client
+
+    async def _absorb_remote(self, remote_id: str, client: RemoteClient) -> None:
+        pending = await self.db.call(lambda db: db.execute(
+            "SELECT id FROM remote_calls WHERE remote=? AND phase='unknown'", (remote_id,)).fetchall())
+        for item in pending:
+            call_id = str(item["id"])
+            try:
+                reply = await asyncio.to_thread(client.query, call_id)
+            except (OSError, BackendError):
+                await self.disconnect_remote_id(remote_id)
+                return
+            if reply.get("op") == "result" and isinstance(reply.get("text"), str):
+                await self.db.call(lambda db, cid=call_id, text=reply["text"]: db.execute(
+                    "UPDATE remote_calls SET phase='done',result=? WHERE id=? AND phase='unknown'",
+                    (text, cid)), write=True)
+
+    async def open_remote(self, value: OpenRemote) -> RemoteView:
+        self.check_host(value)
+        self._admit()
+        existing = await self._remote_row(value.remote_id)
+        if existing is not None:
+            same = (existing["session"], existing["host"], existing["host_key"], existing["daemon_id"],
+                    int(existing["generation"]), existing["endpoint"])
+            if same != (value.session_id, value.host, value.host_key, value.daemon_id, value.generation, value.endpoint):
+                raise BackendError("remote_conflict")
+            await self.reconnect_remote(value)
+            current = await self._remote_row(value.remote_id)
+            assert current is not None
+            return self._remote_view(current)
+        await self.db.call(lambda db: db.execute(
+            "INSERT INTO remotes(id,session,host,host_key,daemon_id,generation,phase,endpoint) VALUES(?,?,?,?,?,?,'disconnected',?)",
+            (value.remote_id, value.session_id, value.host, value.host_key, value.daemon_id, value.generation, value.endpoint)),
+            write=True)
+        row = await self._remote_row(value.remote_id)
+        assert row is not None
+        client = await self._dial_remote(row)
+        if client is not None:
+            await self._absorb_remote(value.remote_id, client)
+        current = await self._remote_row(value.remote_id)
+        assert current is not None
+        if current["phase"] == "blocked":
+            raise BackendError("remote_identity_mismatch")
+        if current["phase"] != "connected":
+            raise BackendError("remote_disconnected", status=503)
+        return self._remote_view(current)
+
+    async def reconnect_remote(self, value: OpenRemote) -> RemoteView:
+        self.check_host(value)
+        self._admit()
+        row = await self._remote_row(value.remote_id)
+        if row is None or row["session"] != value.session_id:
+            raise BackendError("remote_not_found", status=404)
+        old = self.remote_clients.pop(value.remote_id, None)
+        if old is not None:
+            old.close()
+        client = await self._dial_remote(row)
+        if client is None:
+            current = await self._remote_row(value.remote_id)
+            assert current is not None
+            if current["phase"] == "blocked":
+                raise BackendError("remote_identity_mismatch")
+            raise BackendError("remote_disconnected", status=503)
+        await self._absorb_remote(value.remote_id, client)
+        current = await self._remote_row(value.remote_id)
+        assert current is not None
+        return self._remote_view(current)
+
+    async def disconnect_remote_id(self, remote_id: str) -> None:
+        client = self.remote_clients.pop(remote_id, None)
+        if client is not None:
+            client.close()
+        await self.db.call(lambda db: db.execute(
+            "UPDATE remotes SET phase='disconnected' WHERE id=? AND phase!='blocked'", (remote_id,)), write=True)
+
+    async def disconnect_remote(self, value: OpenRemote) -> RemoteView:
+        self.check_host(value)
+        self._admit()
+        row = await self._remote_row(value.remote_id)
+        if row is None or row["session"] != value.session_id:
+            raise BackendError("remote_not_found", status=404)
+        await self.disconnect_remote_id(value.remote_id)
+        current = await self._remote_row(value.remote_id)
+        assert current is not None
+        return self._remote_view(current)
+
+    async def submit_remote(self, value: OpenRemote, call: RemoteCallRequest) -> RemoteCallView:
+        self.check_host(value)
+        self._admit()
+        row = await self._remote_row(value.remote_id)
+        if row is None or row["session"] != value.session_id:
+            raise BackendError("remote_not_found", status=404)
+        if row["phase"] != "connected":
+            raise BackendError("remote_unreachable", status=503)
+        if await self._unknown_remote(value.remote_id):
+            existing = await self.db.call(lambda db: db.execute(
+                "SELECT * FROM remote_calls WHERE id=?", (call.call_id,)).fetchone())
+            if existing is None or existing["remote"] != value.remote_id:
+                raise BackendError("remote_blocked", status=503)
+        existing = await self.db.call(lambda db: db.execute(
+            "SELECT * FROM remote_calls WHERE id=?", (call.call_id,)).fetchone())
+        client = self.remote_clients.get(value.remote_id)
+        if client is None:
+            await self.disconnect_remote_id(value.remote_id)
+            raise BackendError("remote_disconnected", status=503)
+        if existing is not None:
+            if existing["remote"] != value.remote_id or existing["command"] != call.command:
+                raise BackendError("remote_call_conflict")
+            if existing["phase"] == "done":
+                return self._remote_call(existing)
+            try:
+                reply = await asyncio.to_thread(client.query, call.call_id)
+            except (OSError, BackendError):
+                await self.disconnect_remote_id(value.remote_id)
+                raise BackendError("remote_disconnected", status=503) from None
+            return await self._apply_remote_reply(call.call_id, reply, allow_new=False)
+        await self.db.call(lambda db: db.execute(
+            "INSERT INTO remote_calls(id,remote,command,phase) VALUES(?,?,?,'unknown')",
+            (call.call_id, value.remote_id, call.command)), write=True)
+        try:
+            reply = await asyncio.to_thread(client.call, call.call_id, call.command)
+        except (OSError, BackendError):
+            await self.disconnect_remote_id(value.remote_id)
+            current = await self.db.call(lambda db: db.execute(
+                "SELECT * FROM remote_calls WHERE id=?", (call.call_id,)).fetchone())
+            assert current is not None
+            return self._remote_call(current)
+        return await self._apply_remote_reply(call.call_id, reply, allow_new=True)
+
+    async def _apply_remote_reply(self, call_id: str, reply: dict[str, object], *, allow_new: bool) -> RemoteCallView:
+        op = reply.get("op")
+        if op == "result" and isinstance(reply.get("text"), str):
+            phase, result = "done", reply["text"]
+        elif op == "conflict":
+            phase, result = "conflict", ""
+        else:
+            phase, result = "unknown", ""
+        if not allow_new and phase == "conflict":
+            phase = "unknown"
+        await self.db.call(lambda db: db.execute(
+            "UPDATE remote_calls SET phase=?,result=? WHERE id=?", (phase, result, call_id)), write=True)
+        current = await self.db.call(lambda db: db.execute("SELECT * FROM remote_calls WHERE id=?", (call_id,)).fetchone())
+        assert current is not None
+        return self._remote_call(current)
+
     async def _terminal_row(self, terminal_id: str) -> sqlite3.Row | None:
         return await self.db.call(lambda db: db.execute("SELECT * FROM terminals WHERE id=?", (terminal_id,)).fetchone())
 
@@ -1546,6 +1743,13 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/pty/read")(owner.read_terminal)
     app.post("/mcp/open")(owner.open_mcp)
     app.post("/mcp/cancel")(owner.cancel_mcp)
+    app.post("/remotes/open")(owner.open_remote)
+    app.post("/remotes/reconnect")(owner.reconnect_remote)
+    app.post("/remotes/disconnect")(owner.disconnect_remote)
+
+    @app.post("/remotes/calls")
+    async def remote_call(value: SubmitRemote) -> RemoteCallView:
+        return await owner.submit_remote(value, RemoteCallRequest(call_id=value.call_id, command=value.command))
 
     @app.post("/mcp/calls")
     async def mcp_call(value: McpCallEnvelope) -> McpCall:

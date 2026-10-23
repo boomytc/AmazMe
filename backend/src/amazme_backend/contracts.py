@@ -333,6 +333,52 @@ class McpDecisionEnvelope(HostFence):
     decision: McpDecision
 
 
+class RemoteOpen(Model):
+    remote_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    host: str = Field(min_length=1, max_length=200)
+    host_key: str = Field(min_length=16, max_length=128)
+    generation: int = Field(default=1, ge=1, le=1_000_000)
+    endpoint: str = Field(pattern=r"^127\.0\.0\.1:[0-9]{1,5}$")
+
+
+class OpenRemote(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    remote_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    host: str = Field(min_length=1, max_length=200)
+    host_key: str = Field(min_length=16, max_length=128)
+    daemon_id: str = Field(pattern=r"^[a-f0-9]{64}$")
+    generation: int = Field(ge=1, le=1_000_000)
+    endpoint: str = Field(pattern=r"^127\.0\.0\.1:[0-9]{1,5}$")
+
+
+class RemoteView(Model):
+    remote_id: str
+    host: str
+    phase: Literal["connected", "disconnected", "blocked"]
+    generation: int
+
+
+class SubmitRemote(OpenRemote):
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+
+
+class RemoteRun(RemoteOpen):
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+
+
+class RemoteCallRequest(Model):
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+
+
+class RemoteCallView(Model):
+    call_id: str
+    phase: Literal["unknown", "done", "conflict"]
+    result: str = ""
+
+
 class TerminalView(Model):
     terminal_id: str
     cols: int

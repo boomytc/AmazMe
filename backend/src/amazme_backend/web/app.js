@@ -548,6 +548,44 @@ function startClient() {
       $("mcp-approval").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let remoteId = "";
+  const remoteState = {connected:"已连接",disconnected:"已断开，远端未证明停止",blocked:"身份不符，已阻塞"};
+  function remoteBody() {
+    return {remote_id: remoteId, host: $("remote-host").value, host_key: $("remote-key").value, endpoint: $("remote-endpoint").value, generation: 1};
+  }
+  function showRemote(view, call) {
+    $("remote-state").textContent = remoteState[view.phase] || view.phase;
+    if (call) $("remote-result").textContent = call.result || call.phase;
+  }
+  $("remote-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    remoteId = remoteId || crypto.randomUUID().replaceAll("-", "");
+    try {
+      showRemote(await api(`/api/v1/sessions/${selected}/remotes`, "POST", remoteBody(), current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("remote-command").onsubmit = async event => {
+    event.preventDefault();
+    if (!remoteId || !selected) return;
+    try {
+      const call = await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/calls`, "POST",
+        {...remoteBody(), call_id: crypto.randomUUID().replaceAll("-", ""), command: $("remote-run").value}, current);
+      $("remote-result").textContent = call.result || call.phase;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("remote-drop").onclick = async () => {
+    if (!remoteId || !selected) return;
+    try { showRemote(await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/disconnect`, "POST", remoteBody(), current)); }
+    catch (failure) { error(failure); }
+  };
+  $("remote-again").onclick = async () => {
+    if (!remoteId || !selected) return;
+    try { showRemote(await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/reconnect`, "POST", remoteBody(), current)); }
+    catch (failure) { error(failure); }
+  };
   $("mcp-cancel").onclick = async () => {
     if (!mcpServer) return;
     try {

@@ -50,11 +50,16 @@ from .contracts import (
     ModelCatalog,
     ModelSettings,
     OpenMcp,
+    OpenRemote,
     OpenTerminal,
     PrepareUpdate,
     ProcessLease,
     Receipt,
     Recovery,
+    RemoteCallView,
+    RemoteOpen,
+    RemoteRun,
+    RemoteView,
     ResolutionEnvelope,
     RetireSupervisor,
     Session,
@@ -63,6 +68,7 @@ from .contracts import (
     StopWorker,
     Submission,
     Submit,
+    SubmitRemote,
     SupervisorHealth,
     TerminalInput,
     TerminalOpen,
@@ -81,6 +87,7 @@ from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
+from .remote_session import daemon_identity
 from .storage import (
     TERMINAL,
     SessionStore,
@@ -403,6 +410,31 @@ class Host:
         self._admit()
         return await self.supervisor.call("POST", "/mcp/decision", McpCall, McpDecisionEnvelope(
             **self._mcp_fence(session_id), server_id=server_id, call_id=call_id, decision=value))  # type: ignore[arg-type]
+
+    def _remote_body(self, session_id: str, value: RemoteOpen) -> OpenRemote:
+        return OpenRemote(host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
+                          remote_id=value.remote_id, host=value.host, host_key=value.host_key,
+                          daemon_id=daemon_identity(), generation=value.generation, endpoint=value.endpoint)
+
+    async def open_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        return await self.supervisor.call("POST", "/remotes/open", RemoteView, self._remote_body(session_id, value))
+
+    async def reconnect_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
+        self._admit()
+        return await self.supervisor.call("POST", "/remotes/reconnect", RemoteView, self._remote_body(session_id, value))
+
+    async def disconnect_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
+        self._admit()
+        return await self.supervisor.call("POST", "/remotes/disconnect", RemoteView, self._remote_body(session_id, value))
+
+    async def submit_remote(self, session_id: str, value: RemoteRun) -> RemoteCallView:
+        self._admit()
+        body = self._remote_body(session_id, value)
+        return await self.supervisor.call("POST", "/remotes/calls", RemoteCallView, SubmitRemote(
+            **body.model_dump(), call_id=value.call_id, command=value.command))
 
     async def cancel_mcp(self, session_id: str, value: McpOpen) -> McpView:
         self._admit()
@@ -1120,6 +1152,28 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session_id}/terminals/{terminal_id}/read")
     async def read_terminal(session_id: str, terminal_id: str) -> TerminalView:
         return await owner.read_terminal(session_id, terminal_id)
+
+    @app.post("/api/v1/sessions/{session_id}/remotes")
+    async def open_remote(session_id: str, value: RemoteOpen) -> RemoteView:
+        return await owner.open_remote(session_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/remotes/{remote_id}/reconnect")
+    async def reconnect_remote(session_id: str, remote_id: str, value: RemoteOpen) -> RemoteView:
+        if value.remote_id != remote_id:
+            raise BackendError("remote_conflict")
+        return await owner.reconnect_remote(session_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/remotes/{remote_id}/disconnect")
+    async def disconnect_remote(session_id: str, remote_id: str, value: RemoteOpen) -> RemoteView:
+        if value.remote_id != remote_id:
+            raise BackendError("remote_conflict")
+        return await owner.disconnect_remote(session_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/remotes/{remote_id}/calls")
+    async def submit_remote(session_id: str, remote_id: str, value: RemoteRun) -> RemoteCallView:
+        if value.remote_id != remote_id:
+            raise BackendError("remote_conflict")
+        return await owner.submit_remote(session_id, value)
 
     @app.post("/api/v1/sessions/{session_id}/mcp")
     async def open_mcp(session_id: str, value: McpOpen) -> McpView:
