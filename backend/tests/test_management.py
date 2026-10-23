@@ -201,6 +201,10 @@ def test_browser_manages_the_selected_session() -> None:
             seen.push('share '+path);
             return response({share_id:body.share_id,session_id:session,digest:'abcdef1234567890',messages:[]});
           }
+          if(method==='GET' && path.startsWith(`/api/v1/sessions/${session}/shares/`)) {
+            seen.push('share-get '+path);
+            return response({share_id:path.slice(path.lastIndexOf('/')+1),session_id:session,digest:'abcdef1234567890',messages:[{request_id:'hello',role:'user',content:'已保存'}]});
+          }
           if(path==='/api/v1/export') {
             seen.push('export');
             return response({format:'amazme-export/1',digest:'abc',projects:[],sessions:[],feedback:[],settings:{display_name:'',revision:0}});
@@ -230,7 +234,7 @@ def test_browser_manages_the_selected_session() -> None:
         $('manage-feedback').requestSubmit();
         await until(()=>$('manage-state').textContent===session);
         $('manage-share').click();
-        await until(()=>$('manage-state').textContent.includes('abcdef12'));
+        await until(()=>$('manage-state').textContent.includes('已保存'));
         $('manage-export').click();
         await until(()=>$('manage-state').textContent.includes('amazme-export/1'));
         $('manage-import').requestSubmit();
@@ -241,6 +245,7 @@ def test_browser_manages_the_selected_session() -> None:
         assert.equal(seen.includes('settings 甲 0'), true);
         assert.equal(seen.includes('feedback '+session+' 界面卡住'), true);
         assert.equal(seen.includes('share /api/v1/sessions/'+session+'/shares'), true);
+        assert.equal(seen.some(item => item.startsWith('share-get /api/v1/sessions/'+session+'/shares/')), true);
         assert.equal(seen.includes('export'), true);
         assert.equal(seen.includes('import amazme-export/1 false'), true);
         window.happyDOM && await window.happyDOM.abort();

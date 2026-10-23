@@ -845,7 +845,9 @@ function startClient() {
       const view = await api(`/api/v1/sessions/${selected}/shares`, "POST", {
         share_id: crypto.randomUUID().replaceAll("-", ""),
       }, current);
-      $("manage-state").textContent = `${view.session_id} · ${view.digest.slice(0, 8)}`;
+      const stored = await api(`/api/v1/sessions/${selected}/shares/${view.share_id}`);
+      const text = (stored.messages || []).map(item => item.content).join("\n");
+      $("manage-state").textContent = `${stored.session_id} · ${stored.digest.slice(0, 8)}${text ? ` · ${text}` : ""}`;
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
