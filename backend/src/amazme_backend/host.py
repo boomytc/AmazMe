@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import contextlib
 import difflib
 import hashlib
@@ -20,6 +22,15 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from .artifacts import (
+    ArtifactBody,
+    ArtifactList,
+    ArtifactView,
+    ArtifactWrite,
+    list_artifacts,
+    read_artifact,
+    save_artifact,
+)
 from .automations import resolve_due
 from .common import Peer, Profile, build_id, child_command, lock, private_write, wait_peer
 from .computer_run import ComputerDriver, start_driver
@@ -740,6 +751,38 @@ class Host:
                                         sort_keys=True, separators=(",", ":"), ensure_ascii=False))
         feedback_id, session_id, stored = await self.store.save_feedback(value.feedback_id, value.session_id, text, key)
         return FeedbackView(feedback_id=feedback_id, session_id=session_id, text=stored)
+
+    def _reject_artifact_secret(self, value: ArtifactWrite) -> None:
+        secret = self._provider_secret()
+        if not secret:
+            return
+        if secret in value.name:
+            raise BackendError("artifact_secret")
+        try:
+            raw = base64.b64decode(value.data_base64, validate=True)
+        except (binascii.Error, ValueError):
+            return
+        if secret.encode() in raw:
+            raise BackendError("artifact_secret")
+
+    async def put_artifact(self, session: str, value: ArtifactWrite) -> ArtifactView:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        self._reject_artifact_secret(value)
+        return save_artifact(self.profile.path, session, value)
+
+    async def artifacts(self, session: str) -> ArtifactList:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        return list_artifacts(self.profile.path, session)
+
+    async def artifact(self, session: str, artifact_id: str) -> ArtifactBody:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        return read_artifact(self.profile.path, session, artifact_id)
 
     async def share_session(self, session: str, value: ShareWrite) -> ShareView:
         self._admit()
@@ -1962,6 +2005,18 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session}/computer/cleanup")
     async def computer_cleanup(session: str) -> ComputerCleanup:
         return await owner.computer_cleanup(session)
+
+    @app.post("/api/v1/sessions/{session}/artifacts", status_code=201)
+    async def put_artifact(session: str, value: ArtifactWrite) -> ArtifactView:
+        return await owner.put_artifact(session, value)
+
+    @app.get("/api/v1/sessions/{session}/artifacts")
+    async def artifacts(session: str) -> ArtifactList:
+        return await owner.artifacts(session)
+
+    @app.get("/api/v1/sessions/{session}/artifacts/{artifact_id}")
+    async def artifact(session: str, artifact_id: str) -> ArtifactBody:
+        return await owner.artifact(session, artifact_id)
 
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:

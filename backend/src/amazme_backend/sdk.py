@@ -1,10 +1,12 @@
 """Async client for one explicit host, session, and workspace."""
 
 import asyncio
+import base64
 from typing import cast
 
 import httpx
 
+from .artifacts import ArtifactBody, ArtifactView
 from .contracts import Attachment, BackendError, ErrorBody, Identity, ImagePart, Receipt, Session, SessionList
 
 
@@ -93,6 +95,22 @@ class Client:
             json_body=body,
             headers=self._write(attachment_id))
         return Receipt.model_validate(payload)
+
+    async def put_artifact(self, *, session_id: str, workspace: str, attachment_id: str, artifact_id: str,
+                           name: str, data: bytes, media_type: str = "application/octet-stream") -> ArtifactView:
+        await self._require_workspace(session_id, workspace)
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/artifacts",
+            json_body={
+                "artifact_id": artifact_id, "name": name, "media_type": media_type,
+                "data_base64": base64.b64encode(data).decode(),
+            },
+            headers=self._write(attachment_id))
+        return ArtifactView.model_validate(payload)
+
+    async def artifact(self, *, session_id: str, artifact_id: str) -> ArtifactBody:
+        payload = await self._send("GET", f"/api/v1/sessions/{session_id}/artifacts/{artifact_id}")
+        return ArtifactBody.model_validate(payload)
 
     async def cancel(self, *, session_id: str, workspace: str, attachment_id: str, request_id: str) -> Receipt:
         await self._require_workspace(session_id, workspace)

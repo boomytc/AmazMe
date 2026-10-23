@@ -84,6 +84,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | API key | P1 | `provider.json`，不进普通日志 | 部分通过 | 配置加载 | 刷新、轮换和登出竞争未做 |
 | OAuth、单一刷新管理者、取消期间 token 落盘 | P3 | 无 | 未通过 | 无 | 按供应商要求的 client ID、回调和请求身份实现。缺账号时保持未验收并继续无关功能 |
 | 图片、分类 | P3 | `POST /api/v1/sessions/{id}/submissions` 的 `images`；页面「图片」；SDK `submit(images=)` | 部分通过 | `backend/tests/test_images.py` 落盘后用本地供应商流核对请求体，并用 happy-dom 发送所选文件 | 一次最多 8 张，每张不超过 8 MB，只接受 PNG、JPEG、WebP、GIF。图片字节存在用户消息上，下一次请求放进 `image_url`。回执只计张数。用量、快照和消息事件不含图片正文。错误的 base64 不会落盘。分类仍未做，也没有把图片交给真实视觉模型 |
+| 会话产物 | P3 | `POST/GET /api/v1/sessions/{id}/artifacts`；页面「产物」；SDK `put_artifact` | 部分通过 | `backend/tests/test_artifacts.py` 保存后从磁盘读回，并用 happy-dom 打开列表和正文 | 每个会话最多 32 个，每个不超过 1 MB。同一 ID 相同内容再次保存不另写一份；内容或名称不同则保留原文。符号链接被拒绝。名称不能是路径。正文里的供应商密钥不会落盘，错误文本也不含密钥。这不是工作区文件，也还不会把过长命令输出自动收进产物 |
 | 会话归档 | P3 | `POST /api/v1/sessions/{id}/archive`；页面「归档 / 恢复」 | 部分通过 | `test_session_branch.py` 的归档用例和 happy-dom | `1af60222`。不在 A/B 安装包里，也还没有真实 Chrome。历史不删除；未开始的任务变为已取消 |
 | 上下文压缩、过期结果拒绝、压缩失败保留原历史 | P3 | `POST /api/v1/sessions/{id}/compactions`；页面「压缩上下文」 | 部分通过 | `test_session_branch.py` 的压缩用例和 happy-dom | `8c9cee19`。摘要走当前供应商。依据不一致拒绝写入。失败不删原消息。还不在 A/B 包和真实 Chrome 里 |
 | 切换会话 | P2 Web | 侧栏 | 已通过 | `verify_client.py` 的 A-B-A | 分支后的切换有 happy-dom 测试，还没有进 Chrome 报告 |

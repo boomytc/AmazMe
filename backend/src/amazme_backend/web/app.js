@@ -896,6 +896,49 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let artifactId = "";
+  async function loadArtifacts() {
+    if (!selected) return;
+    const list = await api(`/api/v1/sessions/${selected}/artifacts`);
+    $("artifact-list").replaceChildren(...list.artifacts.map(item => button(
+      `${item.name} · ${item.size}`, () => void openArtifact(item.artifact_id))));
+    if (!list.artifacts.length) $("artifact-list").textContent = "还没有产物";
+  }
+  async function openArtifact(id) {
+    const body = await api(`/api/v1/sessions/${selected}/artifacts/${id}`);
+    let text = "";
+    try { text = atob(body.data_base64); } catch { text = ""; }
+    $("artifact-body").textContent = `${body.name} · ${body.digest}\n${text}`;
+    $("error").textContent = "";
+  }
+  $("artifacts").addEventListener("toggle", () => {
+    if ($("artifacts").open) loadArtifacts().catch(error);
+  });
+  $("artifact-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !writable()) return;
+    const file = ($("artifact-file").files || [])[0];
+    if (!file) { error(new Error("请选择文件")); return; }
+    if (!file.size || file.size > 1048576) { error(new Error("产物超过 1 MB")); return; }
+    const name = $("artifact-name").value.trim();
+    if (!name || name.includes("/") || name.includes("\\")) { error(new Error("产物名称不能包含路径")); return; }
+    artifactId = artifactId || crypto.randomUUID().replaceAll("-", "").slice(0, 32);
+    try {
+      const encoded = await readImage(file);
+      const media = /^[a-z0-9][a-z0-9.+-]{0,40}\/[a-z0-9][a-z0-9.+-]{0,40}$/.test(encoded.media_type)
+        ? encoded.media_type : "application/octet-stream";
+      await api(`/api/v1/sessions/${selected}/artifacts`, "POST", {
+        artifact_id: artifactId, name, media_type: media, data_base64: encoded.data_base64,
+      }, current, current.identity);
+      artifactId = "";
+      $("artifact-file").value = "";
+      await loadArtifacts();
+      $("error").textContent = "";
+    } catch (failure) {
+      if (definitive(failure)) artifactId = "";
+      error(failure);
+    }
+  };
   async function loadProjects() {
     const list = await api("/api/v1/projects");
     $("manage-projects").textContent = list.projects.length
