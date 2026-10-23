@@ -208,6 +208,7 @@ def test_browser_registers_and_runs_the_selected_plugin() -> None:
         const identity = {build_id:'build',host_epoch:1,state:'ready'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
+        let pluginPosted = false;
         globalThis.fetch = async (path, options={})=>{
           const method = options.method || 'GET';
           const body = options.body ? JSON.parse(options.body) : {};
@@ -216,7 +217,15 @@ def test_browser_registers_and_runs_the_selected_plugin() -> None:
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(SESSION) + r''',title:'工作区',archived:false}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(SESSION) + r''',build_id:'build',host_epoch:1});
+          if(path==='/api/v1/plugins' && method==='GET') {
+            seen.push('GET /api/v1/plugins');
+            const plugins = pluginPosted
+              ? [{plugin_id:'p',name:'记事本',capabilities:['stamp'],config:{},fingerprint:'1111111111111111',entry:'stamp'},{plugin_id:'q',name:'notes',capabilities:['stamp'],config:{},fingerprint:'abcdef1234567890',entry:'stamp'}]
+              : [{plugin_id:'p',name:'记事本',capabilities:['stamp'],config:{},fingerprint:'1111111111111111',entry:'stamp'}];
+            return response({plugins});
+          }
           if(path==='/api/v1/plugins' && method==='POST') {
+            pluginPosted = true;
             seen.push(body.name);
             return response({plugin_id:body.plugin_id,name:body.name,capabilities:['stamp'],config:body.config,fingerprint:'abcdef1234567890',entry:'stamp'});
           }
@@ -237,6 +246,8 @@ def test_browser_registers_and_runs_the_selected_plugin() -> None:
         }
         await import(appURL);
         await until(()=>$('sessions').textContent.includes('工作区'));
+        $('plugins').querySelector('summary').click();
+        await until(()=>$('plugin-list').textContent==='记事本');
         $('plugin-name').value = 'notes';
         $('plugin-label').value = '记事';
         $('plugin-form').requestSubmit();
@@ -247,9 +258,11 @@ def test_browser_registers_and_runs_the_selected_plugin() -> None:
         $('plugin-label').value = '改过';
         $('plugin-reload').click();
         await until(()=>$('plugin-state').textContent.startsWith('notes') && $('plugin-state').textContent.includes('fedcba123456'));
-        assert.equal(seen[0], 'notes');
-        assert.ok(seen[1].endsWith(' alpha'));
-        assert.equal(seen[2], 'reload 改过');
+        await until(()=>$('plugin-list').textContent==='记事本\nnotes');
+        assert.ok(seen.filter(item => item==='GET /api/v1/plugins').length >= 2);
+        assert.ok(seen.includes('notes'));
+        assert.ok(seen.some(item => item.endsWith(' alpha')));
+        assert.equal(seen.includes('reload 改过'), true);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

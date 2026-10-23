@@ -749,6 +749,13 @@ function startClient() {
     } catch (failure) { error(failure); }
   };
   let pluginId = "";
+  async function loadPlugins() {
+    const list = await api("/api/v1/plugins");
+    $("plugin-list").textContent = list.plugins.length ? list.plugins.map(item => item.name).join("\n") : "还没有插件";
+  }
+  $("plugins").addEventListener("toggle", () => {
+    if ($("plugins").open) loadPlugins().catch(error);
+  });
   function showPlugin(view, call) {
     $("plugin-state").textContent = `${view.name} · ${view.entry} · ${view.fingerprint.slice(0, 12)}`;
     if (call) $("plugin-result").textContent = call.phase === "done" ? call.result : call.phase;
@@ -759,6 +766,7 @@ function startClient() {
     pluginId = pluginId || crypto.randomUUID().replaceAll("-", "");
     try {
       showPlugin(await api("/api/v1/plugins", "POST", {plugin_id: pluginId, name: $("plugin-name").value, config: {label: $("plugin-label").value}}, current));
+      await loadPlugins();
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
