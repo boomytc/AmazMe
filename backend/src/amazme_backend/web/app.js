@@ -791,6 +791,16 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  async function loadProjects() {
+    const list = await api("/api/v1/projects");
+    $("manage-projects").textContent = list.projects.length
+      ? list.projects.map(item => item.name).join("\n")
+      : "还没有项目";
+  }
+  $("manage").addEventListener("toggle", () => {
+    if (!$("manage").open) return;
+    loadProjects().catch(error);
+  });
   let manageProject = "";
   $("manage-project").onsubmit = async event => {
     event.preventDefault();
@@ -801,6 +811,7 @@ function startClient() {
       const session = await api("/api/v1/sessions", "POST", {title: project.name, project_id: project.project_id}, current);
       await load();
       await select(session.session_id);
+      await loadProjects();
       $("manage-state").textContent = `${project.project_id} · ${session.session_id}`;
       $("error").textContent = "";
     } catch (failure) { error(failure); }

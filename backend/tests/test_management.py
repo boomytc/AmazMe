@@ -76,6 +76,9 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             changed = await client.post("/api/v1/projects", json={"project_id": PROJECT, "name": "另一个"})
             assert project.status_code == 200 and again.json()["name"] == "演示"
             assert changed.status_code == 409 and changed.json()["code"] == "project_conflict"
+            listed_projects = await client.get("/api/v1/projects")
+            assert listed_projects.status_code == 200
+            assert listed_projects.json()["projects"] == [{"project_id": PROJECT, "name": "演示"}]
             missing = await client.post("/api/v1/sessions", json={"title": "孤立", "project_id": "e" * 32})
             assert missing.status_code == 404 and missing.json()["code"] == "project_not_found"
             created = await client.post("/api/v1/sessions", json={"title": "笔记", "project_id": PROJECT})
@@ -159,6 +162,7 @@ def test_browser_manages_the_selected_session() -> None:
         const identity = {build_id:'build',host_epoch:1,state:'ready'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
+        let projectPosted = false;
         const session = ''' + json.dumps(SESSION) + r''';
         globalThis.fetch = async (path, options={})=>{
           const method = options.method || 'GET';
@@ -172,7 +176,15 @@ def test_browser_manages_the_selected_session() -> None:
             return response({session_id:session,title:body.title,project_id:body.project_id,parent_id:'',fork_request_id:'',archived:false,workspace:'primary'},201);
           }
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:session,build_id:'build',host_epoch:1});
+          if(path==='/api/v1/projects' && method==='GET') {
+            seen.push('GET /api/v1/projects');
+            const projects = projectPosted
+              ? [{project_id:'p', name:'北窗'}, {project_id:'q', name:'演示'}]
+              : [{project_id:'p', name:'北窗'}];
+            return response({projects});
+          }
           if(path==='/api/v1/projects' && method==='POST') {
+            projectPosted = true;
             seen.push('project '+body.name);
             return response({project_id:body.project_id,name:body.name});
           }
@@ -206,9 +218,11 @@ def test_browser_manages_the_selected_session() -> None:
         }
         await import(appURL);
         await until(()=>$('sessions').textContent.includes('演示'));
+        $('manage').querySelector('summary').click();
+        await until(()=>$('manage-projects').textContent === '北窗');
         $('manage-project-name').value = '演示';
         $('manage-project').requestSubmit();
-        await until(()=>$('manage-state').textContent.includes(session));
+        await until(()=>$('manage-projects').textContent === '北窗\n演示');
         $('manage-name').value = '甲';
         $('manage-settings').requestSubmit();
         await until(()=>$('manage-state').textContent.includes('甲 · 1'));
@@ -221,13 +235,14 @@ def test_browser_manages_the_selected_session() -> None:
         await until(()=>$('manage-state').textContent.includes('amazme-export/1'));
         $('manage-import').requestSubmit();
         await until(()=>$('manage-state').textContent.includes('amazme-export/1 · 0'));
-        assert.equal(seen[0], 'project 演示');
-        assert.equal(/^session [a-f0-9]{32}$/.test(seen[1]), true);
-        assert.equal(seen[2], 'settings 甲 0');
-        assert.equal(seen[3], 'feedback '+session+' 界面卡住');
-        assert.equal(seen[4], 'share /api/v1/sessions/'+session+'/shares');
-        assert.equal(seen[5], 'export');
-        assert.equal(seen[6], 'import amazme-export/1 false');
+        assert.equal(seen.filter(item => item==='GET /api/v1/projects').length >= 2, true);
+        assert.equal(seen.includes('project 演示'), true);
+        assert.equal(seen.some(item => /^session [a-f0-9]{32}$/.test(item)), true);
+        assert.equal(seen.includes('settings 甲 0'), true);
+        assert.equal(seen.includes('feedback '+session+' 界面卡住'), true);
+        assert.equal(seen.includes('share /api/v1/sessions/'+session+'/shares'), true);
+        assert.equal(seen.includes('export'), true);
+        assert.equal(seen.includes('import amazme-export/1 false'), true);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''
