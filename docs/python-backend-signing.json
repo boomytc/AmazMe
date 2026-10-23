@@ -57,5 +57,28 @@
     "codesign_verify_deep_strict_exit": 0,
     "sha256_after_staple": "c0366c5dbc2d42ab165d49d0dbeeeaa4e453fc6297deeb3db1cf2d2243ea7e76",
     "also_contains_coding_agent": true
+  },
+  "desktop_current_dmg": {
+    "recorded_against_head": "16b6e5f6",
+    "path": ".artifacts/python-backend-sign/desktop-current/AmazMe-0.3.4-macos-arm64.dmg",
+    "app": ".artifacts/python-backend-sign/desktop-current/AmazMe.app",
+    "app_version": "0.3.4",
+    "node": "v22.23.3",
+    "electron": "44.6.0",
+    "python_backend": "Contents/Resources/amazme-backend",
+    "python_onedir_source": ".artifacts/python-backend-node/package-e4fbezy7/AmazMe Python 0.1.0",
+    "python_build_id": "fad52a180bc053a906e0bfad00e30cb1d1b5f78a0fc4d5f88f3ce1e452a3d915",
+    "python_onedir_rebuilt_from_this_head": false,
+    "runtime_node": "Contents/Resources/amazme-backend/runtime/node/bin/node",
+    "packs": ["@amazme/ai", "@amazme/chord", "@amazme/codemode", "@amazme/durable", "@amazme/gui", "@amazme/telemetry", "@amazme/web"],
+    "contains_coding_agent": false,
+    "signed": "Developer ID with hardened runtime",
+    "npm_run_release": false,
+    "notarization_status": "Accepted",
+    "submission_id": "9f05224d-b733-4284-b720-14644be20e87",
+    "staple_validate_exit": 0,
+    "spctl_assess_open_exit": 0,
+    "codesign_verify_deep_strict_exit": 0,
+    "sha256_after_staple": "c1a256cda805b2358b781b5a993f6ee9bafa7f07291833c0465719facf303740"
   }
 }
