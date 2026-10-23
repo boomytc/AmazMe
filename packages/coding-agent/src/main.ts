@@ -334,18 +334,9 @@ export async function main(args: string[]) {
 		for (const option of parsed.unknownFlags.keys()) console.error(chalk.red(`Error: Unknown option --${option}. Use ${APP_COMMAND} --help.`));
 		process.exit(1);
 	}
-	if (parsed.pythonUrl !== undefined || parsed.pythonToken !== undefined || parsed.workspace !== undefined) {
-		if (parsed.help) {
-			printHelp();
-			return;
-		}
-		if (!parsed.pythonUrl || !parsed.pythonToken || !parsed.workspace || appMode !== "interactive") {
-			console.error(!parsed.pythonUrl || !parsed.pythonToken || !parsed.workspace ? "python_target_required" : "python_target_requires_tty");
-			process.exit(1);
-		}
-		const { runPythonSessionTui } = await import("./python-session-tui.ts");
-		await runPythonSessionTui({ url: parsed.pythonUrl, token: parsed.pythonToken, workspace: parsed.workspace });
-		return;
+	if (!nativeInteractive && (parsed.pythonUrl !== undefined || parsed.pythonToken !== undefined)) {
+		console.error("python_target_requires_tty");
+		process.exit(1);
 	}
 	if (plainMetadata && parsed.help) {
 		printHelp();
@@ -412,6 +403,23 @@ export async function main(args: string[]) {
 		startupSettingsManager.applyOverrides({ tuiMode: parsed.tuiMode });
 	}
 	if (nativeInteractive && parsed.verbose) startupSettingsManager.applyOverrides({ quietStartup: false });
+
+	if (nativeInteractive && process.env.AMAZME_DURABLE_TUI !== "1") {
+		if ((parsed.pythonUrl === undefined) !== (parsed.pythonToken === undefined)) {
+			console.error("python_target_required");
+			process.exit(1);
+		}
+		const workspace = parsed.workspace || "primary";
+		if (parsed.pythonUrl && parsed.pythonToken) {
+			const { runPythonSessionTui } = await import("./python-session-tui.ts");
+			await runPythonSessionTui({ url: parsed.pythonUrl, token: parsed.pythonToken, workspace });
+		} else {
+			const { runOwnedPythonInteractive } = await import("./python-session-tui.ts");
+			await runOwnedPythonInteractive({ workspace, cwd: effectiveCwd });
+		}
+		printTimings();
+		return;
+	}
 
 	if (nativeInteractive) {
 		const { initialMessage, initialImages } = await prepareInitialMessage(parsed);

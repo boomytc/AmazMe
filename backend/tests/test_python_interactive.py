@@ -101,7 +101,7 @@ def _open_ui(url: str, token: str, home: Path) -> tuple[subprocess.Popen[bytes],
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
     env = os.environ.copy()
-    env["AMAZME_AGENT_DIR"] = str(home)
+    env["AMAZME_CODING_AGENT_DIR"] = str(home)
     env.pop("AMAZME_OFFLINE", None)
     proc = subprocess.Popen(
         [NODE, str(CLI), "--python-url", url, "--python-token", token, "--workspace", "primary"],
@@ -208,3 +208,94 @@ async def test_amazme_interactive_uses_python_and_quit_releases(tmp_path: Path) 
         elif master >= 0:
             os.close(master)
         _stop(proc, profile)
+
+
+def _open_default(tmp_path: Path, cwd: Path) -> tuple[subprocess.Popen[bytes], int]:
+    assert CLI.is_file(), "build @amazme/coding-agent before this test"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    wrapper = bin_dir / "amazme-backend"
+    if not wrapper.exists():
+        wrapper.write_text(f"#!/bin/sh\nexec {sys.executable} -m amazme_backend \"$@\"\n")
+        wrapper.chmod(0o755)
+    master, slave = pty.openpty()
+    fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 120, 0, 0))
+    env = os.environ.copy()
+    env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+    env["AMAZME_CODING_AGENT_DIR"] = str(tmp_path / "agent")
+    env.pop("AMAZME_OFFLINE", None)
+    env.pop("AMAZME_PYTHON_BACKEND", None)
+    proc = subprocess.Popen(
+        [NODE, str(CLI)], cwd=cwd, stdin=slave, stdout=slave, stderr=slave, close_fds=True, env=env)
+    os.close(slave)
+    return proc, master
+
+
+async def test_default_interactive_starts_python_and_leave_keeps_the_host(tmp_path: Path) -> None:
+    cwd = tmp_path / "workspace"
+    cwd.mkdir()
+    profile = tmp_path / "agent" / "python-host"
+    ui: subprocess.Popen[bytes] | None = None
+    master = -1
+    try:
+        ui, master = _open_default(tmp_path, cwd)
+        screen = _collect(master, ui, "", "绑定:", time.monotonic() + 30)
+        found = MARKER.search(screen)
+        assert found is not None, screen[-2000:]
+        session_id, attachment_id = found.group(1), found.group(2)
+        token = (profile / "web.token").read_text().strip()
+        url = str(json.loads((profile / "ready.json").read_text())["url"])
+        assert token not in screen
+        future = int(time.time() * 1000) + 60_000
+        async with Client(url, token) as client:
+            other = await client.attach(session_id)
+            parked = await client.submit(
+                session_id=session_id, workspace="primary", attachment_id=other.attachment_id,
+                request_id="parked", text="等一下", not_before_ms=future)
+            assert parked.cancel_requested is False
+        os.write(master, b"\x03")
+        screen = _collect(master, ui, screen, "已松开绑定", time.monotonic() + 10)
+        assert "已松开绑定" in screen, screen[-2000:]
+        assert ui.wait(timeout=10) == 0
+        async with Client(url, token) as client:
+            still = await client.request(session_id=session_id, request_id="parked")
+            assert still.status == parked.status
+            assert still.cancel_requested is False
+            await _rejects(lambda: client.submit(
+                session_id=session_id, workspace="primary", attachment_id=attachment_id,
+                request_id="after-quit", text="再来"), "stale_client_binding")
+        os.close(master)
+        master = -1
+        first_pid = ui.pid
+
+        ui, master = _open_default(tmp_path, cwd)
+        assert ui.pid != first_pid
+        screen = _collect(master, ui, "", "绑定:", time.monotonic() + 20)
+        second = MARKER.search(screen)
+        assert second is not None, screen[-2000:]
+        assert second.group(1) != session_id
+        os.write(master, "你好\r".encode())
+        screen = _collect(master, ui, screen, "已收到：你好", time.monotonic() + 30)
+        assert "已收到：你好" in screen, screen[-2000:]
+        assert token not in screen
+        os.write(master, b"\x03")
+        screen = _collect(master, ui, screen, "已松开绑定", time.monotonic() + 10)
+        assert ui.wait(timeout=10) == 0
+        async with Client(url, token) as client:
+            still = await client.request(session_id=session_id, request_id="parked")
+            assert still.status == parked.status
+            fresh = await client.attach(session_id)
+            await client.cancel(
+                session_id=session_id, workspace="primary", attachment_id=fresh.attachment_id,
+                request_id="parked")
+        os.close(master)
+        master = -1
+        ui = None
+    finally:
+        if ui is not None and master >= 0:
+            _close(ui, master)
+        elif master >= 0:
+            os.close(master)
+        if profile.is_dir():
+            subprocess.run([sys.executable, "-m", "amazme_backend", "stop", "--profile", str(profile)],
+                           check=False, capture_output=True, text=True, timeout=40)

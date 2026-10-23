@@ -140,6 +140,7 @@ describe.skipIf(process.platform === "win32" || !tmuxAvailable())("durable TUI s
 				"export COLUMNS=80",
 				"export LINES=24",
 				`export AMAZME_CODING_AGENT_DIR=${quote(profile)}`,
+				"export AMAZME_DURABLE_TUI=1",
 				"export AMAZME_OFFLINE=1",
 				`${quote(process.execPath)} --experimental-strip-types --import ${quote(sourceResolverUrl)} ${quote(cliPath)} --offline --provider fixture --model plain --api-key test-key --session-dir ${quote(sessionDir)} --no-extensions --no-mcp${modeArg}`,
 				"status=$?",

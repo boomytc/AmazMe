@@ -171,6 +171,7 @@ describe.skipIf(process.platform === "win32")("durable TUI /quit", () => {
 					COLUMNS: "120",
 					LINES: "40",
 					AMAZME_CODING_AGENT_DIR: profile,
+					AMAZME_DURABLE_TUI: "1",
 					AMAZME_OFFLINE: "1",
 				},
 				stdio: ["pipe", "pipe", "pipe"],

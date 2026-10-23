@@ -227,6 +227,7 @@ await main(process.argv.slice(2));
 					COLUMNS: "120",
 					LINES: "40",
 					AMAZME_CODING_AGENT_DIR: profile,
+					AMAZME_DURABLE_TUI: "1",
 					AMAZME_OFFLINE: "1",
 					AMAZME_CLOSE_MARKER: marker,
 					AMAZME_RESTORED_MARKER: restoredMarker,

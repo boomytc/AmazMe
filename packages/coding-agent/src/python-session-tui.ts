@@ -3,7 +3,10 @@
  * Leaving releases this binding and does not cancel accepted work.
  */
 
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { Component } from "@amazme/tui";
 import { getAgentDir } from "./config.ts";
 import { KeybindingsManager } from "./core/keybindings.ts";
@@ -225,4 +228,120 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		await releaseOnce();
 	}
 	process.exit(process.exitCode ?? 0);
+}
+
+function backendCommand(): string {
+	return process.env.AMAZME_PYTHON_BACKEND || "amazme-backend";
+}
+
+async function liveUrl(readyPath: string, tokenPath: string): Promise<string> {
+	if (!existsSync(readyPath) || !existsSync(tokenPath)) return "";
+	try {
+		const ready = JSON.parse(readFileSync(readyPath, "utf8")) as unknown;
+		if (!isRecord(ready) || typeof ready.url !== "string") return "";
+		const token = readFileSync(tokenPath, "utf8").trim();
+		const response = await fetch(`${ready.url}/api/v1/bootstrap`, {
+			headers: { Authorization: `Bearer ${token}` },
+			signal: AbortSignal.timeout(2000),
+		});
+		return response.ok ? ready.url : "";
+	} catch {
+		return "";
+	}
+}
+
+function startServe(command: string, profile: string): Promise<string> {
+	const err = openSync(join(profile, "serve.err"), "a");
+	let child;
+	try {
+		child = spawn(command, ["serve", "--profile", profile, "--port", "0"], {
+			detached: true,
+			stdio: ["ignore", "pipe", err],
+		});
+	} catch (error) {
+		const code = error instanceof Error && "code" in error ? String(error.code) : "";
+		fail(code === "ENOENT" ? "python_backend_missing" : "python_serve_failed");
+	}
+	child.unref();
+	const stdout = child.stdout;
+	if (!stdout) fail("python_serve_failed");
+	return new Promise((resolveReady, reject) => {
+		let pending = "";
+		let settled = false;
+		const finish = (error: Error | undefined, url?: string): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			stdout.off("data", onData);
+			if (error) {
+				child.kill();
+				reject(error);
+				return;
+			}
+			stdout.destroy();
+			resolveReady(url ?? "");
+		};
+		const timer = setTimeout(() => finish(new Error("python_serve_timeout")), 30_000);
+		const onData = (chunk: Buffer | string): void => {
+			pending += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+			const newline = pending.indexOf("\n");
+			if (newline < 0) return;
+			const line = pending.slice(0, newline);
+			let ready: unknown;
+			try {
+				ready = JSON.parse(line);
+			} catch {
+				finish(new Error("python_serve_failed"));
+				return;
+			}
+			if (!isRecord(ready) || typeof ready.url !== "string") {
+				finish(new Error("python_serve_failed"));
+				return;
+			}
+			finish(undefined, ready.url);
+		};
+		stdout.on("data", onData);
+		child.once("error", (error: NodeJS.ErrnoException) => {
+			finish(new Error(error.code === "ENOENT" ? "python_backend_missing" : "python_serve_failed"));
+		});
+		child.once("exit", () => finish(new Error("python_serve_failed")));
+	});
+}
+
+/** Start or attach to the local Python host. Leaving the screen does not stop it. */
+export async function runOwnedPythonInteractive(options: { readonly workspace: string; readonly cwd: string }): Promise<void> {
+	if (!options.workspace) fail("workspace_required");
+	const command = backendCommand();
+	const profile = join(getAgentDir(), "python-host");
+	const tokenPath = join(profile, "web.token");
+	const readyPath = join(profile, "ready.json");
+	if (!existsSync(join(profile, "config.json"))) {
+		mkdirSync(getAgentDir(), { recursive: true });
+		const providerPath = join(getAgentDir(), "provider.json");
+		writeFileSync(
+			providerPath,
+			JSON.stringify({
+				provider: "faux",
+				model: "faux",
+				base_url: "",
+				api_key: "",
+				max_tokens: 2048,
+				proxy: "",
+				headers: {},
+			}),
+			{ mode: 0o600 },
+		);
+		const init = spawnSync(
+			command,
+			["init", "--profile", profile, "--workspace", resolve(options.cwd), "--provider-config", providerPath],
+			{ encoding: "utf8" },
+		);
+		const errno = init.error as NodeJS.ErrnoException | null;
+		if (errno?.code === "ENOENT") fail("python_backend_missing");
+		if (init.status !== 0) fail("python_init_failed");
+	}
+	const existing = await liveUrl(readyPath, tokenPath);
+	const url = existing || (await startServe(command, profile));
+	const token = readFileSync(tokenPath, "utf8").trim();
+	await runPythonSessionTui({ url, token, workspace: options.workspace });
 }

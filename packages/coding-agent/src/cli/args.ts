@@ -353,9 +353,9 @@ ${chalk.bold("Options:")}
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Show startup resource counts (overrides quietStartup)
   --tui-mode <mode>              TUI mode: fullscreen (default) or regular
-  --python-url <url>             Python host for interactive mode
-  --python-token <token>         Web token for that host
-  --workspace <name>             Session workspace, required with --python-url
+  --python-url <url>             Attach interactive mode to this Python host
+  --python-token <token>         Web token for --python-url
+  --workspace <name>             Session workspace (default: primary)
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as AMAZME_OFFLINE=1)
