@@ -26,6 +26,39 @@ describe("shipped CLI does not start the old web host", () => {
 		expect(`${result.stdout}\n${result.stderr}`).not.toContain("Web: http");
 	});
 
+	it("refuses an internal host role instead of starting the old server", async () => {
+		expect(existsSync(cli)).toBe(true);
+		const directory = createTempDir("amazme-role-removed-");
+		directories.push(directory);
+		const profile = join(directory, "profile");
+		const result = await new Promise<{ code: number | null; stdout: string; stderr: string }>((resolve, reject) => {
+			const child = execFile(
+				process.execPath,
+				[cli],
+				{
+					cwd: directory,
+					encoding: "utf8",
+					timeout: 20_000,
+					env: {
+						...process.env,
+						AMAZME_CODING_AGENT_DIR: profile,
+						AMAZME_OFFLINE: "1",
+						__AMAZME_INTERNAL_SPAWN: "server",
+					},
+				},
+				(error, stdout, stderr) => {
+					const exitCode = error && "code" in error && typeof error.code === "number" ? error.code : error ? 1 : 0;
+					if (error && !("code" in error)) reject(error);
+					else resolve({ code: exitCode, stdout, stderr });
+				},
+			);
+			child.stdin?.end();
+		});
+		expect(result.code).not.toBe(0);
+		expect(result.stderr).toContain("old_web_host_removed");
+		expect(result.stdout).not.toContain("Web: http");
+	});
+
 	it.each(["import", "export"] as const)("refuses old session %s without reading a session file", async (command) => {
 		expect(existsSync(cli)).toBe(true);
 		const directory = createTempDir("amazme-migration-removed-");

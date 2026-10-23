@@ -11,10 +11,7 @@ const args = process.argv.slice(2);
 async function run(): Promise<void> {
 	try {
 		const role = consumeInternalProcessRole();
-		if (role === "server") await (await import("./host/server.ts")).runServerProcess(args);
-		else if (role === "session-worker") await (await import("./host/session-worker.ts")).runSessionWorkerProcess(args);
-		else if (role === "coordinator") await (await import("./host/coordinator.ts")).runCoordinatorProcess(args);
-		else if (args[0] === "web" || args[0] === "server" || args[0] === "client") {
+		if (role !== undefined || args[0] === "web" || args[0] === "server" || args[0] === "client") {
 			console.error("old_web_host_removed");
 			console.error("网页由 Python 后端提供，不再启动旧宿主");
 			process.exitCode = 1;
