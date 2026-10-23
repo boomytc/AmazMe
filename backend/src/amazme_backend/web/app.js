@@ -476,6 +476,36 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let fileDir = "", filePath = "", fileDigest = "";
+  const fileJoin = (dir, name) => dir ? `${dir}/${name}` : name;
+  async function loadFiles() {
+    const listing = await api(fileDir ? `/api/v1/files?path=${encodeURIComponent(fileDir)}` : "/api/v1/files");
+    const nodes = [];
+    if (fileDir) nodes.push(button("上级", () => { fileDir = fileDir.split("/").slice(0, -1).join("/"); void loadFiles().catch(error); }));
+    for (const item of listing.entries) {
+      if (item.kind === "dir") nodes.push(button(`${item.name}/`, () => { fileDir = fileJoin(fileDir, item.name); void loadFiles().catch(error); }));
+      else if (item.kind === "file") nodes.push(button(item.name, () => void openFile(fileJoin(fileDir, item.name))));
+    }
+    if (listing.truncated) nodes.push(element("p", "只显示前 200 项", "muted"));
+    $("file-list").replaceChildren(...nodes);
+  }
+  async function openFile(name) {
+    const file = await api(`/api/v1/files/content?path=${encodeURIComponent(name)}`);
+    filePath = file.path; fileDigest = file.truncated ? "" : file.digest;
+    $("file-content").value = file.content;
+    $("file-save").disabled = file.truncated;
+    $("file-diff").textContent = file.truncated ? "文件过大，只显示前一部分" : "";
+  }
+  $("files").addEventListener("toggle", () => { if ($("files").open) void loadFiles().catch(error); });
+  $("file-save").onclick = async () => {
+    if (!filePath || !identity || health?.state !== "ready") return;
+    try {
+      const change = await api("/api/v1/files/content", "POST", {path: filePath, content: $("file-content").value, expected_digest: fileDigest});
+      fileDigest = change.digest;
+      $("file-diff").textContent = change.diff;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   $("create").onclick = async () => {
     $("create").disabled = true;
     try { const value = await api("/api/v1/sessions", "POST", {title:"工作区任务"}); await load(); await select(value.session_id); }

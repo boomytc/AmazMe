@@ -74,6 +74,7 @@ from .storage import (
     session_database,
 )
 from .transport import app_factory
+from .workspace_files import FileChange, FileContent, FileList, FileWrite, list_files, read_file, write_file
 
 
 class Login(Model):
@@ -323,6 +324,23 @@ class Host:
 
     async def sessions(self) -> SessionList:
         return await self.store.sessions()
+
+    def workspace_root(self) -> Path:
+        return Path(self.profile.config.workspace)
+
+    def list_workspace(self, relative: str = "") -> FileList:
+        self._admit()
+        return list_files(self.workspace_root(), relative)
+
+    def read_workspace(self, relative: str) -> FileContent:
+        self._admit()
+        return read_file(self.workspace_root(), relative)
+
+    async def write_workspace(self, value: FileWrite) -> FileChange:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        return write_file(self.workspace_root(), value)
 
     def model_catalog(self) -> ModelCatalog:
         self._admit()
@@ -1007,6 +1025,18 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/bootstrap")
     async def bootstrap() -> Identity:
         return owner.identity((await owner.health()).state)
+
+    @app.get("/api/v1/files")
+    async def files(path: str = "") -> FileList:
+        return owner.list_workspace(path)
+
+    @app.get("/api/v1/files/content")
+    async def file_content(path: str) -> FileContent:
+        return owner.read_workspace(path)
+
+    @app.post("/api/v1/files/content")
+    async def file_write(value: FileWrite) -> FileChange:
+        return await owner.write_workspace(value)
 
     @app.get("/api/v1/models")
     async def models() -> ModelCatalog:
