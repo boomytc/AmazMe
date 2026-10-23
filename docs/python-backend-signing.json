@@ -42,5 +42,20 @@
     "staple_validate_text": "The validate action worked!",
     "spctl_assess_open_exit": 0,
     "sha256_after_staple": "e0bfad05a4e6ff619d9ce862fd07c57f1fb1190928545c3e88a1ebf24fea84fb"
+  },
+  "python_desktop_dmg": {
+    "path": ".artifacts/python-backend-sign/python-desktop/AmazMe-0.3.4-macos-arm64.dmg",
+    "app": ".artifacts/python-backend-sign/python-desktop/AmazMe.app",
+    "python_backend": "Contents/Resources/amazme-backend",
+    "python_build_id": "fad52a180bc053a906e0bfad00e30cb1d1b5f78a0fc4d5f88f3ce1e452a3d915",
+    "runtime_node": "Contents/Resources/amazme-backend/runtime/node/bin/node",
+    "signed": "Developer ID with hardened runtime",
+    "notarization_status": "Accepted",
+    "submission_id": "c277e305-87e4-476c-a1dd-b8ee23b6b2f8",
+    "staple_validate_exit": 0,
+    "spctl_assess_open_exit": 0,
+    "codesign_verify_deep_strict_exit": 0,
+    "sha256_after_staple": "c0366c5dbc2d42ab165d49d0dbeeeaa4e453fc6297deeb3db1cf2d2243ea7e76",
+    "also_contains_coding_agent": true
   }
 }

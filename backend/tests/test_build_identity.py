@@ -26,14 +26,14 @@ def test_package_identity_requires_node_helper_plugin_and_vm_tools() -> None:
     module = load_packager()
     missing_identity = getattr(module, "missing_identity")
     required = getattr(module, "REQUIRED_IDENTITY")
-    assert "resources/node/bin/node" in missing_identity({})
+    assert "runtime/node/bin/node" in missing_identity({})
     assert missing_identity({name: "abc" for name in required}) == []
     nested = {
         "_internal/amazme_backend/codemode_helper.mjs": "abc",
         "_internal/amazme_backend/plugin_gate.py": "abc",
         "_internal/amazme_backend/node_modules/quickjs-wasi/quickjs.wasm": "abc",
-        "resources/node/bin/node": "abc",
-        "resources/docker": "abc",
-        "resources/lima/bin/limactl": "abc",
+        "runtime/node/bin/node": "abc",
+        "runtime/docker": "abc",
+        "runtime/lima/bin/limactl": "abc",
     }
     assert missing_identity(nested) == []

@@ -227,6 +227,14 @@ async function main() {
 		}),
 	), nodeExecutable);
 	await finalizeBundle(appDirectory, manifest, nodeExecutable);
+	const pythonBackend = argument("--python-backend");
+	if (pythonBackend !== undefined) {
+		const source = resolve(pythonBackend);
+		guard(existsSync(join(source, "amazme-backend")), "Python backend bundle is missing amazme-backend");
+		await cp(source, join(contents, "Resources", "amazme-backend"), {
+			recursive: true, verbatimSymlinks: true, mode: constants.COPYFILE_FICLONE,
+		});
+	}
 	await signApp(appDirectory, signing);
 	console.log(`Built ${appDirectory}`);
 	console.log(`Version ${manifest.app.version} · Node ${manifest.node} · Electron ${manifest.electron}`);

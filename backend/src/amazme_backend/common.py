@@ -18,7 +18,8 @@ from .contracts import BackendError, Identity, ProfileConfig, ProviderConfig
 
 def resource_root() -> Path:
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "resources"
+        # "resources" is a bundle Resources directory on a case-insensitive volume.
+        return Path(sys.executable).resolve().parent / "runtime"
     return Path(__file__).resolve().parents[2] / "resources"
 
 

@@ -15,9 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 OFFICIAL_NODE = Path.home() / "Library/Caches/amazme-release/node-v22.23.3-darwin-arm64/bin/node"
 REQUIRED_IDENTITY = (
-    "resources/node/bin/node",
-    "resources/docker",
-    "resources/lima/bin/limactl",
+    "runtime/node/bin/node",
+    "runtime/docker",
+    "runtime/lima/bin/limactl",
     "codemode_helper.mjs",
     "plugin_gate.py",
     "quickjs-wasi/quickjs.wasm",
@@ -48,7 +48,7 @@ def missing_identity(files: dict[str, str]) -> list[str]:
 
 
 def install_codemode_runtime(bundle: Path) -> None:
-    node_dest = bundle / "resources" / "node" / "bin" / "node"
+    node_dest = bundle / "runtime" / "node" / "bin" / "node"
     node_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(official_node(), node_dest)
     node_dest.chmod(0o755)
@@ -87,7 +87,7 @@ def main() -> None:
         ], check=True, stdout=log, stderr=subprocess.STDOUT, timeout=300)
     bundle = output / "AmazMe Python 0.1.0"
     shutil.move(output / "dist/amazme-backend", bundle)
-    shutil.copytree(ROOT / "resources", bundle / "resources")
+    shutil.copytree(ROOT / "resources", bundle / "runtime")
     install_codemode_runtime(bundle)
     fingerprints = {}
     for path in sorted(bundle.rglob("*")):
