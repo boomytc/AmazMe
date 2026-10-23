@@ -17,6 +17,33 @@ class ProviderConfig(Model):
     max_tokens: int = Field(default=2048, ge=32, le=8192)
 
 
+class CatalogModel(Model):
+    provider: Literal["deepseek", "faux"]
+    model: str
+    label: str
+    endpoint_editable: bool
+
+
+class ModelSettings(Model):
+    provider: Literal["deepseek", "faux"]
+    model: str
+    base_url: str
+    max_tokens: int
+    key_configured: bool
+
+
+class ModelCatalog(Model):
+    models: list[CatalogModel]
+    current: ModelSettings
+
+
+class UpdateModelSettings(Model):
+    provider: Literal["deepseek", "faux"]
+    model: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    base_url: str = Field(default="", max_length=300)
+    max_tokens: int = Field(default=2048, ge=32, le=8192)
+
+
 class ProfileConfig(Model):
     format: Literal[2] = 2
     profile_id: str

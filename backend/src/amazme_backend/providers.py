@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from openai import AsyncOpenAI
 from openai.types.chat import (
@@ -13,15 +14,47 @@ from pydantic import TypeAdapter
 
 from .contracts import (
     BackendError,
+    CatalogModel,
     DelegateTasks,
     Message,
     Model,
+    ModelSettings,
     ProviderConfig,
     ReadFile,
     Shell,
     ToolCall,
+    UpdateModelSettings,
     WriteFile,
 )
+
+CATALOG = (
+    CatalogModel(provider="faux", model="faux", label="本地确定性", endpoint_editable=False),
+    CatalogModel(provider="deepseek", model="deepseek-flash", label="DeepSeek Flash", endpoint_editable=True),
+)
+
+
+def public_settings(config: ProviderConfig) -> ModelSettings:
+    return ModelSettings(provider=config.provider, model=config.model, base_url=config.base_url,
+                         max_tokens=config.max_tokens, key_configured=bool(config.api_key.get_secret_value()))
+
+
+def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> ProviderConfig:
+    """Return the next provider config. The stored API key is kept and never taken from the request."""
+    if requested.provider == "faux":
+        if requested.model != "faux":
+            raise BackendError("model_not_available")
+        return current.model_copy(update={
+            "provider": "faux", "model": "faux", "base_url": "", "max_tokens": requested.max_tokens,
+        })
+    if not current.api_key.get_secret_value():
+        raise BackendError("provider_not_configured")
+    parts = urlsplit(requested.base_url.strip())
+    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+        raise BackendError("invalid_model_endpoint")
+    return current.model_copy(update={
+        "provider": "deepseek", "model": requested.model, "base_url": parts.geturl(),
+        "max_tokens": requested.max_tokens,
+    })
 
 
 class Completion(Model):

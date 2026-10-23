@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AmazMe</title><link rel="stylesheet" href="/style.css"></head>
-<body><aside><h1>AmazMe <small>0.1.0</small></h1><p class="muted">Linux 工作区</p><button id="create" disabled>新建会话</button><nav id="sessions" aria-label="会话"></nav><p id="connection" role="status">未连接</p></aside>
+<body><aside><h1>AmazMe <small>0.1.0</small></h1><p class="muted">Linux 工作区</p><form id="model-form"><label for="model-choice">模型</label><select id="model-choice"></select><label for="model-endpoint">端点</label><input id="model-endpoint" type="url" autocomplete="off"><button type="submit">保存模型</button></form><button id="create" disabled>新建会话</button><nav id="sessions" aria-label="会话"></nav><p id="connection" role="status">未连接</p></aside>
 <main><header><h2>工作区助手</h2><span id="state"></span></header>
 <form id="login"><label for="token">输入本机配对码</label><input id="token" type="password" autocomplete="off" required><button>连接</button><p class="muted">在启动终端运行 pair 命令获取配对码。</p></form>
 <p id="recovery" role="status" hidden></p><p id="pending-count" class="muted"></p>

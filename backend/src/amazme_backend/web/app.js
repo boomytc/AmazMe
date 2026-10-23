@@ -383,8 +383,39 @@ function startClient() {
     } catch (failure) { if (owns(connection)) { error(failure); reconnect(connection); } }
     finally { if (owns(connection)) { connecting = false; controls(); } }
   }
+  async function loadModels() {
+    const catalog = await api("/api/v1/models");
+    const select = $("model-choice");
+    const endpoint = $("model-endpoint");
+    select.replaceChildren(...catalog.models.map(item => {
+      const option = document.createElement("option");
+      option.value = `${item.provider}\n${item.model}`;
+      option.textContent = item.label;
+      option.dataset.endpoint = item.endpoint_editable ? "1" : "";
+      return option;
+    }));
+    const current = catalog.current;
+    const key = `${current.provider}\n${current.model}`;
+    if (![...select.options].some(option => option.value === key)) {
+      const custom = document.createElement("option");
+      custom.value = key;
+      custom.textContent = current.model;
+      custom.dataset.endpoint = current.provider === "deepseek" ? "1" : "";
+      select.append(custom);
+    }
+    select.value = key;
+    endpoint.value = current.base_url;
+    endpoint.disabled = current.provider !== "deepseek";
+    select.onchange = () => {
+      const editable = select.value.split("\n")[0] === "deepseek";
+      endpoint.disabled = !editable;
+      if (!editable) endpoint.value = "";
+    };
+    $("model-form").dataset.maxTokens = String(current.max_tokens);
+  }
   async function load() {
     identity = await api("/api/v1/bootstrap"); health = {state:identity.state}; $("login").hidden = true;
+    await loadModels();
     const value = await api("/api/v1/sessions");
     archived.clear();
     for (const item of value.sessions) archived.set(item.session_id, Boolean(item.archived));
@@ -411,6 +442,20 @@ function startClient() {
     event.preventDefault();
     try { await api("/auth", "POST", {token:$("token").value}); $("token").value = ""; await load(); }
     catch (failure) { error(failure); }
+  };
+  $("model-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!identity || health?.state !== "ready") return;
+    const [provider, model] = $("model-choice").value.split("\n");
+    const maxTokens = Number($("model-form").dataset.maxTokens || 2048);
+    try {
+      const saved = await api("/api/v1/models", "POST", {
+        provider, model, base_url: $("model-endpoint").value, max_tokens: maxTokens,
+      });
+      $("model-endpoint").value = saved.base_url;
+      $("model-endpoint").disabled = saved.provider !== "deepseek";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
   };
   $("create").onclick = async () => {
     $("create").disabled = true;

@@ -65,6 +65,60 @@
         }
       }
     },
+    "/api/v1/models": {
+      "get": {
+        "summary": "Models",
+        "operationId": "models_api_v1_models_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCatalog"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Update Model",
+        "operationId": "update_model_api_v1_models_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateModelSettings"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/health": {
       "get": {
         "summary": "Health",
@@ -1052,6 +1106,39 @@
         ],
         "title": "BranchSession"
       },
+      "CatalogModel": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "deepseek",
+              "faux"
+            ],
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "endpoint_editable": {
+            "type": "boolean",
+            "title": "Endpoint Editable"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "label",
+          "endpoint_editable"
+        ],
+        "title": "CatalogModel"
+      },
       "Cleanup": {
         "properties": {
           "session_id": {
@@ -1596,6 +1683,65 @@
           "token"
         ],
         "title": "Login"
+      },
+      "ModelCatalog": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogModel"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "current": {
+            "$ref": "#/components/schemas/ModelSettings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "models",
+          "current"
+        ],
+        "title": "ModelCatalog"
+      },
+      "ModelSettings": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "deepseek",
+              "faux"
+            ],
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base Url"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "title": "Max Tokens"
+          },
+          "key_configured": {
+            "type": "boolean",
+            "title": "Key Configured"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "base_url",
+          "max_tokens",
+          "key_configured"
+        ],
+        "title": "ModelSettings"
       },
       "PrepareUpdate": {
         "properties": {
@@ -2162,6 +2308,45 @@
           "arguments"
         ],
         "title": "ToolCall"
+      },
+      "UpdateModelSettings": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "deepseek",
+              "faux"
+            ],
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "title": "Model"
+          },
+          "base_url": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Base Url",
+            "default": ""
+          },
+          "max_tokens": {
+            "type": "integer",
+            "maximum": 8192.0,
+            "minimum": 32.0,
+            "title": "Max Tokens",
+            "default": 2048
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "UpdateModelSettings"
       },
       "UpdateRecord": {
         "properties": {

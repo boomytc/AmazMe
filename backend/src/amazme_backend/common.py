@@ -13,7 +13,7 @@ from typing import IO, Literal
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from .contracts import BackendError, Identity, ProfileConfig
+from .contracts import BackendError, Identity, ProfileConfig, ProviderConfig
 
 
 def resource_root() -> Path:
@@ -108,6 +108,25 @@ class Profile:
         info = self.ipc.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise BackendError("unsafe_ipc_directory")
+
+    def reload_provider(self) -> None:
+        fresh = ProfileConfig.model_validate_json((self.path / "config.json").read_bytes())
+        if (fresh.profile_id != self.config.profile_id or fresh.workspace != self.config.workspace
+                or fresh.format != self.config.format):
+            raise BackendError("profile_identity_mismatch")
+        self.config = fresh
+
+    def save_provider(self, provider: ProviderConfig) -> None:
+        raw = json.loads((self.path / "config.json").read_text())
+        raw["provider"] = {
+            "provider": provider.provider,
+            "base_url": provider.base_url,
+            "model": provider.model,
+            "api_key": provider.api_key.get_secret_value(),
+            "max_tokens": provider.max_tokens,
+        }
+        private_write(self.path / "config.json", json.dumps(raw))
+        self.reload_provider()
 
     def socket(self, name: str) -> Path:
         return self.ipc / f"{name}.sock"

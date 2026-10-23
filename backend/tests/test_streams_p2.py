@@ -573,6 +573,7 @@ def test_browser_connection_ownership_and_safe_retry_without_browser():
         globalThis.fetch = async (path, options={})=>{
             const method=options.method||'GET'; calls.push({path,options});
             if(path==='/api/v1/bootstrap') return response(identity);
+            if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
             if(path==='/api/v1/health') return response({state:healthState,identity});
             if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A'},{session_id:'b',title:'B'}]});
             const parts=path.split('/'), session=parts[4];

@@ -40,6 +40,8 @@ from .contracts import (
     Identity,
     Message,
     Model,
+    ModelCatalog,
+    ModelSettings,
     PrepareUpdate,
     ProcessLease,
     Receipt,
@@ -53,6 +55,7 @@ from .contracts import (
     Submission,
     Submit,
     SupervisorHealth,
+    UpdateModelSettings,
     UpdateRecord,
     WorkerActivity,
     WorkerInfo,
@@ -61,7 +64,7 @@ from .contracts import (
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
-from .providers import summarize
+from .providers import CATALOG, choose_model, public_settings, summarize
 from .storage import (
     TERMINAL,
     SessionStore,
@@ -320,6 +323,20 @@ class Host:
 
     async def sessions(self) -> SessionList:
         return await self.store.sessions()
+
+    def model_catalog(self) -> ModelCatalog:
+        self._admit()
+        self.profile.reload_provider()
+        return ModelCatalog(models=list(CATALOG), current=public_settings(self.profile.config.provider))
+
+    async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        self.profile.reload_provider()
+        chosen = choose_model(self.profile.config.provider, value)
+        self.profile.save_provider(chosen)
+        return public_settings(self.profile.config.provider)
 
     async def create_session(self, value: CreateSession) -> Session:
         self._admit()
@@ -990,6 +1007,14 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/bootstrap")
     async def bootstrap() -> Identity:
         return owner.identity((await owner.health()).state)
+
+    @app.get("/api/v1/models")
+    async def models() -> ModelCatalog:
+        return owner.model_catalog()
+
+    @app.post("/api/v1/models")
+    async def update_model(value: UpdateModelSettings) -> ModelSettings:
+        return await owner.update_model(value)
 
     @app.get("/api/v1/health")
     async def health() -> Health:

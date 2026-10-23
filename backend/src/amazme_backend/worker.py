@@ -195,8 +195,13 @@ class Worker:
         await self.store.fence(value)
         return await self.identity()
 
+    def _use_current_provider(self) -> None:
+        self.profile.reload_provider()
+        self.store.config = self.profile.config.provider
+
     async def submit(self, value: Submission) -> Receipt:
         self._business()
+        self._use_current_provider()
         self.last_demand = time.monotonic()
         receipt = await self.store.accept(value.value, value)
         self.quiescent.clear()
@@ -304,6 +309,7 @@ class Worker:
         if self.validation:
             raise BackendError("validation_worker")
         if isinstance(action, ModelInvocation):
+            self.profile.reload_provider()
             config = action.config.model_copy(update={"api_key": self.profile.config.provider.api_key})
             answer = ""
             completion: Completion | None = None
