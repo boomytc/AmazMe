@@ -1,6 +1,9 @@
 """The served page carries the running host identity before the page module starts."""
 
+import base64
+import hashlib
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -37,6 +40,7 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
         response = await client.get("/")
         again = await client.get("/index.html")
+        script_file = await client.get("/app.js")
     assert response.status_code == 200
     assert response.text == again.text == boot_page(identity, host.origin)
     marker = "globalThis.__AMAZME_BOOT__="
@@ -48,6 +52,15 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     assert boot["transport"] == {"url": "ws://127.0.0.1:4310/api/v1/events", "path": "/api/v1/events"}
     assert boot["mode"] == "source"
     assert "document.title=globalThis.__AMAZME_BOOT__.app.name" in response.text
+    source = re.search(r"<script>(globalThis\.__AMAZME_BOOT__=.*?)</script>", response.text)
+    assert source is not None
+    digest = base64.b64encode(hashlib.sha256(source.group(1).encode()).digest()).decode()
+    policy = response.headers["content-security-policy"]
+    assert f"script-src 'self' 'sha256-{digest}'" in policy
+    assert "unsafe-inline" not in policy
+    assert script_file.status_code == 200
+    assert "sha256-" not in script_file.headers["content-security-policy"]
+    assert "unsafe-inline" not in script_file.headers["content-security-policy"]
 
 
 def test_missing_origin_is_rejected(tmp_path: Path) -> None:

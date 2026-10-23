@@ -147,7 +147,7 @@ from .host_store import Delivery, HostStore, ServiceRecord
 from .manage import bundle_digest, bundle_text, contains_secret, transcript_digest
 from .manage import digest as content_digest
 from .memories import match_memories, remember
-from .page_boot import boot_page
+from .page_boot import boot_document
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
@@ -1826,7 +1826,10 @@ def application(owner: Host) -> FastAPI:
             return JSONResponse({"code": "runtime_recovering", "message": "Runtime recovering; retry the same request ID"}, status_code=503)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none'; connect-src 'self'; style-src 'self'"
+        if "content-security-policy" not in response.headers:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; frame-ancestors 'none'; connect-src 'self'; style-src 'self'"
+            )
         return response
 
     @app.post("/auth")
@@ -2204,8 +2207,10 @@ def application(owner: Host) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     @app.get("/index.html", response_class=HTMLResponse)
-    def page() -> str:
-        return boot_page(owner.identity(), owner.origin)
+    def page(response: Response) -> str:
+        document, policy = boot_document(owner.identity(), owner.origin)
+        response.headers["Content-Security-Policy"] = policy
+        return document
 
     app.mount("/", StaticFiles(directory=Path(__file__).with_name("web"), html=True), name="web")
     return app
