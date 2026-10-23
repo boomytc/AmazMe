@@ -249,9 +249,13 @@ def test_browser_enables_web_for_the_selected_session() -> None:
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:session,title:'工作区',archived:false,workspace:'primary'}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:session,build_id:'build',host_epoch:1});
+          if(path===`/api/v1/sessions/${session}/web` && method==='GET') {
+            seen.push('GET '+path);
+            return response({enabled:true,base_url:'https://tools.example/v1/tools',count:4,send_original_question:false,timeout_ms:30000,max_response_bytes:2097152,max_content_chars:20000});
+          }
           if(path===`/api/v1/sessions/${session}/web` && method==='POST') {
-            seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+String(body.enabled));
-            return response({enabled:true,base_url:'https://api.deepseek.com/v1/tools',count:10,send_original_question:true,timeout_ms:30000,max_response_bytes:2097152,max_content_chars:20000});
+            seen.push('POST '+String(body.enabled)+' '+body.base_url+' '+String(body.count));
+            return response(body);
           }
           if(path===`/api/v1/sessions/${session}/web/calls` && method==='POST') {
             seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+body.query);
@@ -266,14 +270,18 @@ def test_browser_enables_web_for_the_selected_session() -> None:
         }
         await import(appURL);
         await until(()=>$('sessions').textContent.includes('工作区'));
-        $('web-enabled').checked = true;
+        assert.equal($('web-enabled').checked, false);
+        $('web').querySelector('summary').click();
+        await until(()=>$('web-enabled').checked && $('web-state').textContent.includes('https://tools.example/v1/tools'));
+        $('web-enabled').checked = false;
         $('web-form').requestSubmit();
-        await until(()=>$('web-state').textContent.includes('已启用'));
+        await until(()=>$('web-state').textContent.includes('已关闭') && $('web-state').textContent.includes('https://tools.example/v1/tools'));
         $('web-query').value = '项目结构';
         $('web-search').requestSubmit();
         await until(()=>$('web-state').textContent.includes('done'));
-        assert.equal(seen[0], `/api/v1/sessions/${session}/web ["enabled"] true`);
-        assert.equal(seen[1], `/api/v1/sessions/${session}/web/calls ["call_id","kind","query"] 项目结构`);
+        assert.ok(seen.includes(`GET /api/v1/sessions/${session}/web`));
+        assert.ok(seen.includes('POST false https://tools.example/v1/tools 4'));
+        assert.ok(seen.some(item => item.includes('/web/calls') && item.includes('项目结构')));
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

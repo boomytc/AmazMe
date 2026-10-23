@@ -339,6 +339,7 @@ function startClient() {
     const cached = resume && current?.session === id ? current.model : null;
     if (selected !== id) {
       workflowId = ""; workflowView = null;
+      webPolicy = null;
       $("web-state").textContent = "";
       $("web-enabled").checked = false;
       $("computer-state").textContent = "";
@@ -363,6 +364,7 @@ function startClient() {
       if (!owns(connection)) { void detach(connection); return; }
       const attachment = connection.attachment;
       if (attachment.session_id !== id || attachment.build_id !== boot.build_id || attachment.host_epoch !== boot.host_epoch) throw new Error("会话绑定不匹配");
+      if ($("web").open) void loadWebPolicy().catch(error);
       const url = new URL(`/api/v1/events/${id}`, location.origin); url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(url); connection.ws = ws;
       connection.helloTimer = setTimeout(() => reconnect(connection, true), 40000);
@@ -585,12 +587,27 @@ function startClient() {
       $("mcp-approval").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let webPolicy = null;
+  function showWebPolicy(policy) {
+    webPolicy = policy;
+    $("web-enabled").checked = Boolean(policy.enabled);
+    $("web-state").textContent = `${policy.enabled ? "已启用" : "已关闭"} · ${policy.base_url}`;
+  }
+  async function loadWebPolicy() {
+    if (!selected) return;
+    showWebPolicy(await api(`/api/v1/sessions/${selected}/web`));
+  }
+  $("web").addEventListener("toggle", () => {
+    if ($("web").open) loadWebPolicy().catch(error);
+  });
   $("web-form").onsubmit = async event => {
     event.preventDefault();
     if (!selected || !identity || health?.state !== "ready") return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/web`, "POST", {enabled: $("web-enabled").checked}, current);
-      $("web-state").textContent = view.enabled ? "已启用" : "已关闭";
+      const view = await api(`/api/v1/sessions/${selected}/web`, "POST", {
+        ...(webPolicy || {}), enabled: $("web-enabled").checked,
+      }, current);
+      showWebPolicy(view);
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
