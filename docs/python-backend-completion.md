@@ -80,7 +80,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | API key | P1 | `provider.json`，不进普通日志 | 部分通过 | 配置加载 | 刷新、轮换和登出竞争未做 |
 | OAuth、单一刷新管理者、取消期间 token 落盘 | P3 | 无 | 未通过 | 无 | 按供应商要求的 client ID、回调和请求身份实现。缺账号时保持未验收并继续无关功能 |
 | 图片、分类 | P3 | 无 | 未通过 | 无 | 按产品里实际有的能力做，不按枚举注册名称 |
-| 会话归档 | P3 | `POST /api/v1/sessions/{id}/archive`；页面「归档 / 恢复」 | 部分通过 | `test_session_branch.py` 的归档用例和 happy-dom | 不在 A/B 安装包里，也还没有真实 Chrome。历史不删除；未开始的任务变为已取消 |
+| 会话归档 | P3 | `POST /api/v1/sessions/{id}/archive`；页面「归档 / 恢复」 | 部分通过 | `test_session_branch.py` 的归档用例和 happy-dom | `1af60222`。不在 A/B 安装包里，也还没有真实 Chrome。历史不删除；未开始的任务变为已取消 |
 | 上下文压缩、过期结果拒绝、压缩失败保留原历史 | P3 | 审批过期已有；压缩无 | 未通过 | 审批过期单测 | 压缩要单独做，失败不能改写原历史 |
 | 切换会话 | P2 Web | 侧栏 | 已通过 | `verify_client.py` 的 A-B-A | 分支后的切换有 happy-dom 测试，还没有进 Chrome 报告 |
 | 文件浏览、编辑、diff、受检写入 | P3 | 现在只有 VM 里的 `read_file` / `write_file` | 部分通过 | P1 工具路径 | 浏览、diff、符号链接、硬链接、权限和并发写未做 |
