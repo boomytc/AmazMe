@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -41,9 +41,13 @@ import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
 import {
 	desktopPythonBootPlan,
 	pairingCookie,
+	parsePythonUpdateRecord,
+	pythonCompleteUpdateRequest,
 	pythonPrepareUpdateRequest,
 	pythonResumeUpdateRequest,
 	pythonShutdownRequest,
+	pythonUpdateAction,
+	pythonUpdateStatePath,
 	readControlToken,
 	resolvePythonBackend,
 	shouldStopSharedBackend,
@@ -113,33 +117,116 @@ async function stopPythonBackend(): Promise<void> {
 	}
 }
 
+function pythonUpdateFile(): string {
+	return pythonUpdateStatePath(app.getPath("userData"));
+}
+
+function readPendingPythonUpdate(): { readonly updateId?: string; readonly targetBuild?: string } | undefined {
+	const path = pythonUpdateFile();
+	if (!existsSync(path)) return undefined;
+	try {
+		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+		if (typeof parsed !== "object" || parsed === null) return undefined;
+		const record = parsed as { readonly update_id?: unknown; readonly target_build?: unknown };
+		return {
+			...(typeof record.update_id === "string" ? { updateId: record.update_id } : {}),
+			...(typeof record.target_build === "string" ? { targetBuild: record.target_build } : {}),
+		};
+	} catch {
+		return undefined;
+	}
+}
+
+function writePendingPythonUpdate(value: { readonly updateId?: string; readonly targetBuild: string }): void {
+	const path = pythonUpdateFile();
+	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+	writeFileSync(path, JSON.stringify({
+		...(value.updateId === undefined ? {} : { update_id: value.updateId }),
+		target_build: value.targetBuild,
+	}), { mode: 0o600 });
+}
+
+function clearPendingPythonUpdate(): void {
+	const path = pythonUpdateFile();
+	if (existsSync(path)) unlinkSync(path);
+}
+
+async function controlCall(path: string, method: string, body?: string): Promise<{ readonly ok: boolean; readonly status: number; readonly value: unknown }> {
+	const ready = host?.pythonReady();
+	if (ready === undefined || pythonProfile.length === 0) return { ok: false, status: 0, value: undefined };
+	const response = await fetch(`${ready.origin}${path}`, {
+		method,
+		redirect: "error",
+		headers: {
+			Authorization: `Bearer ${readControlToken(pythonProfile)}`,
+			...(body === undefined ? {} : { "content-type": "application/json" }),
+		},
+		...(body === undefined ? {} : { body }),
+		signal: AbortSignal.timeout(120_000),
+	});
+	const text = await response.text();
+	let value: unknown;
+	if (text.length > 0) {
+		try { value = JSON.parse(text) as unknown; } catch { value = undefined; }
+	}
+	return { ok: response.ok, status: response.status, value };
+}
+
+/** Verify on the target build, then activate. The source build is left frozen. */
+async function settlePythonUpdate(): Promise<void> {
+	const ready = host?.pythonReady();
+	if (!usingPythonBackend || ready === undefined) return;
+	const pending = readPendingPythonUpdate();
+	if (pending?.updateId === undefined) return;
+	pythonUpdateId = pending.updateId;
+	const current = await controlCall(`/control/updates/${pending.updateId}`, "GET");
+	if (current.status === 404) { clearPendingPythonUpdate(); return; }
+	const record = parsePythonUpdateRecord(current.value);
+	if (!current.ok || record === undefined) return;
+	if (record.activated) { clearPendingPythonUpdate(); return; }
+	const action = pythonUpdateAction(ready.buildId, {
+		source_build: record.sourceBuild, target_build: record.targetBuild, activated: record.activated, phase: record.phase,
+	});
+	if (action === "hold") return;
+	let revision = record.revision;
+	let phase = record.phase;
+	if (action === "verify") {
+		const request = pythonResumeUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, record.updateId);
+		const resumed = await controlCall(new URL(request.url).pathname, "POST");
+		const verified = parsePythonUpdateRecord(resumed.value);
+		if (!resumed.ok || verified === undefined || verified.activated) {
+			if (verified?.activated) clearPendingPythonUpdate();
+			return;
+		}
+		revision = verified.revision;
+		phase = verified.phase;
+	}
+	if (phase !== "validating" && phase !== "completed") return;
+	const complete = pythonCompleteUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, record.updateId, revision);
+	const activated = parsePythonUpdateRecord((await controlCall(new URL(complete.url).pathname, "POST", complete.body)).value);
+	if (activated?.activated) clearPendingPythonUpdate();
+}
+
 async function updateHostAdmission(action: "prepare" | "resume"): Promise<boolean> {
 	if (usingPythonBackend) {
 		const ready = host?.pythonReady();
 		if (ready === undefined || pythonWebToken.length === 0 || pythonProfile.length === 0) return false;
 		try {
-			const control = readControlToken(pythonProfile);
 			if (action === "prepare") {
-				const target = process.env.AMAZME_PYTHON_TARGET_BUILD ?? "";
-				const request = pythonPrepareUpdateRequest(ready, control, pythonWebToken, randomBytes(8).toString("hex"), target);
-				const response = await fetch(request.url, {
-					method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(15_000),
-				});
-				if (!response.ok) return false;
-				const payload: unknown = await response.json();
-				const updateId = typeof payload === "object" && payload !== null ? (payload as { readonly update_id?: unknown }).update_id : undefined;
-				if (typeof updateId !== "string" || updateId.length === 0) return false;
-				pythonUpdateId = updateId;
+				const target = readPendingPythonUpdate()?.targetBuild ?? process.env.AMAZME_PYTHON_TARGET_BUILD ?? "";
+				const updateId = randomBytes(8).toString("hex");
+				const request = pythonPrepareUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, updateId, target);
+				const response = await controlCall(new URL(request.url).pathname, "POST", request.body);
+				const prepared = parsePythonUpdateRecord(response.value);
+				if (!response.ok || prepared === undefined || prepared.activated || prepared.phase !== "prepared") return false;
+				pythonUpdateId = prepared.updateId;
+				writePendingPythonUpdate({ updateId: prepared.updateId, targetBuild: prepared.targetBuild });
 				return true;
 			}
-			if (pythonUpdateId.length === 0) return false;
-			const request = pythonResumeUpdateRequest(ready, control, pythonWebToken, pythonUpdateId);
-			const response = await fetch(request.url, {
-				method: "POST", redirect: "error", headers: request.headers, signal: AbortSignal.timeout(15_000),
-			});
-			await response.body?.cancel();
-			return response.ok;
-		} catch {
+			await settlePythonUpdate();
+			return true;
+		} catch (error: unknown) {
+			console.error(`desktop python update failed: ${error instanceof Error ? error.message : "request failed"}`);
 			return false;
 		}
 	}
@@ -665,6 +752,11 @@ async function boot(): Promise<void> {
 		},
 	});
 	const pageUrl = await host.start();
+	if (usingPythonBackend) {
+		try { await settlePythonUpdate(); } catch (error: unknown) {
+			console.error(`desktop python update settle failed: ${error instanceof Error ? error.message : "request failed"}`);
+		}
+	}
 	const namedSession = deepLinkSession?.trim();
 	await openWindow(pageUrl, namedSession ? { sessionId: namedSession } : { workspace: "primary", fresh: true });
 	if (!SMOKE && !notices.quitting) {
@@ -687,12 +779,12 @@ async function boot(): Promise<void> {
 					const confirmed = await ask({ type: "question", message: translate(locale, "desktop.update.installConfirm"), detail: translate(locale, "desktop.update.installDetail"),
 						buttons: [translate(locale, "desktop.update.later"), translate(locale, "desktop.update.installAction")], defaultId: 0, cancelId: 0, noLink: true }) === 1;
 					if (!confirmed) return false;
-					if (!await updateHostAdmission("prepare")) throw new Error("busy");
 					return true;
 				} finally { showingDialog = false; }
 			},
+			prepareHost: () => updateHostAdmission("prepare"),
 			quit: async () => { requestQuit(); },
-			resumeHost: async () => { await updateHostAdmission("resume"); },
+			resumeHost: async () => { await settlePythonUpdate(); },
 		});
 		await updates.start();
 		await refreshApplicationMenu();

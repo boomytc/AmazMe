@@ -207,6 +207,96 @@ export function pythonPrepareUpdateRequest(
 	};
 }
 
+export function pythonCompleteUpdateRequest(
+	ready: PythonReady,
+	controlToken: string,
+	webToken: string,
+	updateId: string,
+	expectedRevision: string,
+): {
+	readonly url: string;
+	readonly headers: { readonly Authorization: string; readonly "content-type": "application/json" };
+	readonly body: string;
+} {
+	distinctTokens(controlToken, webToken);
+	if (!/^[A-Za-z0-9._-]{1,128}$/u.test(updateId) || expectedRevision.length === 0) {
+		throw new Error("desktop update activate needs the prepared id and revision");
+	}
+	return {
+		url: `${ready.origin}/control/updates/complete`,
+		headers: { Authorization: `Bearer ${controlToken}`, "content-type": "application/json" },
+		body: JSON.stringify({ update_id: updateId, expected_revision: expectedRevision }),
+	};
+}
+
+export interface PythonUpdateRecord {
+	readonly updateId: string;
+	readonly sourceBuild: string;
+	readonly targetBuild: string;
+	readonly phase: string;
+	readonly revision: string;
+	readonly activated: boolean;
+	readonly validationPurpose: string;
+}
+
+export function parsePythonUpdateRecord(value: unknown): PythonUpdateRecord | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	const record = value as Record<string, unknown>;
+	if (typeof record.update_id !== "string" || typeof record.source_build !== "string" || typeof record.target_build !== "string") return undefined;
+	if (typeof record.phase !== "string" || typeof record.revision !== "string" || typeof record.activated !== "boolean") return undefined;
+	const validation = record.validation;
+	const purpose = typeof validation === "object" && validation !== null && typeof (validation as { readonly purpose?: unknown }).purpose === "string"
+		? (validation as { readonly purpose: string }).purpose
+		: "";
+	return {
+		updateId: record.update_id,
+		sourceBuild: record.source_build,
+		targetBuild: record.target_build,
+		phase: record.phase,
+		revision: record.revision,
+		activated: record.activated,
+		validationPurpose: purpose,
+	};
+}
+
+/** Running the old build must not activate. Only the target build verifies, then activates. */
+export function pythonUpdateAction(runningBuild: string, record: {
+	readonly source_build: string;
+	readonly target_build: string;
+	readonly activated: boolean;
+	readonly phase: string;
+}): "hold" | "verify" | "activate" {
+	if (record.activated || runningBuild !== record.target_build) return "hold";
+	if (record.phase === "validating" || record.phase === "completed") return "activate";
+	return "verify";
+}
+
+export function pythonUpdateStatePath(userData: string): string {
+	return join(userData, "updates", "python-update.json");
+}
+
+/** The staged app or onedir names the build the running host must become before it can thaw. */
+export function readPythonBuildId(root: string): string | undefined {
+	const candidates = [
+		join(root, "build.json"),
+		join(root, "amazme-backend", "build.json"),
+		join(root, "AmazMe.app", "Contents", "Resources", "amazme-backend", "build.json"),
+		join(root, "Contents", "Resources", "amazme-backend", "build.json"),
+	];
+	for (const path of candidates) {
+		if (!existsSync(path)) continue;
+		try {
+			const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+			if (typeof parsed !== "object" || parsed === null) continue;
+			const buildId = (parsed as { readonly build_id?: unknown }).build_id;
+			if (typeof buildId === "string" && BUILD_ID.test(buildId)) return buildId;
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
+}
+
 export function pythonResumeUpdateRequest(ready: PythonReady, controlToken: string, webToken: string, updateId: string): {
 	readonly url: string;
 	readonly headers: { readonly Authorization: string };

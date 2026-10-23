@@ -8,7 +8,12 @@ import {
 	desktopPythonBootPlan,
 	pairingCookie,
 	parsePythonReadyLine,
+	parsePythonUpdateRecord,
+	pythonCompleteUpdateRequest,
 	pythonPrepareUpdateRequest,
+	pythonUpdateAction,
+	pythonUpdateStatePath,
+	readPythonBuildId,
 	pythonResumeUpdateRequest,
 	pythonShutdownRequest,
 	readControlToken,
@@ -127,6 +132,37 @@ describe("packaged python backend", () => {
 		expect(resume.url).toBe("http://127.0.0.1:4310/control/updates/replace-1/resume");
 		expect(resume.body).toBe("");
 		expect(resume.headers.Authorization).toBe(`Bearer ${CONTROL}`);
+		const complete = pythonCompleteUpdateRequest(ready(), CONTROL, WEB, "replace-1", "4");
+		expect(complete.url).toBe("http://127.0.0.1:4310/control/updates/complete");
+		expect(JSON.parse(complete.body)).toEqual({ update_id: "replace-1", expected_revision: "4" });
+		expect(complete.headers.Authorization).not.toContain(WEB);
+	});
+
+	test("keeps a source build frozen and activates only the target build", () => {
+		const source = "a".repeat(64);
+		const target = "b".repeat(64);
+		const prepared = { source_build: source, target_build: target, activated: false, phase: "prepared" };
+		expect(pythonUpdateAction(source, prepared)).toBe("hold");
+		expect(pythonUpdateAction(target, prepared)).toBe("verify");
+		expect(pythonUpdateAction(target, { ...prepared, phase: "validating" })).toBe("activate");
+		expect(pythonUpdateAction(target, { ...prepared, activated: true, phase: "completed" })).toBe("hold");
+		const parsed = parsePythonUpdateRecord({
+			update_id: "replace-1", source_build: source, target_build: target, phase: "validating", revision: "4",
+			activated: false, validation: { purpose: "validation" },
+		});
+		expect(parsed?.validationPurpose).toBe("validation");
+		expect(parsed === undefined ? "hold" : pythonUpdateAction(target, {
+			source_build: parsed.sourceBuild, target_build: parsed.targetBuild, activated: parsed.activated, phase: parsed.phase,
+		})).toBe("activate");
+	});
+
+	test("reads the staged python build id", () => {
+		const dir = createTempDir("amazme-python-build-");
+		expect(readPythonBuildId(dir)).toBeUndefined();
+		mkdirSync(join(dir, "amazme-backend"));
+		writeFileSync(join(dir, "amazme-backend", "build.json"), JSON.stringify({ build_id: BUILD }));
+		expect(readPythonBuildId(dir)).toBe(BUILD);
+		expect(pythonUpdateStatePath(dir)).toBe(join(dir, "updates", "python-update.json"));
 	});
 
 	test("pairs with a cookie and does not put the token in the URL", () => {

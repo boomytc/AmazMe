@@ -10,6 +10,7 @@ import type { DesktopUpdateIO, PreparedUpdate } from "./update-controller.ts";
 import { handoffUpdate } from "./update-handoff.ts";
 import { discardPreparedUpdate } from "./update-cleanup.ts";
 import { macOSBundleVersion } from "./macos-version.ts";
+import { pythonUpdateStatePath, readPythonBuildId } from "./python-backend.ts";
 
 const exec = promisify(execFile);
 export type MacTool = (command: string, args: readonly string[]) => Promise<string>;
@@ -95,6 +96,7 @@ export function createMacUpdateIO(options: {
 	readonly cache: string;
 	readonly userData?: string;
 	readonly confirmQuit: () => Promise<boolean>;
+	readonly prepareHost?: () => Promise<boolean>;
 	readonly resumeHost?: () => Promise<void>;
 	readonly quit: () => Promise<void>;
 }): DesktopUpdateIO {
@@ -151,6 +153,12 @@ export function createMacUpdateIO(options: {
 		},
 		async install(prepared: PreparedUpdate) {
 			await writableTarget(options.target);
+			const targetBuild = readPythonBuildId(prepared.directory);
+			if (options.userData !== undefined && targetBuild !== undefined) {
+				const path = pythonUpdateStatePath(options.userData);
+				await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+				await writeFile(path, JSON.stringify({ target_build: targetBuild }), { mode: 0o600 });
+			}
 			// The helper is loaded completely before the old bundle is moved. No system Node is required.
 			const node = join(options.target, "Contents", "Resources", "node", "bin", "node");
 			const helperEnv: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin", HOME: process.env.HOME };
@@ -159,7 +167,12 @@ export function createMacUpdateIO(options: {
 				if (process.env[key]) helperEnv[key] = process.env[key];
 			}
 			await handoffUpdate({
-				confirm: options.confirmQuit, quit: options.quit, resume: async () => { await options.resumeHost?.(); },
+				confirm: options.confirmQuit,
+				quit: async () => {
+					if (options.prepareHost !== undefined && !await options.prepareHost()) throw new Error("busy");
+					await options.quit();
+				},
+				resume: async () => { await options.resumeHost?.(); },
 				start() {
 					const child = spawn(node, [fileURLToPath(new URL("./update-helper.bundle.mjs", import.meta.url)), prepared.directory], {
 						detached: true, stdio: ["pipe", "pipe", "ignore"], env: helperEnv,

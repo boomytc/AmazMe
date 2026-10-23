@@ -26,6 +26,7 @@ export function createDesktopUpdates(options: {
 	readonly userData: string;
 	readonly locale: () => Promise<Locale>;
 	readonly confirmQuit: () => Promise<boolean>;
+	readonly prepareHost?: () => Promise<boolean>;
 	readonly resumeHost?: () => Promise<void>;
 	readonly quit: () => Promise<void>;
 	/** Tests substitute IO, never a production trust bypass or arbitrary feed URL. */
@@ -41,7 +42,8 @@ export function createDesktopUpdates(options: {
 	const preferences = join(options.userData, "updates", "preferences.json");
 	const url = new URL("./update-window.html", import.meta.url).href;
 	const io = options.io ?? createMacUpdateIO({ target: dirname(dirname(dirname(options.executable))), current: options.version, arch: process.arch,
-		cache: join(options.userData, "updates", "cache"), userData: options.userData, confirmQuit: options.confirmQuit, quit: options.quit, resumeHost: options.resumeHost });
+		cache: join(options.userData, "updates", "cache"), userData: options.userData, confirmQuit: options.confirmQuit,
+		prepareHost: options.prepareHost, quit: options.quit, resumeHost: options.resumeHost });
 	const publish = async (): Promise<void> => {
 		const current = window;
 		if (!current || current.isDestroyed()) return;
