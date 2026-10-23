@@ -1,3 +1,5 @@
+import { parsePythonReadyLine, type PythonReady } from "./python-backend.ts";
+
 /**
  * The desktop shell's view of the web host's launch line.
  *
@@ -13,6 +15,8 @@ export interface ReadinessParser {
 	push(chunk: string): string | undefined;
 	/** Treat any trailing partial line as complete. Throws when no launch line was seen. */
 	finalize(): string;
+	/** Set when the line was the packaged Python backend's JSON identity, not `Web:`. */
+	pythonReady(): PythonReady | undefined;
 }
 
 /** The page URL from one launch line, or undefined when the line is not that launch line. */
@@ -52,15 +56,25 @@ export function extractWebUrl(line: string): string | undefined {
 export function createReadinessParser(): ReadinessParser {
 	let pending = "";
 	let readyUrl: string | undefined;
+	let python: PythonReady | undefined;
 
-	const accept = (line: string): string | undefined => {
-		const parsed = extractWebUrl(line);
-		if (parsed === undefined) return undefined;
+	const acceptUrl = (parsed: string): string => {
 		if (readyUrl !== undefined && parsed !== readyUrl) {
 			throw new Error(`desktop host emitted conflicting launch URLs: ${readyUrl} and ${parsed}`);
 		}
 		readyUrl = parsed;
 		return readyUrl;
+	};
+
+	const accept = (line: string): string | undefined => {
+		const backend = parsePythonReadyLine(line);
+		if (backend !== undefined) {
+			python = backend;
+			return acceptUrl(backend.pageUrl);
+		}
+		const parsed = extractWebUrl(line);
+		if (parsed === undefined) return undefined;
+		return acceptUrl(parsed);
 	};
 
 	return {
@@ -81,6 +95,9 @@ export function createReadinessParser(): ReadinessParser {
 				throw new Error("desktop host exited before emitting its launch URL");
 			}
 			return readyUrl;
+		},
+		pythonReady() {
+			return python;
 		},
 	};
 }

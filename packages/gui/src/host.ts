@@ -2,6 +2,7 @@ import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { DESKTOP_PARENT_PIPE_ENV } from "@amazme/coding-agent/config";
 import type { WebHostLaunch } from "./launch.ts";
+import type { PythonReady } from "./python-backend.ts";
 import { createReadinessParser } from "./readiness.ts";
 
 const DEFAULT_READINESS_TIMEOUT_MS = 60_000;
@@ -63,6 +64,8 @@ export interface HostSupervisor {
 	shutdown(): Promise<void>;
 	/** Bounded tail of stdout and stderr. Still grows after the launch line, then drops the head. */
 	tail(): string;
+	/** Present after the packaged Python backend prints its readiness line. */
+	pythonReady(): PythonReady | undefined;
 }
 
 interface NodeChildOptions {
@@ -163,6 +166,7 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 	let shuttingDown = false;
 	let output = "";
 	let readinessTimer: ReturnType<typeof setTimeout> | undefined;
+	const parser = createReadinessParser();
 
 	const note = (chunk: string): void => {
 		output = `${output}${chunk}`.slice(-MAX_HOST_OUTPUT_CHARS);
@@ -175,7 +179,6 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 			return Promise.reject(new Error("desktop host cannot start after shutdown"));
 		}
 		startPromise = new Promise<string>((resolve, reject) => {
-			const parser = createReadinessParser();
 			const spawned = options.spawnHost();
 			child = spawned;
 			exited = new Promise<void>((accept) => {
@@ -288,5 +291,5 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 		return shutdownPromise;
 	};
 
-	return { start, shutdown, tail: () => output };
+	return { start, shutdown, tail: () => output, pythonReady: () => parser.pythonReady() };
 }

@@ -1,6 +1,9 @@
+import { execFile } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import { PAGE_DIRECTORY } from "@amazme/web/assets";
 import {
 	app,
@@ -10,6 +13,7 @@ import {
 	Menu,
 	nativeImage,
 	Notification,
+	session,
 	shell,
 	Tray,
 	type Event as ElectronEvent,
@@ -17,10 +21,9 @@ import {
 } from "electron";
 import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "./locale.ts";
 import { hostFailureCopy, quitDialogCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
-import { createHostSupervisor, spawnWebHost, type HostStartupFailure, type HostSupervisor } from "./host.ts";
+import { createHostSupervisor, spawnNodeChild, spawnWebHost, type HostStartupFailure, type HostSupervisor } from "./host.ts";
 import {
 	hostWorkingDirectory,
-	missingHostEntry,
 	resolveHostCli,
 	resolveNodeExecutable,
 	webHostLaunch,
@@ -36,6 +39,18 @@ import { createDesktopUpdates } from "./desktop-updates.ts";
 import { markUpdatedDesktopHealthy } from "./update-helper.ts";
 import { mayStartInstalledApp } from "./update-launch.ts";
 import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
+import {
+	desktopPythonBootPlan,
+	pairingCookie,
+	pythonPrepareUpdateRequest,
+	pythonResumeUpdateRequest,
+	pythonShutdownRequest,
+	readControlToken,
+	resolvePythonBackend,
+	shouldStopSharedBackend,
+} from "./python-backend.ts";
+
+const execFileAsync = promisify(execFile);
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
@@ -79,8 +94,55 @@ let quitPrompt: Promise<boolean> | undefined;
 let notices: ShellController;
 let updates: ReturnType<typeof createDesktopUpdates> | undefined;
 const desktopUpdateToken = randomBytes(32).toString("hex");
+let usingPythonBackend = false;
+let pythonProfile = "";
+let pythonWebToken = "";
+let pythonUpdateId = "";
+
+async function stopPythonBackend(): Promise<void> {
+	const ready = host?.pythonReady();
+	if (!usingPythonBackend || ready === undefined || pythonProfile.length === 0 || pythonWebToken.length === 0) return;
+	try {
+		const request = pythonShutdownRequest(ready, readControlToken(pythonProfile), pythonWebToken);
+		const response = await fetch(request.url, {
+			method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(15_000),
+		});
+		await response.body?.cancel();
+	} catch (error: unknown) {
+		console.error(`desktop python shutdown failed: ${error instanceof Error ? error.message : "request failed"}`);
+	}
+}
 
 async function updateHostAdmission(action: "prepare" | "resume"): Promise<boolean> {
+	if (usingPythonBackend) {
+		const ready = host?.pythonReady();
+		if (ready === undefined || pythonWebToken.length === 0 || pythonProfile.length === 0) return false;
+		try {
+			const control = readControlToken(pythonProfile);
+			if (action === "prepare") {
+				const target = process.env.AMAZME_PYTHON_TARGET_BUILD ?? "";
+				const request = pythonPrepareUpdateRequest(ready, control, pythonWebToken, randomBytes(8).toString("hex"), target);
+				const response = await fetch(request.url, {
+					method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(15_000),
+				});
+				if (!response.ok) return false;
+				const payload: unknown = await response.json();
+				const updateId = typeof payload === "object" && payload !== null ? (payload as { readonly update_id?: unknown }).update_id : undefined;
+				if (typeof updateId !== "string" || updateId.length === 0) return false;
+				pythonUpdateId = updateId;
+				return true;
+			}
+			if (pythonUpdateId.length === 0) return false;
+			const request = pythonResumeUpdateRequest(ready, control, pythonWebToken, pythonUpdateId);
+			const response = await fetch(request.url, {
+				method: "POST", redirect: "error", headers: request.headers, signal: AbortSignal.timeout(15_000),
+			});
+			await response.body?.cancel();
+			return response.ok;
+		} catch {
+			return false;
+		}
+	}
 	if (!hostPageUrl) return false;
 	try {
 		const response = await fetch(new URL(`/desktop-update/${action}`, hostPageUrl), { method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000), headers: { "x-amazme-desktop-update": desktopUpdateToken } });
@@ -96,7 +158,10 @@ function readinessTimeout(): number | undefined {
 }
 
 function shutdownHost(): Promise<void> {
-	shutdownPromise ??= host?.shutdown() ?? Promise.resolve();
+	shutdownPromise ??= (async () => {
+		await stopPythonBackend();
+		await (host?.shutdown() ?? Promise.resolve());
+	})();
 	return shutdownPromise;
 }
 
@@ -523,21 +588,58 @@ async function openWindow(pageUrl: string, sessionId: string | undefined = undef
 
 async function boot(): Promise<void> {
 	app.dock?.setIcon(APP_ICON);
-	const cliEntry = resolveHostCli();
-	const launch = webHostLaunch({
-		nodeExecutable: resolveNodeExecutable(process.env),
-		cliEntry,
-		cwd: hostWorkingDirectory(process.env, process.cwd()),
-		env: { ...process.env, AMAZME_DESKTOP_UPDATE_TOKEN: desktopUpdateToken },
-	});
-	const missing = missingHostEntry(launch);
+	const pythonExecutable = resolvePythonBackend(process.env, process.resourcesPath);
+	const cwd = hostWorkingDirectory(process.env, process.cwd());
+	let launch: { readonly executable: string; readonly args: readonly string[]; readonly cwd: string; readonly env: NodeJS.ProcessEnv; readonly entries: readonly string[] };
+	let nodeLaunch: ReturnType<typeof webHostLaunch> | undefined;
+	if (pythonExecutable !== undefined) {
+		usingPythonBackend = true;
+		pythonProfile = join(app.getPath("userData"), "python-profile");
+		const provider = join(app.getPath("userData"), "faux-provider.json");
+		if (!existsSync(provider)) {
+			writeFileSync(provider, JSON.stringify({
+				provider: "faux", model: "faux", base_url: "", api_key: "", max_tokens: 2048, proxy: "", headers: {},
+			}));
+		}
+		const plan = desktopPythonBootPlan({
+			executable: pythonExecutable,
+			profile: pythonProfile,
+			workspace: cwd,
+			providerConfig: provider,
+			profileExists: existsSync(join(pythonProfile, "config.json")),
+			cwd,
+			env: process.env,
+		});
+		const missingPython = plan.entries.find((entry) => !existsSync(entry));
+		if (missingPython !== undefined) throw new Error(`desktop python backend is missing: ${missingPython}`);
+		for (const step of plan.preflight) {
+			const result = await execFileAsync(plan.executable, [...step.args], { cwd: plan.cwd, env: plan.env });
+			if (step.command === "pair") pythonWebToken = String(result.stdout).trim();
+		}
+		if (pythonWebToken.length === 0 || pythonWebToken === readControlToken(pythonProfile)) {
+			throw new Error("desktop python pairing did not return a web token");
+		}
+		launch = { executable: plan.executable, args: plan.serveArgs, cwd: plan.cwd, env: plan.env, entries: plan.entries };
+	} else {
+		const cliEntry = resolveHostCli();
+		nodeLaunch = webHostLaunch({
+			nodeExecutable: resolveNodeExecutable(process.env),
+			cliEntry,
+			cwd,
+			env: { ...process.env, AMAZME_DESKTOP_UPDATE_TOKEN: desktopUpdateToken },
+		});
+		launch = { executable: nodeLaunch.nodeExecutable, args: nodeLaunch.args, cwd: nodeLaunch.cwd, env: nodeLaunch.env, entries: [...nodeLaunch.entries] };
+	}
+	const missing = launch.entries.find((entry) => !existsSync(entry));
 	if (missing !== undefined) {
 		throw new Error(`desktop host entry is missing: ${missing}`);
 	}
 	const timeout = readinessTimeout();
 	host = createHostSupervisor({
 		spawnHost: () => {
-			const child = spawnWebHost(launch);
+			const child = nodeLaunch !== undefined
+				? spawnWebHost(nodeLaunch)
+				: spawnNodeChild({ executable: launch.executable, args: launch.args, cwd: launch.cwd, env: launch.env });
 			if (SMOKE && child.pid !== undefined) process.stdout.write(`desktop host pid: ${child.pid}\n`);
 			return child;
 		},
@@ -553,6 +655,7 @@ async function boot(): Promise<void> {
 		},
 	});
 	const pageUrl = await host.start();
+	if (pythonWebToken.length > 0) await session.defaultSession.cookies.set(pairingCookie(pageUrl, pythonWebToken));
 	await openWindow(pageUrl, deepLinkSession);
 	if (!SMOKE && !notices.quitting) {
 		const target = dirname(dirname(dirname(process.execPath)));
@@ -603,6 +706,7 @@ async function initializeDesktop(): Promise<void> {
 		else showWindow();
 	});
 	app.on("window-all-closed", () => {
+		if (usingPythonBackend && !shouldStopSharedBackend("window-closed")) return;
 		if (tray === undefined || SMOKE) app.quit();
 	});
 	app.on("before-quit", (event: ElectronEvent) => {
