@@ -45,10 +45,16 @@ from .contracts import (
     McpView,
     OpenCode,
     OpenMcp,
+    OpenPlugin,
     OpenRemote,
     OpenTerminal,
+    PluginCallEnvelope,
+    PluginCallView,
+    PluginList,
+    PluginView,
     ProcessLease,
     Recovery,
+    ReloadPlugin,
     RemoteCallRequest,
     RemoteCallView,
     RemoteView,
@@ -72,6 +78,7 @@ from .contracts import (
 from .docker_channel import GateChannel
 from .faults import Faults
 from .mcp_session import McpClient, mcp_container, mcp_digest
+from .plugin_run import plugin_fingerprint, run_plugin_gate, set_fingerprint, stored_config, validate_config
 from .processes import ProcessReservation, exited, wait_exited
 from .pty_gate import WINDOW
 from .pty_session import PtyClient, pty_container
@@ -291,6 +298,10 @@ class Supervisor:
               CREATE TABLE IF NOT EXISTS code_runs(id TEXT PRIMARY KEY,session TEXT NOT NULL,source TEXT NOT NULL,
                 phase TEXT NOT NULL,value TEXT NOT NULL DEFAULT '',committed INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS code_state(session TEXT PRIMARY KEY,document TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS plugins(id TEXT PRIMARY KEY,name TEXT NOT NULL,
+                capabilities TEXT NOT NULL,config TEXT NOT NULL,fingerprint TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS plugin_calls(id TEXT PRIMARY KEY,plugin TEXT NOT NULL,
+                session TEXT NOT NULL,text TEXT NOT NULL,phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '');
               PRAGMA user_version=2;
               COMMIT;
             """)
@@ -477,7 +488,8 @@ class Supervisor:
             with ProcessReservation(self.profile.path, "worker", instance) as reservation:
                 worker = WorkerInfo(session_id=value.session_id, worker_id=instance, pid=0,
                                     socket=str(self.profile.worker_socket(value.session_id)), build_id=self.build,
-                                    process_lease=reservation.lease, purpose=value.purpose, host_epoch=self.host_epoch)
+                                    process_lease=reservation.lease, purpose=value.purpose, host_epoch=self.host_epoch,
+                                    plugin_fingerprint=await self.plugin_set_fingerprint())
                 # This row is committed before spawn; even death before PID publication leaves an exact lease.
                 await self.db.call(lambda db: db.execute("INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
                     (instance, value.session_id, worker.model_dump_json())), write=True)
@@ -1434,6 +1446,109 @@ class Supervisor:
             raise BackendError("codemode_not_found", status=404)
         return await self._code_view_with_state(missing)
 
+    async def plugin_set_fingerprint(self) -> str:
+        rows = await self.db.call(lambda db: db.execute("SELECT fingerprint FROM plugins").fetchall())
+        return set_fingerprint([str(row[0]) for row in rows])
+
+    def _plugin_view(self, row: sqlite3.Row) -> PluginView:
+        loaded: object = json.loads(str(row["config"]))
+        return PluginView(plugin_id=str(row["id"]), name=str(row["name"]), capabilities=["stamp"],
+                          config=stored_config(loaded), fingerprint=str(row["fingerprint"]), entry="stamp")
+
+    async def list_plugins(self) -> PluginList:
+        rows = await self.db.call(lambda db: db.execute("SELECT * FROM plugins ORDER BY name").fetchall())
+        return PluginList(plugins=[self._plugin_view(row) for row in rows])
+
+    async def _live_plugin_mismatch(self, expected: str) -> bool:
+        for worker in await self._workers():
+            if worker.state == "stopped" or worker.process_lease is None or exited(worker.process_lease):
+                continue
+            if worker.plugin_fingerprint != expected:
+                return True
+        return False
+
+    async def _plugin_change_blocked(self, upcoming: str) -> None:
+        if await self._live_plugin_mismatch(upcoming):
+            raise BackendError("plugin_reload_blocked", status=409)
+
+    async def _plugin_fingerprint_ready(self, expected: str) -> None:
+        if await self._live_plugin_mismatch(expected):
+            raise BackendError("plugin_fingerprint_mismatch", status=409)
+
+    async def register_plugin(self, value: OpenPlugin) -> PluginView:
+        self.check_host(value)
+        self._admit()
+        config = validate_config(value.config)
+        fingerprint = plugin_fingerprint(value.plugin_id, value.name, config)
+        existing = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
+        if existing is not None:
+            if str(existing["fingerprint"]) != fingerprint:
+                raise BackendError("plugin_conflict")
+            return self._plugin_view(existing)
+        current = [str(row[0]) for row in await self.db.call(lambda db: db.execute("SELECT fingerprint FROM plugins").fetchall())]
+        await self._plugin_change_blocked(set_fingerprint([*current, fingerprint]))
+        await self.db.call(lambda db: db.execute(
+            "INSERT INTO plugins(id,name,capabilities,config,fingerprint) VALUES(?,?,?,?,?)",
+            (value.plugin_id, value.name, json.dumps(["stamp"]), json.dumps(config, sort_keys=True), fingerprint)), write=True)
+        row = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
+        assert row is not None
+        return self._plugin_view(row)
+
+    async def reload_plugin(self, value: ReloadPlugin) -> PluginView:
+        self.check_host(value)
+        self._admit()
+        current = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
+        if current is None:
+            raise BackendError("plugin_not_found", status=404)
+        config = validate_config(value.config)
+        fingerprint = plugin_fingerprint(value.plugin_id, str(current["name"]), config)
+        if fingerprint == str(current["fingerprint"]):
+            return self._plugin_view(current)
+        others = [str(row[0]) for row in await self.db.call(lambda db: db.execute(
+            "SELECT fingerprint FROM plugins WHERE id!=?", (value.plugin_id,)).fetchall())]
+        await self._plugin_change_blocked(set_fingerprint([*others, fingerprint]))
+        await self.db.call(lambda db: db.execute(
+            "UPDATE plugins SET config=?,fingerprint=? WHERE id=?",
+            (json.dumps(config, sort_keys=True), fingerprint, value.plugin_id)), write=True)
+        row = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
+        assert row is not None
+        return self._plugin_view(row)
+
+    def _plugin_call(self, row: sqlite3.Row) -> PluginCallView:
+        phase = str(row["phase"])
+        if phase not in {"done", "failed", "unknown", "conflict"}:
+            phase = "unknown"
+        return PluginCallView(call_id=str(row["id"]), phase=phase, result=str(row["result"]))  # type: ignore[arg-type]
+
+    async def call_plugin(self, value: PluginCallEnvelope) -> PluginCallView:
+        self.check_host(value)
+        self._admit()
+        plugin = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
+        if plugin is None:
+            raise BackendError("plugin_not_found", status=404)
+        existing = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_calls WHERE id=?", (value.call_id,)).fetchone())
+        if existing is not None:
+            if str(existing["plugin"]) != value.plugin_id or str(existing["session"]) != value.session_id or str(existing["text"]) != value.text:
+                raise BackendError("plugin_call_conflict")
+            return self._plugin_call(existing)
+        unknown = await self.db.call(lambda db: db.execute(
+            "SELECT 1 FROM plugin_calls WHERE plugin=? AND phase='unknown'", (value.plugin_id,)).fetchone())
+        if unknown is not None:
+            raise BackendError("execution_cleanup_pending", status=503)
+        await self._plugin_fingerprint_ready(await self.plugin_set_fingerprint())
+        workspace = self.profile.path / "plugin-work" / value.plugin_id
+        await self.db.call(lambda db: db.execute(
+            "INSERT INTO plugin_calls(id,plugin,session,text,phase) VALUES(?,?,?,?,'unknown')",
+            (value.call_id, value.plugin_id, value.session_id, value.text)), write=True)
+        outcome = await asyncio.to_thread(run_plugin_gate, workspace, value.text)
+        phase = outcome.phase
+        result = value.text if phase == "done" else ""
+        await self.db.call(lambda db: db.execute(
+            "UPDATE plugin_calls SET phase=?,result=? WHERE id=?", (phase, result, value.call_id)), write=True)
+        row = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_calls WHERE id=?", (value.call_id,)).fetchone())
+        assert row is not None
+        return self._plugin_call(row)
+
     def _remote_view(self, row: sqlite3.Row) -> RemoteView:
         phase = str(row["phase"])
         if phase not in {"connected", "disconnected", "blocked"}:
@@ -1838,6 +1953,10 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/mcp/cancel")(owner.cancel_mcp)
     app.post("/code/run")(owner.run_code)
     app.post("/code/cancel")(owner.cancel_code)
+    app.get("/plugins")(owner.list_plugins)
+    app.post("/plugins/register")(owner.register_plugin)
+    app.post("/plugins/reload")(owner.reload_plugin)
+    app.post("/plugins/call")(owner.call_plugin)
     app.post("/remotes/open")(owner.open_remote)
     app.post("/remotes/reconnect")(owner.reconnect_remote)
     app.post("/remotes/disconnect")(owner.disconnect_remote)

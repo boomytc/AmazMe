@@ -548,6 +548,37 @@ function startClient() {
       $("mcp-approval").textContent = "";
     } catch (failure) { error(failure); }
   };
+  let pluginId = "";
+  function showPlugin(view, call) {
+    $("plugin-state").textContent = `${view.name} · ${view.entry} · ${view.fingerprint.slice(0, 12)}`;
+    if (call) $("plugin-result").textContent = call.phase === "done" ? call.result : call.phase;
+  }
+  $("plugin-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!identity || health?.state !== "ready") return;
+    pluginId = pluginId || crypto.randomUUID().replaceAll("-", "");
+    try {
+      showPlugin(await api("/api/v1/plugins", "POST", {plugin_id: pluginId, name: $("plugin-name").value, config: {label: $("plugin-label").value}}, current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("plugin-call").onsubmit = async event => {
+    event.preventDefault();
+    if (!pluginId || !selected || !identity) return;
+    try {
+      const call = await api(`/api/v1/sessions/${selected}/plugins/${pluginId}/calls`, "POST",
+        {call_id: crypto.randomUUID().replaceAll("-", ""), text: $("plugin-text").value}, current);
+      $("plugin-result").textContent = call.phase === "done" ? call.result : call.phase;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("plugin-reload").onclick = async () => {
+    if (!pluginId || !identity || health?.state !== "ready") return;
+    try {
+      showPlugin(await api(`/api/v1/plugins/${pluginId}/reload`, "POST", {config: {label: $("plugin-label").value}}, current));
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   $("history-form").onsubmit = async event => {
     event.preventDefault();
     if (!selected) return;

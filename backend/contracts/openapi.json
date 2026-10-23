@@ -1309,6 +1309,167 @@
         }
       }
     },
+    "/api/v1/plugins": {
+      "get": {
+        "summary": "Plugins",
+        "operationId": "plugins_api_v1_plugins_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginList"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Register Plugin",
+        "operationId": "register_plugin_api_v1_plugins_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginDraft"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugins/{plugin_id}/reload": {
+      "post": {
+        "summary": "Reload Plugin",
+        "operationId": "reload_plugin_api_v1_plugins__plugin_id__reload_post",
+        "parameters": [
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginReload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/plugins/{plugin_id}/calls": {
+      "post": {
+        "summary": "Call Plugin",
+        "operationId": "call_plugin_api_v1_sessions__session_id__plugins__plugin_id__calls_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginCallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginCallView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/search": {
       "get": {
         "summary": "Search Session",
@@ -3064,6 +3225,162 @@
         ],
         "title": "ModelSettings"
       },
+      "PluginCallRequest": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Call Id"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "text"
+        ],
+        "title": "PluginCallRequest"
+      },
+      "PluginCallView": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "done",
+              "failed",
+              "unknown",
+              "conflict"
+            ],
+            "title": "Phase"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "phase"
+        ],
+        "title": "PluginCallView"
+      },
+      "PluginDraft": {
+        "properties": {
+          "plugin_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Plugin Id"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Name"
+          },
+          "config": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Config"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plugin_id",
+          "name"
+        ],
+        "title": "PluginDraft"
+      },
+      "PluginList": {
+        "properties": {
+          "plugins": {
+            "items": {
+              "$ref": "#/components/schemas/PluginView"
+            },
+            "type": "array",
+            "title": "Plugins"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plugins"
+        ],
+        "title": "PluginList"
+      },
+      "PluginReload": {
+        "properties": {
+          "config": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Config"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PluginReload"
+      },
+      "PluginView": {
+        "properties": {
+          "plugin_id": {
+            "type": "string",
+            "title": "Plugin Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "capabilities": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Capabilities"
+          },
+          "config": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Config"
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint"
+          },
+          "entry": {
+            "type": "string",
+            "title": "Entry"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "plugin_id",
+          "name",
+          "capabilities",
+          "config",
+          "fingerprint",
+          "entry"
+        ],
+        "title": "PluginView"
+      },
       "PrepareUpdate": {
         "properties": {
           "update_id": {
@@ -4207,6 +4524,11 @@
           "fingerprint": {
             "type": "string",
             "title": "Fingerprint",
+            "default": ""
+          },
+          "plugin_fingerprint": {
+            "type": "string",
+            "title": "Plugin Fingerprint",
             "default": ""
           },
           "purpose": {

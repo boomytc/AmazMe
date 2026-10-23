@@ -54,12 +54,21 @@ from .contracts import (
     ModelSettings,
     OpenCode,
     OpenMcp,
+    OpenPlugin,
     OpenRemote,
     OpenTerminal,
+    PluginCallEnvelope,
+    PluginCallRequest,
+    PluginCallView,
+    PluginDraft,
+    PluginList,
+    PluginReload,
+    PluginView,
     PrepareUpdate,
     ProcessLease,
     Receipt,
     Recovery,
+    ReloadPlugin,
     RemoteCallView,
     RemoteOpen,
     RemoteRun,
@@ -522,6 +531,48 @@ class Host:
             return SearchResults(query=query.strip(), hits=await worker.search(query))
         finally:
             await worker.db.close()
+
+    async def _plugin_work_pending(self) -> bool:
+        for session in (await self.sessions()).sessions:
+            path = session_database(self.profile.path, session.session_id)
+            if not path.is_file():
+                continue
+            worker = SessionStore(path, session.session_id, build=self.build, config=self.profile.config.provider,
+                                 approval_policy=self.profile.config.approval_policy, require_existing=True)
+            try:
+                await worker.initialize()
+                if any(item.status not in TERMINAL for item in (await worker.snapshot()).requests):
+                    return True
+            finally:
+                await worker.db.close()
+        return False
+
+    async def register_plugin(self, value: PluginDraft) -> PluginView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        if await self._plugin_work_pending():
+            raise BackendError("plugin_reload_blocked", status=409)
+        return await self.supervisor.call("POST", "/plugins/register", PluginView, OpenPlugin(
+            host_epoch=self.fence.host_epoch, build_id=self.build, plugin_id=value.plugin_id,
+            name=value.name, config=value.config))
+
+    async def reload_plugin(self, plugin_id: str, value: PluginReload) -> PluginView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        if await self._plugin_work_pending():
+            raise BackendError("plugin_reload_blocked", status=409)
+        return await self.supervisor.call("POST", "/plugins/reload", PluginView, ReloadPlugin(
+            host_epoch=self.fence.host_epoch, build_id=self.build, plugin_id=plugin_id, config=value.config))
+
+    async def call_plugin(self, session_id: str, plugin_id: str, value: PluginCallRequest) -> PluginCallView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        return await self.supervisor.call("POST", "/plugins/call", PluginCallView, PluginCallEnvelope(
+            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
+            plugin_id=plugin_id, call_id=value.call_id, text=value.text))
 
     async def archive_session(self, session: str, archived: bool) -> Session:
         self._admit()
@@ -1288,6 +1339,22 @@ def application(owner: Host) -> FastAPI:
         owner.attachments.pop(identity, None)
         owner.attachment_seen.pop(identity, None)
         return {"detached": True}
+
+    @app.get("/api/v1/plugins")
+    async def plugins() -> PluginList:
+        return await owner.supervisor.call("GET", "/plugins", PluginList)
+
+    @app.post("/api/v1/plugins")
+    async def register_plugin(value: PluginDraft) -> PluginView:
+        return await owner.register_plugin(value)
+
+    @app.post("/api/v1/plugins/{plugin_id}/reload")
+    async def reload_plugin(plugin_id: str, value: PluginReload) -> PluginView:
+        return await owner.reload_plugin(plugin_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/plugins/{plugin_id}/calls")
+    async def call_plugin(session_id: str, plugin_id: str, value: PluginCallRequest) -> PluginCallView:
+        return await owner.call_plugin(session_id, plugin_id, value)
 
     @app.get("/api/v1/sessions/{session_id}/search")
     async def search_session(session_id: str, q: str) -> SearchResults:

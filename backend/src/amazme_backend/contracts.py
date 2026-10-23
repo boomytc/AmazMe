@@ -465,9 +465,62 @@ class WorkerInfo(Model):
     state: Literal["starting", "ready", "frozen", "stopping", "stopped", "blocked", "unknown"] = "starting"
     execution_epoch: int = 0
     fingerprint: str = ""
+    plugin_fingerprint: str = ""
     purpose: Literal["business", "validation"] = "business"
     host_epoch: int = 0
     storage_ready: bool = False
+
+
+class PluginDraft(Model):
+    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    config: dict[str, str] = Field(default_factory=dict)
+
+
+class PluginReload(Model):
+    config: dict[str, str] = Field(default_factory=dict)
+
+
+class PluginView(Model):
+    plugin_id: str
+    name: str
+    capabilities: list[str]
+    config: dict[str, str]
+    fingerprint: str
+    entry: str
+
+
+class PluginList(Model):
+    plugins: list[PluginView]
+
+
+class PluginCallRequest(Model):
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    text: str = Field(min_length=1, max_length=200)
+
+
+class OpenPlugin(HostFence):
+    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    config: dict[str, str] = Field(default_factory=dict)
+
+
+class ReloadPlugin(HostFence):
+    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    config: dict[str, str] = Field(default_factory=dict)
+
+
+class PluginCallEnvelope(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    text: str = Field(min_length=1, max_length=200)
+
+
+class PluginCallView(Model):
+    call_id: str
+    phase: Literal["done", "failed", "unknown", "conflict"]
+    result: str = ""
 
 
 class WorkerRequest(Model):
