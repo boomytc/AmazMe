@@ -1034,8 +1034,51 @@ class Supervisor:
         await self._set_blocked("")
 
     async def shutdown(self, value: HostFence) -> Identity:
+        # Drop the control lock before waiting for worker exit. A worker still in
+        # initialize is blocked on this same lock, so waiting while holding it never
+        # observes the process exit and leaves the supervisor running.
         async with self.control:
-            await self._shutdown(value)
+            self.check_host(value)
+            self.draining = True
+            await self._reconcile_vm("owned_vm_stopped")
+            pending: list[WorkerInfo] = []
+            for worker in await self._workers():
+                if worker.state == "stopped":
+                    continue
+                worker.state = "stopping"
+                await self._save_worker(worker)
+                for row in await self._unclean_epochs(worker.session_id):
+                    if row["worker"] == worker.worker_id:
+                        receipt = await self._cleanup_epoch(row)
+                        if receipt.state != "clean":
+                            raise BackendError("execution_cleanup_pending", receipt.reason, 503)
+                pending.append(await self._worker(worker.worker_id))
+        for worker in pending:
+            lease = worker.process_lease
+            if lease is not None and not exited(lease):
+                fence = HostFence(build_id=worker.build_id, host_epoch=self.host_epoch)
+                try:
+                    ack = await self._peer_identity(worker, "POST", "/fence", fence)
+                    if ack.host_epoch != self.host_epoch:
+                        raise BackendError("worker_fence_pending", status=503)
+                    await self._peer_identity(worker, "POST", "/stop", StopWorker(
+                        **fence.model_dump(), session_id=worker.session_id, worker_id=worker.worker_id,
+                        execution_epoch=worker.execution_epoch, reason="update"))
+                except (httpx.TransportError, TimeoutError, BackendError):
+                    pass
+                try:
+                    await wait_exited(lease, timeout=5)
+                except BackendError:
+                    pass
+        async with self.control:
+            for worker in pending:
+                current = await self._worker(worker.worker_id)
+                if current.state == "stopped":
+                    continue
+                result = await self._retire_worker(current, "update")
+                if result.state != "clean":
+                    raise BackendError("execution_cleanup_pending", result.reason, 503)
+            await self._set_blocked("")
             return self.identity()
 
     async def retire(self, value: RetireSupervisor) -> SupervisorHealth:
@@ -1117,9 +1160,10 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
 
     @app.post("/shutdown")
     async def shutdown(value: HostFence) -> Identity:
-        result = await owner.shutdown(value)
-        server_stop.set()
-        return result
+        try:
+            return await owner.shutdown(value)
+        finally:
+            server_stop.set()
 
     @app.post("/retire")
     async def retire(value: RetireSupervisor) -> SupervisorHealth:

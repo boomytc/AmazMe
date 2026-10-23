@@ -321,10 +321,13 @@ class UpdateRuntime:
 
     def identity(self):
         from amazme_backend.contracts import Identity
+        # A per-session restart budget is reported in the blocked list. It does not by itself
+        # mean the supervisor lost its VM or fence, matching Supervisor.identity.
+        execution_blocked = any(not str(item).startswith("worker_restart_budget_exhausted:") for item in self.blocked)
         return Identity(profile_id=self.owner.profile.config.profile_id, instance_id=self.service.instance_id,
                         build_id=self.service.build_id, fingerprint=self.service.build_id, pid=1,
                         role="supervisor", host_epoch=self.epoch,
-                        state="blocked" if self.blocked else "frozen" if self.freeze_id else "ready")
+                        state="blocked" if execution_blocked else "frozen" if self.freeze_id else "ready")
 
     def health(self):
         from amazme_backend.contracts import SupervisorHealth
@@ -647,6 +650,14 @@ async def test_blocked_profile_without_owner_does_not_spawn_diagnostic_worker(ow
     await runtime.install(owner.build)
     runtime.blocked = ["cleanup_blocked"]
     with pytest.raises(BackendError, match="diagnostic_worker_unavailable"):
+        await owner.reader("a" * 32)
+    assert not any(path == "/workers/ensure" for _, path in runtime.calls)
+
+
+async def test_exhausted_session_budget_is_reported_without_spawning(owner, runtime):
+    await runtime.install(owner.build)
+    runtime.blocked = ["worker_restart_budget_exhausted:" + "a" * 32]
+    with pytest.raises(BackendError, match="worker_restart_budget_exhausted"):
         await owner.reader("a" * 32)
     assert not any(path == "/workers/ensure" for _, path in runtime.calls)
 

@@ -9,7 +9,7 @@ P2 增加持久队列、审批、子工作、定时唤醒、完整状态重同�
 构建结果是一个完整目录，必须整体保留。它包含 Python、Lima/VZ、guest agent、Linux 基础镜像、
 Docker CLI 和离线容器镜像；运行时不需要系统 Python、Node、Colima 或 Docker CLI，也不临时安装依赖。
 本阶段支持实测的 macOS arm64。历史闭环见 [P0/P1 运行记录](../docs/python-backend-p1-evidence.md)，
-P2 当前产物、阶段证据与剩余验收见 [P2 交接](../docs/python-backend-p2-handoff.md)。P2 尚未完整验收。
+P2 故障矩阵和浏览器验收见 [P2 交接](../docs/python-backend-p2-handoff.md)。物理磁盘、真实睡眠/断电和公证分发尚未验收。
 
 先在仓库外创建权限为 `0600` 的模型配置 JSON：
 

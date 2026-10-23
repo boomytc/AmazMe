@@ -353,6 +353,12 @@ class Host:
                         raise
                     self.worker_peers[session] = (info.worker_id, peer)
                     return ReadPeer(peer)
+                # The restart budget is already on the health list once the dead worker is retired.
+                # Reporting it as a missing diagnostic hides the durable refusal and never reaches spawn.
+                budget = "worker_restart_budget_exhausted:" + session
+                if (budget in health.blocked and health.identity.state != "blocked"
+                        and all(item == budget for item in health.blocked)):
+                    raise BackendError("worker_restart_budget_exhausted", status=503)
                 if health.blocked or health.identity.state == "blocked":
                     raise BackendError("diagnostic_worker_unavailable", status=503)
             if active:

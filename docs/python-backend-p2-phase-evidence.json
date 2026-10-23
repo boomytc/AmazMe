@@ -1,71 +1,95 @@
 {
-  "phase": "P2 partial acceptance",
+  "phase": "P2 fault matrix and browser acceptance",
   "full_p2_accepted": false,
   "date": "2026-10-23",
+  "parent": "112c596958bd03b1887aaecb361f64c29ec17c46",
   "source_checks": {
-    "pytest": 284,
+    "pytest": 285,
     "ruff": "passed",
     "pyright": "0 errors",
-    "wheel_sdist": "passed",
+    "wheel_sdist": "passed on the pre-fix tree; product fixes were covered by pytest, ruff and pyright",
     "workspace_check": "passed"
   },
   "builds": [
     {
-      "executable": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-p2/package-elc1r9vp/AmazMe Python 0.1.0/amazme-backend",
-      "build_id": "97834ab4d684f5f970a14550f42a02995aca724dd5969f0c45a20b27f8b92fc8"
-    }
-  ],
-  "runtime_cases": [
-    {
-      "case": "host.lost_delivery",
-      "status": "passed",
-      "assertions": [
-        "delivery lost ACK keeps original acceptance",
-        "delivery retry has exactly one external effect",
-        "one durable acceptance event",
-        "no duplicated tool-result message",
-        "each epoch has an exact durable cleanup proof",
-        "case ended without unresolved effect holds",
-        "case ended with healthy Host"
-      ],
-      "report": "/tmp/am2-8ei0wbd3/cases/host.lost_delivery.json",
-      "sha256": "641e1d8bb234b1519f69d78730cf62591e05f48605f3989d7174dce9c77f61c3"
+      "role": "A",
+      "bundle": ".artifacts/python-backend-p2/package-gbn32ffr/AmazMe Python 0.1.0",
+      "build_id": "257b71973f69ed8fe2178ab41acddbb973360e44db507dc7c7ba7a1af6ddac5c"
     },
     {
-      "case": "storage.commit_crash",
-      "status": "passed",
-      "assertions": [
-        "uncommitted receipt is invisible to another SQLite reader",
-        "uncommitted acceptance produced no effect",
-        "durable Host intent retries rolled-back acceptance exactly once",
-        "one durable acceptance event",
-        "no duplicated tool-result message",
-        "each epoch has an exact durable cleanup proof",
-        "case ended without unresolved effect holds",
-        "case ended with healthy Host"
-      ],
-      "report": "/tmp/am2-8ei0wbd3/cases/storage.commit_crash.json",
-      "sha256": "89addf62d3db9c726e7f818eec8cb54e67e189951ee75ebe81b8d4f7959f8d92"
-    },
-    {
-      "case": "events.ack_resync",
-      "status": "passed",
-      "assertions": [
-        "stream starts from a complete snapshot",
-        "unacknowledged subscriber cannot block persisted business work",
-        "stalled subscriber is bounded and disconnected",
-        "lost ACK reconnect replays complete transactions",
-        "a gap ACK is rejected",
-        "foreign/expired stream cursor receives a new authoritative snapshot",
-        "case ended without unresolved effect holds",
-        "case ended with healthy Host"
-      ],
-      "report": "/tmp/am2-8ei0wbd3/cases/events.ack_resync.json",
-      "sha256": "c7033f01d964e543e4d8f84297bc7ea64a740ccf08e767ecb772c2084141f75b"
+      "role": "B",
+      "bundle": ".artifacts/python-backend-p2/package-r3e13r24/AmazMe Python 0.1.0",
+      "build_id": "7f4e9d802bbe1be8a96748bfdd89bf677bf09811e44398a12b6c8bbbd143b2fb"
     }
   ],
-  "cleanup": "passed",
-  "report": "/tmp/am2-8ei0wbd3/report.json",
-  "report_sha256": "f48c72408b51059b3fae38888d957f1c393eaa0523e3469b18984f229b0fcef7",
-  "remaining": "28 matrix cases including two-build update, real browser, and acceptance gaps in handoff"
+  "matrix": {
+    "command": "backend/.venv/bin/python backend/tools/verify_p2.py --executable \"$P2_A\" --target-executable \"$P2_B\" --case all",
+    "report": "/tmp/am2-uphi4eyo/report.json",
+    "status": "passed",
+    "passed": 34,
+    "failed": 0,
+    "not_run": 0,
+    "skipped": 0,
+    "cleanup": "passed for the shared profile and the separate approval profile",
+    "cases": [
+      "worker.model_intent",
+      "worker.model_result",
+      "worker.tool_intent",
+      "worker.tool_result",
+      "worker.decision",
+      "worker.cleanup",
+      "supervisor.create_intent",
+      "supervisor.created",
+      "supervisor.registered",
+      "supervisor.started",
+      "supervisor.before_permit",
+      "supervisor.permitted",
+      "supervisor.result",
+      "supervisor.closed",
+      "host.lost_delivery",
+      "host.takeover_stale_stop",
+      "sessions.sibling",
+      "scheduled.worker_crash",
+      "children.join_crash",
+      "children.cancel_descendants",
+      "approval.auto",
+      "storage.commit_crash",
+      "events.ack_resync",
+      "workers.restart_budget",
+      "cleanup.unavailable",
+      "update.freeze",
+      "update.prepared",
+      "update.health",
+      "update.complete_crash",
+      "update.roster",
+      "host.pause_delivery",
+      "vm.force_stop",
+      "bundle.replaced_file",
+      "approval.wait"
+    ]
+  },
+  "browser": {
+    "command": "backend/.venv/bin/python backend/tools/verify_client.py --executable \"$P2_A\"",
+    "browser": "Chrome 155.0.8059.85 headless",
+    "build_id": "257b71973f69ed8fe2178ab41acddbb973360e44db507dc7c7ba7a1af6ddac5c",
+    "status": "passed",
+    "page_errors": [],
+    "cleanup": "browser, owned services and VM closed",
+    "report": ".artifacts/python-backend-p2/client-xzj9q131/report.json"
+  },
+  "added_runtime_coverage": [
+    "children.cancel_descendants: live delegated setsid/double-fork shell, cancel acknowledgement is not terminal, cleanup proof precedes terminal status, descendants stop, unknown write is reconciled",
+    "update.roster: missing participant, rewritten historical build_id, and a validation receipt that names a container are each rejected; the same-version other build_id activates only after restore",
+    "bundle.replaced_file: a cloned bundle with one changed stylesheet is refused before readiness; the original bundles stay unmodified"
+  ],
+  "product_fixes": [
+    "A retired session whose only health block is worker_restart_budget_exhausted is reported as that code. The read path does not spawn a worker.",
+    "Supervisor shutdown releases its control lock before waiting for worker exit, so a worker still opening an epoch can fail closed and release its lease."
+  ],
+  "not_accepted": [
+    "Physical disk exhaustion. SQLite FULL and corrupt-copy tests are not a full disk.",
+    "Real host sleep, wake, or power loss. SIGSTOP/SIGCONT and VM force-stop are simulations.",
+    "Developer ID signature, notarization, and a stapled distribution DMG. These bundles are local ad-hoc onedir builds.",
+    "Electron, TUI, PTY, multiple workspaces, OAuth, plugins, and a real provider spend. P3 has not started."
+  ]
 }
