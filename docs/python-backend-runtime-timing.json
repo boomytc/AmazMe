@@ -1,0 +1,51 @@
+{
+  "executable": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/package-fe7_msbu/AmazMe Python 0.1.0/amazme-backend",
+  "build_id": "a44cf603121570ffcb1037fcb331ba3bb6b22d106555ddda367aa7157e41a73e",
+  "approval_policy": "auto",
+  "cold_post_s": 10.734007,
+  "cold_until_succeeded_s": 10.748091,
+  "cold_settled_s": 0.014084,
+  "cold_post_status": "queued",
+  "warm_post_s": [
+    0.005516,
+    0.004196,
+    0.0041,
+    0.003834,
+    0.003705,
+    0.003583,
+    0.003484,
+    0.003586
+  ],
+  "warm_settled_s": [
+    0.028562,
+    0.026261,
+    0.027035,
+    0.026959,
+    0.026843,
+    0.025623,
+    0.029314,
+    0.026562
+  ],
+  "snapshot_s": 0.008732,
+  "snapshot_requests": 9,
+  "snapshot_events": 70,
+  "snapshot_bytes": 28932,
+  "search_s": 0.006914,
+  "search_hits": 50,
+  "search_bytes": 5965,
+  "shell_submit_s": 0.0039,
+  "shell_status_before_cancel": "running",
+  "shell_reached_running": true,
+  "shell_sleep_visible_before_cancel": 0,
+  "containers_before_cancel": [
+    "9e80f0855561 \"python -I -c '\\\"\\\"\\\"Fi\u2026\""
+  ],
+  "docker_ps_error": "",
+  "cancel_receipt_s": 0.124177,
+  "cancel_status": "cancelled",
+  "cancel_requested": true,
+  "cancel_process_gone_s": 0.164727,
+  "sleep_still_visible": 0,
+  "containers_after_cancel": [],
+  "host_pid": 86936
+}
