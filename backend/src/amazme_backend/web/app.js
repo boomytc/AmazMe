@@ -341,6 +341,8 @@ function startClient() {
       workflowId = ""; workflowView = null;
       $("web-state").textContent = "";
       $("web-enabled").checked = false;
+      $("computer-state").textContent = "";
+      $("computer-enabled").checked = false;
     }
     retire(); selected = id; const binding = ++generation;
     const connection = {generation:binding, session:id, ready:false, model:cached, ws:null, attachment:null};
@@ -600,6 +602,45 @@ function startClient() {
         call_id: crypto.randomUUID().replaceAll("-", ""), kind: "search", query: $("web-query").value,
       }, current);
       $("web-state").textContent = `${view.phase} · ${view.error || view.result}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  let computerCapture = "";
+  $("computer-form").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !identity || health?.state !== "ready") return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/computer`, "POST", {enabled: $("computer-enabled").checked}, current);
+      $("computer-state").textContent = view.enabled ? "已启用" : "已关闭";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("computer-observe").onclick = async () => {
+    if (!selected || !identity || health?.state !== "ready") return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/computer/observe`, "POST", {}, current);
+      computerCapture = view.capture ? view.capture.capture_id : "";
+      $("computer-state").textContent = view.permitted ? `${view.capture.width}×${view.capture.height}` : view.error;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("computer-act").onsubmit = async event => {
+    event.preventDefault();
+    if (!selected || !computerCapture || !identity || health?.state !== "ready") return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/computer/actions`, "POST", {
+        action_id: crypto.randomUUID().replaceAll("-", ""), capture_id: computerCapture,
+        x: Number($("computer-x").value), y: Number($("computer-y").value),
+      }, current);
+      $("computer-state").textContent = `${view.phase} · ${view.driver_x},${view.driver_y}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("computer-cleanup").onclick = async () => {
+    if (!selected || !identity || health?.state !== "ready") return;
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/computer/cleanup`, "POST", {}, current);
+      $("computer-state").textContent = view.cleared ? `已清理 ${view.proof}` : "";
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };

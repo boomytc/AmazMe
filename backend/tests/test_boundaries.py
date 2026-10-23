@@ -25,7 +25,8 @@ def test_generated_event_contracts_do_not_drift():
 
 def test_business_modules_cannot_spawn_native_processes():
     # Container PID 1 programs and the Codemode helper supervisor may spawn a process.
-    permitted = {"host.py", "supervisor.py", "vm.py", "gate.py", "pty_gate.py", "mcp_gate.py", "codemode_run.py", "plugin_run.py"}
+    permitted = {"host.py", "supervisor.py", "vm.py", "gate.py", "pty_gate.py", "mcp_gate.py", "codemode_run.py",
+                 "plugin_run.py", "computer_run.py"}
     for path in (ROOT / "src/amazme_backend").glob("*.py"):
         if path.name in permitted:
             continue

@@ -20,6 +20,9 @@ from .contracts import (
     Cleanup,
     CommitBatch,
     Compaction,
+    ComputerActionView,
+    ComputerCaptureView,
+    ComputerPolicy,
     Decision,
     DelegateTasks,
     EffectHold,
@@ -385,6 +388,14 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS web_policies(id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS web_calls(
                   id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS computer_policies(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS computer_captures(
+                  ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,observed_ms INTEGER NOT NULL,
+                  payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS computer_actions(
+                  id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS computer_runtime(
+                  id TEXT PRIMARY KEY,blocked INTEGER NOT NULL,exit_code INTEGER,proof TEXT NOT NULL);
             """)
             for key, value in {"stream_id": secrets.token_hex(16), "revision": "0", "host_epoch": "0",
                                "freeze_id": "", "stopping": "", "blocked": "", "driver_id": "", "execution_epoch": "0"}.items():
@@ -803,6 +814,122 @@ class SessionStore:
             db.execute("UPDATE web_calls SET payload=? WHERE id=? AND json_extract(payload,'$.phase')='unknown'",
                        (current.model_dump_json(), call_id))
             return self._web_call(db, call_id)
+        return await self._tx(operation)
+
+    def _computer_policy(self, db: sqlite3.Connection) -> ComputerPolicy:
+        row = db.execute("SELECT payload FROM computer_policies WHERE id='policy'").fetchone()
+        if row is None:
+            return ComputerPolicy()
+        return ComputerPolicy.model_validate_json(row[0])
+
+    def _computer_runtime(self, db: sqlite3.Connection) -> tuple[bool, int | None, str]:
+        row = db.execute("SELECT blocked,exit_code,proof FROM computer_runtime WHERE id='current'").fetchone()
+        if row is None:
+            return False, None, ""
+        exit_code = None if row[1] is None else int(row[1])
+        return bool(row[0]), exit_code, str(row[2])
+
+    async def computer_policy(self) -> ComputerPolicy:
+        return await self.db.call(self._computer_policy)
+
+    async def save_computer_policy(self, value: ComputerPolicy) -> ComputerPolicy:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> ComputerPolicy:
+            if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
+                raise BackendError("worker_frozen")
+            db.execute(
+                "INSERT INTO computer_policies(id,payload) VALUES('policy',?) "
+                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
+                (value.model_dump_json(),))
+            return value
+        return await self._tx(operation)
+
+    async def computer_blocked(self) -> bool:
+        blocked, _exit, _proof = await self.db.call(self._computer_runtime)
+        return blocked
+
+    async def computer_runtime(self) -> tuple[bool, int | None, str]:
+        return await self.db.call(self._computer_runtime)
+
+    async def note_computer_exit(self, exit_code: int | None) -> None:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> None:
+            _blocked, previous, proof = self._computer_runtime(db)
+            code = previous if exit_code is None else exit_code
+            db.execute(
+                "INSERT INTO computer_runtime(id,blocked,exit_code,proof) VALUES('current',1,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET blocked=1,exit_code=excluded.exit_code,proof=computer_runtime.proof",
+                (code, proof))
+        await self._tx(operation)
+
+    async def finish_computer_cleanup(self, proof: str) -> str:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> str:
+            blocked, exit_code, existing = self._computer_runtime(db)
+            if not blocked:
+                return existing
+            if exit_code is None or not proof:
+                raise BackendError("computer_exit_unproven")
+            db.execute("UPDATE computer_runtime SET blocked=0,proof=? WHERE id='current'", (proof,))
+            return proof
+        return await self._tx(operation)
+
+    async def save_computer_capture(self, value: ComputerCaptureView) -> ComputerCaptureView:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> ComputerCaptureView:
+            db.execute("INSERT INTO computer_captures(id,observed_ms,payload) VALUES(?,?,?)",
+                       (value.capture_id, value.observed_ms, value.model_dump_json()))
+            return value
+        return await self._tx(operation)
+
+    async def latest_computer_capture(self) -> ComputerCaptureView | None:
+        def operation(db: sqlite3.Connection) -> ComputerCaptureView | None:
+            row = db.execute("SELECT payload FROM computer_captures ORDER BY ordinal DESC LIMIT 1").fetchone()
+            if row is None:
+                return None
+            return ComputerCaptureView.model_validate_json(row[0])
+        return await self.db.call(operation)
+
+    async def find_computer_action(self, action_id: str, body: str) -> ComputerActionView | None:
+        def operation(db: sqlite3.Connection) -> ComputerActionView | None:
+            row = db.execute("SELECT digest,payload FROM computer_actions WHERE id=?", (action_id,)).fetchone()
+            if row is None:
+                return None
+            if str(row[0]) != digest(body):
+                raise BackendError("computer_action_conflict")
+            return ComputerActionView.model_validate_json(row[1])
+        return await self.db.call(operation)
+
+    async def begin_computer_action(self, action_id: str, body: str) -> tuple[ComputerActionView, bool]:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> tuple[ComputerActionView, bool]:
+            blocked, _exit, _proof = self._computer_runtime(db)
+            key = digest(body)
+            row = db.execute("SELECT digest,payload FROM computer_actions WHERE id=?", (action_id,)).fetchone()
+            if row:
+                if str(row[0]) != key:
+                    raise BackendError("computer_action_conflict")
+                return ComputerActionView.model_validate_json(row[1]), False
+            if blocked:
+                raise BackendError("computer_blocked")
+            view = ComputerActionView(action_id=action_id, session_id=self.session_id, phase="unknown")
+            db.execute("INSERT INTO computer_actions(id,digest,payload) VALUES(?,?,?)",
+                       (action_id, key, view.model_dump_json()))
+            return view, True
+        return await self._tx(operation)
+
+    async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"],
+                                     error: str, driver_x: int | None, driver_y: int | None) -> ComputerActionView:
+        def operation(db: sqlite3.Connection, _changes: Changes) -> ComputerActionView:
+            row = db.execute("SELECT payload FROM computer_actions WHERE id=?", (action_id,)).fetchone()
+            if row is None:
+                raise BackendError("computer_action_missing", status=404)
+            current = ComputerActionView.model_validate_json(row[0])
+            if current.phase != "unknown":
+                return current
+            current.phase = phase
+            current.error = error
+            current.driver_x = driver_x
+            current.driver_y = driver_y
+            db.execute(
+                "UPDATE computer_actions SET payload=? WHERE id=? AND json_extract(payload,'$.phase')='unknown'",
+                (current.model_dump_json(), action_id))
+            return current
         return await self._tx(operation)
 
     def _cancel_tree(self, db: sqlite3.Connection, c: Changes, request_id: str) -> None:

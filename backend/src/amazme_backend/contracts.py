@@ -372,6 +372,52 @@ class WebCallView(Model):
     result: str = ""
 
 
+class ComputerPolicy(Model):
+    enabled: bool = False
+    max_age_ms: int = Field(default=55000, ge=1, le=55000)
+
+
+class ComputerCaptureView(Model):
+    capture_id: str
+    width: int
+    height: int
+    raw_width: int
+    raw_height: int
+    orientation: int
+    scale: int
+    observed_ms: int
+
+
+class ComputerObserve(Model):
+    permitted: bool
+    accessibility: bool = False
+    screen: bool = False
+    identity: str = ""
+    error: str = ""
+    capture: ComputerCaptureView | None = None
+
+
+class ComputerActionRequest(Model):
+    action_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    capture_id: str = Field(min_length=1, max_length=128)
+    x: int = Field(ge=0, le=100000)
+    y: int = Field(ge=0, le=100000)
+
+
+class ComputerActionView(Model):
+    action_id: str
+    session_id: str
+    phase: Literal["unknown", "done", "failed"]
+    error: str = ""
+    driver_x: int | None = None
+    driver_y: int | None = None
+
+
+class ComputerCleanup(Model):
+    cleared: bool
+    proof: str = ""
+
+
 class HostFence(Model):
     host_epoch: int
     build_id: str

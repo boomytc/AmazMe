@@ -22,6 +22,8 @@ from pydantic import BaseModel, Field
 
 from .automations import resolve_due
 from .common import Peer, Profile, build_id, child_command, lock, private_write, wait_peer
+from .computer_run import ComputerDriver, start_driver
+from .computer_use import driver_point, upright_size
 from .contracts import (
     ApprovalDecision,
     ApprovalEnvelope,
@@ -45,6 +47,12 @@ from .contracts import (
     Compaction,
     CompactSession,
     CompleteUpdate,
+    ComputerActionRequest,
+    ComputerActionView,
+    ComputerCaptureView,
+    ComputerCleanup,
+    ComputerObserve,
+    ComputerPolicy,
     CreateSession,
     EffectResolution,
     FreezeSupervisor,
@@ -206,6 +214,10 @@ class Host:
         self.attachment_seen: dict[str, float] = {}
         self.faults = Faults(profile.path, "host", self.instance, enabled=profile.config.testing)
         self.web_client: httpx.AsyncClient | None = None
+        self.computer_scenario: Literal["unconfigured", "denied", "granted", "plain", "hold", "drop"] = "unconfigured"
+        self.computer_drivers: dict[str, ComputerDriver] = {}
+        self.computer_held: set[str] = set()
+        self.computer_mu = asyncio.Lock()
 
     @property
     def storage_failed(self) -> bool:
@@ -873,6 +885,138 @@ class Host:
             error = "web_transport"
         return await self._with_session(
             session, lambda store: store.settle_web_call(value.call_id, phase, error, result))
+
+    async def _computer_enter(self, session: str) -> bool:
+        async with self.computer_mu:
+            if session in self.computer_held:
+                return False
+            self.computer_held.add(session)
+            return True
+
+    async def _computer_leave(self, session: str) -> None:
+        async with self.computer_mu:
+            self.computer_held.discard(session)
+
+    @staticmethod
+    def _driver_int(hello: dict[str, object], key: str) -> int:
+        value = hello.get(key)
+        if not isinstance(value, int):
+            raise BackendError("computer_driver_lost")
+        return value
+
+    async def save_computer_policy(self, session: str, value: ComputerPolicy) -> ComputerPolicy:
+        return await self._with_session(session, lambda store: store.save_computer_policy(value))
+
+    async def computer_policy(self, session: str) -> ComputerPolicy:
+        return await self._with_session(session, lambda store: store.computer_policy(), require_active=False)
+
+    async def _park_driver(self, session: str, driver: ComputerDriver) -> int | None:
+        self.computer_drivers.pop(session, None)
+        return await asyncio.to_thread(driver.stop)
+
+    async def computer_observe(self, session: str) -> ComputerObserve:
+        policy = await self.computer_policy(session)
+        if not policy.enabled:
+            raise BackendError("computer_disabled")
+        if await self._with_session(session, lambda store: store.computer_blocked()):
+            raise BackendError("computer_blocked")
+        if not await self._computer_enter(session):
+            raise BackendError("computer_busy")
+        try:
+            driver = self.computer_drivers.get(session)
+            if driver is None or driver.process.poll() is not None:
+                if driver is not None:
+                    code = await self._park_driver(session, driver)
+                    await self._with_session(session, lambda store: store.note_computer_exit(code))
+                    raise BackendError("computer_blocked")
+                directory = session_database(self.profile.path, session).parent
+                driver = await asyncio.to_thread(start_driver, directory, self.computer_scenario)
+                self.computer_drivers[session] = driver
+            hello = driver.hello
+            accessibility = hello.get("accessibility") is True
+            screen = hello.get("screen") is True
+            identity = str(hello.get("identity") or "")
+            if not accessibility or not screen:
+                await self._park_driver(session, driver)
+                return ComputerObserve(permitted=False, accessibility=accessibility, screen=screen,
+                                       identity=identity, error="permission_required")
+            raw_width = self._driver_int(hello, "raw_width")
+            raw_height = self._driver_int(hello, "raw_height")
+            orientation = self._driver_int(hello, "orientation")
+            scale = self._driver_int(hello, "scale")
+            width, height = upright_size(raw_width, raw_height, orientation)
+            capture_id = hashlib.sha256(f"{session}:{identity}:{time.time_ns()}".encode()).hexdigest()[:32]
+            reply = await asyncio.to_thread(driver.request, {"op": "observe", "capture_id": capture_id})
+            if reply.get("capture_id") != capture_id:
+                raise BackendError("computer_driver_lost")
+            capture = ComputerCaptureView(
+                capture_id=capture_id, width=width, height=height, raw_width=raw_width, raw_height=raw_height,
+                orientation=orientation, scale=scale, observed_ms=time.time_ns() // 1_000_000)
+            await self._with_session(session, lambda store: store.save_computer_capture(capture))
+            return ComputerObserve(permitted=True, accessibility=True, screen=True, identity=identity, capture=capture)
+        finally:
+            await self._computer_leave(session)
+
+    async def computer_action(self, session: str, value: ComputerActionRequest) -> ComputerActionView:
+        policy = await self.computer_policy(session)
+        if not policy.enabled:
+            raise BackendError("computer_disabled")
+        body = json.dumps({"capture_id": value.capture_id, "x": value.x, "y": value.y},
+                          sort_keys=True, separators=(",", ":"))
+        found = await self._with_session(session, lambda store: store.find_computer_action(value.action_id, body))
+        if found is not None:
+            return found
+        if await self._with_session(session, lambda store: store.computer_blocked()):
+            raise BackendError("computer_blocked")
+        capture = await self._with_session(session, lambda store: store.latest_computer_capture())
+        if (capture is None or capture.capture_id != value.capture_id
+                or time.time_ns() // 1_000_000 - capture.observed_ms > policy.max_age_ms):
+            raise BackendError("computer_stale")
+        point = driver_point(value.x, value.y, capture.raw_width, capture.raw_height,
+                             capture.orientation, capture.scale)
+        if not await self._computer_enter(session):
+            raise BackendError("computer_busy")
+        try:
+            view, send = await self._with_session(session, lambda store: store.begin_computer_action(value.action_id, body))
+            if not send:
+                return view
+            driver = self.computer_drivers.get(session)
+            if driver is None or driver.process.poll() is not None:
+                code = await self._park_driver(session, driver) if driver is not None else None
+                await self._with_session(session, lambda store: store.note_computer_exit(code))
+                return await self._with_session(session, lambda store: store.settle_computer_action(
+                    value.action_id, "unknown", "computer_driver_lost", None, None))
+            try:
+                reply = await asyncio.to_thread(driver.request, {
+                    "op": "act", "capture_id": value.capture_id, "x": point[0], "y": point[1]})
+            except BackendError:
+                code = await self._park_driver(session, driver)
+                await self._with_session(session, lambda store: store.note_computer_exit(code))
+                return await self._with_session(session, lambda store: store.settle_computer_action(
+                    value.action_id, "unknown", "computer_driver_lost", None, None))
+            if reply.get("op") != "acted" or reply.get("x") != point[0] or reply.get("y") != point[1]:
+                return await self._with_session(session, lambda store: store.settle_computer_action(
+                    value.action_id, "failed", "computer_rejected", None, None))
+            return await self._with_session(session, lambda store: store.settle_computer_action(
+                value.action_id, "done", "", point[0], point[1]))
+        finally:
+            await self._computer_leave(session)
+
+    async def computer_cleanup(self, session: str) -> ComputerCleanup:
+        driver = self.computer_drivers.get(session)
+        if driver is not None and driver.process.poll() is None:
+            raise BackendError("computer_exit_unproven")
+        if driver is not None:
+            code = await self._park_driver(session, driver)
+            await self._with_session(session, lambda store: store.note_computer_exit(code))
+        blocked, exit_code, proof = await self._with_session(session, lambda store: store.computer_runtime())
+        if not blocked:
+            return ComputerCleanup(cleared=True, proof=proof)
+        if exit_code is None:
+            raise BackendError("computer_exit_unproven")
+        digest = hashlib.sha256(f"computer-cleanup:{exit_code}".encode()).hexdigest()
+        stored = await self._with_session(session, lambda store: store.finish_computer_cleanup(digest))
+        return ComputerCleanup(cleared=True, proof=stored)
 
     async def branch_session(self, parent: str, value: BranchSession) -> Session:
         self._admit()
@@ -1653,6 +1797,26 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session}/web/calls")
     async def web_call(session: str, value: WebCallRequest) -> WebCallView:
         return await owner.web_call(session, value)
+
+    @app.get("/api/v1/sessions/{session}/computer")
+    async def computer_policy(session: str) -> ComputerPolicy:
+        return await owner.computer_policy(session)
+
+    @app.post("/api/v1/sessions/{session}/computer")
+    async def save_computer_policy(session: str, value: ComputerPolicy) -> ComputerPolicy:
+        return await owner.save_computer_policy(session, value)
+
+    @app.post("/api/v1/sessions/{session}/computer/observe")
+    async def computer_observe(session: str) -> ComputerObserve:
+        return await owner.computer_observe(session)
+
+    @app.post("/api/v1/sessions/{session}/computer/actions")
+    async def computer_action(session: str, value: ComputerActionRequest) -> ComputerActionView:
+        return await owner.computer_action(session, value)
+
+    @app.post("/api/v1/sessions/{session}/computer/cleanup")
+    async def computer_cleanup(session: str) -> ComputerCleanup:
+        return await owner.computer_cleanup(session)
 
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:
