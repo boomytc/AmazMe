@@ -1,8 +1,8 @@
 """Move a frozen onedir onto a path that contains spaces and start it twice.
 
-The process gets a PATH that only contains the system directories. Its own command
-and children must stay inside that moved directory. This does not pretend the
-network was unplugged: sandbox-exec on this Mac still allows outbound HTTPS.
+The process gets a PATH that only contains the system directories. With the
+default seatbelt, a direct connect to a public IP is refused while localhost
+still connects. That is process offline startup, not a physical cable pull.
 """
 
 import argparse
@@ -18,6 +18,59 @@ from pathlib import Path
 from typing import cast
 
 CLEAN_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+SANDBOX_BODY = """(version 1)
+(deny default)
+(allow process*)
+(allow signal)
+(allow sysctl-read)
+(allow file-read*)
+(allow file-ioctl)
+(allow file-read* file-write* file-ioctl (literal "/dev/null"))
+(allow file-read* file-ioctl (literal "/dev/urandom"))
+(allow file-read* file-ioctl (literal "/dev/random"))
+(allow file-read* file-ioctl (literal "/dev/zero"))
+(allow file-ioctl (literal "/dev/dtracehelper"))
+(allow network-inbound (local ip "localhost:*"))
+(allow network-outbound (remote ip "localhost:*"))
+(allow network-bind (local ip "localhost:*"))
+"""
+
+
+def write_sandbox(path: Path, write_roots: list[Path]) -> None:
+    lines = [SANDBOX_BODY]
+    seen: set[str] = set()
+    for root in write_roots:
+        resolved = str(root.resolve())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        lines.append(f'(allow file-write* (subpath "{resolved}"))\n')
+    path.write_text("".join(lines))
+
+
+def prove_seatbelt(profile: Path) -> dict[str, str]:
+    denied = subprocess.run(
+        ["/usr/bin/sandbox-exec", "-f", str(profile), "/usr/bin/python3", "-c",
+         "import socket;s=socket.socket();s.settimeout(3);s.connect(('1.1.1.1',443))"],
+        check=False, capture_output=True, text=True)
+    local = subprocess.run(
+        ["/usr/bin/sandbox-exec", "-f", str(profile), "/usr/bin/python3", "-c",
+         "import socket;s=socket.socket();s.settimeout(3);s.connect(('127.0.0.1',9))"],
+        check=False, capture_output=True, text=True)
+    denied_text = denied.stderr + denied.stdout
+    local_text = local.stderr + local.stdout
+    if "Operation not permitted" not in denied_text:
+        raise SystemExit("seatbelt did not refuse a public IP: " + denied_text[-500:])
+    if "Connection refused" not in local_text and "Errno 61" not in local_text:
+        raise SystemExit("seatbelt did not allow localhost: " + local_text[-500:])
+    return {"public_ip_443": "operation not permitted", "localhost_9": "connection refused"}
+
+
+def launched(executable: Path, args: list[str], sandbox: Path | None) -> list[str]:
+    command = [str(executable), *args]
+    if sandbox is None:
+        return command
+    return ["/usr/bin/sandbox-exec", "-f", str(sandbox), *command]
 
 
 def clean_env() -> dict[str, str]:
@@ -112,7 +165,7 @@ def loopback_sockets(pids: list[int]) -> list[str]:
     return sockets
 
 
-def serve_once(executable: Path, root: Path, index: int, build_id: str) -> dict[str, object]:
+def serve_once(executable: Path, root: Path, index: int, build_id: str, sandbox: Path | None) -> dict[str, object]:
     work = root / f"work space {index}"
     profile = work / "profile"
     workspace = work / "workspace"
@@ -124,15 +177,15 @@ def serve_once(executable: Path, root: Path, index: int, build_id: str) -> dict[
     }))
     env = clean_env()
     init = subprocess.run(
-        [str(executable), "init", "--profile", str(profile), "--workspace", str(workspace), "--provider-config", str(provider)],
+        launched(executable, ["init", "--profile", str(profile), "--workspace", str(workspace), "--provider-config", str(provider)], sandbox),
         check=False, capture_output=True, text=True, env=env)
     if init.returncode != 0:
-        raise SystemExit(init.stderr[-2000:])
+        raise SystemExit(init.stderr[-2000:] or init.stdout[-2000:])
     err_path = work / "serve.err"
     err_file = err_path.open("wb")
     started = time.monotonic()
     proc = subprocess.Popen(
-        [str(executable), "serve", "--profile", str(profile), "--port", "0"],
+        launched(executable, ["serve", "--profile", str(profile), "--port", "0"], sandbox),
         stdout=subprocess.PIPE, stderr=err_file, env=env)
     err_file.close()
     try:
@@ -141,8 +194,8 @@ def serve_once(executable: Path, root: Path, index: int, build_id: str) -> dict[
         if proc.pid is None:
             raise SystemExit("serve did not start")
         tree = process_tree(proc.pid)
-        bundle = str(executable.parent)
-        outside = [command for _pid, command in tree if not command.startswith(bundle)]
+        executable_text = str(executable)
+        outside = [command for _pid, command in tree if executable_text not in command]
         if outside:
             raise SystemExit("process left the moved bundle: " + " | ".join(outside))
         token = (profile / "web.token").read_text().strip()
@@ -174,7 +227,7 @@ def serve_once(executable: Path, root: Path, index: int, build_id: str) -> dict[
             "commands": [command for _pid, command in tree],
         }
     finally:
-        subprocess.run([str(executable), "stop", "--profile", str(profile)], check=False, capture_output=True, text=True, env=env, timeout=40)
+        subprocess.run(launched(executable, ["stop", "--profile", str(profile)], sandbox), check=False, capture_output=True, text=True, env=env, timeout=40)
         try:
             proc.wait(timeout=20)
         except subprocess.TimeoutExpired:
@@ -188,6 +241,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--offline", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
     source = args.bundle.resolve()
     executable_name = source / "amazme-backend"
@@ -203,7 +257,13 @@ def main() -> None:
     executable = moved / "amazme-backend"
     if " " not in str(executable):
         raise SystemExit("moved executable path has no space")
-    runs = [serve_once(executable, moved.parent, index, build_id) for index in (1, 2)]
+    sandbox: Path | None = None
+    seatbelt: dict[str, str] | None = None
+    if args.offline:
+        sandbox = moved.parent / "offline.sb"
+        write_sandbox(sandbox, [moved.parent, Path("/private/var/folders"), Path("/var/folders"), Path("/private/tmp"), Path("/tmp")])
+        seatbelt = prove_seatbelt(sandbox)
+    runs = [serve_once(executable, moved.parent, index, build_id, sandbox) for index in (1, 2)]
     for run in runs:
         if not any(pid == run["pid"] for pid, _ppid, _command in process_rows()):
             continue
@@ -213,7 +273,7 @@ def main() -> None:
         "moved": str(moved),
         "build_id": build_id,
         "clean_path": CLEAN_PATH,
-        "offline_enforcement": "not proven; sandbox-exec still allowed https://example.com",
+        "offline_enforcement": seatbelt if seatbelt is not None else "not requested",
         "runs": runs,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
