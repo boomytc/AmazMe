@@ -1,5 +1,7 @@
 import asyncio
 import contextlib
+import difflib
+import hashlib
 import json
 import os
 import secrets
@@ -28,6 +30,11 @@ from .contracts import (
     BranchSession,
     Cancel,
     CancelCode,
+    CheckpointCreate,
+    CheckpointList,
+    CheckpointPreview,
+    CheckpointRestore,
+    CheckpointView,
     Cleanup,
     CodeRun,
     CodeView,
@@ -129,6 +136,10 @@ from .workspace_files import (
     write_file,
 )
 from .workspace_map import PRIMARY, check_grant_directory, client_path, guest_path, split_client_path
+
+
+def _checkpoint_id(workspace: str, path: str, digest: str) -> str:
+    return hashlib.sha256(f"{workspace}\n{path}\n{digest}".encode()).hexdigest()[:32]
 
 
 class Login(Model):
@@ -450,9 +461,77 @@ class Host:
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
         name, inner, root = await self._mapped_root(value.path)
+        shown = client_path(name, inner)
+        current = self._current_text(root, inner)
+        if current is not None and current[0] != value.expected_digest:
+            raise BackendError("file_conflict")
+        if current is None and value.expected_digest:
+            raise BackendError("file_conflict")
+        if current is not None:
+            await self.store.save_checkpoint(
+                _checkpoint_id(name, shown, current[0]), name, shown, current[0], current[1])
         changed = write_file(root, value.model_copy(update={"path": inner}))
-        changed.path = client_path(name, inner)
+        changed.path = shown
         return changed
+
+    def _current_text(self, root: Path, inner: str) -> tuple[str, str] | None:
+        try:
+            current = read_file(root, inner)
+        except BackendError as exc:
+            if exc.code == "workspace_not_file":
+                return None
+            raise
+        if current.truncated:
+            return None
+        return current.digest, current.content
+
+    async def create_checkpoint(self, value: CheckpointCreate) -> CheckpointView:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        name, inner = split_client_path(value.path)
+        if name == "grant" or not inner or name != value.workspace:
+            raise BackendError("invalid_workspace_path")
+        await self._require_workspace(name)
+        _name, _inner, root = await self._mapped_root(value.path)
+        current = self._current_text(root, inner)
+        if current is None:
+            raise BackendError("checkpoint_unavailable")
+        await self.store.save_checkpoint(value.checkpoint_id, name, client_path(name, inner), current[0], current[1])
+        return CheckpointView(checkpoint_id=value.checkpoint_id, workspace=name, path=client_path(name, inner), digest=current[0])
+
+    async def list_checkpoints(self, workspace: str, path: str) -> CheckpointList:
+        self._admit()
+        rows = await self.store.checkpoints_for(workspace, path)
+        return CheckpointList(checkpoints=[
+            CheckpointView(checkpoint_id=item[0], workspace=item[1], path=item[2], digest=item[3]) for item in rows
+        ])
+
+    async def preview_checkpoint(self, checkpoint_id: str) -> CheckpointPreview:
+        self._admit()
+        saved = await self.store.checkpoint(checkpoint_id)
+        if saved is None:
+            raise BackendError("checkpoint_not_found", status=404)
+        _cid, workspace, path, digest, content = saved
+        name, inner, root = await self._mapped_root(path)
+        current = self._current_text(root, inner) if inner else None
+        current_text = "" if current is None else current[1]
+        current_digest = "" if current is None else current[0]
+        diff = "".join(difflib.unified_diff(
+            content.splitlines(keepends=True), current_text.splitlines(keepends=True),
+            fromfile=path, tofile=path))
+        return CheckpointPreview(
+            checkpoint_id=checkpoint_id, workspace=workspace, path=path,
+            guest_path=(guest_path(name) + "/" + inner) if inner else guest_path(name),
+            digest=digest, content=content, current_digest=current_digest, diff=diff)
+
+    async def restore_checkpoint(self, checkpoint_id: str, value: CheckpointRestore) -> FileChange:
+        self._admit()
+        saved = await self.store.checkpoint(checkpoint_id)
+        if saved is None:
+            raise BackendError("checkpoint_not_found", status=404)
+        _cid, _workspace, path, _digest, content = saved
+        return await self.write_workspace(FileWrite(path=path, content=content, expected_digest=value.expected_digest))
 
     def _terminal_fence(self, session_id: str, terminal_id: str) -> TerminalQuery:
         return TerminalQuery(host_epoch=self.fence.host_epoch, build_id=self.build,
@@ -1358,6 +1437,22 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/files/content")
     async def file_write(value: FileWrite) -> FileChange:
         return await owner.write_workspace(value)
+
+    @app.post("/api/v1/checkpoints")
+    async def create_checkpoint(value: CheckpointCreate) -> CheckpointView:
+        return await owner.create_checkpoint(value)
+
+    @app.get("/api/v1/checkpoints")
+    async def checkpoints(workspace: str = "primary", path: str = "") -> CheckpointList:
+        return await owner.list_checkpoints(workspace, path)
+
+    @app.get("/api/v1/checkpoints/{checkpoint_id}")
+    async def preview_checkpoint(checkpoint_id: str) -> CheckpointPreview:
+        return await owner.preview_checkpoint(checkpoint_id)
+
+    @app.post("/api/v1/checkpoints/{checkpoint_id}/restore")
+    async def restore_checkpoint(checkpoint_id: str, value: CheckpointRestore) -> FileChange:
+        return await owner.restore_checkpoint(checkpoint_id, value)
 
     @app.post("/api/v1/sessions/{session_id}/terminals")
     async def open_terminal(session_id: str, value: TerminalOpen) -> TerminalView:

@@ -123,6 +123,8 @@ class HostStore:
                 CREATE TABLE IF NOT EXISTS workspace_grants(name TEXT PRIMARY KEY, host_path TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, workspace TEXT NOT NULL,
                   text TEXT NOT NULL, digest TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS file_checkpoints(id TEXT PRIMARY KEY, workspace TEXT NOT NULL,
+                  path TEXT NOT NULL, digest TEXT NOT NULL, content TEXT NOT NULL);
                 PRAGMA user_version=2;
             """)
             # Format 2 already shipped without branch columns. Adding them keeps every existing row.
@@ -217,6 +219,41 @@ class HostStore:
             except sqlite3.OperationalError:
                 return []
             return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
+        return await self._call(operation)
+
+    async def save_checkpoint(self, checkpoint_id: str, workspace: str, path: str, digest: str, content: str) -> tuple[str, str, str, str]:
+        def operation(db: sqlite3.Connection) -> tuple[str, str, str, str]:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute(
+                "SELECT workspace, path, digest, content FROM file_checkpoints WHERE id=?", (checkpoint_id,)).fetchone()
+            if row is not None:
+                if (str(row[0]), str(row[1]), str(row[2]), str(row[3])) != (workspace, path, digest, content):
+                    raise BackendError("checkpoint_conflict")
+                return checkpoint_id, workspace, path, digest
+            if db.execute("SELECT count(*) FROM file_checkpoints").fetchone()[0] >= 200:
+                raise BackendError("checkpoint_capacity", status=429)
+            db.execute(
+                "INSERT INTO file_checkpoints(id,workspace,path,digest,content) VALUES(?,?,?,?,?)",
+                (checkpoint_id, workspace, path, digest, content))
+            return checkpoint_id, workspace, path, digest
+        return await self.transaction(operation)
+
+    async def checkpoints_for(self, workspace: str, path: str) -> list[tuple[str, str, str, str]]:
+        def operation(db: sqlite3.Connection) -> list[tuple[str, str, str, str]]:
+            rows = db.execute(
+                "SELECT id, workspace, path, digest FROM file_checkpoints WHERE workspace=? AND path=? ORDER BY rowid",
+                (workspace, path)).fetchall()
+            return [(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in rows]
+        return await self._call(operation)
+
+    async def checkpoint(self, checkpoint_id: str) -> tuple[str, str, str, str, str] | None:
+        def operation(db: sqlite3.Connection) -> tuple[str, str, str, str, str] | None:
+            row = db.execute(
+                "SELECT id, workspace, path, digest, content FROM file_checkpoints WHERE id=?", (checkpoint_id,)).fetchone()
+            if row is None:
+                return None
+            return str(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4])
         return await self._call(operation)
 
     async def create_session(self, session_id: str, value: CreateSession) -> Session:

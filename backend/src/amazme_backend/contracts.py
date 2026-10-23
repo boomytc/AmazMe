@@ -257,6 +257,38 @@ class MemoryList(Model):
     memories: list[MemoryView]
 
 
+class CheckpointCreate(Model):
+    checkpoint_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    workspace: str = "primary"
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class CheckpointView(Model):
+    checkpoint_id: str
+    workspace: str
+    path: str
+    digest: str
+
+
+class CheckpointList(Model):
+    checkpoints: list[CheckpointView]
+
+
+class CheckpointPreview(Model):
+    checkpoint_id: str
+    workspace: str
+    path: str
+    guest_path: str
+    digest: str
+    content: str
+    current_digest: str
+    diff: str
+
+
+class CheckpointRestore(Model):
+    expected_digest: str = Field(default="", max_length=64)
+
+
 class HostFence(Model):
     host_epoch: int
     build_id: str

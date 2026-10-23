@@ -412,6 +412,180 @@
         }
       }
     },
+    "/api/v1/checkpoints": {
+      "post": {
+        "summary": "Create Checkpoint",
+        "operationId": "create_checkpoint_api_v1_checkpoints_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Checkpoints",
+        "operationId": "checkpoints_api_v1_checkpoints_get",
+        "parameters": [
+          {
+            "name": "workspace",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "primary",
+              "title": "Workspace"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/checkpoints/{checkpoint_id}": {
+      "get": {
+        "summary": "Preview Checkpoint",
+        "operationId": "preview_checkpoint_api_v1_checkpoints__checkpoint_id__get",
+        "parameters": [
+          {
+            "name": "checkpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Checkpoint Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckpointPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/checkpoints/{checkpoint_id}/restore": {
+      "post": {
+        "summary": "Restore Checkpoint",
+        "operationId": "restore_checkpoint_api_v1_checkpoints__checkpoint_id__restore_post",
+        "parameters": [
+          {
+            "name": "checkpoint_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Checkpoint Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckpointRestore"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FileChange"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/terminals": {
       "post": {
         "summary": "Open Terminal",
@@ -2459,6 +2633,141 @@
           "endpoint_editable"
         ],
         "title": "CatalogModel"
+      },
+      "CheckpointCreate": {
+        "properties": {
+          "checkpoint_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Checkpoint Id"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": "primary"
+          },
+          "path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "checkpoint_id",
+          "path"
+        ],
+        "title": "CheckpointCreate"
+      },
+      "CheckpointList": {
+        "properties": {
+          "checkpoints": {
+            "items": {
+              "$ref": "#/components/schemas/CheckpointView"
+            },
+            "type": "array",
+            "title": "Checkpoints"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "checkpoints"
+        ],
+        "title": "CheckpointList"
+      },
+      "CheckpointPreview": {
+        "properties": {
+          "checkpoint_id": {
+            "type": "string",
+            "title": "Checkpoint Id"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "guest_path": {
+            "type": "string",
+            "title": "Guest Path"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "current_digest": {
+            "type": "string",
+            "title": "Current Digest"
+          },
+          "diff": {
+            "type": "string",
+            "title": "Diff"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "checkpoint_id",
+          "workspace",
+          "path",
+          "guest_path",
+          "digest",
+          "content",
+          "current_digest",
+          "diff"
+        ],
+        "title": "CheckpointPreview"
+      },
+      "CheckpointRestore": {
+        "properties": {
+          "expected_digest": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Expected Digest",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "CheckpointRestore"
+      },
+      "CheckpointView": {
+        "properties": {
+          "checkpoint_id": {
+            "type": "string",
+            "title": "Checkpoint Id"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "checkpoint_id",
+          "workspace",
+          "path",
+          "digest"
+        ],
+        "title": "CheckpointView"
       },
       "Cleanup": {
         "properties": {

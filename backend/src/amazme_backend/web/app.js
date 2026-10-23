@@ -720,6 +720,34 @@ function startClient() {
       showTerminal(await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/resize`, "POST", {cols: 100, rows: 40}, current));
     } catch (failure) { error(failure); }
   };
+  let checkpointId = "";
+  $("checkpoint-save").onclick = async () => {
+    if (!filePath || !identity || health?.state !== "ready") return;
+    checkpointId = crypto.randomUUID().replaceAll("-", "");
+    const workspace = filePath.startsWith("grant/") ? filePath.split("/")[1] : "primary";
+    try {
+      const view = await api("/api/v1/checkpoints", "POST", {checkpoint_id: checkpointId, workspace, path: filePath}, current);
+      $("file-diff").textContent = `已保存 ${view.digest.slice(0, 12)}`;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("checkpoint-preview").onclick = async () => {
+    if (!checkpointId) return;
+    try {
+      const view = await api(`/api/v1/checkpoints/${checkpointId}`);
+      $("file-diff").textContent = view.diff || "与当前文件相同";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("checkpoint-restore").onclick = async () => {
+    if (!checkpointId || !fileDigest) return;
+    try {
+      const changed = await api(`/api/v1/checkpoints/${checkpointId}/restore`, "POST", {expected_digest: fileDigest}, current);
+      fileDigest = changed.digest;
+      $("file-diff").textContent = changed.diff;
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
   $("file-save").onclick = async () => {
     if (!filePath || !identity || health?.state !== "ready") return;
     try {
