@@ -83,8 +83,8 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | 会话归档 | P3 | `POST /api/v1/sessions/{id}/archive`；页面「归档 / 恢复」 | 部分通过 | `test_session_branch.py` 的归档用例和 happy-dom | `1af60222`。不在 A/B 安装包里，也还没有真实 Chrome。历史不删除；未开始的任务变为已取消 |
 | 上下文压缩、过期结果拒绝、压缩失败保留原历史 | P3 | `POST /api/v1/sessions/{id}/compactions`；页面「压缩上下文」 | 部分通过 | `test_session_branch.py` 的压缩用例和 happy-dom | `8c9cee19`。摘要走当前供应商。依据不一致拒绝写入。失败不删原消息。还不在 A/B 包和真实 Chrome 里 |
 | 切换会话 | P2 Web | 侧栏 | 已通过 | `verify_client.py` 的 A-B-A | 分支后的切换有 happy-dom 测试，还没有进 Chrome 报告 |
-| 文件浏览、编辑、diff、受检写入 | P3 | `GET /api/v1/files`、`GET/POST /api/v1/files/content`；页面「工作区文件」 | 部分通过 | `backend/tests/test_workspace_files.py`；`test_boundaries.py` 会执行客户机脚本 | `0ebbe95` 页面按摘要写入。`9e2defe` 的客户机 `read_file` / `write_file` 拒绝越界符号链接、符号链接目录和硬链接，但工具写入仍不要求摘要，也会补齐缺失的父目录。多工作区映射未做。这两次提交都不在 A/B 安装包里 |
-| 多工作区与统一路径映射 | P3 | init 只有一个 workspace | 未通过 | 无 | 显式宿主/guest 映射。不默认挂载 HOME、钥匙串或 SSH agent |
+| 文件浏览、编辑、diff、受检写入 | P3 | `GET /api/v1/files`、`GET/POST /api/v1/files/content`；页面「工作区文件」 | 部分通过 | `backend/tests/test_workspace_files.py`；`test_boundaries.py` 会执行客户机脚本 | `0ebbe95` 页面按摘要写入。`9e2defe` 的客户机 `read_file` / `write_file` 拒绝越界符号链接、符号链接目录和硬链接，但工具写入仍不要求摘要，也会补齐缺失的父目录。多工作区映射见 `efbda5d`。这些提交都不在 A/B 安装包里 |
+| 多工作区与统一路径映射 | P3 | `POST /api/v1/workspaces`；页面「工作区文件」 | 部分通过 | `backend/tests/test_workspaces.py` 授予目录、读写文件、工具命令和终端 cwd | `efbda5d`。主目录仍是 `/workspace`。额外目录显式授予后固定为 `/grant/名称`，文件接口、工具根和终端 cwd 使用这条路径。用户主目录、`.ssh`、钥匙串、profile 和 `docker.sock` 不能授予。取消授予不删目录里的文件。还没有在 Lima 里挂载验证，也不在 A/B 包里。shell 工具仍从 `/workspace` 启动 |
 | PTY、终端输入、resize、输出背压 | P3 | `POST /api/v1/sessions/{id}/terminals`；页面「终端」 | 部分通过 | `backend/tests/test_pty.py` 会执行客户机脚本，并经监督器打开同一条命令 | `6dcdc47`。输出超过窗口后不再转发，直到客户端授信。退出码只来自 waitpid，连接断开保持 unknown。容器规格无网络、不分配 Docker TTY。本机测试直接跑该 PID 1 脚本，没有在 Lima 里再跑一遍。Docker 桥接代码未对真实 daemon 验收 |
 | 工作区持久依赖卷和固定工具镜像 | P1 资源 / P4 分发 | 构建期离线镜像 | 部分通过 | P1 运行记录 | 运行时不临时拉镜像。完整离线首启属 P4 |
 | SSH / 远端 daemon | P3 | `POST /api/v1/sessions/{id}/remotes`；页面「远端」 | 部分通过 | `backend/tests/test_remote.py` 启动 `remote_daemon.py` 并经监督器连接 | `81b0186`。核对主机密钥、daemon 内容和代际。本地断开后阶段是 disconnected 或 blocked，不是已停止。未知调用不重放，代际不符时挡住新命令。这不是一次真实 OpenSSH 到远端主机的会话 |
@@ -119,5 +119,5 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 ## 下一步
 
 1. 工作区文件浏览和受检写入在 `0ebbe95`，客户机文件工具的链接约束在 `9e2defe`。后者的 Ruff、Pyright 和 pytest 312 通过。A/B 安装包仍是 `d5cefaf`。
-2. 插件登记和受管入口在 `268556a`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth、多工作区和记忆注入未做。插件入口还不是客户机进程。
+2. 多工作区路径映射在 `efbda5d`。插件登记和受管入口在 `268556a`。当前会话历史搜索在 `6fc70d5`。Codemode 在 `6319c3f`。远端 daemon 在 `81b0186`。MCP 在 `7719860`，终端 PTY 在 `6dcdc47`。这几项都还没有真实 Linux/OpenSSH 验收。OAuth 和记忆注入未做。插件入口和额外工作区都还没在 Lima 里验收。
 3. 睡眠和断电保持未验收。ENOSPC 只证明 2MiB 隔离卷。
