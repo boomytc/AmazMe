@@ -14,6 +14,7 @@ import {
 	readControlToken,
 	resolvePythonBackend,
 	shouldStopSharedBackend,
+	windowCloseAction,
 	type PythonReady,
 } from "../src/python-backend.ts";
 import { createTempDir } from "./temp-dir.ts";
@@ -104,6 +105,10 @@ describe("packaged python backend", () => {
 	test("closes a window without stopping, and explicit quit uses the control token", () => {
 		expect(shouldStopSharedBackend("window-closed")).toBe(false);
 		expect(shouldStopSharedBackend("explicit-quit")).toBe(true);
+		expect(windowCloseAction({ quitting: false, pythonBackend: true, tray: true })).toBe("hide");
+		expect(windowCloseAction({ quitting: false, pythonBackend: true, tray: false })).toBe("allow");
+		expect(windowCloseAction({ quitting: false, pythonBackend: false, tray: false })).toBe("quit");
+		expect(windowCloseAction({ quitting: true, pythonBackend: true, tray: true })).toBe("allow");
 		const request = pythonShutdownRequest(ready(), CONTROL, WEB);
 		expect(request.url).toBe("http://127.0.0.1:4310/control/shutdown");
 		expect(request.headers.Authorization).toBe(`Bearer ${CONTROL}`);
@@ -126,7 +131,7 @@ describe("packaged python backend", () => {
 
 	test("pairs with a cookie and does not put the token in the URL", () => {
 		const cookie = pairingCookie("http://127.0.0.1:4310/", WEB);
-		expect(cookie).toEqual({ url: "http://127.0.0.1:4310", name: "amazme", value: WEB, httpOnly: true, sameSite: "strict", path: "/" });
+		expect(cookie).toEqual({ url: "http://127.0.0.1:4310", name: "amazme", value: WEB, httpOnly: true, secure: false, sameSite: "lax", path: "/" });
 		expect(cookie.url).not.toContain(WEB);
 	});
 

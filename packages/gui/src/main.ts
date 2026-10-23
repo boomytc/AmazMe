@@ -13,7 +13,6 @@ import {
 	Menu,
 	nativeImage,
 	Notification,
-	session,
 	shell,
 	Tray,
 	type Event as ElectronEvent,
@@ -48,6 +47,7 @@ import {
 	readControlToken,
 	resolvePythonBackend,
 	shouldStopSharedBackend,
+	windowCloseAction,
 } from "./python-backend.ts";
 
 const execFileAsync = promisify(execFile);
@@ -526,9 +526,10 @@ async function openWindow(pageUrl: string, sessionId: string | undefined = undef
 		void refreshApplicationMenu();
 	});
 	created.on("close", (event) => {
-		if (notices.quitting) return;
-		if (tray !== undefined) {
-			event.preventDefault();
+		const action = windowCloseAction({ quitting: notices.quitting, pythonBackend: usingPythonBackend, tray: tray !== undefined });
+		if (action === "allow") return;
+		event.preventDefault();
+		if (action === "hide") {
 			if (created.isFullScreen()) created.setFullScreen(false);
 			created.hide();
 			return;
@@ -566,6 +567,12 @@ async function openWindow(pageUrl: string, sessionId: string | undefined = undef
 		if (isExternalUrl(url)) void shell.openExternal(url);
 		return { action: "deny" };
 	});
+	if (pythonWebToken.length > 0) {
+		const cookie = pairingCookie(target, pythonWebToken);
+		await created.webContents.session.cookies.set(cookie);
+		const stored = await created.webContents.session.cookies.get({ url: cookie.url, name: "amazme" });
+		if (!stored.some((item) => item.value === pythonWebToken)) throw new Error("desktop pairing cookie was not stored");
+	}
 	try {
 		await created.loadURL(target);
 	} catch (error: unknown) {
@@ -640,7 +647,7 @@ async function boot(): Promise<void> {
 			const child = nodeLaunch !== undefined
 				? spawnWebHost(nodeLaunch)
 				: spawnNodeChild({ executable: launch.executable, args: launch.args, cwd: launch.cwd, env: launch.env });
-			if (SMOKE && child.pid !== undefined) process.stdout.write(`desktop host pid: ${child.pid}\n`);
+			if ((SMOKE || usingPythonBackend) && child.pid !== undefined) process.stdout.write(`desktop host pid: ${child.pid}\n`);
 			return child;
 		},
 		...(timeout === undefined ? {} : { readinessTimeoutMs: timeout }),
@@ -655,7 +662,6 @@ async function boot(): Promise<void> {
 		},
 	});
 	const pageUrl = await host.start();
-	if (pythonWebToken.length > 0) await session.defaultSession.cookies.set(pairingCookie(pageUrl, pythonWebToken));
 	await openWindow(pageUrl, deepLinkSession);
 	if (!SMOKE && !notices.quitting) {
 		const target = dirname(dirname(dirname(process.execPath)));

@@ -28,7 +28,14 @@ def main() -> None:
             "--distpath", str(output / "dist"), "--workpath", str(output / "build"), "--specpath", str(output),
             "--paths", str(ROOT / "src"),
             "--add-data", str(ROOT / "src/amazme_backend/web") + ":amazme_backend/web",
-            "--add-data", str(ROOT / "src/amazme_backend/gate.py") + ":amazme_backend",
+            *[
+                item
+                for name in (
+                    "gate.py", "pty_gate.py", "mcp_gate.py", "plugin_gate.py",
+                    "computer_driver.py", "remote_daemon.py", "codemode_helper.mjs",
+                )
+                for item in ("--add-data", f"{ROOT / 'src/amazme_backend' / name}:amazme_backend")
+            ],
             str(entry),
         ], check=True, stdout=log, stderr=subprocess.STDOUT, timeout=300)
     bundle = output / "AmazMe Python 0.1.0"

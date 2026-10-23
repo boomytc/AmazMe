@@ -1,0 +1,20 @@
+{
+  "executable": "/Users/boom/workspace/AmazMe/.artifacts/python-backend-electron/package-zfh4prnh/AmazMe Python 0.1.0/amazme-backend",
+  "build_id": "5df74527eb72fdf034f4e3be2d9aef23a4393f8109d74506fbf3c8ed34b1f830",
+  "runs": [
+    {
+      "hostPid": 42463,
+      "page": "http://127.0.0.1:56644/",
+      "loginHidden": true,
+      "backendAliveAfterClose": true,
+      "backendDeadAfterQuit": true
+    },
+    {
+      "hostPid": 42565,
+      "page": "http://127.0.0.1:56644/",
+      "loginHidden": true,
+      "backendAliveAfterClose": true,
+      "backendDeadAfterQuit": true
+    }
+  ]
+}

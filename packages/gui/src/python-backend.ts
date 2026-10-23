@@ -41,6 +41,13 @@ export function shouldStopSharedBackend(reason: "window-closed" | "explicit-quit
 	return reason === "explicit-quit";
 }
 
+/** Closing a window must not stop a shared Python backend. A tray only hides that window. */
+export function windowCloseAction(input: { readonly quitting: boolean; readonly pythonBackend: boolean; readonly tray: boolean }): "allow" | "hide" | "quit" {
+	if (input.quitting) return "allow";
+	if (input.pythonBackend && !shouldStopSharedBackend("window-closed")) return input.tray ? "hide" : "allow";
+	return input.tray ? "hide" : "quit";
+}
+
 /** One stdout line from `amazme-backend serve`. Other lines are ignored. */
 export function parsePythonReadyLine(line: string): PythonReady | undefined {
 	const trimmed = line.replace(/\r$/u, "").trim();
@@ -145,7 +152,8 @@ export function pairingCookie(pageUrl: string, webToken: string): {
 	readonly name: "amazme";
 	readonly value: string;
 	readonly httpOnly: true;
-	readonly sameSite: "strict";
+	readonly secure: false;
+	readonly sameSite: "lax";
 	readonly path: "/";
 } {
 	const url = new URL(pageUrl);
@@ -155,7 +163,7 @@ export function pairingCookie(pageUrl: string, webToken: string): {
 	if (webToken.length === 0 || url.href.includes(webToken)) {
 		throw new Error("desktop pairing token must stay out of the page URL");
 	}
-	return { url: url.origin, name: "amazme", value: webToken, httpOnly: true, sameSite: "strict", path: "/" };
+	return { url: url.origin, name: "amazme", value: webToken, httpOnly: true, secure: false, sameSite: "lax", path: "/" };
 }
 
 export function readControlToken(profile: string): string {
