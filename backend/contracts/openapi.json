@@ -2726,6 +2726,46 @@
         }
       }
     },
+    "/api/v1/rpc": {
+      "post": {
+        "summary": "Rpc",
+        "operationId": "rpc_api_v1_rpc_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RpcCall"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Rpc Api V1 Rpc Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins": {
       "get": {
         "summary": "Plugins",
@@ -6057,6 +6097,74 @@
           "generation"
         ],
         "title": "RemoteView"
+      },
+      "RpcCall": {
+        "properties": {
+          "jsonrpc": {
+            "type": "string",
+            "const": "2.0",
+            "title": "Jsonrpc",
+            "default": "2.0"
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "default": ""
+          },
+          "method": {
+            "type": "string",
+            "title": "Method",
+            "default": ""
+          },
+          "params": {
+            "$ref": "#/components/schemas/RpcParams"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RpcCall"
+      },
+      "RpcParams": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "default": ""
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": ""
+          },
+          "attachment_id": {
+            "type": "string",
+            "title": "Attachment Id",
+            "default": ""
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id",
+            "default": ""
+          },
+          "title": {
+            "type": "string",
+            "title": "Title",
+            "default": ""
+          },
+          "text": {
+            "type": "string",
+            "title": "Text",
+            "default": ""
+          },
+          "not_before_ms": {
+            "type": "integer",
+            "title": "Not Before Ms",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RpcParams"
       },
       "SearchHit": {
         "properties": {

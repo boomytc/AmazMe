@@ -150,6 +150,7 @@ from .memories import match_memories, remember
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
+from .rpc import RpcCall, handle_rpc
 from .storage import (
     TERMINAL,
     SessionStore,
@@ -1344,6 +1345,13 @@ class Host:
             self.worker_peers[session] = (info.worker_id, peer)
             return peer
 
+    def release_attachment(self, session: str, attachment_id: str) -> None:
+        existing = self.attachments.get(attachment_id)
+        if existing and existing.session_id != session:
+            raise BackendError("attachment_conflict")
+        self.attachments.pop(attachment_id, None)
+        self.attachment_seen.pop(attachment_id, None)
+
     def check_attachment(self, identity: str, session: str) -> Attachment:
         value = self.attachments.get(identity)
         if (value is None or value.session_id != session or value.host_epoch != self.fence.host_epoch
@@ -2095,13 +2103,16 @@ def application(owner: Host) -> FastAPI:
         return value
 
     @app.delete("/api/v1/sessions/{session}/attachments/{identity}")
-    async def detach(session: str, identity: str) -> dict[str, bool]:
-        existing = owner.attachments.get(identity)
-        if existing and existing.session_id != session:
-            raise BackendError("attachment_conflict")
-        owner.attachments.pop(identity, None)
-        owner.attachment_seen.pop(identity, None)
+    async def detach(session: str, identity: str, request: Request) -> dict[str, bool]:
+        # The presented binding is the one being released. Another binding on the same session stays.
+        if request.headers.get("x-amazme-attachment", "") != identity:
+            raise BackendError("stale_client_binding")
+        owner.release_attachment(session, identity)
         return {"detached": True}
+
+    @app.post("/api/v1/rpc")
+    async def rpc(value: RpcCall) -> dict[str, object]:
+        return await handle_rpc(owner, value)
 
     @app.get("/api/v1/plugins")
     async def plugins() -> PluginList:

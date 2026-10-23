@@ -3,6 +3,7 @@ import asyncio
 import json
 import os
 import secrets
+import sys
 import time
 from contextlib import ExitStack
 from pathlib import Path
@@ -15,6 +16,9 @@ from .processes import retain_inherited
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "client":
+        from .client_cmd import run_client
+        raise SystemExit(run_client(sys.argv[2:]))
     parser = argparse.ArgumentParser(prog="amazme-backend")
     parser.add_argument("mode", choices=["init", "serve", "worker", "supervisor", "stop", "pair", "destroy-vm"])
     parser.add_argument("--profile", type=Path, required=True)
