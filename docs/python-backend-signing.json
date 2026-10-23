@@ -1,0 +1,46 @@
+{
+  "recorded_against_head": "89dd0ac6d983ce2cd7cbad667d54e52ead2b8eba",
+  "ad_hoc_substitution": false,
+  "npm_run_release": false,
+  "tag_or_github_release": false,
+  "credential_shape": {
+    "release_env_file_present": true,
+    "required_names_present": true,
+    "team_id_shape": "10 alphanumeric",
+    "credential_problem": null,
+    "p8_problem": null
+  },
+  "developer_id_application_count": 1,
+  "developer_id_for_configured_team": 1,
+  "resolve_signing": "developer-id",
+  "history_only": "Notarization history query succeeded; no archive submitted.",
+  "python_backend_copy": {
+    "source": ".artifacts/python-backend-head/package-yboxdh3i/AmazMe Python 0.1.0/amazme-backend",
+    "signed_copy": ".artifacts/python-backend-sign/probe/amazme-backend",
+    "source_signature": "adhoc",
+    "source_team_identifier": "not set",
+    "copy_codesign_exit": 0,
+    "copy_verify_strict_exit": 0,
+    "copy_team_matches_configured": true,
+    "copy_hardened_runtime": true,
+    "copy_timestamp_present": true,
+    "copy_notarized": false,
+    "copy_stapled": false
+  },
+  "desktop_preview_dmg": {
+    "path": ".artifacts/python-backend-sign/desktop/AmazMe-0.3.4-macos-arm64.dmg",
+    "app": ".artifacts/python-backend-sign/desktop/AmazMe.app",
+    "app_version": "0.3.4",
+    "node": "v22.23.3",
+    "electron": "44.6.0",
+    "contains_python_onedir": false,
+    "packs": ["@amazme/gui", "@amazme/coding-agent"],
+    "signed": "Developer ID with hardened runtime on the app",
+    "notarization_status": "Accepted",
+    "submission_id": "cc84ac41-6d73-464d-a496-74914b94b9d9",
+    "staple_validate_exit": 0,
+    "staple_validate_text": "The validate action worked!",
+    "spctl_assess_open_exit": 0,
+    "sha256_after_staple": "e0bfad05a4e6ff619d9ce862fd07c57f1fb1190928545c3e88a1ebf24fea84fb"
+  }
+}

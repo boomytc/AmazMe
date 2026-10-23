@@ -8,6 +8,7 @@ still connects. That is process offline startup, not a physical cable pull.
 import argparse
 import json
 import os
+import re
 import select
 import shutil
 import subprocess
@@ -34,18 +35,42 @@ SANDBOX_BODY = """(version 1)
 (allow network-outbound (remote ip "localhost:*"))
 (allow network-bind (local ip "localhost:*"))
 """
+# Last matching seatbelt rule wins. Deny these names, then allow the same names inside the bundle.
+RUNTIME_EXEC_DENY = """(deny process-exec*
+  (regex #"/((python3(\\.[0-9]+)*)|python|node|colima|docker)$"))
+"""
+FORBIDDEN_RUNTIME = re.compile(r"^(python3(\.\d+)*|python|node|colima|docker)$")
 
 
-def write_sandbox(path: Path, write_roots: list[Path]) -> None:
+def seatbelt_path(path: Path) -> str:
+    text = str(path.resolve())
+    if "\"" in text or "\n" in text or "\\" in text:
+        raise SystemExit("sandbox path cannot be quoted")
+    return text
+
+
+def write_sandbox(path: Path, write_roots: list[Path], bundle: Path | None = None) -> None:
     lines = [SANDBOX_BODY]
     seen: set[str] = set()
     for root in write_roots:
-        resolved = str(root.resolve())
+        resolved = seatbelt_path(root)
         if resolved in seen:
             continue
         seen.add(resolved)
         lines.append(f'(allow file-write* (subpath "{resolved}"))\n')
+    if bundle is not None:
+        lines.append(RUNTIME_EXEC_DENY)
+        lines.append(f'(allow process-exec* (subpath "{seatbelt_path(bundle)}"))\n')
     path.write_text("".join(lines))
+
+
+def is_forbidden_runtime(executable: str, bundle: Path) -> bool:
+    name = Path(executable).name
+    if name == "sandbox-exec" or FORBIDDEN_RUNTIME.fullmatch(name) is None:
+        return False
+    resolved = str(Path(executable).resolve())
+    root = str(bundle.resolve())
+    return resolved != root and not resolved.startswith(root + os.sep)
 
 
 def prove_seatbelt(profile: Path) -> dict[str, str]:
@@ -143,6 +168,20 @@ def process_tree(root: int) -> list[tuple[int, str]]:
     return [(pid, command) for pid, _ppid, command in rows if pid in ids]
 
 
+def text_executables(pids: list[int]) -> list[str]:
+    if not pids:
+        raise SystemExit("process tree was empty")
+    result = subprocess.run(
+        ["/usr/sbin/lsof", "-nP", "-a", "-p", ",".join(str(pid) for pid in pids), "-d", "txt", "-Fn"],
+        check=False, capture_output=True, text=True)
+    if result.returncode not in {0, 1}:
+        raise SystemExit(result.stderr[-1000:])
+    paths = [line[1:] for line in result.stdout.splitlines() if line.startswith("n/")]
+    if not paths:
+        raise SystemExit("could not read process executables")
+    return paths
+
+
 def loopback_sockets(pids: list[int]) -> list[str]:
     if not pids:
         return []
@@ -198,6 +237,11 @@ def serve_once(executable: Path, root: Path, index: int, build_id: str, sandbox:
         outside = [command for _pid, command in tree if executable_text not in command]
         if outside:
             raise SystemExit("process left the moved bundle: " + " | ".join(outside))
+        pids = [pid for pid, _command in tree]
+        executables = text_executables(pids)
+        forbidden = [item for item in executables if is_forbidden_runtime(item, executable.parent)]
+        if forbidden:
+            raise SystemExit("packaged backend invoked a system runtime: " + " | ".join(forbidden))
         token = (profile / "web.token").read_text().strip()
         request = urllib.request.Request(
             str(ready["url"]) + "/api/v1/bootstrap",
@@ -210,7 +254,6 @@ def serve_once(executable: Path, root: Path, index: int, build_id: str, sandbox:
         body = cast(dict[object, object], payload)
         if body.get("build_id") != build_id or body.get("protocol") != "amazme-http/1" or body.get("role") != "host":
             raise SystemExit("bootstrap did not match the moved bundle")
-        pids = [pid for pid, _command in tree]
         sockets = loopback_sockets(pids)
         rss = subprocess.run(
             ["/bin/ps", "-o", "rss=", "-p", ",".join(str(pid) for pid in pids)],
@@ -225,6 +268,8 @@ def serve_once(executable: Path, root: Path, index: int, build_id: str, sandbox:
             "role": body["role"],
             "sockets": sockets,
             "commands": [command for _pid, command in tree],
+            "executables": executables,
+            "forbidden_runtime": forbidden,
         }
     finally:
         subprocess.run(launched(executable, ["stop", "--profile", str(profile)], sandbox), check=False, capture_output=True, text=True, env=env, timeout=40)
@@ -260,9 +305,12 @@ def main() -> None:
     sandbox: Path | None = None
     seatbelt: dict[str, str] | None = None
     if args.offline:
-        sandbox = moved.parent / "offline.sb"
-        write_sandbox(sandbox, [moved.parent, Path("/private/var/folders"), Path("/var/folders"), Path("/private/tmp"), Path("/tmp")])
-        seatbelt = prove_seatbelt(sandbox)
+        network = moved.parent / "offline.sb"
+        write_roots = [moved.parent, Path("/private/var/folders"), Path("/var/folders"), Path("/private/tmp"), Path("/tmp")]
+        write_sandbox(network, write_roots)
+        seatbelt = prove_seatbelt(network)
+        sandbox = moved.parent / "runtime.sb"
+        write_sandbox(sandbox, write_roots, moved)
     runs = [serve_once(executable, moved.parent, index, build_id, sandbox) for index in (1, 2)]
     for run in runs:
         if not any(pid == run["pid"] for pid, _ppid, _command in process_rows()):
@@ -274,6 +322,7 @@ def main() -> None:
         "build_id": build_id,
         "clean_path": CLEAN_PATH,
         "offline_enforcement": seatbelt if seatbelt is not None else "not requested",
+        "runtime_exec_policy": "deny system python, node, colima, and docker outside the bundle" if sandbox is not None else "not requested",
         "runs": runs,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
