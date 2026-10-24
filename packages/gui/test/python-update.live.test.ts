@@ -218,10 +218,5 @@ describe("desktop update admission on the packaged backend", () => {
 			answer,
 		}, null, 2));
 		await stop(targetExecutable, profile, targetReady, control, web, target.child);
-		await new Promise<void>((resolve) => {
-			const cleaner = spawn(targetExecutable, ["destroy-vm", "--profile", profile], { stdio: "ignore" });
-			const timer = setTimeout(() => resolve(), 30_000);
-			cleaner.once("exit", () => { clearTimeout(timer); resolve(); });
-		});
 	}, 180_000);
 });
