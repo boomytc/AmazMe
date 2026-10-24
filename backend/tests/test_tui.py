@@ -14,8 +14,9 @@ import time
 from pathlib import Path
 from typing import cast
 
-from amazme_backend.contracts import BackendError
+from amazme_backend.contracts import Attachment, BackendError, Session, TerminalView
 from amazme_backend.sdk import Client
+from amazme_backend.tui import _handle, _PtyPending
 
 TOKEN_FILE = "web.token"
 MARKER = re.compile(r"会话:([a-f0-9]{32}) 绑定:([a-f0-9]{32}) 工作区:primary")
@@ -332,3 +333,63 @@ async def test_tui_shell_waits_for_an_explicit_decision(tmp_path: Path) -> None:
         elif master >= 0:
             os.close(master)
         _stop(proc, profile)
+
+
+def _terminal(**updates: object) -> TerminalView:
+    fields: dict[str, object] = {
+        "terminal_id": "term", "session_id": "a" * 32, "cols": 80, "rows": 24,
+        "queued": 0, "written": 0, "output": "", "output_seq": 1, "phase": "running",
+    }
+    fields.update(updates)
+    return TerminalView.model_validate(fields)
+
+
+async def test_tui_reuses_an_unconfirmed_terminal_input() -> None:
+    class Fake:
+        def __init__(self) -> None:
+            self.writes: list[tuple[str, str]] = []
+
+        async def write_terminal(self, **kwargs: object) -> TerminalView:
+            input_id = str(kwargs["input_id"])
+            data = str(kwargs["data"])
+            self.writes.append((input_id, data))
+            if len(self.writes) == 1:
+                raise BackendError("supervisor_unavailable")
+            status = "unknown" if len(self.writes) == 2 else "accepted"
+            return _terminal(input_id=input_id, input_status=status)
+
+        async def read_terminal(self, **_kwargs: object) -> TerminalView:
+            return _terminal(output="seen")
+
+    client = Fake()
+    session = Session(session_id="a" * 32, title="终端")
+    attachment = Attachment(attachment_id="b" * 32, session_id=session.session_id, host_epoch=1, build_id="build")
+    pending = _PtyPending()
+    lines: list[str] = []
+    try:
+        await _handle(client, session, attachment, "primary", "/pty echo hi", lines, None, "term", "", pending)  # type: ignore[arg-type]
+    except BackendError as exc:
+        assert exc.code == "supervisor_unavailable"
+    else:
+        raise AssertionError("write was confirmed")
+    assert len(client.writes) == 1 and pending.text == "/pty echo hi"
+    lines.clear()
+    await _handle(client, session, attachment, "primary", "/pty echo no", lines, None, "term", "", pending)  # type: ignore[arg-type]
+    assert client.writes == [(pending.input_id, "echo hi\n")] and "同一输入" in lines[-1]
+    lines.clear()
+    await _handle(client, session, attachment, "primary", "/pty echo hi", lines, None, "term", "", pending)  # type: ignore[arg-type]
+    assert [item[0] for item in client.writes] == [pending.input_id, pending.input_id]
+    assert lines[-1] == "输入未确认"
+    lines.clear()
+    await _handle(client, session, attachment, "primary", "/pty echo hi", lines, None, "term", "", pending)  # type: ignore[arg-type]
+    assert len(client.writes) == 3 and len({item[0] for item in client.writes}) == 1
+    assert pending.input_id == "" and "输入已接收" in lines
+    lines.clear()
+    await _handle(client, session, attachment, "primary", "/pty echo next", lines, None, "term", "", pending)  # type: ignore[arg-type]
+    assert client.writes[-1][1] == "echo next\n" and client.writes[-1][0] != client.writes[0][0]
+    pending.input_id = client.writes[0][0]
+    pending.text = "/pty echo hi"
+    lines.clear()
+    before = len(client.writes)
+    await _handle(client, session, attachment, "primary", "/pty-ack", lines, None, "term", "", pending)  # type: ignore[arg-type]
+    assert pending.input_id == "" and "不会重放" in lines[-1] and len(client.writes) == before

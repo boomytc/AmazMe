@@ -153,6 +153,12 @@ def _stopped(kind: str, phase: str, clean: bool) -> str:
 
 
 @dataclass
+class _PtyPending:
+    input_id: str = ""
+    text: str = ""
+
+
+@dataclass
 class _Held:
     kind: str
     request_id: str = ""
@@ -261,7 +267,8 @@ async def _decide_held(client: Client, session: Session, attachment: Attachment,
 
 
 async def _handle(client: Client, session: Session, attachment: Attachment, workspace: str, text: str,
-                  lines: list[str], held: _Held | None, terminal_id: str, server_id: str) -> tuple[_Held | None, str, str]:
+                  lines: list[str], held: _Held | None, terminal_id: str, server_id: str,
+                  pending: _PtyPending) -> tuple[_Held | None, str, str]:
     if held is not None:
         if text not in {"批准", "拒绝"}:
             lines.append("先输入批准或拒绝")
@@ -287,7 +294,18 @@ async def _handle(client: Client, session: Session, attachment: Attachment, work
             terminal_id=terminal_id, cols=cols, rows=rows)
         lines.append(f"终端 {view.cols} {view.rows}")
         return None, terminal_id, server_id
+    if text == "/pty-ack":
+        if not pending.input_id:
+            lines.append("没有未确认的输入")
+            return None, terminal_id, server_id
+        pending.input_id = ""
+        pending.text = ""
+        lines.append("已由用户核对；原输入不会重放")
+        return None, terminal_id, server_id
     if text.startswith("/pty "):
+        if pending.input_id and pending.text != text:
+            lines.append("上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。")
+            return None, terminal_id, server_id
         if not terminal_id:
             terminal_id = secrets.token_hex(16)
             opened = await client.open_terminal(
@@ -297,12 +315,17 @@ async def _handle(client: Client, session: Session, attachment: Attachment, work
                 lines.append("终端打开未确认")
                 return None, "", server_id
             lines.append("终端已打开")
+        if not pending.input_id:
+            pending.input_id = secrets.token_hex(16)
+            pending.text = text
         written = await client.write_terminal(
             session_id=session.session_id, attachment_id=attachment.attachment_id, terminal_id=terminal_id,
-            input_id=secrets.token_hex(16), data=text.removeprefix("/pty ") + "\n")
+            input_id=pending.input_id, data=text.removeprefix("/pty ") + "\n")
         if written.input_status != "accepted":
             lines.append("输入未确认")
             return None, terminal_id, server_id
+        pending.input_id = ""
+        pending.text = ""
         lines.append("输入已接收")
         view = await _watch_terminal(client, session.session_id, attachment.attachment_id, terminal_id)
         lines.extend(_visible(view.output))
@@ -363,6 +386,7 @@ async def _loop(client: Client, session: Session, attachment: Attachment, worksp
     draft = ""
     notice = ""
     held: _Held | None = None
+    pending = _PtyPending()
     while True:
         _paint(session.session_id, attachment.attachment_id, workspace, lines, draft, notice)
         key = await _read_key()
@@ -384,7 +408,7 @@ async def _loop(client: Client, session: Session, attachment: Attachment, worksp
             _paint(session.session_id, attachment.attachment_id, workspace, lines, draft, notice)
             try:
                 held, terminal_id, server_id = await _handle(
-                    client, session, attachment, workspace, text, lines, held, terminal_id, server_id)
+                    client, session, attachment, workspace, text, lines, held, terminal_id, server_id, pending)
             except (BackendError, ValidationError, json.JSONDecodeError, ValueError) as exc:
                 code = exc.code if isinstance(exc, BackendError) else "invalid_command"
                 lines.append(code)
