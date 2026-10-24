@@ -1,15 +1,16 @@
 {
   "date": "2026-10-24",
   "stage": "Electron process loading the current source backend",
-  "source_build_id": "f64fe5ec94e95dbaff3e431011bdd9a0454c854daa90c62ba9cb13aa6f506537",
-  "status": "passed for one Electron process against the checkout; frozen install, lost input receipt, and crash recovery remain open",
+  "source_build_id": "23ad63ddfefd0ee93b8b9529cc1167609a2aac3763ea8b62a0097324ec467a51",
+  "status": "passed for one Electron process against the checkout; frozen install, update freeze, and killing the worker or supervisor remain open",
   "runtime": {
     "runner": "backend/tools/verify_electron.py",
-    "report": ".artifacts/native/electron-o04d4rq_/report.json",
+    "report": ".artifacts/native/electron-uamesscf/report.json",
     "execution": "electron-source",
     "vm_created": false,
     "user_agent": "Electron",
     "checks": [
+      "electron page reused one terminal input after the first receipt was lost",
       "electron page showed terminal output, observed resize, kept the terminal across reload, and explicit close exited it",
       "electron page approval was required before the shell wrote its file",
       "electron page saved a checkpoint for the shell output",
@@ -20,9 +21,9 @@
     "page_errors": [],
     "budget": {
       "cap_bytes": 536870912,
-      "highwater_bytes": 37617664,
-      "minimum_free_bytes": 286513713152,
-      "elapsed_seconds": 7.841821207897738,
+      "highwater_bytes": 46510080,
+      "minimum_free_bytes": 286411763712,
+      "elapsed_seconds": 9.606116791022941,
       "failure": ""
     },
     "cleanup": {
@@ -31,14 +32,16 @@
       "reclaimed": true,
       "leaks": [],
       "disk_level": "ok",
-      "free_bytes": 286513713152,
+      "free_bytes": 286411579392,
       "deletion": "not_performed"
     }
   },
   "limits": [
     "The desktop executable is a wrapper around python -m amazme_backend in this checkout, not a frozen or notarized package",
-    "backend/src did not change in this unit, so the build_id matches the terminal-screen commit",
-    "Lost terminal input receipt, update freeze, and killing the worker or supervisor were not repeated inside Electron",
+    "This run did not change backend/src. The build_id is the current checkout, including the UTF-16 terminal cursor",
+    "The first terminal input reached the server, then the page lost the response. The retry used the same input id and electron-lost.txt stayed a single x",
+    "Update freeze and killing the worker or supervisor were not repeated inside Electron",
+    "Earlier electron report directories were released by the two-slot runner limit",
     "TUI, CLI, RPC, and SDK were not part of this run",
     "No VM was created or started"
   ]

@@ -48,7 +48,8 @@
 | 交互画面未确认输入不另写一次 | `a1b7f8d36c1a260e2c8655e2e97d044113097ff5` | `packages/coding-agent/test/python-screen-terminal.test.ts`：同一次画面进程里未确认的 `/pty` 沿用同一编号；改内容不发送；`/pty-ack` 不重放。每次 print 命令仍是新进程 |
 | macOS 临时目录里的后端不是常驻服务 | `ce4da8bfdc69f815721a945e4dcc54171351bcee` | `backend/tests/test_resource_census.py`：`/var/folders/.../T` 与 `/private/var` 别名上的 profile 记为泄漏，目录不在也一样；`C` 缓存和用户 profile 仍是 observed。画面测试先停止所属进程再删目录 |
 | 工作区无法核实时不启动 | `74a0786e4b39028bf80688275ca62c8af16d0ae2` | `backend/tests/test_workspaces.py`：库缺失、表缺失、损坏或工作区为空时，shell、终端和 MCP 不启动、不写文件。已打开的终端仍可读取和关闭 |
-| 终端增量不再切开非 BMP 字符 | 包含本文件的提交 | `backend/tests/test_pty.py`：输出游标按 UTF-16 码元计数，和页面切片一致。先显示 A 再增量显示 A🙂 不会留下孤立低代理项。CLI 失败重试沿用同一输入编号；成功或核对之后，同一命令是新操作 |
+| 终端增量不再切开非 BMP 字符 | `b9d61ca2efdc7765a0beae496b69153823934213` | `backend/tests/test_pty.py`：输出游标按 UTF-16 码元计数，和页面切片一致。先显示 A 再增量显示 A🙂 不会留下孤立低代理项。CLI 失败重试沿用同一输入编号；成功或核对之后，同一命令是新操作 |
+| Electron 丢回执后沿用同一输入 | 包含本文件的提交 | `backend/tools/verify_electron.py`：真实 Electron 进程里第一次输入已到达服务器，回执被丢掉；再次提交沿用同一编号，文件仍是一个 `x` |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -87,11 +88,11 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 插件门、Codemode 和桌面驱动只拿到工具环境。供应商密钥、控制令牌和 SSH agent 不传给这些子进程。这不是真实 TCC，也不是任意第三方插件。源码 build_id 为 `64a11ff6f92ffda56ce808430dcb243eaa934a41f8ffae2d7ebe79294c6ba9b1`。
 
 资源普查命令只报告，不按进程名发信号。用户主目录里的常驻服务保持 observed。macOS 用户临时目录 `/var/folders/<两级>/T` 和 `/private/var` 下的同一路径也是临时 profile，目录已经不在仍按启动参数归类；`C` 缓存目录不是泄漏。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
-下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
+下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。这次 Electron 运行又释放了 `electron-o04d4rq_`，当前证据是 `electron-uamesscf`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
 
 ## 剩余执行顺序
 
-1. **其余客户端实验。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。输出游标按 UTF-16 码元计数，页面按同一长度截取增量。TUI 和默认交互画面在当前进程内沿用未确认的 `/pty` 输入。CLI 把未确认的输入编号写在代理目录里，失败重试沿用它；成功或 `/pty-ack` 之后，同一命令是新操作。Electron 离开页面后本地编号不保留。RPC 和 SDK 使用调用方传入的输入编号，没有另一套账本。这些客户端都还没有覆盖更新冻结，以及 worker 或监督器被杀掉的实验。页面画面仍不是完整终端模拟，也没有换成 xterm。
+1. **其余客户端实验。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。输出游标按 UTF-16 码元计数，页面按同一长度截取增量。TUI 和默认交互画面在当前进程内沿用未确认的 `/pty` 输入。CLI 把未确认的输入编号写在代理目录里，失败重试沿用它；成功或 `/pty-ack` 之后，同一命令是新操作。Electron 页面在回执丢失后沿用同一输入编号。RPC 和 SDK 使用调用方传入的输入编号，没有另一套账本。这些客户端都还没有覆盖更新冻结，以及 worker 或监督器被杀掉的实验。页面画面仍不是完整终端模拟，也没有换成 xterm。
    这些实验仍要按同一契约补证。先追踪已有实现，不另建一套业务运行时。
 2. **按真实需求补齐产品功能。** 多工作区已在本机目录上核对：会话 shell、终端和没有 grant/ 前缀的文件工具进入授予目录，文件区显示当前浏览目录，侧栏显示当前会话的本机目录，取消授予不删文件。页面新建终端和连接 MCP 不跟随文件区。没有对应会话时，这些启动不会落到主工作区。宿主库已有会话表而缺少这一行时，监督器不改用主目录；写明工作区名称也会先核对会话行。库文件不存在、会话表不存在、库损坏或工作区为空时，新的 shell、终端和 MCP 也不启动。已经打开的终端仍可读取和关闭。会话存在时，显式 grant/名称 仍指向那个目录。
    `amazme-backend client decide` 已核对显式批准和拒绝。`client submit` 仍只等待终态。

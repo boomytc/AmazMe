@@ -249,6 +249,33 @@ def main() -> None:
                     expect(page.locator("#terminal-state")).to_have_text("尚无终端，点击新建")
                     page.locator("#terminal-new").click()
                     expect(page.locator("#terminal-state")).to_have_text("运行中")
+                    lost_ids: list[str] = []
+                    lost_attempts = {"count": 0}
+
+                    def fail_first_input(route) -> None:
+                        request = route.request
+                        lost_attempts["count"] += 1
+                        body = request.post_data_json
+                        if isinstance(body, dict) and isinstance(body.get("input_id"), str):
+                            lost_ids.append(str(body["input_id"]))
+                        if lost_attempts["count"] == 1:
+                            route.fetch()
+                            route.abort()
+                            return
+                        route.continue_()
+
+                    page.route("**/terminals/**/input", fail_first_input)
+                    page.locator("#terminal-input").fill("printf x >> electron-lost.txt")
+                    page.locator("#terminal-form button").first.click()
+                    expect(page.locator("#error")).not_to_have_text("", timeout=15000)
+                    until(lambda: (workspace / "electron-lost.txt").read_text() if (workspace / "electron-lost.txt").exists() else "",
+                          lambda value: value == "x")
+                    page.locator("#terminal-form button").first.click()
+                    time.sleep(0.4)
+                    assert (workspace / "electron-lost.txt").read_text() == "x"
+                    assert len(lost_ids) >= 2 and lost_ids[0] == lost_ids[1]
+                    page.unroute("**/terminals/**/input", fail_first_input)
+                    report["checks"].append("electron page reused one terminal input after the first receipt was lost")
                     page.locator("#terminal-input").fill("printf x > electron-term.txt; printf 'ELECTRON_TERM_OK\\n'")
                     page.locator("#terminal-form button").first.click()
                     expect(page.locator("#terminal-output")).to_contain_text("ELECTRON_TERM_OK")

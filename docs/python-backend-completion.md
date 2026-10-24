@@ -18,7 +18,7 @@
 | RPC | 已通过此单元范围 | `--mode rpc` 进程：显式审批、文件、检查点、终端、MCP、松开绑定不关闭、显式关闭 |
 | Python SDK | 已通过此单元范围 | 独立进程里的 `sdk.Client`：显式审批、文件、检查点、终端、MCP、进程退出不关闭、显式关闭 |
 | 默认交互画面 | 已通过此单元范围 | 包入口交互进程：显式审批、文件、检查点、终端、MCP、离开不关闭、再次进入后显式关闭。进程内未确认的 `/pty` 沿用同一次编号 |
-| C3 客户端未重复实验 | 未验收 | Electron 的输入丢回执；各客户端的更新冻结、worker 或监督器被杀；完整终端模拟。CLI 失败重试沿用代理目录里的编号。RPC 和 SDK 由调用方传入编号。TUI 和默认交互画面只在当前进程内沿用未确认输入 |
+| C3 客户端未重复实验 | 未验收 | 各客户端的更新冻结、worker 或监督器被杀；完整终端模拟。Electron 页面丢回执后沿用同一输入编号。CLI 失败重试沿用代理目录里的编号。RPC 和 SDK 由调用方传入编号。TUI 和默认交互画面只在当前进程内沿用未确认输入 |
 | D 剩余功能与签名安装 | 待本机链路验收 | 供应商、OAuth、TCC、SSH、完整产品/签名分发与旧依赖清理 |
 
 本轮三份运行报告的 build_id 均为 `c3f544e9061ff51f12d8fde261ad9018b4dda363f78b298643585f0d6e7af6ce`：
@@ -80,17 +80,17 @@ Chrome 155 驱动真实本机官方 Python MCP SDK 1.26.0 探针服务：拒绝�
 `verify_terminal.py` 的报告是 `.artifacts/native/terminal-3i__hs0x/report.json`。Chrome 155 看到 `NATIVE_TERM_OK`、工作区路径和 `stty size` 的 `40 100`；丢回执后同一输入只写入一次文件；关页面后阶段仍是 running，显式关闭后 clean 且 exited。页面无错误。
 这次运行释放了无人使用的 `terminal-err1kda9`。预算高水位 23,683,072 字节，空闲约 267.6 GiB，所属进程和全局普查都已收回。
 本单元最终源码上后端测试 477 项通过，包含既有的 worker 与监督器终端崩溃测试；Ruff 和 Pyright 通过。没有构建冻结安装包，没有启动或恢复 VM。
-这次 Chrome 运行不重复杀进程实验。画面不是完整 VT：没有备用屏幕、滚动区、鼠标、宽字符宽度和颜色。`output_seq` 按 Python 码点计数，页面按这个差值截取新增尾部；非 BMP 字符在 JS 里占两个长度单位，可能截断。保留文本被截短后，差值大于文本长度时会整段重放当前尾部。Electron 源码进程见下一节。TUI、CLI、RPC、SDK 尚未按这个画面验收。
+这次 Chrome 运行不重复杀进程实验。画面不是完整 VT：没有备用屏幕、滚动区、鼠标、宽字符宽度和颜色。`output_seq` 按 UTF-16 码元计数，和页面字符串长度一致。保留文本被截短后，差值大于文本长度时会整段重放当前尾部。Electron 源码进程见下一节。TUI、CLI、RPC、SDK 尚未按这个画面验收。
 
 ### Electron 源码进程
 
 详见 [Electron 证据](python-backend-native-electron-evidence.json)。
 `verify_electron.py` 让桌面启动器执行当前检出的 `python -m amazme_backend`，没有使用冻结包。
-源码 build_id 仍是 `f64fe5ec94e95dbaff3e431011bdd9a0454c854daa90c62ba9cb13aa6f506537`，因为这次没有改 `backend/src`。
-报告 `.artifacts/native/electron-o04d4rq_/report.json`。真实 Electron 页面完成终端输出、`stty` 观察到的 resize、刷新后终端仍在、显式关闭后退出；shell 审批后才写入文件；打开该文件并保存检查点；MCP 拒绝没有副作用，一次批准写入一次。
+这次源码 build_id 是 `23ad63ddfefd0ee93b8b9529cc1167609a2aac3763ea8b62a0097324ec467a51`。运行器没有改 `backend/src`。
+报告 `.artifacts/native/electron-uamesscf/report.json`。真实 Electron 页面完成终端输出、`stty` 观察到的 resize、刷新后终端仍在、显式关闭后退出；shell 审批后才写入文件；打开该文件并保存检查点；MCP 拒绝没有副作用，一次批准写入一次。第一次终端输入已经写到服务器，页面没有拿到回执；再次提交沿用同一输入编号，`electron-lost.txt` 仍是一个 `x`。
 第二个窗口是另一个会话。关闭任一窗口后，源码后端、另一会话、推迟的请求和 MCP 服务都还在。显式退出 Electron 后，它所启动的后端退出，无关的 sleep 进程仍在。页面无错误。
 预算高水位 37,617,664 字节，耗时约 7.8 秒，空闲约 266.8 GiB，所属进程和全局普查都已收回。没有启动或恢复 VM。
-这次没有在 Electron 里重做输入丢回执、更新冻结，或杀掉 worker 与监督器。旧的 `python-backend-electron-*.json` 只证明当时的冻结包。
+这次没有在 Electron 里重做更新冻结，或杀掉 worker 与监督器。旧的 `python-backend-electron-*.json` 只证明当时的冻结包。两份槽位已满时，运行器释放了更早的 `electron-o04d4rq_`。
 
 ### TUI
 
