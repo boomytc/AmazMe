@@ -276,6 +276,8 @@ def test_browser_manages_the_selected_session() -> None:
         const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
+        const feedbackIds = [];
+        const shareIds = [];
         let projectPosted = false;
         const session = ''' + json.dumps(SESSION) + r''';
         globalThis.fetch = async (path, options={})=>{
@@ -308,11 +310,15 @@ def test_browser_manages_the_selected_session() -> None:
             return response({display_name:body.display_name,revision:body.expected_revision+1});
           }
           if(path==='/api/v1/feedback' && method==='POST') {
-            seen.push('feedback '+body.session_id+' '+body.text);
+            feedbackIds.push(body.feedback_id);
+            if(feedbackIds.length === 2) throw new Error('lost');
+            seen.push('feedback '+body.session_id+' '+body.text+' '+body.feedback_id);
             return response({feedback_id:body.feedback_id,session_id:body.session_id,text:body.text});
           }
           if(path===`/api/v1/sessions/${session}/shares` && method==='POST') {
-            seen.push('share '+path);
+            shareIds.push(body.share_id);
+            if(shareIds.length === 2) throw new Error('lost');
+            seen.push('share '+path+' '+body.share_id);
             return response({share_id:body.share_id,session_id:session,digest:'abcdef1234567890',messages:[]});
           }
           if(method==='GET' && path.startsWith(`/api/v1/sessions/${session}/shares/`)) {
@@ -357,8 +363,28 @@ def test_browser_manages_the_selected_session() -> None:
         assert.equal(seen.includes('project 演示'), true);
         assert.equal(seen.some(item => /^session [a-f0-9]{32}$/.test(item)), true);
         assert.equal(seen.includes('settings 甲 0'), true);
-        assert.equal(seen.includes('feedback '+session+' 界面卡住'), true);
-        assert.equal(seen.includes('share /api/v1/sessions/'+session+'/shares'), true);
+        assert.equal(seen.includes('feedback '+session+' 界面卡住 '+feedbackIds[0]), true);
+        assert.equal(seen.includes('share /api/v1/sessions/'+session+'/shares '+shareIds[0]), true);
+        $('error').textContent = '';
+        $('manage-feedback-text').value = '再记一次';
+        $('manage-feedback').requestSubmit();
+        await until(()=>$('error').textContent === 'lost');
+        $('manage-feedback-text').value = '别的内容';
+        $('manage-feedback').requestSubmit();
+        await until(()=>$('error').textContent.includes('同一内容'));
+        assert.equal(feedbackIds.length, 2);
+        $('manage-feedback-text').value = '再记一次';
+        $('manage-feedback').requestSubmit();
+        await until(()=>$('manage-state').textContent===session && feedbackIds.length===3);
+        assert.equal(feedbackIds[1], feedbackIds[2]);
+        $('manage-share').click();
+        await until(()=>$('error').textContent === 'lost');
+        $('manage-share').click();
+        await until(()=>$('manage-state').textContent.includes('已保存') && shareIds.length===3);
+        assert.equal(shareIds[1], shareIds[2]);
+        $('manage-share').click();
+        await until(()=>shareIds.length===4);
+        assert.notEqual(shareIds[3], shareIds[2]);
         assert.equal(seen.some(item => item.startsWith('share-get /api/v1/sessions/'+session+'/shares/')), true);
         assert.equal(seen.includes('export'), true);
         assert.equal(seen.includes('import amazme-export/1 false'), true);

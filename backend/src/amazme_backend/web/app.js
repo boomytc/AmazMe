@@ -1479,20 +1479,43 @@ function startClient() {
   $("manage-feedback").onsubmit = async event => {
     event.preventDefault();
     if (!selected || !identity || health?.state !== "ready") return;
+    const text = $("manage-feedback-text").value;
+    const key = `feedback:${identity.profile_id}:${selected}`;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
+    catch { pending = null; }
+    if (pending && pending.phase === "unknown" && pending.text !== text) {
+      error(new Error("上次反馈结果未知，未自动重发；请用同一内容查询。"));
+      return;
+    }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {feedback_id: crypto.randomUUID().replaceAll("-", ""), text, phase: "unknown"};
+      sessionStorage.setItem(key, JSON.stringify(pending));
+    }
     try {
       const saved = await api("/api/v1/feedback", "POST", {
-        feedback_id: crypto.randomUUID().replaceAll("-", ""), session_id: selected, text: $("manage-feedback-text").value,
+        feedback_id: pending.feedback_id, session_id: selected, text: pending.text,
       }, current);
+      sessionStorage.removeItem(key);
       $("manage-state").textContent = saved.session_id;
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   $("manage-share").onclick = async () => {
     if (!selected || !identity || health?.state !== "ready") return;
+    const key = `share:${identity.profile_id}:${selected}`;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
+    catch { pending = null; }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {share_id: crypto.randomUUID().replaceAll("-", ""), phase: "unknown"};
+      sessionStorage.setItem(key, JSON.stringify(pending));
+    }
     try {
       const view = await api(`/api/v1/sessions/${selected}/shares`, "POST", {
-        share_id: crypto.randomUUID().replaceAll("-", ""),
+        share_id: pending.share_id,
       }, current);
+      sessionStorage.removeItem(key);
       const stored = await api(`/api/v1/sessions/${selected}/shares/${view.share_id}`);
       const text = (stored.messages || []).map(item => item.content).join("\n");
       $("manage-state").textContent = `${stored.session_id} · ${stored.digest.slice(0, 8)}${text ? ` · ${text}` : ""}`;
