@@ -938,9 +938,13 @@ class Host:
             if current is not None and current != (item.session_id, item.text):
                 raise BackendError("import_conflict")
         incoming_projects = {project.project_id for project in bundle.projects}
+        incoming_sessions = {item.session_id for item in bundle.sessions}
         for item in bundle.sessions:
             await self._require_workspace(item.workspace)
             if item.project_id and item.project_id not in known_projects and item.project_id not in incoming_projects:
+                raise BackendError("import_conflict")
+        for item in bundle.feedback:
+            if item.session_id and item.session_id not in existing and item.session_id not in incoming_sessions:
                 raise BackendError("import_conflict")
         created = 0
         for item in bundle.sessions:

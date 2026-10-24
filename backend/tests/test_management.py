@@ -14,8 +14,10 @@ from amazme_backend.contracts import (
     ExportBundle,
     ExportMessage,
     ExportSession,
+    FeedbackView,
     HostFence,
     ProcessLease,
+    ProductSettings,
     ProjectView,
     Submit,
 )
@@ -204,6 +206,52 @@ async def test_import_checks_every_workspace_before_writing(tmp_path: Path) -> N
             assert not (await client.get(f"/api/v1/sessions/{first}/search", params={"q": "乙"})).json()["hits"]
     finally:
         shutil.rmtree(grant, ignore_errors=True)
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+async def test_import_rejects_feedback_for_an_unknown_session_before_writing(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    session_id, project_id, feedback_id = "4" * 32, "5" * 32, "6" * 32
+    try:
+        async with _client(host) as client:
+            refused_body = _sealed(ExportBundle(
+                format="amazme-export/1",
+                projects=[ProjectView(project_id=project_id, name="不该出现")],
+                sessions=[ExportSession(
+                    session_id=session_id, title="先到", workspace="primary", project_id=project_id,
+                    messages=[ExportMessage(request_id="m", role="user", content="甲")])],
+                feedback=[FeedbackView(feedback_id=feedback_id, session_id="7" * 32, text="悬空反馈")],
+                settings=ProductSettings(display_name="不该改名"),
+            ))
+            refused = await client.post("/api/v1/import", json=refused_body)
+            assert refused.status_code == 409 and refused.json()["code"] == "import_conflict"
+            exported = await client.get("/api/v1/export")
+            assert exported.status_code == 200
+            assert exported.json()["projects"] == []
+            assert exported.json()["sessions"] == []
+            assert exported.json()["feedback"] == []
+            assert exported.json()["settings"]["display_name"] == ""
+            accepted_body = _sealed(ExportBundle(
+                format="amazme-export/1",
+                projects=[ProjectView(project_id=project_id, name="不该出现")],
+                sessions=[ExportSession(
+                    session_id=session_id, title="先到", workspace="primary", project_id=project_id,
+                    messages=[ExportMessage(request_id="m", role="user", content="甲")])],
+                feedback=[FeedbackView(feedback_id=feedback_id, session_id=session_id, text="跟着会话")],
+                settings=ProductSettings(display_name="已导入"),
+            ))
+            accepted = await client.post("/api/v1/import", json=accepted_body)
+            assert accepted.status_code == 200 and accepted.json()["created"] == 1
+            again = (await client.get("/api/v1/export")).json()
+            assert again["projects"] == [{"project_id": project_id, "name": "不该出现"}]
+            assert again["feedback"] == [{"feedback_id": feedback_id, "session_id": session_id, "text": "跟着会话"}]
+            assert again["settings"]["display_name"] == "已导入"
+            assert any(item["session_id"] == session_id for item in again["sessions"])
+    finally:
         await host.supervisor.close()
         await host.store.db.close()
 
