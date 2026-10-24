@@ -16,6 +16,26 @@ from .pty_gate import CREDIT, EXIT, INPUT, OUT_CREDIT, OUTPUT, PERMIT, RESIZE, W
 SCROLLBACK = 256 * 1024
 
 
+def utf16_units(text: str) -> int:
+    """Match JavaScript string length. A non-BMP code point is two units, not one."""
+    return sum(2 if ord(char) > 0xFFFF else 1 for char in text)
+
+
+def utf16_tail(text: str, limit: int) -> str:
+    """Keep the newest units. A code point that does not fit is dropped whole."""
+    if limit <= 0:
+        return ""
+    count = 0
+    start = len(text)
+    for index in range(len(text) - 1, -1, -1):
+        units = 2 if ord(text[index]) > 0xFFFF else 1
+        if count + units > limit:
+            break
+        count += units
+        start = index
+    return text[start:]
+
+
 class PtyClient:
     """Synchronous client used by the supervisor's PTY task and by tests."""
 
@@ -156,9 +176,9 @@ class PtyClient:
             self._decoder = codecs.getincrementaldecoder("utf-8")("replace")
             self._text_done = False
         chunk = self._decoder.decode(data, final)
-        self.text_seq += len(chunk)
+        self.text_seq += utf16_units(chunk)
         self.text += chunk
-        if len(self.text) > SCROLLBACK:
-            self.text = self.text[-SCROLLBACK:]
+        if utf16_units(self.text) > SCROLLBACK:
+            self.text = utf16_tail(self.text, SCROLLBACK)
         if final:
             self._text_done = True

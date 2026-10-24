@@ -11,7 +11,7 @@ import pytest
 
 from amazme_backend.contracts import BackendError
 from amazme_backend.pty_gate import EXIT, OUTPUT, WINDOW
-from amazme_backend.pty_session import SCROLLBACK, PtyClient
+from amazme_backend.pty_session import SCROLLBACK, PtyClient, utf16_tail, utf16_units
 
 GATE = Path(__file__).parents[1] / "src/amazme_backend/pty_gate.py"
 SOURCE = GATE.read_text()
@@ -111,6 +111,15 @@ def test_split_utf8_and_output_after_exit_stay_in_scrollback() -> None:
         pty._apply(OUTPUT, b"OK")
         assert pty.text == "你OK"
         assert pty.text_seq == 3
+        emoji = "🙂".encode()
+        other = PtyClient(right)
+        other._apply(OUTPUT, emoji[:1])
+        assert other.text == "" and other.text_seq == 0
+        other._apply(OUTPUT, emoji[1:])
+        assert other.text == "🙂" and other.text_seq == utf16_units("🙂") == 2
+        assert utf16_tail("A🙂", 2) == "🙂"
+        assert utf16_tail("A🙂", 1) == ""
+        assert utf16_units("你") == 1 and utf16_units("e\u0301") == 2
         assert pty.exit_code == 0
         assert pty.pending_output is True
     finally:
@@ -197,7 +206,7 @@ def test_browser_sends_terminal_input_and_resize() -> None:
           for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
           throw Error('timed out '+$('error').textContent);
         }
-        await import(appURL);
+            await import(appURL);
         await until(()=>$('sessions').textContent.includes('工作区'));
         $('terminal').open = true;
         $('terminal').dispatchEvent(new window.Event('toggle'));
@@ -219,6 +228,26 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         assert.equal(typed[1].body.data, '\r');
         assert.equal(typed[1].body.input_id.length, 32);
         assert.notEqual(typed[0].body.input_id, typed[1].body.input_id);
+        const emojiView = {id:'emoji'};
+            const first = globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A', output_seq:1});
+            const second = globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A🙂', output_seq:3});
+        assert.equal(second.includes('🙂'), true);
+        assert.equal(second.includes('\uDE42') && !second.includes('🙂'), false);
+            const third = globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A🙂', output_seq:3});
+        assert.equal(third, second);
+        const cjk = {id:'cjk'};
+            globalThis.renderTerminal(cjk, {cols:80, rows:24, output:'你', output_seq:1});
+            assert.equal(globalThis.renderTerminal(cjk, {cols:80, rows:24, output:'你好', output_seq:2}).includes('你好'), true);
+            const mark = {id:'mark'};
+            globalThis.renderTerminal(mark, {cols:40, rows:4, output:'e', output_seq:1});
+            assert.equal(globalThis.renderTerminal(mark, {cols:40, rows:4, output:'e\u0301', output_seq:2}).includes('e\u0301'), true);
+            const resized = globalThis.renderTerminal(emojiView, {cols:100, rows:40, output:'A🙂', output_seq:3});
+        assert.equal(resized.includes('🙂'), true);
+        const longView = {id:'long'};
+            globalThis.renderTerminal(longView, {cols:80, rows:8, output:'hello', output_seq:5});
+            const replaced = globalThis.renderTerminal(longView, {cols:80, rows:8, output:'xy', output_seq:100});
+        assert.equal(replaced.includes('xy'), true);
+        assert.equal(replaced.includes('hello'), false);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

@@ -4,7 +4,10 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { getAgentDir } from "./config.ts";
 import { writeRawStdout } from "./core/output-guard.ts";
 import { connectPythonHost } from "./python-session-tui.ts";
 
@@ -47,6 +50,47 @@ function sleep(ms: number): Promise<void> {
 
 function hexId(): string {
 	return randomBytes(16).toString("hex");
+}
+
+interface PtyRetry {
+	inputId: string;
+	prompt: string;
+	terminalId: string;
+}
+
+function ptyRetryPath(sessionId: string): string {
+	if (!/^[A-Za-z0-9_-]{1,80}$/.test(sessionId)) fail("invalid_session");
+	return join(getAgentDir(), "terminal-inputs", `${sessionId}.json`);
+}
+
+function readPtyRetry(sessionId: string): PtyRetry | null {
+	const path = ptyRetryPath(sessionId);
+	if (!existsSync(path)) return null;
+	const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+	if (!isRecord(parsed) || typeof parsed.inputId !== "string" || typeof parsed.prompt !== "string" || typeof parsed.terminalId !== "string") {
+		fail("invalid_terminal_input");
+	}
+	return { inputId: parsed.inputId, prompt: parsed.prompt, terminalId: parsed.terminalId };
+}
+
+function storePtyRetry(sessionId: string, pending: PtyRetry): PtyRetry {
+	mkdirSync(join(getAgentDir(), "terminal-inputs"), { recursive: true, mode: 0o700 });
+	try {
+		writeFileSync(ptyRetryPath(sessionId), JSON.stringify(pending), { flag: "wx", mode: 0o600 });
+		return pending;
+	} catch (error) {
+		if (!isRecord(error) || error.code !== "EEXIST") throw error;
+		const current = readPtyRetry(sessionId);
+		if (!current) fail("invalid_terminal_input");
+		return current;
+	}
+}
+
+export function clearPtyRetry(sessionId: string): boolean {
+	const path = ptyRetryPath(sessionId);
+	if (!existsSync(path)) return false;
+	unlinkSync(path);
+	return true;
 }
 
 function approvalSummary(approval: Record<string, unknown>): string {
@@ -385,6 +429,46 @@ async function watchTerminal(client: HostClient, sessionId: string, attachmentId
 	return typeof view.output === "string" ? view.output : "";
 }
 
+export async function runPtyCommand(client: HostClient, sessionId: string, attachmentId: string, workspace: string, prompt: string, jsonMode: boolean): Promise<number> {
+	if (prompt === "/pty-ack") {
+		const removed = clearPtyRetry(sessionId);
+		const text = removed ? "已由用户核对；原输入不会重放\n" : "没有未确认的输入\n";
+		return emitRecord({ workspace, session_id: sessionId, status: removed ? "acked" : "absent" }, jsonMode, text, removed ? 0 : 1);
+	}
+	const pending = readPtyRetry(sessionId);
+	if (pending && pending.prompt !== prompt) {
+		return emitRecord({
+			workspace, session_id: sessionId, status: "unknown", input_id: pending.inputId,
+		}, jsonMode, "上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。\n", 1);
+	}
+	let terminalId = pending?.terminalId ?? "";
+	if (!terminalId) {
+		terminalId = await client.runningTerminal(sessionId);
+		if (!terminalId) terminalId = await client.openTerminal(sessionId, attachmentId, workspace);
+	}
+	const claimed = pending ?? storePtyRetry(sessionId, { inputId: hexId(), prompt, terminalId });
+	if (claimed.prompt !== prompt) {
+		return emitRecord({
+			workspace, session_id: sessionId, status: "unknown", input_id: claimed.inputId,
+		}, jsonMode, "上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。\n", 1);
+	}
+	try {
+		await client.writeTerminal(sessionId, attachmentId, claimed.terminalId, `${prompt.slice("/pty ".length)}\n`, claimed.inputId);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "request_failed";
+		const text = message === "terminal_input_unconfirmed" ? "输入未确认\n" : `${message}\n`;
+		return emitRecord({
+			workspace, session_id: sessionId, status: "unknown", input_id: claimed.inputId, terminal_id: claimed.terminalId,
+		}, jsonMode, text, 1);
+	}
+	clearPtyRetry(sessionId);
+	const output = await watchTerminal(client, sessionId, attachmentId, claimed.terminalId);
+	const text = `输入已接收\n${visibleLines(output).join("\n")}\n`;
+	return emitRecord({
+		workspace, session_id: sessionId, status: "accepted", terminal_id: claimed.terminalId, input_id: claimed.inputId, output,
+	}, jsonMode, text, 0);
+}
+
 async function localCommand(client: HostClient, opened: OpenedSession, workspace: string, prompt: string, decision: string | undefined, jsonMode: boolean): Promise<number | undefined> {
 	const approve = decision === "批准";
 	if (prompt.startsWith("/file ")) {
@@ -414,13 +498,8 @@ async function localCommand(client: HostClient, opened: OpenedSession, workspace
 		await client.resizeTerminal(opened.sessionId, opened.attachmentId, terminalId, cols, rows);
 		return emitRecord({ workspace, session_id: opened.sessionId, status: "resized", cols, rows }, jsonMode, `终端 ${cols} ${rows}\n`, 0);
 	}
-	if (prompt.startsWith("/pty ")) {
-		let terminalId = await client.runningTerminal(opened.sessionId);
-		if (!terminalId) terminalId = await client.openTerminal(opened.sessionId, opened.attachmentId, workspace);
-		await client.writeTerminal(opened.sessionId, opened.attachmentId, terminalId, `${prompt.slice("/pty ".length)}\n`);
-		const output = await watchTerminal(client, opened.sessionId, opened.attachmentId, terminalId);
-		const text = `输入已接收\n${visibleLines(output).join("\n")}\n`;
-		return emitRecord({ workspace, session_id: opened.sessionId, status: "accepted", terminal_id: terminalId, output }, jsonMode, text, 0);
+	if (prompt === "/pty-ack" || prompt.startsWith("/pty ")) {
+		return runPtyCommand(client, opened.sessionId, opened.attachmentId, workspace, prompt, jsonMode);
 	}
 	if (prompt === "/mcp-close") {
 		const serverId = await client.readyServer(opened.sessionId);

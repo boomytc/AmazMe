@@ -775,8 +775,21 @@ function startClient() {
         continue;
       }
       if (ch < " ") { i += 1; continue; }
-      this.put(ch);
-      i += 1;
+      const point = data.codePointAt(i);
+      const size = point > 0xFFFF ? 2 : 1;
+      let glyph = data.slice(i, i + size);
+      i += size;
+      while (i < data.length) {
+        const mark = data.codePointAt(i);
+        const combining = (mark >= 0x0300 && mark <= 0x036F) || (mark >= 0x1AB0 && mark <= 0x1AFF)
+          || (mark >= 0x1DC0 && mark <= 0x1DFF) || (mark >= 0x20D0 && mark <= 0x20FF)
+          || (mark >= 0xFE20 && mark <= 0xFE2F);
+        if (!combining) break;
+        const markSize = mark > 0xFFFF ? 2 : 1;
+        glyph += data.slice(i, i + markSize);
+        i += markSize;
+      }
+      this.put(glyph);
     }
   };
   TerminalScreen.prototype.consumeEscape = function (data, i) {
@@ -841,16 +854,18 @@ function startClient() {
     }
     const text = value.output || "";
     const seq = Number(value.output_seq || text.length);
-    if (!screen.ready || seq < screen.seq || seq - screen.seq > text.length) {
+    const delta = seq - screen.seq;
+    if (!screen.ready || seq < screen.seq || delta > text.length) {
       screen.resetGrid();
       screen.scroll = [];
       screen.pending = "";
       screen.write(text);
-    } else if (seq > screen.seq) screen.write(text.slice(text.length - (seq - screen.seq)));
+    } else if (delta > 0) screen.write(text.slice(text.length - delta));
     screen.seq = seq;
     screen.ready = true;
     return screen.visible();
   }
+  globalThis.renderTerminal = renderTerminal;
   let terminalView = null, terminalPoll = null, terminalNavigation = 0;
   const terminalKey = (connection, suffix) => `terminal:${identity.profile_id}:${connection.session}:${suffix}`;
   const terminalOwns = view => view && terminalView === view && owns(view.connection);
