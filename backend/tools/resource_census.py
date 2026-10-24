@@ -13,7 +13,7 @@ import os
 import shutil
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
 WARN_FREE_BYTES = 50 * 1024**3
@@ -107,8 +107,54 @@ def profile_arg(argv: list[str]) -> str | None:
     return None
 
 
+def _posix(path: str) -> str:
+    return os.path.normpath(path).replace("\\", "/")
+
+
+def _canonical_profile(profile: str) -> str:
+    """Resolve symlinks through the longest existing ancestor. A missing temp profile still canonicalizes."""
+    path = os.path.normpath(profile)
+    if os.path.lexists(path):
+        return os.path.realpath(path)
+    missing: list[str] = []
+    current = path
+    while current and current != os.path.dirname(current) and not os.path.lexists(current):
+        missing.append(os.path.basename(current))
+        current = os.path.dirname(current)
+    if not current or not os.path.lexists(current):
+        return path
+    resolved = os.path.realpath(current)
+    for part in reversed(missing):
+        resolved = os.path.join(resolved, part)
+    return os.path.normpath(resolved)
+
+
+def _ephemeral_text(path: str) -> bool:
+    if path in {"/tmp", "/private/tmp"}:
+        return True
+    if any(marker in path for marker in ("/tmp/", "/private/tmp/", "/.artifacts/", ".amazme-vm", "/am2-")):
+        return True
+    parts = PurePosixPath(path).parts
+    if len(parts) >= 6 and parts[0] == "/" and parts[1:3] == ("var", "folders") and parts[5] == "T":
+        return True
+    return len(parts) >= 7 and parts[0] == "/" and parts[1:4] == ("private", "var", "folders") and parts[6] == "T"
+
+
+def _profile_aliases(path: str) -> set[str]:
+    aliases = {path}
+    if path.startswith("/private/var/"):
+        aliases.add("/var/" + path.removeprefix("/private/var/"))
+    elif path.startswith("/var/"):
+        aliases.add("/private" + path)
+    return aliases
+
+
 def _profile_ephemeral(profile: str) -> bool:
-    return any(marker in profile for marker in ("/tmp/", "/private/tmp/", "/.artifacts/", ".amazme-vm", "/am2-"))
+    candidates = {_posix(profile), _posix(_canonical_profile(profile))}
+    expanded: set[str] = set()
+    for item in candidates:
+        expanded.update(_profile_aliases(item))
+    return any(_ephemeral_text(item) for item in expanded)
 
 
 def _mentions_owned_runtime(blob: str) -> bool:

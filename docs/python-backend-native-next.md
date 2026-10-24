@@ -45,7 +45,8 @@
 | 未知网页查询和桌面点击不另开一次 | `7c10958172a12f600da369a08c60131263bac6fe` | `backend/tests/test_web_tools.py`、`backend/tests/test_computer_use.py`：结果未知时沿用同一调用或动作；改查询、画面或坐标不会发送 |
 | 未知压缩不再次请求模型 | `96f9bd3dead41d5790fcc92d76d628e4ad74d055` | `backend/tests/test_session_branch.py`：已写好或仍占位的同一次压缩不再请求模型；页面沿用同一次编号 |
 | TUI 未确认输入不另写一次 | `4f046d51ad10dcb807a2902179a5b6becd4cfdff` | `backend/tests/test_tui.py`：同一次进程里未确认的 `/pty` 沿用同一编号；改内容不发送；`/pty-ack` 不重放 |
-| 交互画面未确认输入不另写一次 | 包含本文件的提交 | `packages/coding-agent/test/python-screen-terminal.test.ts`：同一次画面进程里未确认的 `/pty` 沿用同一编号；改内容不发送；`/pty-ack` 不重放。每次 print 命令仍是新进程 |
+| 交互画面未确认输入不另写一次 | `a1b7f8d36c1a260e2c8655e2e97d044113097ff5` | `packages/coding-agent/test/python-screen-terminal.test.ts`：同一次画面进程里未确认的 `/pty` 沿用同一编号；改内容不发送；`/pty-ack` 不重放。每次 print 命令仍是新进程 |
+| macOS 临时目录里的后端不是常驻服务 | 包含本文件的提交 | `backend/tests/test_resource_census.py`：`/var/folders/.../T` 与 `/private/var` 别名上的 profile 记为泄漏，目录不在也一样；`C` 缓存和用户 profile 仍是 observed。画面测试先停止所属进程再删目录 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -83,7 +84,7 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 压缩不带出供应商密钥的源码 build_id 为 `dcb80f58d549076adc4c9582dbc3a06e005105ad9a529dedadebc85fb95a2142`。原文含当前密钥时不请求摘要。返回的摘要含当前密钥时不写入，原消息保留。已经落盘且含当前密钥的摘要不会进入下一轮模型输入。用户本轮不同的原文仍会发送。这不是真实供应商调用。
 插件门、Codemode 和桌面驱动只拿到工具环境。供应商密钥、控制令牌和 SSH agent 不传给这些子进程。这不是真实 TCC，也不是任意第三方插件。源码 build_id 为 `64a11ff6f92ffda56ce808430dcb243eaa934a41f8ffae2d7ebe79294c6ba9b1`。
 
-资源普查命令只报告。用户主目录里的常驻服务保持 observed。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
+资源普查命令只报告，不按进程名发信号。用户主目录里的常驻服务保持 observed。macOS 用户临时目录 `/var/folders/<两级>/T` 和 `/private/var` 下的同一路径也是临时 profile，目录已经不在仍按启动参数归类；`C` 缓存目录不是泄漏。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
 下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
 
 ## 剩余执行顺序

@@ -61,6 +61,35 @@ def test_ephemeral_supervisor_and_its_child_block_a_new_build(tmp_path):
     assert report["deletion"] == "not_performed"
 
 
+def test_missing_macos_temp_profile_is_a_leak_and_a_user_profile_is_not(tmp_path):
+    gone = "/private/var/folders/ab/cd/T/amazme-screen-pty-nNZ88F/profile"
+    alias = "/var/folders/ab/cd/T/../T/amazme-screen-pty-nNZ88F/profile"
+    escaped = "/var/folders/ab/cd/T/../../../../Users/keep/profile"
+    cache = "/private/var/folders/ab/cd/C/com.apple.python/profile"
+    user = "/Users/keep/profile"
+    assert not Path(gone).exists()
+    if Path("/var").is_symlink():
+        assert census._canonical_profile("/var").startswith("/private/")
+        assert census._profile_ephemeral("/var/folders/ab/cd/T/amazme-screen-pty-missing/profile")
+    processes = [
+        proc(4638, 1, ["python", "-m", "amazme_backend", "supervisor", "--profile", gone]),
+        proc(50, 1, ["amazme-backend", "serve", "--profile", alias]),
+        proc(51, 1, ["amazme-backend", "worker", "--profile", cache, "--session", "s"]),
+        proc(52, 1, ["amazme-backend", "supervisor", "--profile", user]),
+        proc(53, 1, ["amazme-backend", "serve", "--profile", escaped]),
+    ]
+    report, _arts, _vm, _temp = assembled(tmp_path, processes, 60 * GIB)
+    rows = {row["pid"]: row for row in [*report["observed"], *report["leaks"]]}
+    assert rows[4638]["disposition"] == "leak"
+    assert rows[50]["disposition"] == "leak"
+    assert rows[51]["disposition"] == "observed"
+    assert rows[52]["disposition"] == "observed"
+    assert rows[53]["disposition"] == "observed"
+    assert report["reclaimed"] is False
+    assert report["deletion"] == "not_performed"
+    assert report["build_allowed"] is False
+
+
 def test_durable_serve_supervisor_and_worker_stay_observed(tmp_path):
     profile = "/Users/keep/profile"
     processes = [

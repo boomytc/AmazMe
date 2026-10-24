@@ -160,7 +160,7 @@ Chrome 155 驱动真实本机官方 Python MCP SDK 1.26.0 探针服务：拒绝�
 这些结论仅覆盖普查列出的 scope，不能扩展为整台机器无任何资源占用。
 
 资源普查随后单独收口：命令只报告，退出码 0/2/1 分别是可继续、磁盘预警、拒绝新增。
-用户主目录中的常驻服务记为 observed，不按进程名停止。临时 profile 上的 serve、supervisor、worker、execute、service-runner，无主的 pty-gate / mcp-gate，以及带产物路径的无头浏览器记为泄漏。
+用户主目录中的常驻服务记为 observed，不按进程名停止。临时 profile 上的 serve、supervisor、worker、execute、service-runner，无主的 pty-gate / mcp-gate，以及带产物路径的无头浏览器记为泄漏。macOS `/var/folders/<两级>/T` 与 `/private/var` 别名同样是临时 profile，profile 目录已经不在也按参数归类；`C` 缓存目录不是泄漏。交互画面测试先走 `stop` 并等待所属 Host、监督器和仍带该 profile 的后代退出，再删除目录。
 打包在锁内只删除产物根下没有进程引用、超出保留窗口的旧 `package-*`。运行器达到两份时只删除最旧且没有进程引用的一份，不提高上限。
 VM 目录和 `am2-*` 临时目录只报告；未确认不删除，也不安装或启动虚拟机。
 源码身份未改。隔离 profile 实跑时 build_id 仍是 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`；

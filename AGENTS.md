@@ -25,7 +25,7 @@
 backend/.venv/bin/python backend/tools/resource_census.py
 ```
 
-阈值、归类和退出码以 `backend/tools/resource_census.py` 为准。空闲磁盘低于 50 GiB 预警，退出码 2。低于 20 GiB，或仍有临时 profile 上的 serve / supervisor / worker / execute / service-runner、无主 pty-gate / mcp-gate、Lima / hostagent、带本机产物路径的无头浏览器、VM 目录、`am2-` 临时目录、超过两份的 `package-*`，退出码 1。用户主目录里的常驻服务只记为 observed，不当作泄漏，也不按进程名停止。
+阈值、归类和退出码以 `backend/tools/resource_census.py` 为准。空闲磁盘低于 50 GiB 预警，退出码 2。低于 20 GiB，或仍有临时 profile 上的 serve / supervisor / worker / execute / service-runner、无主 pty-gate / mcp-gate、Lima / hostagent、带本机产物路径的无头浏览器、VM 目录、`am2-` 临时目录、超过两份的 `package-*`，退出码 1。临时 profile 含 `/tmp`、`/private/tmp`、`.artifacts`、`am2-`、`.amazme-vm`，以及 macOS 用户临时目录 `/var/folders/<两级>/T` 和 `/private/var` 下的同一路径；目录已经不在也按启动参数里的路径归类。`/var/folders` 的 `C` 缓存和用户主目录里的常驻服务只记为 observed，不当作泄漏，也不按进程名停止。
 
 `reclaimed` 只对应该次输出的 `scope`。测试 passed、某次 cleanup 字符串、或只匹配 `amazme_backend serve` 的 pgrep，都不是资源已经收回。
 
