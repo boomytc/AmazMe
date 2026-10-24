@@ -336,7 +336,7 @@ def test_browser_saves_the_selected_catalog_model() -> None:
         const window = new Window({url:'http://127.0.0.1:1234/'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
         Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         let current = {provider:'deepseek',model:'deepseek-flash',base_url:'https://api.deepseek.com',max_tokens:2048,key_configured:true};
         const models = [
           {provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false},

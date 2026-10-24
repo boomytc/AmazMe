@@ -89,7 +89,7 @@ def test_browser_previews_a_checkpoint_without_replacing_the_editor() -> None:
         const window = new Window({url:'http://127.0.0.1:1234/'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
         Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
         const checkpointIds = [];

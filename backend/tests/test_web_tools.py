@@ -411,6 +411,10 @@ async def _until_idle(worker: Worker, seen: list[httpx.Request]) -> None:
 async def test_model_web_tool_stays_out_of_the_vm_and_does_not_replay(tmp_path: Path) -> None:
     host = _host(tmp_path)
     (tmp_path / "sessions" / SESSION).mkdir(parents=True)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    await host.store.initialize(host.instance, host.build, lease)
+    await host.store.create_session(SESSION, CreateSession(title="网页工具"))
     worker = Worker(host.profile, SESSION, "worker-web")
     await worker.store.initialize()
     fence = HostFence(host_epoch=1, build_id=worker.build)
@@ -477,6 +481,10 @@ async def test_model_web_tool_stays_out_of_the_vm_and_does_not_replay(tmp_path: 
 async def test_model_web_tool_without_a_key_does_not_reserve_a_call(tmp_path: Path) -> None:
     host = _host(tmp_path, provider="faux")
     (tmp_path / "sessions" / SESSION).mkdir(parents=True)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    await host.store.initialize(host.instance, host.build, lease)
+    await host.store.create_session(SESSION, CreateSession(title="网页工具"))
     worker = Worker(host.profile, SESSION, "worker-web")
     await worker.store.initialize()
     fence = HostFence(host_epoch=1, build_id=worker.build)

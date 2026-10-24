@@ -64,6 +64,7 @@ def test_window_url_binds_its_own_session_and_pagehide_does_not_cancel() -> None
             const method=options.method||'GET';
             calls.push({path,method,body:options.body});
             if (path==='/api/v1/bootstrap') return response(identity);
+            if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
             if (path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
             if (path==='/api/v1/health') return response({state:'ready',identity});
             if (path==='/api/v1/sessions' && method==='GET') {
