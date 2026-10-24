@@ -276,8 +276,8 @@ def main() -> None:
                     expect(page.locator("#error")).not_to_have_text("", timeout=15000)
                     until(lambda: (workspace / "electron-lost.txt").read_text() if (workspace / "electron-lost.txt").exists() else "",
                           lambda value: value == "x")
-                    page.locator("#terminal-form button").first.click()
-                    time.sleep(0.4)
+                    page.locator("#terminal-retry").click()
+                    expect(page.locator("#terminal-pending")).to_have_text("")
                     assert (workspace / "electron-lost.txt").read_text() == "x"
                     assert len(lost_ids) >= 2 and lost_ids[0] == lost_ids[1]
                     page.unroute("**/terminals/**/input", fail_first_input)

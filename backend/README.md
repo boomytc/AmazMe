@@ -1,6 +1,6 @@
 # AmazMe Python 后端 0.1.0
 
-AmazMe 正在按 [本机优先方案](../docs/python-backend-plan.md) 将 shell、文件、PTY、MCP 改为操作用户真实环境。
+AmazMe 按 [本机优先方案](../docs/python-backend-plan.md) 使用 Python shell、文件、PTY、MCP 操作用户真实环境。
 保留 Python 会话、模型、SQLite、审批及客户端，移除 VM 默认执行依赖。状态见 [验收台账](../docs/python-backend-completion.md)。
 
 本机 shell 具有当前用户权限，文件 API 的路径检查和命令审批不构成操作系统沙箱。
@@ -57,4 +57,4 @@ backend/.venv/bin/python backend/tools/verify_screen.py
 用新隔离 profile 验收，不读取、迁移或删除用户历史库。禁止恢复 VM 链路、运行 prepare_runtime/bootstrap_resources，
 以及反复打包积累磁盘。普通开发先做源码验证，需要安装验证时仅保留一份本轮包。
 历史 VM 安装命令与报告保留在 Git 历史和 docs/python-backend-p2-handoff.md，不能用于当前本机验收。
-当前阶段的提交、证据、剩余顺序和执行约束见 [阶段交接](../docs/python-backend-native-next.md)。
+当前候选、提交和证据见 [完成台账](../docs/python-backend-completion.md)；执行约束见 [实施入口](../docs/python-backend-native-next.md)。
