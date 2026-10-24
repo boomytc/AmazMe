@@ -38,6 +38,7 @@ from .contracts import (
     Lease,
     McpCall,
     McpCallEnvelope,
+    McpCallRef,
     McpCallRequest,
     McpDecision,
     McpDecisionEnvelope,
@@ -80,7 +81,7 @@ from .contracts import (
     WorkerSpec,
 )
 from .faults import Faults
-from .mcp_session import McpClient, mcp_digest
+from .mcp_session import McpClient, catalog_schema_digest, mcp_digest
 from .memories import session_workspace
 from .native_execution import LocalPermit, LocalProcess, reconcile
 from .native_services import ServiceProcess
@@ -91,6 +92,11 @@ from .pty_session import PtyClient
 from .remote_session import RemoteClient
 from .transport import app_factory
 from .workspace_map import PRIMARY, load_grants, split_client_path
+
+MCP_UNRESOLVED_LIMIT = 512
+MCP_ACTIVE_LIMIT = 16
+MCP_IDENTITY_LIMIT = 4096
+MCP_TERMINAL_WINDOW = 100
 
 
 class ExecutionDB:
@@ -317,7 +323,8 @@ class Supervisor:
             for table, additions in {
                 "mcp_servers": {"workspace": "TEXT NOT NULL DEFAULT 'primary'", "protocol_version": "TEXT NOT NULL DEFAULT ''",
                                 "lease": "TEXT NOT NULL DEFAULT ''", "directory": "TEXT NOT NULL DEFAULT ''", "permitted": "INTEGER NOT NULL DEFAULT 0"},
-                "mcp_calls": {"result_data": "TEXT", "is_error": "INTEGER NOT NULL DEFAULT 0"},
+                "mcp_calls": {"result_data": "TEXT", "is_error": "INTEGER NOT NULL DEFAULT 0",
+                              "schema_digest": "TEXT NOT NULL DEFAULT ''", "origin": "TEXT NOT NULL DEFAULT 'manual'"},
             }.items():
                 present = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})")}
                 for column, definition in additions.items():
@@ -1176,6 +1183,7 @@ class Supervisor:
             "phase": row["phase"], "result": row["result"], "digest": row["digest"],
             "arguments": json.loads(row["arguments"]), "is_error": bool(row["is_error"]),
             "result_data": json.loads(row["result_data"]) if row["result_data"] else None,
+            "origin": row["origin"] if row["origin"] in {"manual", "model"} else "manual",
         })
 
     async def open_mcp(self, value: OpenMcp) -> McpView:
@@ -1213,6 +1221,11 @@ class Supervisor:
                 await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET permitted=1 WHERE id=?", (value.server_id,)), write=True)
                 await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), location)
                 catalog = json.dumps([tool.model_dump() for tool in client.tools], ensure_ascii=False)
+                busy = await self.db.call(lambda db: db.execute(
+                    "SELECT 1 FROM mcp_calls WHERE server=? AND phase IN ('waiting_approval','running')",
+                    (value.server_id,)).fetchone())
+                if busy:
+                    raise BackendError("mcp_tool_identity")
                 await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET phase='ready',catalog=?,protocol_version=? WHERE id=?",
                     (catalog, client.protocol_version, value.server_id)), write=True)
             except BaseException:
@@ -1255,10 +1268,30 @@ class Supervisor:
                     await self._close_mcp(server, interrupted=True)
             servers = await self.db.call(lambda db: db.execute(
                 "SELECT * FROM mcp_servers WHERE session=? ORDER BY clean,rowid DESC LIMIT 100", (value.session_id,)).fetchall())
-            calls = await self.db.call(lambda db: db.execute(
-                "SELECT c.* FROM mcp_calls c JOIN mcp_servers s ON s.id=c.server WHERE s.session=? "
-                "ORDER BY (c.phase IN ('waiting_approval','running')) DESC,c.rowid DESC LIMIT 100", (value.session_id,)).fetchall())
+            calls = await self._listed_calls(value.session_id)
             return McpState(servers=[self._mcp_view(row) for row in servers], calls=[self._mcp_call(row) for row in calls])
+
+    async def _listed_calls(self, session_id: str) -> list[sqlite3.Row]:
+        """Non-terminal calls stay visible. Terminal history keeps its newest window and is never deleted here."""
+        def query(db: sqlite3.Connection) -> tuple[list[sqlite3.Row], list[sqlite3.Row]]:
+            open_rows = db.execute(
+                "SELECT c.* FROM mcp_calls c JOIN mcp_servers s ON s.id=c.server "
+                "WHERE s.session=? AND c.phase NOT IN ('done','denied') ORDER BY c.rowid", (session_id,)).fetchall()
+            recent = db.execute(
+                "SELECT c.* FROM mcp_calls c JOIN mcp_servers s ON s.id=c.server "
+                "WHERE s.session=? AND c.phase IN ('done','denied') ORDER BY c.rowid DESC LIMIT ?",
+                (session_id, MCP_TERMINAL_WINDOW)).fetchall()
+            return list(open_rows), list(recent)
+        open_rows, recent = await self.db.call(query)
+        seen: set[str] = set()
+        merged: list[sqlite3.Row] = []
+        for row in [*open_rows, *recent]:
+            call_id = str(row["id"])
+            if call_id in seen:
+                continue
+            seen.add(call_id)
+            merged.append(row)
+        return merged
 
     async def request_mcp_call(self, session_id: str, server_id: str, value: McpCallRequest, fence: HostFence) -> McpCall:
         async with self.control:
@@ -1270,22 +1303,30 @@ class Supervisor:
             digest = mcp_digest(server_id, str(server["command"]), str(server["workspace"]), self.build, value.name, value.arguments)
             existing = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
             if existing is not None:
-                if existing["server"] != server_id or existing["digest"] != digest:
+                stored_origin = str(existing["origin"] or "manual")
+                if (existing["server"] != server_id or existing["digest"] != digest
+                        or stored_origin != value.origin or str(existing["schema_digest"] or "") != value.schema_digest):
                     raise BackendError("mcp_call_conflict")
+                if existing["phase"] == "running":
+                    await self._sync_mcp(server_id)
+                    existing = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
+                    assert existing is not None
                 return self._mcp_call(existing)
             if server["phase"] != "ready":
                 raise BackendError("mcp_not_ready")
             if value.name not in {item["name"] for item in json.loads(server["catalog"])}:
                 raise BackendError("mcp_tool_unknown")
-            count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_calls").fetchone()[0])
-            if count >= 512:
-                raise BackendError("mcp_call_capacity", status=429)
-            active = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_calls WHERE phase IN ('waiting_approval','running')").fetchone()[0])
-            if active >= 16:
+            counts = await self.db.call(lambda db: db.execute(
+                "SELECT count(*), sum(phase IN ('waiting_approval','running','unknown')), "
+                "sum(phase IN ('waiting_approval','running')) FROM mcp_calls").fetchone())
+            total, unresolved, active = int(counts[0] or 0), int(counts[1] or 0), int(counts[2] or 0)
+            if total >= MCP_IDENTITY_LIMIT or unresolved >= MCP_UNRESOLVED_LIMIT or active >= MCP_ACTIVE_LIMIT:
                 raise BackendError("mcp_call_capacity", status=429)
             await self.db.call(lambda db: db.execute(
-                "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase) VALUES(?,?,?,?,?,'waiting_approval')",
-                (value.call_id, server_id, value.name, json.dumps(value.arguments, sort_keys=True, ensure_ascii=False), digest)), write=True)
+                "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase,schema_digest,origin) "
+                "VALUES(?,?,?,?,?,'waiting_approval',?,?)",
+                (value.call_id, server_id, value.name, json.dumps(value.arguments, sort_keys=True, ensure_ascii=False),
+                 digest, value.schema_digest, value.origin)), write=True)
             row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
             assert row is not None
             return self._mcp_call(row)
@@ -1302,11 +1343,20 @@ class Supervisor:
                 raise BackendError("mcp_call_conflict")
             decision = json.dumps({"approve": value.approve, "digest": value.digest})
             if row["decision_id"]:
-                if row["decision_id"] != value.decision_id or row["decision"] != decision:
+                if row["decision_id"] != value.decision_id or (row["phase"] != "conflict" and row["decision"] != decision):
                     raise BackendError("mcp_decision_conflict")
                 return self._mcp_call(row)
             if row["phase"] != "waiting_approval":
                 raise BackendError("mcp_call_conflict")
+            pinned = str(row["schema_digest"] or "")
+            if value.approve and pinned and catalog_schema_digest(str(server["catalog"]), str(row["name"])) != pinned:
+                refusal = json.dumps({"approve": False, "digest": value.digest, "reason": "schema"})
+                await self.db.call(lambda db: db.execute(
+                    "UPDATE mcp_calls SET phase='conflict',decision_id=?,decision=? WHERE id=? AND phase='waiting_approval'",
+                    (value.decision_id, refusal, call_id)), write=True)
+                current = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (call_id,)).fetchone())
+                assert current is not None
+                return self._mcp_call(current)
             if value.approve:
                 busy = await self.db.call(lambda db: db.execute(
                     "SELECT 1 FROM mcp_calls WHERE server=? AND phase IN ('running','unknown')", (server_id,)).fetchone())
@@ -1370,6 +1420,51 @@ class Supervisor:
         for result in results:
             if isinstance(result, BaseException):
                 raise result
+
+    async def lookup_mcp_call(self, value: McpCallRef) -> McpCall:
+        async with self.control:
+            self.check_host(value)
+            row = await self._owned_call(value.session_id, value.server_id, value.call_id)
+            if row["phase"] == "running":
+                await self._sync_mcp(value.server_id)
+                row = await self._owned_call(value.session_id, value.server_id, value.call_id)
+            return self._mcp_call(row)
+
+    async def _owned_call(self, session_id: str, server_id: str, call_id: str) -> sqlite3.Row:
+        row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (call_id,)).fetchone())
+        server = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
+        if row is None or server is None or row["server"] != server_id or server["session"] != session_id:
+            raise BackendError("mcp_call_not_found", status=404)
+        return row
+
+    async def cancel_mcp_call(self, value: McpCallRef) -> McpCall:
+        """Cancel one call. Waiting calls are denied before any send. A running service is not closed."""
+        async with self.control:
+            self.check_host(value)
+            row = await self._owned_call(value.session_id, value.server_id, value.call_id)
+            phase = str(row["phase"])
+            if phase in {"done", "denied", "unknown", "conflict"}:
+                return self._mcp_call(row)
+            if phase == "waiting_approval":
+                decision = json.dumps({"approve": False, "digest": row["digest"], "reason": "cancelled"})
+                await self.db.call(lambda db: db.execute(
+                    "UPDATE mcp_calls SET phase='denied',decision_id=?,decision=? WHERE id=? AND phase='waiting_approval'",
+                    ("cancel:" + value.call_id, decision, value.call_id)), write=True)
+                return self._mcp_call(await self._owned_call(value.session_id, value.server_id, value.call_id))
+            if phase == "running":
+                client = self.mcp_clients.get(value.server_id)
+                if client is not None:
+                    with contextlib.suppress(OSError, BackendError, ValueError):
+                        await asyncio.to_thread(client.cancel_call, value.call_id)
+                        await asyncio.to_thread(client.pump, 0.2)
+                        await self._sync_mcp(value.server_id)
+                current = await self._owned_call(value.session_id, value.server_id, value.call_id)
+                if current["phase"] == "running":
+                    await self.db.call(lambda db: db.execute(
+                        "UPDATE mcp_calls SET phase='unknown' WHERE id=? AND phase='running'", (value.call_id,)), write=True)
+                    current = await self._owned_call(value.session_id, value.server_id, value.call_id)
+                return self._mcp_call(current)
+            raise BackendError("mcp_call_conflict")
 
     async def cancel_mcp(self, value: McpQuery) -> McpView:
         async with self.control:
@@ -2028,6 +2123,9 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     @app.post("/mcp/decision")
     async def mcp_decision(value: McpDecisionEnvelope) -> McpCall:
         return await owner.decide_mcp_call(value.session_id, value.server_id, value.call_id, value.decision, value)
+
+    app.post("/mcp/lookup")(owner.lookup_mcp_call)
+    app.post("/mcp/calls/cancel")(owner.cancel_mcp_call)
     app.post("/tools/run")(owner.run_tool)
     app.post("/tools/lookup")(owner.lookup_tool)
     app.post("/effects/resolve")(owner.resolve_effect)

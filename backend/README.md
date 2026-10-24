@@ -6,8 +6,10 @@ AmazMe 正在按 [本机优先方案](../docs/python-backend-plan.md) 将 shell�
 本机 shell 具有当前用户权限，文件 API 的路径检查和命令审批不构成操作系统沙箱。
 不自动把后端令牌、模型密钥传给工具；继续保留签名、公证和系统权限要求。
 
-本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。MCP 目前由用户连接、
-选择工具、填写 JSON 参数并审批调用；模型主动发现和调用 MCP 尚未接入。
+本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。用户可以连接服务、
+选择工具、填写 JSON 参数并审批调用。已连接服务的工具目录也会交给模型；模型提出的调用走会话审批，
+不能调用 Host 的用户审批接口代替决定，批准后的结果进入后续模型上下文。
+动态目录刷新、HTTP/OAuth、媒体呈现和任意第三方服务兼容性尚未验收。
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
 MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
@@ -39,8 +41,9 @@ backend/.venv/bin/python backend/tools/verify_mcp.py
 ```
 
 `verify_native.py` 使用 faux 和真实本机进程；`verify_client.py` 使用已安装 Chrome。
-`verify_mcp.py` 用 Chrome 操作本机官方 MCP Python SDK 探针服务，覆盖审批、丢回执、结构化结果和停止；
-它验证受控服务互操作，不代表任意第三方服务或模型驱动的 MCP 已通过。
+`verify_mcp.py` 用 Chrome 操作本机官方 MCP Python SDK 探针服务，覆盖审批、丢回执、结构化结果和停止。
+`verify_mcp_model.py` 用隔离 profile 和现有 DeepSeek 配置，让模型选择已连接的本机探针工具；拒绝无副作用，批准后的结果回到模型。
+两者都不代表动态目录、其他传输或任意第三方服务已通过。
 真实模型与 Chrome 用 `verify_web.py --provider-config /private/provider.json`，会产生模型费用。
 这些运行器创建自己的隔离 profile、记录报告并关闭所属进程；不会接管用户原有服务。
 报告保存在 `.artifacts/native`，两个 native `run-*` 之后先核对已有证据再运行，避免无界积累。

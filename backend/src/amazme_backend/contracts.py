@@ -157,7 +157,8 @@ class Receipt(Model):
 
 class ToolCall(Model):
     id: str
-    name: Literal["shell", "read_file", "write_file", "delegate_task", "web_search", "web_fetch"]
+    # mcp_tool is the session's canonical call. mcp_<20 hex> is only the name offered to a provider.
+    name: str = Field(pattern=r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20})$")
     arguments: str
 
 
@@ -704,6 +705,34 @@ class McpCallRequest(Model):
     call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     name: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,128}$")
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    schema_digest: str = ""
+    origin: Literal["manual", "model"] = "manual"
+
+    @field_validator("arguments")
+    @classmethod
+    def bounded_arguments(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        if len(json.dumps(value, ensure_ascii=False).encode()) > 16000:
+            raise ValueError("MCP arguments exceed 16000 bytes")
+        return value
+
+    @field_validator("schema_digest")
+    @classmethod
+    def schema_pin(cls, value: str) -> str:
+        if value and (len(value) != 64 or any(character not in "0123456789abcdef" for character in value)):
+            raise ValueError("MCP schema digest invalid")
+        return value
+
+
+class McpToolCall(Model):
+    """Identity captured when the model proposes a call. The provider never chooses these fields."""
+
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    tool: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,128}$")
+    workspace: str = Field(min_length=1, max_length=64)
+    command: str = Field(min_length=1, max_length=16000)
+    schema_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
     @field_validator("arguments")
     @classmethod
@@ -723,6 +752,7 @@ class McpCall(Model):
     result_data: dict[str, JsonValue] | None = None
     is_error: bool = False
     digest: str
+    origin: Literal["manual", "model"] = "manual"
 
 
 class McpState(Model):
@@ -747,6 +777,12 @@ class McpDecisionEnvelope(HostFence):
     server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     decision: McpDecision
+
+
+class McpCallRef(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
 class CodeRun(Model):

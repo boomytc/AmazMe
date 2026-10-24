@@ -1,9 +1,10 @@
 """Session-owned checkpoints and driver actions; no execution or database handles escape."""
+import json
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 
 from .contracts import (
     BackendError,
@@ -12,6 +13,7 @@ from .contracts import (
     EffectHold,
     EffectResolution,
     Lease,
+    McpToolCall,
     Message,
     Model,
     Preview,
@@ -25,13 +27,14 @@ from .contracts import (
     WebSearch,
     WriteFile,
 )
+from .mcp_session import McpOffer
 from .providers import Completion
 from .web_tools import validate_fetch_url
 
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
@@ -49,6 +52,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
     elif call.name == "web_fetch":
         parsed_fetch = WebFetch.model_validate_json(call.arguments)
         value = parsed_fetch.model_copy(update={"url": validate_fetch_url(parsed_fetch.url)})
+    elif call.name == "mcp_tool":
+        value = McpToolCall.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
     if isinstance(value, ReadFile):
@@ -56,6 +61,29 @@ def normalized_call(call: ToolCall) -> ToolCall:
         if path.is_absolute() or ".." in path.parts:
             raise BackendError("invalid_workspace_path")
     return call.model_copy(update={"arguments": value.model_dump_json()})
+
+
+def resolve_model_call(catalog_json: str, call: ToolCall, call_id: str) -> ToolCall:
+    """Rewrite a provider alias using the catalog saved before that model call. Live catalogs are ignored."""
+    if call.name == "mcp_tool" or (call.name.startswith("mcp_") and not catalog_json):
+        raise BackendError("mcp_tool_unknown")
+    if not call.name.startswith("mcp_"):
+        return normalized_call(call)
+    try:
+        offers = TypeAdapter(list[McpOffer]).validate_json(catalog_json)
+    except (json.JSONDecodeError, ValidationError):
+        raise BackendError("mcp_catalog_conflict") from None
+    offer = next((item for item in offers if item.alias == call.name), None)
+    if offer is None:
+        raise BackendError("mcp_tool_unknown")
+    try:
+        arguments = TypeAdapter(dict[str, JsonValue]).validate_json(call.arguments or "{}")
+    except (json.JSONDecodeError, ValidationError):
+        raise BackendError("invalid_tool_arguments") from None
+    payload = McpToolCall(server_id=offer.server_id, tool=offer.name, workspace=offer.workspace,
+                          command=offer.command, schema_digest=offer.schema_digest, call_id=call_id,
+                          arguments=arguments)
+    return normalized_call(ToolCall(id=call.id, name="mcp_tool", arguments=payload.model_dump_json()))
 
 
 class Run(Model):
@@ -77,6 +105,7 @@ class Step(Model):
     generation: int
     call: ToolCall | None = None
     result: str = ""
+    mcp_catalog: str = ""
     approval_id: str = ""
     proposal_digest: str = ""
     children: list[str] = Field(default_factory=list)
@@ -146,7 +175,21 @@ class WebRetrieval:
     call: ToolCall
 
 
-type Action = Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect | WebRetrieval
+@dataclass(frozen=True)
+class McpRetrieval:
+    """One model-proposed MCP call. stop cancels that call and leaves every service process running."""
+
+    step_id: str
+    request_id: str
+    generation: int
+    call: ToolCall
+    stop: bool = False
+
+
+type Action = (
+    Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect
+    | WebRetrieval | McpRetrieval
+)
 
 
 @dataclass(frozen=True)
@@ -206,7 +249,15 @@ class WebReturned:
     result: str = ""
 
 
+@dataclass(frozen=True)
+class McpReturned:
+    invocation: McpRetrieval
+    phase: Literal["done", "denied", "unknown", "conflict", "cancelled"]
+    error: str = ""
+    result: str = ""
+
+
 type Observation = (
     ModelReturned | ToolReturned | ToolObserved | EpochOpened | EpochClosed | EffectResolved | Failed | Previewed
-    | WebReturned
+    | WebReturned | McpReturned
 )

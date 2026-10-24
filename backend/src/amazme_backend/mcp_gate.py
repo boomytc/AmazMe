@@ -16,6 +16,7 @@ from .contracts import McpTool
 from .native_execution import tool_environment
 
 LIMIT = 262144
+CALL_IDENTITY_LIMIT = 4096
 VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
 MESSAGE = TypeAdapter(dict[str, JsonValue])
 
@@ -152,6 +153,15 @@ def main() -> int:
                         code = _stop_server(server)
                         _send(1, {"op": "exit", "code": code})
                         return code
+                    if op == "cancel_call":
+                        target = message.get("call_id")
+                        if not isinstance(target, str):
+                            raise ValueError("MCP cancel shape invalid")
+                        if waiting is not None and waiting[0] == target:
+                            _send(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled",
+                                           "params": {"requestId": waiting[1], "reason": "User cancelled call"}})
+                        _send(1, {"op": "cancel_ack", "call_id": target})
+                        continue
                     if op != "call" or phase != "ready":
                         raise ValueError("MCP call before ready")
                     call_id, name, arguments = message.get("call_id"), message.get("name"), message.get("arguments")
@@ -162,8 +172,12 @@ def main() -> int:
                     if previous is not None:
                         _send(1, previous[1] if previous[0] == canonical else {"op": "conflict", "call_id": call_id})
                         continue
-                    if waiting is not None or len(seen) >= 512:
+                    if waiting is not None:
                         raise ValueError("MCP call capacity")
+                    if len(seen) >= CALL_IDENTITY_LIMIT:
+                        # Keep every sent identity. A full history refuses the new id and does not stop the service.
+                        _send(1, {"op": "conflict", "call_id": call_id})
+                        continue
                     waiting = (call_id, request("tools/call", {"name": name, "arguments": arguments}), canonical)
             if reader in readable:
                 data = os.read(reader, 4096)

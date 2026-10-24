@@ -113,6 +113,47 @@ def test_cancel_waits_for_native_server_and_tracked_descendants(tmp_path: Path) 
         assert not late.exists()
 
 
+SLOW = """
+import json, sys
+marker = sys.argv[1]
+def send(message):
+    sys.stdout.write(json.dumps(message) + "\\n")
+    sys.stdout.flush()
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get("method")
+    if method == "initialize":
+        send({"jsonrpc":"2.0","id":msg["id"],"result":{"protocolVersion":"2024-11-05","capabilities":{},"serverInfo":{"name":"slow","version":"0"}}})
+    elif method == "tools/list":
+        send({"jsonrpc":"2.0","id":msg["id"],"result":{"tools":[{"name":"slow","description":"慢","inputSchema":{"type":"object"}}]}})
+    elif method == "tools/call":
+        open(marker, "a").write("called")
+    elif method == "notifications/cancelled":
+        open(marker, "a").write(" cancelled")
+"""
+
+
+def test_cancel_call_does_not_stop_the_service(tmp_path: Path) -> None:
+    script = tmp_path / "slow_server.py"
+    script.write_text(SLOW)
+    marker = tmp_path / "calls.txt"
+    with running(f"/usr/bin/python3 {script} {marker}") as (process, mcp, _root):
+        mcp.call("call-1", "slow", {})
+        for _ in range(50):
+            if marker.exists() and "called" in marker.read_text():
+                break
+            time.sleep(0.05)
+        assert marker.read_text() == "called"
+        mcp.cancel_call("call-1")
+        for _ in range(50):
+            if "cancelled" in marker.read_text():
+                break
+            time.sleep(0.05)
+        assert marker.read_text() == "called cancelled"
+        assert process.poll() is None and mcp.exit_code is None
+        mcp.cancel()
+
+
 def test_socket_loss_does_not_emit_an_exit(tmp_path: Path) -> None:
     script = tmp_path / "hold_server.py"
     script.write_text(HOLDER)

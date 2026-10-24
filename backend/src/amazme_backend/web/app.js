@@ -795,7 +795,8 @@ function startClient() {
     if (pendingCall && calls.some(call => call.call_id === pendingCall.call_id)) sessionStorage.removeItem(pendingKey);
     else if (changing && pendingCall) { view.tool = pendingCall.name; $("mcp-arguments").value = JSON.stringify(pendingCall.arguments, null, 2); }
     for (const call of calls) if (call.phase !== "waiting_approval") sessionStorage.removeItem(mcpKey(connection, `decision:${call.call_id}`));
-    $("mcp-approval").replaceChildren(...calls.filter(call => call.phase === "waiting_approval").map(call => {
+    const manualCalls = calls.filter(call => call.phase === "waiting_approval" && call.origin !== "model");
+    $("mcp-approval").replaceChildren(...manualCalls.map(call => {
       const article = element("article"); article.dataset.mcpCall = call.call_id;
       article.append(element("pre", `${row.command}\n${call.name}\n${JSON.stringify(call.arguments, null, 2)}`));
       for (const approve of [true, false]) article.append(button(approve ? "批准调用" : "拒绝调用", async () => {
@@ -814,7 +815,7 @@ function startClient() {
       }));
       return article;
     }));
-    $("mcp-result").textContent = calls.filter(call => call.phase !== "waiting_approval").slice(0, 30).map(call =>
+    $("mcp-result").textContent = calls.filter(call => call.phase !== "waiting_approval" || call.origin === "model").slice(0, 30).map(call =>
       `${call.name} · ${call.phase}${call.is_error ? " · 工具报告错误" : ""}\n${call.result || ""}${call.result_data?.structuredContent ? "\n" + JSON.stringify(call.result_data.structuredContent, null, 2) : ""}`).join("\n\n");
     $("mcp-server").onchange = () => { if (owns(connection)) showMcpState(state, connection, $("mcp-server").value); };
   }

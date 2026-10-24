@@ -1,6 +1,8 @@
 """Private session API and one checkpoint driver. Execution belongs to Supervisor."""
 import asyncio
 import contextlib
+import hashlib
+import json
 import logging
 import time
 
@@ -22,6 +24,15 @@ from .contracts import (
     HostReady,
     Identity,
     Lease,
+    McpCall,
+    McpCallEnvelope,
+    McpCallRef,
+    McpCallRequest,
+    McpDecision,
+    McpDecisionEnvelope,
+    McpSession,
+    McpState,
+    McpToolCall,
     Message,
     PreparedFileWrite,
     PrepareFileWrite,
@@ -49,6 +60,7 @@ from .contracts import (
     WriteFile,
 )
 from .faults import Faults
+from .mcp_session import catalog_payload, offers_from_views
 from .memories import inject_memories, relevant_memories, session_workspace
 from .providers import Completion, stream
 from .session_domain import (
@@ -59,6 +71,8 @@ from .session_domain import (
     EpochClosed,
     EpochOpened,
     Failed,
+    McpRetrieval,
+    McpReturned,
     ModelInvocation,
     ModelReturned,
     Observation,
@@ -213,7 +227,7 @@ class Worker:
 
     def _interrupt(self) -> None:
         # Open/close/reconciliation boundaries are never cancelled with business work.
-        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval)):
+        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval)):
             self.run_task.cancel()
 
     async def cancel(self, value: Cancel) -> Receipt:
@@ -221,7 +235,7 @@ class Worker:
         self.last_demand = time.monotonic()
         async with self.dispatch_lock:
             receipt = await self.store.cancel(value.request_id, value)
-            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval)):
+            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval)):
                 current = await self.store.get(self.current.request_id)
                 if current.cancel_requested:
                     self._interrupt()
@@ -339,6 +353,71 @@ class Worker:
             raise BackendError("tool_result_identity_mismatch")
         return WebReturned(action, view.phase, view.error, view.result)
 
+    async def _mcp_fence(self) -> HostFence:
+        return HostFence(host_epoch=await self.store.host_epoch(), build_id=self.build)
+
+    async def _mcp_offers(self):
+        fence = await self._mcp_fence()
+        state = await self.supervisor.call("POST", "/mcp/state", McpState, McpSession(
+            host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session))
+        return offers_from_views(state.servers)
+
+    @staticmethod
+    def _mcp_decision_id(step_id: str) -> str:
+        return hashlib.sha256(f"mcp-decision:{step_id}".encode()).hexdigest()[:32]
+
+    def _mcp_observation(self, action: McpRetrieval, call: McpCall) -> McpReturned:
+        if call.phase == "done":
+            payload = json.dumps({"text": call.result, "is_error": call.is_error, "data": call.result_data},
+                                 ensure_ascii=False)
+            return McpReturned(action, "done", result=payload)
+        if call.phase == "denied":
+            return McpReturned(action, "denied", "mcp_call_denied")
+        if call.phase == "conflict":
+            return McpReturned(action, "conflict", "mcp_tool_identity")
+        if call.phase == "unknown":
+            return McpReturned(action, "unknown", "mcp_outcome_unknown")
+        if call.phase == "waiting_approval":
+            return McpReturned(action, "cancelled")
+        return McpReturned(action, "unknown", "mcp_outcome_unknown")
+
+    async def _retrieve_mcp(self, action: McpRetrieval) -> McpReturned:
+        args = McpToolCall.model_validate_json(action.call.arguments)
+        fence = await self._mcp_fence()
+        ref = McpCallRef(host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session,
+                         server_id=args.server_id, call_id=args.call_id)
+        if action.stop:
+            try:
+                current = await self.supervisor.call("POST", "/mcp/lookup", McpCall, ref)
+            except BackendError as exc:
+                if exc.code == "mcp_call_not_found":
+                    return McpReturned(action, "cancelled")
+                raise
+            if current.phase not in {"done", "denied", "unknown", "conflict"}:
+                current = await self.supervisor.call("POST", "/mcp/calls/cancel", McpCall, ref)
+            return self._mcp_observation(action, current)
+        request = McpCallRequest(call_id=args.call_id, name=args.tool, arguments=args.arguments,
+                                 schema_digest=args.schema_digest, origin="model")
+        current = await self.supervisor.call("POST", "/mcp/calls", McpCall, McpCallEnvelope(
+            host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session,
+            server_id=args.server_id, call=request))
+        if current.phase == "waiting_approval":
+            decision = McpDecision(decision_id=self._mcp_decision_id(action.step_id), approve=True, digest=current.digest)
+            try:
+                current = await self.supervisor.call("POST", "/mcp/decision", McpCall, McpDecisionEnvelope(
+                    host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session,
+                    server_id=args.server_id, call_id=args.call_id, decision=decision))
+            except BackendError as exc:
+                if exc.code != "mcp_decision_conflict":
+                    raise
+                current = await self.supervisor.call("POST", "/mcp/lookup", McpCall, ref)
+                if current.phase == "waiting_approval":
+                    return McpReturned(action, "unknown", "mcp_outcome_unknown")
+        while current.phase == "running":
+            await asyncio.sleep(0.05)
+            current = await self.supervisor.call("POST", "/mcp/lookup", McpCall, ref)
+        return self._mcp_observation(action, current)
+
     async def prepare_file_write(self, action: ToolInvocation) -> PreparedFileWrite:
         ready = HostReady.model_validate_json((self.profile.path / "ready.json").read_bytes())
         epoch = await self.store.host_epoch()
@@ -374,7 +453,11 @@ class Worker:
             preview_seq = 0
             last_preview = 0.0
             messages = await self.model_input(action.messages)
-            async for item in stream(config, messages):
+            # A direct model probe has no session database. A live turn binds the catalog before any token.
+            offers = await self._mcp_offers() if self.storage_ready else []
+            if self.storage_ready:
+                await self.store.bind_mcp_catalog(action.step_id, action.generation, catalog_payload(offers))
+            async for item in stream(config, messages, offers):
                 if isinstance(item, Completion):
                     completion = item
                 else:
@@ -399,6 +482,8 @@ class Worker:
             return EpochClosed(action.request_id, action.lease, cleanup)
         if isinstance(action, WebRetrieval):
             return await self._retrieve_web(action)
+        if isinstance(action, McpRetrieval):
+            return await self._retrieve_mcp(action)
         if isinstance(action, ToolInvocation):
             prepared = await self.prepare_file_write(action) if action.call.name == "write_file" else None
             command = command_for(action.call)

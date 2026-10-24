@@ -5879,6 +5879,15 @@
           "digest": {
             "type": "string",
             "title": "Digest"
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "model"
+            ],
+            "title": "Origin",
+            "default": "manual"
           }
         },
         "additionalProperties": false,
@@ -5910,6 +5919,20 @@
             },
             "type": "object",
             "title": "Arguments"
+          },
+          "schema_digest": {
+            "type": "string",
+            "title": "Schema Digest",
+            "default": ""
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "model"
+            ],
+            "title": "Origin",
+            "default": "manual"
           }
         },
         "additionalProperties": false,
@@ -7801,14 +7824,7 @@
           },
           "name": {
             "type": "string",
-            "enum": [
-              "shell",
-              "read_file",
-              "write_file",
-              "delegate_task",
-              "web_search",
-              "web_fetch"
-            ],
+            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20})$",
             "title": "Name"
           },
           "arguments": {

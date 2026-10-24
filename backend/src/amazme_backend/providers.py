@@ -13,7 +13,7 @@ from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionToolParam,
 )
-from pydantic import SecretStr, TypeAdapter
+from pydantic import JsonValue, SecretStr, TypeAdapter, ValidationError
 
 from .contracts import (
     BackendError,
@@ -31,6 +31,7 @@ from .contracts import (
     WebSearch,
     WriteFile,
 )
+from .mcp_session import McpOffer
 
 CATALOG = (
     CatalogModel(provider="faux", model="faux", label="本地确定性", endpoint_editable=False),
@@ -238,8 +239,14 @@ class PendingCall:
     arguments: str = ""
 
 
-def tool_definitions() -> list[ChatCompletionToolParam]:
-    return [
+def _object_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
+    if schema.get("type") is None:
+        return {"type": "object", **schema}
+    return schema
+
+
+def tool_definitions(offers: list[McpOffer] | None = None) -> list[ChatCompletionToolParam]:
+    tools: list[ChatCompletionToolParam] = [
         {"type": "function", "function": {"name": "shell", "description": "Execute a command with the local user shell in the selected project directory. This has the current user permissions, including network access. Commands may have side effects; never retry an unknown result.", "parameters": Shell.model_json_schema()}},
         {"type": "function", "function": {"name": "read_file", "description": "Read a relative UTF-8 workspace file.", "parameters": ReadFile.model_json_schema()}},
         {"type": "function", "function": {"name": "write_file", "description": "Write a relative UTF-8 workspace file.", "parameters": WriteFile.model_json_schema()}},
@@ -247,6 +254,16 @@ def tool_definitions() -> list[ChatCompletionToolParam]:
         {"type": "function", "function": {"name": "web_search", "description": "Search through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", "parameters": WebSearch.model_json_schema()}},
         {"type": "function", "function": {"name": "web_fetch", "description": "Fetch one http(s) page through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", "parameters": WebFetch.model_json_schema()}},
     ]
+    for offer in offers or []:
+        description = (
+            f"MCP tool {offer.name} on service {offer.server_id} in workspace {offer.workspace}. "
+            f"{offer.description} Do not retry an unknown result."
+        )
+        tools.append({"type": "function", "function": {
+            "name": offer.alias, "description": description[:1000],
+            "parameters": cast(dict[str, object], _object_schema(offer.input_schema)),
+        }})
+    return tools
 
 
 def reasoning_signature(details: list[object]) -> str:
@@ -278,6 +295,8 @@ def provider_messages(messages: list[Message], provider: str = "") -> list[ChatC
         "This is not an OS sandbox. Do not assume a Linux filesystem or /workspace directory. "
         "Never read or transmit credentials unless explicitly authorized, or retry an unknown side effect. "
         "web_search and web_fetch use the saved web policy. "
+        "Session MCP tools are the mcp_ names for this turn. They run on a connected local service. "
+        "Do not call approval or decision endpoints, and do not retry an unknown MCP result. "
         "Report actual tool results. "
         "Never claim a command ran unless a tool result confirms it. Keep answers concise."
     )}]
@@ -329,7 +348,8 @@ async def summarize(config: ProviderConfig, messages: list[Message]) -> str:
     return summary.strip()[:16000]
 
 
-async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterator[str | Completion]:
+async def stream(config: ProviderConfig, messages: list[Message],
+                 offers: list[McpOffer] | None = None) -> AsyncIterator[str | Completion]:
     if not messages or not any(message.role == "user" for message in messages):
         raise BackendError("missing_user_context")
     if config.provider == "faux":
@@ -353,6 +373,15 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
         elif prompt.startswith("/fetch ") and not results:
             call = ToolCall(id=identity, name="web_fetch",
                             arguments=WebFetch(url=prompt[7:].strip()).model_dump_json())
+        elif prompt.startswith("/mcp ") and not results:
+            try:
+                body = TypeAdapter(dict[str, JsonValue]).validate_json(prompt[5:])
+            except (json.JSONDecodeError, ValidationError):
+                raise BackendError("invalid_tool_arguments") from None
+            alias, arguments = body.get("alias"), body.get("arguments")
+            if not isinstance(alias, str) or not isinstance(arguments, dict):
+                raise BackendError("invalid_tool_arguments")
+            call = ToolCall(id=identity, name=alias, arguments=json.dumps(arguments, ensure_ascii=False))
         elif prompt.startswith("/sequence "):
             commands = TypeAdapter(list[str]).validate_json(prompt[10:])
             if not commands or len(commands) > 24:
@@ -385,7 +414,7 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
                                max_retries=0, timeout=60, default_headers=config.headers or None,
                                http_client=http) as client:
             response = await client.chat.completions.create(
-                model=config.model, messages=provider_messages(messages, config.provider), tools=tool_definitions(),
+                model=config.model, messages=provider_messages(messages, config.provider), tools=tool_definitions(offers),
                 max_tokens=config.max_tokens, stream=True, stream_options={"include_usage": True},
                 extra_body={"thinking": {"type": "disabled"}},
             )

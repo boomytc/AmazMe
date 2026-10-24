@@ -41,8 +41,8 @@ async def test_model_call_injects_only_the_session_workspace(tmp_path: Path, mon
     host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
     captured: list[list[Message]] = []
 
-    async def fake_stream(config: ProviderConfig, messages: list[Message]):
-        del config
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None):
+        del config, offers
         captured.append(messages)
         yield Completion(message=Message(role="assistant", content="ok"), response_id="faux")
 

@@ -88,7 +88,7 @@ export type Snapshot = {
 
 export type ToolCall = {
   id: string;
-  name: "shell" | "read_file" | "write_file" | "delegate_task" | "web_search" | "web_fetch";
+  name: string;
   arguments: string;
 };
 

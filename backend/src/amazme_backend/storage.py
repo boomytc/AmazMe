@@ -61,6 +61,8 @@ from .session_domain import (
     EpochClosed,
     EpochOpened,
     Failed,
+    McpRetrieval,
+    McpReturned,
     ModelInvocation,
     ModelReturned,
     Observation,
@@ -77,6 +79,7 @@ from .session_domain import (
     WebRetrieval,
     WebReturned,
     normalized_call,
+    resolve_model_call,
 )
 
 TERMINAL = frozenset({"succeeded", "cancelled", "interrupted", "failed", "unknown"})
@@ -1106,6 +1109,21 @@ class SessionStore:
             return request
         return await self._tx(operation)
 
+    async def bind_mcp_catalog(self, step_id: str, generation: int, catalog_json: str) -> None:
+        """Persist the tool list before the provider stream. A later catalog cannot replace it."""
+        def operation(db: sqlite3.Connection, _changes: Changes) -> None:
+            step = self._step(db, step_id)
+            request = self._request(db, step.request_id)
+            if (step.kind != "model" or step.phase != "intent" or step.generation != generation
+                    or request.generation != generation):
+                raise BackendError("stale_generation")
+            if step.mcp_catalog and step.mcp_catalog != catalog_json:
+                raise BackendError("mcp_catalog_conflict")
+            if step.mcp_catalog != catalog_json:
+                step.mcp_catalog = catalog_json
+                self._save_step(db, step)
+        await self._tx(operation)
+
     async def resolve(self, value: EffectResolution, fence: HostFence) -> Receipt:
         def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
             self._fence(db, fence)
@@ -1257,7 +1275,7 @@ class SessionStore:
         assert step.call is not None
         binding = self._binding(db, request.request_id, step.call)
         required = self.approval_policy == "all" or (
-            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file"})
+            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool"})
         if not required:
             return True
         approval: Approval | None = None
@@ -1311,8 +1329,9 @@ class SessionStore:
                     self._decide(db, c, request, Decision(status="succeeded", answer=message.content))
             else:
                 for i, call in enumerate(message.tool_calls):
-                    call = normalized_call(call)
                     tool_id = digest(f"{self.session_id}:{step.step_id}:{i}:{call.id}")
+                    # The call id is the step id's prefix and is stored before approval or any send.
+                    call = resolve_model_call(step.mcp_catalog, call, tool_id[:32])
                     self._save_step(db, Step(step_id=tool_id, request_id=request.request_id,
                                             ordinal=step.ordinal + i + 1, kind="tool", phase="proposed",
                                             generation=request.generation, call=call))
@@ -1369,6 +1388,13 @@ class SessionStore:
         run = self._run(db, request.request_id)
         steps = self._steps(db, request.request_id)
         for step in steps:
+            mcp_intent = step.kind == "tool" and step.phase == "intent" and step.call and step.call.name == "mcp_tool"
+            if mcp_intent:
+                if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
+                    return Park("frozen")
+                assert step.call is not None
+                return McpRetrieval(step.step_id, request.request_id, request.generation, step.call,
+                                    stop=request.cancel_requested and not request.decision)
             web_intent = step.kind == "tool" and step.phase == "intent" and step.call and step.call.name in {
                 "web_search", "web_fetch"}
             if web_intent:
@@ -1441,6 +1467,15 @@ class SessionStore:
                 if step.call.name == "delegate_task":
                     self._delegate(db, c, request, step)
                     return Continue()
+                if step.call.name == "mcp_tool":
+                    self._consume(db, c, step)
+                    step.phase, step.generation = "intent", request.generation
+                    self._save_step(db, step)
+                    request.status = "running"
+                    self._save_request(db, c, request)
+                    c.emit("tool", request.request_id, step.model_dump_json())
+                    c.hit("mcp_intent", request.request_id, step.step_id)
+                    return McpRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if step.call.name in {"web_search", "web_fetch"}:
                     # The call id is the step id. No epoch: the supervisor cannot prove a paid HTTP call.
                     self._consume(db, c, step)
@@ -1570,11 +1605,47 @@ class SessionStore:
             c.emit("tool", request.request_id, step.model_dump_json())
             c.hit("web_result", request.request_id, step.step_id)
             return
+        if isinstance(observation, McpReturned):
+            action = observation.invocation
+            request = self._request(db, action.request_id)
+            step = self._step(db, action.step_id)
+            if (request.generation != action.generation or step.phase != "intent"
+                    or step.request_id != request.request_id or step.call is None or step.call.name != "mcp_tool"
+                    or action.call != step.call):
+                raise BackendError("stale_generation")
+            if observation.phase == "done":
+                step.result, step.phase = observation.result, "result"
+                self._save_step(db, step)
+                c.emit("tool", request.request_id, step.model_dump_json())
+                c.hit("mcp_result", request.request_id, step.step_id)
+                # A result that arrives after cancel stays in the transcript and does not start another model turn.
+                if request.cancel_requested and not request.decision:
+                    self._materialize(db, c, request, step)
+                    self._decide(db, c, request, Decision(status="cancelled"))
+                return
+            step.phase = "unknown" if observation.phase == "unknown" else "applied"
+            self._save_step(db, step)
+            if observation.phase == "unknown":
+                self._decide(db, c, request, Decision(
+                    status="cancelled" if request.cancel_requested else "unknown",
+                    error=observation.error or "mcp_outcome_unknown"))
+            elif observation.phase == "conflict":
+                self._decide(db, c, request, Decision(status="failed", error=observation.error or "mcp_tool_identity"))
+            else:
+                cancelled = request.cancel_requested or observation.phase == "cancelled"
+                self._decide(db, c, request, Decision(
+                    status="cancelled" if cancelled else "failed",
+                    error="" if cancelled else (observation.error or "mcp_call_denied")))
+            c.emit("tool", request.request_id, observation.error or observation.phase)
+            return
         if isinstance(observation, Failed):
             action = observation.action
             if isinstance(action, (CloseEpoch, OpenEpoch, QueryTool, ReconcileEffect)):
                 self._set_meta(db, "blocked", observation.error)
                 c.emit("cleanup", action.request_id, observation.error)
+                return
+            if isinstance(action, McpRetrieval):
+                # The call may already exist. Leave the intent so the next advance queries it.
                 return
             if isinstance(action, (ModelInvocation, ToolInvocation, WebRetrieval)):
                 request = self._request(db, action.request_id)
