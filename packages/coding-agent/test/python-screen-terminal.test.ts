@@ -1,7 +1,7 @@
+import { createTempDir } from "./temp-dir.ts";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -108,14 +108,18 @@ async function stopHost(profile: string): Promise<{ code: number | null; output:
 		let output = "";
 		stop.stdout?.setEncoding("utf8");
 		stop.stderr?.setEncoding("utf8");
-		stop.stdout?.on("data", (chunk: string) => { output += chunk; });
-		stop.stderr?.on("data", (chunk: string) => { output += chunk; });
+		stop.stdout?.on("data", (chunk: string) => {
+			output += chunk;
+		});
+		stop.stderr?.on("data", (chunk: string) => {
+			output += chunk;
+		});
 		stop.on("exit", (code) => resolve({ code, output }));
 	});
 }
 
 function startOwnedHost(): Promise<OwnedHost> {
-	const directory = mkdtempSync(join(tmpdir(), "amazme-screen-pty-"));
+	const directory = createTempDir("amazme-screen-pty-");
 	const profile = join(directory, "profile");
 	const workspace = join(directory, "workspace");
 	mkdirSync(workspace);
@@ -150,7 +154,10 @@ function startOwnedHost(): Promise<OwnedHost> {
 			}
 			if (leftover.length > 0) {
 				const again = await remainingOwned(profile);
-				signalOwned(again.filter((pid) => leftover.includes(pid)), "SIGKILL");
+				signalOwned(
+					again.filter((pid) => leftover.includes(pid)),
+					"SIGKILL",
+				);
 				leftover = await waitGone(leftover, 2_000);
 			}
 			if (leftover.length > 0) throw new Error(`owned_processes_remain ${leftover.join(",")}`);
@@ -160,15 +167,38 @@ function startOwnedHost(): Promise<OwnedHost> {
 		})();
 		return closing;
 	};
-	onTestFinished(() => close());
+	onTestFinished(async () => { await close(); });
 	return (async () => {
 		try {
 			const provider = join(directory, "provider.json");
-			writeFileSync(provider, JSON.stringify({
-				provider: "faux", model: "faux", base_url: "", api_key: "", max_tokens: 2048, proxy: "", headers: {},
-			}));
+			writeFileSync(
+				provider,
+				JSON.stringify({
+					provider: "faux",
+					model: "faux",
+					base_url: "",
+					api_key: "",
+					max_tokens: 2048,
+					proxy: "",
+					headers: {},
+				}),
+			);
 			await new Promise<void>((resolve, reject) => {
-				const init = spawn(python, ["-m", "amazme_backend", "init", "--profile", profile, "--workspace", workspace, "--provider-config", provider], { cwd: root });
+				const init = spawn(
+					python,
+					[
+						"-m",
+						"amazme_backend",
+						"init",
+						"--profile",
+						profile,
+						"--workspace",
+						workspace,
+						"--provider-config",
+						provider,
+					],
+					{ cwd: root },
+				);
 				init.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`init ${code}`))));
 			});
 			serve = spawn(python, ["-m", "amazme_backend", "serve", "--profile", profile, "--port", "0"], { cwd: root });
@@ -178,7 +208,7 @@ function startOwnedHost(): Promise<OwnedHost> {
 				serve?.stdout?.setEncoding("utf8");
 				serve?.stdout?.on("data", (chunk: string) => {
 					pending += chunk;
-					const line = pending.split("\n").find((item) => item.startsWith("{") && item.includes("\"url\""));
+					const line = pending.split("\n").find((item) => item.startsWith("{") && item.includes('"url"'));
 					if (line === undefined) return;
 					clearTimeout(timer);
 					resolve(String((JSON.parse(line) as { url: string }).url));
@@ -226,7 +256,13 @@ test("the interactive screen reuses an unconfirmed terminal input", async () => 
 		async readTerminal() {
 			return { output: "seen", output_seq: 1, cols: 80, rows: 24 };
 		},
-		async writeTerminal(_sessionId: string, _attachmentId: string, _terminalId: string, data: string, inputId?: string) {
+		async writeTerminal(
+			_sessionId: string,
+			_attachmentId: string,
+			_terminalId: string,
+			data: string,
+			inputId?: string,
+		) {
 			writes.push({ id: inputId ?? "", data });
 			if (writes.length === 1) throw new Error("supervisor_unavailable");
 			if (writes.length === 2) throw new Error("terminal_input_unconfirmed");
@@ -265,7 +301,14 @@ test("a failed assertion stops the owned host before removing its profile", asyn
 	const opened = await client.open("primary");
 	const screen = state();
 	screen.terminalId = "";
-	const shown = await handleLine(client, opened.sessionId, opened.attachmentId, "primary", screen, "/pty printf SCREEN_FAIL\\n");
+	const shown = await handleLine(
+		client,
+		opened.sessionId,
+		opened.attachmentId,
+		"primary",
+		screen,
+		"/pty printf SCREEN_FAIL\\n",
+	);
 	expect(shown[0]).toBe("输入已接收");
 	const trace: string[] = [];
 	let failed = false;
@@ -291,7 +334,14 @@ test("the same terminal input id is written once on a real host", async () => {
 		const opened = await client.open("primary");
 		const screen = state();
 		screen.terminalId = "";
-		const shown = await handleLine(client, opened.sessionId, opened.attachmentId, "primary", screen, "/pty printf SCREEN_LINE\\n");
+		const shown = await handleLine(
+			client,
+			opened.sessionId,
+			opened.attachmentId,
+			"primary",
+			screen,
+			"/pty printf SCREEN_LINE\\n",
+		);
 		expect(shown[0]).toBe("输入已接收");
 		expect(shown.join("\n")).toContain("SCREEN_LINE");
 		const terminalId = screen.terminalId;

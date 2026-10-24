@@ -29,31 +29,6 @@
 		},
 		"./rpc-entry": {
 			"import": "./dist/bundle/rpc-entry.js"
-		},
-		"./plugin": {
-			"source": "./src/plugin.ts",
-			"types": "./dist/plugin.d.ts",
-			"import": "./dist/plugin.js"
-		},
-		"./client": {
-			"source": "./src/client/index.ts",
-			"types": "./dist/client/index.d.ts",
-			"import": "./dist/client/index.js"
-		},
-		"./host/plugin": {
-			"source": "./src/host/plugin.ts",
-			"types": "./dist/host/plugin.d.ts",
-			"import": "./dist/host/plugin.js"
-		},
-		"./host": {
-			"source": "./src/host/server.ts",
-			"types": "./dist/host/server.d.ts",
-			"import": "./dist/host/server.js"
-		},
-		"./web": {
-			"source": "./src/host/web/host.ts",
-			"types": "./dist/host/web/host.d.ts",
-			"import": "./dist/host/web/host.js"
 		}
 	},
 	"files": [
@@ -68,54 +43,26 @@
 		"clean": "shx rm -rf dist",
 		"build": "npm run clean && npm run build:unbundled && node ../../scripts/build-coding-agent-bundle.mjs",
 		"build:unbundled": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets",
-		"build:binary": "node ../../scripts/build-coding-agent-binary.mjs",
-		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/ && shx mkdir -p dist/modes/interactive/assets && shx mkdir -p dist/core/export-html/vendor && shx cp src/core/export-html/template.html src/core/export-html/template.css src/core/export-html/template.js dist/core/export-html/ && shx cp src/core/export-html/vendor/*.js dist/core/export-html/vendor/",
+		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/",
 		"test": "vitest --run",
-		"generate:schemas": "node --import ./src/source-resolver.ts scripts/generate-schemas.ts",
-		"generate:references": "node --import ./src/source-resolver.ts scripts/generate-references.ts",
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
-		"@amazme/chord": "0.3.4",
-		"@amazme/durable": "0.3.4",
-		"@js-temporal/polyfill": "0.5.1",
-		"@amazme/agent": "0.3.4",
-		"@amazme/ai": "0.3.4",
-		"@amazme/codemode": "0.3.4",
-		"@amazme/mcp": "0.3.4",
 		"@amazme/tui": "0.3.4",
 		"@silvia-odwyer/photon-node": "0.3.4",
-		"brace-expansion": "5.0.12",
 		"chalk": "6.0.0",
 		"cross-spawn": "7.0.6",
 		"diff": "8.0.4",
-		"grok-mermaid": "0.2.3",
 		"highlight.js": "10.7.3",
-		"hosted-git-info": "9.0.3",
-		"ignore": "7.0.8",
-		"jiti": "2.7.0",
-		"minimatch": "10.2.6",
-		"proper-lockfile": "4.1.2",
-		"quickjs-wasi": "3.6.2",
 		"semver": "7.8.5",
-		"typebox": "1.3.27",
-		"undici": "8.10.2",
-		"yaml": "2.9.0",
-		"@amazme/env": "0.3.4",
-		"@amazme/client": "0.3.4",
-		"@amazme/protocol": "0.3.4",
-		"@amazme/server": "0.3.4",
-		"@amazme/web": "0.3.4",
-		"esbuild": "0.28.2"
+		"typebox": "1.3.27"
 	},
 	"overrides": {
 		"protobufjs": "7.6.6"
 	},
 	"devDependencies": {
 		"@types/cross-spawn": "6.0.6",
-		"@types/hosted-git-info": "3.0.5",
 		"@types/node": "22.19.19",
-		"@types/proper-lockfile": "4.1.4",
 		"@types/semver": "7.7.1",
 		"marked": "18.0.11",
 		"shx": "0.3.4",

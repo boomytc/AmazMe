@@ -40,11 +40,9 @@ async function runCli(args: string[]): Promise<{ stdout: string; stderr: string;
 	const fakeNpmPath = join(tempRoot, "fake-npm.mjs");
 	writeFileSync(
 		fakeNpmPath,
-		[
-			'console.log("changed 1 package in 471ms");',
-			'console.log("found 0 vulnerabilities");',
-			"process.exit(0);",
-		].join("\n"),
+		['console.log("changed 1 package in 471ms");', 'console.log("found 0 vulnerabilities");', "process.exit(0);"].join(
+			"\n",
+		),
 		"utf-8",
 	);
 
@@ -91,19 +89,19 @@ describe("stdout cleanliness in non-interactive modes", () => {
 		const result = await runCli(["--help"]);
 
 		expect(result.code).toBe(0);
-		expect(result.stdout).toContain("Usage:");
-		expect(result.stderr).not.toContain("Usage:");
+		expect(result.stdout).toContain("用法：");
+		expect(result.stderr).not.toContain("用法：");
 		expect(result.stderr).not.toContain("changed 1 package in 471ms");
 		expect(result.stderr).not.toContain("found 0 vulnerabilities");
 	});
 
-	it("keeps stdout empty for --mode json --help while routing trusted startup chatter to stderr", async () => {
+	it("keeps stdout empty for --mode json --help without executing obsolete startup package installers", async () => {
 		const result = await runCli(["--mode", "json", "--help", "--approve"]);
 
 		expect(result.code).toBe(0);
 		expect(result.stdout).toBe("");
-		expect(result.stderr).toContain("changed 1 package in 471ms");
-		expect(result.stderr).toContain("found 0 vulnerabilities");
-		expect(result.stderr).toContain("Usage:");
+		expect(result.stderr).not.toContain("changed 1 package in 471ms");
+		expect(result.stderr).not.toContain("found 0 vulnerabilities");
+		expect(result.stderr).toContain("用法：");
 	});
 });

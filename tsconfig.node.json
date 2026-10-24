@@ -13,10 +13,7 @@
 	],
 	"exclude": [
 		"**/dist/**",
-		"packages/coding-agent/examples/extensions/**",
 		"packages/web/src/**",
-		"packages/web/test/**",
-		"packages/coding-agent/src/host/web/page.ts",
-		"packages/coding-agent/test/experimental-web-transitions.test.ts"
+		"packages/web/test/**"
 	]
 }

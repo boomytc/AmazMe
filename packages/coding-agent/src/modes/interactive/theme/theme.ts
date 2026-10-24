@@ -1,6 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { ThinkingLevel } from "@amazme/agent";
+import type { ThinkingLevel } from "../../../cli/args.ts";
 import {
 	backgroundAnsi,
 	type Color,
@@ -246,8 +246,7 @@ export class Theme {
 		// indexed color depths flatten it into a different theme. Transient surfaces (selection,
 		// search) are not enough to hide a whole palette.
 		const surface = this.concreteColors.userMessageBg;
-		this.requiresTruecolor =
-			options.requiresTruecolor ?? (surface !== undefined && colorToOklch(surface).c >= 0.06);
+		this.requiresTruecolor = options.requiresTruecolor ?? (surface !== undefined && colorToOklch(surface).c >= 0.06);
 		this.ownAppearance = options.appearance ?? detectAppearance(concreteForegrounds, concreteBackgrounds);
 	}
 
@@ -268,8 +267,7 @@ export class Theme {
 		const terminal = terminalColors;
 		if (this.resolvedColors?.terminal !== terminal) {
 			const guess = GUESSED_DEFAULT_COLORS[this.appearance];
-			const toColor = (rgb: RgbColor | undefined, fallback: Color) =>
-				rgb ? rgbColor(rgb.r, rgb.g, rgb.b) : fallback;
+			const toColor = (rgb: RgbColor | undefined, fallback: Color) => (rgb ? rgbColor(rgb.r, rgb.g, rgb.b) : fallback);
 			const foreground = toColor(terminal.foreground, guess.foreground);
 			const background = toColor(terminal.background, guess.background);
 			const colors = { ...this.concreteColors };
@@ -775,7 +773,8 @@ function startThemeWatcher(): void {
 	}
 
 	const watchedThemeName = currentThemeName;
-	const themeFile = registeredThemes.get(watchedThemeName)?.sourcePath ??
+	const themeFile =
+		registeredThemes.get(watchedThemeName)?.sourcePath ??
 		(resourceThemeSelection ? undefined : path.join(getCustomThemesDir(), `${watchedThemeName}.json`));
 	if (themeFile === undefined) return;
 	const customThemesDir = path.dirname(themeFile);

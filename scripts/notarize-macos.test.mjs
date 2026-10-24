@@ -223,7 +223,7 @@ exit 97
 }
 
 test("notarization uses the same 1.0.0 gate as GitHub release", () => {
-	for (const version of ["0.3.4", "0.9.9", "1.0.0", "1.2.3", "1.0.0-rc.1", "not-a-version"]) {
+	for (const version of [productVersion(), "0.9.9", "1.0.0", "1.2.3", "1.0.0-rc.1", "not-a-version"]) {
 		assert.equal(notarizationAllowed(version), publishesToGitHub(version));
 	}
 	assert.equal(productVersion(), JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);

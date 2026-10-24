@@ -1,4 +1,4 @@
-import type { ImageContent } from "@amazme/ai";
+import type { ImageContent } from "../python-headless.ts";
 import type { Args } from "./args.ts";
 
 export interface InitialMessageInput {

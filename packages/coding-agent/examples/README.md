@@ -1,39 +1,5 @@
 # Examples
 
-Example code for the pi-coding-agent SDK, process integration, and extensions.
+当前示例使用 [Python SDK](sdk/README.md)，连接现有 Host，或通过 Python factory 注册会话工具。Node 本包只提供产品入口、HTTP 客户端与终端组件。
 
-## CLI integration
-
-[`rpc-client.ts`](rpc-client.ts) uses the typed `RpcClient` to run Pi in a child process, stream events, and wait for the run to settle.
-
-Build the coding-agent package before running it from a repository checkout:
-
-```bash
-node examples/rpc-client.ts "Explain this repository"
-```
-
-## Directories
-
-### [sdk/](sdk/)
-Python SDK connects to the existing Host with explicit session, workspace and stable request IDs; Python factories register session tools. See the SDK directory.
-
-### [extensions/](extensions/)
-Example extensions demonstrating:
-- Lifecycle event handlers (tool interception, safety gates, context modifications)
-- Custom tools (todo lists, questions, subagents, output truncation)
-- Commands and keyboard shortcuts
-- Custom UI (footers, headers, editors, overlays)
-- Git integration (checkpoints, auto-commit)
-- System prompt modifications and custom compaction
-- External integrations (SSH, file watchers, system theme sync)
-- Custom providers (Anthropic with custom streaming, GitLab Duo)
-
-### [plugins/amazme-example-plugin/](plugins/amazme-example-plugin/)
-An experimental plugin package that Pi automatically builds into separate Session-worker and TUI Chord facets.
-
-## Documentation
-
-- [SDK Examples](sdk/README.md)
-- [CLI Integration](../docs/cli-integration.md)
-- [Extensions Documentation](../docs/extensions.md)
-- [Skills Documentation](../docs/skills.md)
+旧 TS Durable 会话、extension/provider 工厂和 Chord facet 示例已随其产品消费者迁移删除；原文保留在迁移前 Git 基线中。现行契约见 [Python 方案](../../../docs/python-backend-plan.md)。

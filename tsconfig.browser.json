@@ -13,8 +13,6 @@
 	"include": [
 		"packages/web/src/**/*",
 		"packages/web/test/**/*",
-		"packages/coding-agent/src/host/web/page.ts",
-		"packages/coding-agent/test/experimental-web-transitions.test.ts",
 		"packages/coding-agent/src/utils/highlight-js.d.ts"
 	]
 }

@@ -1,19 +1,10 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import {
-	chmod,
-	cp,
-	mkdir,
-	mkdtemp,
-	readFile,
-	rm,
-	symlink,
-	writeFile,
-} from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { resolveDriverBinary } from "../packages/coding-agent/plugins/computer-use/src/driver.ts";
+import { resolveDriverBinary } from "../packages/coding-agent/plugins/computer-use/src/installation.ts";
 import {
 	APP_NAME,
 	archivePin,
@@ -44,17 +35,10 @@ test(
 			await assert.rejects(resolveDriverBinary(options), /unavailable/);
 			const current = await signedRuntime(home);
 			for (const name of ["0.9.0", "0.34.1-amazme.99", "development", "zzz"])
-				await cp(
-					current.directory,
-					join(installationRoot("darwin", home), name),
-					{ recursive: true },
-				);
+				await cp(current.directory, join(installationRoot("darwin", home), name), { recursive: true });
 			assert.equal(await resolveDriverBinary(options), current.binary);
 			await writeFile(current.binary, "broken");
-			await assert.rejects(
-				resolveDriverBinary(options),
-				/differs from its pinned manifest/,
-			);
+			await assert.rejects(resolveDriverBinary(options), /differs from its pinned manifest/);
 			assert.equal(
 				await resolveDriverBinary({
 					...options,
@@ -64,10 +48,7 @@ test(
 			);
 			await rm(current.directory, { recursive: true });
 			await symlink(legacy.directory, current.directory);
-			await assert.rejects(
-				resolveDriverBinary(options),
-				/Invalid managed runtime directory/,
-			);
+			await assert.rejects(resolveDriverBinary(options), /Invalid managed runtime directory/);
 			await rm(current.directory);
 			await mkdir(current.directory);
 			await assert.rejects(resolveDriverBinary(options), { code: "ENOENT" });
@@ -95,12 +76,7 @@ test(
 					`<key>AmazMeRuntimeVersion</key><string>${historicalPin.version}</string>`,
 				),
 			);
-			execFileSync("/usr/bin/codesign", [
-				"--force",
-				"--sign",
-				"-",
-				join(directory, APP_NAME),
-			]);
+			execFileSync("/usr/bin/codesign", ["--force", "--sign", "-", join(directory, APP_NAME)]);
 			await writeFile(
 				join(directory, "manifest.json"),
 				JSON.stringify({
@@ -148,10 +124,7 @@ test("non-mac discovery uses the same pinned shared installation and rejects non
 		);
 		await chmod(binary, 0o644);
 		if (process.platform !== "win32")
-			await assert.rejects(
-				resolveDriverBinary({ home, platform: "linux", arch: "x64", env: {} }),
-				{ code: "EACCES" },
-			);
+			await assert.rejects(resolveDriverBinary({ home, platform: "linux", arch: "x64", env: {} }), { code: "EACCES" });
 	} finally {
 		await rm(home, { recursive: true, force: true });
 	}
@@ -174,20 +147,13 @@ test(
 			}
 			assert.equal(
 				await resolveDriverBinary({ home, platform: "darwin", env: {} }),
-				join(
-					installationRoot("darwin", home),
-					PATCH_PIN.version,
-					MAC_FILES.binary,
-				),
+				join(installationRoot("darwin", home), PATCH_PIN.version, MAC_FILES.binary),
 			);
 			// Historical versions cannot become an implicit fallback when the current version is missing.
 			await rm(join(installationRoot("darwin", home), PATCH_PIN.version), {
 				recursive: true,
 			});
-			await assert.rejects(
-				resolveDriverBinary({ home, platform: "darwin", env: {} }),
-				/unavailable/,
-			);
+			await assert.rejects(resolveDriverBinary({ home, platform: "darwin", env: {} }), /unavailable/);
 		} finally {
 			await rm(home, { recursive: true, force: true });
 		}

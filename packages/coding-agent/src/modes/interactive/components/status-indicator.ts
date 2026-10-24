@@ -1,5 +1,5 @@
 import { type Component, Loader, type TUI, truncateToWidth } from "@amazme/tui";
-import type { WorkingIndicatorOptions } from "../../../core/extensions/index.ts";
+import type { LoaderIndicatorOptions as WorkingIndicatorOptions } from "@amazme/tui";
 import { theme } from "../theme/theme.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { keyText } from "./keybinding-hints.ts";

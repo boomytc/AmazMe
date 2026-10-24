@@ -5,73 +5,178 @@
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
 		"paths": {
-			"@amazme/chord": ["./packages/chord/src/index.ts"],
-			"@amazme/chord/bundler": ["./packages/chord/src/bundler.ts"],
-			"@amazme/chord/context": ["./packages/chord/src/context/index.ts"],
-			"@amazme/chord/delta": ["./packages/chord/src/delta/index.ts"],
-			"@amazme/chord/node": ["./packages/chord/src/node.ts"],
-			"@amazme/chord/output": ["./packages/chord/src/output.ts"],
-			"@amazme/chord/sqlite": ["./packages/chord/src/sqlite/index.ts"],
-			"@amazme/chord/sqlite/node": ["./packages/chord/src/sqlite/node.ts"],
-			"@amazme/chord/sqlite/cloudflare": ["./packages/chord/src/sqlite/cloudflare.ts"],
-			"@amazme/chord/telemetry-sqlite": ["./packages/chord/src/telemetry-sqlite/index.ts"],
-			"@amazme/telemetry": ["./packages/telemetry/src/index.ts"],
-			"@amazme/telemetry/testing": ["./packages/telemetry/src/testing/index.ts"],
-			"@amazme/telemetry/render": ["./packages/telemetry/src/render.ts"],
-			"@amazme/codemode": ["./packages/codemode/src/index.ts"],
-			"@amazme/codemode/cloudflare": ["./packages/codemode/src/cloudflare.ts"],
-			"@amazme/codemode/portable": ["./packages/codemode/src/portable.ts"],
-			"@amazme/codemode/declarations": ["./packages/codemode/src/declarations.ts"],
-			"@amazme/codemode/source": ["./packages/codemode/src/source.ts"],
-			"@amazme/codemode/worker": ["./packages/codemode/src/runtime/worker.ts"],
-			"@amazme/mcp": ["./packages/mcp/src/index.ts"],
-			"@amazme/mcp/oauth": ["./packages/mcp/src/oauth/index.ts"],
-			"@amazme/mcp/testing": ["./packages/mcp/src/testing/index.ts"],
-			"@amazme/ai": ["./packages/ai/src/index.ts"],
-			"@amazme/ai/oauth": ["./packages/ai/src/oauth.ts"],
-			"@amazme/ai/*": ["./packages/ai/src/*.ts", "./packages/ai/src/providers/*.ts"],
-			"@amazme/ai/dist/*": ["./packages/ai/src/*"],
-			"@amazme/durable": ["./packages/durable/src/index.ts"],
-			"@amazme/durable/testing": ["./packages/durable/src/testing/index.ts"],
+			"@amazme/chord": [
+				"./packages/chord/src/index.ts"
+			],
+			"@amazme/chord/bundler": [
+				"./packages/chord/src/bundler.ts"
+			],
+			"@amazme/chord/context": [
+				"./packages/chord/src/context/index.ts"
+			],
+			"@amazme/chord/delta": [
+				"./packages/chord/src/delta/index.ts"
+			],
+			"@amazme/chord/node": [
+				"./packages/chord/src/node.ts"
+			],
+			"@amazme/chord/output": [
+				"./packages/chord/src/output.ts"
+			],
+			"@amazme/chord/sqlite": [
+				"./packages/chord/src/sqlite/index.ts"
+			],
+			"@amazme/chord/sqlite/node": [
+				"./packages/chord/src/sqlite/node.ts"
+			],
+			"@amazme/chord/sqlite/cloudflare": [
+				"./packages/chord/src/sqlite/cloudflare.ts"
+			],
+			"@amazme/chord/telemetry-sqlite": [
+				"./packages/chord/src/telemetry-sqlite/index.ts"
+			],
+			"@amazme/telemetry": [
+				"./packages/telemetry/src/index.ts"
+			],
+			"@amazme/telemetry/testing": [
+				"./packages/telemetry/src/testing/index.ts"
+			],
+			"@amazme/telemetry/render": [
+				"./packages/telemetry/src/render.ts"
+			],
+			"@amazme/codemode": [
+				"./packages/codemode/src/index.ts"
+			],
+			"@amazme/codemode/cloudflare": [
+				"./packages/codemode/src/cloudflare.ts"
+			],
+			"@amazme/codemode/portable": [
+				"./packages/codemode/src/portable.ts"
+			],
+			"@amazme/codemode/declarations": [
+				"./packages/codemode/src/declarations.ts"
+			],
+			"@amazme/codemode/source": [
+				"./packages/codemode/src/source.ts"
+			],
+			"@amazme/codemode/worker": [
+				"./packages/codemode/src/runtime/worker.ts"
+			],
+			"@amazme/mcp": [
+				"./packages/mcp/src/index.ts"
+			],
+			"@amazme/mcp/oauth": [
+				"./packages/mcp/src/oauth/index.ts"
+			],
+			"@amazme/mcp/testing": [
+				"./packages/mcp/src/testing/index.ts"
+			],
+			"@amazme/ai": [
+				"./packages/ai/src/index.ts"
+			],
+			"@amazme/ai/oauth": [
+				"./packages/ai/src/oauth.ts"
+			],
+			"@amazme/ai/*": [
+				"./packages/ai/src/*.ts",
+				"./packages/ai/src/providers/*.ts"
+			],
+			"@amazme/ai/dist/*": [
+				"./packages/ai/src/*"
+			],
+			"@amazme/durable": [
+				"./packages/durable/src/index.ts"
+			],
+			"@amazme/durable/testing": [
+				"./packages/durable/src/testing/index.ts"
+			],
 			"@amazme/durable/*": [
 				"./packages/durable/src/*.ts",
 				"./packages/durable/src/*/index.ts",
 				"./packages/durable/src/*"
 			],
-			"@amazme/env": ["./packages/env/src/index.ts"],
-			"@amazme/agent": ["./packages/agent/src/index.ts"],
-			"@amazme/coding-agent": ["./packages/coding-agent/src/index.ts"],
-			"@amazme/coding-agent/plugin": ["./packages/coding-agent/src/plugin.ts"],
-			"@amazme/coding-agent/host": ["./packages/coding-agent/src/host/server.ts"],
-			"@amazme/coding-agent/web": ["./packages/coding-agent/src/host/web/host.ts"],
-			"@amazme/coding-agent/host/plugin": [
-				"./packages/coding-agent/src/host/plugin.ts"
+			"@amazme/env": [
+				"./packages/env/src/index.ts"
 			],
-			"@amazme/coding-agent/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
-			"@amazme/coding-agent/*": ["./packages/coding-agent/src/*"],
-			"@amazme/protocol": ["./packages/protocol/src/index.ts"],
-			"@amazme/protocol/*": ["./packages/protocol/src/*"],
-			"@amazme/client": ["./packages/client/src/index.ts"],
-			"@amazme/client/unix": ["./packages/client/src/unix.ts"],
-			"@amazme/client/websocket": ["./packages/client/src/websocket.ts"],
-			"@amazme/web": ["./packages/web/dist/index.d.ts"],
-			"@amazme/web/assets": ["./packages/web/src/assets.ts"],
-			"@amazme/web/locale": ["./packages/web/src/locale.ts"],
-			"@amazme/web/strings": ["./packages/web/src/strings.ts"],
-			"@amazme/web/typography": ["./packages/web/src/typography.ts"],
-			"@amazme/client/*": ["./packages/client/src/*"],
-			"@amazme/server": ["./packages/server/src/index.ts"],
-			"@amazme/server/testing": ["./packages/server/src/testing/index.ts"],
-			"@amazme/server/unix": ["./packages/server/src/transports/unix/index.ts"],
-			"@amazme/server/websocket": ["./packages/server/src/transports/websocket/index.ts"],
-			"@amazme/server/*": ["./packages/server/src/*"],
-			"typebox": ["./node_modules/typebox"],
-			"@amazme/tui": ["./packages/tui/src/index.ts"],
-			"@amazme/tui/*": ["./packages/tui/src/*"]
+			"@amazme/agent": [
+				"./packages/agent/src/index.ts"
+			],
+			"@amazme/coding-agent": [
+				"./packages/coding-agent/src/index.ts"
+			],
+			"@amazme/coding-agent/*": [
+				"./packages/coding-agent/src/*"
+			],
+			"@amazme/protocol": [
+				"./packages/protocol/src/index.ts"
+			],
+			"@amazme/protocol/*": [
+				"./packages/protocol/src/*"
+			],
+			"@amazme/client": [
+				"./packages/client/src/index.ts"
+			],
+			"@amazme/client/unix": [
+				"./packages/client/src/unix.ts"
+			],
+			"@amazme/client/websocket": [
+				"./packages/client/src/websocket.ts"
+			],
+			"@amazme/web": [
+				"./packages/web/dist/index.d.ts"
+			],
+			"@amazme/web/assets": [
+				"./packages/web/src/assets.ts"
+			],
+			"@amazme/web/locale": [
+				"./packages/web/src/locale.ts"
+			],
+			"@amazme/web/strings": [
+				"./packages/web/src/strings.ts"
+			],
+			"@amazme/web/typography": [
+				"./packages/web/src/typography.ts"
+			],
+			"@amazme/client/*": [
+				"./packages/client/src/*"
+			],
+			"@amazme/server": [
+				"./packages/server/src/index.ts"
+			],
+			"@amazme/server/testing": [
+				"./packages/server/src/testing/index.ts"
+			],
+			"@amazme/server/unix": [
+				"./packages/server/src/transports/unix/index.ts"
+			],
+			"@amazme/server/websocket": [
+				"./packages/server/src/transports/websocket/index.ts"
+			],
+			"@amazme/server/*": [
+				"./packages/server/src/*"
+			],
+			"typebox": [
+				"./node_modules/typebox"
+			],
+			"@amazme/tui": [
+				"./packages/tui/src/index.ts"
+			],
+			"@amazme/tui/*": [
+				"./packages/tui/src/*"
+			]
 		}
 	},
 	"files": [],
 	"include": [],
-	"references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.browser.json" }],
-	"exclude": ["**/dist/**"]
+	"references": [
+		{
+			"path": "./tsconfig.node.json"
+		},
+		{
+			"path": "./tsconfig.browser.json"
+		}
+	],
+	"exclude": [
+		"**/dist/**"
+	]
 }

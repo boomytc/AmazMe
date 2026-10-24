@@ -98,54 +98,30 @@ function moduleScopeAwaits(source) {
 }
 
 /** Direct registry dependencies stay exact; workspace dependencies also match their release version. */
-export function checkDependencyVersions(
-	repoRoot,
-	packages = workspacePackages(repoRoot),
-) {
+export function checkDependencyVersions(repoRoot, packages = workspacePackages(repoRoot)) {
 	const files = [];
 	const rootManifest = join(repoRoot, "package.json");
 	if (existsSync(rootManifest)) files.push(rootManifest);
 	const collect = (directory) => {
 		for (const entry of readdirSync(directory, { withFileTypes: true })) {
-			if (
-				entry.isDirectory() &&
-				!["node_modules", "dist", ".git"].includes(entry.name)
-			)
+			if (entry.isDirectory() && !["node_modules", "dist", ".git"].includes(entry.name))
 				collect(join(directory, entry.name));
-			else if (entry.isFile() && entry.name === "package.json")
-				files.push(join(directory, entry.name));
+			else if (entry.isFile() && entry.name === "package.json") files.push(join(directory, entry.name));
 		}
 	};
 	collect(join(repoRoot, "packages"));
 	const failures = [];
-	const exact =
-		/^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+	const exact = /^(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
 	for (const file of files) {
 		const manifest = JSON.parse(readFileSync(file, "utf8"));
-		for (const section of [
-			"dependencies",
-			"devDependencies",
-			"optionalDependencies",
-		]) {
+		for (const section of ["dependencies", "devDependencies", "optionalDependencies"]) {
 			for (const [name, specifier] of Object.entries(manifest[section] ?? {})) {
-				if (
-					/^(?:workspace:|file:|link:|portal:|git\+|github:|git:|https?:|ssh:)/.test(
-						specifier,
-					)
-				)
-					continue;
+				if (/^(?:workspace:|file:|link:|portal:|git\+|github:|git:|https?:|ssh:)/.test(specifier)) continue;
 				const alias = specifier.startsWith("npm:");
-				const version = alias
-					? specifier.slice(specifier.lastIndexOf("@") + 1)
-					: specifier;
+				const version = alias ? specifier.slice(specifier.lastIndexOf("@") + 1) : specifier;
 				const location = `${relative(repoRoot, file)}: ${section}.${name}`;
-				if (!exact.test(version))
-					failures.push(`${location} must be pinned, found ${specifier}`);
-				else if (
-					!alias &&
-					packages.has(name) &&
-					version !== packages.get(name).manifest.version
-				)
+				if (!exact.test(version)) failures.push(`${location} must be pinned, found ${specifier}`);
+				else if (!alias && packages.has(name) && version !== packages.get(name).manifest.version)
 					failures.push(
 						`${location} must match workspace version ${packages.get(name).manifest.version}, found ${version}`,
 					);
@@ -189,9 +165,13 @@ export function checkChangelogs(repoRoot) {
 				const name = lines[index].slice(4);
 				const order = changelogSections.indexOf(name);
 				if (order === -1)
-					failures.push(`${location}:${index + 1}: section must be one of ${changelogSections.join(", ")}, found "${name}"`);
+					failures.push(
+						`${location}:${index + 1}: section must be one of ${changelogSections.join(", ")}, found "${name}"`,
+					);
 				else if (order <= previous)
-					failures.push(`${location}:${index + 1}: "${name}" is repeated or out of order (${changelogSections.join(", ")})`);
+					failures.push(
+						`${location}:${index + 1}: "${name}" is repeated or out of order (${changelogSections.join(", ")})`,
+					);
 				else previous = order;
 				const next = lines.slice(index + 1, end).find((line) => line.trim() !== "");
 				if (next === undefined || next.startsWith("#"))
@@ -302,13 +282,7 @@ export function checkVersionLiterals(repoRoot, files) {
  * grow it for session output.
  */
 export const sourceTempDirAllowlist = {
-	"packages/coding-agent/src/durable/sessions.ts":
-		"--no-session artifact directory, removed on release and on process exit",
-	"packages/coding-agent/src/host/services/share-command.ts": "/share upload scratch directory",
-	"packages/coding-agent/src/modes/interactive/external-editor.ts": "external editor scratch file",
 	"packages/coding-agent/src/utils/clipboard.ts": "WSL clipboard hand-off file",
-	"packages/coding-agent/src/utils/clipboard-image.ts": "WSL clipboard hand-off file",
-	"packages/coding-agent/src/core/plugins/artifact.ts": "plugin build scratch directory",
 	"packages/durable/src/env/node.ts": "ExecutionEnv.createTempDir contract (not used for spills)",
 	"packages/env/src/ssh.ts": "SSH host-key scratch directory",
 	"packages/chord/src/manager.ts": "local IPC socket path",
@@ -330,7 +304,11 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 	const sourceExtensions = /\.(?:[cm]?ts|[cm]?js|tsx|jsx)$/;
 	const exactSourceFile = /^packages\/[^/*?[\]{}]+\/src\/[^*?[\]{}]+\.(?:[cm]?ts|[cm]?js|tsx|jsx)$/;
 	for (const [file, reason] of Object.entries(allowed)) {
-		if (!exactSourceFile.test(file) || file.endsWith(".d.ts") || file.split("/").some((part) => part === "." || part === "..")) {
+		if (
+			!exactSourceFile.test(file) ||
+			file.endsWith(".d.ts") ||
+			file.split("/").some((part) => part === "." || part === "..")
+		) {
 			failures.push(
 				`${file}: sourceTempDirAllowlist entries must be one exact packages/<pkg>/src/... source file, not a directory or pattern`,
 			);
@@ -374,12 +352,7 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 				walk(testRoot, path);
 				continue;
 			}
-			if (
-				!entry.name.endsWith(".ts") &&
-				!entry.name.endsWith(".js") &&
-				!entry.name.endsWith(".mjs")
-			)
-				continue;
+			if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".js") && !entry.name.endsWith(".mjs")) continue;
 			if (path === helper) continue;
 			const source = readFileSync(path, "utf8");
 			for (const [index, line] of source.split("\n").entries()) {
@@ -416,7 +389,10 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 export function checkTempDirAllowlistFiles(repoRoot, allowed = sourceTempDirAllowlist) {
 	return Object.keys(allowed)
 		.filter((file) => !existsSync(join(repoRoot, file)))
-		.map((file) => `${file}: listed in sourceTempDirAllowlist but no such source file; remove it from sourceTempDirAllowlist`);
+		.map(
+			(file) =>
+				`${file}: listed in sourceTempDirAllowlist but no such source file; remove it from sourceTempDirAllowlist`,
+		);
 }
 
 /** Syntax-aware checks over source, including development-only host and browser modules. */
@@ -676,9 +652,9 @@ export async function checkEntryContracts(repoRoot) {
 		"packages/durable/src/index.ts",
 		"packages/durable/src/tools/index.ts",
 		"packages/durable/src/codemode/index.ts",
+		"packages/web/src/index.ts",
 		"packages/codemode/src/portable.ts",
 		"packages/codemode/src/cloudflare.ts",
-		"packages/coding-agent/src/host/web/page.ts",
 	]) {
 		try {
 			await build({
@@ -707,5 +683,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
-	else console.log("Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, test and source temp dirs, and version literals passed.");
+	else
+		console.log(
+			"Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, test and source temp dirs, and version literals passed.",
+		);
 }

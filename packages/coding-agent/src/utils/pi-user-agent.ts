@@ -1,6 +1,5 @@
-import { formatUserAgent } from "@amazme/ai";
-
-/** pi's `User-Agent` for its own network requests; the same detailed form pi-ai sends to providers. */
+/** Preserve Pi's original request identity without loading its retired provider runtime. */
 export function getPiUserAgent(version: string): string {
-	return formatUserAgent({ userAgent: "detailed", version });
+	const runtime = process.versions.bun ? `bun/${process.versions.bun}` : `node/${process.version}`;
+	return `pi/${version} (${process.platform}; ${runtime}; ${process.arch})`;
 }

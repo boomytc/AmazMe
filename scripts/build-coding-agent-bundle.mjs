@@ -1,287 +1,86 @@
 #!/usr/bin/env node
-
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
-const scriptDir = dirname(fileURLToPath(import.meta.url));
-const repoRoot = resolve(scriptDir, "..");
-const codingAgentDir = join(repoRoot, "packages", "coding-agent");
-const aiDistDir = join(repoRoot, "packages", "ai", "dist");
-const codingAgentDistDir = join(codingAgentDir, "dist");
-const bundleDir = join(codingAgentDistDir, "bundle");
-const banner = {
-	js: 'import { createRequire as __amazmeCreateRequire } from "node:module"; const require = __amazmeCreateRequire(import.meta.url);',
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const dist = join(root, "packages/coding-agent/dist");
+const bundle = join(dist, "bundle");
+const entries = {
+	"cli-runtime": join(dist, "cli.js"),
+	index: join(dist, "index.js"),
+	"rpc-entry": join(dist, "rpc-entry.js"),
 };
-const allowedExternalPackages = new Set([
-	"@amazme/chord",
-	"@amazme/chord/context",
-	"@amazme/chord/delta",
-	"@amazme/chord/node",
-	"@amazme/chord/output",
-	"@amazme/chord/sqlite",
-	"@amazme/chord/sqlite/node",
-	"@amazme/chord/sqlite/cloudflare",
-	"@silvia-odwyer/photon-node",
-	"jiti",
-	"esbuild",
-	"@amazme/web/assets",
-	// Optional native accelerators. Their callers fall back to JavaScript when absent.
-	"bufferutil",
-	"utf-8-validate",
-	// Optional native proxy authentication. Its caller reports an install hint when absent.
-	"kerberos",
-	// Optional debug output coloring.
-	"supports-color",
-]);
-
-const lazyJitiPlugin = {
-	name: "lazy-jiti-transform",
-	setup(build) {
-		build.onResolve({ filter: /^jiti\/static$/ }, () => ({
-			namespace: "lazy-jiti",
-			path: "jiti/static",
-		}));
-		build.onLoad({ filter: /.*/, namespace: "lazy-jiti" }, () => ({
-			contents: `
-import { createRequire } from "node:module";
-
-const require = createRequire(import.meta.url);
-let createJitiImpl;
-
-export function createJiti(...args) {
-	createJitiImpl ??= require("jiti").createJiti;
-	return createJitiImpl(...args);
+for (const path of [...Object.values(entries), join(dist, "utils/image-resize-worker.js")]) {
+	if (!existsSync(path)) throw new Error(`Bundle input missing: ${relative(root, path)}`);
 }
-`,
-			loader: "js",
-		}));
-	},
-};
-
-const httpsProxyAgentNamedExportPlugin = {
-	name: "https-proxy-agent-named-export",
-	setup(build) {
-		build.onResolve({ filter: /^https-proxy-agent$/ }, (args) => {
-			if (args.kind !== "dynamic-import") return undefined;
-			return {
-				namespace: "https-proxy-agent-named-export",
-				path: args.path,
-			};
-		});
-		build.onLoad(
-			{
-				filter: /^https-proxy-agent$/,
-				namespace: "https-proxy-agent-named-export",
-			},
-			() => ({
-				contents: 'export { HttpsProxyAgent } from "https-proxy-agent";',
-				loader: "js",
-				resolveDir: repoRoot,
-			}),
-		);
-	},
-};
-
-function commonBuildOptions() {
-	return {
-		absWorkingDir: repoRoot,
-		banner,
-		bundle: true,
-		define: { AMAZME_BUNDLED_NODE: "true" },
-		external: ["@amazme/chord", "@silvia-odwyer/photon-node", "esbuild", "@amazme/web/assets"],
-		format: "esm",
-		legalComments: "none",
-		logLevel: "warning",
-		metafile: true,
-		minifySyntax: true,
-		minifyWhitespace: true,
-		platform: "node",
-		// The source uses jiti/static so Bun embeds its Babel transform. The Node
-		// package replaces it with a synchronous lazy require so jiti loads only
-		// when importing an extension; Babel remains deferred until a cache miss
-		// needs transformation.
-		plugins: [lazyJitiPlugin, httpsProxyAgentNamedExportPlugin],
-		sourcemap: false,
-		target: "node22.19",
-		// Do not apply the monorepo's source-oriented path aliases while bundling
-		// compiled output. Release builds must resolve the same package entries as
-		// an installed npm package.
-		tsconfigRaw: { compilerOptions: {} },
-	};
-}
-
-// Browser code is a release asset. Installed hosts read it without a compiler or source aliases.
-// Root paths supply protocol and client source. `@amazme/web` there is the declaration the node
-// project typechecks; alias the package back to its source so this asset inlines the implementation.
-await build({
-	entryPoints: [join(codingAgentDir, "src", "host", "web", "page.ts")],
-	outfile: join(codingAgentDistDir, "host", "web", "page-browser.js"),
+rmSync(bundle, { force: true, recursive: true });
+mkdirSync(bundle, { recursive: true });
+const options = {
+	absWorkingDir: root,
 	bundle: true,
 	format: "esm",
-	platform: "browser",
-	target: "es2022",
-	alias: {
-		"@amazme/web": join(repoRoot, "packages", "web", "src", "index.ts"),
-		"@amazme/web/typography": join(repoRoot, "packages", "web", "src", "typography.ts"),
+	platform: "node",
+	target: "node22.19",
+	define: { AMAZME_BUNDLED_NODE: "true" },
+	external: ["@silvia-odwyer/photon-node"],
+	banner: {
+		js: 'import { createRequire as __amazmeCreateRequire } from "node:module"; const require = __amazmeCreateRequire(import.meta.url);',
 	},
-	tsconfig: join(repoRoot, "tsconfig.json"),
+	legalComments: "none",
 	logLevel: "warning",
-});
-
-function validateExternalImports(metafiles) {
-	const unexpected = new Set();
-	for (const metafile of metafiles) {
-		for (const input of Object.values(metafile.inputs)) {
-			for (const imported of input.imports) {
-				if (!imported.external || isBuiltin(imported.path) || allowedExternalPackages.has(imported.path)) {
-					continue;
-				}
-				unexpected.add(imported.path);
-			}
-		}
-	}
-	if (unexpected.size > 0) {
-		throw new Error(`Bundle left unexpected external imports: ${Array.from(unexpected).sort().join(", ")}`);
-	}
-}
-
-function findContainingOutput(metafile, inputSuffix) {
-	const normalizedSuffix = inputSuffix.replaceAll("\\", "/");
-	for (const [outputPath, output] of Object.entries(metafile.outputs)) {
-		if (Object.keys(output.inputs).some((inputPath) => inputPath.replaceAll("\\", "/").endsWith(normalizedSuffix))) {
-			return resolve(repoRoot, outputPath);
-		}
-	}
-	throw new Error(`Could not locate bundled output containing ${inputSuffix}`);
-}
-
-function outputBytes(metafiles) {
-	return metafiles.reduce(
-		(total, metafile) => total + Object.values(metafile.outputs).reduce((subtotal, output) => subtotal + output.bytes, 0),
-		0,
-	);
-}
-
-for (const entry of [
-	join(codingAgentDistDir, "cli.js"),
-	join(codingAgentDistDir, "index.js"),
-	join(codingAgentDistDir, "rpc-entry.js"),
-	join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-	join(codingAgentDistDir, "extensions", "codemode", "worker.js"),
-	join(aiDistDir, "api", "bedrock-converse-stream.js"),
-	join(aiDistDir, "auth", "oauth", "anthropic.js"),
-]) {
-	if (!existsSync(entry)) {
-		throw new Error(`Bundle input is missing: ${relative(repoRoot, entry)}. Build the workspace packages first.`);
-	}
-}
-
-rmSync(bundleDir, { force: true, recursive: true });
-mkdirSync(bundleDir, { recursive: true });
-
-const mainResult = await build({
-	...commonBuildOptions(),
+	metafile: true,
+	minifySyntax: true,
+	minifyWhitespace: true,
+	tsconfigRaw: { compilerOptions: {} },
+};
+const main = await build({
+	...options,
+	entryPoints: entries,
+	outdir: bundle,
 	entryNames: "[name]",
-	entryPoints: {
-		"cli-runtime": join(codingAgentDistDir, "cli.js"),
-		index: join(codingAgentDistDir, "index.js"),
-		"rpc-entry": join(codingAgentDistDir, "rpc-entry.js"),
-	},
-	outdir: bundleDir,
 	chunkNames: "chunks/[name]-[hash]",
 	splitting: true,
 });
-
-const bedrockLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/api/bedrock-converse-stream.lazy.js");
-const oauthLoaderOutput = findContainingOutput(mainResult.metafile, "packages/ai/dist/auth/oauth/load.js");
-const imageResizeOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/utils/image-resize.js");
-const configOutput = findContainingOutput(mainResult.metafile, "packages/coding-agent/dist/config.js");
-if (dirname(bedrockLoaderOutput) !== dirname(oauthLoaderOutput)) {
-	throw new Error("Bedrock and OAuth lazy loaders were emitted into different directories");
-}
-
-// These implementations are reached through variable-specifier imports or a
-// worker URL, so the main bundle cannot follow them. Emit one self-contained
-// file per implementation beside the code that resolves it.
-const lazyEntryPoints = {
-	anthropic: join(aiDistDir, "auth", "oauth", "anthropic.js"),
-	"bedrock-converse-stream": join(aiDistDir, "api", "bedrock-converse-stream.js"),
-	"github-copilot": join(aiDistDir, "auth", "oauth", "github-copilot.js"),
-	"image-resize-worker": join(codingAgentDistDir, "utils", "image-resize-worker.js"),
-	"kimi-coding": join(aiDistDir, "auth", "oauth", "kimi-coding.js"),
-	meta: join(aiDistDir, "auth", "oauth", "meta.js"),
-	"openai-chatgpt": join(aiDistDir, "auth", "oauth", "openai-chatgpt.js"),
-	"openai-codex": join(aiDistDir, "auth", "oauth", "openai-codex.js"),
-	openrouter: join(aiDistDir, "auth", "oauth", "openrouter.js"),
-	radius: join(aiDistDir, "auth", "oauth", "radius.js"),
-	xai: join(aiDistDir, "auth", "oauth", "xai.js"),
-};
-
-// Every OAuth flow loaded through importOAuthModule() must have a lazy entry,
-// otherwise the flow fails at runtime with a missing module error.
-const oauthLoadSource = readFileSync(join(repoRoot, "packages", "ai", "src", "auth", "oauth", "load.ts"), "utf8");
-for (const match of oauthLoadSource.matchAll(/importOAuthModule\("\.\/([^"]+)\.ts"\)/g)) {
-	if (!(match[1] in lazyEntryPoints)) {
-		throw new Error(`OAuth flow "${match[1]}" is lazily imported but has no lazy bundle entry`);
-	}
-}
-
-const lazyResult = await build({
-	...commonBuildOptions(),
-	entryNames: "[name]",
-	entryPoints: lazyEntryPoints,
-	outdir: dirname(bedrockLoaderOutput),
-	splitting: false,
+// The only out-of-graph worker is a media helper. It resolves beside image-resize's chunk.
+const imageOutput = Object.entries(main.metafile.outputs).find(([, value]) =>
+	Object.keys(value.inputs).some((path) => path.endsWith("coding-agent/dist/utils/image-resize.js")),
+);
+if (!imageOutput) throw new Error("Image helper missing from client bundle");
+const media = await build({
+	...options,
+	entryPoints: { "image-resize-worker": join(dist, "utils/image-resize-worker.js") },
+	outdir: dirname(resolve(root, imageOutput[0])),
 });
-
-// getCodemodeWorkerSpecifier() in config.ts spawns the codemode worker from an in-memory data: URL
-// so codemode survives an update that replaces or deletes the install (#10439). A data: URL module
-// has no file location, so the worker must not use the createRequire(import.meta.url) banner,
-// require(), or imports other than Node builtins.
-const codemodeWorkerResult = await build({
-	...commonBuildOptions(),
-	banner: undefined,
-	entryNames: "[name]",
-	entryPoints: { "codemode-worker": join(codingAgentDistDir, "extensions", "codemode", "worker.js") },
-	outdir: dirname(bedrockLoaderOutput),
-	splitting: false,
-});
-for (const [outputPath, output] of Object.entries(codemodeWorkerResult.metafile.outputs)) {
-	const invalid = output.imports.filter((imported) => imported.kind !== "import-statement" || !isBuiltin(imported.path));
-	if (invalid.length > 0) {
-		throw new Error(
-			`Codemode worker must only import Node builtins: ${invalid.map((imported) => imported.path).join(", ")}`,
-		);
-	}
-	if (readFileSync(resolve(repoRoot, outputPath), "utf8").includes("import.meta")) {
-		throw new Error("Codemode worker must not use import.meta");
+for (const graph of [main.metafile, media.metafile]) {
+	for (const [path, input] of Object.entries(graph.inputs)) {
+		if (
+			/packages\/(?:ai|durable|chord|agent|mcp|server)\/dist\//.test(path) ||
+			/coding-agent\/dist\/(?:host|durable|extensions)\//.test(path)
+		)
+			throw new Error(`Legacy business runtime in product bundle: ${path}`);
+		for (const item of input.imports) {
+			if (item.external && !isBuiltin(item.path) && item.path !== "@silvia-odwyer/photon-node")
+				throw new Error(`Unexpected external import: ${item.path}`);
+		}
 	}
 }
-
-const imageResizeWorkerOutput = resolve(dirname(bedrockLoaderOutput), "image-resize-worker.js");
-if (dirname(imageResizeOutput) !== dirname(imageResizeWorkerOutput)) {
-	throw new Error("Image resize implementation and worker were emitted into different directories");
-}
-// getCodemodeWorkerUrl() in config.ts resolves the worker next to its own chunk.
-if (dirname(configOutput) !== dirname(bedrockLoaderOutput)) {
-	throw new Error("config.ts and the codemode worker were emitted into different directories");
-}
-
-const metafiles = [mainResult.metafile, lazyResult.metafile, codemodeWorkerResult.metafile];
-validateExternalImports(metafiles);
-const cliLauncher = `#!/usr/bin/env node
+const launcher = `#!/usr/bin/env node
 import { createRequire, enableCompileCache } from "node:module";
-
 enableCompileCache();
 createRequire(import.meta.url)("./cli-runtime.js");
 `;
-writeFileSync(join(bundleDir, "cli.js"), cliLauncher);
-chmodSync(join(bundleDir, "cli.js"), 0o755);
-chmodSync(join(bundleDir, "rpc-entry.js"), 0o755);
-
-const files = new Set(metafiles.flatMap((metafile) => Object.keys(metafile.outputs))).size + 1;
-const mib = (outputBytes(metafiles) + cliLauncher.length) / (1024 * 1024);
-console.log(`Built ${relative(repoRoot, bundleDir)} (${files} files, ${mib.toFixed(1)} MiB)`);
+writeFileSync(join(bundle, "cli.js"), launcher);
+chmodSync(join(bundle, "cli.js"), 0o755);
+chmodSync(join(bundle, "rpc-entry.js"), 0o755);
+writeFileSync(
+	join(bundle, "inputs.json"),
+	JSON.stringify(
+		[...new Set([...Object.keys(main.metafile.inputs), ...Object.keys(media.metafile.inputs)])].sort(),
+		null,
+		2,
+	) + "\n",
+);
+console.log(`Built ${relative(root, bundle)} with Python clients and media helpers`);

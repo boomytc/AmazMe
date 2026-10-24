@@ -2,11 +2,11 @@
  * CLI argument parsing and help display
  */
 
-import type { ThinkingLevel } from "@amazme/agent";
 import chalk from "chalk";
 import { APP_COMMAND, APP_NAME } from "../config.ts";
-import type { ExtensionFlag } from "../core/extensions/types.ts";
-import type { TuiMode } from "../core/settings-manager.ts";
+
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type TuiMode = "regular" | "fullscreen";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -157,8 +157,11 @@ export function parseArgs(args: string[]): Args {
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
-			const error = tools.some(name => !/^(?:[A-Za-z_*?][A-Za-z0-9_*?]{0,127}|[+-][A-Za-z_][A-Za-z0-9_]{0,127})$/.test(name))
-				|| (tools.some(name=>/^[+-]/.test(name)) && tools.some(name=>!(/^[+-]/.test(name)))) ? "use native tool names, patterns, or only +name/-name modifiers" : undefined;
+			const error =
+				tools.some((name) => !/^(?:[A-Za-z_*?][A-Za-z0-9_*?]{0,127}|[+-][A-Za-z_][A-Za-z0-9_]{0,127})$/.test(name)) ||
+				(tools.some((name) => /^[+-]/.test(name)) && tools.some((name) => !/^[+-]/.test(name)))
+					? "use native tool names, patterns, or only +name/-name modifiers"
+					: undefined;
 			if (error) result.diagnostics.push({ type: "error", message: `Invalid tools option: ${error}` });
 			else result.tools = tools;
 		} else if ((arg === "--exclude-tools" || arg === "-xt") && i + 1 < args.length) {
@@ -166,7 +169,9 @@ export function parseArgs(args: string[]): Args {
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
-			const error = excludeTools.some(name=>!/^[A-Za-z_*?][A-Za-z0-9_*?]{0,127}$/.test(name)) ? "excludeTools accepts only plain names or patterns" : undefined;
+			const error = excludeTools.some((name) => !/^[A-Za-z_*?][A-Za-z0-9_*?]{0,127}$/.test(name))
+				? "excludeTools accepts only plain names or patterns"
+				: undefined;
 			if (error) result.diagnostics.push({ type: "error", message: `Invalid tools option: ${error}` });
 			else result.excludeTools = excludeTools;
 		} else if (arg === "--thinking" && i + 1 < args.length) {
@@ -241,7 +246,15 @@ export function parseArgs(args: string[]): Args {
 					message: `Invalid TUI mode "${mode}". Valid values: regular, fullscreen`,
 				});
 			}
-		} else if (arg === "--python-url" || arg === "--python-token" || arg === "--python-session" || arg === "--decision" || arg === "--request" || arg === "--call" || arg === "--workspace") {
+		} else if (
+			arg === "--python-url" ||
+			arg === "--python-token" ||
+			arg === "--python-session" ||
+			arg === "--decision" ||
+			arg === "--request" ||
+			arg === "--call" ||
+			arg === "--workspace"
+		) {
 			const value = args[i + 1];
 			if (value === undefined || value.startsWith("-")) {
 				result.diagnostics.push({ type: "error", message: `${arg} requires a value` });
@@ -289,18 +302,8 @@ export function parseArgs(args: string[]): Args {
 	return result;
 }
 
-export function printHelp(extensionFlags?: ExtensionFlag[]): void {
-	const extensionFlagsText =
-		extensionFlags && extensionFlags.length > 0
-			? `\n${chalk.bold("Extension CLI Flags:")}\n${extensionFlags
-					.map((flag) => {
-						const value = flag.type === "string" ? " <value>" : "";
-						const description = flag.description ?? `Registered by ${flag.extensionPath}`;
-						return `  --${flag.name}${value}`.padEnd(30) + description;
-					})
-					.join("\n")}\n`
-			: "";
-	process.stdout.write(`${APP_NAME} — 本机桌面助手
+export function printHelp(output: Pick<NodeJS.WriteStream, "write"> = process.stdout): void {
+	output.write(`${APP_NAME} — 本机桌面助手
 
 用法：
   ${APP_COMMAND} [--print | --mode json | --mode rpc] [@文件...] [问题]
@@ -331,5 +334,5 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
   --help | --version                      帮助或版本
 
 交互客户端的终端和 MCP 命令保留原调用编号。离开客户端只释放绑定。
-OAuth、模型、项目和设置由 Python Host 保存。旧 JSONL 会话不迁移。${extensionFlagsText}\n`);
+OAuth、模型、项目和设置由 Python Host 保存。旧 JSONL 会话不迁移。\n`);
 }

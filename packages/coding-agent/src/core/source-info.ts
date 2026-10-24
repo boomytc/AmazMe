@@ -1,5 +1,3 @@
-import type { PathMetadata } from "./package-manager.ts";
-
 export type SourceScope = "user" | "project" | "temporary";
 export type SourceOrigin = "package" | "top-level";
 
@@ -26,16 +24,6 @@ export function getSyntheticPathSource(path: string): string | undefined {
 
 export function isSyntheticPath(path: string): boolean {
 	return path.startsWith(BUILTIN_PATH_PREFIX) || path.startsWith("<");
-}
-
-export function createSourceInfo(path: string, metadata: PathMetadata): SourceInfo {
-	return {
-		path,
-		source: metadata.source,
-		scope: metadata.scope,
-		origin: metadata.origin,
-		baseDir: metadata.baseDir,
-	};
 }
 
 export function createSyntheticSourceInfo(

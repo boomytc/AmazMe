@@ -25,7 +25,7 @@
 		"generate:model-catalog": "npm --prefix packages/ai run generate-model-catalog",
 		"eval": "npm run eval --workspace=@amazme/evals --",
 		"test": "npm run test --workspaces --if-present",
-		"test:mcp-conformance": "node packages/coding-agent/test/mcp-conformance/run.ts"
+		"test:mcp-conformance": "backend/.venv/bin/python -m pytest backend/tests/test_mcp.py backend/tests/test_mcp_model.py backend/tests/test_native_mcp.py"
 	},
 	"devDependencies": {
 		"@anthropic-ai/sandbox-runtime": "0.0.26",

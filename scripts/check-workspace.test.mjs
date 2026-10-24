@@ -56,11 +56,7 @@ test("dependency checks reject registry ranges in every direct section and exact
 	const failures = checkDependencyVersions(root);
 	assert.equal(failures.length, 4);
 	assert.ok(
-		failures.some((message) =>
-			message.includes(
-				"optionalDependencies.@amazme/ai must match workspace version",
-			),
-		),
+		failures.some((message) => message.includes("optionalDependencies.@amazme/ai must match workspace version")),
 	);
 });
 
@@ -142,7 +138,7 @@ test("await inside functions, methods, and arrows does not suspend the module", 
 	const directory = packageFixture(root, "ai", "export {};");
 	writeFileSync(
 		join(directory, "src/flow.ts"),
-		'async function a() { await b(); }\nexport const c = async () => { await d(); };\nclass E { async f() { for await (const g of h) { g; } } }\n',
+		"async function a() { await b(); }\nexport const c = async () => { await d(); };\nclass E { async f() { for await (const g of h) { g; } } }\n",
 	);
 	assert.deepEqual(checkSourceContracts(root), []);
 });
@@ -215,12 +211,19 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	writeFileSync(join(ai, "src/models.ts"), 'export { value } from "./index.ts";');
 	const durable = packageFixture(root, "durable", 'import fs from "node:fs"; export const read = fs.readFileSync;');
 	mkdirSync(join(durable, "src/codemode"), { recursive: true });
-	writeFileSync(join(durable, "src/codemode/index.ts"), 'import fs from "node:fs"; export const read = fs.readFileSync;');
+	writeFileSync(
+		join(durable, "src/codemode/index.ts"),
+		'import fs from "node:fs"; export const read = fs.readFileSync;',
+	);
 	mkdirSync(join(durable, "src/tools"), { recursive: true });
 	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
-	const agent = packageFixture(root, "coding-agent", "export const value = 1;");
-	mkdirSync(join(agent, "src/host/web"), { recursive: true });
-	writeFileSync(join(agent, "src/host/web/page.ts"), 'import fs from "node:fs"; export const read = fs.readFileSync;');
+	packageFixture(root, "coding-agent", "export const value = 1;");
+	packageFixture(root, "web", "export const value = 1;");
+	mkdirSync(join(root, "packages/web/src"), { recursive: true });
+	writeFileSync(
+		join(root, "packages/web/src/index.ts"),
+		'import fs from "node:fs"; export const read = fs.readFileSync;',
+	);
 	const { failures } = await checkEntryContracts(root);
 	assert.ok(failures.some((failure) => failure.includes("forbidden runtime import packages/ai/src/index.ts")));
 	assert.ok(
@@ -245,12 +248,12 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 		);
 	}
 	for (const entry of ["index.ts", "codemode/index.ts"]) {
-		assert.ok(failures.some((failure) => failure.startsWith(`packages/durable/src/${entry}:`) && failure.includes("node:fs")));
+		assert.ok(
+			failures.some((failure) => failure.startsWith(`packages/durable/src/${entry}:`) && failure.includes("node:fs")),
+		);
 	}
 	assert.ok(
-		failures.some(
-			(failure) => failure.startsWith("packages/coding-agent/src/host/web/page.ts:") && failure.includes("node:fs"),
-		),
+		failures.some((failure) => failure.startsWith("packages/web/src/index.ts:") && failure.includes("node:fs")),
 	);
 });
 
@@ -261,9 +264,10 @@ test("Durable root and file tools keep the optional Photon processor in its own 
 	const codemode = packageFixture(root, "codemode", "export const value = 1;");
 	for (const name of ["portable", "cloudflare"])
 		writeFileSync(join(codemode, `src/${name}.ts`), "export const value = 1;");
-	const agent = packageFixture(root, "coding-agent", "export const value = 1;");
-	mkdirSync(join(agent, "src/host/web"), { recursive: true });
-	writeFileSync(join(agent, "src/host/web/page.ts"), "export const value = 1;");
+	packageFixture(root, "coding-agent", "export const value = 1;");
+	packageFixture(root, "web", "export const value = 1;");
+	mkdirSync(join(root, "packages/web/src"), { recursive: true });
+	writeFileSync(join(root, "packages/web/src/index.ts"), "export const value = 1;");
 	const durable = packageFixture(root, "durable", 'export { photon } from "./images/index.ts";');
 	mkdirSync(join(durable, "src/codemode"), { recursive: true });
 	writeFileSync(join(durable, "src/codemode/index.ts"), "export const value = 1;");
@@ -273,7 +277,13 @@ test("Durable root and file tools keep the optional Photon processor in its own 
 	writeFileSync(join(durable, "src/tools/index.ts"), 'export { photon } from "../images/index.ts";');
 	const { failures } = await checkEntryContracts(root);
 	for (const entry of ["index.ts", "tools/index.ts"])
-		assert.ok(failures.some((failure) => failure.startsWith(`packages/durable/src/${entry}:`) && failure.includes("forbidden runtime import packages/durable/src/images/index.ts")));
+		assert.ok(
+			failures.some(
+				(failure) =>
+					failure.startsWith(`packages/durable/src/${entry}:`) &&
+					failure.includes("forbidden runtime import packages/durable/src/images/index.ts"),
+			),
+		);
 	writeFileSync(join(durable, "src/index.ts"), "export const value = 1;");
 	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
 	assert.deepEqual((await checkEntryContracts(root)).failures, []);
@@ -306,15 +316,18 @@ test("changelog checks reject unknown, repeated, out-of-order, and empty section
 	const failures = checkChangelogs(root);
 	assert.equal(failures.length, 7, failures.join("\n"));
 	for (const fragment of [
-		'agent/CHANGELOG.md:5: section must be one of',
+		"agent/CHANGELOG.md:5: section must be one of",
 		'agent/CHANGELOG.md:13: "Added" is repeated or out of order',
 		'agent/CHANGELOG.md:17: "Fixed" is repeated or out of order',
 		'agent/CHANGELOG.md:17: "Fixed" has no entries',
-		'agent/CHANGELOG.md:19: release heading must read',
+		"agent/CHANGELOG.md:19: release heading must read",
 		'ai/CHANGELOG.md: first line must be "# Changelog"',
 		'ai/CHANGELOG.md:3: first section must be "## [Unreleased]"',
 	])
-		assert.ok(failures.some((failure) => failure.includes(fragment)), `missing ${fragment} in\n${failures.join("\n")}`);
+		assert.ok(
+			failures.some((failure) => failure.includes(fragment)),
+			`missing ${fragment} in\n${failures.join("\n")}`,
+		);
 });
 
 function buildConfigFixture(root, name, config) {
@@ -331,7 +344,10 @@ test("build configs resolve workspace packages through node_modules, not paths",
 
 test("build configs reject paths in the package config and in configs it extends", () => {
 	const root = fixture();
-	writeFileSync(join(root, "tsconfig.base.json"), JSON.stringify({ compilerOptions: { paths: { "@amazme/ai": ["x"] } } }));
+	writeFileSync(
+		join(root, "tsconfig.base.json"),
+		JSON.stringify({ compilerOptions: { paths: { "@amazme/ai": ["x"] } } }),
+	);
 	buildConfigFixture(root, "agent", {
 		extends: "../../tsconfig.base.json",
 		compilerOptions: { paths: { "@amazme/ai": ["../ai/dist/index.d.ts"] } },
@@ -405,7 +421,10 @@ test("a version pinned to a scoped third-party package is not the release versio
 });
 
 test("by default the release-version rule reads only files git tracks", () => {
-	const root = versionFixture({ "src/tracked.ts": 'export const v = "9.8.7";\n', "src/scratch.ts": 'export const v = "9.8.7";\n' });
+	const root = versionFixture({
+		"src/tracked.ts": 'export const v = "9.8.7";\n',
+		"src/scratch.ts": 'export const v = "9.8.7";\n',
+	});
 	execFileSync("git", ["init", "-q"], { cwd: root });
 	execFileSync("git", ["add", "package.json", "src/tracked.ts"], { cwd: root });
 	const failures = checkVersionLiterals(root);
@@ -436,10 +455,7 @@ test("temp dir checks allow only packages/*/test/temp-dir.ts and reject bare mkd
 	assert.equal(failures.length, 2, failures.join("\n"));
 	assert.ok(failures.some((message) => message.includes("leaky.test.ts:")));
 	assert.ok(failures.some((message) => message.includes("nested/temp-dir.ts:")));
-	assert.equal(
-		failures.filter((message) => message.includes("/test/temp-dir.ts:")).length,
-		0,
-	);
+	assert.equal(failures.filter((message) => message.includes("/test/temp-dir.ts:")).length, 0);
 });
 
 test("temp dir helpers match the ai vitest copy; tui may differ", () => {
@@ -474,11 +490,11 @@ test("package sources may not call tmpdir() outside the allowlist", () => {
 	// A variable named tmpdir is not a call.
 	writeFileSync(join(src, "utils", "remote.ts"), "export const join = (tmpdir) => tmpdir + '/x';\n");
 	writeFileSync(
-		join(src, "durable", "sessions.ts"),
+		join(src, "utils", "clipboard.ts"),
 		'import { tmpdir } from "node:os";\nexport const dir = join(tmpdir(), "amazme-session-artifacts-x");\n',
 	);
 	const failures = checkTempDirUsage(root, {
-		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+		"packages/coding-agent/src/utils/clipboard.ts": "--no-session artifact directory",
 	});
 	assert.equal(failures.length, 2, failures.join("\n"));
 	assert.ok(failures.some((message) => message.startsWith("packages/coding-agent/src/utils/output-files.ts:2:")));
@@ -488,11 +504,11 @@ test("package sources may not call tmpdir() outside the allowlist", () => {
 
 test("an allowlisted source that stops calling tmpdir() must leave the allowlist", () => {
 	const root = fixture();
-	const src = join(root, "packages", "coding-agent", "src", "durable");
+	const src = join(root, "packages", "coding-agent", "src", "utils");
 	mkdirSync(src, { recursive: true });
-	writeFileSync(join(src, "sessions.ts"), "export const dir = '/var/sessions';\n");
+	writeFileSync(join(src, "clipboard.ts"), "export const dir = '/var/sessions';\n");
 	const failures = checkTempDirUsage(root, {
-		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+		"packages/coding-agent/src/utils/clipboard.ts": "--no-session artifact directory",
 	});
 	assert.equal(failures.length, 1, failures.join("\n"));
 	assert.ok(failures[0].includes("remove it from sourceTempDirAllowlist"));
@@ -504,14 +520,14 @@ test("an allowlisted source file that no longer exists must leave the allowlist"
 	mkdirSync(src, { recursive: true });
 	writeFileSync(join(src, "kept.ts"), 'import { tmpdir } from "node:os";\nexport const dir = tmpdir();\n');
 	const allowed = {
-		"packages/coding-agent/src/durable/sessions.ts": "--no-session artifact directory",
+		"packages/coding-agent/src/utils/clipboard.ts": "--no-session artifact directory",
 		"packages/coding-agent/src/kept.ts": "still calls it",
 	};
 	// The walk never visits a file that is gone, so only the file check can see this entry.
 	assert.deepEqual(checkTempDirUsage(root, allowed), []);
 	const failures = checkTempDirAllowlistFiles(root, allowed);
 	assert.equal(failures.length, 1, failures.join("\n"));
-	assert.ok(failures[0].startsWith("packages/coding-agent/src/durable/sessions.ts:"));
+	assert.ok(failures[0].startsWith("packages/coding-agent/src/utils/clipboard.ts:"));
 	assert.ok(failures[0].includes("no such source file"));
 	assert.ok(failures[0].includes("remove it from sourceTempDirAllowlist"));
 });
@@ -528,8 +544,13 @@ test("allowlist entries are exact source files with a reason", () => {
 		"packages/coding-agent/src/utils/scratch.ts": "  ",
 	});
 	assert.equal(failures.length, 4, failures.join("\n"));
-	assert.equal(failures.filter((message) => message.includes("one exact packages/<pkg>/src/... source file")).length, 3);
-	assert.ok(failures.includes("packages/coding-agent/src/utils/scratch.ts: sourceTempDirAllowlist entry needs a reason"));
+	assert.equal(
+		failures.filter((message) => message.includes("one exact packages/<pkg>/src/... source file")).length,
+		3,
+	);
+	assert.ok(
+		failures.includes("packages/coding-agent/src/utils/scratch.ts: sourceTempDirAllowlist entry needs a reason"),
+	);
 });
 
 test("every real allowlist entry is an existing source file with a reason that still calls tmpdir()", () => {
@@ -543,8 +564,8 @@ test("every real allowlist entry is an existing source file with a reason that s
 	assert.deepEqual(checkTempDirAllowlistFiles(repoRoot), []);
 });
 
-test("the source allowlist exempts the --no-session directory but not output files", () => {
-	assert.ok(Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/durable/sessions.ts"));
+test("the source allowlist retains clipboard scratch but rejects session output", () => {
+	assert.ok(Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/utils/clipboard.ts"));
 	assert.ok(!Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/utils/output-files.ts"));
 	assert.ok(!Object.keys(sourceTempDirAllowlist).some((file) => file.includes("/mcp/")));
 });

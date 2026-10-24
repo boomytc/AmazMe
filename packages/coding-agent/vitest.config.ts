@@ -26,6 +26,8 @@ export default mergeConfig(
 			globals: true,
 			environment: "node",
 			testTimeout: 30000,
+			maxWorkers: 1,
+			fileParallelism: false,
 			// Tests run offline by default; opt in with allowNetwork() from test/test-network-env.ts.
 			env: {
 				...providerEnvironment,

@@ -3,12 +3,9 @@
 // can reach node:sqlite) is imported dynamically below, after this has run. Keep the static imports free of SQLite.
 import "./quiet-warnings.ts";
 import { APP_NAME } from "./config.ts";
-import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
 
 process.title = `${APP_NAME}-rpc`;
 process.env.AMAZME_CODING_AGENT = "true";
 process.env.AI_AGENT = "AmazMe";
-
-configureHttpDispatcher();
 
 void import("./main.ts").then(({ main }) => main(["--mode", "rpc", ...process.argv.slice(2)]));

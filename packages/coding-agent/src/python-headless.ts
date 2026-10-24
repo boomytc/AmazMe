@@ -7,10 +7,16 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
-import type { ImageContent } from "@amazme/ai";
+
 import { getAgentDir } from "./config.ts";
 import { writeRawStdout } from "./core/output-guard.ts";
 import { connectPythonHost } from "./python-session-tui.ts";
+
+export interface ImageContent {
+	readonly type: "image";
+	readonly data: string;
+	readonly mimeType: string;
+}
 
 export interface PythonRunOptions {
 	readonly system_prompt?: string;
@@ -76,7 +82,12 @@ function readPtyRetry(sessionId: string): PtyRetry | null {
 	const path = ptyRetryPath(sessionId);
 	if (!existsSync(path)) return null;
 	const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-	if (!isRecord(parsed) || typeof parsed.inputId !== "string" || typeof parsed.prompt !== "string" || typeof parsed.terminalId !== "string") {
+	if (
+		!isRecord(parsed) ||
+		typeof parsed.inputId !== "string" ||
+		typeof parsed.prompt !== "string" ||
+		typeof parsed.terminalId !== "string"
+	) {
 		fail("invalid_terminal_input");
 	}
 	return { inputId: parsed.inputId, prompt: parsed.prompt, terminalId: parsed.terminalId };
@@ -118,8 +129,15 @@ function approvalSummary(approval: Record<string, unknown>): string {
 }
 
 function visibleLines(raw: string): string[] {
-	const text = raw.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "").replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "").replace(/\r/g, "");
-	return text.split("\n").map((line) => line.trimEnd()).filter((line) => line.length > 0).slice(-8);
+	const text = raw
+		.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
+		.replace(/\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g, "")
+		.replace(/\r/g, "");
+	return text
+		.split("\n")
+		.map((line) => line.trimEnd())
+		.filter((line) => line.length > 0)
+		.slice(-8);
 }
 
 export class HostClient {
@@ -132,8 +150,12 @@ export class HostClient {
 	constructor(url: string, token: string, options: PythonRunOptions = {}) {
 		this.#url = url.replace(/\/$/, "");
 		this.#token = token;
-		this.#runOptions = {system_prompt:options.system_prompt, append_system_prompt:options.append_system_prompt,
-			allowed_tools:options.allowed_tools, excluded_tools:options.excluded_tools};
+		this.#runOptions = {
+			system_prompt: options.system_prompt,
+			append_system_prompt: options.append_system_prompt,
+			allowed_tools: options.allowed_tools,
+			excluded_tools: options.excluded_tools,
+		};
 	}
 
 	async bootstrap(): Promise<void> {
@@ -162,28 +184,54 @@ export class HostClient {
 		return { sessionId, attachmentId: attached.attachment_id };
 	}
 
-	async submit(sessionId: string, workspace: string, attachmentId: string, text: string, images: readonly ImageContent[] = []): Promise<Polled> {
+	async submit(
+		sessionId: string,
+		workspace: string,
+		attachmentId: string,
+		text: string,
+		images: readonly ImageContent[] = [],
+	): Promise<Polled> {
 		await this.#requireWorkspace(sessionId, workspace);
 		const requestId = randomBytes(8).toString("hex");
-		await this.#send("POST", `/api/v1/sessions/${sessionId}/submissions`, { ...this.#runOptions, request_id: requestId, text,
-			images:images.map(image=>({media_type:image.mimeType, data_base64:image.data})) }, attachmentId);
+		await this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/submissions`,
+			{
+				...this.#runOptions,
+				request_id: requestId,
+				text,
+				images: images.map((image) => ({ media_type: image.mimeType, data_base64: image.data })),
+			},
+			attachmentId,
+		);
 		return this.#untilDecision(sessionId, requestId);
 	}
 
-	async decideRequest(sessionId: string, attachmentId: string, requestId: string, approve: boolean): Promise<Record<string, unknown>> {
+	async decideRequest(
+		sessionId: string,
+		attachmentId: string,
+		requestId: string,
+		approve: boolean,
+	): Promise<Record<string, unknown>> {
 		const approval = await this.pendingApproval(sessionId, requestId);
 		if (!approval) fail("approval_not_found");
 		const approvalId = approval.approval_id;
 		const revision = approval.revision;
 		const digest = approval.proposal_digest;
-		if (typeof approvalId !== "string" || typeof revision !== "string" || typeof digest !== "string") fail("invalid_approval");
-		await this.#send("POST", `/api/v1/sessions/${sessionId}/approvals`, {
-			decision_id: hexId(),
-			approval_id: approvalId,
-			expected_revision: revision,
-			proposal_digest: digest,
-			approve,
-		}, attachmentId);
+		if (typeof approvalId !== "string" || typeof revision !== "string" || typeof digest !== "string")
+			fail("invalid_approval");
+		await this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/approvals`,
+			{
+				decision_id: hexId(),
+				approval_id: approvalId,
+				expected_revision: revision,
+				proposal_digest: digest,
+				approve,
+			},
+			attachmentId,
+		);
 		return this.#untilTerminal(sessionId, requestId);
 	}
 
@@ -207,7 +255,9 @@ export class HostClient {
 		const listed = await this.#send("GET", `/api/v1/sessions/${sessionId}/terminals`);
 		const terminals = listed.terminals;
 		if (!Array.isArray(terminals)) fail("invalid_terminal");
-		const running = terminals.filter((item) => isRecord(item) && item.phase === "running" && typeof item.terminal_id === "string");
+		const running = terminals.filter(
+			(item) => isRecord(item) && item.phase === "running" && typeof item.terminal_id === "string",
+		);
 		if (running.length > 1) fail("terminal_ambiguous");
 		const first = running[0];
 		return isRecord(first) && typeof first.terminal_id === "string" ? first.terminal_id : "";
@@ -215,22 +265,38 @@ export class HostClient {
 
 	async openTerminal(sessionId: string, attachmentId: string, workspace: string): Promise<string> {
 		const terminalId = hexId();
-		const opened = await this.#send("POST", `/api/v1/sessions/${sessionId}/terminals`, {
-			terminal_id: terminalId,
-			command: "sh",
-			cols: 80,
-			rows: 24,
-			workspace,
-		}, attachmentId);
+		const opened = await this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/terminals`,
+			{
+				terminal_id: terminalId,
+				command: "sh",
+				cols: 80,
+				rows: 24,
+				workspace,
+			},
+			attachmentId,
+		);
 		if (opened.terminal_id !== terminalId || opened.phase !== "running") fail("terminal_open_failed");
 		return terminalId;
 	}
 
-	async writeTerminal(sessionId: string, attachmentId: string, terminalId: string, data: string, inputId = hexId()): Promise<void> {
-		const written = await this.#send("POST", `/api/v1/sessions/${sessionId}/terminals/${terminalId}/input`, {
-			input_id: inputId,
-			data,
-		}, attachmentId);
+	async writeTerminal(
+		sessionId: string,
+		attachmentId: string,
+		terminalId: string,
+		data: string,
+		inputId = hexId(),
+	): Promise<void> {
+		const written = await this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/terminals/${terminalId}/input`,
+			{
+				input_id: inputId,
+				data,
+			},
+			attachmentId,
+		);
 		if (written.input_status !== "accepted") fail("terminal_input_unconfirmed");
 	}
 
@@ -238,8 +304,19 @@ export class HostClient {
 		return this.#send("POST", `/api/v1/sessions/${sessionId}/terminals/${terminalId}/read`, {}, attachmentId);
 	}
 
-	async resizeTerminal(sessionId: string, attachmentId: string, terminalId: string, cols: number, rows: number): Promise<void> {
-		const view = await this.#send("POST", `/api/v1/sessions/${sessionId}/terminals/${terminalId}/resize`, { cols, rows }, attachmentId);
+	async resizeTerminal(
+		sessionId: string,
+		attachmentId: string,
+		terminalId: string,
+		cols: number,
+		rows: number,
+	): Promise<void> {
+		const view = await this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/terminals/${terminalId}/resize`,
+			{ cols, rows },
+			attachmentId,
+		);
 		if (view.cols !== cols || view.rows !== rows) fail("terminal_resize_failed");
 	}
 
@@ -251,7 +328,9 @@ export class HostClient {
 		const state = await this.#send("GET", `/api/v1/sessions/${sessionId}/mcp`);
 		const servers = state.servers;
 		if (!Array.isArray(servers)) fail("invalid_mcp");
-		const ready = servers.filter((item) => isRecord(item) && item.phase === "ready" && typeof item.server_id === "string");
+		const ready = servers.filter(
+			(item) => isRecord(item) && item.phase === "ready" && typeof item.server_id === "string",
+		);
 		if (ready.length > 1) fail("mcp_ambiguous");
 		const first = ready[0];
 		return isRecord(first) && typeof first.server_id === "string" ? first.server_id : "";
@@ -259,36 +338,63 @@ export class HostClient {
 
 	async openMcp(sessionId: string, attachmentId: string, command: string, workspace: string): Promise<string> {
 		const serverId = hexId();
-		const opened = await this.#send("POST", `/api/v1/sessions/${sessionId}/mcp`, {
-			server_id: serverId,
-			command,
-			workspace,
-		}, attachmentId);
+		const opened = await this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/mcp`,
+			{
+				server_id: serverId,
+				command,
+				workspace,
+			},
+			attachmentId,
+		);
 		if (opened.server_id !== serverId || opened.phase !== "ready") fail("mcp_open_failed");
 		return serverId;
 	}
 
-	async requestMcp(sessionId: string, attachmentId: string, serverId: string, name: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
-		return this.#send("POST", `/api/v1/sessions/${sessionId}/mcp/${serverId}/calls`, {
-			call_id: hexId(),
-			name,
-			arguments: args,
-			origin: "manual",
-		}, attachmentId);
+	async requestMcp(
+		sessionId: string,
+		attachmentId: string,
+		serverId: string,
+		name: string,
+		args: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
+		return this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/mcp/${serverId}/calls`,
+			{
+				call_id: hexId(),
+				name,
+				arguments: args,
+				origin: "manual",
+			},
+			attachmentId,
+		);
 	}
 
-	async decideCall(sessionId: string, attachmentId: string, callId: string, approve: boolean): Promise<Record<string, unknown>> {
+	async decideCall(
+		sessionId: string,
+		attachmentId: string,
+		callId: string,
+		approve: boolean,
+	): Promise<Record<string, unknown>> {
 		const state = await this.#send("GET", `/api/v1/sessions/${sessionId}/mcp`);
 		const calls = state.calls;
 		if (!Array.isArray(calls)) fail("invalid_mcp");
 		const found = calls.find((item) => isRecord(item) && item.call_id === callId);
-		if (!isRecord(found) || typeof found.server_id !== "string" || typeof found.digest !== "string") fail("mcp_call_not_found");
+		if (!isRecord(found) || typeof found.server_id !== "string" || typeof found.digest !== "string")
+			fail("mcp_call_not_found");
 		if (found.phase !== "waiting_approval") fail("mcp_call_conflict");
-		const decided = await this.#send("POST", `/api/v1/sessions/${sessionId}/mcp/${found.server_id}/calls/${callId}/decision`, {
-			decision_id: hexId(),
-			approve,
-			digest: found.digest,
-		}, attachmentId);
+		const decided = await this.#send(
+			"POST",
+			`/api/v1/sessions/${sessionId}/mcp/${found.server_id}/calls/${callId}/decision`,
+			{
+				decision_id: hexId(),
+				approve,
+				digest: found.digest,
+			},
+			attachmentId,
+		);
 		return this.#untilMcp(sessionId, callId, decided);
 	}
 
@@ -338,10 +444,15 @@ export class HostClient {
 		fail("request_pending");
 	}
 
-	async #untilMcp(sessionId: string, callId: string, current: Record<string, unknown>): Promise<Record<string, unknown>> {
+	async #untilMcp(
+		sessionId: string,
+		callId: string,
+		current: Record<string, unknown>,
+	): Promise<Record<string, unknown>> {
 		let call = current;
 		for (let attempt = 0; attempt < 800; attempt += 1) {
-			if (call.phase === "done" || call.phase === "denied" || call.phase === "unknown" || call.phase === "conflict") return call;
+			if (call.phase === "done" || call.phase === "denied" || call.phase === "unknown" || call.phase === "conflict")
+				return call;
 			await sleep(50);
 			const state = await this.#send("GET", `/api/v1/sessions/${sessionId}/mcp`);
 			const calls = state.calls;
@@ -355,11 +466,16 @@ export class HostClient {
 
 	async rpc(call: unknown): Promise<unknown> {
 		if (isRecord(call) && call.method === "request.submit" && isRecord(call.params))
-			call = {...call, params:{...this.#runOptions, ...call.params}};
+			call = { ...call, params: { ...this.#runOptions, ...call.params } };
 		return this.#sendRaw("POST", "/api/v1/rpc", call);
 	}
 
-	async #send(method: string, path: string, jsonBody?: Record<string, unknown>, attachmentId = ""): Promise<Record<string, unknown>> {
+	async #send(
+		method: string,
+		path: string,
+		jsonBody?: Record<string, unknown>,
+		attachmentId = "",
+	): Promise<Record<string, unknown>> {
 		const payload = await this.#sendRaw(method, path, jsonBody, attachmentId);
 		if (!isRecord(payload)) fail("request_failed");
 		return payload;
@@ -387,7 +503,13 @@ export class HostClient {
 	}
 }
 
-async function emitReceipt(workspace: string, sessionId: string, receipt: Record<string, unknown>, jsonMode: boolean, approval?: Record<string, unknown>): Promise<number> {
+async function emitReceipt(
+	workspace: string,
+	sessionId: string,
+	receipt: Record<string, unknown>,
+	jsonMode: boolean,
+	approval?: Record<string, unknown>,
+): Promise<number> {
 	const status = typeof receipt.status === "string" ? receipt.status : "failed";
 	const answer = typeof receipt.answer === "string" ? receipt.answer : "";
 	const error = typeof receipt.error === "string" && receipt.error ? ` ${receipt.error}` : "";
@@ -419,14 +541,24 @@ async function emitReceipt(workspace: string, sessionId: string, receipt: Record
 	return 1;
 }
 
-async function emitRecord(payload: Record<string, unknown>, jsonMode: boolean, text: string, code: number): Promise<number> {
+async function emitRecord(
+	payload: Record<string, unknown>,
+	jsonMode: boolean,
+	text: string,
+	code: number,
+): Promise<number> {
 	if (jsonMode) await writeRawStdout(`${JSON.stringify(payload)}\n`);
 	else if (code === 0) await writeRawStdout(text);
 	else process.stderr.write(text);
 	return code;
 }
 
-async function watchTerminal(client: HostClient, sessionId: string, attachmentId: string, terminalId: string): Promise<string> {
+async function watchTerminal(
+	client: HostClient,
+	sessionId: string,
+	attachmentId: string,
+	terminalId: string,
+): Promise<string> {
 	let view = await client.readTerminal(sessionId, attachmentId, terminalId);
 	let last = typeof view.output_seq === "number" ? view.output_seq : 0;
 	let stable = 0;
@@ -444,17 +576,37 @@ async function watchTerminal(client: HostClient, sessionId: string, attachmentId
 	return typeof view.output === "string" ? view.output : "";
 }
 
-export async function runPtyCommand(client: HostClient, sessionId: string, attachmentId: string, workspace: string, prompt: string, jsonMode: boolean): Promise<number> {
+export async function runPtyCommand(
+	client: HostClient,
+	sessionId: string,
+	attachmentId: string,
+	workspace: string,
+	prompt: string,
+	jsonMode: boolean,
+): Promise<number> {
 	if (prompt === "/pty-ack") {
 		const removed = clearPtyRetry(sessionId);
 		const text = removed ? "已由用户核对；原输入不会重放\n" : "没有未确认的输入\n";
-		return emitRecord({ workspace, session_id: sessionId, status: removed ? "acked" : "absent" }, jsonMode, text, removed ? 0 : 1);
+		return emitRecord(
+			{ workspace, session_id: sessionId, status: removed ? "acked" : "absent" },
+			jsonMode,
+			text,
+			removed ? 0 : 1,
+		);
 	}
 	const pending = readPtyRetry(sessionId);
 	if (pending && pending.prompt !== prompt) {
-		return emitRecord({
-			workspace, session_id: sessionId, status: "unknown", input_id: pending.inputId,
-		}, jsonMode, "上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。\n", 1);
+		return emitRecord(
+			{
+				workspace,
+				session_id: sessionId,
+				status: "unknown",
+				input_id: pending.inputId,
+			},
+			jsonMode,
+			"上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。\n",
+			1,
+		);
 	}
 	let terminalId = pending?.terminalId ?? "";
 	if (!terminalId) {
@@ -463,71 +615,140 @@ export async function runPtyCommand(client: HostClient, sessionId: string, attac
 	}
 	const claimed = pending ?? storePtyRetry(sessionId, { inputId: hexId(), prompt, terminalId });
 	if (claimed.prompt !== prompt) {
-		return emitRecord({
-			workspace, session_id: sessionId, status: "unknown", input_id: claimed.inputId,
-		}, jsonMode, "上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。\n", 1);
+		return emitRecord(
+			{
+				workspace,
+				session_id: sessionId,
+				status: "unknown",
+				input_id: claimed.inputId,
+			},
+			jsonMode,
+			"上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。\n",
+			1,
+		);
 	}
 	try {
-		await client.writeTerminal(sessionId, attachmentId, claimed.terminalId, `${prompt.slice("/pty ".length)}\n`, claimed.inputId);
+		await client.writeTerminal(
+			sessionId,
+			attachmentId,
+			claimed.terminalId,
+			`${prompt.slice("/pty ".length)}\n`,
+			claimed.inputId,
+		);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "request_failed";
 		const text = message === "terminal_input_unconfirmed" ? "输入未确认\n" : `${message}\n`;
-		return emitRecord({
-			workspace, session_id: sessionId, status: "unknown", input_id: claimed.inputId, terminal_id: claimed.terminalId,
-		}, jsonMode, text, 1);
+		return emitRecord(
+			{
+				workspace,
+				session_id: sessionId,
+				status: "unknown",
+				input_id: claimed.inputId,
+				terminal_id: claimed.terminalId,
+			},
+			jsonMode,
+			text,
+			1,
+		);
 	}
 	clearPtyRetry(sessionId);
 	const output = await watchTerminal(client, sessionId, attachmentId, claimed.terminalId);
 	const text = `输入已接收\n${visibleLines(output).join("\n")}\n`;
-	return emitRecord({
-		workspace, session_id: sessionId, status: "accepted", terminal_id: claimed.terminalId, input_id: claimed.inputId, output,
-	}, jsonMode, text, 0);
+	return emitRecord(
+		{
+			workspace,
+			session_id: sessionId,
+			status: "accepted",
+			terminal_id: claimed.terminalId,
+			input_id: claimed.inputId,
+			output,
+		},
+		jsonMode,
+		text,
+		0,
+	);
 }
 
-async function localCommand(client: HostClient, opened: OpenedSession, workspace: string, prompt: string, decision: string | undefined, jsonMode: boolean): Promise<number | undefined> {
+async function localCommand(
+	client: HostClient,
+	opened: OpenedSession,
+	workspace: string,
+	prompt: string,
+	decision: string | undefined,
+	jsonMode: boolean,
+): Promise<number | undefined> {
 	const approve = decision === "批准";
 	if (prompt.startsWith("/file ")) {
 		const content = await client.readFile(prompt.slice("/file ".length).trim());
-		return emitRecord({ workspace, session_id: opened.sessionId, status: "read", content }, jsonMode, `${content.replace(/\n/g, " ")}\n`, 0);
+		return emitRecord(
+			{ workspace, session_id: opened.sessionId, status: "read", content },
+			jsonMode,
+			`${content.replace(/\n/g, " ")}\n`,
+			0,
+		);
 	}
 	if (prompt.startsWith("/checkpoint ")) {
 		const digest = await client.saveCheckpoint(workspace, prompt.slice("/checkpoint ".length).trim());
-		return emitRecord({ workspace, session_id: opened.sessionId, status: "saved", digest }, jsonMode, `已保存 ${digest.slice(0, 12)}\n`, 0);
+		return emitRecord(
+			{ workspace, session_id: opened.sessionId, status: "saved", digest },
+			jsonMode,
+			`已保存 ${digest.slice(0, 12)}\n`,
+			0,
+		);
 	}
 	if (prompt === "/pty-close") {
 		const terminalId = await client.runningTerminal(opened.sessionId);
-		if (!terminalId) return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无终端\n", 1);
+		if (!terminalId)
+			return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无终端\n", 1);
 		const view = await client.closeTerminal(opened.sessionId, opened.attachmentId, terminalId);
 		const phase = typeof view.phase === "string" ? view.phase : "unknown";
 		const clean = view.clean === true;
 		const label = phase === "exited" && clean ? "终端已退出\n" : "终端停止未确认\n";
-		return emitRecord({ workspace, session_id: opened.sessionId, status: phase, clean }, jsonMode, label, phase === "exited" && clean ? 0 : 1);
+		return emitRecord(
+			{ workspace, session_id: opened.sessionId, status: phase, clean },
+			jsonMode,
+			label,
+			phase === "exited" && clean ? 0 : 1,
+		);
 	}
 	if (prompt.startsWith("/pty-size ")) {
 		const terminalId = await client.runningTerminal(opened.sessionId);
-		if (!terminalId) return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无终端\n", 1);
+		if (!terminalId)
+			return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无终端\n", 1);
 		const [colsText, rowsText] = prompt.slice("/pty-size ".length).trim().split(/\s+/, 2);
 		const cols = Number(colsText);
 		const rows = Number(rowsText);
 		if (!Number.isInteger(cols) || !Number.isInteger(rows)) fail("invalid_command");
 		await client.resizeTerminal(opened.sessionId, opened.attachmentId, terminalId, cols, rows);
-		return emitRecord({ workspace, session_id: opened.sessionId, status: "resized", cols, rows }, jsonMode, `终端 ${cols} ${rows}\n`, 0);
+		return emitRecord(
+			{ workspace, session_id: opened.sessionId, status: "resized", cols, rows },
+			jsonMode,
+			`终端 ${cols} ${rows}\n`,
+			0,
+		);
 	}
 	if (prompt === "/pty-ack" || prompt.startsWith("/pty ")) {
 		return runPtyCommand(client, opened.sessionId, opened.attachmentId, workspace, prompt, jsonMode);
 	}
 	if (prompt === "/mcp-close") {
 		const serverId = await client.readyServer(opened.sessionId);
-		if (!serverId) return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无服务\n", 1);
+		if (!serverId)
+			return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无服务\n", 1);
 		const view = await client.closeMcp(opened.sessionId, opened.attachmentId, serverId);
 		const phase = typeof view.phase === "string" ? view.phase : "unknown";
 		const clean = view.clean === true;
 		const label = phase === "exited" && clean ? "服务已退出\n" : "服务停止未确认\n";
-		return emitRecord({ workspace, session_id: opened.sessionId, status: phase, clean }, jsonMode, label, phase === "exited" && clean ? 0 : 1);
+		return emitRecord(
+			{ workspace, session_id: opened.sessionId, status: phase, clean },
+			jsonMode,
+			label,
+			phase === "exited" && clean ? 0 : 1,
+		);
 	}
 	if (prompt.startsWith("/mcp-call ")) {
 		const serverId = await client.readyServer(opened.sessionId);
-		if (!serverId) return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无服务\n", 1);
+		if (!serverId)
+			return emitRecord({ workspace, session_id: opened.sessionId, status: "absent" }, jsonMode, "尚无服务\n", 1);
 		const rest = prompt.slice("/mcp-call ".length).trim();
 		const splitAt = rest.indexOf(" ");
 		if (splitAt <= 0) fail("invalid_tool_arguments");
@@ -540,20 +761,55 @@ async function localCommand(client: HostClient, opened: OpenedSession, workspace
 			call = await client.decideCall(opened.sessionId, opened.attachmentId, call.call_id, approve);
 		}
 		if (call.phase === "waiting_approval") {
-			return emitRecord({
-				workspace, session_id: opened.sessionId, status: "waiting_approval",
-				call_id: call.call_id, digest: call.digest, summary: `等待审批 MCP ${String(call.name)}`,
-			}, jsonMode, `等待审批 MCP ${String(call.name)}\n`, 2);
+			return emitRecord(
+				{
+					workspace,
+					session_id: opened.sessionId,
+					status: "waiting_approval",
+					call_id: call.call_id,
+					digest: call.digest,
+					summary: `等待审批 MCP ${String(call.name)}`,
+				},
+				jsonMode,
+				`等待审批 MCP ${String(call.name)}\n`,
+				2,
+			);
 		}
-		const label = call.phase === "denied" ? "MCP denied\n" : call.phase === "unknown" ? "MCP unknown\n" : `MCP ${String(call.phase)}\n`;
+		const label =
+			call.phase === "denied"
+				? "MCP denied\n"
+				: call.phase === "unknown"
+					? "MCP unknown\n"
+					: `MCP ${String(call.phase)}\n`;
 		const code = call.phase === "done" ? 0 : 1;
-		return emitRecord({ workspace, session_id: opened.sessionId, status: call.phase, call_id: call.call_id, result: call.result ?? "" }, jsonMode, label, code);
+		return emitRecord(
+			{ workspace, session_id: opened.sessionId, status: call.phase, call_id: call.call_id, result: call.result ?? "" },
+			jsonMode,
+			label,
+			code,
+		);
 	}
 	if (prompt.startsWith("/mcp ")) {
 		const existing = await client.readyServer(opened.sessionId);
-		if (existing) return emitRecord({ workspace, session_id: opened.sessionId, status: "ready", server_id: existing }, jsonMode, "服务已连接\n", 0);
-		const serverId = await client.openMcp(opened.sessionId, opened.attachmentId, prompt.slice("/mcp ".length).trim(), workspace);
-		return emitRecord({ workspace, session_id: opened.sessionId, status: "ready", server_id: serverId }, jsonMode, "MCP 已连接\n", 0);
+		if (existing)
+			return emitRecord(
+				{ workspace, session_id: opened.sessionId, status: "ready", server_id: existing },
+				jsonMode,
+				"服务已连接\n",
+				0,
+			);
+		const serverId = await client.openMcp(
+			opened.sessionId,
+			opened.attachmentId,
+			prompt.slice("/mcp ".length).trim(),
+			workspace,
+		);
+		return emitRecord(
+			{ workspace, session_id: opened.sessionId, status: "ready", server_id: serverId },
+			jsonMode,
+			"MCP 已连接\n",
+			0,
+		);
 	}
 	return undefined;
 }
@@ -566,22 +822,48 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions): Pr
 		process.stderr.write("missing_prompt\n");
 		return 1;
 	}
-	const opened = options.session ? await client.attach(options.session, options.workspace) : await client.open(options.workspace);
+	const opened = options.session
+		? await client.attach(options.session, options.workspace)
+		: await client.open(options.workspace);
 	try {
 		if (!prompt && options.request && decision) {
-			const receipt = await client.decideRequest(opened.sessionId, opened.attachmentId, options.request, decision === "批准");
+			const receipt = await client.decideRequest(
+				opened.sessionId,
+				opened.attachmentId,
+				options.request,
+				decision === "批准",
+			);
 			return emitReceipt(options.workspace, opened.sessionId, receipt, jsonMode);
 		}
 		if (!prompt && options.call && decision) {
 			const call = await client.decideCall(opened.sessionId, opened.attachmentId, options.call, decision === "批准");
-			const label = call.phase === "denied" ? "MCP denied\n" : call.phase === "unknown" ? "MCP unknown\n" : `MCP ${String(call.phase)}\n`;
-			return emitRecord({
-				workspace: options.workspace, session_id: opened.sessionId, status: call.phase, call_id: call.call_id,
-			}, jsonMode, label, call.phase === "done" ? 0 : 1);
+			const label =
+				call.phase === "denied"
+					? "MCP denied\n"
+					: call.phase === "unknown"
+						? "MCP unknown\n"
+						: `MCP ${String(call.phase)}\n`;
+			return emitRecord(
+				{
+					workspace: options.workspace,
+					session_id: opened.sessionId,
+					status: call.phase,
+					call_id: call.call_id,
+				},
+				jsonMode,
+				label,
+				call.phase === "done" ? 0 : 1,
+			);
 		}
 		const local = await localCommand(client, opened, options.workspace, prompt, decision, jsonMode);
 		if (local !== undefined) return local;
-		const polled = await client.submit(opened.sessionId, options.workspace, opened.attachmentId, prompt, options.images);
+		const polled = await client.submit(
+			opened.sessionId,
+			options.workspace,
+			opened.attachmentId,
+			prompt,
+			options.images,
+		);
 		if (polled.approval && decision) {
 			const requestId = polled.receipt.request_id;
 			if (typeof requestId !== "string") fail("invalid_approval");

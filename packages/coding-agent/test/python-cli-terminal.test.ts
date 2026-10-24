@@ -1,7 +1,7 @@
+import { createTempDir } from "./temp-dir.ts";
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, onTestFinished, test } from "vitest";
@@ -17,7 +17,7 @@ afterEach(() => {
 });
 
 function agentDir(): string {
-	const directory = mkdtempSync(join(tmpdir(), "amazme-cli-pty-"));
+	const directory = createTempDir("amazme-cli-pty-");
 	directories.push(directory);
 	process.env.AMAZME_CODING_AGENT_DIR = directory;
 	return directory;
@@ -67,12 +67,25 @@ test("the same CLI retry does not write a real terminal twice", async () => {
 	const profile = join(directory, "profile");
 	const workspace = join(directory, "workspace");
 	mkdirSync(workspace);
-	writeFileSync(join(directory, "provider.json"), JSON.stringify({
-		provider: "faux", model: "faux", base_url: "", api_key: "", max_tokens: 2048, proxy: "", headers: {},
-	}));
+	writeFileSync(
+		join(directory, "provider.json"),
+		JSON.stringify({
+			provider: "faux",
+			model: "faux",
+			base_url: "",
+			api_key: "",
+			max_tokens: 2048,
+			proxy: "",
+			headers: {},
+		}),
+	);
 	const provider = join(directory, "provider.json");
 	await new Promise<void>((resolve, reject) => {
-		const init = spawn(python, ["-m", "amazme_backend", "init", "--profile", profile, "--workspace", workspace, "--provider-config", provider], { cwd: root });
+		const init = spawn(
+			python,
+			["-m", "amazme_backend", "init", "--profile", profile, "--workspace", workspace, "--provider-config", provider],
+			{ cwd: root },
+		);
 		init.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`init ${code}`))));
 	});
 	const serve = spawn(python, ["-m", "amazme_backend", "serve", "--profile", profile, "--port", "0"], { cwd: root });
@@ -101,7 +114,7 @@ test("the same CLI retry does not write a real terminal twice", async () => {
 		serve.stdout?.setEncoding("utf8");
 		serve.stdout?.on("data", (chunk: string) => {
 			pending += chunk;
-			const line = pending.split("\n").find((item) => item.startsWith("{") && item.includes("\"url\""));
+			const line = pending.split("\n").find((item) => item.startsWith("{") && item.includes('"url"'));
 			if (line === undefined) return;
 			clearTimeout(timer);
 			resolve(String((JSON.parse(line) as { url: string }).url));
@@ -113,23 +126,35 @@ test("the same CLI retry does not write a real terminal twice", async () => {
 	const opened = await client.open("primary");
 	const prompt = "/pty printf CLI_MARK";
 	expect(await runPtyCommand(client, opened.sessionId, opened.attachmentId, "primary", prompt, false)).toBe(0);
-	const terminalId = (await client.runningTerminal(opened.sessionId));
+	const terminalId = await client.runningTerminal(opened.sessionId);
 	const inputId = randomBytes(16).toString("hex");
 	await client.writeTerminal(opened.sessionId, opened.attachmentId, terminalId, "printf CLI_MARK\n", inputId);
 	const once = String((await client.readTerminal(opened.sessionId, opened.attachmentId, terminalId)).output ?? "");
 	const count = once.split("CLI_MARK").length - 1;
 	expect(count).toBeGreaterThan(0);
-	writeFileSync(join(directory, "terminal-inputs", `${opened.sessionId}.json`), JSON.stringify({
-		inputId, prompt, terminalId,
-	}));
+	writeFileSync(
+		join(directory, "terminal-inputs", `${opened.sessionId}.json`),
+		JSON.stringify({
+			inputId,
+			prompt,
+			terminalId,
+		}),
+	);
 	expect(await runPtyCommand(client, opened.sessionId, opened.attachmentId, "primary", prompt, false)).toBe(0);
 	const again = String((await client.readTerminal(opened.sessionId, opened.attachmentId, terminalId)).output ?? "");
 	expect(again.split("CLI_MARK").length - 1).toBe(count);
 	expect(existsSync(join(directory, "terminal-inputs", `${opened.sessionId}.json`))).toBe(false);
-	writeFileSync(join(directory, "terminal-inputs", `${opened.sessionId}.json`), JSON.stringify({
-		inputId, prompt, terminalId,
-	}));
-	expect(await runPtyCommand(client, opened.sessionId, opened.attachmentId, "primary", "/pty printf CLI_OTHER", false)).toBe(1);
+	writeFileSync(
+		join(directory, "terminal-inputs", `${opened.sessionId}.json`),
+		JSON.stringify({
+			inputId,
+			prompt,
+			terminalId,
+		}),
+	);
+	expect(
+		await runPtyCommand(client, opened.sessionId, opened.attachmentId, "primary", "/pty printf CLI_OTHER", false),
+	).toBe(1);
 	const held = String((await client.readTerminal(opened.sessionId, opened.attachmentId, terminalId)).output ?? "");
 	expect(held.split("CLI_MARK").length - 1).toBe(count);
 	expect(held.includes("CLI_OTHER")).toBe(false);
