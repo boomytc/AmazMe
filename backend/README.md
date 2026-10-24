@@ -12,7 +12,7 @@ AmazMe 正在按 [本机优先方案](../docs/python-backend-plan.md) 将 shell�
 动态目录刷新、HTTP/OAuth、媒体呈现和任意第三方服务兼容性尚未验收。
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
-终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 可以装载这份页面；关闭窗口不停止后端，显式退出才停止它所启动的后端。`amazme-backend tui`、print/JSON CLI、`--mode rpc` 和 Python SDK 在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。默认交互画面尚未按这个范围验收。
+终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 可以装载这份页面；关闭窗口不停止后端，显式退出才停止它所启动的后端。`amazme-backend tui`、print/JSON CLI、`--mode rpc`、Python SDK 和默认 `amazme` 交互画面在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
 MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、
@@ -39,6 +39,7 @@ backend/.venv/bin/python backend/tools/verify_native.py
 backend/.venv/bin/python backend/tools/verify_client.py
 backend/.venv/bin/python backend/tools/verify_terminal.py
 backend/.venv/bin/python backend/tools/verify_mcp.py
+backend/.venv/bin/python backend/tools/verify_screen.py
 ```
 
 `verify_native.py` 使用 faux 和真实本机进程；`verify_client.py` 使用已安装 Chrome。

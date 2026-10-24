@@ -383,7 +383,12 @@ export async function main(args: string[]) {
 		const workspace = parsed.workspace || "primary";
 		if (parsed.pythonUrl && parsed.pythonToken) {
 			const { runPythonSessionTui } = await import("./python-session-tui.ts");
-			await runPythonSessionTui({ url: parsed.pythonUrl, token: parsed.pythonToken, workspace });
+			await runPythonSessionTui({
+				url: parsed.pythonUrl,
+				token: parsed.pythonToken,
+				workspace,
+				...(parsed.pythonSession === undefined ? {} : { session: parsed.pythonSession }),
+			});
 		} else {
 			const { runOwnedPythonInteractive } = await import("./python-session-tui.ts");
 			await runOwnedPythonInteractive({ workspace, cwd: effectiveCwd });

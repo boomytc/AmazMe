@@ -69,7 +69,7 @@ function visibleLines(raw: string): string[] {
 	return text.split("\n").map((line) => line.trimEnd()).filter((line) => line.length > 0).slice(-8);
 }
 
-class HostClient {
+export class HostClient {
 	readonly #url: string;
 	readonly #token: string;
 	#buildId = "";

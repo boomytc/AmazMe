@@ -1,10 +1,10 @@
 /**
  * Interactive screen for one explicit Python host, session, and workspace.
- * Leaving releases this binding and does not cancel accepted work.
+ * An exact 批准 or 拒绝 is the only decision. Leaving releases this binding
+ * and does not cancel accepted work or close the session terminal or MCP service.
  */
 
 import { spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Component } from "@amazme/tui";
@@ -13,24 +13,27 @@ import { KeybindingsManager } from "./core/keybindings.ts";
 import { CustomEditor } from "./modes/interactive/components/custom-editor.ts";
 import { getEditorTheme, initTheme } from "./modes/interactive/theme/theme.ts";
 import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
+import { HostClient } from "./python-headless.ts";
 
 export interface PythonSessionTarget {
 	readonly url: string;
 	readonly token: string;
 	readonly workspace: string;
+	readonly session?: string;
 }
 
-interface Identity {
-	readonly buildId: string;
-	readonly hostEpoch: number;
+interface Held {
+	readonly kind: "request" | "mcp";
+	readonly requestId: string;
+	readonly callId: string;
+	readonly summary: string;
 }
 
-interface OpenedSession {
-	readonly sessionId: string;
-	readonly attachmentId: string;
+interface ScreenState {
+	terminalId: string;
+	serverId: string;
+	held: Held | null;
 }
-
-const TERMINAL = new Set(["succeeded", "cancelled", "interrupted", "failed", "unknown"]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -40,81 +43,164 @@ function fail(code: string): never {
 	throw new Error(code);
 }
 
-class PythonClient {
-	readonly #url: string;
-	readonly #token: string;
-	#buildId = "";
-	#hostEpoch = 0;
+function stopped(kind: string, view: Record<string, unknown>): string {
+	const phase = typeof view.phase === "string" ? view.phase : "";
+	const clean = view.clean === true;
+	if (phase === "exited" && clean) return `${kind}已退出`;
+	if (phase === "unknown" || !clean) return `${kind}停止未确认`;
+	return `${kind}${phase}`;
+}
 
-	constructor(target: PythonSessionTarget) {
-		this.#url = target.url.replace(/\/$/, "");
-		this.#token = target.token;
-	}
+function mcpLine(call: Record<string, unknown>): string {
+	const phase = typeof call.phase === "string" ? call.phase : "failed";
+	const error = typeof call.error === "string" && call.error ? ` ${call.error}` : "";
+	const result = typeof call.result === "string" && call.result ? ` ${call.result}` : "";
+	return `MCP ${phase}${error}${result}`;
+}
 
-	async bootstrap(): Promise<Identity> {
-		const body = await this.#send("GET", "/api/v1/bootstrap");
-		if (typeof body.build_id !== "string" || typeof body.host_epoch !== "number") fail("invalid_bootstrap");
-		this.#buildId = body.build_id;
-		this.#hostEpoch = body.host_epoch;
-		return { buildId: body.build_id, hostEpoch: body.host_epoch };
-	}
+function receiptLine(receipt: Record<string, unknown>): string {
+	const status = typeof receipt.status === "string" ? receipt.status : "failed";
+	if (status === "succeeded") return typeof receipt.answer === "string" && receipt.answer ? receipt.answer : "succeeded";
+	const error = typeof receipt.error === "string" && receipt.error ? ` ${receipt.error}` : "";
+	return `${status}${error}`;
+}
 
-	async open(workspace: string): Promise<OpenedSession> {
-		if (!workspace) fail("workspace_required");
-		const created = await this.#send("POST", "/api/v1/sessions", { title: "终端", workspace });
-		if (typeof created.session_id !== "string" || created.workspace !== workspace) fail("invalid_session");
-		const attached = await this.#send("POST", `/api/v1/sessions/${created.session_id}/attachments`);
-		if (typeof attached.attachment_id !== "string") fail("invalid_attachment");
-		return { sessionId: created.session_id, attachmentId: attached.attachment_id };
-	}
-
-	async submit(sessionId: string, workspace: string, attachmentId: string, text: string): Promise<string> {
-		const current = await this.#send("GET", "/api/v1/sessions");
-		const sessions = current.sessions;
-		if (!Array.isArray(sessions)) fail("invalid_session");
-		const found = sessions.find((item) => isRecord(item) && item.session_id === sessionId);
-		if (!isRecord(found)) fail("session_not_found");
-		if (found.workspace !== workspace) fail("workspace_mismatch");
-		const requestId = randomBytes(8).toString("hex");
-		await this.#send(
-			"POST",
-			`/api/v1/sessions/${sessionId}/submissions`,
-			{ request_id: requestId, text },
-			attachmentId,
-		);
-		for (let attempt = 0; attempt < 200; attempt += 1) {
-			const receipt = await this.#send("GET", `/api/v1/sessions/${sessionId}/requests/${requestId}`);
-			if (typeof receipt.status === "string" && TERMINAL.has(receipt.status)) {
-				if (receipt.status === "succeeded" && typeof receipt.answer === "string") return receipt.answer;
-				return receipt.status;
-			}
-			await new Promise((resolve) => setTimeout(resolve, 50));
+function approvalSummary(approval: Record<string, unknown>): string {
+	const call = isRecord(approval.call) ? approval.call : {};
+	const name = typeof call.name === "string" ? call.name : "tool";
+	let command = "";
+	if (typeof call.arguments === "string") {
+		try {
+			const args: unknown = JSON.parse(call.arguments);
+			if (isRecord(args) && typeof args.command === "string") command = args.command;
+		} catch {
+			command = "";
 		}
-		fail("request_pending");
 	}
+	return command ? `等待审批 ${name} ${command}` : `等待审批 ${name}`;
+}
 
-	async release(sessionId: string, attachmentId: string): Promise<void> {
-		await this.#send("DELETE", `/api/v1/sessions/${sessionId}/attachments/${attachmentId}`, undefined, attachmentId);
-	}
+function visibleLines(output: string): string[] {
+	return output.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n").filter((line) => line.length > 0).slice(-8);
+}
 
-	async #send(method: string, path: string, jsonBody?: Record<string, unknown>, attachmentId = ""): Promise<Record<string, unknown>> {
-		const headers: Record<string, string> = { Authorization: `Bearer ${this.#token}` };
-		if (jsonBody !== undefined) headers["Content-Type"] = "application/json";
-		if (method !== "GET" && method !== "HEAD") {
-			headers["x-amazme-build"] = this.#buildId;
-			headers["x-amazme-epoch"] = String(this.#hostEpoch);
-			if (attachmentId) headers["x-amazme-attachment"] = attachmentId;
+async function stableOutput(client: HostClient, sessionId: string, attachmentId: string, terminalId: string): Promise<string> {
+	let view = await client.readTerminal(sessionId, attachmentId, terminalId);
+	let last = typeof view.output_seq === "number" ? view.output_seq : 0;
+	let stable = 0;
+	const deadline = Date.now() + 15_000;
+	while (Date.now() < deadline && stable < 3) {
+		await new Promise((resolve) => setTimeout(resolve, 100));
+		view = await client.readTerminal(sessionId, attachmentId, terminalId);
+		const seq = typeof view.output_seq === "number" ? view.output_seq : 0;
+		if (seq === last && seq > 0) stable += 1;
+		else {
+			last = seq;
+			stable = 0;
 		}
-		const response = await fetch(`${this.#url}${path}`, {
-			method,
-			headers,
-			body: jsonBody === undefined ? undefined : JSON.stringify(jsonBody),
-		});
-		const payload: unknown = await response.json();
-		if (!isRecord(payload)) fail("request_failed");
-		if (!response.ok) fail(typeof payload.code === "string" ? payload.code : `http_${response.status}`);
-		return payload;
 	}
+	return typeof view.output === "string" ? view.output : "";
+}
+
+async function decideHeld(client: HostClient, sessionId: string, attachmentId: string, state: ScreenState, approve: boolean): Promise<string[]> {
+	const held = state.held;
+	if (!held) return [];
+	if (held.kind === "mcp") {
+		const decided = await client.decideCall(sessionId, attachmentId, held.callId, approve);
+		state.held = null;
+		return [mcpLine(decided)];
+	}
+	const receipt = await client.decideRequest(sessionId, attachmentId, held.requestId, approve);
+	state.held = null;
+	return [receiptLine(receipt)];
+}
+
+async function handleLine(client: HostClient, sessionId: string, attachmentId: string, workspace: string, state: ScreenState, prompt: string): Promise<string[]> {
+	if (state.held) {
+		if (prompt !== "批准" && prompt !== "拒绝") return ["先输入批准或拒绝"];
+		return decideHeld(client, sessionId, attachmentId, state, prompt === "批准");
+	}
+	if (prompt.startsWith("/file ")) {
+		return [(await client.readFile(prompt.slice("/file ".length))).replace(/\n/g, "\\n")];
+	}
+	if (prompt.startsWith("/checkpoint ")) {
+		const digest = await client.saveCheckpoint(workspace, prompt.slice("/checkpoint ".length));
+		return [`已保存 ${digest.slice(0, 12)}`];
+	}
+	if (prompt === "/pty-close") {
+		const terminalId = state.terminalId || (await client.runningTerminal(sessionId));
+		if (!terminalId) return ["没有终端"];
+		const closed = await client.closeTerminal(sessionId, attachmentId, terminalId);
+		state.terminalId = "";
+		return [stopped("终端", closed)];
+	}
+	if (prompt.startsWith("/pty-size ")) {
+		const terminalId = state.terminalId || (await client.runningTerminal(sessionId));
+		if (!terminalId) return ["没有终端"];
+		const parts = prompt.slice("/pty-size ".length).split(/\s+/);
+		const cols = Number(parts[0]);
+		const rows = Number(parts[1]);
+		if (!Number.isInteger(cols) || !Number.isInteger(rows)) return ["尺寸无效"];
+		await client.resizeTerminal(sessionId, attachmentId, terminalId, cols, rows);
+		state.terminalId = terminalId;
+		const view = await client.readTerminal(sessionId, attachmentId, terminalId);
+		return [`终端 ${String(view.cols)} ${String(view.rows)}`];
+	}
+	if (prompt.startsWith("/pty ")) {
+		const terminalId = state.terminalId || (await client.runningTerminal(sessionId)) || (await client.openTerminal(sessionId, attachmentId, workspace));
+		state.terminalId = terminalId;
+		try {
+			await client.writeTerminal(sessionId, attachmentId, terminalId, `${prompt.slice("/pty ".length)}\n`);
+		} catch (error) {
+			return [error instanceof Error && error.message === "terminal_input_unconfirmed" ? "输入未确认" : error instanceof Error ? error.message : "request_failed"];
+		}
+		return ["输入已接收", ...visibleLines(await stableOutput(client, sessionId, attachmentId, terminalId))];
+	}
+	if (prompt === "/mcp-close") {
+		const serverId = state.serverId || (await client.readyServer(sessionId));
+		if (!serverId) return ["没有服务"];
+		const closed = await client.closeMcp(sessionId, attachmentId, serverId);
+		state.serverId = "";
+		return [stopped("服务", closed)];
+	}
+	if (prompt.startsWith("/mcp-call ")) {
+		const serverId = state.serverId || (await client.readyServer(sessionId));
+		if (!serverId) return ["没有服务"];
+		state.serverId = serverId;
+		const raw = prompt.slice("/mcp-call ".length);
+		const split = raw.indexOf(" ");
+		if (split <= 0) return ["参数无效"];
+		let args: unknown;
+		try {
+			args = JSON.parse(raw.slice(split + 1));
+		} catch {
+			return ["参数无效"];
+		}
+		if (!isRecord(args)) return ["参数无效"];
+		const call = await client.requestMcp(sessionId, attachmentId, serverId, raw.slice(0, split), args);
+		if (call.phase === "waiting_approval" && typeof call.call_id === "string") {
+			state.held = { kind: "mcp", requestId: "", callId: call.call_id, summary: `等待审批 MCP ${typeof call.name === "string" ? call.name : ""}`.trim() };
+			return [state.held.summary];
+		}
+		return [mcpLine(call)];
+	}
+	if (prompt.startsWith("/mcp ")) {
+		const serverId = state.serverId || (await client.readyServer(sessionId)) || (await client.openMcp(sessionId, attachmentId, prompt.slice("/mcp ".length), workspace));
+		state.serverId = serverId;
+		return ["MCP 已连接"];
+	}
+	const polled = await client.submit(sessionId, workspace, attachmentId, prompt);
+	const approval = polled.approval;
+	if (approval && typeof approval.request_id === "string" && typeof approval.approval_id === "string") {
+		state.held = {
+			kind: "request",
+			requestId: approval.request_id,
+			callId: "",
+			summary: approvalSummary(approval),
+		};
+		return [state.held.summary];
+	}
+	return [receiptLine(polled.receipt)];
 }
 
 class PythonSessionScreen implements Component {
@@ -155,9 +241,9 @@ class PythonSessionScreen implements Component {
 
 export async function runPythonSessionTui(target: PythonSessionTarget): Promise<void> {
 	if (!target.url || !target.token || !target.workspace) fail("python_target_required");
-	const client = new PythonClient(target);
+	const client = new HostClient(target.url, target.token);
 	await client.bootstrap();
-	const opened = await client.open(target.workspace);
+	const opened = target.session ? await client.attach(target.session, target.workspace) : await client.open(target.workspace);
 	initTheme();
 	const tui = createInteractiveTui({
 		tuiMode: "regular",
@@ -199,25 +285,47 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		leave();
 		return true;
 	};
-	editor.onSubmit = (text) => {
-		const prompt = text.trim();
-		if (!prompt) return;
-		screen.addLine("正在等待");
+	const onSignal = (): void => leave();
+	process.on("SIGINT", onSignal);
+	const state: ScreenState = { terminalId: "", serverId: "", held: null };
+	let busy = false;
+	let queued = "";
+	if (target.session) {
+		const terminalId = await client.runningTerminal(opened.sessionId).catch(() => "");
+		const serverId = await client.readyServer(opened.sessionId).catch(() => "");
+		if (terminalId) screen.addLine("终端仍在");
+		if (serverId) screen.addLine("服务仍在");
+		state.terminalId = terminalId;
+		state.serverId = serverId;
+	}
+	const runLine = (prompt: string): void => {
+		busy = true;
+		screen.addLine(prompt);
 		tui.requestRender();
-		void client
-			.submit(opened.sessionId, target.workspace, opened.attachmentId, prompt)
-			.then((answer) => {
-				screen.addLine(prompt);
-				screen.addLine(answer);
-				tui.requestRender();
+		void handleLine(client, opened.sessionId, opened.attachmentId, target.workspace, state, prompt)
+			.then((lines) => {
+				for (const line of lines) screen.addLine(line);
 			})
 			.catch((error: unknown) => {
 				screen.addLine(error instanceof Error ? error.message : "request_failed");
-				tui.requestRender();
+			})
+			.finally(() => {
+				busy = false;
+				const next = queued;
+				queued = "";
+				if (next) runLine(next);
+				else tui.requestRender();
 			});
 	};
-	const onSignal = (): void => leave();
-	process.on("SIGINT", onSignal);
+	editor.onSubmit = (text) => {
+		const prompt = text.trim();
+		if (!prompt) return;
+		if (busy) {
+			if (!queued) queued = prompt;
+			return;
+		}
+		runLine(prompt);
+	};
 	tui.addChild(screen);
 	tui.setFocus(screen);
 	tui.start();

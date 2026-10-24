@@ -1,6 +1,6 @@
 # 本机优先阶段交接
 
-2026-10-24，分支 `dev`。模型驱动 MCP、Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC 和 Python SDK 已按各自范围验收。默认交互画面、产品能力和安装仍未完成，整个 Python 重构尚未完成。
+2026-10-24，分支 `dev`。模型驱动 MCP、Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。产品能力和安装仍未完成，整个 Python 重构尚未完成。
 现行设计只有 [本机优先方案](python-backend-plan.md)；旧 P0/P1/P2 的 VM 方案与验收数字仅保留历史意义。
 
 ## 已形成的提交单元
@@ -17,7 +17,8 @@
 | TUI | `b55c94950e0bd8a38953ac055b0ee88f7880e614` | [证据](python-backend-native-tui-evidence.json)：真实 `amazme-backend tui`；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
 | CLI print/JSON | `b346797bac2c9c97af06e2cf8b8561f8403fc8bb` | [证据](python-backend-native-cli-evidence.json)：包入口 print/JSON 进程；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
 | RPC | `ad7c433e95b9c0c07af314cbca8e6ac8eee1566a` | [证据](python-backend-native-rpc-evidence.json)：`--mode rpc` 进程；显式审批、终端、文件、检查点、MCP、松开绑定不关闭、显式关闭 |
-| Python SDK | 包含本文件的提交 | [证据](python-backend-native-sdk-evidence.json)：独立进程里的 `sdk.Client`；显式审批、终端、文件、检查点、MCP、进程退出不关闭、显式关闭 |
+| Python SDK | `8bdf019c7e34e13d91bb8f5d55a516b194acb25a` | [证据](python-backend-native-sdk-evidence.json)：独立进程里的 `sdk.Client`；显式审批、终端、文件、检查点、MCP、进程退出不关闭、显式关闭 |
+| 默认交互画面 | 包含本文件的提交 | [证据](python-backend-native-screen-evidence.json)：包入口交互进程；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -33,15 +34,15 @@ TUI 改了会话客户端，所以这个 build_id 与终端画面不同。那次
 CLI 没有改 `backend/src`，源码 build_id 仍是上一行。证据使用包入口 `packages/coding-agent/dist/bundle/cli.js` 和 faux，不代表真实模型又跑过一遍。
 RPC 扩展了同一宿主上的调用，源码 build_id 为 `763a4e6d956f9653e92a299f0f4a50b83526510c0ce74a3dec9d5222cbfc45c4`。该单元后端测试 478 项通过；Ruff 和 Pyright 通过。证据使用 `--mode rpc` 和 faux，不代表真实模型又跑过一遍。
 SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 Python 进程调用 `amazme_backend.sdk.Client`，使用 faux，不代表真实模型又跑过一遍。
+默认交互画面也没有改 `backend/src`，源码 build_id 仍是 `763a4e6d956f9653e92a299f0f4a50b83526510c0ce74a3dec9d5222cbfc45c4`。证据使用包入口 `packages/coding-agent/dist/bundle/cli.js` 和 faux，不代表真实模型又跑过一遍。
 
 资源普查命令只报告。用户主目录里的常驻服务保持 observed。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
-下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是这次 SDK 证据。
+下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
 
 ## 剩余执行顺序
 
-1. **其余客户端。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC 和 Python SDK 已按各自范围验收。这些客户端都还没有覆盖输入丢回执、更新冻结，以及 worker 或监督器被杀掉的实验。TUI、CLI、RPC 和 SDK 不是完整终端模拟。默认 `amazme` 交互画面遇到审批仍会超时。
-   逐个复核这些客户端上的本机 shell、文件、审批、检查点、PTY 和 MCP，覆盖多窗口、多会话、断线、旧绑定、关闭归属和更新期间停止。
-   先追踪已有实现，缺什么补什么，不另建一套业务运行时。
+1. **其余客户端实验。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。这些客户端都还没有覆盖输入丢回执、更新冻结，以及 worker 或监督器被杀掉的实验。TUI、CLI、RPC、SDK 和默认交互画面不是完整终端模拟。
+   这些实验仍要按同一契约补证。先追踪已有实现，不另建一套业务运行时。
 2. **按真实需求补齐产品功能。** 对照台账逐项复核供应商/账号、OAuth、SSH、多工作区、插件、Codemode、computer-use、
    记忆、工作流、定时任务、网页工具、导入导出及分享。区分已有实现和仅有 faux/协议测试；需要 TCC、真实 SSH 或
    真实供应商的功能取得对应证据。MCP 动态目录刷新、HTTP/OAuth、媒体与更多服务兼容性独立验收，不提前泛化。
@@ -74,7 +75,7 @@ backend/.venv/bin/pytest backend/tests -q
 npm run check:workspace
 ```
 
-按改动选择 `verify_native.py`、`verify_client.py`、`verify_terminal.py`、`verify_mcp.py`、`verify_mcp_model.py`、`verify_electron.py`、`verify_tui.py`、`verify_cli.py`、`verify_rpc.py`、`verify_sdk.py`；
+按改动选择 `verify_native.py`、`verify_client.py`、`verify_terminal.py`、`verify_mcp.py`、`verify_mcp_model.py`、`verify_electron.py`、`verify_tui.py`、`verify_cli.py`、`verify_rpc.py`、`verify_sdk.py`、`verify_screen.py`；
 真实模型才运行 `verify_web.py --provider-config /private/provider.json` 或 `verify_mcp_model.py`。
 模型 MCP 验证只读取 zsh 的 `DEEPSEEK_API_KEY`，写入权限 0600 的临时配置，结束后删除该文件并清空隔离 profile 的密钥。
 不得输出密钥、复制全部环境到工具或把凭据放进仓库。MCP 探针依赖 `uv sync --project backend --frozen` 的开发依赖。
