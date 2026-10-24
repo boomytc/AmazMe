@@ -1,0 +1,53 @@
+{
+  "date": "2026-10-24",
+  "stage": "coding-agent print and JSON CLI against the current source backend",
+  "source_build_id": "936905f85b7af4fc2e260250bd813cff78546d25b18cf396419e116f04ae9738",
+  "status": "passed for the package print CLI; interactive screen, RPC, SDK, lost input receipt, and crash recovery remain open",
+  "runtime": {
+    "runner": "backend/tools/verify_cli.py",
+    "client": "packages/coding-agent/dist/bundle/cli.js",
+    "report": ".artifacts/native/cli-xc19exkk/report.json",
+    "execution": "cli-source",
+    "vm_created": false,
+    "checks": [
+      "a decision aimed at both a request and a call was refused before any call",
+      "a decision other than the two exact words was refused before any call",
+      "print mode left a shell approval pending and wrote no file",
+      "a later explicit refusal finished the same request with no side effect",
+      "an explicit approval in the same print run wrote the file once",
+      "the same session read the file and saved a checkpoint",
+      "terminal input was accepted, then resize was visible, without claiming command success",
+      "MCP stayed pending without a decision, a refusal had no effect, and one approval wrote once",
+      "another CLI session stayed separate and did not stop the first terminal or MCP service",
+      "leaving the CLI kept the host, the parked request, the terminal, and the MCP service",
+      "rejoining the same session explicitly stopped that terminal and MCP service"
+    ],
+    "budget": {
+      "cap_bytes": 536870912,
+      "highwater_bytes": 44834816,
+      "minimum_free_bytes": 286459322368,
+      "elapsed_seconds": 7.9750962080433965,
+      "failure": ""
+    },
+    "cleanup": {
+      "owned_reclaimed": true,
+      "global_reclaimed": true,
+      "reclaimed": true,
+      "leaks": [],
+      "disk_level": "ok",
+      "free_bytes": 286461317120,
+      "deletion": "not_performed"
+    }
+  },
+  "limits": [
+    "The client is the package print/JSON entry packages/coding-agent/dist/bundle/cli.js, not the interactive coding-agent screen",
+    "Shell approval used faux. The file, checkpoint, terminal, and MCP effects were on the local machine",
+    "The CLI prints the latest visible lines of terminal output. It is not a full VT and does not interpret the web terminal's escape sequences",
+    "Accepted terminal input is not command success",
+    "Only the exact words 批准 and 拒绝 decide. The prompt text does not. A decision cannot name both a request and a call",
+    "Process exit only releases the attachment. It does not close the terminal, the MCP service, or a parked request",
+    "Lost terminal input receipt, update freeze, and killing the worker or supervisor were not repeated inside the CLI",
+    "The interactive screen, RPC, and SDK were not part of this run",
+    "No frozen package was built and no VM was created or started"
+  ]
+}

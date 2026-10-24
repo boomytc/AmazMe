@@ -321,8 +321,8 @@ export async function main(args: string[]) {
 		for (const option of parsed.unknownFlags.keys()) console.error(chalk.red(`Error: Unknown option --${option}. Use ${APP_COMMAND} --help.`));
 		process.exit(1);
 	}
-	if (!nativeInteractive && (parsed.pythonUrl !== undefined || parsed.pythonToken !== undefined)) {
-		console.error("python_target_requires_tty");
+	if ((parsed.pythonUrl === undefined) !== (parsed.pythonToken === undefined)) {
+		console.error("python_target_required");
 		process.exit(1);
 	}
 	if (plainMetadata && parsed.help) {
@@ -380,10 +380,6 @@ export async function main(args: string[]) {
 	if (nativeInteractive && parsed.verbose) startupSettingsManager.applyOverrides({ quietStartup: false });
 
 	if (nativeInteractive) {
-		if ((parsed.pythonUrl === undefined) !== (parsed.pythonToken === undefined)) {
-			console.error("python_target_required");
-			process.exit(1);
-		}
 		const workspace = parsed.workspace || "primary";
 		if (parsed.pythonUrl && parsed.pythonToken) {
 			const { runPythonSessionTui } = await import("./python-session-tui.ts");
@@ -447,6 +443,10 @@ export async function main(args: string[]) {
 		cwd: effectiveCwd,
 		...(parsed.pythonUrl === undefined ? {} : { url: parsed.pythonUrl }),
 		...(parsed.pythonToken === undefined ? {} : { token: parsed.pythonToken }),
+		...(parsed.pythonSession === undefined ? {} : { session: parsed.pythonSession }),
+		...(parsed.decision === undefined ? {} : { decision: parsed.decision }),
+		...(parsed.request === undefined ? {} : { request: parsed.request }),
+		...(parsed.call === undefined ? {} : { call: parsed.call }),
 		prompt,
 	});
 	restoreStdout();

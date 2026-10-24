@@ -1,6 +1,6 @@
 # 本机优先阶段交接
 
-2026-10-24，分支 `dev`。模型驱动 MCP、Web 终端画面、Electron 源码进程和 `amazme-backend tui` 已按各自范围验收。CLI、RPC、SDK、产品能力和安装仍未完成，整个 Python 重构尚未完成。
+2026-10-24，分支 `dev`。模型驱动 MCP、Web 终端画面、Electron 源码进程、`amazme-backend tui` 和 print/JSON CLI 已按各自范围验收。默认交互画面、RPC、SDK、产品能力和安装仍未完成，整个 Python 重构尚未完成。
 现行设计只有 [本机优先方案](python-backend-plan.md)；旧 P0/P1/P2 的 VM 方案与验收数字仅保留历史意义。
 
 ## 已形成的提交单元
@@ -14,7 +14,8 @@
 | C2 模型驱动 MCP | `05db362d5fde93b204564edcd4b2418d3bdd407a` | [证据](python-backend-native-mcp-model-evidence.json)：DeepSeek 选择本机探针，拒绝无副作用，结果回到模型 |
 | Web 终端画面 | `951e73c76fa7d2d685fe21d4cdc93069ffccc866` | [证据](python-backend-native-terminal-screen-evidence.json)：归还 32 KiB 窗口、256 KiB 滚动记录、页面解释转义；Chrome 看到命令输出和 resize |
 | Electron 源码进程 | `52daf512d10fa5d76b46300816ca7d27c60e451f` | [证据](python-backend-native-electron-evidence.json)：真实 Electron 装载当前源码后端；终端、审批、检查点、MCP、双窗口和退出归属 |
-| TUI | 包含本文件的提交 | [证据](python-backend-native-tui-evidence.json)：真实 `amazme-backend tui`；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
+| TUI | `b55c94950e0bd8a38953ac055b0ee88f7880e614` | [证据](python-backend-native-tui-evidence.json)：真实 `amazme-backend tui`；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
+| CLI print/JSON | 包含本文件的提交 | [证据](python-backend-native-cli-evidence.json)：包入口 print/JSON 进程；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -26,14 +27,15 @@
 该单元最终源码上后端测试 477 项通过；Ruff 和 Pyright 通过。Chrome 证据只覆盖 Web 上的一条本机 shell。
 Electron 源码进程使用同一 build_id：桌面启动器指向当前检出的 Python 模块，没有使用冻结包。
 TUI 的源码 build_id 为 `936905f85b7af4fc2e260250bd813cff78546d25b18cf396419e116f04ae9738`。
-这次改了会话客户端，所以 build_id 与终端画面不同。证据使用 faux，不代表真实模型又跑过一遍。
+TUI 改了会话客户端，所以这个 build_id 与终端画面不同。那次证据使用 faux，不代表真实模型又跑过一遍。
+CLI 没有改 `backend/src`，源码 build_id 仍是上一行。证据使用包入口 `packages/coding-agent/dist/bundle/cli.js` 和 faux，不代表真实模型又跑过一遍。
 
 资源普查命令只报告。用户主目录里的常驻服务保持 observed。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
-下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是这次 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。
+下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是这次 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。
 
 ## 剩余执行顺序
 
-1. **其余客户端。** Web 终端画面、Electron 源码进程和 `amazme-backend tui` 已按各自范围验收。Electron 和 TUI 都还没有覆盖输入丢回执、更新冻结，以及 worker 或监督器被杀掉的实验。TUI 只显示最近的可见行，不是完整终端模拟。默认 `amazme` 交互、CLI、RPC、SDK 尚未用真实进程验收。
+1. **其余客户端。** Web 终端画面、Electron 源码进程、`amazme-backend tui` 和 print/JSON CLI 已按各自范围验收。Electron、TUI 和 CLI 都还没有覆盖输入丢回执、更新冻结，以及 worker 或监督器被杀掉的实验。TUI 和 CLI 只显示最近的可见行，不是完整终端模拟。默认 `amazme` 交互画面遇到审批仍会超时。RPC、SDK 尚未用真实进程验收。
    逐个复核这些客户端上的本机 shell、文件、审批、检查点、PTY 和 MCP，覆盖多窗口、多会话、断线、旧绑定、关闭归属和更新期间停止。
    先追踪已有实现，缺什么补什么，不另建一套业务运行时。
 2. **按真实需求补齐产品功能。** 对照台账逐项复核供应商/账号、OAuth、SSH、多工作区、插件、Codemode、computer-use、
@@ -68,7 +70,7 @@ backend/.venv/bin/pytest backend/tests -q
 npm run check:workspace
 ```
 
-按改动选择 `verify_native.py`、`verify_client.py`、`verify_terminal.py`、`verify_mcp.py`、`verify_mcp_model.py`、`verify_electron.py`、`verify_tui.py`；
+按改动选择 `verify_native.py`、`verify_client.py`、`verify_terminal.py`、`verify_mcp.py`、`verify_mcp_model.py`、`verify_electron.py`、`verify_tui.py`、`verify_cli.py`；
 真实模型才运行 `verify_web.py --provider-config /private/provider.json` 或 `verify_mcp_model.py`。
 模型 MCP 验证只读取 zsh 的 `DEEPSEEK_API_KEY`，写入权限 0600 的临时配置，结束后删除该文件并清空隔离 profile 的密钥。
 不得输出密钥、复制全部环境到工具或把凭据放进仓库。MCP 探针依赖 `uv sync --project backend --frozen` 的开发依赖。

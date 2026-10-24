@@ -454,6 +454,22 @@ describe("parseArgs", () => {
 		test("requires a value", () => {
 			expect(parseArgs(["--workspace"]).diagnostics).toEqual([{ type: "error", message: "--workspace requires a value" }]);
 		});
+
+		test("keeps an explicit decision off the prompt", () => {
+			const result = parseArgs([
+				"--python-session", "ab".repeat(16),
+				"--decision", "拒绝",
+				"--request", "req-1",
+				"--call", "call-1",
+				"/shell printf y > out.txt",
+			]);
+			expect(result.pythonSession).toBe("ab".repeat(16));
+			expect(result.decision).toBe("拒绝");
+			expect(result.request).toBe("req-1");
+			expect(result.call).toBe("call-1");
+			expect(result.messages).toEqual(["/shell printf y > out.txt"]);
+			expect(result.unknownFlags.size).toBe(0);
+		});
 	});
 
 	describe("tool flags", () => {
