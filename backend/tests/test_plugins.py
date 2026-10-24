@@ -259,6 +259,9 @@ def test_browser_registers_and_runs_the_selected_plugin() -> None:
           }
           if(path.includes('/plugins/') && path.endsWith('/calls')) {
             seen.push(path.split('/plugins/')[1].split('/')[0] + ' ' + body.text);
+            seen.push('id '+body.call_id+' '+body.text);
+            const repeat = seen.filter(item=>item==='id '+body.call_id+' '+body.text).length > 1;
+            if(body.text==='hold' && !repeat) return response({call_id:body.call_id,phase:'unknown',result:''});
             return response({call_id:body.call_id,phase:'done',result:body.text});
           }
           if(path.endsWith('/reload')) {
@@ -283,6 +286,22 @@ def test_browser_registers_and_runs_the_selected_plugin() -> None:
         $('plugin-text').value = 'alpha';
         $('plugin-call').requestSubmit();
         await until(()=>$('plugin-result').textContent==='alpha');
+        $('plugin-text').value = 'hold';
+        $('plugin-call').requestSubmit();
+        await until(()=>$('plugin-result').textContent==='unknown' && $('error').textContent.includes('同一文本'));
+        const held = seen.filter(item=>item.startsWith('id ') && item.endsWith(' hold'));
+        assert.equal(held.length, 1);
+        $('error').textContent = '';
+        $('plugin-text').value = 'other';
+        $('plugin-call').requestSubmit();
+        await until(()=>$('error').textContent.includes('同一文本'));
+        assert.equal(seen.filter(item=>item.startsWith('id ')).length, 2);
+        $('plugin-text').value = 'hold';
+        $('plugin-call').requestSubmit();
+        await until(()=>$('plugin-result').textContent==='hold');
+        const again = seen.filter(item=>item.startsWith('id ') && item.endsWith(' hold'));
+        assert.equal(again.length, 2);
+        assert.equal(again[0], again[1]);
         $('plugin-label').value = '改过';
         $('plugin-reload').click();
         await until(()=>$('plugin-state').textContent.startsWith('notes') && $('plugin-state').textContent.includes('fedcba123456'));

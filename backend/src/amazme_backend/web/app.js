@@ -1264,14 +1264,31 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  const pluginCallKey = () => `plugin-call:${identity.profile_id}:${selected}:${pluginId}`;
   $("plugin-call").onsubmit = async event => {
     event.preventDefault();
-    if (!pluginId || !selected || !identity) return;
+    if (!pluginId || !selected || !identity || health?.state !== "ready") return;
+    const text = $("plugin-text").value;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(pluginCallKey()) || "null"); }
+    catch { pending = null; }
+    if (pending && pending.phase === "unknown" && pending.text !== text) {
+      error(new Error("上次插件调用结果未知，未自动重发；请用同一文本查询。"));
+      return;
+    }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {call_id: crypto.randomUUID().replaceAll("-", ""), text, phase: "unknown"};
+      sessionStorage.setItem(pluginCallKey(), JSON.stringify(pending));
+    }
     try {
       const call = await api(`/api/v1/sessions/${selected}/plugins/${pluginId}/calls`, "POST",
-        {call_id: crypto.randomUUID().replaceAll("-", ""), text: $("plugin-text").value}, current);
+        {call_id: pending.call_id, text: pending.text}, current);
+      pending.phase = call.phase;
+      if (call.phase === "unknown") sessionStorage.setItem(pluginCallKey(), JSON.stringify(pending));
+      else sessionStorage.removeItem(pluginCallKey());
       $("plugin-result").textContent = call.phase === "done" ? call.result : call.phase;
-      $("error").textContent = "";
+      if (call.phase === "unknown") error(new Error("上次插件调用结果未知，未自动重发；请用同一文本查询。"));
+      else $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   $("plugin-reload").onclick = async () => {
@@ -1439,22 +1456,48 @@ function startClient() {
     } catch (failure) { error(failure); }
   };
   let codeRun = "";
+  const codeKey = () => `code-run:${identity.profile_id}:${selected}`;
   $("code-run").onclick = async () => {
     if (!selected || !identity || health?.state !== "ready") return;
-    codeRun = crypto.randomUUID().replaceAll("-", "");
+    const source = $("code-source").value;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(codeKey()) || "null"); }
+    catch { pending = null; }
+    if (pending && pending.phase === "unknown" && pending.source !== source) {
+      error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
+      return;
+    }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {run_id: crypto.randomUUID().replaceAll("-", ""), source, phase: "unknown"};
+      sessionStorage.setItem(codeKey(), JSON.stringify(pending));
+    }
+    codeRun = pending.run_id;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/code`, "POST", {run_id: codeRun, source: $("code-source").value}, current);
+      const view = await api(`/api/v1/sessions/${selected}/code`, "POST", {run_id: pending.run_id, source: pending.source}, current);
+      pending.phase = view.phase;
+      if (view.phase === "unknown") sessionStorage.setItem(codeKey(), JSON.stringify(pending));
+      else sessionStorage.removeItem(codeKey());
       $("code-result").textContent = view.phase === "success" ? view.value : view.phase;
       $("code-state").textContent = view.phase === "success" ? view.state : "";
-      $("error").textContent = "";
+      if (view.phase === "unknown") error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
+      else $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   $("code-cancel").onclick = async () => {
-    if (!codeRun || !selected) return;
+    if (!selected || !identity) return;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(codeKey()) || "null"); }
+    catch { pending = null; }
+    const runId = codeRun || pending?.run_id || "";
+    if (!runId) return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/code/${codeRun}/cancel`, "POST", {}, current);
+      const view = await api(`/api/v1/sessions/${selected}/code/${runId}/cancel`, "POST", {}, current);
+      codeRun = runId;
+      if (view.phase !== "unknown") sessionStorage.removeItem(codeKey());
       $("code-result").textContent = view.phase;
       if (view.phase !== "success") $("code-state").textContent = "";
+      if (view.phase === "unknown") error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
+      else $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   let remoteId = "";

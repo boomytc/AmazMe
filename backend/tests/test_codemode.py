@@ -212,6 +212,7 @@ def test_browser_shows_committed_state_and_clears_it_after_failure() -> None:
         const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
+        const runs = [];
         globalThis.fetch = async (path, options={})=>{
           const method = options.method || 'GET';
           const body = options.body ? JSON.parse(options.body) : null;
@@ -222,11 +223,15 @@ def test_browser_shows_committed_state_and_clears_it_after_failure() -> None:
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1});
           if(path.endsWith('/code') && method==='POST') {
             seen.push(body.source);
+            runs.push(body.run_id+' '+body.source);
+            const repeat = runs.filter(item=>item.startsWith(body.run_id+' ')).length > 1;
+            if (String(body.source).includes('hold') && !repeat) return response({run_id:body.run_id,phase:'unknown',value:'',state:''});
             if (String(body.source).includes('fail')) return response({run_id:body.run_id,phase:'failed',value:'',state:'{"k":9}'});
             return response({run_id:body.run_id,phase:'success',value:'1',state:'{"k":2}'});
           }
           if(path.endsWith('/cancel') && method==='POST') {
             seen.push('cancel');
+            runs.push('cancel '+path);
             return response({run_id:'x',phase:'cancelled',value:'',state:'{"k":2}'});
           }
           throw Error('unexpected '+method+' '+path);
@@ -248,6 +253,24 @@ def test_browser_shows_committed_state_and_clears_it_after_failure() -> None:
         $('code-cancel').click();
         await until(()=>$('code-result').textContent==='cancelled' && $('code-state').textContent==='');
         assert.ok(seen.includes('cancel'));
+        $('code-source').value = 'hold';
+        $('code-run').click();
+        await until(()=>$('code-result').textContent==='unknown' && $('error').textContent.includes('同一脚本'));
+        const held = runs.filter(item=>item.endsWith(' hold'));
+        assert.equal(held.length, 1);
+        $('error').textContent = '';
+        $('code-source').value = 'other';
+        $('code-run').click();
+        await until(()=>$('error').textContent.includes('同一脚本'));
+        assert.equal(runs.filter(item=>item.endsWith(' hold') || item.endsWith(' other')).length, 1);
+        $('code-source').value = 'hold';
+        $('code-run').click();
+        await until(()=>$('code-result').textContent==='1');
+        const again = runs.filter(item=>item.endsWith(' hold'));
+        assert.equal(again.length, 2);
+        assert.equal(again[0], again[1]);
+        $('code-cancel').click();
+        await until(()=>runs.some(item=>item.startsWith('cancel ') && item.includes(again[0].split(' ')[0])));
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''
