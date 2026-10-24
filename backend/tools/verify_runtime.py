@@ -1,5 +1,6 @@
 """Run real native Host/worker/supervisor recovery checks in a new owned profile."""
 
+import asyncio
 import json
 import select
 import shlex
@@ -39,10 +40,14 @@ class Runtime:
     def __init__(self, command, root: Path, provider: Path, *, approval_policy="auto"):
         self.command, self.root = command, root
         self.workspace, self.profile = root / "workspace", root / "profile"
+        if self.profile.exists() or self.profile.is_symlink():
+            raise RuntimeError("Verifier profile already exists")
         self.workspace.mkdir()
         self.env = {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(Path.home()), "TMPDIR": "/tmp"}
         subprocess.run([*command, "init", "--profile", str(self.profile), "--workspace", str(self.workspace),
                         "--provider-config", str(provider), "--approval-policy", approval_policy, "--test-mode"], check=True, capture_output=True, env=self.env)
+        identity = self.profile.stat()
+        self._profile_identity = (identity.st_dev, identity.st_ino)
         self.log = (root / "host.log").open("w")
         self.process = None
         self.client = None
@@ -128,6 +133,29 @@ class Runtime:
             self.client.close()
             self.client = None
 
+    def clear_owned_credentials(self):
+        """Only the profile created by this Runtime may lose copied test credentials."""
+        from amazme_backend.accounts import AccountDocument, AccountStore
+
+        identity = self.profile.stat()
+        if self.profile.is_symlink() or (identity.st_dev, identity.st_ino) != self._profile_identity:
+            raise RuntimeError("Verifier profile identity changed")
+
+        async def clear():
+            store = AccountStore(self.profile)
+            async with store.locked():
+                current = self.profile.stat()
+                if self.profile.is_symlink() or (current.st_dev, current.st_ino) != self._profile_identity:
+                    raise RuntimeError("Verifier profile identity changed")
+                # The copied vault is now authoritative; config-only scrubbing is insufficient.
+                previous = store.read()
+                config = self.profile / "config.json"
+                value = json.loads(config.read_text())
+                value["provider"].update(api_key="", proxy="", headers={})
+                private_write(config, json.dumps(value))
+                store.write(AccountDocument(revision=previous.revision + 1))
+        asyncio.run(clear())
+
     def close(self):
         try:
             self.stop()
@@ -136,23 +164,22 @@ class Runtime:
             for path in (self.profile / "processes").glob("*.lock"):
                 assert exited(ProcessLease.model_validate_json(path.read_bytes())), path.name
         finally:
-            self.log.close()
-            config = self.profile / "config.json"
-            value = json.loads(config.read_text())
-            value["provider"]["api_key"] = ""
-            private_write(config, json.dumps(value))
-            census = _census()
             try:
-                report, processes = census.scan()
-                self.resource_report = census.owned_after(
-                    [self.root, self.profile], report, processes, before=getattr(self, "resource_before", None),
-                )
-                census.record(report, purpose="serve", event="after", before=getattr(self, "resource_before", None))
-            except Exception as error:
-                self.resource_report = {
-                    "reclaimed": False, "owned_reclaimed": False, "global_reclaimed": False,
-                    "scope": census.SCOPE, "error": str(error), "deletion": "not_performed", "note": census.NOTE,
-                }
+                self.log.close()
+                self.clear_owned_credentials()
+            finally:
+                census = _census()
+                try:
+                    report, processes = census.scan()
+                    self.resource_report = census.owned_after(
+                        [self.root, self.profile], report, processes, before=getattr(self, "resource_before", None),
+                    )
+                    census.record(report, purpose="serve", event="after", before=getattr(self, "resource_before", None))
+                except Exception as error:
+                    self.resource_report = {
+                        "reclaimed": False, "owned_reclaimed": False, "global_reclaimed": False,
+                        "scope": census.SCOPE, "error": str(error), "deletion": "not_performed", "note": census.NOTE,
+                    }
 
 
 def daemon_command(marker):
