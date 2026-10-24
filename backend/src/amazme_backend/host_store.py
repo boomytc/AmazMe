@@ -163,6 +163,9 @@ class HostStore:
                   session TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL);
                 PRAGMA user_version=2;
             """)
+            session_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(sessions)")}
+            if "updated_ms" not in session_columns:
+                db.execute("ALTER TABLE sessions ADD COLUMN updated_ms INTEGER NOT NULL DEFAULT 0")
             checkpoints = {str(row[1]) for row in db.execute("PRAGMA table_info(file_checkpoints)")}
             if "used" not in checkpoints:
                 db.execute("ALTER TABLE file_checkpoints ADD COLUMN used INTEGER NOT NULL DEFAULT 0")
@@ -196,7 +199,7 @@ class HostStore:
     def _session_sql(tail: str) -> str:
         return (
             "SELECT s.id AS id,s.title AS title,s.parent_id AS parent_id,"
-            "s.fork_request_id AS fork_request_id,s.archived AS archived,s.workspace AS workspace,"
+            "s.fork_request_id AS fork_request_id,s.archived AS archived,s.workspace AS workspace,s.updated_ms AS updated_ms,"
             "coalesce(p.project,'') AS project_id FROM sessions s "
             "LEFT JOIN project_sessions p ON p.session=s.id " + tail
         )
@@ -207,11 +210,11 @@ class HostStore:
         project_id = str(row["project_id"]) if "project_id" in keys else ""
         return Session(session_id=str(row["id"]), title=str(row["title"]), parent_id=str(row["parent_id"]),
                        fork_request_id=str(row["fork_request_id"]), archived=bool(row["archived"]),
-                       workspace=str(row["workspace"] or "primary"), project_id=project_id)
+                       workspace=str(row["workspace"] or "primary"), project_id=project_id, updated_ms=int(row["updated_ms"]))
 
     async def sessions(self) -> SessionList:
         return await self._call(lambda db: SessionList(sessions=[
-            self._session(row) for row in db.execute(self._session_sql("ORDER BY s.rowid"))]))
+            self._session(row) for row in db.execute(self._session_sql("ORDER BY s.updated_ms,s.rowid"))]))
 
     async def workspace_grants(self) -> list[tuple[str, str]]:
         def operation(db: sqlite3.Connection) -> list[tuple[str, str]]:
@@ -406,7 +409,7 @@ class HostStore:
             if existing is None:
                 db.execute("INSERT INTO deliveries(id,session,kind,digest,payload) VALUES(?,?,?,?,?)",
                            (identity, str(row["session"]), "submit", digest, payload))
-                db.execute("UPDATE sessions SET wanted=1,next_check=0 WHERE id=?", (str(row["session"]),))
+                db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (time.time_ns() // 1_000_000, str(row["session"])))
             db.execute("UPDATE automations SET phase='done', delivery_id=? WHERE id=?", (identity, str(row["id"])))
             done = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
             assert done is not None
@@ -442,15 +445,15 @@ class HostStore:
                 stored_project = "" if linked is None else str(linked[0])
                 if str(row[0]) != value.title or str(row[1] or "primary") != workspace or stored_project != project_id:
                     raise BackendError("session_conflict")
-                return Session(session_id=session_id, title=value.title, workspace=workspace, project_id=project_id)
+                return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
             if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
                 raise BackendError("session_capacity", status=429)
             if project_id and db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
                 raise BackendError("project_not_found", status=404)
-            db.execute("INSERT INTO sessions(id,title,workspace) VALUES(?,?,?)", (session_id, value.title, workspace))
+            db.execute("INSERT INTO sessions(id,title,workspace,updated_ms) VALUES(?,?,?,?)", (session_id, value.title, workspace, time.time_ns() // 1_000_000))
             if project_id:
                 db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
-            return Session(session_id=session_id, title=value.title, workspace=workspace, project_id=project_id)
+            return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
         return await self.transaction(operation)
 
     async def create_branch(self, session_id: str, parent_id: str, fork_request_id: str, title: str) -> Session:
@@ -465,12 +468,11 @@ class HostStore:
             workspace = str(parent[0] or "primary")
             project = db.execute("SELECT project FROM project_sessions WHERE session=?", (parent_id,)).fetchone()
             project_id = str(project[0]) if project else ""
-            db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id,workspace) VALUES(?,?,?,?,?)",
-                       (session_id, title, parent_id, fork_request_id, workspace))
+            db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id,workspace,updated_ms) VALUES(?,?,?,?,?,?)",
+                       (session_id, title, parent_id, fork_request_id, workspace, time.time_ns() // 1_000_000))
             if project_id:
                 db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
-            return Session(session_id=session_id, title=title, parent_id=parent_id,
-                           fork_request_id=fork_request_id, workspace=workspace, project_id=project_id)
+            return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
         return await self.transaction(operation)
 
     async def discard_unopened_branch(self, session_id: str) -> None:
@@ -519,7 +521,7 @@ class HostStore:
                 raise BackendError("delivery_capacity", status=429)
             db.execute("INSERT INTO deliveries(id,session,kind,digest,payload) VALUES(?,?,?,?,?)",
                        (identity, session, kind, digest, payload))
-            db.execute("UPDATE sessions SET wanted=1,next_check=0 WHERE id=?", (session,))
+            db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (time.time_ns() // 1_000_000, session))
             return self._delivery(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())
         return await self.transaction(operation)
 
@@ -826,7 +828,7 @@ class HostStore:
                 raise BackendError("import_conflict")
             row = db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone()
             if row is None:
-                db.execute("INSERT INTO sessions(id,title,workspace) VALUES(?,?,?)", (session_id, title, workspace))
+                db.execute("INSERT INTO sessions(id,title,workspace,updated_ms) VALUES(?,?,?,?)", (session_id, title, workspace, time.time_ns() // 1_000_000))
             if project_id:
                 db.execute(
                     "INSERT INTO project_sessions(session,project) VALUES(?,?) "

@@ -8,11 +8,12 @@ import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { Component } from "@amazme/tui";
+import { SelectList, type Component } from "@amazme/tui";
 import { getAgentDir } from "./config.ts";
 import { KeybindingsManager } from "./core/keybindings.ts";
 import { CustomEditor } from "./modes/interactive/components/custom-editor.ts";
-import { getEditorTheme, initTheme } from "./modes/interactive/theme/theme.ts";
+import { getEditorTheme,
+	getSelectListTheme, initTheme } from "./modes/interactive/theme/theme.ts";
 import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
 import { HostClient, type PythonRunOptions } from "./python-headless.ts";
 
@@ -21,6 +22,10 @@ export interface PythonSessionTarget extends PythonRunOptions {
 	readonly token: string;
 	readonly workspace: string;
 	readonly session?: string;
+	readonly selection?: "continue" | "resume";
+	readonly title?: string;
+	readonly tuiMode?: "regular" | "fullscreen";
+	readonly theme?: string;
 }
 
 export interface Held {
@@ -69,7 +74,7 @@ function receiptLine(receipt: Record<string, unknown>): string {
 	const status = typeof receipt.status === "string" ? receipt.status : "failed";
 	if (status === "succeeded") return typeof receipt.answer === "string" && receipt.answer ? receipt.answer : "succeeded";
 	const error = typeof receipt.error === "string" && receipt.error ? ` ${receipt.error}` : "";
-	return `${status}${error}`;
+	return `${status}${error} request=${String(receipt.request_id)}；/request ${String(receipt.request_id)} 查询原回执`;
 }
 
 function approvalSummary(approval: Record<string, unknown>): string {
@@ -126,6 +131,21 @@ export async function handleLine(client: HostClient, sessionId: string, attachme
 	if (state.held) {
 		if (prompt !== "批准" && prompt !== "拒绝") return ["先输入批准或拒绝"];
 		return decideHeld(client, sessionId, attachmentId, state, prompt === "批准");
+	}
+	if (prompt.startsWith("/request ")) {
+		const requestId = prompt.slice("/request ".length).trim();
+		if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId)) return ["请求编号无效"];
+		const polled = await client.inspectRequest(sessionId, requestId);
+		if (polled.approval) {
+			state.held = {
+				kind: "request",
+				requestId,
+				callId: "",
+				summary: approvalSummary(polled.approval),
+			};
+			return [state.held.summary];
+		}
+		return [receiptLine(polled.receipt)];
 	}
 	if (prompt.startsWith("/file ")) {
 		return [(await client.readFile(prompt.slice("/file ".length))).replace(/\n/g, "\\n")];
@@ -244,7 +264,8 @@ class PythonSessionScreen implements Component {
 	}
 
 	render(width: number): string[] {
-		const clip = (line: string) => (line.length > width ? line.slice(0, width) : line);
+		const clip = (line: string) =>
+			line.length > width ? line.slice(0, width) : line;
 		return [clip(this.#header), ...this.#lines.map(clip), ...this.#editor.render(width)];
 	}
 
@@ -257,14 +278,77 @@ class PythonSessionScreen implements Component {
 	}
 }
 
+/** Only locally queued prompts count against this bound; accepted work stays in Python. */
+export class PendingPrompts {
+	readonly #items: string[] = [];
+	#bytes = 0;
+	get length(): number {
+		return this.#items.length;
+	}
+	push(prompt: string): boolean {
+		const bytes = Buffer.byteLength(prompt);
+		if (this.#items.length >= 32 || this.#bytes + bytes > 64 * 1024)
+			return false;
+		this.#items.push(prompt);
+		this.#bytes += bytes;
+		return true;
+	}
+	shift(): string | undefined {
+		const prompt = this.#items.shift();
+		if (prompt !== undefined) this.#bytes -= Buffer.byteLength(prompt);
+		return prompt;
+	}
+}
+
+async function selectSession(
+	client: HostClient,
+	target: PythonSessionTarget,
+): Promise<string | undefined | null> {
+	if (target.session) return target.session;
+	if (target.selection === "continue") return client.recent(target.workspace);
+	if (target.selection !== "resume") return undefined;
+	const sessions = (await client.listSessions(target.workspace))
+		.filter((item) => !item.archived)
+		.reverse();
+	if (!sessions.length) return undefined;
+	const picker = createInteractiveTui({
+		tuiMode: target.tuiMode ?? "regular",
+		showHardwareCursor: false,
+		logDirectory: getAgentDir(),
+	});
+	const list = new SelectList(
+		sessions.map((item) => ({
+			value: item.session_id,
+			label: item.title,
+			description: item.session_id,
+		})),
+		12,
+		getSelectListTheme(),
+	);
+	try {
+		return await new Promise<string | null>((resolveSelected) => {
+			list.onSelect = (item) => resolveSelected(item.value);
+			list.onCancel = () => resolveSelected(null);
+			picker.addChild(list);
+			picker.setFocus(list);
+			picker.start();
+		});
+	} finally {
+		picker.stop();
+	}
+}
+
 export async function runPythonSessionTui(target: PythonSessionTarget): Promise<void> {
 	if (!target.url || !target.token || !target.workspace) fail("python_target_required");
 	const client = new HostClient(target.url, target.token, target);
 	await client.bootstrap();
-	const opened = target.session ? await client.attach(target.session, target.workspace) : await client.open(target.workspace);
-	initTheme();
+	initTheme(target.theme);
+	const selected = await selectSession(client, target);
+	if (selected === null) return;
+	const opened = selected
+		? await client.attach(selected, target.workspace) : await client.open(target.workspace, target.title);
 	const tui = createInteractiveTui({
-		tuiMode: "regular",
+		tuiMode: target.tuiMode ?? "regular",
 		showHardwareCursor: false,
 		logDirectory: getAgentDir(),
 	});
@@ -276,9 +360,10 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 	let released = false;
 	let closing = false;
 	let finish = (): void => {};
-	const finished = new Promise<void>((resolve) => {
-		finish = resolve;
+	const finished = new Promise<void>((resolveFinished) => {
+		finish = resolveFinished;
 	});
+	const queued = new PendingPrompts();
 	const releaseOnce = async (): Promise<void> => {
 		if (released) return;
 		released = true;
@@ -288,6 +373,8 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		if (closing) return;
 		closing = true;
 		tui.stop();
+		if (queued.length)
+			process.stderr.write(`离开前尚有 ${queued.length} 条输入未提交\n`);
 		void releaseOnce()
 			.then(() => {
 				process.stdout.write("已松开绑定\n");
@@ -307,49 +394,78 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 	process.on("SIGINT", onSignal);
 	const state: ScreenState = { terminalId: "", serverId: "", held: null, pendingInput: null };
 	let busy = false;
-	let queued = "";
-	if (target.session) {
-		const terminalId = await client.runningTerminal(opened.sessionId).catch(() => "");
-		const serverId = await client.readyServer(opened.sessionId).catch(() => "");
-		if (terminalId) screen.addLine("终端仍在");
-		if (serverId) screen.addLine("服务仍在");
-		state.terminalId = terminalId;
-		state.serverId = serverId;
-	}
 	const runLine = (prompt: string): void => {
+		if (closing) return;
 		busy = true;
 		screen.addLine(prompt);
 		tui.requestRender();
 		void handleLine(client, opened.sessionId, opened.attachmentId, target.workspace, state, prompt)
 			.then((lines) => {
-				for (const line of lines) screen.addLine(line);
+				if (!closing) for (const line of lines) screen.addLine(line);
 			})
 			.catch((error: unknown) => {
-				screen.addLine(error instanceof Error ? error.message : "request_failed");
+				if (!closing)
+					screen.addLine(error instanceof Error ? error.message : "request_failed");
 			})
 			.finally(() => {
 				busy = false;
-				const next = queued;
-				queued = "";
-				if (next) runLine(next);
+				if (closing) return;
+				const next = queued.shift();
+				if (next !== undefined) runLine(next);
 				else tui.requestRender();
 			});
 	};
 	editor.onSubmit = (text) => {
 		const prompt = text.trim();
-		if (!prompt) return;
+		if (!prompt || closing) return;
 		if (busy) {
-			if (!queued) queued = prompt;
+			if (!queued.push(prompt)) {
+				editor.setText(prompt);
+				screen.addLine("待发送队列已满，输入留在编辑器中；请稍后提交");
+			} else screen.addLine(`已排队 ${queued.length} 条`);
+			tui.requestRender();
 			return;
 		}
 		runLine(prompt);
 	};
-	tui.addChild(screen);
+	try {
+		if (selected) {
+			const snapshot = await client.snapshot(opened.sessionId);
+			if (Array.isArray(snapshot.requests))
+				for (const item of snapshot.requests) {
+					if (!isRecord(item)) continue;
+					if (typeof item.text === "string") screen.addLine(item.text);
+					screen.addLine(receiptLine(item));
+				}
+			const approvals = Array.isArray(snapshot.approvals)
+				? snapshot.approvals
+				: [];
+			const pending = approvals.find(
+				(item) => isRecord(item) && item.state === "pending",
+			);
+			if (isRecord(pending) && typeof pending.request_id === "string") {
+				state.held = {
+					kind: "request",
+					requestId: pending.request_id,
+					callId: "",
+					summary: approvalSummary(pending),
+				};
+				screen.addLine(state.held.summary);
+			}
+			state.terminalId = await client.runningTerminal(opened.sessionId);
+			state.serverId = await client.readyServer(opened.sessionId);
+			if (state.terminalId) screen.addLine("终端仍在");
+			if (state.serverId) screen.addLine("服务仍在");
+		}
+		if (!closing) {
+			tui.addChild(screen);
 	tui.setFocus(screen);
 	tui.start();
-	try {
+		}
 		await finished;
 	} finally {
+		closing = true;
+		tui.stop();
 		process.off("SIGINT", onSignal);
 		await releaseOnce();
 	}
@@ -484,7 +600,9 @@ export async function connectPythonHost(options: {
 }
 
 /** Start or attach to the local Python host. Leaving the screen does not stop it. */
-export async function runOwnedPythonInteractive(options: PythonRunOptions & { readonly workspace: string; readonly cwd: string; readonly session?: string }): Promise<void> {
+export async function runOwnedPythonInteractive(options: Omit<PythonSessionTarget, "url" | "token"> & {
+		readonly cwd: string;
+	}): Promise<void> {
 	if (!options.workspace) fail("workspace_required");
 	const host = await connectPythonHost({ cwd: options.cwd });
 	await runPythonSessionTui({ ...options, url: host.url, token: host.token, workspace: options.workspace,

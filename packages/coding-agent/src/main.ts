@@ -73,7 +73,10 @@ export async function main(args: string[]): Promise<void> {
 	if (parsed.noSession && (parsed.continue || parsed.resume))
 		throw new Error("--no-session cannot be combined with --continue or --resume");
 	if (session !== undefined && !/^[a-f0-9]{32}$/.test(session)) throw new Error("invalid_session");
-	if (parsed.session !== undefined && (parsed.continue || parsed.resume || parsed.noSession))
+	if (parsed.continue && parsed.resume)
+		throw new Error("session_selector_conflict");
+	if (
+		session !== undefined && (parsed.continue || parsed.resume || parsed.noSession))
 		throw new Error("session_selector_conflict");
 	if (parsed.provider || parsed.model || parsed.apiKey) {
 		if (!parsed.model) throw new Error("model_required");
@@ -94,12 +97,23 @@ export async function main(args: string[]): Promise<void> {
 		if (process.exitCode) return;
 	}
 	const runOptions = requestOptions(parsed);
+	const sessionOptions = {
+		...(parsed.continue
+			? { selection: "continue" as const }
+			: parsed.resume
+				? { selection: "resume" as const }
+				: {}),
+		...(parsed.name ? { title: parsed.name } : {}),
+	};
 	const interactive = !parsed.print && parsed.mode === undefined && process.stdin.isTTY && process.stdout.isTTY;
 	if (interactive) {
 		const { runOwnedPythonInteractive, runPythonSessionTui } = await import("./python-session-tui.ts");
 		if (parsed.pythonUrl && parsed.pythonToken)
 			await runPythonSessionTui({
 				...runOptions,
+				...sessionOptions,
+				...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
+				...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
 				url: parsed.pythonUrl,
 				token: parsed.pythonToken,
 				workspace: parsed.workspace || "primary",
@@ -108,6 +122,9 @@ export async function main(args: string[]): Promise<void> {
 		else
 			await runOwnedPythonInteractive({
 				...runOptions,
+				...sessionOptions,
+				...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
+				...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
 				cwd,
 				workspace: parsed.workspace || "primary",
 				...(session === undefined ? {} : { session }),
@@ -127,6 +144,7 @@ export async function main(args: string[]): Promise<void> {
 	const { runPythonHeadless } = await import("./python-headless.ts");
 	process.exitCode = await runPythonHeadless({
 		...runOptions,
+		...sessionOptions,
 		mode: parsed.mode === "rpc" ? "rpc" : parsed.mode === "json" ? "json" : "text",
 		cwd,
 		workspace: parsed.workspace || "primary",

@@ -333,6 +333,7 @@ class Snapshot(Model):
 
 
 class Session(Model):
+    updated_ms: int = Field(default=0, ge=0)
     session_id: str
     title: str
     parent_id: str = ""

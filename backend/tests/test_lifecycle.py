@@ -876,3 +876,27 @@ async def test_one_session_budget_does_not_block_profile_health(owner, runtime):
     health = await owner.health()
     assert health.state == "ready" and health.errors == []
     assert health.supervisor.session_errors["a" * 32] == ["worker_restart_budget_exhausted"]
+
+
+async def test_session_recency_is_persisted_and_retries_do_not_move_it(store, tmp_path, lease, monkeypatch):
+    first, second = "a" * 32, "b" * 32
+    monkeypatch.setattr("amazme_backend.host_store.time.time_ns", lambda: 200_000_000)
+    await store.create_session(second, CreateSession(title="second", workspace="docs"))
+    monkeypatch.setattr("amazme_backend.host_store.time.time_ns", lambda: 300_000_000)
+    submitted = Submit(request_id="stable-activity", text="later")
+    await store.enqueue(first, "submit", submitted.request_id, submitted)
+    monkeypatch.setattr("amazme_backend.host_store.time.time_ns", lambda: 400_000_000)
+    await store.enqueue(first, "submit", submitted.request_id, submitted)
+    sessions = (await store.sessions()).sessions
+    # The fixture's first session was created with real wall time; its new activity
+    # replaces that value. Replaying a receipt is not new conversation activity.
+    assert [value.session_id for value in sessions] == [second, first]
+    assert sessions[-1].updated_ms == 300
+    await store.db.close()
+    reopened = HostStore(tmp_path / "host.sqlite", require_existing=True)
+    try:
+        await reopened.initialize("replacement", "a" * 64, lease)
+        assert (await reopened.sessions()).sessions == sessions
+        assert (await reopened.create_session(first, CreateSession())).updated_ms == 300
+    finally:
+        await reopened.db.close()

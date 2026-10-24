@@ -34,9 +34,18 @@ export interface PythonHeadlessOptions extends PythonRunOptions {
 	readonly prompt: string;
 	readonly images?: readonly ImageContent[];
 	readonly session?: string;
+	readonly selection?: "continue" | "resume";
+	readonly title?: string;
 	readonly decision?: string;
 	readonly request?: string;
 	readonly call?: string;
+}
+
+export interface SessionSummary {
+	readonly session_id: string;
+	readonly title: string;
+	readonly workspace: string;
+	readonly archived: boolean;
 }
 
 interface OpenedSession {
@@ -47,6 +56,14 @@ interface OpenedSession {
 interface Polled {
 	readonly receipt: Record<string, unknown>;
 	readonly approval?: Record<string, unknown>;
+}
+
+export class HostRequestError extends Error {
+	readonly status: number;
+	constructor(status: number, code: string) {
+		super(code);
+		this.status = status;
+	}
 }
 
 const TERMINAL = new Set(["succeeded", "cancelled", "interrupted", "failed", "unknown"]);
@@ -165,9 +182,35 @@ export class HostClient {
 		this.#hostEpoch = body.host_epoch;
 	}
 
-	async open(workspace: string): Promise<OpenedSession> {
+	async listSessions(workspace: string): Promise<SessionSummary[]> {
+		const body = await this.#send("GET", "/api/v1/sessions");
+		if (!Array.isArray(body.sessions)) fail("invalid_session");
+		return body.sessions.flatMap((item: unknown) => {
+			if (!isRecord(item) || typeof item.session_id !== "string" || typeof item.title !== "string" || typeof item.workspace !== "string")
+				fail("invalid_session");
+			return item.workspace === workspace
+				? [{session_id:item.session_id, title:item.title, workspace:item.workspace, archived:item.archived === true}]
+				: [];
+		});
+	}
+
+	async recent(workspace: string): Promise<string | undefined> {
+		return (await this.listSessions(workspace))
+			.filter((item) => !item.archived)
+			.at(-1)?.session_id;
+	}
+
+	async snapshot(sessionId: string): Promise<Record<string, unknown>> {
+		return this.#send("GET", `/api/v1/sessions/${sessionId}/snapshot`);
+	}
+
+	async inspectRequest(sessionId: string, requestId: string): Promise<Polled> {
+		return this.#untilDecision(sessionId, requestId);
+	}
+
+	async open(workspace: string, title = "命令"): Promise<OpenedSession> {
 		if (!workspace) fail("workspace_required");
-		const created = await this.#send("POST", "/api/v1/sessions", { title: "命令", workspace });
+		const created = await this.#send("POST", "/api/v1/sessions", {title, workspace, session_id:hexId()});
 		if (typeof created.session_id !== "string" || created.workspace !== workspace) fail("invalid_session");
 		return this.attach(created.session_id, workspace);
 	}
@@ -190,21 +233,42 @@ export class HostClient {
 		attachmentId: string,
 		text: string,
 		images: readonly ImageContent[] = [],
+		requestId = hexId(),
 	): Promise<Polled> {
 		await this.#requireWorkspace(sessionId, workspace);
-		const requestId = randomBytes(8).toString("hex");
-		await this.#send(
-			"POST",
-			`/api/v1/sessions/${sessionId}/submissions`,
-			{
-				...this.#runOptions,
-				request_id: requestId,
-				text,
-				images: images.map((image) => ({ media_type: image.mimeType, data_base64: image.data })),
-			},
-			attachmentId,
-		);
-		return this.#untilDecision(sessionId, requestId);
+		try {
+			await this.#send(
+				"POST",
+				`/api/v1/sessions/${sessionId}/submissions`,
+				{
+					...this.#runOptions,
+					request_id: requestId,
+					text,
+					images: images.map((image) => ({media_type:image.mimeType, data_base64:image.data})),
+				},
+				attachmentId,
+			);
+		} catch (error) {
+			if (error instanceof HostRequestError && error.status < 500) throw error;
+			return {
+				receipt: {
+					request_id: requestId,
+					status: "unknown",
+					error: "submission_unconfirmed",
+				},
+			};
+		}
+		try {
+			return await this.#untilDecision(sessionId, requestId);
+		} catch {
+			return {
+				receipt: {
+					request_id: requestId,
+					status: "unknown",
+					error: "receipt_unconfirmed",
+				},
+			};
+		}
 	}
 
 	async decideRequest(
@@ -497,7 +561,7 @@ export class HostClient {
 		const payload: unknown = await response.json();
 		if (!response.ok) {
 			const code = isRecord(payload) && typeof payload.code === "string" ? payload.code : `http_${response.status}`;
-			fail(code);
+			throw new HostRequestError(response.status, code);
 		}
 		return payload;
 	}
@@ -534,7 +598,9 @@ async function emitReceipt(
 	} else if (approval) {
 		process.stderr.write(`${approvalSummary(approval)}\n`);
 	} else {
-		process.stderr.write(`${status}${error}\n`);
+		process.stderr.write(
+			`${status}${error} session=${sessionId} request=${String(receipt.request_id)}\n`,
+		);
 	}
 	if (status === "succeeded") return 0;
 	if (status === "waiting_approval") return 2;
@@ -818,14 +884,33 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions): Pr
 	const jsonMode = options.mode === "json";
 	const prompt = options.prompt;
 	const decision = options.decision;
-	if (!prompt && !(options.session && decision && (options.request || options.call))) {
+	if (!prompt && !(options.session && (options.request || (decision && options.call)))) {
 		process.stderr.write("missing_prompt\n");
 		return 1;
 	}
-	const opened = options.session
-		? await client.attach(options.session, options.workspace)
-		: await client.open(options.workspace);
+	if (options.selection === "resume")
+		fail("session_selection_requires_tty_use_session_id");
+	const selected = options.session ??
+		(options.selection === "continue"
+			? await client.recent(options.workspace)
+			: undefined);
+	const opened = selected
+		? await client.attach(selected, options.workspace)
+		: await client.open(options.workspace, options.title);
 	try {
+		if (!prompt && options.request && !decision) {
+			const polled = await client.inspectRequest(
+				opened.sessionId,
+				options.request,
+			);
+			return emitReceipt(
+				options.workspace,
+				opened.sessionId,
+				polled.receipt,
+				jsonMode,
+				polled.approval,
+			);
+		}
 		if (!prompt && options.request && decision) {
 			const receipt = await client.decideRequest(
 				opened.sessionId,
@@ -863,6 +948,7 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions): Pr
 			opened.attachmentId,
 			prompt,
 			options.images,
+			options.request,
 		);
 		if (polled.approval && decision) {
 			const requestId = polled.receipt.request_id;

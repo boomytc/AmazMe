@@ -9791,6 +9791,12 @@
       },
       "Session": {
         "properties": {
+          "updated_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Updated Ms",
+            "default": 0
+          },
           "session_id": {
             "type": "string",
             "title": "Session Id"
