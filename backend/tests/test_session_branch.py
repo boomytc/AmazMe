@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
@@ -21,6 +22,7 @@ from amazme_backend.contracts import (
     CreateSession,
     HostFence,
     Lease,
+    Message,
     PrepareUpdate,
     ProcessLease,
     Receipt,
@@ -48,8 +50,10 @@ from amazme_backend.session_domain import (
     ToolReturned,
 )
 from amazme_backend.storage import SessionStore, compaction_basis, session_database
+from amazme_backend.worker import Worker
 
 PARENT = "a" * 32
+KEY = "sk-test-not-real"
 
 
 class Driver:
@@ -468,6 +472,87 @@ async def test_failed_summary_does_not_replace_history(owner: Host, monkeypatch:
         assert any(message.role == "assistant" and "alpha" in message.content for message in action.messages)
     finally:
         await parent.db.close()
+
+
+async def test_compaction_does_not_send_or_keep_the_provider_secret(
+        owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
+    owner.profile.save_provider(owner.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
+    calls: list[str] = []
+
+    async def fake_summarize(_config: object, messages: list[Message]) -> str:
+        text = "\n".join(message.content for message in messages)
+        calls.append(text)
+        if "回声" in text:
+            return f"回声摘要 {KEY}"
+        return "已压缩干净对话"
+
+    monkeypatch.setattr("amazme_backend.host.summarize", fake_summarize)
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "干净", "r-clean", owner.build)
+    finally:
+        await parent.db.close()
+    created = await owner.compact_session(PARENT, CompactSession(compaction_id="c-clean", through_request_id="r-clean"))
+    assert created.summary == "已压缩干净对话" and KEY not in calls[0]
+    parent = await parent_store(owner)
+    try:
+        assert (await parent.snapshot()).compaction == "已压缩干净对话"
+        await finish(parent, "回声", "r-echo", owner.build)
+        echo_payloads = await message_payloads(parent)
+    finally:
+        await parent.db.close()
+    before_echo = len(calls)
+    with pytest.raises(BackendError, match="compaction_secret") as echoed:
+        await owner.compact_session(PARENT, CompactSession(compaction_id="c-echo", through_request_id="r-echo"))
+    assert KEY not in str(echoed.value) and len(calls) == before_echo + 1
+    parent = await parent_store(owner)
+    try:
+        assert await message_payloads(parent) == echo_payloads
+        await finish(parent, "普通", "r-plain", owner.build)
+        stored = f"旧摘要 {KEY}"
+        await parent.commit_compaction(
+            "c-stored", "r-plain", stored, compaction_basis(await parent.message_payloads("r-plain")))
+        assert (await parent.snapshot()).compaction == stored
+    finally:
+        await parent.db.close()
+    worker = Worker(owner.profile, PARENT, "worker-compact")
+    await worker.store.initialize()
+    worker.storage_ready = True
+    try:
+        prepared = await worker.model_input([
+            Message(role="user", content=stored),
+            Message(role="user", content=f"我说 {KEY}"),
+        ])
+    finally:
+        await worker.store.db.close()
+    assert [item.content for item in prepared] == [f"我说 {KEY}"]
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, f"对话 {KEY}", "r-secret", owner.build)
+        secret_payloads = await message_payloads(parent)
+    finally:
+        await parent.db.close()
+    sent = len(calls)
+    app = application(owner)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=owner.origin, headers={
+        "Authorization": "Bearer web-only", "x-amazme-build": owner.build,
+        "x-amazme-epoch": str(owner.fence.host_epoch),
+    }) as client:
+        attached = await client.post(f"/api/v1/sessions/{PARENT}/attachments")
+        assert attached.status_code == 201
+        client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+        rejected = await client.post(
+            f"/api/v1/sessions/{PARENT}/compactions",
+            json={"compaction_id": "c-secret", "through_request_id": "r-secret"})
+    assert rejected.status_code == 409 and rejected.json()["code"] == "compaction_secret"
+    assert KEY not in rejected.text and len(calls) == sent
+    parent = await parent_store(owner)
+    try:
+        assert await message_payloads(parent) == secret_payloads
+        saved = await parent.db.call(lambda db: [str(row[0]) for row in db.execute("SELECT payload FROM compactions")])
+    finally:
+        await parent.db.close()
+    assert any(stored in item for item in saved) and not any(f"回声摘要 {KEY}" in item for item in saved)
 
 
 async def test_archived_session_cannot_compact(owner: Host) -> None:

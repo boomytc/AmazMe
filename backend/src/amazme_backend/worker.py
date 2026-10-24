@@ -330,7 +330,13 @@ class Worker:
         secret = self.profile.config.provider.api_key.get_secret_value()
         memories = [item for item in relevant_memories(self.profile.path, workspace, query)
                     if not contains_secret(item.text, secret)]
-        return inject_memories(messages, memories)
+        prepared = inject_memories(messages, memories)
+        if self.storage_ready:
+            summary = await self.store.active_summary()
+            self.profile.reload_provider()
+            if contains_secret(summary, self.profile.config.provider.api_key.get_secret_value()):
+                prepared = [item for item in prepared if item.content != summary]
+        return prepared
 
     async def _retrieve_web(self, action: WebRetrieval) -> WebReturned:
         self._use_current_provider()

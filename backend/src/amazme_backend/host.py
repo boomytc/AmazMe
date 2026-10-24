@@ -1466,8 +1466,14 @@ class Host:
             raise BackendError("compaction_unsettled")
         basis = compaction_basis(payloads)
         # Summarize before the commit. A failed summary does not replace or delete history.
-        summary = await summarize(self.profile.config.provider, [
-            Message.model_validate_json(payload) for payload in payloads])
+        messages = [Message.model_validate_json(payload) for payload in payloads]
+        self.profile.reload_provider()
+        if contains_secret("\n".join(message.content for message in messages), self._provider_secret()):
+            raise BackendError("compaction_secret")
+        summary = await summarize(self.profile.config.provider, messages)
+        self.profile.reload_provider()
+        if contains_secret(summary, self._provider_secret()):
+            raise BackendError("compaction_secret")
         return await self._with_session(
             session, lambda store: store.commit_compaction(
                 value.compaction_id, value.through_request_id, summary, basis))

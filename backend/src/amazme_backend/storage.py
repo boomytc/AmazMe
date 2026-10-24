@@ -1286,6 +1286,9 @@ class SessionStore:
                 best = record
         return best
 
+    async def active_summary(self) -> str:
+        return await self.db.call(self._active_summary)
+
     def _active_summary(self, db: sqlite3.Connection) -> str:
         previous = db.execute(
             "SELECT id FROM requests WHERE kind='root' AND status='succeeded' ORDER BY ordinal DESC LIMIT 1").fetchone()
