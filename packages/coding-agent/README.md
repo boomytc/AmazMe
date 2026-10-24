@@ -30,3 +30,7 @@ npm test --workspace @amazme/coding-agent
 `amazme workspaces list` 查看目录，`workspaces add NAME /absolute/path` 显式登记。
 `--continue` 继续当前工作区最近的非归档会话；`--resume` 在 TUI 中选择，`--session ID` 指定会话。
 回执未确认时保留原请求 ID，使用 `--session ID --request ID` 或 TUI 的 `/request ID` 查询，不会自动重发。
+
+上下文文件、技能和提示词模板由 Python 按 Pi 的目录规则加载。
+使用 `--skill PATH` / `--prompt-template PATH` 添加资源，`--no-context-files` / `--no-skills` / `--no-prompt-templates` 禁用默认发现。
+输入 `/skill:名称 参数` 或 `/模板名称 参数`；TUI 用 `/skills`、`/prompts`、`/context` 查看资源，CLI 用 `amazme resources --session ID`。

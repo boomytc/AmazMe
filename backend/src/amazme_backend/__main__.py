@@ -73,7 +73,8 @@ def main() -> None:
         provider_data = {**provider.model_dump(), "api_key": provider.api_key.get_secret_value()}
         config = {"format": 2, "profile_id": secrets.token_hex(16), "workspace": str(workspace),
                   "approval_policy": args.approval_policy, "testing": args.test_mode,
-                  "resources": str(resource_root()), "provider": provider_data}
+                  "resources": str(resource_root()), "provider": provider_data,
+                  "user_resources": str(Path(os.environ.get("AMAZME_CODING_AGENT_DIR", "~/.amazme/agent")).expanduser().resolve())}
         private_write(args.profile / "config.json", json.dumps(config))
         from .accounts import AccountStore
         accounts = AccountStore(args.profile)

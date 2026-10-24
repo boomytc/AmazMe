@@ -121,6 +121,7 @@ def resolve_model_call(catalog_json: str, call: ToolCall, call_id: str, plugin_c
 
 
 class Run(Model):
+    input_text: str | None = None
     direct_call: ToolCall | None = None
     request_id: str
     depth: int = 0

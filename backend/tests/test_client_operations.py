@@ -116,6 +116,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       if(path.endsWith('/computer/cleanup'))return response({cleared:true,proof:'owned-exit'});
       if(path.endsWith('/computer/observe'))return response({permitted:true,capture:{capture_id:path.split('/')[4],width:100,height:100}});
       if(path.endsWith('/remotes'))return response({phase:'connected'});
+      if(path.endsWith('/resources'))return new Promise(resolve=>held.push({path,body,resolve:v=>resolve(response(v))}));
       if(method==='POST') return new Promise(resolve=>held.push({path,body,resolve:v=>resolve(response(v))}));
       throw Error('unexpected '+method+' '+path);
     };
@@ -165,6 +166,20 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       await until(()=>sessionStorage.getItem(keyB)===null);
       assert.equal($(test.out).textContent,after);
     }
+    await select(a);
+    $('resources-load').click();await until(()=>held.length===1);
+    const resourceA=held.shift();
+    await select(b);
+    $('resources-load').click();await until(()=>held.length===1);
+    const resourceB=held.shift();
+    const catalog={context_files:['A-only'],skills:[],prompts:[],diagnostics:[]};
+    resourceA.resolve(catalog);
+    await new Promise(resolve=>setTimeout(resolve,5));
+    assert.equal($('resources-list').textContent,'');
+    await select(a);
+    resourceB.resolve({...catalog,context_files:['B-only']});
+    await new Promise(resolve=>setTimeout(resolve,5));
+    assert.equal($('resources-list').textContent,'');
     // A cleanup proof may arrive before the old HTTP waiter receives its unknown result.
     $('computer-ground').click();await until(()=>held.length===1);
     const old=held.shift(), nativeKey='computer-operation:host-1:'+a;

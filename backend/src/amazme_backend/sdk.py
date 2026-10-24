@@ -45,6 +45,7 @@ from .contracts import (
     PluginReload,
     PluginView,
     Receipt,
+    ResourceOptions,
     Session,
     SessionList,
     Snapshot,
@@ -59,6 +60,7 @@ from .contracts import (
     WorkspaceSelect,
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
+from .resources import ResourceCatalog
 from .workspace_files import FileContent
 
 
@@ -102,6 +104,12 @@ class Client:
         self.build_id = identity.build_id
         self.host_epoch = identity.host_epoch
         return identity
+
+    async def resources(self, session_id: str, options: ResourceOptions | None = None) -> ResourceCatalog:
+        if options is None:
+            return ResourceCatalog.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/resources"))
+        return ResourceCatalog.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/resources",
+            json_body=options.model_dump(), headers=self._write()))
 
     async def workspaces(self) -> WorkspaceList:
         return WorkspaceList.model_validate(await self._send("GET", "/api/v1/workspaces"))
@@ -268,11 +276,13 @@ class Client:
                      not_before_ms: int = 0, images: list[ImagePart] | None = None,
                      system_prompt: str | None = None, append_system_prompt: str = "",
                      allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None,
+                     resource_options: ResourceOptions | None = None,
                      tool_call: ToolCall | None = None) -> Receipt:
         await self._require_workspace(session_id, workspace)
         body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms,
                                    "system_prompt": system_prompt, "append_system_prompt": append_system_prompt,
                                    "allowed_tools": allowed_tools, "excluded_tools": excluded_tools or [],
+                                   "resource_options": (resource_options or ResourceOptions()).model_dump(),
                                    "tool_call":tool_call.model_dump() if tool_call is not None else None}
         if images:
             body["images"] = [image.model_dump() for image in images]

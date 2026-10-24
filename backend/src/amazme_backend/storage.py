@@ -15,7 +15,8 @@ from typing import IO, Literal
 
 from pydantic import JsonValue, TypeAdapter
 
-from .common import lock
+from .accounts import AccountStore
+from .common import Profile, lock
 from .contracts import (
     Approval,
     ApprovalDecision,
@@ -43,6 +44,7 @@ from .contracts import (
     ProviderConfig,
     Receipt,
     Replay,
+    ResourceOptions,
     SearchHit,
     SessionDiagnostic,
     Snapshot,
@@ -59,8 +61,10 @@ from .contracts import (
     plugin_alias,
 )
 from .faults import Faults
+from .manage import contains_secret
 from .mcp_session import mcp_alias
 from .providers import Completion, stored_provider, token_cost_micro
+from .resources import session_resources
 from .session_domain import (
     Action,
     CloseEpoch,
@@ -408,7 +412,8 @@ class SessionStore:
     def __init__(self, path: Path, session_id: str, *, build: str = "test-build",
                  config: ProviderConfig | None = None, approval_policy: str = "mutations",
                  faults: Faults | None = None, require_existing: bool = False, read_only: bool = False,
-                 instance: str = ""):
+                 instance: str = "", profile: Profile | None = None):
+        self.profile = profile
         self.db = Database(path, require_existing=require_existing, read_only=read_only, preflight=self._preflight)
         self.instance = instance or secrets.token_hex(16)
         self.session_id, self.build = session_id, build
@@ -674,6 +679,20 @@ class SessionStore:
         if value.allowed_tools is not None:
             config.allowed_tools = value.allowed_tools
         config.excluded_tools = list(dict.fromkeys([*config.excluded_tools, *value.excluded_tools]))
+        expanded_text: str | None = None
+        if inherited is None and self.profile is not None and value.tool_call is None:
+            config.resource_options = value.resource_options
+            resources = session_resources(self.profile, self.session_id, value.resource_options)
+            expanded_text = resources.expand(value.text)
+            if len(expanded_text) > 64000:
+                raise BackendError("resource_input_limit")
+            config.append_system_prompt = "\n\n".join(filter(None, [config.append_system_prompt, resources.system_context()]))
+            if len(config.append_system_prompt) > 32000:
+                raise BackendError("system_prompt_limit")
+            known_secrets = (*AccountStore(self.profile.path).secrets(), self.profile.token,
+                       self.profile.config.provider.api_key.get_secret_value())
+            if contains_secret(config.append_system_prompt + "\n" + expanded_text, known_secrets):
+                raise BackendError("resource_secret")
         direct = normalized_call(value.tool_call) if value.tool_call is not None else None
         if direct is not None:
             selected = direct.name
@@ -688,7 +707,7 @@ class SessionStore:
                 direct = direct.model_copy(update={"arguments":args_mcp.model_dump_json()})
             if not config.tool_allowed(selected):
                 raise BackendError("tool_not_allowed")
-        self._save_run(db, Run(request_id=value.request_id, config=config, depth=depth, direct_call=direct))
+        self._save_run(db, Run(request_id=value.request_id, config=config, depth=depth, direct_call=direct, input_text=expanded_text))
         c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
         c.hit("accepted", receipt.request_id)
         return receipt
@@ -728,7 +747,7 @@ class SessionStore:
             if value.mode == "reject_busy" and pending and not tombstone:
                 raise BackendError("session_busy")
             if value.mode == "steer" and not tombstone:
-                if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools:
+                if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools or value.resource_options != ResourceOptions():
                     raise BackendError("run_options_immutable")
                 if value.not_before_ms:
                     raise BackendError("scheduled_steer_unsupported")
@@ -1395,8 +1414,9 @@ class SessionStore:
                     history = payloads[matched.message_count:]
                 for index, payload in enumerate(history):
                     self._message(db, c, request.request_id, f"history:{index}", Message.model_validate_json(payload))
+        run = self._run(db, request.request_id)
         self._message(db, c, request.request_id, "input", Message(
-            role="user", content=request.text, images=self._load_images(db, request.request_id)))
+            role="user", content=run.input_text if run.input_text is not None else request.text, images=self._load_images(db, request.request_id)))
         request.status = "running"
         request.generation += 1
         self._save_request(db, c, request)

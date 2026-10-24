@@ -21,6 +21,14 @@ export function requestOptions(parsed: Args): PythonRunOptions {
 		...(parsed.noMcp ? ["mcp_*"] : []),
 	];
 	return {
+		...((parsed.noContextFiles || parsed.noSkills || parsed.noPromptTemplates || parsed.skills?.length || parsed.promptTemplates?.length)
+			? {resource_options: {
+				...(parsed.noContextFiles ? {no_context_files:true} : {}),
+				...(parsed.noSkills ? {no_skills:true} : {}),
+				...(parsed.noPromptTemplates ? {no_prompt_templates:true} : {}),
+				...(parsed.skills?.length ? {skill_paths:parsed.skills} : {}),
+				...(parsed.promptTemplates?.length ? {prompt_paths:parsed.promptTemplates} : {}),
+			}} : {}),
 		...(parsed.systemPrompt === undefined ? {} : { system_prompt: parsed.systemPrompt }),
 		...(parsed.appendSystemPrompt === undefined
 			? {}

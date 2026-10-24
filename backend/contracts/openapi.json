@@ -1172,6 +1172,92 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/resources": {
+      "get": {
+        "summary": "Resources",
+        "operationId": "resources_api_v1_sessions__session__resources_get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCatalog"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Selected Resources",
+        "operationId": "selected_resources_api_v1_sessions__session__resources_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceOptions"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResourceCatalog"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces": {
       "get": {
         "summary": "Workspaces",
@@ -9358,6 +9444,118 @@
         ],
         "title": "RemoteView"
       },
+      "ResourceCatalog": {
+        "properties": {
+          "context_files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Context Files"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceItem"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "prompts": {
+            "items": {
+              "$ref": "#/components/schemas/ResourceItem"
+            },
+            "type": "array",
+            "title": "Prompts"
+          },
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Diagnostics"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "context_files",
+          "skills",
+          "prompts",
+          "diagnostics"
+        ],
+        "title": "ResourceCatalog"
+      },
+      "ResourceItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
+          "disable_model_invocation": {
+            "type": "boolean",
+            "title": "Disable Model Invocation",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "path"
+        ],
+        "title": "ResourceItem"
+      },
+      "ResourceOptions": {
+        "properties": {
+          "no_context_files": {
+            "type": "boolean",
+            "title": "No Context Files",
+            "default": false
+          },
+          "no_skills": {
+            "type": "boolean",
+            "title": "No Skills",
+            "default": false
+          },
+          "skill_paths": {
+            "items": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Skill Paths"
+          },
+          "no_prompt_templates": {
+            "type": "boolean",
+            "title": "No Prompt Templates",
+            "default": false
+          },
+          "prompt_paths": {
+            "items": {
+              "type": "string",
+              "maxLength": 1024,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Prompt Paths"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ResourceOptions"
+      },
       "RpcCall": {
         "properties": {
           "jsonrpc": {
@@ -9386,6 +9584,9 @@
       },
       "RpcParams": {
         "properties": {
+          "resource_options": {
+            "$ref": "#/components/schemas/ResourceOptions"
+          },
           "system_prompt": {
             "anyOf": [
               {
@@ -10165,6 +10366,9 @@
       },
       "Submit": {
         "properties": {
+          "resource_options": {
+            "$ref": "#/components/schemas/ResourceOptions"
+          },
           "system_prompt": {
             "anyOf": [
               {

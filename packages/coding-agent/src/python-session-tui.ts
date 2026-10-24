@@ -132,6 +132,13 @@ export async function handleLine(client: HostClient, sessionId: string, attachme
 		if (prompt !== "批准" && prompt !== "拒绝") return ["先输入批准或拒绝"];
 		return decideHeld(client, sessionId, attachmentId, state, prompt === "批准");
 	}
+	if (prompt === "/skills" || prompt === "/prompts" || prompt === "/context") {
+		const resources = await client.resources(sessionId);
+		const key = prompt === "/skills" ? "skills" : prompt === "/prompts" ? "prompts" : "context_files";
+		const items = resources[key];
+		if (!Array.isArray(items) || !items.length) return ["没有资源"];
+		return items.map((item: unknown) => typeof item === "string" ? item : isRecord(item) ? `${String(item.name)} · ${String(item.path)}` : "");
+	}
 	if (prompt.startsWith("/request ")) {
 		const requestId = prompt.slice("/request ".length).trim();
 		if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId)) return ["请求编号无效"];

@@ -668,6 +668,14 @@ async def test_workspace_selection_is_shared_by_sdk_rpc_and_stable_session_creat
         assert duplicate["result"] == session.model_dump()
         assert (await client.workspaces()).workspaces[-1] == chosen
         assert len((await client.sessions()).sessions) == 1
+        instructions = launch / "AGENTS.md"
+        instructions.write_text("project instructions")
+        host.profile.config.user_resources = str(tmp_path / "agent")
+        resources = await client.resources(SESSION)
+        assert resources.context_files[-1] == str(instructions)
+        listed = await handle_rpc(host, RpcCall(id="resources", method="resource.list", params=RpcParams(
+            session_id=SESSION, workspace=chosen.name)))
+        assert listed["result"] == resources.model_dump()
     finally:
         await client._http.aclose()
         await host.store.db.close()

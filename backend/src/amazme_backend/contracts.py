@@ -22,7 +22,16 @@ ProviderApi = Literal["openai-completions", "openai-responses", "openai-codex-re
 TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$"
 
 
+class ResourceOptions(Model):
+    no_context_files: bool = False
+    no_skills: bool = False
+    skill_paths: list[Annotated[str, Field(min_length=1, max_length=1024)]] = Field(default_factory=list, max_length=32)
+    no_prompt_templates: bool = False
+    prompt_paths: list[Annotated[str, Field(min_length=1, max_length=1024)]] = Field(default_factory=list, max_length=32)
+
+
 class RunOptions(Model):
+    resource_options: ResourceOptions = Field(default_factory=ResourceOptions)
     system_prompt: str | None = Field(default=None, max_length=32000)
     append_system_prompt: str = Field(default="", max_length=32000)
     allowed_tools: list[str] | None = Field(default=None, max_length=128)
@@ -111,6 +120,7 @@ class ProfileConfig(Model):
     profile_id: str
     workspace: str
     resources: str
+    user_resources: str = ""
     provider: ProviderConfig
     approval_policy: Literal["auto", "mutations", "all"] = "mutations"
     testing: bool = False

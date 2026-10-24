@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, expect, test, vi } from "vitest";
 import { main, requestOptions } from "../src/main.ts";
+import { parseArgs } from "../src/cli/args.ts";
 import { HostClient } from "../src/python-headless.ts";
 import { runPythonProductCommand } from "../src/python-product.ts";
 import { connectPythonHost } from "../src/python-session-tui.ts";
@@ -230,4 +231,12 @@ test("HTTP and RPC submissions carry the same immutable run defaults", async () 
 	expect(sent[1]).toMatchObject({
 		params: { system_prompt: "explicit", allowed_tools: [], text: "rpc" },
 	});
+});
+
+
+test("resource options reach Python without client-side discovery or expansion", async () => {
+    const options = requestOptions(parseArgs(["--no-context-files", "--no-skills", "--skill", "/explicit/skills",
+        "--no-prompt-templates", "--prompt-template", "/explicit/template.md"]));
+    expect(options.resource_options).toEqual({no_context_files:true,no_skills:true,skill_paths:["/explicit/skills"],
+        no_prompt_templates:true,prompt_paths:["/explicit/template.md"]});
 });

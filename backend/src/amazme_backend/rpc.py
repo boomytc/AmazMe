@@ -47,6 +47,7 @@ from .contracts import (
     PluginReload,
     PluginView,
     Receipt,
+    ResourceOptions,
     RunOptions,
     Session,
     SessionList,
@@ -65,6 +66,7 @@ from .contracts import (
     WorkspaceSelect,
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
+from .resources import ResourceCatalog
 from .workspace_files import FileContent
 
 
@@ -170,6 +172,8 @@ class RpcHost(Protocol):
     async def oauth_input(self, login_id: str, value: OAuthInput) -> OAuthView: ...
 
     async def cancel_oauth(self, login_id: str) -> OAuthView: ...
+
+    async def resources(self, session: str, options: ResourceOptions | None = None) -> ResourceCatalog: ...
 
     async def workspaces(self) -> WorkspaceList: ...
 
@@ -325,6 +329,11 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.oauth_input(params.login_id, params.authorization)
     if method == "oauth.cancel":
         return await owner.cancel_oauth(params.login_id)
+    if method == "resource.list":
+        _require_workspace(params)
+        if await _workspace(owner, params.session_id) != params.workspace:
+            raise BackendError("workspace_mismatch")
+        return await owner.resources(params.session_id, params.resource_options)
     if method == "workspace.list":
         return await owner.workspaces()
     if method == "workspace.select":
@@ -385,6 +394,7 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
             session, "submit", params.request_id,
             Submit(request_id=params.request_id, text=params.text, not_before_ms=params.not_before_ms,
                    system_prompt=params.system_prompt, append_system_prompt=params.append_system_prompt,
+                   resource_options=params.resource_options,
                    allowed_tools=params.allowed_tools, excluded_tools=params.excluded_tools, tool_call=params.tool_call))
     if method == "request.cancel":
         if not params.request_id:

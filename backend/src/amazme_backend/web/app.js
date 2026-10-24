@@ -507,7 +507,7 @@ function startClient() {
     if (selected !== id) {
       workflowId = ""; workflowView = null;
       remoteId = "";
-      for (const id of ["code-result", "code-state", "code-tools", "code-media", "plugin-result", "remote-state", "remote-result"]) $(id).textContent = "";
+      for (const id of ["code-result", "code-state", "code-tools", "code-media", "plugin-result", "remote-state", "remote-result", "resources-list"]) $(id).textContent = "";
       webPolicy = null;
       $("web-state").textContent = "";
       $("web-enabled").checked = false;
@@ -1804,6 +1804,20 @@ function startClient() {
     const frac = String(Math.abs(micro % 1000000)).padStart(6, "0");
     return `${whole}.${frac} 美元`;
   }
+  $("resources-load").onclick = async () => {
+    const operation = beginOperation("resources");
+    if (!operation?.session) return;
+    try {
+      const resources = await api(`/api/v1/sessions/${operation.session}/resources`, "GET", undefined, operation.connection);
+      if (!operation.active()) return;
+      $("resources-list").textContent = [
+        "上下文", ...resources.context_files,
+        "技能", ...resources.skills.map(item => `${item.name} · ${item.path}${item.disable_model_invocation ? " · 仅手动调用" : ""}`),
+        "提示词", ...resources.prompts.map(item => `${item.name} · ${item.description}`),
+        ...resources.diagnostics,
+      ].join("\n");
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
   $("usage-load").onclick = async () => {
     const operation = beginOperation("usage");
     if (!operation) return;

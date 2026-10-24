@@ -14,6 +14,7 @@ const COMMANDS = new Set([
 	"export",
 	"doctor",
 	"workspaces",
+	"resources",
 ]);
 
 export async function runPythonProductCommand(

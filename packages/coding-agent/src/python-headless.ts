@@ -18,7 +18,16 @@ export interface ImageContent {
 	readonly mimeType: string;
 }
 
+export interface PythonResourceOptions {
+	readonly no_context_files?: boolean;
+	readonly no_skills?: boolean;
+	readonly skill_paths?: readonly string[];
+	readonly no_prompt_templates?: boolean;
+	readonly prompt_paths?: readonly string[];
+}
+
 export interface PythonRunOptions {
+	readonly resource_options?: PythonResourceOptions;
 	readonly system_prompt?: string;
 	readonly append_system_prompt?: string;
 	readonly allowed_tools?: readonly string[];
@@ -168,6 +177,7 @@ export class HostClient {
 		this.#url = url.replace(/\/$/, "");
 		this.#token = token;
 		this.#runOptions = {
+	        resource_options: options.resource_options,
 			system_prompt: options.system_prompt,
 			append_system_prompt: options.append_system_prompt,
 			allowed_tools: options.allowed_tools,
@@ -180,6 +190,10 @@ export class HostClient {
 		if (typeof body.build_id !== "string" || typeof body.host_epoch !== "number") fail("invalid_bootstrap");
 		this.#buildId = body.build_id;
 		this.#hostEpoch = body.host_epoch;
+	}
+
+	async resources(sessionId: string): Promise<Record<string, unknown>> {
+		return this.#send("POST", `/api/v1/sessions/${sessionId}/resources`, {...this.#runOptions.resource_options});
 	}
 
 	async selectWorkspace(cwd: string, name = ""): Promise<string> {

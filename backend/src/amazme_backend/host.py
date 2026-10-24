@@ -159,6 +159,7 @@ from .contracts import (
     RemoteRun,
     RemoteView,
     ResolutionEnvelope,
+    ResourceOptions,
     RetireSupervisor,
     SearchResults,
     Session,
@@ -212,6 +213,7 @@ from .page_boot import boot_document
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
+from .resources import ResourceCatalog, session_resources
 from .rpc import RpcCall, handle_rpc
 from .session_ops import SessionOps, SessionRelay
 from .ssh import scan_host_key
@@ -509,6 +511,11 @@ class Host:
 
     def workspace_root(self) -> Path:
         return Path(self.profile.config.workspace)
+
+    async def resources(self, session: str, options: ResourceOptions | None = None) -> ResourceCatalog:
+        self._admit()
+        await self._require_session(session)
+        return await asyncio.to_thread(lambda: session_resources(self.profile, session, options or ResourceOptions()).catalog)
 
     async def workspaces(self) -> WorkspaceList:
         self._admit()
@@ -2848,6 +2855,14 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/sessions/{session}/artifacts/{artifact_id}")
     async def artifact(session: str, artifact_id: str) -> ArtifactBody:
         return await owner.artifact(session, artifact_id)
+
+    @app.get("/api/v1/sessions/{session}/resources")
+    async def resources(session: str) -> ResourceCatalog:
+        return await owner.resources(session)
+
+    @app.post("/api/v1/sessions/{session}/resources")
+    async def selected_resources(session: str, value: ResourceOptions) -> ResourceCatalog:
+        return await owner.resources(session, value)
 
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:

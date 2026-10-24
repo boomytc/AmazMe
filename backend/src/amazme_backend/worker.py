@@ -134,7 +134,7 @@ class Worker:
         self.store = SessionStore(session_database(profile.path, session), session,
                                   build=self.build, config=profile.config.provider,
                                   approval_policy=profile.config.approval_policy, faults=self.faults,
-                                  require_existing=require_existing, instance=instance)
+                                  require_existing=require_existing, instance=instance, profile=profile)
         self.supervisor = Peer(profile.socket("supervisor"), profile.token)
         self.owner = WorkerRequest(session_id=session, worker_id=instance, build_id=self.build)
         self.state: WorkerState = "recovering"

@@ -28,6 +28,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--url", required=True)
     parser.add_argument("--token", required=True)
     sub = parser.add_subparsers(dest="command", required=True)
+    resource = sub.add_parser("resources")
+    resource.add_argument("--session", required=True)
     create = sub.add_parser("create")
     create.add_argument("--workspace", required=True)
     create.add_argument("--title", default="新会话")
@@ -220,6 +222,9 @@ async def _run(argv: list[str]) -> int:
             return 1
     try:
         async with Client(args.url, args.token) as client:
+            if args.command == "resources":
+                print((await client.resources(args.session)).model_dump_json())
+                return 0
             if args.command == "workspaces":
                 if args.workspace_command == "select":
                     result = await client.select_workspace(args.path, args.name)
