@@ -9,6 +9,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
@@ -41,6 +42,7 @@ from amazme_backend.storage import SessionStore, correction_text, session_databa
 SESSION = "a" * 32
 SECRET = "父会话秘密"
 CHECK = "只检查这一句"
+KEY = "sk-test-not-real"
 
 
 def _host(tmp_path: Path) -> Host:
@@ -343,6 +345,35 @@ async def test_workflow_rejects_conflicts_and_a_second_open_correction(tmp_path:
             assert none.status_code == 200
             assert none.json()["stage"] == "exhausted" and none.json()["attempts"] == 0
             assert [item["role"] for item in none.json()["children"]] == ["check"]
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+async def test_workflow_check_does_not_store_the_provider_secret(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    host.profile.save_provider(host.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    created = await host.create_session(CreateSession(title="检查"))
+    try:
+        async with _client(host) as client:
+            await _attach_session(client, created.session_id)
+            rejected = await client.post(
+                f"/api/v1/sessions/{created.session_id}/workflows", json=_open_body("a" * 32, f"检查 {KEY}"))
+            assert rejected.status_code == 409 and rejected.json()["code"] == "workflow_secret"
+            assert KEY not in rejected.text
+            assert not session_database(tmp_path, created.session_id).parent.exists()
+            opened = await client.post(
+                f"/api/v1/sessions/{created.session_id}/workflows", json=_open_body("b" * 32, "只检查这一句"))
+            assert opened.status_code == 200 and len(opened.json()["children"]) == 1
+            conflict = await client.post(
+                f"/api/v1/sessions/{created.session_id}/workflows", json=_open_body("b" * 32, f"另一句 {KEY}"))
+            assert conflict.status_code == 409 and conflict.json()["code"] == "workflow_conflict"
+            assert KEY not in conflict.text
+            listed = await client.get(f"/api/v1/sessions/{created.session_id}/workflows/{'b' * 32}")
+            assert listed.json()["check"] == "只检查这一句"
     finally:
         await host.supervisor.close()
         await host.store.db.close()

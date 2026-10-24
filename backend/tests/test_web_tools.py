@@ -193,6 +193,55 @@ async def test_web_call_does_not_forward_chat_secrets_or_replay_unknown(tmp_path
         await host.store.db.close()
 
 
+async def test_web_outbound_omits_the_provider_secret(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    seen: list[httpx.Request] = []
+    host.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    await host.store.create_session(SESSION, CreateSession(title="网页"))
+    path = session_database(tmp_path, SESSION)
+    path.parent.mkdir(parents=True, mode=0o700)
+    seeded = SessionStore(path, SESSION, build=host.build)
+    await seeded.initialize()
+    try:
+        await seeded.accept(Submit(request_id="root", text=f"原话 {KEY}"), HostFence(host_epoch=0, build_id=host.build))
+    finally:
+        await seeded.db.close()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
+            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
+            "x-amazme-epoch": str(host.fence.host_epoch),
+        }) as client:
+            await _ready(host, client)
+            query = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "secret-query", "kind": "search", "query": f"查找 {KEY}"})
+            assert query.status_code == 409 and query.json()["code"] == "web_secret"
+            assert KEY not in query.text and seen == []
+            fetched = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "secret-fetch", "kind": "fetch", "url": f"https://example.com/{KEY}"})
+            assert fetched.status_code == 409 and fetched.json()["code"] == "web_secret"
+            assert seen == []
+            clean = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
+                "call_id": "clean", "kind": "search", "query": "项目结构"})
+            assert clean.status_code == 200 and clean.json()["phase"] == "done"
+            body = json.loads(seen[0].content)
+            assert "ori_question" not in body and KEY.encode() not in seen[0].content
+        stored = SessionStore(path, SESSION, build=host.build, require_existing=True)
+        await stored.initialize()
+        try:
+            reserved = await stored.db.call(lambda db: db.execute(
+                "SELECT id FROM web_calls WHERE id IN ('secret-query','secret-fetch')").fetchall())
+            assert reserved == []
+        finally:
+            await stored.db.close()
+    finally:
+        await host.web_client.aclose()
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
 async def test_web_call_without_a_deepseek_key_sends_nothing(tmp_path: Path) -> None:
     host = _host(tmp_path, provider="faux")
     seen: list[httpx.Request] = []

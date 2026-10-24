@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .contracts import BackendError, WebCallRequest, WebCallView, WebPolicy
+from .manage import contains_secret
 
 DEFAULT_WEB_BASE = "https://api.deepseek.com/v1/tools"
 WebOutcome = str
@@ -148,6 +149,8 @@ async def execute_web_call(store: WebCaller, value: WebCallRequest, *, key: str,
         raise BackendError("web_disabled")
     if not key:
         raise BackendError("web_credential_missing")
+    if contains_secret(value.query, key) or contains_secret(value.url, key):
+        raise BackendError("web_secret")
     search_count = policy.count
     if value.kind == "search":
         query = value.query.strip()
@@ -157,7 +160,7 @@ async def execute_web_call(store: WebCaller, value: WebCallRequest, *, key: str,
         outbound: dict[str, object] = {"query": query, "count": search_count, "need_content": False}
         if policy.send_original_question:
             clipped = original_question(question)
-            if clipped:
+            if clipped and not contains_secret(question, key):
                 outbound["ori_question"] = clipped
         endpoint = policy.base_url + "/search"
     else:

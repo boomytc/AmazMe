@@ -1036,6 +1036,8 @@ class Host:
             raise BackendError("session_not_found", status=404)
         session = next(item for item in (await self.sessions()).sessions if item.session_id == value.session_id)
         await self._require_workspace(session.workspace)
+        if contains_secret(value.text, self._provider_secret()):
+            raise BackendError("automation_secret")
         row = await self.store.save_automation(
             value.automation_id, value.session_id, session.workspace, value.text.strip(),
             value.zone, value.local, fold, due_ms)
@@ -1045,7 +1047,7 @@ class Host:
         self._admit()
         if await self.store.active_update():
             return AutomationTick()
-        row = await self.store.claim_due_automation(int(time.time() * 1000))
+        row = await self.store.claim_due_automation(int(time.time() * 1000), self._provider_secret())
         if row is None:
             return AutomationTick()
         return AutomationTick(fired=self._automation(row))
@@ -1123,6 +1125,8 @@ class Host:
                     raise
             else:
                 existing = True
+        if not existing and contains_secret(value.check, self._provider_secret()):
+            raise BackendError("workflow_secret")
         if not existing and not await self._grant_allows_new_work(session):
             raise BackendError("workspace_not_found", status=404)
         return await self._with_session(

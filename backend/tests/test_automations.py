@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import CreateSession, HostFence, ProcessLease, WorkspaceGrantRequest
@@ -13,6 +14,7 @@ from amazme_backend.host import Host, application
 
 SESSION = "a" * 32
 OTHER = "b" * 32
+KEY = "sk-test-not-real"
 
 
 def _host(tmp_path: Path) -> Host:
@@ -151,6 +153,43 @@ async def test_removed_grant_does_not_submit_a_due_automation(tmp_path: Path) ->
         await host.supervisor.close()
         await host.store.db.close()
         shutil.rmtree(grant, ignore_errors=True)
+
+
+async def test_automation_text_does_not_carry_the_provider_secret(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    host.profile.save_provider(host.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    await host.store.create_session(SESSION, CreateSession(title="定时"))
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
+            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
+            "x-amazme-epoch": str(host.fence.host_epoch),
+        }) as client:
+            rejected = await client.post("/api/v1/automations", json={
+                "automation_id": "6" * 32, "session_id": SESSION, "text": f"run {KEY}",
+                "zone": "America/New_York", "local": "2026-01-15T10:00"})
+            assert rejected.status_code == 409 and rejected.json()["code"] == "automation_secret"
+            assert KEY not in rejected.text
+            assert await _deliveries(host, SESSION) == 0
+            await host.store.save_automation(
+                "7" * 32, SESSION, "primary", f"later {KEY}", "America/New_York", "2026-01-15T10:00", 0, 1)
+            fired = await client.post("/api/v1/automations/tick")
+            body = fired.json()["fired"]
+            assert body["automation_id"] == "7" * 32 and body["phase"] == "unknown" and body["delivery_id"] == ""
+            assert await _deliveries(host, SESSION) == 0
+            kept = await client.post("/api/v1/automations", json={
+                "automation_id": "8" * 32, "session_id": SESSION, "text": "run once",
+                "zone": "America/New_York", "local": "2026-01-15T11:00"})
+            assert kept.status_code == 200
+            done = await client.post("/api/v1/automations/tick")
+            assert done.json()["fired"]["automation_id"] == "8" * 32
+            assert done.json()["fired"]["phase"] == "done" and done.json()["fired"]["delivery_id"]
+            assert await _deliveries(host, SESSION) == 1
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()
 
 
 def test_browser_schedules_the_selected_session() -> None:

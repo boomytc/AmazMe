@@ -29,6 +29,7 @@ from .contracts import (
     WorkerInfo,
     WriteFile,
 )
+from .manage import contains_secret
 from .storage import Database
 
 
@@ -375,7 +376,7 @@ class HostStore:
             return row
         return await self.transaction(operation)
 
-    async def claim_due_automation(self, now_ms: int) -> sqlite3.Row | None:
+    async def claim_due_automation(self, now_ms: int, secret: str = "") -> sqlite3.Row | None:
         """One scheduler claims one due automation and its submit delivery in the same transaction."""
         def operation(db: sqlite3.Connection) -> sqlite3.Row | None:
             row = db.execute(
@@ -385,7 +386,8 @@ class HostStore:
                 return None
             session = db.execute("SELECT archived, workspace FROM sessions WHERE id=?", (str(row["session"]),)).fetchone()
             workspace = "" if session is None else str(session["workspace"] or "primary")
-            if session is None or int(session["archived"]) or workspace != str(row["workspace"] or "primary") or not _grant_present(db, workspace):
+            if (session is None or int(session["archived"]) or workspace != str(row["workspace"] or "primary")
+                    or not _grant_present(db, workspace) or contains_secret(str(row["text"]), secret)):
                 db.execute("UPDATE automations SET phase='unknown' WHERE id=? AND phase='scheduled'", (str(row["id"]),))
                 updated = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
                 assert updated is not None
