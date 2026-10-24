@@ -67,7 +67,7 @@ async def test_catalog_lists_runnable_models_and_hides_the_key(owner: Host) -> N
     catalog = owner.model_catalog()
     body = catalog.model_dump_json()
     assert SECRET not in body
-    assert {item.model for item in catalog.models} == {"faux", "deepseek-flash"}
+    assert {item.model for item in catalog.models} == {"faux", "deepseek-flash", "deepseek-v4-pro"}
     assert catalog.current.model == "deepseek-flash" and catalog.current.key_configured is True
     saved = await owner.update_model(UpdateModelSettings(
         provider="deepseek", model="deepseek-chat", base_url="https://gateway.example/v1", max_tokens=128))

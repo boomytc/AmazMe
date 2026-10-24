@@ -36,6 +36,7 @@ from .mcp_session import McpOffer
 CATALOG = (
     CatalogModel(provider="faux", model="faux", label="本地确定性", endpoint_editable=False),
     CatalogModel(provider="deepseek", model="deepseek-flash", label="DeepSeek Flash", endpoint_editable=True),
+    CatalogModel(provider="deepseek", model="deepseek-v4-pro", label="DeepSeek V4 Pro", endpoint_editable=True),
 )
 _FORBIDDEN_HEADERS = {
     "authorization", "cookie", "host", "content-length", "transfer-encoding", "connection",
@@ -128,11 +129,12 @@ class Completion(Model):
 
 
 # Published rates, in micro-USD per million tokens: input, output, cache read, cache write.
-# deepseek-flash matches packages/ai/src/providers/data/deepseek.json.
+# DeepSeek rates match packages/ai/src/providers/data/deepseek.json.
 # faux matches the zero rates on the local faux model.
 _PRICE_MICRO_PER_MILLION: dict[tuple[str, str], tuple[int, int, int, int]] = {
     ("faux", "faux"): (0, 0, 0, 0),
     ("deepseek", "deepseek-flash"): (300_000, 1_200_000, 6_000, 0),
+    ("deepseek", "deepseek-v4-pro"): (1_320_000, 3_960_000, 44_000, 0),
 }
 _SIGNATURE_LIMIT = 65536
 

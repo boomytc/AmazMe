@@ -117,21 +117,28 @@ async def test_usage_totals_follow_visible_answers_and_the_faux_catalog_price(tm
         await host.store.db.close()
 
 
-def test_deepseek_flash_price_matches_the_published_catalog() -> None:
+def test_deepseek_prices_match_the_published_catalog() -> None:
     from decimal import Decimal
 
     from amazme_backend.providers import catalog_price, token_cost_micro
 
     catalog = json.loads((Path(__file__).parents[2] / "packages/ai/src/providers/data/deepseek.json").read_text())
-    rates = catalog["openai-completions"]["chat:deepseek-flash"]["cost"]
+    published = catalog["openai-completions"]
+    assert {item["id"] for item in published.values()} == {"deepseek-flash", "deepseek-v4-pro"}
+    for model in published.values():
+        rates = model["cost"]
+        price = catalog_price("deepseek", model["id"])
+        assert price == (
+            int(Decimal(str(rates["input"])) * 1_000_000),
+            int(Decimal(str(rates["output"])) * 1_000_000),
+            int(Decimal(str(rates["cacheRead"])) * 1_000_000),
+            int(Decimal(str(rates["cacheWrite"])) * 1_000_000),
+        )
+        assert token_cost_micro(2, 6, 3, 1, price) == (
+            2 * price[0] + 6 * price[1] + 3 * price[2] + 1 * price[3]
+        ) // 1_000_000
     price = catalog_price("deepseek", "deepseek-flash")
     assert price is not None
-    assert price == (
-        int(Decimal(str(rates["input"])) * 1_000_000),
-        int(Decimal(str(rates["output"])) * 1_000_000),
-        int(Decimal(str(rates["cacheRead"])) * 1_000_000),
-        int(Decimal(str(rates["cacheWrite"])) * 1_000_000),
-    )
     assert catalog_price("faux", "faux") == (0, 0, 0, 0)
     assert catalog_price("faux", "deepseek-flash") == (0, 0, 0, 0)
     assert catalog_price("deepseek", "custom-endpoint") is None
