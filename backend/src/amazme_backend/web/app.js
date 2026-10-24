@@ -11,6 +11,78 @@ const terminal = new Set(["succeeded", "cancelled", "interrupted", "failed", "un
 const labels = {queued:"等待执行",running:"执行中",waiting_approval:"等待审批",waiting_children:"等待子任务",waiting_time:"等待计划时间",waiting_host:"等待恢复",cancelling:"正在清理",cleaning:"正在清理",blocked:"等待清理",succeeded:"已完成",cancelled:"已取消",interrupted:"运行中断",failed:"失败",unknown:"结果未知，未自动重试"};
 const states = {ready:"可执行",recovering:"恢复中",blocked:"等待清理",stopping:"正在停止",frozen:"更新冻结"};
 const decimal = value => typeof value === "string" && /^(0|[1-9][0-9]{0,17})$/.test(value);
+// One persisted head is sent at a time. Rebinding never replays an uncertain head.
+export class TerminalInputQueue {
+  constructor(storage, key) {
+    this.storage = storage;
+    this.key = key;
+    this.items = JSON.parse(storage.getItem(key) || "[]");
+    this.paused = this.items.length > 0;
+    this.busy = false;
+    this.binding = null;
+  }
+  bind(binding) {
+    if (this.binding && this.binding !== binding && this.items.length) this.paused = true;
+    this.binding = binding;
+    this.changed();
+  }
+  changed() { this.binding?.changed(); }
+  save(items) {
+    if (items.length) this.storage.setItem(this.key, JSON.stringify(items));
+    else this.storage.removeItem(this.key);
+    this.items = items;
+    this.changed();
+  }
+  enqueue(data, text = null) {
+    if (this.paused) throw new Error("输入尚未确认；请重试原输入或核对后继续。");
+    const bytes = value => new TextEncoder().encode(value).length;
+    if (bytes(data) + this.items.reduce((sum, item) => sum + bytes(item.data), 0) > 65536) {
+      throw new Error("终端输入队列已满（64 KiB）；本次输入未接收，请等待后重试。");
+    }
+    const items = this.items.map(item => ({...item}));
+    let chunk = "";
+    const append = () => {
+      if (!chunk) return;
+      const last = items.at(-1);
+      if (last && !(this.busy && items.length === 1) && last.text === null && text === null && bytes(last.data + chunk) <= 4000) last.data += chunk;
+      else items.push({input_id: crypto.randomUUID().replaceAll("-", ""), data: chunk, text});
+      chunk = "";
+    };
+    for (const char of data) {
+      if (bytes(chunk + char) > 4000) append();
+      chunk += char;
+    }
+    append();
+    this.save(items);
+    void this.drain();
+  }
+  retry() { this.paused = false; this.changed(); void this.drain(); }
+  confirm() {
+    if (this.busy) return;
+    this.save([]);
+    this.paused = false;
+    this.changed();
+  }
+  async drain() {
+    if (this.busy || this.paused) return;
+    const binding = this.binding;
+    this.busy = true;
+    try {
+      while (this.items.length && this.binding === binding && binding.active() && !this.paused) {
+        const head = this.items[0];
+        const result = await binding.send(head);
+        if (result.input_status !== "accepted") throw new Error("输入结果未知，未自动重发；请核对终端内容。");
+        this.save(this.items.filter(item => item.input_id !== head.input_id));
+      }
+    } catch (failure) {
+      this.paused = true;
+      if (binding.active()) binding.error(failure);
+    } finally {
+      this.busy = false;
+      this.changed();
+    }
+  }
+}
 export function seq(value) {
   if (!decimal(value)) throw new Error("无效的事务序号");
   return BigInt(value);
@@ -155,10 +227,25 @@ function startClient() {
   const archived = new Map();
   const sessionWorkspaces = new Map();
   const owns = connection => current === connection && connection.generation === generation;
+  const panelOperations = new Map();
+  function beginOperation(panel) {
+    const connection = current;
+    if (!connection?.identity) return null;
+    const operation = {connection, session:connection.session, identity:connection.identity,
+      active: () => owns(connection) && panelOperations.get(panel) === operation};
+    panelOperations.set(panel, operation);
+    return operation;
+  }
+  function settlePending(key, field, id, value = null) {
+    const saved = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (saved?.[field] !== id) return;
+    if (value) sessionStorage.setItem(key, JSON.stringify(value));
+    else sessionStorage.removeItem(key);
+  }
   const archivedNow = () => Boolean(archived.get(selected));
   const writable = () => Boolean(current?.ready && health?.state === "ready" && current.model?.state === "ready" && !archivedNow());
   function error(value) { $("error").textContent = value.message || String(value); }
-  async function api(path, method = "GET", body, connection = null, fence = identity) {
+  async function api(path, method = "GET", body, connection = null, fence = connection?.identity || identity) {
     const headers = {};
     if (method !== "GET" && path !== "/auth") {
       if (!fence) throw new Error("请重新连接");
@@ -396,14 +483,15 @@ function startClient() {
     rememberWindow(match.session_id, workspace, target.host);
     if (selected !== match.session_id) await select(match.session_id);
   }
-  async function showSessionWorkspace(name) {
+  async function showSessionWorkspace(name, connection) {
     const node = $("session-workspace");
     try {
       const listed = await api("/api/v1/workspaces");
+      if (!owns(connection)) return;
       const match = listed.workspaces.find(item => item.name === name);
       node.textContent = match?.host_path || name || "本机工作区";
     } catch {
-      node.textContent = name || "本机工作区";
+      if (owns(connection)) node.textContent = name || "本机工作区";
     }
   }
   async function select(id, resume = false) {
@@ -418,19 +506,23 @@ function startClient() {
     const cached = resume && current?.session === id ? current.model : null;
     if (selected !== id) {
       workflowId = ""; workflowView = null;
+      remoteId = "";
+      for (const id of ["code-result", "code-state", "plugin-result", "remote-state", "remote-result"]) $(id).textContent = "";
       webPolicy = null;
       $("web-state").textContent = "";
       $("web-enabled").checked = false;
+      computerCapture = "";
       $("computer-state").textContent = "";
       $("computer-enabled").checked = false;
     }
+    computerCapture = "";
     retire(); selected = id; const binding = ++generation;
-    await showSessionWorkspace(workspace);
     const connection = {generation:binding, session:id, ready:false, model:cached, ws:null, attachment:null};
     current = connection; connecting = true;
     $("prompt").value = pending?.target === id ? pending.text : (drafts.get(id) || "");
     $("connection").textContent = resume ? "正在重连" : "正在连接";
     render();
+    void showSessionWorkspace(workspace, connection);
     try {
       const boot = await api("/api/v1/bootstrap");
       if (!owns(connection)) return;
@@ -439,6 +531,7 @@ function startClient() {
         error(new Error("后端构建已更换；刷新页面以载入匹配的客户端，原请求仍保留。")); return;
       }
       identity = boot; connection.identity = boot;
+      remoteId = sessionStorage.getItem(`remote-connection:${boot.profile_id}:${id}`) || "";
       health = {state:boot.state};
       connection.attachment = await api(`/api/v1/sessions/${id}/attachments`, "POST", {}, null, boot);
       if (!owns(connection)) { void detach(connection); return; }
@@ -747,6 +840,7 @@ function startClient() {
   }
   async function renderTerminalNow(view, value) {
     const Terminal = await loadTerminalEngine();
+    if (view.connection && !terminalOwns(view)) return "";
     const cols = Math.max(1, value.cols || 80);
     const rows = Math.max(1, value.rows || 24);
     let screen = terminalScreens.get(view.id);
@@ -762,15 +856,14 @@ function startClient() {
         cols, rows, seq: 0, ready: false,
       };
       const screenId = view.id;
-      screen.term.attachCustomKeyEventHandler(() => false);
       screen.term.onData(data => {
         const current = terminalView;
-        if (!data || !current || current.id !== screenId || !terminalOwns(current) || current.busy || current.phase !== "running") return;
-        sendTerminalData(current, data);
+        if (!data || !current || current.id !== screenId || !terminalOwns(current) || current.phase !== "running") return;
+        try { current.input.enqueue(data); } catch (failure) { error(failure); }
       });
       terminalScreens.set(view.id, screen);
     }
-    if (terminalView?.id === view.id) attachTerminal(screen);
+    if (terminalView?.id === view.id) { attachTerminal(screen); terminalInputControls(terminalView); }
     const text = value.output || "";
     const seq = Number(value.output_seq || text.length);
     const delta = seq - screen.seq;
@@ -792,11 +885,22 @@ function startClient() {
   }
   globalThis.renderTerminal = renderTerminal;
   let terminalView = null, terminalPoll = null, terminalNavigation = 0;
-  const terminalKey = (connection, suffix) => `terminal:${identity.profile_id}:${connection.session}:${suffix}`;
+  const terminalSenders = new Map();
+  function terminalInputControls(view) {
+    if (!terminalOwns(view)) return;
+    const input = view.input;
+    const screen = terminalScreens.get(view.id);
+    if (screen) screen.term.options.disableStdin = input.paused || view.phase !== "running";
+    $("terminal-retry").disabled = input.busy || !input.items.length;
+    $("terminal-confirm").disabled = input.busy;
+    $("terminal-pending").textContent = input.items.length ? `${input.items.length} 批待确认输入${input.paused ? "；请重试原输入或核对后继续" : ""}` : "";
+  }
+  const terminalKey = (connection, suffix) => `terminal:${connection.identity.profile_id}:${connection.session}:${suffix}`;
   const terminalOwns = view => view && terminalView === view && owns(view.connection);
   async function showTerminal(value, view = terminalView) {
     if (!terminalOwns(view)) return;
     view.phase = value.phase;
+    terminalInputControls(view);
     try {
       const text = await renderTerminal(view, value);
       if (!terminalOwns(view)) return;
@@ -822,9 +926,18 @@ function startClient() {
   }
   function selectTerminal(value, connection) {
     clearTimeout(terminalPoll);
-    terminalView = {id:value.terminal_id, connection, phase:value.phase, busy:false};
-    const pending = sessionStorage.getItem(terminalKey(connection, value.terminal_id));
-    $("terminal-input").value = pending ? JSON.parse(pending).text : "";
+    const key = terminalKey(connection, value.terminal_id);
+    let input = terminalSenders.get(key);
+    if (!input) { input = new TerminalInputQueue(sessionStorage, key); terminalSenders.set(key, input); }
+    const view = {id:value.terminal_id, connection, phase:value.phase, input};
+    terminalView = view;
+    input.bind({
+      active: () => terminalOwns(view) && view.phase === "running",
+      send: head => api(`/api/v1/sessions/${connection.session}/terminals/${view.id}/input`, "POST",
+        {input_id:head.input_id, data:head.data}, connection),
+      changed: () => terminalInputControls(view), error,
+    });
+    $("terminal-input").value = input.items[0]?.text || "";
     showTerminal(value);
     void pollTerminal(terminalView);
   }
@@ -865,63 +978,34 @@ function startClient() {
       sessionStorage.removeItem(key);
       if (owns(connection)) { selectTerminal(value, connection); await loadTerminals(); }
     } catch (failure) { if (owns(connection)) error(failure); }
-    finally { $("terminal-new").disabled = false; }
+    finally { if (owns(connection)) $("terminal-new").disabled = false; }
   };
-  $("terminal-form").onsubmit = async event => {
+  $("terminal-form").onsubmit = event => {
     event.preventDefault();
-    const view = terminalView;
-    if (!terminalOwns(view) || view.busy || view.phase !== "running") return;
-    const key = terminalKey(view.connection, view.id), text = $("terminal-input").value;
-    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
-    if (pending && pending.text !== text) { error(new Error("上次输入结果未确认；先重试同一输入，或核对终端后继续。")); return; }
-    if (!pending) { pending = {input_id:crypto.randomUUID().replaceAll("-", ""), text}; sessionStorage.setItem(key, JSON.stringify(pending)); }
-    view.busy = true;
+    const view = terminalView, text = $("terminal-input").value;
+    if (!terminalOwns(view) || view.phase !== "running") return;
     try {
-      const result = await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/input`, "POST",
-        {input_id:pending.input_id, data:`${pending.text}\n`}, view.connection);
-      if (result.input_status === "unknown") throw new Error("输入结果未知，未自动重发；请核对终端内容。");
-      sessionStorage.removeItem(key);
-      if (terminalOwns(view)) { if ($("terminal-input").value === text) $("terminal-input").value = ""; $("error").textContent = ""; }
-    } catch (failure) { if (terminalOwns(view)) error(failure); }
-    finally { view.busy = false; }
+      if (view.input.paused) {
+        if (view.input.items[0]?.text !== text) throw new Error("上次输入结果未确认；先重试同一输入，或核对终端后继续。");
+        view.input.retry();
+      } else view.input.enqueue(`${text}\n`, text);
+      $("terminal-input").value = "";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  };
+  $("terminal-retry").onclick = () => {
+    const view = terminalView;
+    if (!terminalOwns(view)) return;
+    $("error").textContent = "";
+    view.input.retry();
   };
   $("terminal-confirm").onclick = () => {
     const view = terminalView;
-    if (!terminalOwns(view) || view.busy) return;
-    sessionStorage.removeItem(terminalKey(view.connection, view.id));
-    sessionStorage.removeItem(terminalKey(view.connection, `${view.id}:keys`));
+    if (!terminalOwns(view) || view.input.busy) return;
+    view.input.confirm();
     $("terminal-input").value = "";
     $("terminal-state").textContent = "已由用户核对；原输入不会重放";
   };
-  function sendTerminalData(view, data) {
-    const key = terminalKey(view.connection, `${view.id}:keys`);
-    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
-    if (pending && pending.data !== data) { error(new Error("上次输入结果未确认；先重试同一输入，或核对终端后继续。")); return; }
-    if (!pending) { pending = {input_id:crypto.randomUUID().replaceAll("-", ""), data}; sessionStorage.setItem(key, JSON.stringify(pending)); }
-    view.busy = true;
-    api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/input`, "POST",
-      {input_id:pending.input_id, data:pending.data}, view.connection).then(result => {
-      if (result.input_status === "unknown") throw new Error("输入结果未知，未自动重发；请核对终端内容。");
-      sessionStorage.removeItem(key);
-      if (terminalOwns(view)) $("error").textContent = "";
-    }).catch(failure => { if (terminalOwns(view)) error(failure); }).finally(() => { view.busy = false; });
-  }
-  $("terminal-output").addEventListener("keydown", event => {
-    const view = terminalView;
-    if (!terminalOwns(view) || view.busy || view.phase !== "running") return;
-    let data = null;
-    if (event.key === "Enter") data = "\r";
-    else if (event.key === "Backspace") data = "\b";
-    else if (event.key === "Tab") data = "\t";
-    else if (event.key === "ArrowUp") data = "\u001b[A";
-    else if (event.key === "ArrowDown") data = "\u001b[B";
-    else if (event.key === "ArrowRight") data = "\u001b[C";
-    else if (event.key === "ArrowLeft") data = "\u001b[D";
-    else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) data = event.key;
-    if (data === null) return;
-    event.preventDefault();
-    sendTerminalData(view, data);
-  }, true);
   $("terminal-close").onclick = async () => {
     const view = terminalView;
     if (!terminalOwns(view)) return;
@@ -930,7 +1014,7 @@ function startClient() {
   };
   let mcpView = null, mcpPoll = null, mcpNavigation = 0;
   const mcpOwns = view => view && mcpView === view && owns(view.connection);
-  const mcpKey = (connection, suffix) => `mcp:${identity.profile_id}:${connection.session}:${suffix}`;
+  const mcpKey = (connection, suffix) => `mcp:${connection.identity.profile_id}:${connection.session}:${suffix}`;
   function showMcpState(state, connection, preferred = mcpView?.id) {
     if (!owns(connection)) return;
     const openingKey = mcpKey(connection, "opening"), opening = JSON.parse(sessionStorage.getItem(openingKey) || "null");
@@ -1039,30 +1123,39 @@ function startClient() {
     $("web-state").textContent = `${policy.enabled ? "已启用" : "已关闭"} · ${policy.base_url}`;
   }
   async function loadWebPolicy() {
-    if (!selected) return;
-    showWebPolicy(await api(`/api/v1/sessions/${selected}/web`));
+    const connection = current;
+    if (!connection) return;
+    const policy = await api(`/api/v1/sessions/${connection.session}/web`);
+    if (owns(connection)) showWebPolicy(policy);
   }
   $("web").addEventListener("toggle", () => {
     if ($("web").open) loadWebPolicy().catch(error);
   });
   $("web-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("web-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     try {
       const view = await api(`/api/v1/sessions/${selected}/web`, "POST", {
         ...(webPolicy || {}), enabled: $("web-enabled").checked,
-      }, current);
+      }, connection);
+      if (!operation.active()) return;
       showWebPolicy(view);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
-  const webCallKey = () => `web-call:${identity.profile_id}:${selected}`;
   $("web-search").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("web-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
+    const key = `web-call:${identity.profile_id}:${selected}`;
     if (!selected || !identity || health?.state !== "ready") return;
     const query = $("web-query").value;
     let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem(webCallKey()) || "null"); }
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
     if (pending && pending.phase === "unknown" && pending.query !== query) {
       error(new Error("上次网页查询结果未知，未自动重发；请用同一查询再查。"));
@@ -1070,46 +1163,57 @@ function startClient() {
     }
     if (!pending || pending.phase !== "unknown") {
       pending = {call_id: crypto.randomUUID().replaceAll("-", ""), query, phase: "unknown"};
-      sessionStorage.setItem(webCallKey(), JSON.stringify(pending));
+      sessionStorage.setItem(key, JSON.stringify(pending));
     }
     try {
       const view = await api(`/api/v1/sessions/${selected}/web/calls`, "POST", {
         call_id: pending.call_id, kind: "search", query: pending.query,
-      }, current);
+      }, connection);
       pending.phase = view.phase;
-      if (view.phase === "unknown") sessionStorage.setItem(webCallKey(), JSON.stringify(pending));
-      else sessionStorage.removeItem(webCallKey());
+      settlePending(key, "call_id", pending.call_id, view.phase === "unknown" ? pending : null);
+      if (!operation.active()) return;
       $("web-state").textContent = `${view.phase} · ${view.error || view.result}`;
       if (view.phase === "unknown") error(new Error("上次网页查询结果未知，未自动重发；请用同一查询再查。"));
       else $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   let computerCapture = "";
   $("computer-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("computer-action");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/computer`, "POST", {enabled: $("computer-enabled").checked}, current);
+      const view = await api(`/api/v1/sessions/${selected}/computer`, "POST", {enabled: $("computer-enabled").checked}, connection);
+      if (!operation.active()) return;
       $("computer-state").textContent = view.enabled ? "已启用" : "已关闭";
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("computer-observe").onclick = async () => {
+    const operation = beginOperation("computer-action");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/computer/observe`, "POST", {}, current);
+      const view = await api(`/api/v1/sessions/${selected}/computer/observe`, "POST", {}, connection);
+      if (!operation.active()) return;
       computerCapture = view.capture ? view.capture.capture_id : "";
       $("computer-state").textContent = view.permitted ? `${view.capture.width}×${view.capture.height}` : view.error;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
-  const computerActionKey = () => `computer-action:${identity.profile_id}:${selected}`;
   $("computer-act").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("computer-action");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
+    const key = `computer-action:${identity.profile_id}:${selected}`;
     if (!selected || !computerCapture || !identity || health?.state !== "ready") return;
     const point = {capture_id: computerCapture, x: Number($("computer-x").value), y: Number($("computer-y").value)};
     let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem(computerActionKey()) || "null"); }
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
     if (pending && pending.phase === "unknown" && (
       pending.capture_id !== point.capture_id || pending.x !== point.x || pending.y !== point.y)) {
@@ -1118,27 +1222,31 @@ function startClient() {
     }
     if (!pending || pending.phase !== "unknown") {
       pending = {action_id: crypto.randomUUID().replaceAll("-", ""), ...point, phase: "unknown"};
-      sessionStorage.setItem(computerActionKey(), JSON.stringify(pending));
+      sessionStorage.setItem(key, JSON.stringify(pending));
     }
     try {
       const view = await api(`/api/v1/sessions/${selected}/computer/actions`, "POST", {
         action_id: pending.action_id, capture_id: pending.capture_id, x: pending.x, y: pending.y,
-      }, current);
+      }, connection);
       pending.phase = view.phase;
-      if (view.phase === "unknown") sessionStorage.setItem(computerActionKey(), JSON.stringify(pending));
-      else sessionStorage.removeItem(computerActionKey());
+      settlePending(key, "action_id", pending.action_id, view.phase === "unknown" ? pending : null);
+      if (!operation.active()) return;
       $("computer-state").textContent = `${view.phase} · ${view.driver_x},${view.driver_y}`;
       if (view.phase === "unknown") error(new Error("上次桌面动作结果未知，未自动重发；请用同一画面和坐标再查。"));
       else $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("computer-cleanup").onclick = async () => {
+    const operation = beginOperation("computer-action");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/computer/cleanup`, "POST", {}, current);
+      const view = await api(`/api/v1/sessions/${selected}/computer/cleanup`, "POST", {}, connection);
+      if (!operation.active()) return;
       $("computer-state").textContent = view.cleared ? `已清理 ${view.proof}` : "";
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   let workflowId = "", workflowView = null;
   function showWorkflow(view) {
@@ -1148,82 +1256,120 @@ function startClient() {
   }
   $("workflow-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("workflow");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     workflowId = workflowId || crypto.randomUUID().replaceAll("-", "");
     try {
-      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows`, "POST", {
+      const result = await api(`/api/v1/sessions/${selected}/workflows`, "POST", {
         workflow_id: workflowId, check: $("workflow-check").value,
         correction_limit: Number($("workflow-limit").value),
-      }, current));
+      }, connection);
+      if (!operation.active()) return;
+      showWorkflow(result);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   async function verdict(passed) {
+    const operation = beginOperation("workflow");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !workflowId || !identity || health?.state !== "ready") return;
     try {
-      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/verdicts`, "POST", {
+      const view = await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/verdicts`, "POST", {
         verdict_id: crypto.randomUUID().replaceAll("-", ""), passed,
-      }, current));
+      }, connection);
+      if (!operation.active()) return;
+      showWorkflow(view);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   }
   $("workflow-fail").onclick = () => void verdict(false);
   $("workflow-pass").onclick = () => void verdict(true);
   $("workflow-resume").onclick = async () => {
+    const operation = beginOperation("workflow");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !workflowId || !identity) return;
     try {
-      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/resume`, "POST", {}, current));
+      const result = await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/resume`, "POST", {}, connection);
+      if (!operation.active()) return;
+      showWorkflow(result);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("workflow-cancel").onclick = async () => {
+    const operation = beginOperation("workflow");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !workflowId || !identity || health?.state !== "ready") return;
     try {
-      showWorkflow(await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/cancel`, "POST", {}, current));
+      const result = await api(`/api/v1/sessions/${selected}/workflows/${workflowId}/cancel`, "POST", {}, connection);
+      if (!operation.active()) return;
+      showWorkflow(result);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("workflow-cancel-child").onclick = async () => {
+    const operation = beginOperation("workflow");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !workflowId || !workflowView || !identity || health?.state !== "ready") return;
     const child = (workflowView.children || []).find(item => item.status !== "succeeded" && item.status !== "cancelled"
       && item.status !== "failed" && item.status !== "interrupted" && item.status !== "unknown") || workflowView.children.at(-1);
     if (!child) return;
     try {
-      showWorkflow(await api(
-        `/api/v1/sessions/${selected}/workflows/${workflowId}/children/${child.request_id}/cancel`, "POST", {}, current));
+      const result = await api(
+        `/api/v1/sessions/${selected}/workflows/${workflowId}/children/${child.request_id}/cancel`, "POST", {}, connection);
+      if (!operation.active()) return;
+      showWorkflow(result);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   let automationId = "";
   $("automation-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("automation");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     automationId = automationId || crypto.randomUUID().replaceAll("-", "");
     try {
       const view = await api("/api/v1/automations", "POST", {
         automation_id: automationId, session_id: selected, text: $("automation-text").value,
         zone: $("automation-zone").value, local: $("automation-local").value,
-      }, current);
+      }, connection);
+      if (!operation.active()) return;
       $("automation-state").textContent = `${view.phase} · ${view.due_ms}`;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("automation-tick").onclick = async () => {
+    const operation = beginOperation("automation");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     try {
-      const tick = await api("/api/v1/automations/tick", "POST", {}, current);
+      const tick = await api("/api/v1/automations/tick", "POST", {}, connection);
+      if (!operation.active()) return;
       $("automation-state").textContent = tick.fired ? `${tick.fired.phase} · ${tick.fired.delivery_id}` : "没有到期任务";
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("memory").addEventListener("toggle", () => {
     if (!$("memory").open || !selected) return;
-    const workspace = sessionWorkspaces.get(selected) || "primary";
+    const connection = current;
+    const workspace = sessionWorkspaces.get(connection.session) || "primary";
     api(`/api/v1/memories?workspace=${encodeURIComponent(workspace)}`).then(list => {
+      if (!owns(connection)) return;
       $("memory-list").textContent = list.memories.map(item => item.text).join("\n");
-    }).catch(error);
+    }).catch(failure => { if (owns(connection)) error(failure); });
   });
   $("memory-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("memory");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     const workspace = sessionWorkspaces.get(selected) || "primary";
     const text = $("memory-text").value;
@@ -1242,21 +1388,27 @@ function startClient() {
     try {
       await api("/api/v1/memories", "POST", {
         memory_id: pending.memory_id, workspace, text: pending.text,
-      }, current);
-      sessionStorage.removeItem(key);
+      }, connection);
+      settlePending(key, "memory_id", pending.memory_id);
+      if (!operation.active()) return;
       const list = await api(`/api/v1/memories?workspace=${encodeURIComponent(workspace)}`);
+      if (!operation.active()) return;
       $("memory-list").textContent = list.memories.map(item => item.text).join("\n");
       $("memory-text").value = "";
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("memory-preview").onclick = async () => {
+    const operation = beginOperation("memory");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected) return;
     try {
       const list = await api(`/api/v1/sessions/${selected}/memories?q=${encodeURIComponent($("prompt").value)}`);
+      if (!operation.active()) return;
       $("memory-list").textContent = list.memories.length ? list.memories.map(item => item.text).join("\n") : "没有将注入的记忆";
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   let pluginId = "";
   async function loadPlugins() {
@@ -1272,21 +1424,31 @@ function startClient() {
   }
   $("plugin-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("plugin-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!identity || health?.state !== "ready") return;
     pluginId = pluginId || crypto.randomUUID().replaceAll("-", "");
     try {
-      showPlugin(await api("/api/v1/plugins", "POST", {plugin_id: pluginId, name: $("plugin-name").value, config: {label: $("plugin-label").value}}, current));
+      const result = await api("/api/v1/plugins", "POST", {plugin_id: pluginId, name: $("plugin-name").value, config: {label: $("plugin-label").value}}, connection);
+      if (!operation.active()) return;
+      showPlugin(result);
       await loadPlugins();
+      if (!operation.active()) return;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
-  const pluginCallKey = () => `plugin-call:${identity.profile_id}:${selected}:${pluginId}`;
   $("plugin-call").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("plugin-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
+    const key = `plugin-call:${identity.profile_id}:${selected}:${pluginId}`;
+    const targetPlugin = pluginId;
     if (!pluginId || !selected || !identity || health?.state !== "ready") return;
     const text = $("plugin-text").value;
     let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem(pluginCallKey()) || "null"); }
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
     if (pending && pending.phase === "unknown" && pending.text !== text) {
       error(new Error("上次插件调用结果未知，未自动重发；请用同一文本查询。"));
@@ -1294,37 +1456,46 @@ function startClient() {
     }
     if (!pending || pending.phase !== "unknown") {
       pending = {call_id: crypto.randomUUID().replaceAll("-", ""), text, phase: "unknown"};
-      sessionStorage.setItem(pluginCallKey(), JSON.stringify(pending));
+      sessionStorage.setItem(key, JSON.stringify(pending));
     }
     try {
-      const call = await api(`/api/v1/sessions/${selected}/plugins/${pluginId}/calls`, "POST",
-        {call_id: pending.call_id, text: pending.text}, current);
+      const call = await api(`/api/v1/sessions/${selected}/plugins/${targetPlugin}/calls`, "POST",
+        {call_id: pending.call_id, text: pending.text}, connection);
       pending.phase = call.phase;
-      if (call.phase === "unknown") sessionStorage.setItem(pluginCallKey(), JSON.stringify(pending));
-      else sessionStorage.removeItem(pluginCallKey());
+      settlePending(key, "call_id", pending.call_id, call.phase === "unknown" ? pending : null);
+      if (!operation.active()) return;
       $("plugin-result").textContent = call.phase === "done" ? call.result : call.phase;
       if (call.phase === "unknown") error(new Error("上次插件调用结果未知，未自动重发；请用同一文本查询。"));
       else $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("plugin-reload").onclick = async () => {
+    const operation = beginOperation("plugin-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!pluginId || !identity || health?.state !== "ready") return;
     try {
-      showPlugin(await api(`/api/v1/plugins/${pluginId}/reload`, "POST", {config: {label: $("plugin-label").value}}, current));
+      const result = await api(`/api/v1/plugins/${pluginId}/reload`, "POST", {config: {label: $("plugin-label").value}}, connection);
+      if (!operation.active()) return;
+      showPlugin(result);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("history-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("history");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected) return;
     const query = $("history-query").value.trim();
     try {
       const found = await api(`/api/v1/sessions/${selected}/search?q=${encodeURIComponent(query)}`);
+      if (!operation.active()) return;
       $("history-results").textContent = found.hits.length
         ? found.hits.map(hit => hit.excerpt).join("\n")
         : "没有匹配";
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   function money(micro) {
     const whole = Math.trunc(micro / 1000000);
@@ -1332,34 +1503,45 @@ function startClient() {
     return `${whole}.${frac} 美元`;
   }
   $("usage-load").onclick = async () => {
+    const operation = beginOperation("usage");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected) return;
     try {
       const usage = await api(`/api/v1/sessions/${selected}/usage`);
+      if (!operation.active()) return;
       const tokens = `${usage.model_calls} 次模型调用 · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 缓存读 ${usage.cache_read_tokens} · 缓存写 ${usage.cache_write_tokens} · 推理签名 ${usage.reasoning_signatures}`;
       $("usage-report").textContent = usage.priced ? `${tokens} · ${money(usage.cost_micro_usd)}` : `${tokens} · 未计价`;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("diagnostic-load").onclick = async () => {
+    const operation = beginOperation("diagnostic");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected) return;
     try {
       const report = await api(`/api/v1/sessions/${selected}/diagnostics`);
+      if (!operation.active()) return;
       const codes = report.error_codes.length ? report.error_codes.join(",") : "无";
       const blocked = report.blocked_code ? ` · ${report.blocked_code}` : "";
       $("diagnostic-report").textContent = `${report.state} · 失败 ${report.failed} · 未知 ${report.unknown} · ${codes}${blocked}`;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   let artifactId = "";
-  async function loadArtifacts() {
-    if (!selected) return;
-    const list = await api(`/api/v1/sessions/${selected}/artifacts`);
+  async function loadArtifacts(connection = current) {
+    if (!connection) return;
+    const list = await api(`/api/v1/sessions/${connection.session}/artifacts`);
+    if (!owns(connection)) return;
     $("artifact-list").replaceChildren(...list.artifacts.map(item => button(
-      `${item.name} · ${item.size}`, () => void openArtifact(item.artifact_id))));
+      `${item.name} · ${item.size}`, () => void openArtifact(item.artifact_id, connection))));
     if (!list.artifacts.length) $("artifact-list").textContent = "还没有产物";
   }
-  async function openArtifact(id) {
-    const body = await api(`/api/v1/sessions/${selected}/artifacts/${id}`);
+  async function openArtifact(id, connection) {
+    if (!owns(connection)) return;
+    const body = await api(`/api/v1/sessions/${connection.session}/artifacts/${id}`);
+    if (!owns(connection)) return;
     let text = "";
     try { text = atob(body.data_base64); } catch { text = ""; }
     $("artifact-body").textContent = `${body.name} · ${body.digest}\n${text}`;
@@ -1370,6 +1552,9 @@ function startClient() {
   });
   $("artifact-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("artifacts");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !writable()) return;
     const file = ($("artifact-file").files || [])[0];
     if (!file) { error(new Error("请选择文件")); return; }
@@ -1379,14 +1564,17 @@ function startClient() {
     artifactId = artifactId || crypto.randomUUID().replaceAll("-", "").slice(0, 32);
     try {
       const encoded = await readImage(file);
+      if (!operation.active()) return;
       const media = /^[a-z0-9][a-z0-9.+-]{0,40}\/[a-z0-9][a-z0-9.+-]{0,40}$/.test(encoded.media_type)
         ? encoded.media_type : "application/octet-stream";
       await api(`/api/v1/sessions/${selected}/artifacts`, "POST", {
         artifact_id: artifactId, name, media_type: media, data_base64: encoded.data_base64,
-      }, current, current.identity);
+      }, connection, identity);
+      if (!operation.active()) return;
       artifactId = "";
       $("artifact-file").value = "";
-      await loadArtifacts();
+      await loadArtifacts(connection);
+      if (!operation.active()) return;
       $("error").textContent = "";
     } catch (failure) {
       if (definitive(failure)) artifactId = "";
@@ -1437,18 +1625,26 @@ function startClient() {
   };
   $("manage-settings").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("settings");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!identity || health?.state !== "ready") return;
     try {
       const currentSettings = await api("/api/v1/settings");
+      if (!operation.active()) return;
       const saved = await api("/api/v1/settings", "POST", {
         display_name: $("manage-name").value, expected_revision: currentSettings.revision,
-      }, current);
+      }, connection);
+      if (!operation.active()) return;
       $("manage-state").textContent = `${saved.display_name} · ${saved.revision}`;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("manage-feedback").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("manage");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     const text = $("manage-feedback-text").value;
     const key = `feedback:${identity.profile_id}:${selected}`;
@@ -1466,13 +1662,17 @@ function startClient() {
     try {
       const saved = await api("/api/v1/feedback", "POST", {
         feedback_id: pending.feedback_id, session_id: selected, text: pending.text,
-      }, current);
-      sessionStorage.removeItem(key);
+      }, connection);
+      settlePending(key, "feedback_id", pending.feedback_id);
+      if (!operation.active()) return;
       $("manage-state").textContent = saved.session_id;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("manage-share").onclick = async () => {
+    const operation = beginOperation("manage");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     const key = `share:${identity.profile_id}:${selected}`;
     let pending = null;
@@ -1485,39 +1685,52 @@ function startClient() {
     try {
       const view = await api(`/api/v1/sessions/${selected}/shares`, "POST", {
         share_id: pending.share_id,
-      }, current);
-      sessionStorage.removeItem(key);
+      }, connection);
+      settlePending(key, "share_id", pending.share_id);
+      if (!operation.active()) return;
       const stored = await api(`/api/v1/sessions/${selected}/shares/${view.share_id}`);
+      if (!operation.active()) return;
       const text = (stored.messages || []).map(item => item.content).join("\n");
       $("manage-state").textContent = `${stored.session_id} · ${stored.digest.slice(0, 8)}${text ? ` · ${text}` : ""}`;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("manage-export").onclick = async () => {
+    const operation = beginOperation("manage");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     try {
       const bundle = await api("/api/v1/export");
+      if (!operation.active()) return;
       $("manage-import-text").value = JSON.stringify(bundle);
       $("manage-state").textContent = bundle.format;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("manage-import").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("manage");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!identity || health?.state !== "ready") return;
     try {
       const bundle = JSON.parse($("manage-import-text").value);
-      const result = await api("/api/v1/import", "POST", bundle, current);
+      const result = await api("/api/v1/import", "POST", bundle, connection);
+      if (!operation.active()) return;
       $("manage-state").textContent = `${result.format} · ${result.created}`;
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
-  let codeRun = "";
-  const codeKey = () => `code-run:${identity.profile_id}:${selected}`;
+  const codeRuns = new Map();
   $("code-run").onclick = async () => {
+    const operation = beginOperation("code-run");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
+    const key = `code-run:${identity.profile_id}:${selected}`;
     if (!selected || !identity || health?.state !== "ready") return;
     const source = $("code-source").value;
     let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem(codeKey()) || "null"); }
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
     if (pending && pending.phase === "unknown" && pending.source !== source) {
       error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
@@ -1525,36 +1738,40 @@ function startClient() {
     }
     if (!pending || pending.phase !== "unknown") {
       pending = {run_id: crypto.randomUUID().replaceAll("-", ""), source, phase: "unknown"};
-      sessionStorage.setItem(codeKey(), JSON.stringify(pending));
+      sessionStorage.setItem(key, JSON.stringify(pending));
     }
-    codeRun = pending.run_id;
+    codeRuns.set(key, pending.run_id);
     try {
-      const view = await api(`/api/v1/sessions/${selected}/code`, "POST", {run_id: pending.run_id, source: pending.source}, current);
+      const view = await api(`/api/v1/sessions/${selected}/code`, "POST", {run_id: pending.run_id, source: pending.source}, connection);
       pending.phase = view.phase;
-      if (view.phase === "unknown") sessionStorage.setItem(codeKey(), JSON.stringify(pending));
-      else sessionStorage.removeItem(codeKey());
+      settlePending(key, "run_id", pending.run_id, view.phase === "unknown" ? pending : null);
+      if (!operation.active()) return;
       $("code-result").textContent = view.phase === "success" ? view.value : view.phase;
       $("code-state").textContent = view.phase === "success" ? view.state : "";
       if (view.phase === "unknown") error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
       else $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("code-cancel").onclick = async () => {
-    if (!selected || !identity) return;
+    const operation = beginOperation("code-run");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
+    const key = `code-run:${identity.profile_id}:${selected}`;
     let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem(codeKey()) || "null"); }
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
-    const runId = codeRun || pending?.run_id || "";
+    const runId = pending?.run_id || codeRuns.get(key) || "";
     if (!runId) return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/code/${runId}/cancel`, "POST", {}, current);
-      codeRun = runId;
-      if (view.phase !== "unknown") sessionStorage.removeItem(codeKey());
+      const view = await api(`/api/v1/sessions/${selected}/code/${runId}/cancel`, "POST", {}, connection);
+      codeRuns.set(key, runId);
+      if (view.phase !== "unknown") settlePending(key, "run_id", runId);
+      if (!operation.active()) return;
       $("code-result").textContent = view.phase;
       if (view.phase !== "success") $("code-state").textContent = "";
       if (view.phase === "unknown") error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
       else $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   let remoteId = "";
   const remoteState = {connected:"已连接",disconnected:"已断开，远端未证明停止",blocked:"身份不符，已阻塞"};
@@ -1567,20 +1784,30 @@ function startClient() {
   }
   $("remote-form").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("remote-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     remoteId = remoteId || crypto.randomUUID().replaceAll("-", "");
+    sessionStorage.setItem(`remote-connection:${identity.profile_id}:${selected}`, remoteId);
     try {
-      showRemote(await api(`/api/v1/sessions/${selected}/remotes`, "POST", remoteBody(), current));
+      const result = await api(`/api/v1/sessions/${selected}/remotes`, "POST", remoteBody(), connection);
+      if (!operation.active()) return;
+      showRemote(result);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
-  const remoteCallKey = () => `remote-call:${identity.profile_id}:${selected}:${remoteId}`;
   $("remote-command").onsubmit = async event => {
     event.preventDefault();
+    const operation = beginOperation("remote-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
+    const key = `remote-call:${identity.profile_id}:${selected}:${remoteId}`;
+    const targetRemote = remoteId, body = remoteBody();
     if (!remoteId || !selected || !identity || health?.state !== "ready") return;
     const command = $("remote-run").value;
     let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem(remoteCallKey()) || "null"); }
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
     if (pending && pending.phase === "unknown" && pending.command !== command) {
       error(new Error("上次远端命令结果未知，未自动重发；请用同一命令查询。"));
@@ -1588,28 +1815,38 @@ function startClient() {
     }
     if (!pending || pending.phase === "done" || pending.phase === "conflict") {
       pending = {call_id: crypto.randomUUID().replaceAll("-", ""), command, phase: "unknown"};
-      sessionStorage.setItem(remoteCallKey(), JSON.stringify(pending));
+      sessionStorage.setItem(key, JSON.stringify(pending));
     }
     try {
-      const call = await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/calls`, "POST",
-        {...remoteBody(), call_id: pending.call_id, command: pending.command}, current);
+      const call = await api(`/api/v1/sessions/${selected}/remotes/${targetRemote}/calls`, "POST",
+        {...body, call_id: pending.call_id, command: pending.command}, connection);
       pending.phase = call.phase;
-      if (call.phase === "done" || call.phase === "conflict") sessionStorage.removeItem(remoteCallKey());
-      else sessionStorage.setItem(remoteCallKey(), JSON.stringify(pending));
+      settlePending(key, "call_id", pending.call_id, call.phase === "done" || call.phase === "conflict" ? null : pending);
+      if (!operation.active()) return;
       $("remote-result").textContent = call.result || call.phase;
       if (call.phase === "unknown") error(new Error("上次远端命令结果未知，未自动重发；请用同一命令查询。"));
       else $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   $("remote-drop").onclick = async () => {
+    const operation = beginOperation("remote-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!remoteId || !selected) return;
-    try { showRemote(await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/disconnect`, "POST", remoteBody(), current)); }
-    catch (failure) { error(failure); }
+    try { const result = await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/disconnect`, "POST", remoteBody(), connection);
+      if (!operation.active()) return;
+      showRemote(result); }
+    catch (failure) { if (operation.active()) error(failure); }
   };
   $("remote-again").onclick = async () => {
+    const operation = beginOperation("remote-call");
+    if (!operation) return;
+    const {connection, session:selected, identity} = operation;
     if (!remoteId || !selected) return;
-    try { showRemote(await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/reconnect`, "POST", remoteBody(), current)); }
-    catch (failure) { error(failure); }
+    try { const result = await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/reconnect`, "POST", remoteBody(), connection);
+      if (!operation.active()) return;
+      showRemote(result); }
+    catch (failure) { if (operation.active()) error(failure); }
   };
   $("mcp-cancel").onclick = async () => {
     const view = mcpView;

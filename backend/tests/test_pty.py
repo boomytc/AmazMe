@@ -224,7 +224,7 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         await until(()=>$('terminal-output').textContent.includes('hi') && $('terminal-input').value === '');
         assert.equal($('terminal-output').textContent.includes('[2J'), false);
         await new Promise(resolve => setTimeout(resolve, 5));
-        $('terminal-output').dispatchEvent(new window.KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+        $('terminal-output').querySelector('textarea').dispatchEvent(new window.KeyboardEvent('keydown', {key:'Enter', keyCode:13, bubbles:true}));
         await until(()=>seen.filter(item=>item.path.endsWith('/input')).length === 2);
         $('terminal-resize').click();
         await until(()=>seen.some(item=>item.path.endsWith('/resize') && item.body.cols===100 && item.body.rows===40));
@@ -234,6 +234,9 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         assert.equal(typed[1].body.data, '\r');
         assert.equal(typed[1].body.input_id.length, 32);
         assert.notEqual(typed[0].body.input_id, typed[1].body.input_id);
+        $('terminal-output').querySelector('textarea').dispatchEvent(new window.KeyboardEvent('keydown', {key:'c', keyCode:67, ctrlKey:true, bubbles:true}));
+        await until(()=>seen.some(item=>item.path.endsWith('/input') && item.body.data==='\x03'));
+
         const emojiView = {id:'emoji'};
         await globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A', output_seq:1});
         const second = await globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A🙂', output_seq:3});
@@ -284,7 +287,7 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         await until(() => $('error').textContent === 'lost' && inputPosts().some(item => item.body.data === '\u001b[1;1R'));
         const reportId = inputPosts().filter(item => item.body.data === '\u001b[1;1R').at(-1).body.input_id;
         globalThis.allowReport = true;
-        await globalThis.renderTerminal({id:live.body.terminal_id}, {cols:80, rows:24, output:query, output_seq:query.length + 9000});
+        $("terminal-retry").click();
         await until(() => $('error').textContent === '' && inputPosts().filter(item => item.body.data === '\u001b[1;1R' && item.body.input_id === reportId).length === 2);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
