@@ -834,7 +834,8 @@ class SessionStore:
             return self._refresh_workflow(db, self._workflow_row(db, workflow_id)[1])
         return await self._tx(operation)
 
-    async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool) -> WorkflowView:
+    async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool, *,
+                             allow_new_child: bool = True) -> WorkflowView:
         def operation(db: sqlite3.Connection, c: Changes) -> WorkflowView:
             view = self._workflow_row(db, workflow_id)[1]
             key = digest(verdict_body(verdict_id, passed))
@@ -854,6 +855,8 @@ class SessionStore:
                 if view.attempts >= view.correction_limit:
                     view = view.model_copy(update={"stage": "exhausted"})
                 else:
+                    if not allow_new_child:
+                        raise BackendError("workspace_not_found", status=404)
                     attempt = view.attempts + 1
                     prompt = correction_text(attempt)
                     child_id = digest(f"{self.session_id}:{workflow_id}:correction:{attempt}")

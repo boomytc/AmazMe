@@ -1102,7 +1102,27 @@ class Host:
         finally:
             await worker.db.close()
 
+    async def _grant_allows_new_work(self, session_id: str) -> bool:
+        if not await self.store.exists(session_id):
+            raise BackendError("session_not_found", status=404)
+        session = next(item for item in (await self.sessions()).sessions if item.session_id == session_id)
+        if session.workspace == PRIMARY:
+            return True
+        return session.workspace in {name for name, _host in await self.store.workspace_grants()}
+
     async def open_workflow(self, session: str, value: WorkflowOpen) -> WorkflowView:
+        path = session_database(self.profile.path, session)
+        existing = False
+        if path.is_file():
+            try:
+                await self.workflow(session, value.workflow_id)
+            except BackendError as exc:
+                if exc.code != "workflow_not_found":
+                    raise
+            else:
+                existing = True
+        if not existing and not await self._grant_allows_new_work(session):
+            raise BackendError("workspace_not_found", status=404)
         return await self._with_session(
             session, lambda store: store.open_workflow(value.workflow_id, value.check, value.correction_limit))
 
@@ -1115,8 +1135,10 @@ class Host:
             session, lambda store: store.resume_workflow(workflow_id), require_active=False)
 
     async def record_verdict(self, session: str, workflow_id: str, value: WorkflowVerdict) -> WorkflowView:
+        allowed = await self._grant_allows_new_work(session)
         return await self._with_session(
-            session, lambda store: store.record_verdict(workflow_id, value.verdict_id, value.passed))
+            session, lambda store: store.record_verdict(
+                workflow_id, value.verdict_id, value.passed, allow_new_child=allowed))
 
     async def cancel_workflow(self, session: str, workflow_id: str) -> WorkflowView:
         async def operation(store: SessionOps) -> WorkflowView:

@@ -3,6 +3,7 @@
 import base64
 import json
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from amazme_backend.contracts import (
     ProcessLease,
     Submit,
     ToolResult,
+    WorkspaceGrantRequest,
 )
 from amazme_backend.host import Host, application
 from amazme_backend.providers import Completion, stream
@@ -344,6 +346,95 @@ async def test_workflow_rejects_conflicts_and_a_second_open_correction(tmp_path:
     finally:
         await host.supervisor.close()
         await host.store.db.close()
+
+
+def _request_count(profile: Path, session: str) -> int:
+    connection = sqlite3.connect(session_database(profile, session))
+    try:
+        row = connection.execute("SELECT count(*) FROM requests").fetchone()
+    finally:
+        connection.close()
+    assert row is not None
+    return int(row[0])
+
+
+async def _attach_session(client: httpx.AsyncClient, session: str) -> None:
+    attached = await client.post(f"/api/v1/sessions/{session}/attachments")
+    assert attached.status_code == 201
+    client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+
+
+async def test_removed_grant_does_not_open_a_workflow_or_correction(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    grant = tmp_path.parent / f"flow-{tmp_path.name}"
+    grant.mkdir()
+    (grant / "kept.txt").write_text("stay", encoding="utf-8")
+    try:
+        await host.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
+        docs = await host.create_session(CreateSession(title="授予", workspace="docs"))
+        untouched = await host.create_session(CreateSession(title="未打开", workspace="docs"))
+        home = await host.create_session(CreateSession(title="主目录"))
+        async with _client(host) as client:
+            await _attach_session(client, docs.session_id)
+            opened = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows", json=_open_body("a" * 32, "检查", 2))
+            assert opened.status_code == 200 and len(opened.json()["children"]) == 1
+            failed = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows/{'a' * 32}/verdicts",
+                json={"verdict_id": "fail-1", "passed": False})
+            assert failed.status_code == 200 and len(failed.json()["children"]) == 2
+            store = SessionStore(session_database(tmp_path, docs.session_id), docs.session_id,
+                                 build=host.build, approval_policy="auto", require_existing=True)
+            await store.initialize()
+            try:
+                assert (await Driver(store).drain()).reason == "children"
+            finally:
+                await store.db.close()
+            settle = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows", json=_open_body("b" * 32, "收尾", 1))
+            assert settle.status_code == 200
+            await host.remove_workspace("docs")
+            await _attach_session(client, untouched.session_id)
+            refused = await client.post(
+                f"/api/v1/sessions/{untouched.session_id}/workflows", json=_open_body("c" * 32, "不要"))
+            assert refused.status_code == 404 and refused.json()["code"] == "workspace_not_found"
+            assert not session_database(tmp_path, untouched.session_id).parent.exists()
+            await _attach_session(client, docs.session_id)
+            again = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows", json=_open_body("a" * 32, "检查", 2))
+            assert again.status_code == 200 and len(again.json()["children"]) == 2
+            conflict = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows", json=_open_body("a" * 32, "另一检查", 2))
+            assert conflict.status_code == 409 and conflict.json()["code"] == "workflow_conflict"
+            passed = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows/{'b' * 32}/verdicts",
+                json={"verdict_id": "ok", "passed": True})
+            assert passed.status_code == 200 and passed.json()["stage"] == "passed"
+            assert [item["role"] for item in passed.json()["children"]] == ["check"]
+            before = _request_count(tmp_path, docs.session_id)
+            replay = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows/{'a' * 32}/verdicts",
+                json={"verdict_id": "fail-1", "passed": False})
+            assert replay.status_code == 200 and len(replay.json()["children"]) == 2
+            blocked = await client.post(
+                f"/api/v1/sessions/{docs.session_id}/workflows/{'a' * 32}/verdicts",
+                json={"verdict_id": "fail-2", "passed": False})
+            assert blocked.status_code == 404 and blocked.json()["code"] == "workspace_not_found"
+            assert _request_count(tmp_path, docs.session_id) == before
+            stopped = await client.post(f"/api/v1/sessions/{docs.session_id}/workflows/{'a' * 32}/cancel")
+            assert stopped.status_code == 200 and stopped.json()["stage"] == "cancelled"
+            await _attach_session(client, home.session_id)
+            primary = await client.post(
+                f"/api/v1/sessions/{home.session_id}/workflows", json=_open_body("d" * 32, "主目录"))
+            assert primary.status_code == 200 and len(primary.json()["children"]) == 1
+        assert (grant / "kept.txt").read_text(encoding="utf-8") == "stay"
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()
+        shutil.rmtree(grant, ignore_errors=True)
 
 
 def test_browser_runs_the_selected_session_workflow() -> None:

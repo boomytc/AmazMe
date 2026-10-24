@@ -107,6 +107,7 @@ class VerdictBody(Model):
     workflow_id: str
     verdict_id: str
     passed: bool
+    allow_new_child: bool = True
 
 
 class CancelBody(Model):
@@ -200,7 +201,8 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
         return _model(await store.open_workflow(body.workflow_id, body.check, body.correction_limit))
     if name == "record_verdict":
         body = VerdictBody.model_validate_json(payload)
-        return _model(await store.record_verdict(body.workflow_id, body.verdict_id, body.passed))
+        return _model(await store.record_verdict(
+            body.workflow_id, body.verdict_id, body.passed, allow_new_child=body.allow_new_child))
     if name == "cancel":
         body = CancelBody.model_validate_json(payload)
         return _model(await store.cancel(body.request_id, body.fence))
@@ -265,7 +267,8 @@ class SessionOps(Protocol):
     async def open_workflow(self, workflow_id: str, check: str, correction_limit: int) -> WorkflowView: ...
     async def workflow(self, workflow_id: str) -> WorkflowView: ...
     async def resume_workflow(self, workflow_id: str) -> WorkflowView: ...
-    async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool) -> WorkflowView: ...
+    async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool, *,
+                             allow_new_child: bool = True) -> WorkflowView: ...
     async def cancel(self, request_id: str, fence: HostFence) -> Receipt: ...
     async def host_epoch(self) -> int: ...
     async def snapshot(self, state: WorkerState | None = None) -> Snapshot: ...
@@ -317,9 +320,10 @@ class SessionRelay:
         return WorkflowView.model_validate_json(await self._call("open_workflow", OpenWorkflowBody(
             workflow_id=workflow_id, check=check, correction_limit=correction_limit)))
 
-    async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool) -> WorkflowView:
+    async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool, *,
+                             allow_new_child: bool = True) -> WorkflowView:
         return WorkflowView.model_validate_json(await self._call("record_verdict", VerdictBody(
-            workflow_id=workflow_id, verdict_id=verdict_id, passed=passed)))
+            workflow_id=workflow_id, verdict_id=verdict_id, passed=passed, allow_new_child=allow_new_child)))
 
     async def cancel(self, request_id: str, fence: HostFence) -> Receipt:
         return Receipt.model_validate_json(await self._call("cancel", CancelBody(request_id=request_id, fence=fence)))
