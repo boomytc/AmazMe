@@ -7046,6 +7046,109 @@
             "type": "integer",
             "title": "Not Before Ms",
             "default": 0
+          },
+          "decision_id": {
+            "type": "string",
+            "title": "Decision Id",
+            "default": ""
+          },
+          "approval_id": {
+            "type": "string",
+            "title": "Approval Id",
+            "default": ""
+          },
+          "expected_revision": {
+            "type": "string",
+            "title": "Expected Revision",
+            "default": ""
+          },
+          "proposal_digest": {
+            "type": "string",
+            "title": "Proposal Digest",
+            "default": ""
+          },
+          "approve": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approve"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path",
+            "default": ""
+          },
+          "checkpoint_id": {
+            "type": "string",
+            "title": "Checkpoint Id",
+            "default": ""
+          },
+          "terminal_id": {
+            "type": "string",
+            "title": "Terminal Id",
+            "default": ""
+          },
+          "command": {
+            "type": "string",
+            "title": "Command",
+            "default": ""
+          },
+          "cols": {
+            "type": "integer",
+            "title": "Cols",
+            "default": 80
+          },
+          "rows": {
+            "type": "integer",
+            "title": "Rows",
+            "default": 24
+          },
+          "input_id": {
+            "type": "string",
+            "title": "Input Id",
+            "default": ""
+          },
+          "data": {
+            "type": "string",
+            "title": "Data",
+            "default": ""
+          },
+          "server_id": {
+            "type": "string",
+            "title": "Server Id",
+            "default": ""
+          },
+          "call_id": {
+            "type": "string",
+            "title": "Call Id",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "arguments": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Arguments"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest",
+            "default": ""
+          },
+          "schema_digest": {
+            "type": "string",
+            "title": "Schema Digest",
+            "default": ""
           }
         },
         "additionalProperties": false,

@@ -1,21 +1,42 @@
-"""JSON-RPC over the product host. Every call names its session and workspace."""
+"""JSON-RPC over the product host. Every call names its session and workspace.
+
+A prompt submission is not an approval. approval.decide and mcp.decide require the
+caller's explicit boolean plus the pinned identity. Releasing a binding does not
+close a terminal or MCP service.
+"""
 
 import json
 from typing import Literal, Protocol, cast
 
-from pydantic import Field
+from pydantic import Field, JsonValue, ValidationError
 
 from .contracts import (
+    ApprovalDecision,
     Attachment,
     BackendError,
     Cancel,
+    CheckpointCreate,
+    CheckpointView,
     CreateSession,
+    McpCall,
+    McpCallRequest,
+    McpDecision,
+    McpOpen,
+    McpState,
+    McpView,
     Model,
     Receipt,
     Session,
     SessionList,
+    Snapshot,
     Submit,
+    TerminalList,
+    TerminalOpen,
+    TerminalSize,
+    TerminalType,
+    TerminalView,
 )
+from .workspace_files import FileContent
 
 
 class RpcParams(Model):
@@ -26,6 +47,25 @@ class RpcParams(Model):
     title: str = ""
     text: str = ""
     not_before_ms: int = 0
+    decision_id: str = ""
+    approval_id: str = ""
+    expected_revision: str = ""
+    proposal_digest: str = ""
+    approve: bool | None = None
+    path: str = ""
+    checkpoint_id: str = ""
+    terminal_id: str = ""
+    command: str = ""
+    cols: int = 80
+    rows: int = 24
+    input_id: str = ""
+    data: str = ""
+    server_id: str = ""
+    call_id: str = ""
+    name: str = ""
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    digest: str = ""
+    schema_digest: str = ""
 
 
 class RpcCall(Model):
@@ -59,6 +99,38 @@ class RpcHost(Protocol):
     async def deliver(self, session: str, kind: Literal["submit", "cancel", "approval", "resolve"],
                       key: str, value: Model) -> Receipt: ...
 
+    async def attach_session(self, session: str) -> Attachment: ...
+
+    async def session_snapshot(self, session: str) -> Snapshot: ...
+
+    async def request_receipt(self, session: str, request_id: str) -> Receipt: ...
+
+    async def read_workspace(self, relative: str) -> FileContent: ...
+
+    async def create_checkpoint(self, value: CheckpointCreate) -> CheckpointView: ...
+
+    async def list_terminals(self, session_id: str) -> TerminalList: ...
+
+    async def open_terminal(self, session_id: str, value: TerminalOpen) -> TerminalView: ...
+
+    async def type_terminal(self, session_id: str, terminal_id: str, value: TerminalType) -> TerminalView: ...
+
+    async def read_terminal(self, session_id: str, terminal_id: str) -> TerminalView: ...
+
+    async def resize_terminal(self, session_id: str, terminal_id: str, value: TerminalSize) -> TerminalView: ...
+
+    async def close_terminal(self, session_id: str, terminal_id: str) -> TerminalView: ...
+
+    async def mcp_state(self, session_id: str) -> McpState: ...
+
+    async def open_mcp(self, session_id: str, value: McpOpen) -> McpView: ...
+
+    async def request_mcp(self, session_id: str, server_id: str, value: McpCallRequest) -> McpCall: ...
+
+    async def decide_mcp(self, session_id: str, server_id: str, call_id: str, value: McpDecision) -> McpCall: ...
+
+    async def cancel_mcp(self, session_id: str, server_id: str) -> McpView: ...
+
 
 async def _workspace(owner: RpcHost, session_id: str) -> str:
     listed = await owner.sessions()
@@ -73,38 +145,129 @@ def _require_workspace(params: RpcParams) -> None:
         raise BackendError("workspace_required")
 
 
+async def _bound(owner: RpcHost, params: RpcParams) -> str:
+    _require_workspace(params)
+    if not params.session_id or not params.attachment_id:
+        raise BackendError("binding_required")
+    if await _workspace(owner, params.session_id) != params.workspace:
+        raise BackendError("workspace_mismatch")
+    owner.check_attachment(params.attachment_id, params.session_id)
+    return params.session_id
+
+
+def _decision(params: RpcParams) -> bool:
+    if params.approve is None or not params.decision_id:
+        raise BackendError("decision_required")
+    return params.approve
+
+
+async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
+    if method == "session.create":
+        _require_workspace(params)
+        return await owner.create_session(CreateSession(title=params.title or "新会话", workspace=params.workspace))
+    if method == "session.attach":
+        _require_workspace(params)
+        if not params.session_id:
+            raise BackendError("binding_required")
+        if await _workspace(owner, params.session_id) != params.workspace:
+            raise BackendError("workspace_mismatch")
+        return await owner.attach_session(params.session_id)
+    if method == "session.snapshot":
+        return await owner.session_snapshot(await _bound(owner, params))
+    if method == "request.lookup":
+        if not params.request_id:
+            raise BackendError("binding_required")
+        return await owner.request_receipt(await _bound(owner, params), params.request_id)
+    if method == "request.submit":
+        if not params.request_id:
+            raise BackendError("binding_required")
+        session = await _bound(owner, params)
+        if not params.text:
+            raise BackendError("missing_user_context")
+        return await owner.deliver(
+            session, "submit", params.request_id,
+            Submit(request_id=params.request_id, text=params.text, not_before_ms=params.not_before_ms))
+    if method == "request.cancel":
+        if not params.request_id:
+            raise BackendError("binding_required")
+        session = await _bound(owner, params)
+        return await owner.deliver(
+            session, "cancel", params.request_id,
+            Cancel(host_epoch=0, build_id="", request_id=params.request_id))
+    if method == "approval.decide":
+        approve = _decision(params)
+        if not params.approval_id or not params.expected_revision or not params.proposal_digest:
+            raise BackendError("binding_required")
+        session = await _bound(owner, params)
+        return await owner.deliver(session, "approval", params.decision_id, ApprovalDecision(
+            decision_id=params.decision_id, approval_id=params.approval_id,
+            expected_revision=params.expected_revision, proposal_digest=params.proposal_digest, approve=approve))
+    if method == "file.read":
+        if not params.path:
+            raise BackendError("binding_required")
+        await _bound(owner, params)
+        return await owner.read_workspace(params.path)
+    if method == "checkpoint.create":
+        session_workspace = params.workspace
+        await _bound(owner, params)
+        return await owner.create_checkpoint(CheckpointCreate(
+            checkpoint_id=params.checkpoint_id, workspace=session_workspace, path=params.path))
+    if method == "terminal.list":
+        return await owner.list_terminals(await _bound(owner, params))
+    if method == "terminal.open":
+        session = await _bound(owner, params)
+        return await owner.open_terminal(session, TerminalOpen(
+            terminal_id=params.terminal_id, command=params.command, cols=params.cols, rows=params.rows,
+            workspace=params.workspace))
+    if method == "terminal.write":
+        session = await _bound(owner, params)
+        return await owner.type_terminal(session, params.terminal_id, TerminalType(input_id=params.input_id, data=params.data))
+    if method == "terminal.read":
+        session = await _bound(owner, params)
+        return await owner.read_terminal(session, params.terminal_id)
+    if method == "terminal.resize":
+        session = await _bound(owner, params)
+        return await owner.resize_terminal(session, params.terminal_id, TerminalSize(cols=params.cols, rows=params.rows))
+    if method == "terminal.close":
+        session = await _bound(owner, params)
+        return await owner.close_terminal(session, params.terminal_id)
+    if method == "mcp.state":
+        return await owner.mcp_state(await _bound(owner, params))
+    if method == "mcp.open":
+        session = await _bound(owner, params)
+        return await owner.open_mcp(session, McpOpen(
+            server_id=params.server_id, command=params.command, workspace=params.workspace))
+    if method == "mcp.call":
+        session = await _bound(owner, params)
+        return await owner.request_mcp(session, params.server_id, McpCallRequest(
+            call_id=params.call_id, name=params.name, arguments=params.arguments,
+            schema_digest=params.schema_digest, origin="manual"))
+    if method == "mcp.decide":
+        approve = _decision(params)
+        if not params.call_id or not params.digest:
+            raise BackendError("binding_required")
+        session = await _bound(owner, params)
+        return await owner.decide_mcp(session, params.server_id, params.call_id, McpDecision(
+            decision_id=params.decision_id, approve=approve, digest=params.digest))
+    if method == "mcp.close":
+        session = await _bound(owner, params)
+        return await owner.cancel_mcp(session, params.server_id)
+    raise BackendError("method_not_found")
+
+
 async def handle_rpc(owner: RpcHost, call: RpcCall) -> dict[str, object]:
     if call.jsonrpc != "2.0" or not call.id or not call.method:
         return rpc_error(call.id or "0", "invalid_rpc")
     params = call.params
     try:
-        if call.method == "session.create":
-            _require_workspace(params)
-            created = await owner.create_session(CreateSession(title=params.title or "新会话", workspace=params.workspace))
-            return rpc_result(call.id, created)
         if call.method == "session.release":
             if not params.session_id or not params.attachment_id:
                 raise BackendError("binding_required")
             owner.release_attachment(params.session_id, params.attachment_id)
             return {"jsonrpc": "2.0", "id": call.id, "result": {"detached": True, "cancelled": False}}
-        if call.method in {"request.submit", "request.cancel"}:
-            _require_workspace(params)
-            if not params.session_id or not params.attachment_id or not params.request_id:
-                raise BackendError("binding_required")
-            if await _workspace(owner, params.session_id) != params.workspace:
-                raise BackendError("workspace_mismatch")
-            owner.check_attachment(params.attachment_id, params.session_id)
-            if call.method == "request.submit":
-                if not params.text:
-                    raise BackendError("missing_user_context")
-                receipt = await owner.deliver(
-                    params.session_id, "submit", params.request_id,
-                    Submit(request_id=params.request_id, text=params.text, not_before_ms=params.not_before_ms))
-            else:
-                receipt = await owner.deliver(
-                    params.session_id, "cancel", params.request_id,
-                    Cancel(host_epoch=0, build_id="", request_id=params.request_id))
-            return rpc_result(call.id, receipt)
-        return rpc_error(call.id, "method_not_found")
+        result = await _dispatch(owner, call.method, params)
     except BackendError as exc:
         return rpc_error(call.id, exc.code)
+    except ValidationError:
+        return rpc_error(call.id, "invalid_rpc")
+    return rpc_result(call.id, result)

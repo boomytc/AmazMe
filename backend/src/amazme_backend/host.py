@@ -1476,6 +1476,29 @@ class Host:
             self.worker_peers[session] = (info.worker_id, peer)
             return peer
 
+    async def attach_session(self, session: str) -> Attachment:
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        expired = [key for key in self.attachments if time.monotonic() - self.attachment_seen.get(key, 0) > 300]
+        for key in expired:
+            self.attachments.pop(key, None)
+            self.attachment_seen.pop(key, None)
+        if len(self.attachments) >= 128:
+            raise BackendError("attachment_capacity", status=429)
+        value = Attachment(attachment_id=secrets.token_hex(16), session_id=session,
+                           host_epoch=self.fence.host_epoch, build_id=self.build)
+        self.attachments[value.attachment_id] = value
+        self.attachment_seen[value.attachment_id] = time.monotonic()
+        return value
+
+    async def session_snapshot(self, session: str) -> Snapshot:
+        self._admit()
+        return await (await self.reader(session)).call("GET", "/snapshot", Snapshot)
+
+    async def request_receipt(self, session: str, request_id: str) -> Receipt:
+        self._admit()
+        return await (await self.reader(session)).call("GET", "/requests/" + quote(request_id, safe=""), Receipt)
+
     def release_attachment(self, session: str, attachment_id: str) -> None:
         existing = self.attachments.get(attachment_id)
         if existing and existing.session_id != session:
@@ -2268,19 +2291,7 @@ def application(owner: Host) -> FastAPI:
 
     @app.post("/api/v1/sessions/{session}/attachments", status_code=201)
     async def attach(session: str) -> Attachment:
-        if not await owner.store.exists(session):
-            raise BackendError("session_not_found", status=404)
-        expired = [key for key in owner.attachments if time.monotonic() - owner.attachment_seen.get(key, 0) > 300]
-        for key in expired:
-            owner.attachments.pop(key, None)
-            owner.attachment_seen.pop(key, None)
-        if len(owner.attachments) >= 128:
-            raise BackendError("attachment_capacity", status=429)
-        value = Attachment(attachment_id=secrets.token_hex(16), session_id=session,
-                           host_epoch=owner.fence.host_epoch, build_id=owner.build)
-        owner.attachments[value.attachment_id] = value
-        owner.attachment_seen[value.attachment_id] = time.monotonic()
-        return value
+        return await owner.attach_session(session)
 
     @app.delete("/api/v1/sessions/{session}/attachments/{identity}")
     async def detach(session: str, identity: str, request: Request) -> dict[str, bool]:
