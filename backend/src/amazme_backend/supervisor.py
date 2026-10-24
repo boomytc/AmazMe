@@ -599,10 +599,11 @@ class Supervisor:
             return Lease(session_id=value.session_id, worker_id=value.worker_id, build_id=value.build_id,
                          execution_epoch=epoch, supervisor_id=self.instance)
 
-    async def check_lease(self, value: Lease) -> None:
+    async def check_lease(self, value: Lease, *, admit: bool = True) -> None:
         worker = await self.validate_worker(WorkerRequest(session_id=value.session_id, worker_id=value.worker_id,
                                                         build_id=value.build_id))
-        self._admit(validation=worker.purpose == "validation")
+        if admit:
+            self._admit(validation=worker.purpose == "validation")
         if value.supervisor_id != self.instance:
             raise BackendError("stale_supervisor")
         row = await self.db.call(lambda db: db.execute("SELECT * FROM epochs WHERE session=? AND epoch=?",
@@ -637,7 +638,7 @@ class Supervisor:
         admitted = False
         try:
             async with self.control:
-                await self.check_lease(value)
+                await self.check_lease(value, admit=False)
                 worker = await self._worker(value.worker_id)
                 if worker.purpose == "validation":
                     raise BackendError("validation_tools_forbidden")
@@ -649,6 +650,7 @@ class Supervisor:
                     if old["outcome"] == "completed":
                         return ToolResult.model_validate_json(str(old["result"]))
                     raise BackendError("tool_outcome_unknown")
+                self._admit()
                 if value.effect == "write" and await self._write_conflict(value.session_id):
                     raise BackendError("unknown_effect_conflict", status=503)
                 workspace = session_workspace(self.profile.path, value.session_id)
@@ -1192,13 +1194,13 @@ class Supervisor:
     async def open_mcp(self, value: OpenMcp) -> McpView:
         async with self.control:
             self.check_host(value)
-            self._admit()
             old = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
             if old is not None:
                 workspace = value.workspace or str(old["workspace"])
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
                     raise BackendError("mcp_server_conflict")
                 return self._mcp_view(old)
+            self._admit()
             recorded = session_workspace(self.profile.path, value.session_id)
             workspace = value.workspace or recorded
             count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_servers WHERE clean=0").fetchone()[0])
@@ -1888,13 +1890,13 @@ class Supervisor:
     async def open_terminal(self, value: OpenTerminal) -> TerminalView:
         async with self.control:
             self.check_host(value)
-            self._admit()
             old = await self._terminal_row(value.terminal_id)
             if old is not None:
                 workspace = value.workspace or str(old["workspace"])
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
                     raise BackendError("terminal_conflict")
                 return self._view(old)
+            self._admit()
             recorded = session_workspace(self.profile.path, value.session_id)
             workspace = value.workspace or recorded
             count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM terminals WHERE clean=0").fetchone()[0])
@@ -1983,7 +1985,6 @@ class Supervisor:
     async def write_terminal(self, value: TerminalInput) -> TerminalView:
         async with self.control:
             self.check_host(value)
-            self._admit()
             row = await self._terminal_row(value.terminal_id)
             if row is None or row["session"] != value.session_id:
                 raise BackendError("terminal_not_found", status=404)
@@ -1994,6 +1995,7 @@ class Supervisor:
                     raise BackendError("terminal_input_conflict")
                 return self._view(row).model_copy(update={"input_id": value.input_id,
                     "input_status": "accepted" if previous["accepted"] == len(value.data.encode()) else "unknown"})
+            self._admit()
             if row["phase"] != "running" or row["exit_code"] is not None:
                 raise BackendError("terminal_not_running")
             client = self.terminals.get(value.terminal_id)

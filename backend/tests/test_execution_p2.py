@@ -204,6 +204,27 @@ async def test_takeover_requires_every_live_worker_ack(owner):
         await owner.takeover(fence.model_copy(update={"host_epoch": 6}))
 
 
+async def test_freeze_blocks_a_new_shell_and_returns_the_finished_one(owner):
+    info, _ = await worker(owner)
+
+    async def ready(worker, method="GET", path="/identity", body=None):
+        return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id,
+                        instance_id=worker.worker_id, pid=123, role="worker", host_epoch=owner.host_epoch,
+                        fingerprint=owner.build, state="ready")
+
+    owner._peer_identity = ready
+    done = await call(owner, info, identity="done")
+    assert (await owner.run_tool(done)).stdout == "ok\n"
+    epoch = await owner.open_epoch(request(info))
+    await owner.freeze(FreezeSupervisor(build_id=owner.build, host_epoch=owner.host_epoch, freeze_id="hold"))
+    blocked = RunTool(**epoch.model_dump(), call_id="during", request_id="request",
+                      command="printf z > frozen-shell.txt", effect="write")
+    with pytest.raises(BackendError, match="supervisor_frozen"):
+        await owner.run_tool(blocked)
+    assert not (owner.profile.path / "frozen-shell.txt").exists()
+    assert (await owner.run_tool(done)).stdout == "ok\n"
+
+
 async def test_frozen_validation_cannot_execute_tools_and_revision_is_checked(owner):
     freeze = FreezeSupervisor(build_id=owner.build, host_epoch=0, freeze_id="update")
     frozen = await owner.freeze(freeze)

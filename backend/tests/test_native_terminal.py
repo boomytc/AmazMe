@@ -8,6 +8,8 @@ import pytest_asyncio
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
     BackendError,
+    FreezeSupervisor,
+    OpenMcp,
     OpenTerminal,
     TerminalInput,
     TerminalQuery,
@@ -165,3 +167,43 @@ async def test_one_unconfirmed_terminal_does_not_prevent_other_owned_terminal_cl
     assert all(process.process.returncode is not None for process in processes)
     second = await owner._terminal_row("c" * 32)
     assert second is not None and second["clean"]
+
+
+async def test_freeze_blocks_new_terminal_work_and_keeps_the_recorded_input(terminal_owner):
+    owner = terminal_owner
+    value, view = await opened(owner)
+    typed = TerminalInput(**query(owner).model_dump(), input_id="once", data="printf x > frozen.txt\n")
+    await owner.write_terminal(typed)
+    for _ in range(40):
+        if (owner.profile.path / "frozen.txt").exists():
+            break
+        await asyncio.sleep(0.05)
+    assert (owner.profile.path / "frozen.txt").read_text() == "x"
+    fence = FreezeSupervisor(build_id=owner.build, host_epoch=owner.host_epoch, freeze_id="hold")
+    await owner.freeze(fence)
+    with pytest.raises(BackendError, match="supervisor_frozen"):
+        await owner.write_terminal(TerminalInput(**query(owner).model_dump(), input_id="again", data="printf y >> frozen.txt\n"))
+    assert (owner.profile.path / "frozen.txt").read_text() == "x"
+    replay = await owner.write_terminal(typed)
+    assert replay.input_status == "accepted"
+    assert (await owner.read_terminal(query(owner))).phase == "running"
+    assert (await owner.open_terminal(value)).terminal_id == view.terminal_id
+    with pytest.raises(BackendError, match="supervisor_frozen"):
+        await owner.open_terminal(OpenTerminal(**query(owner, "c" * 32).model_dump(), command="printf z > new.txt", workspace="primary"))
+    with pytest.raises(BackendError, match="supervisor_frozen"):
+        await owner.open_mcp(OpenMcp(build_id=owner.build, host_epoch=owner.host_epoch, session_id="a" * 32,
+                                      server_id="d" * 32, command="printf z > mcp.txt", workspace="primary"))
+    assert not (owner.profile.path / "new.txt").exists()
+    assert not (owner.profile.path / "mcp.txt").exists()
+    closed = await owner.close_terminal(query(owner))
+    assert closed.phase == "exited" and closed.clean
+    health = await owner.health()
+    await owner.thaw(fence.model_copy(update={"expected_revision": health.registry_revision}))
+    _, thawed = await opened(owner, "e" * 32, command="printf w > thawed.txt")
+    for _ in range(40):
+        if (owner.profile.path / "thawed.txt").exists():
+            break
+        await asyncio.sleep(0.05)
+    assert thawed.phase == "running"
+    assert (owner.profile.path / "thawed.txt").read_text() == "w"
+    await owner.close_terminal(query(owner, "e" * 32))
