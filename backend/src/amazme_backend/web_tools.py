@@ -142,14 +142,15 @@ async def dispatch_web(endpoint: str, body: dict[str, object], key: str, policy:
 
 
 async def execute_web_call(store: WebCaller, value: WebCallRequest, *, key: str, question: str,
-                           client: httpx.AsyncClient | None) -> WebCallView:
+                           client: httpx.AsyncClient | None, secrets: tuple[str, ...] = ()) -> WebCallView:
     """Reserve the call before sending. A disabled policy or a missing key leaves no row."""
     policy = await store.web_policy()
     if not policy.enabled:
         raise BackendError("web_disabled")
     if not key:
         raise BackendError("web_credential_missing")
-    if contains_secret(value.query, key) or contains_secret(value.url, key):
+    protected = (*secrets, key)
+    if contains_secret(value.query, protected) or contains_secret(value.url, protected):
         raise BackendError("web_secret")
     search_count = policy.count
     if value.kind == "search":
@@ -160,7 +161,7 @@ async def execute_web_call(store: WebCaller, value: WebCallRequest, *, key: str,
         outbound: dict[str, object] = {"query": query, "count": search_count, "need_content": False}
         if policy.send_original_question:
             clipped = original_question(question)
-            if clipped and not contains_secret(question, key):
+            if clipped and not contains_secret(question, protected):
                 outbound["ori_question"] = clipped
         endpoint = policy.base_url + "/search"
     else:

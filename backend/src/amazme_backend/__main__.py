@@ -67,9 +67,15 @@ def main() -> None:
             parser.error("workspace must be a directory")
         provider = ProviderConfig.model_validate_json(args.provider_config.read_bytes())
         args.profile.mkdir(parents=True, mode=0o700, exist_ok=False)
+        provider_data = {**provider.model_dump(), "api_key": provider.api_key.get_secret_value()}
         config = {"format": 2, "profile_id": secrets.token_hex(16), "workspace": str(workspace),
                   "approval_policy": args.approval_policy, "testing": args.test_mode,
-                  "resources": str(resource_root()), "provider": {**provider.model_dump(), "api_key": provider.api_key.get_secret_value()}}
+                  "resources": str(resource_root()), "provider": provider_data}
+        private_write(args.profile / "config.json", json.dumps(config))
+        from .accounts import AccountStore
+        accounts = AccountStore(args.profile)
+        accounts.write(accounts.read())
+        provider_data["api_key"] = ""
         private_write(args.profile / "config.json", json.dumps(config))
         private_write(args.profile / "control.token", secrets.token_hex(32))
         private_write(args.profile / "web.token", secrets.token_hex(24))

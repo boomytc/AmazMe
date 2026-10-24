@@ -376,7 +376,7 @@ class HostStore:
             return row
         return await self.transaction(operation)
 
-    async def claim_due_automation(self, now_ms: int, secret: str = "") -> sqlite3.Row | None:
+    async def claim_due_automation(self, now_ms: int, secret: str | tuple[str, ...] = "") -> sqlite3.Row | None:
         """One scheduler claims one due automation and its submit delivery in the same transaction."""
         def operation(db: sqlite3.Connection) -> sqlite3.Row | None:
             row = db.execute(

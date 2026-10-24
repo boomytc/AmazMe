@@ -18,6 +18,7 @@ REQUIRED_IDENTITY = (
     "runtime/node/bin/node",
     "codemode_helper.mjs",
     "plugin_gate.py",
+    "model_catalog.json",
     "quickjs-wasi/quickjs.wasm",
 )
 
@@ -115,7 +116,7 @@ def build_once(parent: Path) -> None:
                 item
                 for name in (
                     "pty_gate.py", "mcp_gate.py", "plugin_gate.py",
-                    "computer_driver.py", "remote_daemon.py", "codemode_helper.mjs",
+                    "computer_driver.py", "remote_daemon.py", "codemode_helper.mjs", "model_catalog.json",
                 )
                 for item in ("--add-data", f"{ROOT / 'src/amazme_backend' / name}:amazme_backend")
             ],

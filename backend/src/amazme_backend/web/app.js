@@ -581,6 +581,8 @@ function startClient() {
       option.value = `${item.provider}\n${item.model}`;
       option.textContent = item.label;
       option.dataset.endpoint = item.endpoint_editable ? "1" : "";
+      option.dataset.baseUrl = item.base_url || "";
+      option.dataset.api = item.api || "openai-completions";
       return option;
     }));
     const current = catalog.current;
@@ -589,18 +591,19 @@ function startClient() {
       const custom = document.createElement("option");
       custom.value = key;
       custom.textContent = current.model;
-      custom.dataset.endpoint = current.provider === "deepseek" ? "1" : "";
+      custom.dataset.endpoint = current.provider !== "faux" ? "1" : "";
+      custom.dataset.api = current.api || "openai-completions";
+      custom.dataset.baseUrl = current.base_url;
       select.append(custom);
     }
     select.value = key;
     endpoint.value = current.base_url;
-    endpoint.disabled = current.provider !== "deepseek";
+    endpoint.disabled = current.provider === "faux";
     $("model-proxy").value = current.proxy || "";
     $("model-headers").value = Object.entries(current.headers || {}).map(([name, value]) => `${name}: ${value}`).join("\n");
     select.onchange = () => {
-      const editable = select.value.split("\n")[0] === "deepseek";
-      endpoint.disabled = !editable;
-      if (!editable) endpoint.value = "";
+      endpoint.disabled = select.value.split("\n")[0] === "faux";
+      endpoint.value = select.selectedOptions[0]?.dataset.baseUrl || "";
     };
     $("model-form").dataset.maxTokens = String(current.max_tokens);
     $("model-form").dataset.credentialRevision = String(current.credential_revision || 0);
@@ -652,9 +655,19 @@ function startClient() {
     }
     return headers;
   }
+  function beginModelOperation() {
+    if (!identity || health?.state !== "ready") return null;
+    const fence = identity, connection = current, epoch = generation, choice = $("model-choice").value;
+    const operation = {identity:fence, connection,
+      active: () => identity === fence && current === connection && generation === epoch &&
+        $("model-choice").value === choice && panelOperations.get("model") === operation};
+    panelOperations.set("model", operation);
+    return operation;
+  }
   $("model-form").onsubmit = async event => {
     event.preventDefault();
-    if (!identity || health?.state !== "ready") return;
+    const operation = beginModelOperation();
+    if (!operation) return;
     const [provider, model] = $("model-choice").value.split("\n");
     const maxTokens = Number($("model-form").dataset.maxTokens || 2048);
     let headers;
@@ -662,31 +675,120 @@ function startClient() {
     catch (failure) { error(failure); return; }
     try {
       const saved = await api("/api/v1/models", "POST", {
-        provider, model, base_url: $("model-endpoint").value, max_tokens: maxTokens,
+        provider, model, api:$("model-choice").selectedOptions[0]?.dataset.api || null,
+        base_url: $("model-endpoint").value, max_tokens: maxTokens,
         proxy: $("model-proxy").value, headers,
-      });
+      }, operation.connection, operation.identity);
+      if (!operation.active()) return;
       $("model-endpoint").value = saved.base_url;
-      $("model-endpoint").disabled = saved.provider !== "deepseek";
+      $("model-endpoint").disabled = saved.provider === "faux";
       $("model-proxy").value = saved.proxy || "";
       $("model-headers").value = Object.entries(saved.headers || {}).map(([name, value]) => `${name}: ${value}`).join("\n");
+      $("model-form").dataset.credentialRevision = String(saved.credential_revision || 0);
+      $("model-key-state").textContent = saved.key_configured ? "账号已配置" : "账号未配置";
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   };
   async function saveCredential(clear) {
-    if (!identity || health?.state !== "ready") return;
-    const key = $("model-key").value;
+    const operation = beginModelOperation();
+    if (!operation) return;
+    const provider = $("model-choice").value.split("\n")[0], key = $("model-key").value;
     if (!clear && !key) { error(new Error("请输入密钥")); return; }
     try {
-      const saved = await api("/api/v1/models/credential", "POST", {
+      const saved = await api(`/api/v1/accounts/${encodeURIComponent(provider)}`, "POST", {
         expected_revision: Number($("model-form").dataset.credentialRevision || 0),
         clear, api_key: clear ? "" : key,
-      });
+      }, operation.connection, operation.identity);
+      if (!operation.active()) return;
       $("model-key").value = "";
-      $("model-form").dataset.credentialRevision = String(saved.credential_revision || 0);
-      $("model-key-state").textContent = saved.key_configured ? "密钥已配置" : "密钥未配置";
+      $("model-form").dataset.credentialRevision = String(saved.revision);
+      $("model-key-state").textContent = saved.accounts.some(row => row.provider === provider) ? "账号已配置" : "账号未配置";
+      showAccounts(saved);
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
+    } catch (failure) { if (operation.active()) error(failure); }
   }
+  function showAccounts(view) {
+    $("account-list").textContent = view.accounts.map(row => `${row.provider} · ${row.type}${row.login_required ? " · 请重新登录" : ""}`).join("\n") || "尚无账号";
+    $("model-form").dataset.credentialRevision = String(view.revision);
+  }
+  $("accounts").addEventListener("toggle", async () => {
+    if (!$("accounts").open) return;
+    const operation = beginModelOperation();
+    if (!operation) return;
+    try { const view = await api("/api/v1/accounts"); if (operation.active()) showAccounts(view); }
+    catch (failure) { if (operation.active()) error(failure); }
+  });
+  function oauthMethods() {
+    const provider = $("oauth-provider").value;
+    const methods = provider === "anthropic" ? ["browser", "copy_code"] : provider === "openai-codex" ? ["browser", "device_code"] :
+      ["github-copilot", "kimi-coding", "xai", "meta"].includes(provider) ? ["device_code"] : ["browser"];
+    $("oauth-method").replaceChildren(...methods.map(method => {
+      const option = element("option", {browser:"浏览器", copy_code:"复制授权码", device_code:"设备码"}[method]);
+      option.value = method; return option;
+    }));
+  }
+  $("oauth-provider").onchange = oauthMethods;
+  oauthMethods();
+  let oauthPoll = null;
+  const oauthKey = (fence, provider) => `oauth-login:${fence.profile_id}:${provider}`;
+  async function showOAuth(operation, pending) {
+    clearTimeout(oauthPoll);
+    const active = () => operation.active() && $("oauth-provider").value === pending.provider;
+    if (!active()) return;
+    try {
+      const view = await api(`/api/v1/accounts/oauth/${pending.login_id}`);
+      if (!active()) return;
+      $("oauth-state").textContent = `${view.phase}${view.user_code ? " · " + view.user_code : ""}${view.error ? " · " + view.error : ""}`;
+      $("oauth-url").textContent = view.url ? "打开供应商登录页面" : "";
+      if (view.url) $("oauth-url").href = view.url; else $("oauth-url").removeAttribute("href");
+      if (view.phase === "pending") oauthPoll = setTimeout(() => void showOAuth(operation, pending), 750);
+      else {
+        settlePending(oauthKey(operation.identity, pending.provider), "login_id", pending.login_id);
+        const accounts = await api("/api/v1/accounts");
+        if (active()) showAccounts(accounts);
+      }
+    } catch (failure) { if (active()) error(failure); }
+  }
+  $("oauth-form").onsubmit = async event => {
+    event.preventDefault();
+    const operation = beginModelOperation();
+    if (!operation) return;
+    const provider = $("oauth-provider").value, method = $("oauth-method").value, key = oauthKey(operation.identity, provider);
+    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (pending && pending.method !== method) { error(new Error("原登录尚未确认；请查看或取消原登录。")); return; }
+    if (!pending) {
+      pending = {login_id:crypto.randomUUID().replaceAll("-", ""), provider, method,
+        expected_revision:Number($("model-form").dataset.credentialRevision || 0)};
+      sessionStorage.setItem(key, JSON.stringify(pending));
+    }
+    try {
+      await api("/api/v1/accounts/oauth", "POST", pending, operation.connection, operation.identity);
+      await showOAuth(operation, pending);
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
+  $("oauth-input-form").onsubmit = async event => {
+    event.preventDefault();
+    const operation = beginModelOperation();
+    if (!operation) return;
+    const pending = JSON.parse(sessionStorage.getItem(oauthKey(operation.identity, $("oauth-provider").value)) || "null");
+    if (!pending) return;
+    const value = $("oauth-input").value;
+    try {
+      await api(`/api/v1/accounts/oauth/${pending.login_id}/input`, "POST", {value}, operation.connection, operation.identity);
+      if (operation.active()) $("oauth-input").value = "";
+      await showOAuth(operation, pending);
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
+  $("oauth-cancel").onclick = async () => {
+    const operation = beginModelOperation();
+    if (!operation) return;
+    const key = oauthKey(operation.identity, $("oauth-provider").value), pending = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (!pending) return;
+    try {
+      await api(`/api/v1/accounts/oauth/${pending.login_id}`, "DELETE", undefined, operation.connection, operation.identity);
+      await showOAuth(operation, pending);
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
   $("model-key-save").onclick = () => { void saveCredential(false); };
   $("model-key-clear").onclick = () => { void saveCredential(true); };
   let fileDir = "", fileWorkspace = "", fileView = null, fileNavigation = 0, fileListing = 0;

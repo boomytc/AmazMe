@@ -23,7 +23,7 @@ def load_packager() -> object:
 
 def test_source_identity_includes_helper_and_plugin_bytes() -> None:
     names = {path.name for path in source_identity_files()}
-    assert {"codemode_helper.mjs", "plugin_gate.py", "mcp_gate.py"} <= names
+    assert {"codemode_helper.mjs", "plugin_gate.py", "mcp_gate.py", "model_catalog.json"} <= names
 
 
 def test_package_identity_requires_helpers_without_vm_tools() -> None:
@@ -36,6 +36,7 @@ def test_package_identity_requires_helpers_without_vm_tools() -> None:
     nested = {
         "_internal/amazme_backend/codemode_helper.mjs": "abc",
         "_internal/amazme_backend/plugin_gate.py": "abc",
+        "_internal/amazme_backend/model_catalog.json": "abc",
         "_internal/amazme_backend/node_modules/quickjs-wasi/quickjs.wasm": "abc",
         "runtime/node/bin/node": "abc",
     }

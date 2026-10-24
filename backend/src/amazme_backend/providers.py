@@ -8,7 +8,7 @@ from typing import cast
 from urllib.parse import urlsplit
 
 import httpx2
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, omit
 from openai.types.chat import (
     ChatCompletionMessageParam,
     ChatCompletionToolParam,
@@ -17,7 +17,6 @@ from pydantic import JsonValue, SecretStr, TypeAdapter, ValidationError
 
 from .contracts import (
     BackendError,
-    CatalogModel,
     DelegateTasks,
     Message,
     Model,
@@ -32,12 +31,9 @@ from .contracts import (
     WriteFile,
 )
 from .mcp_session import McpOffer
+from .model_catalog import CATALOG as CATALOG
+from .model_catalog import INDEX
 
-CATALOG = (
-    CatalogModel(provider="faux", model="faux", label="本地确定性", endpoint_editable=False),
-    CatalogModel(provider="deepseek", model="deepseek-flash", label="DeepSeek Flash", endpoint_editable=True),
-    CatalogModel(provider="deepseek", model="deepseek-v4-pro", label="DeepSeek V4 Pro", endpoint_editable=True),
-)
 _FORBIDDEN_HEADERS = {
     "authorization", "cookie", "host", "content-length", "transfer-encoding", "connection",
     "proxy-authorization", "x-api-key",
@@ -87,7 +83,7 @@ def _clean_headers(headers: dict[str, str]) -> dict[str, str]:
 
 
 def public_settings(config: ProviderConfig, credential_revision: int = 0) -> ModelSettings:
-    return ModelSettings(provider=config.provider, model=config.model, base_url=config.base_url,
+    return ModelSettings(provider=config.provider, model=config.model, base_url=config.base_url, api=config.api, auth_type=config.auth_type,
                          max_tokens=config.max_tokens, key_configured=bool(config.api_key.get_secret_value()),
                          credential_revision=credential_revision,
                          proxy=redact_proxy(config.proxy), headers=dict(config.headers))
@@ -106,11 +102,15 @@ def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> Pro
         return current.model_copy(update={"provider": "faux", "model": "faux", "base_url": "", **transport})
     if not current.api_key.get_secret_value():
         raise BackendError("provider_not_configured")
-    parts = urlsplit(requested.base_url.strip())
+    if current.provider != requested.provider:
+        raise BackendError("provider_not_configured")
+    model = INDEX.get((requested.provider, requested.model))
+    api = requested.api or (model.api if model is not None else current.api)
+    parts = urlsplit((requested.base_url.strip() or (model.base_url if model is not None else "")))
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
         raise BackendError("invalid_model_endpoint")
     return current.model_copy(update={
-        "provider": "deepseek", "model": requested.model, "base_url": parts.geturl(), **transport,
+        "provider": requested.provider, "model": requested.model, "api": api, "base_url": parts.geturl(), **transport,
     })
 
 
@@ -146,7 +146,19 @@ def catalog_price(provider: str, model: str) -> tuple[int, int, int, int] | None
     """
     if provider == "faux":
         return (0, 0, 0, 0)
-    return _PRICE_MICRO_PER_MILLION.get((provider, model))
+    fixed = _PRICE_MICRO_PER_MILLION.get((provider, model))
+    if fixed is not None:
+        return fixed
+    entry = INDEX.get((provider, model))
+    if entry is None or entry.cost.get("tiers"):
+        return None
+    rates: list[int] = []
+    for key in ("input", "output", "cacheRead", "cacheWrite"):
+        value = entry.cost.get(key)
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
+            return None
+        rates.append(round(value * 1_000_000))
+    return rates[0], rates[1], rates[2], rates[3]
 
 
 def token_cost_micro(
@@ -407,22 +419,32 @@ async def stream(config: ProviderConfig, messages: list[Message],
         return
     if not config.api_key.get_secret_value():
         raise BackendError("provider_not_configured")
+    if config.api != "openai-completions":
+        from .provider_wire import stream as wire_stream
+        async for item in wire_stream(config, messages, offers):
+            yield item
+        return
     calls: dict[int, PendingCall] = {}
     text = ""
     response_id = ""
     input_tokens = output_tokens = cache_read_tokens = cache_write_tokens = 0
     signature: list[object] = []
     finished = False
+    from .provider_wire import base_headers
+    request_headers = base_headers(config, messages)
     http = httpx2.AsyncClient(proxy=config.proxy or None, trust_env=False, timeout=60)
     try:
         async with AsyncOpenAI(api_key=config.api_key.get_secret_value(), base_url=config.base_url,
-                               max_retries=0, timeout=60, default_headers=config.headers or None,
+                               max_retries=0, timeout=60, default_headers=request_headers,
                                http_client=http) as client:
+            metadata = INDEX.get((config.provider, config.model))
+            completion_limit = metadata is not None and metadata.compat.get("maxTokensField") == "max_completion_tokens"
             response = await client.chat.completions.create(
                 model=config.model, messages=provider_messages(messages, config.provider), tools=tool_definitions(offers),
-                max_tokens=config.max_tokens, stream=True, stream_options={"include_usage": True},
-                extra_body={"thinking": {"type": "disabled"}},
-            )
+                max_tokens=omit if completion_limit else config.max_tokens,
+                max_completion_tokens=config.max_tokens if completion_limit else omit,
+                stream=True, stream_options={"include_usage": True},
+                extra_body={"thinking": {"type": "disabled"}} if config.provider == "deepseek" else None)
             async with response:
                 async for chunk in response:
                     response_id = chunk.id

@@ -26,8 +26,9 @@ def bundle_digest(bundle: ExportBundle) -> str:
     return digest(json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")))
 
 
-def contains_secret(text: str, secret: str) -> bool:
-    return bool(secret) and secret in text
+def contains_secret(text: str, secret: str | tuple[str, ...]) -> bool:
+    values = (secret,) if isinstance(secret, str) else secret
+    return any(value and value in text for value in values)
 
 
 def bundle_text(bundle: ExportBundle) -> str:

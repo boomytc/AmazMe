@@ -26,6 +26,7 @@ from amazme_backend.contracts import (
     UpdateRecord,
 )
 from amazme_backend.host import Host, application
+from amazme_backend.host_store import HostStore
 from amazme_backend.providers import stream
 from amazme_backend.session_domain import ModelInvocation
 from amazme_backend.worker import Worker
@@ -67,14 +68,16 @@ async def test_catalog_lists_runnable_models_and_hides_the_key(owner: Host) -> N
     catalog = owner.model_catalog()
     body = catalog.model_dump_json()
     assert SECRET not in body
-    assert {item.model for item in catalog.models} == {"faux", "deepseek-flash", "deepseek-v4-pro"}
+    assert {"faux", "deepseek-flash", "deepseek-v4-pro"} <= {item.model for item in catalog.models}
+    assert {"anthropic", "openai", "openai-codex", "google", "openrouter"} <= {item.provider for item in catalog.models}
     assert catalog.current.model == "deepseek-flash" and catalog.current.key_configured is True
     saved = await owner.update_model(UpdateModelSettings(
         provider="deepseek", model="deepseek-chat", base_url="https://gateway.example/v1", max_tokens=128))
     assert saved.model == "deepseek-chat" and saved.base_url == "https://gateway.example/v1"
     assert SECRET not in saved.model_dump_json()
     raw = json.loads((owner.profile.path / "config.json").read_text())
-    assert raw["provider"]["api_key"] == SECRET
+    assert raw["provider"]["api_key"] == ""
+    assert owner.accounts.secrets() == (SECRET,)
     assert raw["profile_id"] == "catalog"
     assert [item.session_id for item in (await owner.sessions()).sessions] == [PARENT]
     owner.profile.reload_provider()
@@ -92,7 +95,7 @@ async def test_rejected_choice_leaves_the_saved_provider(owner: Host) -> None:
     with pytest.raises(BackendError, match="model_not_available"):
         await owner.update_model(UpdateModelSettings(provider="faux", model="deepseek-flash"))
     assert (owner.profile.path / "config.json").read_text() == before
-    write_profile(owner.profile.path, key="")
+    await owner.replace_credential(CredentialUpdate(expected_revision=0, clear=True))
     owner.profile.reload_provider()
     with pytest.raises(BackendError, match="provider_not_configured"):
         await owner.update_model(UpdateModelSettings(
@@ -171,13 +174,14 @@ async def test_proxy_password_is_kept_but_not_published_or_recorded(owner: Host,
     monkeypatch.setattr("amazme_backend.providers.httpx2.AsyncClient", FakeHTTP)
     monkeypatch.setattr("amazme_backend.providers.AsyncOpenAI", FakeOpenAI)
     with pytest.raises(BackendError, match="stop-before-network"):
-        async for _item in stream(owner.profile.config.provider, [Message(role="user", content="hi")]):
+        async for _item in stream(await owner.accounts.configured(owner.profile.config.provider), [Message(role="user", content="hi")]):
             pass
     http_kwargs = captured["http"]
     openai_kwargs = captured["openai"]
     assert isinstance(http_kwargs, dict) and isinstance(openai_kwargs, dict)
     assert http_kwargs["proxy"] == "http://user:pw@127.0.0.1:9" and http_kwargs["trust_env"] is False
-    assert openai_kwargs["default_headers"] == {"X-Project": "demo"}
+    assert openai_kwargs["default_headers"]["X-Project"] == "demo"
+    assert openai_kwargs["default_headers"]["Authorization"] == "Bearer " + SECRET
     assert captured["closed"] is True
 
 
@@ -197,7 +201,7 @@ async def test_model_route_returns_the_saved_choice(owner: Host) -> None:
         leaked = await client.post("/api/v1/models", json={
             "provider": "faux", "model": "faux", "base_url": "", "max_tokens": 2048, "api_key": SECRET})
         assert leaked.status_code == 422 and SECRET not in leaked.text
-        assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == SECRET
+        assert owner.accounts.read().credentials["deepseek"].key.get_secret_value() == SECRET
 
 
 async def test_credential_revision_keeps_one_key_and_a_cleared_key_is_not_sent(owner: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -213,15 +217,16 @@ async def test_credential_revision_keeps_one_key_and_a_cleared_key_is_not_sent(o
     assert saved[0].key_configured is True and saved[0].credential_revision == 1
     stored = json.loads((owner.profile.path / "config.json").read_text())
     assert stored["credential_revision"] == 1
-    assert stored["provider"]["api_key"] in {"sk-rotate-one", "sk-rotate-two"}
-    winner = stored["provider"]["api_key"]
+    assert stored["provider"]["api_key"] == ""
+    winner = owner.accounts.read().credentials["deepseek"].key.get_secret_value()
+    assert winner in {"sk-rotate-one", "sk-rotate-two"}
     with pytest.raises(BackendError, match="credential_conflict"):
         await owner.replace_credential(CredentialUpdate(expected_revision=0, api_key=SecretStr("sk-rotate-stale")))
-    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == winner
+    assert owner.accounts.read().credentials["deepseek"].key.get_secret_value() == winner
     changed = await owner.update_model(UpdateModelSettings(
         provider="deepseek", model="deepseek-chat", base_url="https://gateway.example/v1"))
     assert changed.credential_revision == 1 and winner not in changed.model_dump_json()
-    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == winner
+    assert owner.accounts.read().credentials["deepseek"].key.get_secret_value() == winner
     frozen = UpdateRecord(update_id="upgrade", source_build="src", target_build="dst",
                           phase="freezing", revision="1", cancel_work=False)
     database = sqlite3.connect(owner.profile.path / "host.sqlite")
@@ -230,7 +235,7 @@ async def test_credential_revision_keeps_one_key_and_a_cleared_key_is_not_sent(o
     database.commit()
     with pytest.raises(BackendError, match="update_frozen"):
         await owner.replace_credential(CredentialUpdate(expected_revision=1, clear=True))
-    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == winner
+    assert owner.accounts.read().credentials["deepseek"].key.get_secret_value() == winner
     database.execute("UPDATE control SET freeze_id='' WHERE id=1")
     database.commit()
     database.close()
@@ -271,6 +276,12 @@ async def test_credential_revision_keeps_one_key_and_a_cleared_key_is_not_sent(o
     profile = Profile(send_root)
     session = "e" * 32
     (send_root / "sessions" / session).mkdir(parents=True)
+    metadata = HostStore(send_root / "host.sqlite")
+    await metadata.initialize("credential-host", build_id(), ProcessLease(
+        instance_id="credential-host", role="host", profile_path=str(send_root),
+        path=str(send_root / "lease"), device=1, inode=1))
+    await metadata.create_session(session, CreateSession(title="credential rotation"))
+    await metadata.db.close()
     worker = Worker(profile, session, "worker-key")
     worker.initialized = True
     worker.state = "ready"
@@ -344,20 +355,20 @@ def test_browser_saves_the_selected_catalog_model() -> None:
             current={provider:'faux',model:'faux',base_url:'',max_tokens:body.max_tokens,key_configured:true,credential_revision:0};
             return response(current);
           }
-          if(path==='/api/v1/models/credential') {
+          if(path==='/api/v1/accounts/faux') {
             const body=JSON.parse(options.body);
             assert.equal(options.headers['x-amazme-build'],'build');
             if(body.clear) {
               assert.equal(body.api_key,'');
               assert.equal(body.expected_revision, 1);
               current={...current, key_configured:false, credential_revision:2};
-              return response(current);
+              return response({revision:2,accounts:[]});
             }
             assert.equal(body.api_key,'next-secret');
             assert.equal(body.clear, false);
             assert.equal(body.expected_revision, 0);
             current={...current, key_configured:true, credential_revision:1};
-            return response(current);
+            return response({revision:1,accounts:[{provider:'faux',type:'api_key'}]});
           }
           throw Error('unexpected '+path);
         };
@@ -379,9 +390,9 @@ def test_browser_saves_the_selected_catalog_model() -> None:
         await until(()=>$('model-choice').value==='faux\nfaux' && $('model-endpoint').value==='' && $('model-endpoint').disabled===true);
         $('model-key').value = 'next-secret';
         $('model-key-save').click();
-        await until(()=>$('model-key-state').textContent==='密钥已配置' && $('model-key').value==='');
+        await until(()=>$('model-key-state').textContent==='账号已配置' && $('model-key').value==='');
         $('model-key-clear').click();
-        await until(()=>$('model-key-state').textContent==='密钥未配置' && $('model-key').value==='');
+        await until(()=>$('model-key-state').textContent==='账号未配置' && $('model-key').value==='');
         window.happyDOM && await window.happyDOM.abort();
     '''
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,

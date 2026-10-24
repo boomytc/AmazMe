@@ -8,25 +8,31 @@ from urllib.parse import quote
 import httpx
 from pydantic import JsonValue
 
+from .accounts import AccountsView
 from .artifacts import ArtifactBody, ArtifactView
 from .contracts import (
     Approval,
     Attachment,
     BackendError,
     CheckpointView,
+    CredentialUpdate,
     ErrorBody,
     Identity,
     ImagePart,
     McpCall,
     McpState,
     McpView,
+    ModelCatalog,
+    ModelSettings,
     Receipt,
     Session,
     SessionList,
     Snapshot,
     TerminalList,
     TerminalView,
+    UpdateModelSettings,
 )
+from .oauth import OAuthInput, OAuthStart, OAuthView
 from .workspace_files import FileContent
 
 
@@ -70,6 +76,35 @@ class Client:
         self.build_id = identity.build_id
         self.host_epoch = identity.host_epoch
         return identity
+
+    async def models(self) -> ModelCatalog:
+        return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
+
+    async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
+        return ModelSettings.model_validate(await self._send("POST", "/api/v1/models",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def accounts(self) -> AccountsView:
+        return AccountsView.model_validate(await self._send("GET", "/api/v1/accounts"))
+
+    async def update_account(self, provider: str, value: CredentialUpdate) -> AccountsView:
+        return AccountsView.model_validate(await self._send("POST", "/api/v1/accounts/" + quote(provider, safe=""),
+            json_body={**value.model_dump(mode="json"), "api_key": value.api_key.get_secret_value()}, headers=self._write()))
+
+    async def start_oauth(self, value: OAuthStart) -> OAuthView:
+        return OAuthView.model_validate(await self._send("POST", "/api/v1/accounts/oauth",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def oauth(self, login_id: str) -> OAuthView:
+        return OAuthView.model_validate(await self._send("GET", "/api/v1/accounts/oauth/" + quote(login_id, safe="")))
+
+    async def oauth_input(self, login_id: str, value: OAuthInput) -> OAuthView:
+        return OAuthView.model_validate(await self._send("POST", "/api/v1/accounts/oauth/" + quote(login_id, safe="") + "/input",
+            json_body={"value": value.value.get_secret_value()}, headers=self._write()))
+
+    async def cancel_oauth(self, login_id: str) -> OAuthView:
+        return OAuthView.model_validate(await self._send("DELETE", "/api/v1/accounts/oauth/" + quote(login_id, safe=""),
+            headers=self._write()))
 
     async def sessions(self) -> SessionList:
         return SessionList.model_validate(await self._send("GET", "/api/v1/sessions"))

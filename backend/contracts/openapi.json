@@ -2498,6 +2498,236 @@
         }
       }
     },
+    "/api/v1/accounts": {
+      "get": {
+        "summary": "Accounts",
+        "operationId": "accounts_api_v1_accounts_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsView"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/oauth": {
+      "post": {
+        "summary": "Start Oauth",
+        "operationId": "start_oauth_api_v1_accounts_oauth_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/oauth/{login_id}": {
+      "get": {
+        "summary": "Oauth View",
+        "operationId": "oauth_view_api_v1_accounts_oauth__login_id__get",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Cancel Oauth",
+        "operationId": "cancel_oauth_api_v1_accounts_oauth__login_id__delete",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/oauth/{login_id}/input": {
+      "post": {
+        "summary": "Oauth Input",
+        "operationId": "oauth_input_api_v1_accounts_oauth__login_id__input_post",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/accounts/{provider}": {
+      "post": {
+        "summary": "Update Account",
+        "operationId": "update_account_api_v1_accounts__provider__post",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CredentialUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountsView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/models/credential": {
       "post": {
         "summary": "Replace Credential",
@@ -4061,6 +4291,67 @@
   },
   "components": {
     "schemas": {
+      "AccountInfo": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "oauth"
+            ],
+            "title": "Type"
+          },
+          "expires_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires Ms"
+          },
+          "login_required": {
+            "type": "boolean",
+            "title": "Login Required",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "type"
+        ],
+        "title": "AccountInfo"
+      },
+      "AccountsView": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "accounts": {
+            "items": {
+              "$ref": "#/components/schemas/AccountInfo"
+            },
+            "type": "array",
+            "title": "Accounts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "accounts"
+        ],
+        "title": "AccountsView"
+      },
       "Approval": {
         "properties": {
           "approval_id": {
@@ -4485,12 +4776,26 @@
       },
       "CatalogModel": {
         "properties": {
-          "provider": {
+          "api": {
             "type": "string",
             "enum": [
-              "deepseek",
-              "faux"
+              "openai-completions",
+              "openai-responses",
+              "openai-codex-responses",
+              "anthropic-messages",
+              "google-generative-ai"
             ],
+            "title": "Api",
+            "default": "openai-completions"
+          },
+          "base_url": {
+            "type": "string",
+            "title": "Base Url",
+            "default": ""
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
             "title": "Provider"
           },
           "model": {
@@ -6333,12 +6638,30 @@
       },
       "ModelSettings": {
         "properties": {
-          "provider": {
+          "api": {
             "type": "string",
             "enum": [
-              "deepseek",
-              "faux"
+              "openai-completions",
+              "openai-responses",
+              "openai-codex-responses",
+              "anthropic-messages",
+              "google-generative-ai"
             ],
+            "title": "Api",
+            "default": "openai-completions"
+          },
+          "auth_type": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "oauth"
+            ],
+            "title": "Auth Type",
+            "default": "api_key"
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
             "title": "Provider"
           },
           "model": {
@@ -6385,6 +6708,111 @@
           "key_configured"
         ],
         "title": "ModelSettings"
+      },
+      "OAuthInput": {
+        "properties": {
+          "value": {
+            "type": "string",
+            "maxLength": 8192,
+            "format": "password",
+            "title": "Value",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "value"
+        ],
+        "title": "OAuthInput"
+      },
+      "OAuthStart": {
+        "properties": {
+          "login_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Login Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "browser",
+              "device_code",
+              "copy_code"
+            ],
+            "title": "Method",
+            "default": "browser"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "login_id",
+          "provider",
+          "expected_revision"
+        ],
+        "title": "OAuthStart"
+      },
+      "OAuthView": {
+        "properties": {
+          "login_id": {
+            "type": "string",
+            "title": "Login Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "complete",
+              "failed",
+              "cancelled",
+              "expired",
+              "unknown"
+            ],
+            "title": "Phase"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url",
+            "default": ""
+          },
+          "user_code": {
+            "type": "string",
+            "title": "User Code",
+            "default": ""
+          },
+          "expires_ms": {
+            "type": "integer",
+            "title": "Expires Ms",
+            "default": 0
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "login_id",
+          "provider",
+          "phase"
+        ],
+        "title": "OAuthView"
       },
       "PluginCallRequest": {
         "properties": {
@@ -7279,6 +7707,56 @@
       },
       "RpcParams": {
         "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "default": ""
+          },
+          "login_id": {
+            "type": "string",
+            "title": "Login Id",
+            "default": ""
+          },
+          "model_settings": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UpdateModelSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "credential": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CredentialUpdate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "oauth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OAuthStart"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "authorization": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OAuthInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "session_id": {
             "type": "string",
             "title": "Session Id",
@@ -8220,17 +8698,32 @@
         "properties": {
           "provider": {
             "type": "string",
-            "enum": [
-              "deepseek",
-              "faux"
-            ],
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
             "title": "Provider"
+          },
+          "api": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "openai-completions",
+                  "openai-responses",
+                  "openai-codex-responses",
+                  "anthropic-messages",
+                  "google-generative-ai"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api"
           },
           "model": {
             "type": "string",
             "maxLength": 128,
             "minLength": 1,
-            "pattern": "^[\\w.-]+$",
+            "pattern": "^[\\w./:@+-]+$",
             "title": "Model"
           },
           "base_url": {

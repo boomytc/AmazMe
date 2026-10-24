@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr
 
+from .accounts import AccountStore, AccountsView, ApiKeyCredential
 from .artifacts import (
     ArtifactBody,
     ArtifactList,
@@ -172,6 +173,8 @@ from .host_store import Delivery, HostStore, ServiceRecord, checkpoint_id
 from .manage import bundle_digest, bundle_text, contains_secret, transcript_digest
 from .manage import digest as content_digest
 from .memories import match_memories, remember, session_workspace
+from .oauth import BROWSER, DEVICE, OAuthInput, OAuthStart, OAuthView
+from .oauth import Login as OAuthLogin
 from .page_boot import boot_document
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
@@ -245,6 +248,8 @@ class Host:
         self.service_lock = asyncio.Lock()
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
+        self.accounts = AccountStore(profile.path)
+        self.oauth_logins: dict[str, OAuthLogin] = {}
         self.attached = ""
         self.stop = asyncio.Event()
         self.closing = False
@@ -774,11 +779,144 @@ class Host:
         return await self.supervisor.call("POST", "/mcp/cancel", McpView, McpQuery(
             build_id=self.build, host_epoch=self.fence.host_epoch, session_id=session_id, server_id=server_id))
 
+    async def _account_write_guard(self) -> None:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+
+    def account_list(self) -> AccountsView:
+        return self.accounts.view()
+
+    async def update_account(self, provider: str, value: CredentialUpdate) -> AccountsView:
+        await self._account_write_guard()
+        key = value.api_key.get_secret_value()
+        if (value.clear and key) or (not value.clear and (
+                not key or len(key) > 512 or any(char in key for char in "\r\n\x00"))):
+            raise BackendError("invalid_credential")
+        async with self.provider_lock:
+            saved = await self.accounts.set(provider, None if value.clear else ApiKeyCredential(key=value.api_key),
+                                             value.expected_revision, self._account_write_guard)
+            self.profile.reload_provider()
+            if self.profile.config.provider.provider == provider:
+                chosen = self.profile.config.provider.model_copy(update={"api_key": SecretStr(""), "auth_type": "api_key"})
+                self.profile.save_provider(chosen, credential_revision=saved.revision)
+            return saved
+
+    async def start_oauth(self, value: OAuthStart) -> OAuthView:
+        await self._account_write_guard()
+        if value.provider not in BROWSER and value.provider not in DEVICE:
+            raise BackendError("oauth_provider_unknown")
+        if value.method == "copy_code" and value.provider != "anthropic":
+            raise BackendError("oauth_method_unknown")
+        if value.method == "device_code" and value.provider not in {*DEVICE, "openai-codex"}:
+            raise BackendError("oauth_method_unknown")
+        old = self.oauth_logins.get(value.login_id)
+        if old is not None:
+            if old.request != value:
+                raise BackendError("oauth_login_conflict")
+            return old.view
+        for key in list(self.oauth_logins):
+            if self.oauth_logins[key].view.phase != "pending":
+                del self.oauth_logins[key]
+        if len(self.oauth_logins) >= 64:
+            raise BackendError("oauth_login_limit")
+        view = OAuthView(login_id=value.login_id, provider=value.provider, phase="pending",
+                         expires_ms=int(time.time() * 1000) + 300000)
+        async with self.provider_lock:
+            # Another start may have completed while waiting for the writer.
+            if value.login_id in self.oauth_logins:
+                login = self.oauth_logins[value.login_id]
+                if login.request != value:
+                    raise BackendError("oauth_login_conflict")
+                return login.view
+            existing = await self.accounts.reserve_login(value, view, self._account_write_guard)
+            if existing is not None:
+                return existing.model_copy(update={"phase": "unknown", "error": "oauth_login_interrupted"}) if existing.phase == "pending" else existing
+        login = OAuthLogin(value, view)
+        self.oauth_logins[value.login_id] = login
+        login.task = asyncio.create_task(self._run_oauth(login))
+        return view
+
+    def oauth_view(self, login_id: str) -> OAuthView:
+        login = self.oauth_logins.get(login_id)
+        if login is None:
+            saved = self.accounts.read().logins.get(login_id)
+            if saved is None:
+                raise BackendError("oauth_login_missing", status=404)
+            return saved.view.model_copy(update={"phase": "unknown", "error": "oauth_login_interrupted"}) if saved.view.phase == "pending" else saved.view
+        return login.view
+
+    async def oauth_input(self, login_id: str, value: OAuthInput) -> OAuthView:
+        await self._account_write_guard()
+        login = self.oauth_logins.get(login_id)
+        if login is None:
+            raise BackendError("oauth_login_missing", status=404)
+        if login.view.phase != "pending":
+            return login.view
+        login.parse_input(value.value.get_secret_value())
+        if login.future is None:
+            raise BackendError("oauth_input_not_ready")
+        if not login.future.done():
+            login.future.set_result(value.value.get_secret_value())
+        return login.view
+
+    async def cancel_oauth(self, login_id: str) -> OAuthView:
+        login = self.oauth_logins.get(login_id)
+        if login is None:
+            view = self.oauth_view(login_id)
+            if view.phase == "unknown":
+                view.phase = "cancelled"
+                await self.accounts.settle_login(login_id, view)
+            return view
+        if login.view.phase == "pending":
+            await login.cancel()
+            await self.accounts.settle_login(login_id, login.view)
+        return login.view
+
+    async def _oauth_request_guard(self, _request: httpx.Request) -> None:
+        await self._account_write_guard()
+
+    async def _run_oauth(self, login: OAuthLogin) -> None:
+        try:
+            self.profile.reload_provider()
+            async with httpx.AsyncClient(proxy=self.profile.config.provider.proxy or None,
+                                         trust_env=False, timeout=30, event_hooks={"request": [self._oauth_request_guard]}) as client:
+                if login.request.provider in DEVICE or login.request.method == "device_code":
+                    await login.begin_device(client)
+                    credential = await login.poll_device(client)
+                else:
+                    await login.begin_browser()
+                    assert login.future is not None
+                    value = await asyncio.wait_for(login.future, 300)
+                    credential = await login.exchange(client, value)
+                async with self.provider_lock:
+                    saved = await self.accounts.set(login.request.provider, credential, login.request.expected_revision,
+                                                    self._account_write_guard)
+                    self.profile.reload_provider()
+                    if self.profile.config.provider.provider == login.request.provider:
+                        chosen = self.profile.config.provider.model_copy(update={"api_key": SecretStr(""), "auth_type": "oauth"})
+                        self.profile.save_provider(chosen, credential_revision=saved.revision)
+                    login.view.phase = "complete"
+        except asyncio.CancelledError:
+            login.view.phase = "cancelled"
+        except TimeoutError:
+            login.view.phase, login.view.error = "expired", "oauth_login_expired"
+        except Exception as exc:
+            login.view.phase = "failed"
+            login.view.error = exc.code if isinstance(exc, BackendError) else "oauth_login_failed"
+        finally:
+            await login.close_callback()
+            login.verifier, login.state, login.device_code = "", "", ""
+            login.future = None
+            try:
+                await self.accounts.settle_login(login.request.login_id, login.view)
+            except (BackendError, OSError, ValueError):
+                login.view.phase, login.view.error = "unknown", "oauth_storage_unconfirmed"
+
     def model_catalog(self) -> ModelCatalog:
         self._admit()
         self.profile.reload_provider()
-        return ModelCatalog(models=list(CATALOG), current=public_settings(
-            self.profile.config.provider, self.profile.config.credential_revision))
+        return ModelCatalog(models=list(CATALOG), current=self._published_model())
 
     async def session_model(self, session_id: str) -> SessionModel:
         self._admit()
@@ -794,7 +932,13 @@ class Host:
         return await self.store.save_session_model(value)
 
     def _published_model(self) -> ModelSettings:
-        return public_settings(self.profile.config.provider, self.profile.config.credential_revision)
+        document = self.accounts.read()
+        credential = document.credentials.get(self.profile.config.provider.provider)
+        key = credential.key if isinstance(credential, ApiKeyCredential) else (
+            credential.access if credential is not None else SecretStr(""))
+        configured = self.profile.config.provider.model_copy(update={"api_key": key,
+            "auth_type": credential.type if credential is not None else "api_key"})
+        return public_settings(configured, document.revision)
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
         self._admit()
@@ -802,8 +946,15 @@ class Host:
             if await self.store.active_update():
                 raise BackendError("update_frozen", status=503)
             self.profile.reload_provider()
-            chosen = choose_model(self.profile.config.provider, value)
-            self.profile.save_provider(chosen)
+            await self.accounts.ensure(self._account_write_guard)
+            target = self.profile.config.provider.model_copy(update={"provider": value.provider})
+            target = await self.accounts.configured(target)
+            chosen = choose_model(target, value)
+            # Credential refresh may have awaited network I/O; recheck freeze before saving settings.
+            await self._account_write_guard()
+            await self.accounts.save_transport(chosen, self._account_write_guard)
+            persisted = chosen.model_copy(update={"api_key": SecretStr("")})
+            self.profile.save_provider(persisted, credential_revision=self.accounts.read().revision)
             return self._published_model()
 
     async def replace_credential(self, value: CredentialUpdate) -> ModelSettings:
@@ -820,10 +971,10 @@ class Host:
             if await self.store.active_update():
                 raise BackendError("update_frozen", status=503)
             self.profile.reload_provider()
-            if self.profile.config.credential_revision != value.expected_revision:
-                raise BackendError("credential_conflict")
-            chosen = self.profile.config.provider.model_copy(update={"api_key": SecretStr(key)})
-            self.profile.save_provider(chosen, credential_revision=self.profile.config.credential_revision + 1)
+            saved = await self.accounts.set(self.profile.config.provider.provider,
+                ApiKeyCredential(key=SecretStr(key)) if key else None, value.expected_revision, self._account_write_guard)
+            chosen = self.profile.config.provider.model_copy(update={"api_key": SecretStr(""), "auth_type": "api_key"})
+            self.profile.save_provider(chosen, credential_revision=saved.revision)
             return self._published_model()
 
     async def _require_workspace(self, name: str) -> None:
@@ -846,8 +997,8 @@ class Host:
             raise BackendError("invalid_session_id", status=400)
         return await self.store.create_session(chosen or secrets.token_hex(16), value)
 
-    def _provider_secret(self) -> str:
-        return self.profile.config.provider.api_key.get_secret_value()
+    def _provider_secret(self) -> tuple[str, ...]:
+        return self.accounts.secrets()
 
     async def _open_transcript(self, session: str) -> list[tuple[str, str, str]]:
         path = session_database(self.profile.path, session)
@@ -892,13 +1043,13 @@ class Host:
         secret = self._provider_secret()
         if not secret:
             return
-        if secret in value.name:
+        if contains_secret(value.name, secret):
             raise BackendError("artifact_secret")
         try:
             raw = base64.b64decode(value.data_base64, validate=True)
         except (binascii.Error, ValueError):
             return
-        if secret.encode() in raw:
+        if any(item.encode() in raw for item in secret):
             raise BackendError("artifact_secret")
 
     async def put_artifact(self, session: str, value: ArtifactWrite) -> ArtifactView:
@@ -1192,7 +1343,8 @@ class Host:
         provider = self.profile.config.provider
         if provider.provider != "deepseek":
             return ""
-        return provider.api_key.get_secret_value()
+        credential = self.accounts.read().credentials.get("deepseek")
+        return credential.key.get_secret_value() if isinstance(credential, ApiKeyCredential) else ""
 
     async def save_web_policy(self, session: str, value: WebPolicy) -> WebPolicy:
         saved = value.model_copy(update={"base_url": validate_base_url(value.base_url)})
@@ -1220,7 +1372,7 @@ class Host:
                 question = await self._web_question(session)
         return await self._with_session(
             session, lambda store: execute_web_call(
-                store, value, key=self._web_key(), question=question, client=self.web_client))
+                store, value, key=self._web_key(), question=question, client=self.web_client, secrets=self._provider_secret()))
 
     async def _computer_enter(self, session: str) -> bool:
         async with self.computer_mu:
@@ -1508,7 +1660,9 @@ class Host:
         if existing is not None:
             return existing
         try:
-            summary = await summarize(self.profile.config.provider, messages)
+            configured = await self.accounts.configured(self.profile.config.provider)
+            await self._account_write_guard()
+            summary = await summarize(configured, messages)
         except BackendError:
             try:
                 await self._with_session(session, lambda store: store.release_compaction(value.compaction_id))
@@ -2081,6 +2235,8 @@ class Host:
 
     async def close(self) -> None:
         self.closing = True
+        await asyncio.gather(*(self.cancel_oauth(key) for key, login in self.oauth_logins.items()
+                               if login.view.phase == "pending"), return_exceptions=True)
         self.stop.set()
         if self.background:
             self.background.cancel()
@@ -2379,6 +2535,30 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/models")
     async def update_model(value: UpdateModelSettings) -> ModelSettings:
         return await owner.update_model(value)
+
+    @app.get("/api/v1/accounts")
+    async def accounts() -> AccountsView:
+        return owner.account_list()
+
+    @app.post("/api/v1/accounts/oauth")
+    async def start_oauth(value: OAuthStart) -> OAuthView:
+        return await owner.start_oauth(value)
+
+    @app.get("/api/v1/accounts/oauth/{login_id}")
+    async def oauth_view(login_id: str) -> OAuthView:
+        return owner.oauth_view(login_id)
+
+    @app.post("/api/v1/accounts/oauth/{login_id}/input")
+    async def oauth_input(login_id: str, value: OAuthInput) -> OAuthView:
+        return await owner.oauth_input(login_id, value)
+
+    @app.delete("/api/v1/accounts/oauth/{login_id}")
+    async def cancel_oauth(login_id: str) -> OAuthView:
+        return await owner.cancel_oauth(login_id)
+
+    @app.post("/api/v1/accounts/{provider}")
+    async def update_account(provider: str, value: CredentialUpdate) -> AccountsView:
+        return await owner.update_account(provider, value)
 
     @app.post("/api/v1/models/credential")
     async def replace_credential(value: CredentialUpdate) -> ModelSettings:

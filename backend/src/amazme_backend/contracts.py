@@ -12,25 +12,35 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+ProviderApi = Literal["openai-completions", "openai-responses", "openai-codex-responses",
+                      "anthropic-messages", "google-generative-ai"]
+
+
 class ProviderConfig(Model):
-    provider: Literal["deepseek", "faux"]
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-flash"
     api_key: SecretStr = SecretStr("")
+    api: ProviderApi = "openai-completions"
+    auth_type: Literal["api_key", "oauth"] = "api_key"
     max_tokens: int = Field(default=2048, ge=32, le=8192)
     proxy: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
 
 
 class CatalogModel(Model):
-    provider: Literal["deepseek", "faux"]
+    api: ProviderApi = "openai-completions"
+    base_url: str = ""
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     model: str
     label: str
     endpoint_editable: bool
 
 
 class ModelSettings(Model):
-    provider: Literal["deepseek", "faux"]
+    api: ProviderApi = "openai-completions"
+    auth_type: Literal["api_key", "oauth"] = "api_key"
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     model: str
     base_url: str
     max_tokens: int
@@ -56,8 +66,9 @@ class SessionModel(Model):
 class UpdateModelSettings(Model):
     """Model selection never carries an API key. Credential changes use CredentialUpdate."""
 
-    provider: Literal["deepseek", "faux"]
-    model: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
+    api: ProviderApi | None = None
+    model: str = Field(min_length=1, max_length=128, pattern=r"^[\w./:@+-]+$")
     base_url: str = Field(default="", max_length=300)
     max_tokens: int = Field(default=2048, ge=32, le=8192)
     proxy: str = Field(default="", max_length=300)

@@ -146,15 +146,7 @@ class Profile:
 
     def save_provider(self, provider: ProviderConfig, *, credential_revision: int | None = None) -> None:
         raw = json.loads((self.path / "config.json").read_text())
-        raw["provider"] = {
-            "provider": provider.provider,
-            "base_url": provider.base_url,
-            "model": provider.model,
-            "api_key": provider.api_key.get_secret_value(),
-            "max_tokens": provider.max_tokens,
-            "proxy": provider.proxy,
-            "headers": provider.headers,
-        }
+        raw["provider"] = {**provider.model_dump(mode="json"), "api_key": provider.api_key.get_secret_value()}
         if credential_revision is not None:
             raw["credential_revision"] = credential_revision
         private_write(self.path / "config.json", json.dumps(raw))

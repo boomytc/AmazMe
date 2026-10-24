@@ -10,6 +10,7 @@ import httpx
 import uvicorn
 from fastapi import FastAPI
 
+from .accounts import AccountStore, ApiKeyCredential
 from .common import Peer, Profile, build_id, lock, unix_listener
 from .contracts import (
     ApprovalEnvelope,
@@ -327,21 +328,22 @@ class Worker:
         query = next((item.content for item in reversed(messages) if item.role == "user"), "")
         workspace = session_workspace(self.profile.path, self.session)
         self.profile.reload_provider()
-        secret = self.profile.config.provider.api_key.get_secret_value()
+        secret = AccountStore(self.profile.path).secrets()
         memories = [item for item in relevant_memories(self.profile.path, workspace, query)
                     if not contains_secret(item.text, secret)]
         prepared = inject_memories(messages, memories)
         if self.storage_ready:
             summary = await self.store.active_summary()
             self.profile.reload_provider()
-            if contains_secret(summary, self.profile.config.provider.api_key.get_secret_value()):
+            if contains_secret(summary, AccountStore(self.profile.path).secrets()):
                 prepared = [item for item in prepared if item.content != summary]
         return prepared
 
     async def _retrieve_web(self, action: WebRetrieval) -> WebReturned:
         self._use_current_provider()
         live = self.store.config
-        key = live.api_key.get_secret_value() if live.provider == "deepseek" else ""
+        credential = AccountStore(self.profile.path).read().credentials.get("deepseek")
+        key = credential.key.get_secret_value() if live.provider == "deepseek" and isinstance(credential, ApiKeyCredential) else ""
         if action.call.name == "web_search":
             args = WebSearch.model_validate_json(action.call.arguments)
             value = WebCallRequest(call_id=action.step_id, kind="search", query=args.query, count=args.count)
@@ -355,7 +357,8 @@ class Worker:
                          if item.role == "user" and item.content.strip()), "")
         try:
             view = await execute_web_call(
-                self.store, value, key=key, question=question, client=self.web_client)
+                self.store, value, key=key, question=question, client=self.web_client,
+                secrets=AccountStore(self.profile.path).secrets())
         except BackendError as exc:
             if exc.code in {"web_disabled", "web_credential_missing"}:
                 return WebReturned(action, "refused", exc.code)
@@ -467,14 +470,9 @@ class Worker:
             # A queued workflow check is not this turn's typed prompt. Leave that prompt intact.
             check = await self.store.workflow_check_text(action.request_id) if self.storage_ready else ""
             self.profile.reload_provider()
-            live = self.profile.config.provider
-            if contains_secret(check, live.api_key.get_secret_value()):
+            if contains_secret(check, AccountStore(self.profile.path).secrets()):
                 raise BackendError("workflow_secret")
-            config = action.config.model_copy(update={
-                "api_key": live.api_key, "proxy": live.proxy, "headers": dict(live.headers),
-            })
-            if config.provider != "faux" and not config.api_key.get_secret_value():
-                raise BackendError("provider_not_configured")
+            config = await AccountStore(self.profile.path).configured(action.config)
             async for item in stream(config, messages, offers):
                 if isinstance(item, Completion):
                     completion = item

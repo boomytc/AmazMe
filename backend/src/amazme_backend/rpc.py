@@ -10,6 +10,7 @@ from typing import Literal, Protocol, cast
 
 from pydantic import Field, JsonValue, ValidationError
 
+from .accounts import AccountsView
 from .contracts import (
     ApprovalDecision,
     Attachment,
@@ -18,6 +19,7 @@ from .contracts import (
     CheckpointCreate,
     CheckpointView,
     CreateSession,
+    CredentialUpdate,
     McpCall,
     McpCallRequest,
     McpDecision,
@@ -25,6 +27,8 @@ from .contracts import (
     McpState,
     McpView,
     Model,
+    ModelCatalog,
+    ModelSettings,
     Receipt,
     Session,
     SessionList,
@@ -35,11 +39,19 @@ from .contracts import (
     TerminalSize,
     TerminalType,
     TerminalView,
+    UpdateModelSettings,
 )
+from .oauth import OAuthInput, OAuthStart, OAuthView
 from .workspace_files import FileContent
 
 
 class RpcParams(Model):
+    provider: str = ""
+    login_id: str = ""
+    model_settings: UpdateModelSettings | None = None
+    credential: CredentialUpdate | None = None
+    oauth: OAuthStart | None = None
+    authorization: OAuthInput | None = None
     session_id: str = ""
     workspace: str = ""
     attachment_id: str = ""
@@ -88,6 +100,22 @@ def rpc_error(identity: str, code: str) -> dict[str, object]:
 
 
 class RpcHost(Protocol):
+    def model_catalog(self) -> ModelCatalog: ...
+
+    async def update_model(self, value: UpdateModelSettings) -> ModelSettings: ...
+
+    def account_list(self) -> AccountsView: ...
+
+    async def update_account(self, provider: str, value: CredentialUpdate) -> AccountsView: ...
+
+    async def start_oauth(self, value: OAuthStart) -> OAuthView: ...
+
+    def oauth_view(self, login_id: str) -> OAuthView: ...
+
+    async def oauth_input(self, login_id: str, value: OAuthInput) -> OAuthView: ...
+
+    async def cancel_oauth(self, login_id: str) -> OAuthView: ...
+
     async def sessions(self) -> SessionList: ...
 
     async def create_session(self, value: CreateSession) -> Session: ...
@@ -162,6 +190,30 @@ def _decision(params: RpcParams) -> bool:
 
 
 async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
+    if method == "model.list":
+        return owner.model_catalog()
+    if method == "model.update":
+        if params.model_settings is None:
+            raise BackendError("model_settings_required")
+        return await owner.update_model(params.model_settings)
+    if method == "account.list":
+        return owner.account_list()
+    if method == "account.update":
+        if not params.provider or params.credential is None:
+            raise BackendError("credential_required")
+        return await owner.update_account(params.provider, params.credential)
+    if method == "oauth.start":
+        if params.oauth is None:
+            raise BackendError("oauth_request_required")
+        return await owner.start_oauth(params.oauth)
+    if method == "oauth.lookup":
+        return owner.oauth_view(params.login_id)
+    if method == "oauth.input":
+        if params.authorization is None:
+            raise BackendError("oauth_input_required")
+        return await owner.oauth_input(params.login_id, params.authorization)
+    if method == "oauth.cancel":
+        return await owner.cancel_oauth(params.login_id)
     if method == "session.create":
         _require_workspace(params)
         return await owner.create_session(CreateSession(title=params.title or "新会话", workspace=params.workspace))
