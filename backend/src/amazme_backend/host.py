@@ -1291,6 +1291,7 @@ class Host:
         source = next(item for item in (await self.sessions()).sessions if item.session_id == parent)
         if source.archived:
             raise BackendError("session_archived")
+        await self._require_workspace(source.workspace)
         title = value.title.strip() or f"分支：{source.title}"
         child_id = secrets.token_hex(16)
         created = await self.store.create_branch(child_id, parent, value.request_id, title[:100])

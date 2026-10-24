@@ -225,7 +225,7 @@ P2 的代码和协议门槛通过后，可以继续没有被环境挡住的 P3�
 | 被替换的安装文件拒绝 ready | 启动 | 已通过 | `bundle.replaced_file` | 只改克隆 | 无 |
 | 存储提交窗口崩溃 | worker | 已通过 | `storage.commit_crash` | 矩阵。SQLite FULL 另有单测，不等于磁盘写满 | 无 |
 | Linux shell、读文件、写文件 | faux/真实模型工具，监督器执行 | 部分通过 | P1 `verify_runtime.py` / `verify_web.py`；P2 矩阵里的 shell 后代 | A/B 的 faux 路径 | 符号链接、硬链接、并发写和多工作区未做 |
-| 从已完成的根任务分支，上下文此后隔离 | `POST /api/v1/sessions/{id}/branches`；会话里的「从此处分支」 | 部分通过 | `backend/tests/test_session_branch.py` | `0b73c8262a17982893326e07ca9a4ad15bb2e7de` 的单测和 happy-dom。不在 A/B 包内 | 还没用打包后的真实 Chrome 点这次分支。父会话历史在子会话继续后保持不变，由该测试覆盖 |
+| 从已完成的根任务分支，上下文此后隔离 | `POST /api/v1/sessions/{id}/branches`；会话里的「从此处分支」 | 部分通过 | `backend/tests/test_session_branch.py` | `0b73c8262a17982893326e07ca9a4ad15bb2e7de` 的单测和 happy-dom。不在 A/B 包内 | 还没用打包后的真实 Chrome 点这次分支。父会话历史在子会话继续后保持不变，由该测试覆盖。工作区已取消时不分出新会话。复制失败时不留下项目关联，父会话和原文保留 |
 
 矩阵命令：
 

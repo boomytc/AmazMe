@@ -27,6 +27,7 @@ from amazme_backend.contracts import (
     Stream,
     Submit,
     ToolResult,
+    WorkspaceGrantRequest,
 )
 from amazme_backend.host import Host, application
 from amazme_backend.host_store import HostStore
@@ -222,6 +223,51 @@ async def test_frozen_update_rejects_a_branch(owner: Host) -> None:
         assert (await parent.get("r1")).status == "succeeded"
     finally:
         await parent.db.close()
+
+
+async def test_failed_branch_keeps_the_parent_project_and_refuses_a_missing_workspace(
+        owner: Host, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    parent = await parent_store(owner)
+    grant = tmp_path.parent / f"branch-{tmp_path.name}"
+    grant.mkdir()
+    docs = None
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+        await owner.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
+        created = await owner.create_session(CreateSession(title="授予", workspace="docs"))
+        path = session_database(owner.profile.path, created.session_id)
+        path.parent.mkdir(parents=True, mode=0o700)
+        docs = SessionStore(path, created.session_id, build=owner.build, approval_policy="auto", instance="docs-worker")
+        await docs.initialize()
+        await docs.fence(fence_for(owner.build))
+        await finish(docs, "docs", "r1", owner.build)
+        await owner.remove_workspace("docs")
+        with pytest.raises(BackendError, match="workspace_not_found"):
+            await owner.branch_session(created.session_id, BranchSession(request_id="r1"))
+        assert {item.session_id for item in (await owner.sessions()).sessions} == {PARENT, created.session_id}
+
+        project = "b" * 32
+        await owner.store.save_project(project, "项目")
+        await owner.store.transaction(lambda db: db.execute(
+            "INSERT INTO project_sessions(session,project) VALUES(?,?)", (PARENT, project)))
+
+        async def fail(self: SessionStore, parent_path: Path, request_id: str) -> None:
+            raise BackendError("storage_failure")
+
+        monkeypatch.setattr(SessionStore, "import_settled_root", fail)
+        with pytest.raises(BackendError, match="storage_failure"):
+            await owner.branch_session(PARENT, BranchSession(request_id="r1"))
+        assert {item.session_id for item in (await owner.sessions()).sessions} == {PARENT, created.session_id}
+        links = await owner.store.db.call(lambda db: [
+            str(row[0]) for row in db.execute("SELECT session FROM project_sessions")])
+        assert links == [PARENT]
+        assert {item.name for item in (owner.profile.path / "sessions").iterdir()} == {PARENT, created.session_id}
+        assert "alpha" in "".join(await message_payloads(parent))
+    finally:
+        if docs is not None:
+            await docs.db.close()
+        await parent.db.close()
+        shutil.rmtree(grant, ignore_errors=True)
 
 
 async def test_branch_columns_keep_existing_session_rows(tmp_path: Path, lease: ProcessLease) -> None:

@@ -459,6 +459,7 @@ class HostStore:
                 return
             if not str(row[0]) or db.execute("SELECT 1 FROM deliveries WHERE session=?", (session_id,)).fetchone():
                 raise BackendError("branch_discard_refused")
+            db.execute("DELETE FROM project_sessions WHERE session=?", (session_id,))
             db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
         await self.transaction(operation)
 

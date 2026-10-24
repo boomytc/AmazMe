@@ -24,7 +24,8 @@
 | 供应商密钥更换 | `1f02bba43651453df31fb1fdf3fad74d472eb5e8` | `backend/tests/test_model_catalog.py`：代际冲突和更新冻结不覆盖已保存密钥；清除后不创建供应商连接；页面更换后清空输入 |
 | 导入前核对工作区 | `8b76f8e4954643f381c6517e673a0bfb8c07a129` | `backend/tests/test_management.py`：缺工作区或项目时不写入；授予本机目录后两个会话和项目一起导入 |
 | 会话文件工具目录 | `896e3822b4edf6d40d5845b4485e39eeb7a0a379` | `backend/tests/test_workspaces.py` 与 `backend/tests/test_tool_checkpoints.py`：相对路径写入授予目录；显式 grant/名称 仍指向该目录；准备摘要对上该目录里的原文 |
-| 导入反馈必须指向会话 | 包含本文件的提交 | `backend/tests/test_management.py`：反馈指向未知会话时不写入项目、会话、显示名或反馈；同一份导出里的会话可以带上反馈 |
+| 导入反馈必须指向会话 | `f09883c506864f67f84fe980bae054bc33e91d5c` | `backend/tests/test_management.py`：反馈指向未知会话时不写入项目、会话、显示名或反馈；同一份导出里的会话可以带上反馈 |
+| 分支失败不留项目关联 | 包含本文件的提交 | `backend/tests/test_session_branch.py`：工作区已取消时不分出新会话；复制失败后项目关联仍只指向父会话 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -47,6 +48,7 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 导入前核对工作区的源码 build_id 为 `915ffb82fdc4b7393f81d82de658692e18bf1b8e21e6143fa89b22e445ca989b`。缺工作区时不写入；授予本机目录后两个会话都导入。
 会话文件工具的源码 build_id 为 `361083b427fb478b8323d36360639f0862057b4fb2d5ada15c7a85771863224b`。相对路径写入授予目录，显式 grant 路径仍指向该目录，准备摘要对上该目录里的原文。
 导入反馈核对的源码 build_id 为 `3952bd14fe648dc0621ea0d9b091327e85a1c89ca36c176d2a39e9490d629669`。反馈指向未知会话时不写入；同一份导出里的会话可以带上反馈。
+分支失败清理的源码 build_id 为 `baa900e81cb64fd18f962a4f41ef51b67cfbcc756928f9f5b4ebd27c4b7cacc6`。工作区已取消时不分出新会话；复制失败后项目关联仍只指向父会话。
 
 资源普查命令只报告。用户主目录里的常驻服务保持 observed。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
 下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
@@ -57,7 +59,7 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
    这些实验仍要按同一契约补证。先追踪已有实现，不另建一套业务运行时。
 2. **按真实需求补齐产品功能。** 多工作区已在本机目录上核对：会话 shell、终端和没有 grant/ 前缀的文件工具进入授予目录，页面显示绝对路径，取消授予不删文件。显式 grant/名称 仍指向那个目录。
    `amazme-backend client decide` 已核对显式批准和拒绝。`client submit` 仍只等待终态。
-   供应商密钥可以更换和清除。OAuth 仍未做。导入会先核对每个会话的工作区，以及反馈指向的会话。缺任何一项时不写入。
+   供应商密钥可以更换和清除。OAuth 仍未做。导入会先核对每个会话的工作区，以及反馈指向的会话。缺任何一项时不写入。分支在工作区已取消时拒绝，复制失败不留下项目关联。
    真实 SSH、插件、Codemode、computer-use、记忆、工作流、定时任务、网页工具及分享仍要逐项区分。
    需要 TCC、真实 SSH 或真实供应商的功能取得对应证据，不能用模拟结果代替。MCP 动态目录刷新、HTTP/OAuth、媒体与更多服务兼容性独立验收。
 3. **本机安装与交付。** 只构建一份当前包；更新实验最多明确 A/B 两份。验证独立安装、含空格路径、受控 PATH、
