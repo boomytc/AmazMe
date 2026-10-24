@@ -886,8 +886,10 @@ function startClient() {
     if ($("terminal").open && selected && identity) void loadTerminals().catch(error);
     else clearTimeout(terminalPoll);
   });
+  // Empty workspace tells the host to use the session directory. The file panel must not retarget it.
+  const sessionOwnedWorkspace = "";
   $("terminal-new").onclick = async () => {
-    const connection = current, workspace = fileWorkspace;
+    const connection = current, workspace = sessionOwnedWorkspace;
     if (!connection || health?.state !== "ready" || $("terminal-new").disabled) return;
     const key = terminalKey(connection, `open:${workspace}`);
     let id = sessionStorage.getItem(key);
@@ -1037,8 +1039,8 @@ function startClient() {
     if (!connection || health?.state !== "ready") return;
     const key = mcpKey(connection, "opening"), command = $("mcp-command").value;
     let pending = JSON.parse(sessionStorage.getItem(key) || "null");
-    if (pending && (pending.command !== command || pending.workspace !== fileWorkspace)) { error(new Error("先用原命令核对连接结果，避免重复启动服务。")); return; }
-    if (!pending) { pending = {server_id:crypto.randomUUID().replaceAll("-", ""), command, workspace:fileWorkspace}; sessionStorage.setItem(key, JSON.stringify(pending)); }
+    if (pending && (pending.command !== command || pending.workspace !== sessionOwnedWorkspace)) { error(new Error("先用原命令核对连接结果，避免重复启动服务。")); return; }
+    if (!pending) { pending = {server_id:crypto.randomUUID().replaceAll("-", ""), command, workspace:sessionOwnedWorkspace}; sessionStorage.setItem(key, JSON.stringify(pending)); }
     try {
       const server = await api(`/api/v1/sessions/${connection.session}/mcp`, "POST", pending, connection);
       sessionStorage.removeItem(key);

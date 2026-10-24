@@ -261,9 +261,10 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
         Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
         const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const seen = [];
+        const seen = [], posted = [];
         globalThis.fetch = async (path, options={})=>{
           const method = options.method || 'GET';
+          if (method !== 'GET') posted.push({path, body: options.body ? JSON.parse(options.body) : {}});
           if(path==='/api/v1/bootstrap') return response(identity);
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
@@ -272,6 +273,17 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
           if(path==='/api/v1/workspaces' && method==='GET') return response({workspaces:[
             {name:'primary',host_path:'/var/primary-work',primary:true},
             {name:'docs',host_path:'/var/docs-work',primary:false}]});
+          if(path.endsWith('/read')) return response({terminal_id:'t', cols:80, rows:24, queued:0, written:0, exit_code:null, output:'', phase:'running'});
+          if(path.endsWith('/terminals') && method==='GET') return response({terminals:[]});
+          if(path.endsWith('/terminals') && method==='POST') {
+            const body = posted.at(-1).body;
+            return response({terminal_id:body.terminal_id, workspace:body.workspace, cols:80, rows:24, queued:0, written:0, exit_code:null, output:'', phase:'running'});
+          }
+          if(path.endsWith('/mcp') && method==='GET') return response({servers:[], calls:[]});
+          if(path.endsWith('/mcp') && method==='POST') {
+            const body = posted.at(-1).body;
+            return response({server_id:body.server_id, command:body.command, workspace:body.workspace, phase:'ready', protocol_version:'2025-11-25', exit_code:null, tools:[], clean:false});
+          }
           if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) {
             seen.push(path);
             if(path.includes('grant%2Fdocs') || path.includes('grant/docs')) return response({path:'grant/docs',absolute_path:'/var/docs-work',entries:[{name:'note.txt',kind:'file',size:4}],truncated:false});
@@ -297,6 +309,13 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
         [...$('sessions').children].find(node=>node.textContent==='工作区').click();
         await until(()=>$('session-workspace').textContent==='/var/primary-work');
         assert.equal($('workspace-location').textContent, '/var/docs-work');
+        $('terminal-new').click();
+        await until(()=>posted.some(item=>item.path.endsWith('/terminals')));
+        $('mcp-command').value = 'python3 demo.py';
+        $('mcp-form').requestSubmit();
+        await until(()=>posted.some(item=>item.path.endsWith('/mcp')));
+        assert.equal(posted.find(item=>item.path.endsWith('/terminals')).body.workspace, '');
+        assert.equal(posted.find(item=>item.path.endsWith('/mcp')).body.workspace, '');
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''
