@@ -136,9 +136,11 @@ from .contracts import (
     SubmitRemote,
     SupervisorHealth,
     TerminalInput,
+    TerminalList,
     TerminalOpen,
     TerminalQuery,
     TerminalResize,
+    TerminalSession,
     TerminalSize,
     TerminalType,
     TerminalView,
@@ -347,6 +349,8 @@ class Host:
         workers = {worker.worker_id: worker for worker in health.workers}
         if health.blocked or health.session_errors or health.identity.state == "blocked":
             raise BackendError("update_health_blocked", status=503)
+        if any(not terminal.clean for terminal in health.terminals):
+            raise BackendError("execution_cleanup_pending", status=503)
         for epoch in health.epochs:
             cleanup = epoch.cleanup
             worker = workers.get(epoch.worker_id)
@@ -638,6 +642,15 @@ class Host:
     async def read_terminal(self, session_id: str, terminal_id: str) -> TerminalView:
         self._admit()
         return await self.supervisor.call("POST", "/pty/read", TerminalView, self._terminal_fence(session_id, terminal_id))
+
+    async def list_terminals(self, session_id: str) -> TerminalList:
+        self._admit()
+        return await self.supervisor.call("POST", "/pty/list", TerminalList, TerminalSession(
+            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id))
+
+    async def close_terminal(self, session_id: str, terminal_id: str) -> TerminalView:
+        self._admit()
+        return await self.supervisor.call("POST", "/pty/close", TerminalView, self._terminal_fence(session_id, terminal_id))
 
     def _mcp_fence(self, session_id: str) -> dict[str, object]:
         return {"host_epoch": self.fence.host_epoch, "build_id": self.build, "session_id": session_id}
@@ -2094,6 +2107,14 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session_id}/terminals")
     async def open_terminal(session_id: str, value: TerminalOpen) -> TerminalView:
         return await owner.open_terminal(session_id, value)
+
+    @app.get("/api/v1/sessions/{session_id}/terminals")
+    async def list_terminals(session_id: str) -> TerminalList:
+        return await owner.list_terminals(session_id)
+
+    @app.post("/api/v1/sessions/{session_id}/terminals/{terminal_id}/close")
+    async def close_terminal(session_id: str, terminal_id: str) -> TerminalView:
+        return await owner.close_terminal(session_id, terminal_id)
 
     @app.post("/api/v1/sessions/{session_id}/terminals/{terminal_id}/input")
     async def type_terminal(session_id: str, terminal_id: str, value: TerminalType) -> TerminalView:

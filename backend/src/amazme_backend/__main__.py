@@ -15,8 +15,14 @@ from .processes import retain_inherited
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "execute":
-        from .native_execution import runner
+    if len(sys.argv) > 1 and sys.argv[1] == "pty-gate":
+        from .pty_gate import main as pty_main
+        raise SystemExit(pty_main())
+    if len(sys.argv) > 1 and sys.argv[1] in {"execute", "terminal-runner"}:
+        if sys.argv[1] == "execute":
+            from .native_execution import runner
+        else:
+            from .native_terminal import runner
         parser = argparse.ArgumentParser()
         parser.add_argument("--profile", type=Path, required=True)
         parser.add_argument("--instance", required=True)

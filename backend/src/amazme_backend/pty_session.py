@@ -1,7 +1,4 @@
-"""PTY window codec and the container spec the supervisor launches.
-
-The codec speaks to pty_gate. It does not open a host PTY or a host shell.
-"""
+"""Bounded PTY protocol client owned by the supervisor."""
 
 from __future__ import annotations
 
@@ -26,8 +23,10 @@ class PtyClient:
         self.written = 0
         self.queued = 0
         self.output = bytearray()
+        self.received = 0
         self.exit_code: int | None = None
         self.pending_output = False
+        self.closed = False
 
     def permit(self, command: str, uid: int, gid: int, cols: int, rows: int, cwd: str = "") -> None:
         payload: dict[str, object] = {"command": command, "uid": uid, "gid": gid, "cols": cols, "rows": rows}
@@ -67,7 +66,10 @@ class PtyClient:
         packet = frame(kind, payload)
         view = memoryview(packet)
         offset = 0
+        deadline = time.monotonic() + 2
         while offset < len(view):
+            if time.monotonic() >= deadline:
+                raise BackendError("pty_channel_backpressure", status=503)
             try:
                 count = self.sock.send(view[offset:])
             except BlockingIOError:
@@ -85,11 +87,14 @@ class PtyClient:
             except BlockingIOError:
                 break
             if not part:
+                self.closed = True
                 break
             self.buf.extend(part)
         while len(self.buf) >= 5:
             length = int.from_bytes(self.buf[1:5], "big")
-            if length > WINDOW or len(self.buf) < 5 + length:
+            if length > WINDOW:
+                raise BackendError("pty_frame_invalid", status=503)
+            if len(self.buf) < 5 + length:
                 return
             kind = self.buf[0]
             payload = bytes(self.buf[5:5 + length])
@@ -100,7 +105,9 @@ class PtyClient:
         if kind == CREDIT and len(payload) == 4:
             self.credit = int.from_bytes(payload, "big")
         elif kind == OUTPUT:
+            self.received += len(payload)
             self.output.extend(payload)
+            del self.output[:-WINDOW]
         elif kind == WROTE and len(payload) == 12:
             self.written = int.from_bytes(payload[:8], "big")
             self.queued = int.from_bytes(payload[8:], "big")

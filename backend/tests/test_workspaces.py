@@ -1,11 +1,8 @@
 """Extra workspace grants share one host and guest path. HOME is not mounted."""
 
 import json
-import os
 import shutil
-import socket
 import subprocess
-import sys
 from pathlib import Path
 
 import httpx
@@ -14,8 +11,6 @@ import pytest
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import HostFence, ProcessLease
 from amazme_backend.host import Host, application
-from amazme_backend.pty_gate import WINDOW
-from amazme_backend.pty_session import PtyClient
 
 SESSION = "b" * 32
 
@@ -102,22 +97,13 @@ async def test_grant_rejects_home_symlink_profile_and_socket(tmp_path: Path) -> 
         await host.store.db.close()
 
 
-def test_terminal_cwd_rejects_a_host_path() -> None:
-    gate = (Path(__file__).parents[1] / "src/amazme_backend/pty_gate.py").read_text()
-    left, right = socket.socketpair()
-    process = subprocess.Popen(
-        [sys.executable, "-I", "-c", gate],
-        stdin=right.fileno(), stdout=right.fileno(), stderr=subprocess.PIPE, pass_fds=(right.fileno(),))
-    right.close()
-    client = PtyClient(left)
-    try:
-        with pytest.raises(Exception):
-            client.permit("pwd", os.getuid(), os.getgid(), 80, 24, "/tmp")
-        assert WINDOW
-    finally:
-        if process.poll() is None:
-            process.kill()
-        process.wait(timeout=5)
+def test_terminal_gate_uses_native_cwd_and_rejects_relative_path() -> None:
+    from amazme_backend.pty_gate import _allowed_cwd
+    assert _allowed_cwd("/tmp") == "/tmp"
+    with pytest.raises(SystemExit):
+        _allowed_cwd("relative/path")
+    with pytest.raises(SystemExit):
+        _allowed_cwd("/tmp/invalid\0path")
 
 
 def test_browser_switches_to_the_granted_absolute_path() -> None:

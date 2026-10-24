@@ -68,7 +68,7 @@ def tool_environment() -> dict[str, str]:
     return env
 
 
-def _stop(tracked: list[ProcessIdentity]) -> bool:
+def stop_tracked(tracked: list[ProcessIdentity]) -> bool:
     for sig, delay in ((signal.SIGTERM, 0.4), (signal.SIGKILL, 1.5)):
         waiting: list[psutil.Process] = []
         for identity in reversed(tracked):
@@ -82,10 +82,12 @@ def _stop(tracked: list[ProcessIdentity]) -> bool:
         # Only subprocess.Popen may reap our direct child; psutil.wait_procs would consume its exit code.
         deadline = time.monotonic() + delay
         while waiting and time.monotonic() < deadline:
-            try:
-                waiting = [p for p in waiting if p.is_running() and p.status() != psutil.STATUS_ZOMBIE]
-            except psutil.NoSuchProcess:
-                continue
+            remaining: list[psutil.Process] = []
+            for process in waiting:
+                with contextlib.suppress(psutil.NoSuchProcess):
+                    if process.is_running() and process.status() != psutil.STATUS_ZOMBIE:
+                        remaining.append(process)
+            waiting = remaining
             if waiting:
                 time.sleep(0.02)
     try:
@@ -163,7 +165,7 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
                 if reason:
                     break
             report.tracked = list(tracked.values())
-            report.stopped = _stop(report.tracked)
+            report.stopped = stop_tracked(report.tracked)
             try:
                 code = child.wait(timeout=2)
             except subprocess.TimeoutExpired:
@@ -185,7 +187,7 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
                     stop_reason=reason)
     except BaseException as error:
         report.reason = error.code if isinstance(error, BackendError) else type(error).__name__
-        report.stopped = _stop(list(tracked.values()))
+        report.stopped = stop_tracked(list(tracked.values()))
         if isinstance(error, BackendError):
             report.result = ToolResult(call_id=permit.call_id, exit_code=1, stdout="", stderr=error.code)
     finally:

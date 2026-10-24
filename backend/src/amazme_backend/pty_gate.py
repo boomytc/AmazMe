@@ -1,9 +1,4 @@
-"""Container PID 1 for one interactive PTY.
-
-The product starts this only as the container command. It never opens a host shell.
-Input that does not fit the window stays in the socket buffer. Output stops until the
-client grants credit. An exit code is sent only after waitpid.
-"""
+"""Native PTY protocol gate. User code starts only after the supervisor permit."""
 
 from __future__ import annotations
 
@@ -11,12 +6,15 @@ import errno
 import fcntl
 import json
 import os
+import pwd
 import select
 import signal
 import socket
 import struct
 import sys
 import termios
+
+from .native_execution import tool_environment
 
 WINDOW = 32768
 PERMIT, INPUT, CREDIT, OUTPUT, WROTE, EXIT, RESIZE, OUT_CREDIT = range(1, 9)
@@ -47,19 +45,15 @@ def _send(kind: int, payload: bytes = b"") -> None:
 
 
 def _allowed_cwd(value: object) -> str:
-    if not isinstance(value, str) or not value or len(value) > 64 or ".." in value or "\0" in value:
+    if not isinstance(value, str) or not os.path.isabs(value) or len(value) > 4096 or "\0" in value:
         raise SystemExit(125)
-    if value == "/workspace":
-        return value
-    name = value.removeprefix("/grant/")
-    if value.startswith("/grant/") and name and "/" not in name and name != "." and name.isascii() and name.replace("-", "").isalnum() and name[0].isalpha() and name.islower():
-        return value
-    raise SystemExit(125)
+    return value
 
 
 def _child(slave: int, uid: int, gid: int, command: str, cwd: str) -> None:
     try:
         os.setsid()
+        fcntl.ioctl(slave, termios.TIOCSCTTY, 0)
         os.dup2(slave, 0)
         os.dup2(slave, 1)
         os.dup2(slave, 2)
@@ -70,22 +64,10 @@ def _child(slave: int, uid: int, gid: int, command: str, cwd: str) -> None:
             if not os.path.isdir(cwd):
                 os._exit(125)
             os.chdir(cwd)
-        elif os.path.isdir("/workspace"):
-            os.chdir("/workspace")
-        try:
-            os.setgroups([])
-        except PermissionError:
-            if os.getuid() != uid:
-                raise
-        try:
-            os.setgid(gid)
-            os.setuid(uid)
-        except PermissionError:
-            if os.getuid() != uid or os.getgid() != gid:
-                raise
-        os.execve("/bin/sh", ["sh", "-c", command], {
-            "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/tmp", "LANG": "C.UTF-8", "TERM": "xterm-256color",
-        })
+        if (uid, gid) != (os.getuid(), os.getgid()):
+            os._exit(125)
+        shell = pwd.getpwuid(uid).pw_shell or "/bin/sh"
+        os.execve(shell, [shell, "-c", command], {**tool_environment(), "TERM": "xterm-256color"})
     finally:
         os._exit(127)
 
@@ -149,6 +131,7 @@ def main() -> int:
             if len(queued) + len(payload) > WINDOW:
                 raise SystemExit(125)
             queued.extend(payload)
+            note_write()
         elif kind == RESIZE:
             if len(payload) != 4:
                 raise SystemExit(125)

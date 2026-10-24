@@ -1479,6 +1479,91 @@
             }
           }
         }
+      },
+      "get": {
+        "summary": "List Terminals",
+        "operationId": "list_terminals_api_v1_sessions__session_id__terminals_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalList"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/terminals/{terminal_id}/close": {
+      "post": {
+        "summary": "Close Terminal",
+        "operationId": "close_terminal_api_v1_sessions__session_id__terminals__terminal_id__close_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "terminal_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Terminal Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TerminalView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/sessions/{session_id}/terminals/{terminal_id}/input": {
@@ -7315,6 +7400,13 @@
       },
       "SupervisorHealth": {
         "properties": {
+          "terminals": {
+            "items": {
+              "$ref": "#/components/schemas/TerminalView"
+            },
+            "type": "array",
+            "title": "Terminals"
+          },
           "identity": {
             "$ref": "#/components/schemas/Identity"
           },
@@ -7388,6 +7480,23 @@
           "epochs"
         ],
         "title": "SupervisorHealth"
+      },
+      "TerminalList": {
+        "properties": {
+          "terminals": {
+            "items": {
+              "$ref": "#/components/schemas/TerminalView"
+            },
+            "type": "array",
+            "title": "Terminals"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "terminals"
+        ],
+        "title": "TerminalList"
       },
       "TerminalOpen": {
         "properties": {
@@ -7481,6 +7590,11 @@
             "type": "string",
             "title": "Terminal Id"
           },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "default": ""
+          },
           "cols": {
             "type": "integer",
             "title": "Cols"
@@ -7520,6 +7634,31 @@
               "unknown"
             ],
             "title": "Phase"
+          },
+          "clean": {
+            "type": "boolean",
+            "title": "Clean",
+            "default": false
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": "primary"
+          },
+          "input_id": {
+            "type": "string",
+            "title": "Input Id",
+            "default": ""
+          },
+          "input_status": {
+            "type": "string",
+            "enum": [
+              "",
+              "accepted",
+              "unknown"
+            ],
+            "title": "Input Status",
+            "default": ""
           }
         },
         "additionalProperties": false,

@@ -1,4 +1,4 @@
-"""The shipped PTY gate, driven through PtyClient and the supervisor. No host shell."""
+"""Native PTY gate, protocol and bounded client buffers."""
 
 import json
 import os
@@ -20,7 +20,7 @@ SOURCE = GATE.read_text()
 def start(command: str, cols: int = 80, rows: int = 24) -> tuple[subprocess.Popen[bytes], PtyClient]:
     gate, client = socket.socketpair()
     process = subprocess.Popen(
-        [sys.executable, "-I", "-c", SOURCE],
+        [sys.executable, "-m", "amazme_backend", "pty-gate"],
         stdin=gate.fileno(), stdout=gate.fileno(), stderr=subprocess.PIPE, pass_fds=(gate.fileno(),),
     )
     gate.close()
@@ -69,9 +69,11 @@ def test_output_stops_at_the_window_until_the_client_grants_credit() -> None:
         for _ in range(40):
             pty.grant(WINDOW)
             pty.pump(0.3)
-            if len(pty.output) >= 200000:
+            if pty.received >= 200000:
                 break
-        assert pty.output.count(ord("x")) == 200000
+        assert pty.received == 200000
+        assert len(pty.output) <= WINDOW
+        assert set(pty.output) == {ord("x")}
         pty.pump(1, lambda: pty.exit_code is not None)
         assert pty.exit_code == 0
     finally:
@@ -141,8 +143,12 @@ def test_browser_sends_terminal_input_and_resize() -> None:
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'工作区',archived:false}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1});
+          if(path.endsWith('/terminals') && method==='GET') {
+            const opened = seen.find(item=>item.path.endsWith('/terminals'));
+            return response({terminals:opened?[{terminal_id:opened.body.terminal_id,workspace:'primary',cols:80,rows:24,queued:0,written:0,exit_code:null,output:'',phase:'running'}]:[]});
+          }
           if(path.endsWith('/terminals') && method==='POST') return response({terminal_id:seen.at(-1).body.terminal_id,cols:80,rows:24,queued:0,written:0,exit_code:null,output:'',phase:'running'});
-          if(path.endsWith('/input')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'',phase:'running'});
+          if(path.endsWith('/input')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'',phase:'running',input_status:'accepted'});
           if(path.endsWith('/read')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'hi',phase:'running'});
           if(path.endsWith('/resize')) return response({terminal_id:'t',cols:100,rows:40,queued:0,written:3,exit_code:null,output:'hi',phase:'running'});
           if(path==='/api/v1/files') return response({path:'',entries:[],truncated:false});
@@ -157,7 +163,9 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         await until(()=>$('sessions').textContent.includes('工作区'));
         $('terminal').open = true;
         $('terminal').dispatchEvent(new window.Event('toggle'));
-        await until(()=>seen.some(item=>item.path.endsWith('/terminals')));
+        await until(()=>$('terminal-state').textContent.includes('尚无终端'));
+        $('terminal-new').click();
+        await until(()=>seen.some(item=>item.path.endsWith('/terminals')) && !$('terminal-new').disabled);
         $('terminal-input').value = 'hi';
         $('terminal-form').requestSubmit();
         await until(()=>$('terminal-output').textContent.includes('hi'));

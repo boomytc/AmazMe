@@ -6,8 +6,9 @@ AmazMe 正在按 [本机优先方案](../docs/python-backend-plan.md) 将 shell�
 本机 shell 具有当前用户权限，文件 API 的路径检查和命令审批不构成操作系统沙箱。
 不自动把后端令牌、模型密钥传给工具；继续保留签名、公证和系统权限要求。
 
-本机 shell、文件、审批、检查点已接通 Web。PTY/MCP 正在下一阶段接入，当前接口返回
-`native_interactive_pending`，不会启动替代执行环境。普通 shell 不用于声明长驻服务。
+本机 shell、文件、审批、检查点和 PTY 已接通 Web。MCP 正在下一阶段接入，当前接口返回
+`native_interactive_pending`。普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
+关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、
 `api_key`）；不要把该 JSON 放入仓库。`init` 复制配置后，原临时文件可删除。
@@ -31,6 +32,7 @@ backend/.venv/bin/pyright --project backend/pyproject.toml
 backend/.venv/bin/pytest backend/tests -q
 backend/.venv/bin/python backend/tools/verify_native.py
 backend/.venv/bin/python backend/tools/verify_client.py
+backend/.venv/bin/python backend/tools/verify_terminal.py
 ```
 
 `verify_native.py` 使用 faux 和真实本机进程；`verify_client.py` 使用已安装 Chrome。

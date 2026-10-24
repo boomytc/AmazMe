@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-24",
+  "stage": "C1 native session terminal",
+  "base_commit": "b6c2d7a26e1dd769960313ab22bd30af47836751",
+  "source_build_id": "c1bcdbcda8b37d2633c8cc9eab183be85bf5c24afce9f8749a28293c5bbee986",
+  "status": "passed for C1 scope",
+  "runtime": {
+    "report": ".artifacts/native/terminal-atacoq7o/report.json",
+    "browser": "155.0.8059.85",
+    "checks": [
+      "explicit create starts one native terminal; opening the panel itself starts none",
+      "lost input response + page reload retained input ID and terminal; one actual file effect",
+      "native resize observed through stty; browser close preserved terminal; explicit close confirmed known cleanup"
+    ],
+    "page_errors": [],
+    "cleanup": "browser and owned native services exited",
+    "budget": {
+      "cap_bytes": 536870912,
+      "highwater_bytes": 9396224,
+      "minimum_free_bytes": 284453007360,
+      "failure": ""
+    }
+  },
+  "verification": {
+    "backend_suite": "438 passed before final parallel cleanup change; final affected lifecycle/native terminal/crash suite 110 passed, including its new regression",
+    "ruff": "passed",
+    "pyright": "0 errors",
+    "wheel_sdist": "passed",
+    "workspace_rules": "passed",
+    "real_process_crashes": "worker death preserves terminal; supervisor death closes known resources and same terminal ID never relaunches"
+  },
+  "limits": [
+    "Known descendants only, not an OS sandbox",
+    "PTY input accepted means queued/written to the PTY, not command success",
+    "Web retains 32 KiB output tail; full terminal emulator and other client integration remain in stage C",
+    "Native MCP and full stage D remain pending",
+    "No frozen or signed package built in this unit; no VM created"
+  ]
+}

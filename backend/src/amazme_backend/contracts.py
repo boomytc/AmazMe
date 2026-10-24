@@ -622,6 +622,10 @@ class TerminalQuery(HostFence):
     terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
+class TerminalSession(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
 class TerminalOpen(Model):
     terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     command: str = Field(min_length=1, max_length=16000)
@@ -784,6 +788,7 @@ class RemoteCallView(Model):
 
 class TerminalView(Model):
     terminal_id: str
+    session_id: str = ""
     cols: int
     rows: int
     queued: int
@@ -791,6 +796,14 @@ class TerminalView(Model):
     exit_code: int | None = None
     output: str
     phase: Literal["running", "exited", "unknown"]
+    clean: bool = False
+    workspace: str = "primary"
+    input_id: str = ""
+    input_status: Literal["", "accepted", "unknown"] = ""
+
+
+class TerminalList(Model):
+    terminals: list[TerminalView]
 
 
 class WorkerSpec(HostFence):
@@ -1088,6 +1101,7 @@ class ExecutionResource(Model):
 
 
 class SupervisorHealth(Model):
+    terminals: list[TerminalView] = Field(default_factory=lambda: list[TerminalView]())
     identity: Identity
     registry_revision: str
     freeze_id: str = ""

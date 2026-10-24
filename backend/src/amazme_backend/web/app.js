@@ -421,6 +421,7 @@ function startClient() {
       const attachment = connection.attachment;
       if (attachment.session_id !== id || attachment.build_id !== boot.build_id || attachment.host_epoch !== boot.host_epoch) throw new Error("会话绑定不匹配");
       if ($("web").open) void loadWebPolicy().catch(error);
+      if ($("terminal").open) void loadTerminals().catch(error);
       const url = new URL(`/api/v1/events/${id}`, location.origin); url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(url); connection.ws = ws;
       connection.helloTimer = setTimeout(() => reconnect(connection, true), 40000);
@@ -665,28 +666,98 @@ function startClient() {
       await listing;
     } catch (failure) { if (appliedNavigation === fileNavigation && (view === fileView || !fileView)) error(failure); }
   };
-  let terminalId = "";
-  async function showTerminal(view) {
-    $("terminal-output").textContent = view.output || "";
-    if (view.exit_code !== null && view.exit_code !== undefined) $("terminal-output").textContent += `\n[退出 ${view.exit_code}]`;
+  let terminalView = null, terminalPoll = null, terminalNavigation = 0;
+  const terminalKey = (connection, suffix) => `terminal:${identity.profile_id}:${connection.session}:${suffix}`;
+  const terminalOwns = view => view && terminalView === view && owns(view.connection);
+  function showTerminal(value, view = terminalView) {
+    if (!terminalOwns(view)) return;
+    view.phase = value.phase;
+    $("terminal-output").textContent = value.output || "";
+    $("terminal-state").textContent = value.phase === "unknown" ? "通道失联；命令未自动重启" : value.phase === "exited" ? "已退出" : "运行中";
+    if (value.exit_code !== null && value.exit_code !== undefined) $("terminal-state").textContent += ` · 退出码 ${value.exit_code}`;
+    if (value.clean === false && value.phase !== "running") $("terminal-state").textContent += " · 停止尚未确认";
+  }
+  async function pollTerminal(view) {
+    if (!terminalOwns(view) || !$("terminal").open || view.phase !== "running") return;
+    try { showTerminal(await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/read`, "POST", {}, view.connection), view); }
+    catch (failure) { if (terminalOwns(view)) error(failure); }
+    if (terminalOwns(view) && $("terminal").open && view.phase === "running") terminalPoll = setTimeout(() => pollTerminal(view), 750);
+  }
+  function selectTerminal(value, connection) {
+    clearTimeout(terminalPoll);
+    terminalView = {id:value.terminal_id, connection, phase:value.phase, busy:false};
+    const pending = sessionStorage.getItem(terminalKey(connection, value.terminal_id));
+    $("terminal-input").value = pending ? JSON.parse(pending).text : "";
+    showTerminal(value);
+    void pollTerminal(terminalView);
+  }
+  async function loadTerminals() {
+    const connection = current, navigation = ++terminalNavigation;
+    if (!connection || !identity) return;
+    const listing = await api(`/api/v1/sessions/${connection.session}/terminals`);
+    if (!owns(connection) || navigation !== terminalNavigation) return;
+    const rows = listing.terminals;
+    $("terminal-choice").replaceChildren(...rows.map(row => {
+      const option = document.createElement("option"); option.value = row.terminal_id;
+      option.textContent = `${row.workspace} · ${row.terminal_id.slice(0, 8)} · ${row.phase}`;
+      return option;
+    }));
+    const row = rows.find(row => row.terminal_id === terminalView?.id) || rows.find(row => row.phase === "running") || rows[0];
+    if (row) { $("terminal-choice").value = row.terminal_id; selectTerminal(row, connection); }
+    else { terminalView = null; $("terminal-output").textContent = ""; $("terminal-state").textContent = "尚无终端，点击新建"; }
+    $("terminal-choice").onchange = () => {
+      const row = rows.find(row => row.terminal_id === $("terminal-choice").value);
+      if (row && owns(connection)) selectTerminal(row, connection);
+    };
   }
   $("terminal").addEventListener("toggle", () => {
-    if (!$("terminal").open || !selected || !identity || health?.state !== "ready") return;
-    terminalId = crypto.randomUUID().replaceAll("-", "");
-    api(`/api/v1/sessions/${selected}/terminals`, "POST", {terminal_id: terminalId, command: "sh", cols: 80, rows: 24, workspace: fileWorkspace}, current)
-      .then(showTerminal).catch(error);
+    if ($("terminal").open && selected && identity) void loadTerminals().catch(error);
+    else clearTimeout(terminalPoll);
   });
+  $("terminal-new").onclick = async () => {
+    const connection = current, workspace = fileWorkspace;
+    if (!connection || health?.state !== "ready" || $("terminal-new").disabled) return;
+    const key = terminalKey(connection, `open:${workspace}`);
+    let id = sessionStorage.getItem(key);
+    if (!id) { id = crypto.randomUUID().replaceAll("-", ""); sessionStorage.setItem(key, id); }
+    $("terminal-new").disabled = true;
+    try {
+      const value = await api(`/api/v1/sessions/${connection.session}/terminals`, "POST", {terminal_id:id, command:"sh", cols:80, rows:24, workspace}, connection);
+      sessionStorage.removeItem(key);
+      if (owns(connection)) { selectTerminal(value, connection); await loadTerminals(); }
+    } catch (failure) { if (owns(connection)) error(failure); }
+    finally { $("terminal-new").disabled = false; }
+  };
   $("terminal-form").onsubmit = async event => {
     event.preventDefault();
-    if (!terminalId || !selected) return;
-    const typed = $("terminal-input").value;
+    const view = terminalView;
+    if (!terminalOwns(view) || view.busy || view.phase !== "running") return;
+    const key = terminalKey(view.connection, view.id), text = $("terminal-input").value;
+    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (pending && pending.text !== text) { error(new Error("上次输入结果未确认；先重试同一输入，或核对终端后继续。")); return; }
+    if (!pending) { pending = {input_id:crypto.randomUUID().replaceAll("-", ""), text}; sessionStorage.setItem(key, JSON.stringify(pending)); }
+    view.busy = true;
     try {
-      await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/input`, "POST",
-        {input_id: crypto.randomUUID().replaceAll("-", ""), data: `${typed}\n`}, current);
-      showTerminal(await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/read`, "POST", {}, current));
-      $("terminal-input").value = "";
-      $("error").textContent = "";
-    } catch (failure) { error(failure); }
+      const result = await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/input`, "POST",
+        {input_id:pending.input_id, data:`${pending.text}\n`}, view.connection);
+      if (result.input_status === "unknown") throw new Error("输入结果未知，未自动重发；请核对终端内容。");
+      sessionStorage.removeItem(key);
+      if (terminalOwns(view)) { if ($("terminal-input").value === text) $("terminal-input").value = ""; $("error").textContent = ""; }
+    } catch (failure) { if (terminalOwns(view)) error(failure); }
+    finally { view.busy = false; }
+  };
+  $("terminal-confirm").onclick = () => {
+    const view = terminalView;
+    if (!terminalOwns(view) || view.busy) return;
+    sessionStorage.removeItem(terminalKey(view.connection, view.id));
+    $("terminal-input").value = "";
+    $("terminal-state").textContent = "已由用户核对；原输入不会重放";
+  };
+  $("terminal-close").onclick = async () => {
+    const view = terminalView;
+    if (!terminalOwns(view)) return;
+    try { showTerminal(await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/close`, "POST", {}, view.connection), view); }
+    catch (failure) { if (terminalOwns(view)) error(failure); }
   };
   let mcpServer = "", mcpCall = "", mcpDigest = "";
   function showMcp(view) {
@@ -1155,10 +1226,10 @@ function startClient() {
     } catch (failure) { error(failure); }
   };
   $("terminal-resize").onclick = async () => {
-    if (!terminalId || !selected) return;
-    try {
-      showTerminal(await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/resize`, "POST", {cols: 100, rows: 40}, current));
-    } catch (failure) { error(failure); }
+    const view = terminalView;
+    if (!terminalOwns(view) || view.phase !== "running") return;
+    try { showTerminal(await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/resize`, "POST", {cols:100, rows:40}, view.connection), view); }
+    catch (failure) { if (terminalOwns(view)) error(failure); }
   };
   async function fileAction(action) {
     const view = fileView;
