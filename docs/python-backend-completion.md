@@ -12,7 +12,8 @@
 | C1 终端画面 | 已通过此单元范围 | 归还输出窗口、256 KiB 滚动记录、页面解释转义、键盘与原输入账本；Chrome 观察到命令输出和 resize |
 | C2 本机 MCP 服务与手动调用 | 已通过此单元范围 | 官方 SDK 本机进程 + Chrome；目录、JSON 参数、审批、去重、结构化结果、取消和真实崩溃恢复 |
 | C2 模型驱动 MCP | 已通过此单元范围 | 真实 DeepSeek 选择本机探针工具，拒绝无副作用，结果回到模型；unknown 不重发，取消不关闭服务 |
-| C3 其余客户端 | 待实施与复核 | Electron、TUI、CLI、RPC、SDK 的本机链路运行验证 |
+| Electron 源码进程 | 已通过此单元范围 | 真实 Electron 装载当前源码后端；终端、shell 审批、检查点、MCP、双窗口关闭和显式退出 |
+| C3 其余客户端 | 待实施与复核 | TUI、CLI、RPC、SDK 的本机链路运行验证 |
 | D 剩余功能与签名安装 | 待本机链路验收 | 供应商、OAuth、TCC、SSH、完整产品/签名分发与旧依赖清理 |
 
 本轮三份运行报告的 build_id 均为 `c3f544e9061ff51f12d8fde261ad9018b4dda363f78b298643585f0d6e7af6ce`：
@@ -74,7 +75,17 @@ Chrome 155 驱动真实本机官方 Python MCP SDK 1.26.0 探针服务：拒绝�
 `verify_terminal.py` 的报告是 `.artifacts/native/terminal-3i__hs0x/report.json`。Chrome 155 看到 `NATIVE_TERM_OK`、工作区路径和 `stty size` 的 `40 100`；丢回执后同一输入只写入一次文件；关页面后阶段仍是 running，显式关闭后 clean 且 exited。页面无错误。
 这次运行释放了无人使用的 `terminal-err1kda9`。预算高水位 23,683,072 字节，空闲约 267.6 GiB，所属进程和全局普查都已收回。
 本单元最终源码上后端测试 477 项通过，包含既有的 worker 与监督器终端崩溃测试；Ruff 和 Pyright 通过。没有构建冻结安装包，没有启动或恢复 VM。
-这次 Chrome 运行不重复杀进程实验。画面不是完整 VT：没有备用屏幕、滚动区、鼠标、宽字符宽度和颜色。`output_seq` 按 Python 码点计数，页面按这个差值截取新增尾部；非 BMP 字符在 JS 里占两个长度单位，可能截断。保留文本被截短后，差值大于文本长度时会整段重放当前尾部。Electron、TUI、CLI、RPC、SDK 尚未按这个画面验收。
+这次 Chrome 运行不重复杀进程实验。画面不是完整 VT：没有备用屏幕、滚动区、鼠标、宽字符宽度和颜色。`output_seq` 按 Python 码点计数，页面按这个差值截取新增尾部；非 BMP 字符在 JS 里占两个长度单位，可能截断。保留文本被截短后，差值大于文本长度时会整段重放当前尾部。Electron 源码进程见下一节。TUI、CLI、RPC、SDK 尚未按这个画面验收。
+
+### Electron 源码进程
+
+详见 [Electron 证据](python-backend-native-electron-evidence.json)。
+`verify_electron.py` 让桌面启动器执行当前检出的 `python -m amazme_backend`，没有使用冻结包。
+源码 build_id 仍是 `f64fe5ec94e95dbaff3e431011bdd9a0454c854daa90c62ba9cb13aa6f506537`，因为这次没有改 `backend/src`。
+报告 `.artifacts/native/electron-o04d4rq_/report.json`。真实 Electron 页面完成终端输出、`stty` 观察到的 resize、刷新后终端仍在、显式关闭后退出；shell 审批后才写入文件；打开该文件并保存检查点；MCP 拒绝没有副作用，一次批准写入一次。
+第二个窗口是另一个会话。关闭任一窗口后，源码后端、另一会话、推迟的请求和 MCP 服务都还在。显式退出 Electron 后，它所启动的后端退出，无关的 sleep 进程仍在。页面无错误。
+预算高水位 37,617,664 字节，耗时约 7.8 秒，空闲约 266.8 GiB，所属进程和全局普查都已收回。没有启动或恢复 VM。
+这次没有在 Electron 里重做输入丢回执、更新冻结，或杀掉 worker 与监督器。旧的 `python-backend-electron-*.json` 只证明当时的冻结包。
 
 ### 资源收尾
 
