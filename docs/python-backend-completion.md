@@ -87,7 +87,7 @@ Chrome 155 驱动真实本机官方 Python MCP SDK 1.26.0 探针服务：拒绝�
 详见 [Electron 证据](python-backend-native-electron-evidence.json)。
 `verify_electron.py` 让桌面启动器执行当前检出的 `python -m amazme_backend`，没有使用冻结包。
 这次源码 build_id 是 `23ad63ddfefd0ee93b8b9529cc1167609a2aac3763ea8b62a0097324ec467a51`。运行器没有改 `backend/src`。
-报告 `.artifacts/native/electron-uamesscf/report.json`。真实 Electron 页面完成终端输出、`stty` 观察到的 resize、刷新后终端仍在、显式关闭后退出；shell 审批后才写入文件；打开该文件并保存检查点；MCP 拒绝没有副作用，一次批准写入一次。第一次终端输入已经写到服务器，页面没有拿到回执；再次提交沿用同一输入编号，`electron-lost.txt` 仍是一个 `x`。
+报告 `.artifacts/native/electron-vv1fjgl1/report.json`。真实 Electron 页面打开 xterm 画面，红色 `RED` 画成 `xterm-fg-1`；完成终端输出、`stty` 观察到的 resize、刷新后终端仍在、显式关闭后退出；shell 审批后才写入文件；打开该文件并保存检查点；MCP 拒绝没有副作用，一次批准写入一次。第一次终端输入已经写到服务器，页面没有拿到回执；再次提交沿用同一输入编号，`electron-lost.txt` 仍是一个 `x`。这次运行释放了 `electron-wiplc67v`。
 第二个窗口是另一个会话。关闭任一窗口后，源码后端、另一会话、推迟的请求和 MCP 服务都还在。显式退出 Electron 后，它所启动的后端退出，无关的 sleep 进程仍在。页面无错误。
 预算高水位 37,617,664 字节，耗时约 7.8 秒，空闲约 266.8 GiB，所属进程和全局普查都已收回。没有启动或恢复 VM。
 这次没有在 Electron 里重做更新冻结，或杀掉 worker 与监督器。旧的 `python-backend-electron-*.json` 只证明当时的冻结包。两份槽位已满时，运行器释放了更早的 `electron-o04d4rq_`。
