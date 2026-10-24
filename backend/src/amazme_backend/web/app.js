@@ -482,6 +482,9 @@ function startClient() {
       if (!editable) endpoint.value = "";
     };
     $("model-form").dataset.maxTokens = String(current.max_tokens);
+    $("model-form").dataset.credentialRevision = String(current.credential_revision || 0);
+    $("model-key-state").textContent = current.key_configured ? "密钥已配置" : "密钥未配置";
+    $("model-key").value = "";
   }
   async function load() {
     identity = await api("/api/v1/bootstrap"); health = {state:identity.state}; $("login").hidden = true;
@@ -548,6 +551,23 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  async function saveCredential(clear) {
+    if (!identity || health?.state !== "ready") return;
+    const key = $("model-key").value;
+    if (!clear && !key) { error(new Error("请输入密钥")); return; }
+    try {
+      const saved = await api("/api/v1/models/credential", "POST", {
+        expected_revision: Number($("model-form").dataset.credentialRevision || 0),
+        clear, api_key: clear ? "" : key,
+      });
+      $("model-key").value = "";
+      $("model-form").dataset.credentialRevision = String(saved.credential_revision || 0);
+      $("model-key-state").textContent = saved.key_configured ? "密钥已配置" : "密钥未配置";
+      $("error").textContent = "";
+    } catch (failure) { error(failure); }
+  }
+  $("model-key-save").onclick = () => { void saveCredential(false); };
+  $("model-key-clear").onclick = () => { void saveCredential(true); };
   let fileDir = "", fileWorkspace = "", fileView = null, fileNavigation = 0, fileListing = 0;
   const fileJoin = (dir, name) => dir ? `${dir}/${name}` : name;
   const checkpointState = element("p", "", "muted");

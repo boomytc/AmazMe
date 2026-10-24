@@ -2,6 +2,7 @@ import asyncio
 import secrets
 
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -62,4 +63,10 @@ def app_factory(token: str = "") -> FastAPI:
     async def backend_error(_request: Request, error: BackendError) -> JSONResponse:
         return JSONResponse(ErrorBody(code=error.code, message=error.message,
                                       retryable=error.status in {429, 503, 504}).model_dump(), status_code=error.status)
+
+    @app.exception_handler(RequestValidationError)
+    async def invalid_request(_request: Request, _error: RequestValidationError) -> JSONResponse:
+        # Validation input can be a credential. The response keeps only the code.
+        return JSONResponse(ErrorBody(code="invalid_request", message="invalid_request").model_dump(), status_code=422)
+
     return app

@@ -443,11 +443,6 @@ class Worker:
         if self.validation:
             raise BackendError("validation_worker")
         if isinstance(action, ModelInvocation):
-            self.profile.reload_provider()
-            live = self.profile.config.provider
-            config = action.config.model_copy(update={
-                "api_key": live.api_key, "proxy": live.proxy, "headers": dict(live.headers),
-            })
             answer = ""
             completion: Completion | None = None
             preview_seq = 0
@@ -457,6 +452,14 @@ class Worker:
             offers = await self._mcp_offers() if self.storage_ready else []
             if self.storage_ready:
                 await self.store.bind_mcp_catalog(action.step_id, action.generation, catalog_payload(offers))
+            # Read the key after the awaits. A logout that landed first must not be sent.
+            self.profile.reload_provider()
+            live = self.profile.config.provider
+            config = action.config.model_copy(update={
+                "api_key": live.api_key, "proxy": live.proxy, "headers": dict(live.headers),
+            })
+            if config.provider != "faux" and not config.api_key.get_secret_value():
+                raise BackendError("provider_not_configured")
             async for item in stream(config, messages, offers):
                 if isinstance(item, Completion):
                     completion = item

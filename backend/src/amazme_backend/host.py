@@ -20,7 +20,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from .artifacts import (
     ArtifactBody,
@@ -65,6 +65,7 @@ from .contracts import (
     ComputerObserve,
     ComputerPolicy,
     CreateSession,
+    CredentialUpdate,
     EffectResolution,
     ExportBundle,
     ExportMessage,
@@ -231,6 +232,7 @@ class Host:
         self.delivery_locks: dict[str, asyncio.Lock] = {}
         self.service_lock = asyncio.Lock()
         self.update_lock = asyncio.Lock()
+        self.provider_lock = asyncio.Lock()
         self.attached = ""
         self.stop = asyncio.Event()
         self.closing = False
@@ -728,7 +730,8 @@ class Host:
     def model_catalog(self) -> ModelCatalog:
         self._admit()
         self.profile.reload_provider()
-        return ModelCatalog(models=list(CATALOG), current=public_settings(self.profile.config.provider))
+        return ModelCatalog(models=list(CATALOG), current=public_settings(
+            self.profile.config.provider, self.profile.config.credential_revision))
 
     async def session_model(self, session_id: str) -> SessionModel:
         self._admit()
@@ -743,14 +746,38 @@ class Host:
             raise BackendError("update_frozen", status=503)
         return await self.store.save_session_model(value)
 
+    def _published_model(self) -> ModelSettings:
+        return public_settings(self.profile.config.provider, self.profile.config.credential_revision)
+
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
         self._admit()
-        if await self.store.active_update():
-            raise BackendError("update_frozen", status=503)
-        self.profile.reload_provider()
-        chosen = choose_model(self.profile.config.provider, value)
-        self.profile.save_provider(chosen)
-        return public_settings(self.profile.config.provider)
+        async with self.provider_lock:
+            if await self.store.active_update():
+                raise BackendError("update_frozen", status=503)
+            self.profile.reload_provider()
+            chosen = choose_model(self.profile.config.provider, value)
+            self.profile.save_provider(chosen)
+            return self._published_model()
+
+    async def replace_credential(self, value: CredentialUpdate) -> ModelSettings:
+        """Replace or clear the stored key. A stale revision cannot overwrite a newer key."""
+        self._admit()
+        key = value.api_key.get_secret_value()
+        if value.clear:
+            if key:
+                raise BackendError("credential_conflict")
+            key = ""
+        elif not key or len(key) > 512 or any(character in key for character in "\r\n\x00"):
+            raise BackendError("invalid_credential")
+        async with self.provider_lock:
+            if await self.store.active_update():
+                raise BackendError("update_frozen", status=503)
+            self.profile.reload_provider()
+            if self.profile.config.credential_revision != value.expected_revision:
+                raise BackendError("credential_conflict")
+            chosen = self.profile.config.provider.model_copy(update={"api_key": SecretStr(key)})
+            self.profile.save_provider(chosen, credential_revision=self.profile.config.credential_revision + 1)
+            return self._published_model()
 
     async def _require_workspace(self, name: str) -> None:
         if name == PRIMARY:
@@ -2228,6 +2255,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/models")
     async def update_model(value: UpdateModelSettings) -> ModelSettings:
         return await owner.update_model(value)
+
+    @app.post("/api/v1/models/credential")
+    async def replace_credential(value: CredentialUpdate) -> ModelSettings:
+        return await owner.replace_credential(value)
 
     @app.get("/api/v1/health")
     async def health() -> Health:

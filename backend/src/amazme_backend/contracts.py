@@ -35,6 +35,7 @@ class ModelSettings(Model):
     base_url: str
     max_tokens: int
     key_configured: bool
+    credential_revision: int = 0
     proxy: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
 
@@ -53,12 +54,20 @@ class SessionModel(Model):
 
 
 class UpdateModelSettings(Model):
+    """Model selection never carries an API key. Credential changes use CredentialUpdate."""
+
     provider: Literal["deepseek", "faux"]
     model: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     base_url: str = Field(default="", max_length=300)
     max_tokens: int = Field(default=2048, ge=32, le=8192)
     proxy: str = Field(default="", max_length=300)
     headers: dict[str, str] = Field(default_factory=dict)
+
+
+class CredentialUpdate(Model):
+    expected_revision: int = Field(ge=0, le=1_000_000_000)
+    clear: bool = False
+    api_key: SecretStr = SecretStr("")
 
 
 class ProfileConfig(Model):
@@ -69,6 +78,7 @@ class ProfileConfig(Model):
     provider: ProviderConfig
     approval_policy: Literal["auto", "mutations", "all"] = "mutations"
     testing: bool = False
+    credential_revision: int = Field(default=0, ge=0)
 
 
 class Identity(Model):

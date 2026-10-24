@@ -144,7 +144,7 @@ class Profile:
             raise BackendError("profile_identity_mismatch")
         self.config = fresh
 
-    def save_provider(self, provider: ProviderConfig) -> None:
+    def save_provider(self, provider: ProviderConfig, *, credential_revision: int | None = None) -> None:
         raw = json.loads((self.path / "config.json").read_text())
         raw["provider"] = {
             "provider": provider.provider,
@@ -155,6 +155,8 @@ class Profile:
             "proxy": provider.proxy,
             "headers": provider.headers,
         }
+        if credential_revision is not None:
+            raw["credential_revision"] = credential_revision
         private_write(self.path / "config.json", json.dumps(raw))
         self.reload_provider()
 

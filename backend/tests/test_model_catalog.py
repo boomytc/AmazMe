@@ -1,17 +1,21 @@
 """Model catalog selection persists without exposing the API key or clearing sessions."""
+import asyncio
 import base64
 import json
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
 import httpx
 import pytest
+from pydantic import SecretStr
 
 from amazme_backend.common import Profile, build_id, private_write
 from amazme_backend.contracts import (
     BackendError,
     CreateSession,
+    CredentialUpdate,
     HostFence,
     Message,
     ProcessLease,
@@ -19,9 +23,11 @@ from amazme_backend.contracts import (
     Submission,
     Submit,
     UpdateModelSettings,
+    UpdateRecord,
 )
 from amazme_backend.host import Host, application
 from amazme_backend.providers import stream
+from amazme_backend.session_domain import ModelInvocation
 from amazme_backend.worker import Worker
 
 SECRET = "sk-catalog-secret"
@@ -188,6 +194,116 @@ async def test_model_route_returns_the_saved_choice(owner: Host) -> None:
         body = saved.json()
         assert body["provider"] == "faux" and body["model"] == "faux" and "api_key" not in body
         assert SECRET not in saved.text
+        leaked = await client.post("/api/v1/models", json={
+            "provider": "faux", "model": "faux", "base_url": "", "max_tokens": 2048, "api_key": SECRET})
+        assert leaked.status_code == 422 and SECRET not in leaked.text
+        assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == SECRET
+
+
+async def test_credential_revision_keeps_one_key_and_a_cleared_key_is_not_sent(owner: Host, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    first = CredentialUpdate(expected_revision=0, api_key=SecretStr("sk-rotate-one"))
+    second = CredentialUpdate(expected_revision=0, api_key=SecretStr("sk-rotate-two"))
+    results = await asyncio.gather(owner.replace_credential(first), owner.replace_credential(second), return_exceptions=True)
+    saved = [item for item in results if not isinstance(item, Exception)]
+    failed = [item for item in results if isinstance(item, Exception)]
+    assert len(saved) == 1 and len(failed) == 1
+    assert isinstance(failed[0], BackendError) and failed[0].code == "credential_conflict"
+    published = saved[0].model_dump_json()
+    assert "sk-rotate-one" not in published and "sk-rotate-two" not in published
+    assert saved[0].key_configured is True and saved[0].credential_revision == 1
+    stored = json.loads((owner.profile.path / "config.json").read_text())
+    assert stored["credential_revision"] == 1
+    assert stored["provider"]["api_key"] in {"sk-rotate-one", "sk-rotate-two"}
+    winner = stored["provider"]["api_key"]
+    with pytest.raises(BackendError, match="credential_conflict"):
+        await owner.replace_credential(CredentialUpdate(expected_revision=0, api_key=SecretStr("sk-rotate-stale")))
+    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == winner
+    changed = await owner.update_model(UpdateModelSettings(
+        provider="deepseek", model="deepseek-chat", base_url="https://gateway.example/v1"))
+    assert changed.credential_revision == 1 and winner not in changed.model_dump_json()
+    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == winner
+    frozen = UpdateRecord(update_id="upgrade", source_build="src", target_build="dst",
+                          phase="freezing", revision="1", cancel_work=False)
+    database = sqlite3.connect(owner.profile.path / "host.sqlite")
+    database.execute("INSERT INTO updates(id, payload) VALUES(?,?)", ("upgrade", frozen.model_dump_json()))
+    database.execute("UPDATE control SET freeze_id='upgrade' WHERE id=1")
+    database.commit()
+    with pytest.raises(BackendError, match="update_frozen"):
+        await owner.replace_credential(CredentialUpdate(expected_revision=1, clear=True))
+    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == winner
+    database.execute("UPDATE control SET freeze_id='' WHERE id=1")
+    database.commit()
+    database.close()
+    with pytest.raises(BackendError, match="credential_conflict"):
+        await owner.replace_credential(CredentialUpdate(expected_revision=1, clear=True, api_key=SecretStr(winner)))
+    with pytest.raises(BackendError, match="invalid_credential"):
+        await owner.replace_credential(CredentialUpdate(expected_revision=1, api_key=SecretStr("")))
+    cleared = await owner.replace_credential(CredentialUpdate(expected_revision=1, clear=True))
+    assert cleared.key_configured is False and cleared.credential_revision == 2
+    assert winner not in cleared.model_dump_json()
+    assert json.loads((owner.profile.path / "config.json").read_text())["provider"]["api_key"] == ""
+    with pytest.raises(BackendError, match="provider_not_configured"):
+        await owner.update_model(UpdateModelSettings(
+            provider="deepseek", model="deepseek-flash", base_url="https://api.deepseek.com"))
+    called = False
+
+    class FakeOpenAI:
+        def __init__(self, **_kwargs: object) -> None:
+            nonlocal called
+            called = True
+
+        async def __aenter__(self) -> "FakeOpenAI":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+    monkeypatch.setattr("amazme_backend.providers.AsyncOpenAI", FakeOpenAI)
+    empty = owner.profile.config.provider
+    with pytest.raises(BackendError, match="provider_not_configured"):
+        async for _item in stream(empty, [Message(role="user", content="hi")]):
+            pass
+    assert called is False
+
+    send_root = tmp_path / "send-profile"
+    send_root.mkdir()
+    write_profile(send_root, provider="deepseek", model="deepseek-flash", key="sk-before-send")
+    profile = Profile(send_root)
+    session = "e" * 32
+    (send_root / "sessions" / session).mkdir(parents=True)
+    worker = Worker(profile, session, "worker-key")
+    worker.initialized = True
+    worker.state = "ready"
+    await worker.store.initialize()
+    held = profile.config.provider
+    seen: dict[str, str] = {}
+
+    async def fake_stream(config, _messages, _offers=None):
+        seen["key"] = config.api_key.get_secret_value()
+        if seen["key"]:
+            raise BackendError("stop-before-network")
+        yield ""
+
+    monkeypatch.setattr("amazme_backend.worker.stream", fake_stream)
+    write_profile(send_root, provider="deepseek", model="deepseek-flash", key="sk-after-send")
+    try:
+        with pytest.raises(BackendError, match="stop-before-network"):
+            await worker.perform(ModelInvocation(
+                step_id="step", request_id="turn", generation=1,
+                messages=[Message(role="user", content="hi")], config=held))
+        assert seen["key"] == "sk-after-send"
+        assert held.api_key.get_secret_value() == "sk-before-send"
+        write_profile(send_root, provider="deepseek", model="deepseek-flash", key="")
+        seen.clear()
+        with pytest.raises(BackendError, match="provider_not_configured"):
+            await worker.perform(ModelInvocation(
+                step_id="step", request_id="turn", generation=1,
+                messages=[Message(role="user", content="hi")], config=held))
+        assert "key" not in seen
+        assert json.loads((send_root / "config.json").read_text())["provider"]["api_key"] == ""
+    finally:
+        await worker.store.db.close()
+        await worker.supervisor.close()
 
 
 def test_browser_saves_the_selected_catalog_model() -> None:
@@ -223,8 +339,24 @@ def test_browser_saves_the_selected_catalog_model() -> None:
             assert.equal(body.model,'faux');
             assert.equal(body.proxy,'http://127.0.0.1:9');
             assert.deepEqual(body.headers,{'X-Project':'demo'});
+            assert.equal(body.api_key, undefined);
             assert.equal(options.headers['x-amazme-build'],'build');
-            current={provider:'faux',model:'faux',base_url:'',max_tokens:body.max_tokens,key_configured:true};
+            current={provider:'faux',model:'faux',base_url:'',max_tokens:body.max_tokens,key_configured:true,credential_revision:0};
+            return response(current);
+          }
+          if(path==='/api/v1/models/credential') {
+            const body=JSON.parse(options.body);
+            assert.equal(options.headers['x-amazme-build'],'build');
+            if(body.clear) {
+              assert.equal(body.api_key,'');
+              assert.equal(body.expected_revision, 1);
+              current={...current, key_configured:false, credential_revision:2};
+              return response(current);
+            }
+            assert.equal(body.api_key,'next-secret');
+            assert.equal(body.clear, false);
+            assert.equal(body.expected_revision, 0);
+            current={...current, key_configured:true, credential_revision:1};
             return response(current);
           }
           throw Error('unexpected '+path);
@@ -236,6 +368,8 @@ def test_browser_saves_the_selected_catalog_model() -> None:
         }
         await import(appURL);
         await until(()=>$('model-choice').selectedOptions[0]?.textContent==='DeepSeek Flash');
+        assert.equal($('model-key-state').textContent, '密钥已配置');
+        assert.equal($('model-key').value, '');
         $('model-choice').value='faux\nfaux';
         $('model-choice').onchange();
         $('model-proxy').value='http://127.0.0.1:9';
@@ -243,6 +377,11 @@ def test_browser_saves_the_selected_catalog_model() -> None:
         assert.equal($('model-endpoint').disabled, true);
         await $('model-form').onsubmit({preventDefault(){}});
         await until(()=>$('model-choice').value==='faux\nfaux' && $('model-endpoint').value==='' && $('model-endpoint').disabled===true);
+        $('model-key').value = 'next-secret';
+        $('model-key-save').click();
+        await until(()=>$('model-key-state').textContent==='密钥已配置' && $('model-key').value==='');
+        $('model-key-clear').click();
+        await until(()=>$('model-key-state').textContent==='密钥未配置' && $('model-key').value==='');
         window.happyDOM && await window.happyDOM.abort();
     '''
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,

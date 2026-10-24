@@ -85,9 +85,10 @@ def _clean_headers(headers: dict[str, str]) -> dict[str, str]:
     return cleaned
 
 
-def public_settings(config: ProviderConfig) -> ModelSettings:
+def public_settings(config: ProviderConfig, credential_revision: int = 0) -> ModelSettings:
     return ModelSettings(provider=config.provider, model=config.model, base_url=config.base_url,
                          max_tokens=config.max_tokens, key_configured=bool(config.api_key.get_secret_value()),
+                         credential_revision=credential_revision,
                          proxy=redact_proxy(config.proxy), headers=dict(config.headers))
 
 
@@ -402,6 +403,8 @@ async def stream(config: ProviderConfig, messages: list[Message],
             message=Message(role="assistant", content=text), response_id=identity,
             input_tokens=sum(len(m.content) for m in messages), output_tokens=len(text)))
         return
+    if not config.api_key.get_secret_value():
+        raise BackendError("provider_not_configured")
     calls: dict[int, PendingCall] = {}
     text = ""
     response_id = ""
