@@ -1193,7 +1193,8 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             self._admit()
-            workspace = value.workspace or session_workspace(self.profile.path, value.session_id)
+            recorded = session_workspace(self.profile.path, value.session_id)
+            workspace = value.workspace or recorded
             old = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
             if old is not None:
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
@@ -1887,7 +1888,8 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             self._admit()
-            workspace = value.workspace or session_workspace(self.profile.path, value.session_id)
+            recorded = session_workspace(self.profile.path, value.session_id)
+            workspace = value.workspace or recorded
             old = await self._terminal_row(value.terminal_id)
             if old is not None:
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):

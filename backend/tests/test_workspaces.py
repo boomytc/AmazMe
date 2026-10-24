@@ -21,6 +21,7 @@ from amazme_backend.contracts import (
     McpCallRequest,
     McpDecision,
     McpOpen,
+    OpenMcp,
     OpenTerminal,
     PluginCallRequest,
     ProcessLease,
@@ -191,12 +192,23 @@ async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path:
         database.close()
     reservation: ProcessReservation | None = None
     try:
+        fence = {"build_id": owner.build, "host_epoch": owner.host_epoch, "session_id": session}
         with pytest.raises(BackendError, match="session_not_found"):
             await owner.open_terminal(OpenTerminal(
-                build_id=owner.build, host_epoch=owner.host_epoch, session_id=session,
-                terminal_id=terminal, command="printf z > leaked.txt"))
-        instance = hashlib.sha256(("terminal:" + terminal).encode()).hexdigest()[:32]
-        assert not (tmp_path / "executions" / instance).exists()
+                **fence, terminal_id=terminal, command="printf z > leaked.txt"))
+        named = "d" * 32
+        with pytest.raises(BackendError, match="session_not_found"):
+            await owner.open_terminal(OpenTerminal(
+                **fence, terminal_id=named, command="printf z > leaked.txt", workspace="primary"))
+        server = "c" * 32
+        with pytest.raises(BackendError, match="session_not_found"):
+            await owner.open_mcp(OpenMcp(
+                **fence, server_id=server, command="python3 demo.py", workspace="primary"))
+        for suffix in (terminal, named):
+            instance = hashlib.sha256(("terminal:" + suffix).encode()).hexdigest()[:32]
+            assert not (tmp_path / "executions" / instance).exists()
+        mcp_instance = hashlib.sha256(("mcp:" + server).encode()).hexdigest()[:32]
+        assert not (tmp_path / "executions" / mcp_instance).exists()
         worker_id = os.urandom(16).hex()
         reservation = ProcessReservation(owner.profile.path, "worker", worker_id)
         info = WorkerInfo(

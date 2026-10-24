@@ -29,7 +29,8 @@
 | 侧栏显示本机目录 | `6e42934df10623807720a5c6931883a847a85815` | `backend/tests/test_workspaces.py`：未选会话时侧栏是「本机工作区」；选中会话后显示该工作区的本机目录；文件区切到另一个授予目录时侧栏不变 |
 | 终端和 MCP 跟随会话目录 | `426cc44a6a7fee16b201e68746637caf7d1685c7` | `backend/tests/test_workspaces.py`：文件区停在另一个授予目录时，新建终端和连接 MCP 仍提交空工作区，由宿主按会话目录打开 |
 | 未知会话不进入主工作区 | `2d1a85602d50eebc837bc2df3c8cbd7e6b2d7b02` | `backend/tests/test_workspaces.py`：没有这条会话时，终端、MCP、脚本、远端和插件调用都不联系监督器 |
-| 监督器拒绝缺失的会话行 | 包含本文件的提交 | `backend/tests/test_workspaces.py`：宿主库已有会话表而没有这一行时，空工作区终端和 shell 在写入主目录之前拒绝 |
+| 监督器拒绝缺失的会话行 | `ccfbaf38fd0e143176b13b38051f029d84d6db8a` | `backend/tests/test_workspaces.py`：宿主库已有会话表而没有这一行时，空工作区终端和 shell 在写入主目录之前拒绝 |
+| 写明工作区仍核对会话行 | 包含本文件的提交 | `backend/tests/test_workspaces.py`：写明 primary 的终端和 MCP 在会话行缺失时拒绝，执行目录不会创建 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -57,6 +58,7 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 终端和 MCP 跟随会话目录的源码 build_id 为 `f49df66d5c14615ed2f806e7598be4d82afd278cd061b8d682d92fcf0a738d62`。文件区停在另一个授予目录时，新建终端和连接 MCP 仍提交空工作区。页面测试使用 happy-dom，不是另一次 Chrome 验收。
 未知会话不进入主工作区的源码 build_id 为 `2a33e729171c47466dacf2982b68ec9d011dc4d6e220bff9b6aae3a6e91ecabb`。没有这条会话时，终端、MCP、脚本、远端和插件调用都不联系监督器。已有会话仍会继续打开。
 监督器拒绝缺失会话行的源码 build_id 为 `f72091af61e53d0319c34ce6beeae58a24eaf79ab185fec746e22bd23281fc89`。宿主库已有会话表而没有这一行时，shell 和空工作区终端不会写入主目录。库文件或会话表还不存在时，监督器单测仍把目录当作 primary。
+写明工作区仍核对会话行的源码 build_id 为 `bda5082f9311adea67b4087c2e4830b1b749fb9bf63cb1744980458aca513f00`。写明 primary 的终端和 MCP 在会话行缺失时拒绝。会话存在时，写明的名称仍指向那个授予目录。
 
 资源普查命令只报告。用户主目录里的常驻服务保持 observed。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
 下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
@@ -65,7 +67,7 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 
 1. **其余客户端实验。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。这些客户端都还没有覆盖输入丢回执、更新冻结，以及 worker 或监督器被杀掉的实验。TUI、CLI、RPC、SDK 和默认交互画面不是完整终端模拟。
    这些实验仍要按同一契约补证。先追踪已有实现，不另建一套业务运行时。
-2. **按真实需求补齐产品功能。** 多工作区已在本机目录上核对：会话 shell、终端和没有 grant/ 前缀的文件工具进入授予目录，文件区显示当前浏览目录，侧栏显示当前会话的本机目录，取消授予不删文件。页面新建终端和连接 MCP 不跟随文件区。没有对应会话时，这些启动不会落到主工作区。宿主库已有会话表而缺少这一行时，监督器也不改用主目录。显式 grant/名称 仍指向那个目录。
+2. **按真实需求补齐产品功能。** 多工作区已在本机目录上核对：会话 shell、终端和没有 grant/ 前缀的文件工具进入授予目录，文件区显示当前浏览目录，侧栏显示当前会话的本机目录，取消授予不删文件。页面新建终端和连接 MCP 不跟随文件区。没有对应会话时，这些启动不会落到主工作区。宿主库已有会话表而缺少这一行时，监督器不改用主目录；写明工作区名称也会先核对会话行。会话存在时，显式 grant/名称 仍指向那个目录。
    `amazme-backend client decide` 已核对显式批准和拒绝。`client submit` 仍只等待终态。
    供应商密钥可以更换和清除。OAuth 仍未做。导入会先核对每个会话的工作区，以及反馈指向的会话。缺任何一项时不写入。分支在工作区已取消时拒绝，复制失败不留下项目关联。
    真实 SSH、插件、Codemode、computer-use、记忆、工作流、定时任务、网页工具及分享仍要逐项区分。
