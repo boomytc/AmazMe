@@ -64,7 +64,10 @@ from .contracts import (
     ComputerCaptureView,
     ComputerCleanup,
     ComputerObserve,
+    ComputerPoint,
     ComputerPolicy,
+    ComputerToolRequest,
+    ComputerToolResult,
     CreateSession,
     CredentialUpdate,
     EffectResolution,
@@ -78,6 +81,7 @@ from .contracts import (
     Health,
     HostFence,
     Identity,
+    ImagePart,
     ImportResult,
     McpCall,
     McpCallEnvelope,
@@ -1409,6 +1413,48 @@ class Host:
         return await self._with_session(
             session, lambda store: store.computer_policy(), require_active=False, write=False)
 
+    async def computer_model_tool(self, value: ComputerToolRequest) -> ComputerToolResult:
+        self._admit()
+        if value.build_id != self.build or value.host_epoch != self.fence.host_epoch:
+            raise BackendError("stale_host_epoch")
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        service = await self.store.service()
+        if service is None or service.state != "running" or exited(service.process_lease):
+            raise BackendError("supervisor_unavailable", status=503)
+        health = await self.supervisor.call("GET", "/health", SupervisorHealth)
+        self._check_supervisor(health.identity, service, fenced=True)
+        worker = next((item for item in health.workers if item.worker_id == value.worker_id), None)
+        if (health.identity.state != "ready" or health.freeze_id or health.blocked or health.session_errors.get(value.session_id)
+                or worker is None or worker.session_id != value.session_id or worker.state != "ready"
+                or worker.host_epoch != value.host_epoch or worker.build_id != self.build
+                or worker.fingerprint != self.build or worker.purpose != "business"
+                or worker.process_lease is None or exited(worker.process_lease)):
+            raise BackendError("worker_identity_mismatch", status=503)
+        await self._read_session(value.session_id, lambda store: store.check_computer_intent(value))
+        try:
+            if value.call.name == "computer_observe":
+                observed = await self.computer_observe(value.session_id)
+                result = observed.model_dump_json(exclude={"image_base64"})
+                images = [ImagePart(media_type="image/png", data_base64=observed.image_base64)] if observed.image_base64 else []
+                return ComputerToolResult(phase="done", result=result, images=images)
+            if value.call.name != "computer_click":
+                raise BackendError("computer_tool_missing")
+            point = ComputerPoint.model_validate_json(value.call.arguments)
+            acted = await self.computer_action(value.session_id, ComputerActionRequest(
+                action_id=value.step_id, **point.model_dump()))
+            return ComputerToolResult(phase=acted.phase, result=acted.model_dump_json())
+        except BackendError as exc:
+            # The action ledger remains authoritative when a send was admitted.
+            if value.call.name == "computer_click":
+                point = ComputerPoint.model_validate_json(value.call.arguments)
+                body = json.dumps(point.model_dump(), sort_keys=True, separators=(",", ":"))
+                prior = await self._with_session(value.session_id,
+                    lambda store: store.find_computer_action(value.step_id, body), write=False)
+                if prior is not None:
+                    return ComputerToolResult(phase=prior.phase, result=prior.model_dump_json())
+            return ComputerToolResult(phase="failed", result=exc.code)
+
     async def _park_driver(self, session: str, driver: ComputerDriver) -> int | None:
         code = await asyncio.to_thread(driver.stop)
         if code is not None:
@@ -1484,14 +1530,16 @@ class Host:
 
     async def computer_action(self, session: str, value: ComputerActionRequest) -> ComputerActionView:
         policy = await self.computer_policy(session)
-        if not policy.enabled:
-            raise BackendError("computer_disabled")
         body = json.dumps({"capture_id": value.capture_id, "x": value.x, "y": value.y},
                           sort_keys=True, separators=(",", ":"))
         found = await self._with_session(
-            session, lambda store: store.find_computer_action(value.action_id, body), write=False)
+            session, lambda store: store.find_computer_action(value.action_id, body), require_active=False, write=False)
         if found is not None:
             return found
+        if not policy.enabled:
+            raise BackendError("computer_disabled")
+        if not policy.allow_foreground:
+            raise BackendError("computer_foreground_disabled")
         if await self._with_session(session, lambda store: store.computer_blocked(), write=False):
             raise BackendError("computer_blocked")
         capture = await self._with_session(
@@ -2773,6 +2821,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/control/file-writes/prepare")
     async def prepare_tool_write(value: PrepareFileWrite) -> PreparedFileWrite:
         return await owner.prepare_tool_write(value)
+
+    @app.post("/control/computer/tool")
+    async def computer_tool(value: ComputerToolRequest) -> ComputerToolResult:
+        return await owner.computer_model_tool(value)
 
     @app.post("/control/recover")
     async def recover(value: Recovery) -> Health:

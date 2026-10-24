@@ -251,6 +251,9 @@ class FakeGate:
         self.service_cancelled = False
         self.results: dict = {}
         self.conflicts: set[str] = set()
+        self.busy: set[str] = set()
+        self.ready = False
+        self.catalog_failed = False
         self.closed = False
         self.exit_code = None
 

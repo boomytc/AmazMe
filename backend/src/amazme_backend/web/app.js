@@ -514,6 +514,7 @@ function startClient() {
       computerCapture = "";
       $("computer-state").textContent = "";
       $("computer-enabled").checked = false;
+      $("computer-foreground").checked = false;
       $("computer-image").removeAttribute("src");
       $("computer-image").hidden = true;
     }
@@ -544,6 +545,7 @@ function startClient() {
       const attachment = connection.attachment;
       if (attachment.session_id !== id || attachment.build_id !== boot.build_id || attachment.host_epoch !== boot.host_epoch) throw new Error("会话绑定不匹配");
       if ($("web").open) void loadWebPolicy().catch(error);
+      if ($("computer").open) void loadComputerPolicy().catch(error);
       if ($("terminal").open) void loadTerminals().catch(error);
       if ($("mcp").open) void loadMcp().catch(error);
       const url = new URL(`/api/v1/events/${id}`, location.origin); url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -1286,6 +1288,15 @@ function startClient() {
     } catch (failure) { if (operation.active()) error(failure); }
   };
   let computerCapture = "";
+  async function loadComputerPolicy() {
+    const operation = beginOperation("computer-action");
+    if (!operation || !operation.identity) return;
+    const view = await api(`/api/v1/sessions/${operation.session}/computer`, "GET", undefined, operation.connection);
+    if (!operation.active()) return;
+    $("computer-enabled").checked = view.enabled;
+    $("computer-foreground").checked = view.allow_foreground;
+  }
+  $("computer").ontoggle = () => { if ($("computer").open) void loadComputerPolicy().catch(error); };
   $("computer-form").onsubmit = async event => {
     event.preventDefault();
     const operation = beginOperation("computer-action");
@@ -1293,7 +1304,8 @@ function startClient() {
     const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/computer`, "POST", {enabled: $("computer-enabled").checked}, connection);
+      const view = await api(`/api/v1/sessions/${selected}/computer`, "POST", {enabled: $("computer-enabled").checked,
+        allow_foreground: $("computer-foreground").checked}, connection);
       if (!operation.active()) return;
       $("computer-state").textContent = view.enabled ? "已启用" : "已关闭";
       $("error").textContent = "";

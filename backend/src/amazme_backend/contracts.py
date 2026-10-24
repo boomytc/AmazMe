@@ -179,7 +179,7 @@ class Receipt(Model):
 class ToolCall(Model):
     id: str
     # mcp_tool is the session's canonical call. mcp_<20 hex> is only the name offered to a provider.
-    name: str = Field(pattern=r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20})$")
+    name: str = Field(pattern=r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_click|mcp_tool|mcp_[a-f0-9]{20})$")
     arguments: str
 
 
@@ -569,6 +569,7 @@ class WebCallView(Model):
 
 class ComputerPolicy(Model):
     enabled: bool = False
+    allow_foreground: bool = False
     max_age_ms: int = Field(default=55000, ge=1, le=55000)
 
 
@@ -593,11 +594,18 @@ class ComputerObserve(Model):
     image_base64: str = Field(default="", max_length=48 * 1024 * 1024)
 
 
-class ComputerActionRequest(Model):
-    action_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+class ComputerPoint(Model):
     capture_id: str = Field(min_length=1, max_length=128)
     x: int = Field(ge=0, le=100000)
     y: int = Field(ge=0, le=100000)
+
+
+class ComputerInspect(Model):
+    pass
+
+
+class ComputerActionRequest(ComputerPoint):
+    action_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
 
 
 class ComputerActionView(Model):
@@ -617,6 +625,21 @@ class ComputerCleanup(Model):
 class HostFence(Model):
     host_epoch: int
     build_id: str
+
+
+class ComputerToolRequest(HostFence):
+    session_id: str
+    worker_id: str
+    step_id: str
+    request_id: str
+    generation: int
+    call: ToolCall
+
+
+class ComputerToolResult(Model):
+    phase: Literal["unknown", "done", "failed"]
+    result: str = ""
+    images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart]())
 
 
 class OpenTerminal(HostFence):

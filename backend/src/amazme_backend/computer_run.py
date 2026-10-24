@@ -250,7 +250,8 @@ class ComputerDriver:
     def _request(self, payload: dict[str, object]) -> dict[str, object]:
         if payload.get("op") == "observe":
             self.capture_id, self.driver_capture = "", ""
-            result = self.call("get_desktop_state", {"max_image_dimension": 0})
+            # CUA records the resize transform in capture_id. Keep RGBA PNGs within the model's 8 MiB image budget.
+            result = self.call("get_desktop_state", {"max_image_dimension": 1400})
             data = RECORD.validate_python(result["data"])
             content = result["content"]
             if not isinstance(content, list):

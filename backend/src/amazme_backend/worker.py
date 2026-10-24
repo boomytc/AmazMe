@@ -18,6 +18,8 @@ from .contracts import (
     Cancel,
     Cleanup,
     Command,
+    ComputerToolRequest,
+    ComputerToolResult,
     EffectHold,
     ErrorBody,
     FreezeWorker,
@@ -68,6 +70,8 @@ from .providers import Completion, stream
 from .session_domain import (
     Action,
     CloseEpoch,
+    ComputerRetrieval,
+    ComputerReturned,
     Continue,
     EffectResolved,
     EpochClosed,
@@ -229,7 +233,7 @@ class Worker:
 
     def _interrupt(self) -> None:
         # Open/close/reconciliation boundaries are never cancelled with business work.
-        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval)):
+        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval)):
             self.run_task.cancel()
 
     async def cancel(self, value: Cancel) -> Receipt:
@@ -237,7 +241,7 @@ class Worker:
         self.last_demand = time.monotonic()
         async with self.dispatch_lock:
             receipt = await self.store.cancel(value.request_id, value)
-            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval)):
+            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval)):
                 current = await self.store.get(self.current.request_id)
                 if current.cancel_requested:
                     self._interrupt()
@@ -453,6 +457,23 @@ class Worker:
             raise BackendError("file_preparation_mismatch")
         return prepared
 
+    async def _retrieve_computer(self, action: ComputerRetrieval) -> ComputerReturned:
+        ready = HostReady.model_validate_json((self.profile.path / "ready.json").read_bytes())
+        epoch = await self.store.host_epoch()
+        if (ready.profile_id != self.profile.config.profile_id or ready.build_id != self.build
+                or ready.fingerprint != self.build or ready.role != "host" or ready.host_epoch != epoch):
+            raise BackendError("stale_host_epoch")
+        request = ComputerToolRequest(build_id=self.build, host_epoch=epoch, session_id=self.session,
+            worker_id=self.instance, step_id=action.step_id, request_id=action.request_id,
+            generation=action.generation, call=action.call)
+        async with httpx.AsyncClient(timeout=75, trust_env=False) as client:
+            response = await client.post(ready.url + "/control/computer/tool", json=request.model_dump(),
+                                         headers={"Authorization": "Bearer " + self.profile.token})
+        if response.is_error:
+            error = ErrorBody.model_validate_json(response.content)
+            raise BackendError(error.code, status=response.status_code)
+        return ComputerReturned(action, ComputerToolResult.model_validate_json(response.content))
+
     async def perform(self, action: Action) -> Observation:
         if self.validation:
             raise BackendError("validation_worker")
@@ -500,6 +521,8 @@ class Worker:
             return await self._retrieve_web(action)
         if isinstance(action, McpRetrieval):
             return await self._retrieve_mcp(action)
+        if isinstance(action, ComputerRetrieval):
+            return await self._retrieve_computer(action)
         if isinstance(action, ToolInvocation):
             prepared = await self.prepare_file_write(action) if action.call.name == "write_file" else None
             command = command_for(action.call)

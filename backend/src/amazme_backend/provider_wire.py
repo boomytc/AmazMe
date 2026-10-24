@@ -19,6 +19,7 @@ from .providers import (
     provider_messages,
     reasoning_signature,
     tool_definitions,
+    tool_image_messages,
     with_catalog_price,
 )
 
@@ -96,7 +97,7 @@ def base_headers(config: ProviderConfig, messages: list[Message]) -> dict[str, s
 
 def responses_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None) -> Record:
     converted: list[JsonValue] = []
-    for message in messages:
+    for message in tool_image_messages(messages):
         if message.role == 'user':
             content: list[JsonValue] = [{'type': 'input_text', 'text': message.content}]
             content.extend([{'type': 'input_image', 'image_url': f'data:{image.media_type};base64,{image.data_base64}'}
@@ -177,7 +178,7 @@ def anthropic_body(config: ProviderConfig, messages: list[Message], offers: list
     oauth = config.provider == 'anthropic' and (config.auth_type == 'oauth' or config.api_key.get_secret_value().startswith('sk-ant-oat'))
     names = _CANONICAL if oauth else {}
     converted: list[JsonValue] = []
-    for message in messages:
+    for message in tool_image_messages(messages):
         if message.role == 'tool':
             converted.append({'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': message.tool_call_id,
                                                          'content': message.content}]})
@@ -275,7 +276,7 @@ async def anthropic(config: ProviderConfig, messages: list[Message], offers: lis
 def google_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None) -> Record:
     converted: list[JsonValue] = []
     names: dict[str, str] = {}
-    for message in messages:
+    for message in tool_image_messages(messages):
         if message.role == 'tool':
             converted.append({'role': 'user', 'parts': [{'functionResponse': {
                 'name': names.get(message.tool_call_id, message.tool_call_id), 'response': {'result': message.content}}}]})

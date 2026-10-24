@@ -9,6 +9,9 @@ from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 from .contracts import (
     BackendError,
     Cleanup,
+    ComputerInspect,
+    ComputerPoint,
+    ComputerToolResult,
     DelegateTasks,
     EffectHold,
     EffectResolution,
@@ -34,7 +37,7 @@ from .web_tools import validate_fetch_url
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | ComputerInspect | ComputerPoint = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
@@ -54,6 +57,10 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = parsed_fetch.model_copy(update={"url": validate_fetch_url(parsed_fetch.url)})
     elif call.name == "mcp_tool":
         value = McpToolCall.model_validate_json(call.arguments)
+    elif call.name == "computer_observe":
+        value = ComputerInspect.model_validate_json(call.arguments)
+    elif call.name == "computer_click":
+        value = ComputerPoint.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
     if isinstance(value, ReadFile):
@@ -186,9 +193,17 @@ class McpRetrieval:
     stop: bool = False
 
 
+@dataclass(frozen=True)
+class ComputerRetrieval:
+    step_id: str
+    request_id: str
+    generation: int
+    call: ToolCall
+
+
 type Action = (
     Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect
-    | WebRetrieval | McpRetrieval
+    | WebRetrieval | McpRetrieval | ComputerRetrieval
 )
 
 
@@ -257,7 +272,13 @@ class McpReturned:
     result: str = ""
 
 
+@dataclass(frozen=True)
+class ComputerReturned:
+    invocation: ComputerRetrieval
+    result: ComputerToolResult
+
+
 type Observation = (
     ModelReturned | ToolReturned | ToolObserved | EpochOpened | EpochClosed | EffectResolved | Failed | Previewed
-    | WebReturned | McpReturned
+    | WebReturned | McpReturned | ComputerReturned
 )

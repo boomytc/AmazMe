@@ -24,6 +24,7 @@ from .contracts import (
     ComputerActionView,
     ComputerCaptureView,
     ComputerPolicy,
+    ComputerToolRequest,
     Decision,
     DelegateTasks,
     EffectHold,
@@ -56,6 +57,8 @@ from .providers import Completion, stored_provider, token_cost_micro
 from .session_domain import (
     Action,
     CloseEpoch,
+    ComputerRetrieval,
+    ComputerReturned,
     Continue,
     EffectResolved,
     EpochClosed,
@@ -490,6 +493,8 @@ class SessionStore:
                   payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS computer_actions(
                   id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS computer_images(
+                  step_id TEXT PRIMARY KEY REFERENCES steps(id),payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS computer_runtime(
                   id TEXT PRIMARY KEY,blocked INTEGER NOT NULL,exit_code INTEGER,proof TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS prompt_images(
@@ -633,6 +638,11 @@ class SessionStore:
         if row is None:
             return []
         return [ImagePart.model_validate(item) for item in json.loads(str(row[0]))]
+
+    @staticmethod
+    def _computer_images(db: sqlite3.Connection, step_id: str) -> list[ImagePart]:
+        row = db.execute("SELECT payload FROM computer_images WHERE step_id=?", (step_id,)).fetchone()
+        return [ImagePart.model_validate(item) for item in json.loads(str(row[0]))] if row else []
 
     def _new_request(self, db: sqlite3.Connection, c: Changes, value: Submit, *, parent_id: str = "",
                      depth: int = 0) -> Receipt:
@@ -1170,6 +1180,18 @@ class SessionStore:
                 self._save_step(db, step)
         await self._tx(operation)
 
+    async def check_computer_intent(self, value: ComputerToolRequest) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            self._fence(db, value)
+            step = self._step(db, value.step_id)
+            request = self._request(db, value.request_id)
+            if (step.phase != "intent" or step.request_id != value.request_id or step.generation != value.generation
+                    or request.generation != value.generation or request.cancel_requested or request.decision
+                    or step.call != value.call or value.call.name not in {"computer_observe", "computer_click"}
+                    or self._meta(db, "freeze_id") or self._meta(db, "stopping") or self._meta(db, "blocked")):
+                raise BackendError("computer_intent_mismatch")
+        await self.db.call(operation)
+
     async def resolve(self, value: EffectResolution, fence: HostFence) -> Receipt:
         def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
             self._fence(db, fence)
@@ -1324,7 +1346,7 @@ class SessionStore:
         assert step.call is not None
         binding = self._binding(db, request.request_id, step.call)
         required = self.approval_policy == "all" or (
-            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool"})
+            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_click"})
         if not required:
             return True
         approval: Approval | None = None
@@ -1387,7 +1409,9 @@ class SessionStore:
         else:
             assert step.call is not None
             self._message(db, c, request.request_id, step.step_id,
-                          Message(role="tool", content=step.result, tool_call_id=step.call.id))
+                          Message(role="tool", content=step.result, tool_call_id=step.call.id,
+                                  images=self._computer_images(db, step.step_id)
+                                  if step.call.name == "computer_observe" else []))
         step.phase = "applied"
         self._save_step(db, step)
 
@@ -1437,6 +1461,16 @@ class SessionStore:
         run = self._run(db, request.request_id)
         steps = self._steps(db, request.request_id)
         for step in steps:
+            if (step.kind == "tool" and step.phase == "intent" and step.call
+                    and step.call.name in {"computer_observe", "computer_click"}):
+                if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
+                    return Park("frozen")
+                if request.cancel_requested or request.decision:
+                    step.phase = "unknown"
+                    self._save_step(db, step)
+                    self._decide(db, c, request, Decision(status="cancelled"))
+                    return Continue()
+                return ComputerRetrieval(step.step_id, request.request_id, request.generation, step.call)
             mcp_intent = step.kind == "tool" and step.phase == "intent" and step.call and step.call.name == "mcp_tool"
             if mcp_intent:
                 if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
@@ -1516,6 +1550,14 @@ class SessionStore:
                 if step.call.name == "delegate_task":
                     self._delegate(db, c, request, step)
                     return Continue()
+                if step.call.name in {"computer_observe", "computer_click"}:
+                    self._consume(db, c, step)
+                    step.phase, step.generation = "intent", request.generation
+                    self._save_step(db, step)
+                    request.status = "running"
+                    self._save_request(db, c, request)
+                    c.emit("tool", request.request_id, step.model_dump_json())
+                    return ComputerRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if step.call.name == "mcp_tool":
                     self._consume(db, c, step)
                     step.phase, step.generation = "intent", request.generation
@@ -1654,6 +1696,31 @@ class SessionStore:
             c.emit("tool", request.request_id, step.model_dump_json())
             c.hit("web_result", request.request_id, step.step_id)
             return
+        if isinstance(observation, ComputerReturned):
+            action = observation.invocation
+            request = self._request(db, action.request_id)
+            step = self._step(db, action.step_id)
+            if (request.generation != action.generation or step.phase != "intent"
+                    or step.request_id != request.request_id or step.call != action.call):
+                raise BackendError("stale_generation")
+            result = observation.result
+            if result.phase == "unknown":
+                step.phase = "unknown"
+                self._save_step(db, step)
+                self._decide(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
+                                                     error="computer_outcome_unknown"))
+                return
+            step.result, step.phase = result.result, "result"
+            if result.images:
+                checked_images(result.images)
+                db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
+                           (step.step_id, json.dumps([image.model_dump() for image in result.images])))
+            self._save_step(db, step)
+            c.emit("tool", request.request_id, step.model_dump_json())
+            if request.cancel_requested and not request.decision:
+                self._materialize(db, c, request, step)
+                self._decide(db, c, request, Decision(status="cancelled"))
+            return
         if isinstance(observation, McpReturned):
             action = observation.invocation
             request = self._request(db, action.request_id)
@@ -1696,7 +1763,7 @@ class SessionStore:
             if isinstance(action, McpRetrieval):
                 # The call may already exist. Leave the intent so the next advance queries it.
                 return
-            if isinstance(action, (ModelInvocation, ToolInvocation, WebRetrieval)):
+            if isinstance(action, (ModelInvocation, ToolInvocation, WebRetrieval, ComputerRetrieval)):
                 request = self._request(db, action.request_id)
                 step = self._step(db, action.step_id)
                 if request.generation != action.generation or step.request_id != request.request_id or step.phase != "intent":
@@ -1706,6 +1773,11 @@ class SessionStore:
                     self._save_step(db, step)
                     self._decide(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
                                                          error=observation.error))
+                elif isinstance(action, ComputerRetrieval):
+                    step.phase = "unknown"
+                    self._save_step(db, step)
+                    self._decide(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
+                                                         error=observation.error or "computer_outcome_unknown"))
                 elif isinstance(action, WebRetrieval):
                     row = db.execute("SELECT payload FROM web_calls WHERE id=?", (action.step_id,)).fetchone()
                     step.phase = "unknown"

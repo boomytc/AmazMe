@@ -15,6 +15,7 @@ from helpers.computer_probe import start_driver as start_probe
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
+    BackendError,
     ComputerActionRequest,
     ComputerPolicy,
     CreateSession,
@@ -91,7 +92,7 @@ async def test_missing_permission_sends_no_click_and_pixels_follow_the_driver(tm
                 "action_id": "early", "capture_id": "missing", "x": 1, "y": 4})
             assert blocked.status_code == 409 and blocked.json()["code"] == "computer_disabled"
             assert _actions(host, SESSION) == []
-            enabled = await client.post(f"/api/v1/sessions/{SESSION}/computer", json={"enabled": True})
+            enabled = await client.post(f"/api/v1/sessions/{SESSION}/computer", json={"enabled": True, "allow_foreground": True})
             assert enabled.status_code == 200 and enabled.json()["enabled"] is True
             denied = await client.post(f"/api/v1/sessions/{SESSION}/computer/observe")
             assert denied.status_code == 200 and denied.json()["error"] == "permission_required"
@@ -135,7 +136,7 @@ async def test_dropped_action_stays_unknown_until_cleanup_proof(tmp_path: Path) 
     try:
         async with _client(host) as client:
             await _open(host, client, SESSION)
-            await client.post(f"/api/v1/sessions/{SESSION}/computer", json={"enabled": True})
+            await client.post(f"/api/v1/sessions/{SESSION}/computer", json={"enabled": True, "allow_foreground": True})
             seen = await client.post(f"/api/v1/sessions/{SESSION}/computer/observe")
             capture = seen.json()["capture"]["capture_id"]
             dropped = await client.post(f"/api/v1/sessions/{SESSION}/computer/actions", json={
@@ -169,7 +170,7 @@ async def test_a_second_action_does_not_start_while_the_first_is_unanswered(tmp_
     try:
         async with _client(host) as client:
             await _open(host, client, SESSION)
-            await client.post(f"/api/v1/sessions/{SESSION}/computer", json={"enabled": True, "max_age_ms": 55000})
+            await client.post(f"/api/v1/sessions/{SESSION}/computer", json={"enabled": True, "allow_foreground": True, "max_age_ms": 55000})
             seen = await client.post(f"/api/v1/sessions/{SESSION}/computer/observe")
             capture = seen.json()["capture"]["capture_id"]
             first = asyncio.create_task(client.post(f"/api/v1/sessions/{SESSION}/computer/actions", json={
@@ -189,7 +190,7 @@ async def test_a_second_action_does_not_start_while_the_first_is_unanswered(tmp_
             SCENARIOS[tmp_path] = "plain"
             attached = await client.post(f"/api/v1/sessions/{OTHER}/attachments")
             client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
-            await client.post(f"/api/v1/sessions/{OTHER}/computer", json={"enabled": True, "max_age_ms": 1})
+            await client.post(f"/api/v1/sessions/{OTHER}/computer", json={"enabled": True, "allow_foreground": True, "max_age_ms": 1})
             aged = await client.post(f"/api/v1/sessions/{OTHER}/computer/observe")
             old_capture = aged.json()["capture"]["capture_id"]
             await asyncio.sleep(0.05)
@@ -197,7 +198,7 @@ async def test_a_second_action_does_not_start_while_the_first_is_unanswered(tmp_
                 "action_id": "late", "capture_id": old_capture, "x": 3, "y": 4})
             assert expired.status_code == 409 and expired.json()["code"] == "computer_stale"
             assert _actions(host, OTHER) == []
-            await client.post(f"/api/v1/sessions/{OTHER}/computer", json={"enabled": True, "max_age_ms": 55000})
+            await client.post(f"/api/v1/sessions/{OTHER}/computer", json={"enabled": True, "allow_foreground": True, "max_age_ms": 55000})
             fresh = await client.post(f"/api/v1/sessions/{OTHER}/computer/observe")
             clicked = await client.post(f"/api/v1/sessions/{OTHER}/computer/actions", json={
                 "action_id": "plain", "capture_id": fresh.json()["capture"]["capture_id"], "x": 3, "y": 4})
@@ -247,12 +248,18 @@ async def test_sdk_and_rpc_use_the_same_bound_computer_action_ledger(tmp_path: P
         view = await client.observe_computer(SESSION, binding.attachment_id)
         assert view.capture is not None
         action = ComputerActionRequest(action_id='shared', capture_id=view.capture.capture_id, x=1, y=4)
+        with pytest.raises(BackendError, match='computer_foreground_disabled'):
+            await client.act_computer(SESSION, binding.attachment_id, action)
+        assert _actions(host, SESSION) == []
+        await client.configure_computer(SESSION, binding.attachment_id, ComputerPolicy(enabled=True, allow_foreground=True))
         assert (await client.act_computer(SESSION, binding.attachment_id, action)).phase == 'done'
         rpc = await handle_rpc(host, RpcCall(id='retry', method='computer.act', params=RpcParams(
             session_id=SESSION, workspace='primary', attachment_id=binding.attachment_id, computer_action=action)))
         assert rpc['result']['phase'] == 'done' and len(_actions(host, SESSION)) == 1
         await client.configure_computer(SESSION, binding.attachment_id, ComputerPolicy(enabled=False))
         assert SESSION not in host.computer_drivers
+        assert (await client.act_computer(SESSION, binding.attachment_id, action)).phase == 'done'
+        assert len(_actions(host, SESSION)) == 1
     finally:
         await client._http.aclose()
         await _stop(host)
@@ -324,7 +331,7 @@ def test_browser_clicks_the_selected_session_capture() -> None:
         await until(()=>$('computer-state').textContent.includes('8,16'));
         $('computer-cleanup').click();
         await until(()=>$('computer-state').textContent.includes('proof'));
-        assert.equal(seen[0], `/api/v1/sessions/${session}/computer ["enabled"]`);
+        assert.equal(seen[0], `/api/v1/sessions/${session}/computer ["allow_foreground","enabled"]`);
         assert.equal(seen[1], `/api/v1/sessions/${session}/computer/observe`);
         assert.equal(seen[2], `/api/v1/sessions/${session}/computer/actions ["action_id","capture_id","x","y"] cap 1,4`);
         assert.equal(seen[3], `/api/v1/sessions/${session}/computer/cleanup`);

@@ -4176,6 +4176,44 @@
         }
       }
     },
+    "/control/computer/tool": {
+      "post": {
+        "summary": "Computer Tool",
+        "operationId": "computer_tool_control_computer_tool_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerToolRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputerToolResult"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/control/recover": {
       "post": {
         "summary": "Recover",
@@ -5149,13 +5187,6 @@
       },
       "ComputerActionRequest": {
         "properties": {
-          "action_id": {
-            "type": "string",
-            "maxLength": 128,
-            "minLength": 1,
-            "pattern": "^[\\w.-]+$",
-            "title": "Action Id"
-          },
           "capture_id": {
             "type": "string",
             "maxLength": 128,
@@ -5173,15 +5204,22 @@
             "maximum": 100000.0,
             "minimum": 0.0,
             "title": "Y"
+          },
+          "action_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "title": "Action Id"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "action_id",
           "capture_id",
           "x",
-          "y"
+          "y",
+          "action_id"
         ],
         "title": "ComputerActionRequest"
       },
@@ -5366,6 +5404,11 @@
             "title": "Enabled",
             "default": false
           },
+          "allow_foreground": {
+            "type": "boolean",
+            "title": "Allow Foreground",
+            "default": false
+          },
           "max_age_ms": {
             "type": "integer",
             "maximum": 55000.0,
@@ -5377,6 +5420,85 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ComputerPolicy"
+      },
+      "ComputerToolRequest": {
+        "properties": {
+          "host_epoch": {
+            "type": "integer",
+            "title": "Host Epoch"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "worker_id": {
+            "type": "string",
+            "title": "Worker Id"
+          },
+          "step_id": {
+            "type": "string",
+            "title": "Step Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "call": {
+            "$ref": "#/components/schemas/ToolCall"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host_epoch",
+          "build_id",
+          "session_id",
+          "worker_id",
+          "step_id",
+          "request_id",
+          "generation",
+          "call"
+        ],
+        "title": "ComputerToolRequest"
+      },
+      "ComputerToolResult": {
+        "properties": {
+          "phase": {
+            "type": "string",
+            "enum": [
+              "unknown",
+              "done",
+              "failed"
+            ],
+            "title": "Phase"
+          },
+          "result": {
+            "type": "string",
+            "title": "Result",
+            "default": ""
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImagePart"
+            },
+            "type": "array",
+            "title": "Images"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "phase"
+        ],
+        "title": "ComputerToolResult"
       },
       "CreateSession": {
         "properties": {
@@ -8703,7 +8825,7 @@
           },
           "name": {
             "type": "string",
-            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20})$",
+            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_click|mcp_tool|mcp_[a-f0-9]{20})$",
             "title": "Name"
           },
           "arguments": {

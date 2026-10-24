@@ -17,7 +17,10 @@ from pydantic import JsonValue, SecretStr, TypeAdapter, ValidationError
 
 from .contracts import (
     BackendError,
+    ComputerInspect,
+    ComputerPoint,
     DelegateTasks,
+    ImagePart,
     Message,
     Model,
     ModelSettings,
@@ -268,6 +271,8 @@ def tool_definitions(offers: list[McpOffer] | None = None) -> list[ChatCompletio
         {"type": "function", "function": {"name": "delegate_task", "description": "Delegate up to eight required independent tasks. Wait for their results before completing.", "parameters": DelegateTasks.model_json_schema()}},
         {"type": "function", "function": {"name": "web_search", "description": "Search through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", "parameters": WebSearch.model_json_schema()}},
         {"type": "function", "function": {"name": "web_fetch", "description": "Fetch one http(s) page through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", "parameters": WebFetch.model_json_schema()}},
+        {"type": "function", "function": {"name": "computer_observe", "description": "Observe the local macOS desktop when the user has enabled computer use and granted system permissions. Returns a capture ID and screenshot. Never invent a capture ID.", "parameters": ComputerInspect.model_json_schema()}},
+        {"type": "function", "function": {"name": "computer_click", "description": "Click screenshot pixel coordinates on the desktop using the latest observed capture ID, subject to session approval. Never retry an unknown action.", "parameters": ComputerPoint.model_json_schema()}},
     ]
     for offer in offers or []:
         description = (
@@ -303,6 +308,27 @@ def replay_reasoning_details(signature: str) -> list[object]:
     return cast(list[object], details)
 
 
+def tool_image_messages(messages: list[Message]) -> list[Message]:
+    expanded: list[Message] = []
+    pending: list[ImagePart] = []
+
+    def flush() -> None:
+        for offset in range(0, len(pending), 8):
+            expanded.append(Message(role="user", content="Images returned by the preceding tools.",
+                                    images=pending[offset:offset + 8]))
+        pending.clear()
+
+    for message in messages:
+        if message.role == "tool":
+            expanded.append(message.model_copy(update={"images": []}) if message.images else message)
+            pending.extend(message.images)
+        else:
+            flush()
+            expanded.append(message)
+    flush()
+    return expanded
+
+
 def provider_messages(messages: list[Message], provider: str = "") -> list[ChatCompletionMessageParam]:
     result: list[ChatCompletionMessageParam] = [{"role": "system", "content": (
         "You are AmazMe. Use the provided tools when asked to inspect or modify the workspace. "
@@ -315,7 +341,7 @@ def provider_messages(messages: list[Message], provider: str = "") -> list[ChatC
         "Report actual tool results. "
         "Never claim a command ran unless a tool result confirms it. Keep answers concise."
     )}]
-    for message in messages:
+    for message in tool_image_messages(messages):
         if message.role == "user":
             if message.images:
                 parts: list[dict[str, object]] = []
