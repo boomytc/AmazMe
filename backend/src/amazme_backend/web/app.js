@@ -211,18 +211,31 @@ function startClient() {
     controls();
   }
   async function compactAt(connection, requestId) {
-    if (!owns(connection) || !writable()) return;
+    if (!owns(connection) || !writable() || !identity) return;
     const key = `compact:${connection.session}:${requestId}`;
     if (running.has(key)) return;
     running.add(key); controls();
+    const storedKey = `compact-id:${identity.profile_id}:${connection.session}:${requestId}`;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(storedKey) || "null"); }
+    catch { pending = null; }
+    if (!pending) {
+      pending = {compaction_id: crypto.randomUUID(), through_request_id: requestId};
+      sessionStorage.setItem(storedKey, JSON.stringify(pending));
+    }
     try {
       const value = await api(`/api/v1/sessions/${connection.session}/compactions`, "POST",
-        {compaction_id: crypto.randomUUID(), through_request_id: requestId}, connection, connection.identity);
+        {compaction_id: pending.compaction_id, through_request_id: pending.through_request_id}, connection, connection.identity);
+      sessionStorage.removeItem(storedKey);
       if (!owns(connection) || !connection.model) return;
       connection.model = {...connection.model, compaction: value.summary};
       render();
     } catch (failure) {
-      if (owns(connection)) error(failure);
+      if (owns(connection)) {
+        error(failure.code === "compaction_pending"
+          ? new Error("上次压缩结果未知，未自动重发；请再查同一次。")
+          : failure);
+      }
     } finally {
       running.delete(key);
       if (owns(connection)) controls();

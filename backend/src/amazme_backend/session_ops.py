@@ -48,6 +48,8 @@ SessionOpName = Literal[
     "begin_computer_action",
     "settle_computer_action",
     "finish_computer_cleanup",
+    "begin_compaction",
+    "release_compaction",
     "commit_compaction",
     "import_transcript",
 ]
@@ -164,6 +166,15 @@ class SettleComputerBody(Model):
     driver_y: int | None = None
 
 
+class BeginCompactionBody(Model):
+    compaction_id: str
+    through_request_id: str
+
+
+class CompactionClaim(Model):
+    compaction: Compaction | None = None
+
+
 class CompactBody(Model):
     compaction_id: str
     through_request_id: str
@@ -252,6 +263,13 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
             body.action_id, body.phase, body.error, body.driver_x, body.driver_y))
     if name == "finish_computer_cleanup":
         return _model(TextValue(value=await store.finish_computer_cleanup(TextValue.model_validate_json(payload).value)))
+    if name == "begin_compaction":
+        body = BeginCompactionBody.model_validate_json(payload)
+        return _model(CompactionClaim(compaction=await store.begin_compaction(
+            body.compaction_id, body.through_request_id)))
+    if name == "release_compaction":
+        await store.release_compaction(BeginCompactionBody.model_validate_json(payload).compaction_id)
+        return ""
     if name == "commit_compaction":
         body = CompactBody.model_validate_json(payload)
         return _model(await store.commit_compaction(
@@ -289,6 +307,8 @@ class SessionOps(Protocol):
     async def begin_computer_action(self, action_id: str, body: str) -> tuple[ComputerActionView, bool]: ...
     async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"], error: str, driver_x: int | None, driver_y: int | None) -> ComputerActionView: ...
     async def finish_computer_cleanup(self, proof: str) -> str: ...
+    async def begin_compaction(self, compaction_id: str, through_request_id: str) -> Compaction | None: ...
+    async def release_compaction(self, compaction_id: str) -> None: ...
     async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str) -> Compaction: ...
     async def import_transcript(self, messages: list[tuple[str, str, str]]) -> None: ...
 
@@ -392,6 +412,15 @@ class SessionRelay:
 
     async def finish_computer_cleanup(self, proof: str) -> str:
         return TextValue.model_validate_json(await self._call("finish_computer_cleanup", TextValue(value=proof))).value
+
+    async def begin_compaction(self, compaction_id: str, through_request_id: str) -> Compaction | None:
+        claim = CompactionClaim.model_validate_json(await self._call("begin_compaction", BeginCompactionBody(
+            compaction_id=compaction_id, through_request_id=through_request_id)))
+        return claim.compaction
+
+    async def release_compaction(self, compaction_id: str) -> None:
+        await self._call("release_compaction", BeginCompactionBody(
+            compaction_id=compaction_id, through_request_id=""))
 
     async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str) -> Compaction:
         return Compaction.model_validate_json(await self._call("commit_compaction", CompactBody(

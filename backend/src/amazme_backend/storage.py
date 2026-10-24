@@ -473,6 +473,8 @@ class SessionStore:
                 CREATE TABLE IF NOT EXISTS previews(request_id TEXT PRIMARY KEY,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS batches(seq INTEGER PRIMARY KEY,payload TEXT NOT NULL,bytes INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS compactions(id TEXT PRIMARY KEY,basis TEXT NOT NULL,payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS compaction_claims(
+                  id TEXT PRIMARY KEY,through_request_id TEXT NOT NULL,basis TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS workflows(
                   id TEXT PRIMARY KEY,digest TEXT NOT NULL,parent_id TEXT NOT NULL,payload TEXT NOT NULL);
                 CREATE INDEX IF NOT EXISTS workflows_parent ON workflows(parent_id);
@@ -1834,6 +1836,56 @@ class SessionStore:
                     return action
             return Park("frozen" if self._meta(db, "freeze_id") else "idle", wake)
         return await self._tx(operation)
+
+    async def begin_compaction(self, compaction_id: str, through_request_id: str) -> Compaction | None:
+        """Reserve one summary. A stored row is returned. An open claim is not sent again."""
+        def operation(db: sqlite3.Connection, _c: Changes) -> Compaction | None:
+            _payloads, basis = self._compaction_source(db, through_request_id)
+            stored = db.execute("SELECT payload FROM compactions WHERE id=?", (compaction_id,)).fetchone()
+            if stored is not None:
+                previous = Compaction.model_validate_json(stored[0])
+                if previous.through_request_id != through_request_id or previous.basis != basis:
+                    raise BackendError("compaction_conflict")
+                return previous
+            same = db.execute(
+                "SELECT payload FROM compactions WHERE basis=? "
+                "AND json_extract(payload,'$.through_request_id')=? ORDER BY rowid LIMIT 1",
+                (basis, through_request_id)).fetchone()
+            if same is not None:
+                return Compaction.model_validate_json(same[0])
+            claim = db.execute(
+                "SELECT id,basis FROM compaction_claims WHERE through_request_id=? "
+                "AND NOT EXISTS (SELECT 1 FROM compactions WHERE id=compaction_claims.id) "
+                "ORDER BY rowid LIMIT 1",
+                (through_request_id,)).fetchone()
+            if claim is not None:
+                if str(claim["id"]) != compaction_id or str(claim["basis"]) != basis:
+                    raise BackendError("compaction_conflict")
+                raise BackendError("compaction_pending")
+            db.execute(
+                "INSERT INTO compaction_claims(id,through_request_id,basis) VALUES(?,?,?)",
+                (compaction_id, through_request_id, basis))
+            return None
+        return await self._tx(operation)
+
+    def _compaction_source(self, db: sqlite3.Connection, through_request_id: str) -> tuple[list[str], str]:
+        row = db.execute("SELECT payload FROM requests WHERE id=?", (through_request_id,)).fetchone()
+        if row is None:
+            raise BackendError("compaction_unsettled")
+        receipt = Receipt.model_validate_json(row[0])
+        payloads = self._payloads(db, through_request_id)
+        if receipt.kind != "root" or receipt.status != "succeeded" or receipt.decision is None or not payloads:
+            raise BackendError("compaction_unsettled")
+        return payloads, compaction_basis(payloads)
+
+    async def release_compaction(self, compaction_id: str) -> None:
+        """Drop a claim that never reached the model. A stored summary stays."""
+        def operation(db: sqlite3.Connection, _c: Changes) -> None:
+            stored = db.execute("SELECT 1 FROM compactions WHERE id=?", (compaction_id,)).fetchone()
+            if stored is not None:
+                return
+            db.execute("DELETE FROM compaction_claims WHERE id=?", (compaction_id,))
+        await self._tx(operation)
 
     async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str) -> Compaction:
         """Store a summary without deleting the messages it covers. A stale basis writes nothing."""

@@ -457,13 +457,17 @@ async def test_failed_summary_does_not_replace_history(owner: Host, monkeypatch:
     try:
         await finish(parent, "alpha", "r1", owner.build)
         original = await message_payloads(parent)
+    finally:
+        await parent.db.close()
 
-        async def fail(_config, _messages):
-            raise BackendError("model_failed")
+    async def fail(_config: object, _messages: object) -> str:
+        raise BackendError("model_failed")
 
-        monkeypatch.setattr("amazme_backend.host.summarize", fail)
-        with pytest.raises(BackendError, match="model_failed"):
-            await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r1"))
+    monkeypatch.setattr("amazme_backend.host.summarize", fail)
+    with pytest.raises(BackendError, match="model_failed"):
+        await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r1"))
+    parent = await parent_store(owner)
+    try:
         assert await message_payloads(parent) == original
         assert (await parent.snapshot()).compaction == ""
         await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
@@ -472,6 +476,51 @@ async def test_failed_summary_does_not_replace_history(owner: Host, monkeypatch:
         assert any(message.role == "assistant" and "alpha" in message.content for message in action.messages)
     finally:
         await parent.db.close()
+
+
+async def test_compaction_is_not_sent_twice(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+    failed = False
+
+    async def fake(_config: object, messages: list[Message]) -> str:
+        nonlocal failed
+        text = "\n".join(message.content for message in messages)
+        if "失败" in text and not failed:
+            failed = True
+            raise BackendError("model_failed")
+        calls.append(text)
+        return "已压缩一次"
+
+    monkeypatch.setattr("amazme_backend.host.summarize", fake)
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+    finally:
+        await parent.db.close()
+    created = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+    again = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+    other = await owner.compact_session(PARENT, CompactSession(compaction_id="c2", through_request_id="r1"))
+    assert created == again == other and len(calls) == 1 and "alpha" in calls[0]
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "失败", "r-fail", owner.build)
+    finally:
+        await parent.db.close()
+    with pytest.raises(BackendError, match="model_failed"):
+        await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r-fail"))
+    retried = await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r-fail"))
+    assert retried.summary == "已压缩一次" and len(calls) == 2
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "停住", "r-held", owner.build)
+        await parent.begin_compaction("c-held", "r-held")
+    finally:
+        await parent.db.close()
+    with pytest.raises(BackendError, match="compaction_pending"):
+        await owner.compact_session(PARENT, CompactSession(compaction_id="c-held", through_request_id="r-held"))
+    with pytest.raises(BackendError, match="compaction_conflict"):
+        await owner.compact_session(PARENT, CompactSession(compaction_id="c-new", through_request_id="r-held"))
+    assert len(calls) == 2
 
 
 async def test_compaction_does_not_send_or_keep_the_provider_secret(
@@ -505,6 +554,9 @@ async def test_compaction_does_not_send_or_keep_the_provider_secret(
     with pytest.raises(BackendError, match="compaction_secret") as echoed:
         await owner.compact_session(PARENT, CompactSession(compaction_id="c-echo", through_request_id="r-echo"))
     assert KEY not in str(echoed.value) and len(calls) == before_echo + 1
+    with pytest.raises(BackendError, match="compaction_pending"):
+        await owner.compact_session(PARENT, CompactSession(compaction_id="c-echo", through_request_id="r-echo"))
+    assert len(calls) == before_echo + 1
     parent = await parent_store(owner)
     try:
         assert await message_payloads(parent) == echo_payloads
@@ -732,6 +784,7 @@ def test_browser_compaction_keeps_the_original_turn() -> None:
         Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
         const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
+        const compactionIds=[];
         globalThis.fetch = async (path, options={})=>{
           if(path==='/api/v1/bootstrap') return response(identity);
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
@@ -744,7 +797,10 @@ def test_browser_compaction_keeps_the_original_turn() -> None:
           if(parts[5]==='compactions') {
             const body=JSON.parse(options.body);
             assert.equal(body.through_request_id,'r1');
-            assert.ok(body.compaction_id);
+            compactionIds.push(body.compaction_id);
+            if(compactionIds.filter(item=>item===body.compaction_id).length===1) {
+              return response({code:'compaction_pending',message:'compaction_pending'},409);
+            }
             return response({compaction_id:body.compaction_id,through_request_id:'r1',basis:'abc',message_count:2,summary:'已压缩 alpha'},201);
           }
           throw Error('unexpected '+path);
@@ -765,8 +821,13 @@ def test_browser_compaction_keeps_the_original_turn() -> None:
         }
         await import(appURL);
         await until(()=>$('conversation').textContent.includes('alpha') && [...document.querySelectorAll('button')].some(node=>node.textContent==='压缩上下文'));
-        [...document.querySelectorAll('button')].find(node=>node.textContent==='压缩上下文').click();
+        const compact=[...document.querySelectorAll('button')].find(node=>node.textContent==='压缩上下文');
+        compact.click();
+        await until(()=>$('error').textContent.includes('未自动重发'));
+        compact.click();
         await until(()=>$('compaction').textContent.includes('已压缩 alpha') && $('conversation').textContent.includes('已收到：alpha'));
+        assert.equal(compactionIds.length, 2);
+        assert.equal(compactionIds[0], compactionIds[1]);
         window.dispatchEvent(new window.Event('pagehide'));
         await window.happyDOM.abort();
     '''
