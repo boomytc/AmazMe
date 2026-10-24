@@ -92,6 +92,7 @@ def test_browser_previews_a_checkpoint_without_replacing_the_editor() -> None:
         const identity = {build_id:'build',host_epoch:1,state:'ready'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
+        const checkpointIds = [];
         globalThis.fetch = async (path, options={})=>{
           const method = options.method || 'GET';
           const body = options.body ? JSON.parse(options.body) : {};
@@ -104,6 +105,8 @@ def test_browser_previews_a_checkpoint_without_replacing_the_editor() -> None:
           if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) return response({path:'',absolute_path:'/workspace',entries:[{name:'note.txt',kind:'file',size:5}],truncated:false});
           if(method==='GET' && path.startsWith('/api/v1/checkpoints?')) return response({checkpoints:[]});
           if(path==='/api/v1/checkpoints' && method==='POST') {
+            checkpointIds.push(body.checkpoint_id);
+            if(checkpointIds.length === 2) throw new Error('lost');
             seen.push(body.path);
             return response({checkpoint_id:body.checkpoint_id,workspace:body.workspace,path:body.path,digest:'aaa'});
           }
@@ -131,6 +134,11 @@ def test_browser_previews_a_checkpoint_without_replacing_the_editor() -> None:
         await until(()=>$('file-diff').textContent.includes('alpha'));
         assert.equal($('file-content').value, before);
         assert.deepEqual(seen, ['note.txt', 'preview']);
+        $('checkpoint-save').click();
+        await until(()=>$('error').textContent === 'lost');
+        $('checkpoint-save').click();
+        await until(()=>$('file-diff').textContent.startsWith('已保存') && checkpointIds.length === 3);
+        assert.equal(checkpointIds[1], checkpointIds[2]);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

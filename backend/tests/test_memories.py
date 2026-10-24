@@ -161,6 +161,7 @@ def test_browser_saves_and_previews_memory_for_the_selected_session() -> None:
         const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
+        const memoryIds = [];
         globalThis.fetch = async (path, options={})=>{
           const method = options.method || 'GET';
           const body = options.body ? JSON.parse(options.body) : {};
@@ -170,6 +171,8 @@ def test_browser_saves_and_previews_memory_for_the_selected_session() -> None:
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(PRIMARY_SESSION) + r''',title:'工作区',archived:false,workspace:'docs'}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(PRIMARY_SESSION) + r''',build_id:'build',host_epoch:1});
           if(path==='/api/v1/memories' && method==='POST') {
+            memoryIds.push(body.memory_id);
+            if(memoryIds.length === 2) throw new Error('lost');
             seen.push(body.workspace + ' ' + body.text);
             return response({memory_id:body.memory_id,workspace:body.workspace,text:body.text});
           }
@@ -192,11 +195,23 @@ def test_browser_saves_and_previews_memory_for_the_selected_session() -> None:
         await until(()=>$('memory-list').textContent==='use alpha');
         $('memory-text').value = 'use alpha';
         $('memory-form').requestSubmit();
-        await until(()=>seen.some(item=>item==='docs use alpha'));
+        await until(()=>seen.some(item=>item==='docs use alpha') && $('memory-text').value === '');
         $('prompt').value = 'please use alpha';
         $('memory-preview').click();
         await until(()=>seen.some(item=>item.includes('/memories?q=')));
         assert.ok(seen.some(item=>item.includes('please%20use%20alpha') || item.includes('please+use+alpha')));
+        $('memory-text').value = 'use beta';
+        await $('memory-form').onsubmit({preventDefault(){}});
+        assert.equal($('error').textContent, 'lost');
+        $('memory-text').value = 'use gamma';
+        await $('memory-form').onsubmit({preventDefault(){}});
+        assert.equal($('error').textContent.includes('同一内容'), true);
+        assert.equal(memoryIds.length, 2);
+        $('memory-text').value = 'use beta';
+        await $('memory-form').onsubmit({preventDefault(){}});
+        assert.equal(memoryIds.length, 3);
+        assert.equal($('error').textContent, '');
+        assert.equal(memoryIds[1], memoryIds[2]);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

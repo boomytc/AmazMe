@@ -1286,10 +1286,24 @@ function startClient() {
     event.preventDefault();
     if (!selected || !identity || health?.state !== "ready") return;
     const workspace = sessionWorkspaces.get(selected) || "primary";
+    const text = $("memory-text").value;
+    const key = `memory:${identity.profile_id}:${selected}:${workspace}`;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
+    catch { pending = null; }
+    if (pending && pending.phase === "unknown" && pending.text !== text) {
+      error(new Error("上次记忆结果未知，未自动重发；请用同一内容查询。"));
+      return;
+    }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {memory_id: crypto.randomUUID().replaceAll("-", ""), text, phase: "unknown"};
+      sessionStorage.setItem(key, JSON.stringify(pending));
+    }
     try {
       await api("/api/v1/memories", "POST", {
-        memory_id: crypto.randomUUID().replaceAll("-", ""), workspace, text: $("memory-text").value,
+        memory_id: pending.memory_id, workspace, text: pending.text,
       }, current);
+      sessionStorage.removeItem(key);
       const list = await api(`/api/v1/memories?workspace=${encodeURIComponent(workspace)}`);
       $("memory-list").textContent = list.memories.map(item => item.text).join("\n");
       $("memory-text").value = "";
@@ -1665,8 +1679,20 @@ function startClient() {
     fileControls();
     try {
       if (action === "checkpoint") {
-        const checkpointId = crypto.randomUUID().replaceAll("-", "");
+        const key = `checkpoint:${identity.profile_id || ""}:${view.workspace}:${view.path}`;
+        let pending = null;
+        try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
+        catch { pending = null; }
+        if (pending && pending.phase === "unknown" && pending.digest !== view.digest) {
+          throw new Error("上次检查点结果未知，未自动重发；请先不要改文件，再保存同一次。");
+        }
+        if (!pending || pending.phase !== "unknown") {
+          pending = {checkpoint_id: crypto.randomUUID().replaceAll("-", ""), digest: view.digest, phase: "unknown"};
+          sessionStorage.setItem(key, JSON.stringify(pending));
+        }
+        const checkpointId = pending.checkpoint_id;
         const saved = await api("/api/v1/checkpoints", "POST", {checkpoint_id: checkpointId, workspace: view.workspace, path: view.path}, current);
+        sessionStorage.removeItem(key);
         if (!active()) return;
         if (!checkpointMatches(view, saved) || saved.checkpoint_id !== checkpointId) throw new Error("检查点与当前文件不一致");
         view.discovery = null;
