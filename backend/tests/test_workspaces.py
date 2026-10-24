@@ -258,8 +258,8 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
         import {Window} from 'happy-dom';
         const window = new Window({url:'http://127.0.0.1:1234/'});
         window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready'};
+        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
+        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         const seen = [];
         globalThis.fetch = async (path, options={})=>{
@@ -267,7 +267,7 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
           if(path==='/api/v1/bootstrap') return response(identity);
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(SESSION) + r''',title:'工作区',archived:false}]});
+          if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(SESSION) + r''',title:'工作区',archived:false,workspace:'primary'}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(SESSION) + r''',build_id:'build',host_epoch:1});
           if(path==='/api/v1/workspaces' && method==='GET') return response({workspaces:[
             {name:'primary',host_path:'/var/primary-work',primary:true},
@@ -285,13 +285,18 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
           throw Error('timed out '+$('error').textContent);
         }
         await import(appURL);
+        assert.equal($('session-workspace').textContent, '本机工作区');
         $('files').open = true;
         $('files').dispatchEvent(new window.Event('toggle'));
         await until(()=>$('workspace-location').textContent==='/var/primary-work' && [...$('file-list').children].some(node=>node.textContent==='keep.txt'));
         [...$('workspace-list').children].find(node=>node.textContent==='docs').click();
         await until(()=>$('workspace-location').textContent==='/var/docs-work' && [...$('file-list').children].some(node=>node.textContent==='note.txt'));
         assert.equal($('workspace-location').textContent.includes('grant/'), false);
+        assert.equal($('session-workspace').textContent, '本机工作区');
         assert.ok(seen.some(path=>path.includes('grant')));
+        [...$('sessions').children].find(node=>node.textContent==='工作区').click();
+        await until(()=>$('session-workspace').textContent==='/var/primary-work');
+        assert.equal($('workspace-location').textContent, '/var/docs-work');
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

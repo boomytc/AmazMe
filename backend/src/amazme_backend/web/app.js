@@ -383,6 +383,16 @@ function startClient() {
     rememberWindow(match.session_id, workspace, target.host);
     if (selected !== match.session_id) await select(match.session_id);
   }
+  async function showSessionWorkspace(name) {
+    const node = $("session-workspace");
+    try {
+      const listed = await api("/api/v1/workspaces");
+      const match = listed.workspaces.find(item => item.name === name);
+      node.textContent = match?.host_path || name || "本机工作区";
+    } catch {
+      node.textContent = name || "本机工作区";
+    }
+  }
   async function select(id, resume = false) {
     const workspace = sessionWorkspaces.get(id) || namedTarget().workspace;
     const host = identity?.profile_id || "";
@@ -402,6 +412,7 @@ function startClient() {
       $("computer-enabled").checked = false;
     }
     retire(); selected = id; const binding = ++generation;
+    await showSessionWorkspace(workspace);
     const connection = {generation:binding, session:id, ready:false, model:cached, ws:null, attachment:null};
     current = connection; connecting = true;
     $("prompt").value = pending?.target === id ? pending.text : (drafts.get(id) || "");
