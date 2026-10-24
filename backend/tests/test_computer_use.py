@@ -231,6 +231,9 @@ def test_browser_clicks_the_selected_session_capture() -> None:
           }
           if(path===`/api/v1/sessions/${session}/computer/actions` && method==='POST') {
             seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+body.capture_id+' '+body.x+','+body.y);
+            if(body.y===9) seen.push('id '+body.action_id+' '+body.x+','+body.y);
+            const repeat = seen.filter(item=>item==='id '+body.action_id+' '+body.x+','+body.y).length > 1;
+            if(body.y===9 && !repeat) return response({action_id:body.action_id,session_id:session,phase:'unknown',error:'',driver_x:null,driver_y:null});
             return response({action_id:body.action_id,session_id:session,phase:'done',error:'',driver_x:8,driver_y:16});
           }
           if(path===`/api/v1/sessions/${session}/computer/cleanup`) {
@@ -259,6 +262,22 @@ def test_browser_clicks_the_selected_session_capture() -> None:
         assert.equal(seen[1], `/api/v1/sessions/${session}/computer/observe`);
         assert.equal(seen[2], `/api/v1/sessions/${session}/computer/actions ["action_id","capture_id","x","y"] cap 1,4`);
         assert.equal(seen[3], `/api/v1/sessions/${session}/computer/cleanup`);
+        $('computer-y').value = '9';
+        $('computer-act').requestSubmit();
+        await until(()=>$('computer-state').textContent.startsWith('unknown') && $('error').textContent.includes('同一画面'));
+        const held = seen.filter(item=>item.startsWith('id '));
+        assert.equal(held.length, 1);
+        $('error').textContent = '';
+        $('computer-x').value = '2';
+        $('computer-act').requestSubmit();
+        await until(()=>$('error').textContent.includes('同一画面'));
+        assert.equal(seen.filter(item=>item.startsWith('id ')).length, 1);
+        $('computer-x').value = '1';
+        $('computer-act').requestSubmit();
+        await until(()=>$('computer-state').textContent.includes('8,16'));
+        const again = seen.filter(item=>item.startsWith('id '));
+        assert.equal(again.length, 2);
+        assert.equal(again[0], again[1]);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

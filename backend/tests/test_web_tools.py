@@ -308,6 +308,9 @@ def test_browser_enables_web_for_the_selected_session() -> None:
           }
           if(path===`/api/v1/sessions/${session}/web/calls` && method==='POST') {
             seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+body.query);
+            seen.push('id '+body.call_id+' '+body.query);
+            const repeat = seen.filter(item=>item==='id '+body.call_id+' '+body.query).length > 1;
+            if(body.query==='hold' && !repeat) return response({call_id:body.call_id,session_id:session,kind:'search',phase:'unknown',error:'',result:''});
             return response({call_id:body.call_id,session_id:session,kind:'search',phase:'done',error:'',result:'{"sources":[]}'});
           }
           throw Error('unexpected '+method+' '+path);
@@ -331,6 +334,22 @@ def test_browser_enables_web_for_the_selected_session() -> None:
         assert.ok(seen.includes(`GET /api/v1/sessions/${session}/web`));
         assert.ok(seen.includes('POST false https://tools.example/v1/tools 4'));
         assert.ok(seen.some(item => item.includes('/web/calls') && item.includes('项目结构')));
+        $('web-query').value = 'hold';
+        $('web-search').requestSubmit();
+        await until(()=>$('web-state').textContent.startsWith('unknown') && $('error').textContent.includes('同一查询'));
+        const held = seen.filter(item=>item.startsWith('id ') && item.endsWith(' hold'));
+        assert.equal(held.length, 1);
+        $('error').textContent = '';
+        $('web-query').value = 'other';
+        $('web-search').requestSubmit();
+        await until(()=>$('error').textContent.includes('同一查询'));
+        assert.equal(seen.filter(item=>item.startsWith('id ') && (item.endsWith(' hold') || item.endsWith(' other'))).length, 1);
+        $('web-query').value = 'hold';
+        $('web-search').requestSubmit();
+        await until(()=>$('web-state').textContent.startsWith('done'));
+        const again = seen.filter(item=>item.startsWith('id ') && item.endsWith(' hold'));
+        assert.equal(again.length, 2);
+        assert.equal(again[0], again[1]);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

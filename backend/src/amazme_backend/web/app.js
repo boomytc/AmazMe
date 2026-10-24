@@ -1088,15 +1088,32 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  const webCallKey = () => `web-call:${identity.profile_id}:${selected}`;
   $("web-search").onsubmit = async event => {
     event.preventDefault();
     if (!selected || !identity || health?.state !== "ready") return;
+    const query = $("web-query").value;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(webCallKey()) || "null"); }
+    catch { pending = null; }
+    if (pending && pending.phase === "unknown" && pending.query !== query) {
+      error(new Error("上次网页查询结果未知，未自动重发；请用同一查询再查。"));
+      return;
+    }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {call_id: crypto.randomUUID().replaceAll("-", ""), query, phase: "unknown"};
+      sessionStorage.setItem(webCallKey(), JSON.stringify(pending));
+    }
     try {
       const view = await api(`/api/v1/sessions/${selected}/web/calls`, "POST", {
-        call_id: crypto.randomUUID().replaceAll("-", ""), kind: "search", query: $("web-query").value,
+        call_id: pending.call_id, kind: "search", query: pending.query,
       }, current);
+      pending.phase = view.phase;
+      if (view.phase === "unknown") sessionStorage.setItem(webCallKey(), JSON.stringify(pending));
+      else sessionStorage.removeItem(webCallKey());
       $("web-state").textContent = `${view.phase} · ${view.error || view.result}`;
-      $("error").textContent = "";
+      if (view.phase === "unknown") error(new Error("上次网页查询结果未知，未自动重发；请用同一查询再查。"));
+      else $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   let computerCapture = "";
@@ -1118,16 +1135,33 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  const computerActionKey = () => `computer-action:${identity.profile_id}:${selected}`;
   $("computer-act").onsubmit = async event => {
     event.preventDefault();
     if (!selected || !computerCapture || !identity || health?.state !== "ready") return;
+    const point = {capture_id: computerCapture, x: Number($("computer-x").value), y: Number($("computer-y").value)};
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(computerActionKey()) || "null"); }
+    catch { pending = null; }
+    if (pending && pending.phase === "unknown" && (
+      pending.capture_id !== point.capture_id || pending.x !== point.x || pending.y !== point.y)) {
+      error(new Error("上次桌面动作结果未知，未自动重发；请用同一画面和坐标再查。"));
+      return;
+    }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {action_id: crypto.randomUUID().replaceAll("-", ""), ...point, phase: "unknown"};
+      sessionStorage.setItem(computerActionKey(), JSON.stringify(pending));
+    }
     try {
       const view = await api(`/api/v1/sessions/${selected}/computer/actions`, "POST", {
-        action_id: crypto.randomUUID().replaceAll("-", ""), capture_id: computerCapture,
-        x: Number($("computer-x").value), y: Number($("computer-y").value),
+        action_id: pending.action_id, capture_id: pending.capture_id, x: pending.x, y: pending.y,
       }, current);
+      pending.phase = view.phase;
+      if (view.phase === "unknown") sessionStorage.setItem(computerActionKey(), JSON.stringify(pending));
+      else sessionStorage.removeItem(computerActionKey());
       $("computer-state").textContent = `${view.phase} · ${view.driver_x},${view.driver_y}`;
-      $("error").textContent = "";
+      if (view.phase === "unknown") error(new Error("上次桌面动作结果未知，未自动重发；请用同一画面和坐标再查。"));
+      else $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   $("computer-cleanup").onclick = async () => {
