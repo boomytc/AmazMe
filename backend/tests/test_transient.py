@@ -209,3 +209,38 @@ async def test_pending_host_delivery_keeps_the_original_request_ledger(tmp_path:
             shutil.rmtree(profile.path)
             profile.ipc.rmdir()
         source.ipc.rmdir()
+
+
+def test_persistent_session_directory_links_original_vault_and_never_overwrites(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from amazme_backend.__main__ import main
+
+    source = source_profile(tmp_path)
+    destination = tmp_path / "history" / "python-host"
+    source_history = source.path / "host.sqlite"
+    source_history.write_bytes(b"original history")
+    before = (source.path / "accounts.json").read_bytes()
+    monkeypatch.setattr(sys, "argv", ["amazme-backend", "init", "--profile", str(destination),
+        "--workspace", source.config.workspace, "--source-profile", str(source.path)])
+    profile: Profile | None = None
+    try:
+        main()
+        profile = Profile(destination)
+        assert profile.account_path == source.path
+        assert profile.config.profile_id != source.config.profile_id
+        assert profile.config.workspace == source.config.workspace
+        assert profile.config.user_resources == source.config.user_resources
+        assert "vault-only-secret" not in (destination / "config.json").read_text()
+        assert not (destination / "accounts.json").exists()
+        assert not (destination / "host.sqlite").exists()
+        assert (destination / "web.token").read_text() != (source.path / "web.token").read_text()
+        assert AccountStore(profile.account_path).secrets() == ("vault-only-secret",)
+        config = (destination / "config.json").read_bytes()
+        with pytest.raises(FileExistsError):
+            main()
+        assert (destination / "config.json").read_bytes() == config
+        assert source_history.read_bytes() == b"original history"
+        assert (source.path / "accounts.json").read_bytes() == before
+    finally:
+        source.ipc.rmdir()
+        if profile:
+            profile.ipc.rmdir()

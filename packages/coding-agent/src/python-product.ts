@@ -21,7 +21,7 @@ const COMMANDS = new Set([
 export async function runPythonProductCommand(
 	args: readonly string[],
 	cwd: string,
-	options: { readonly input?: string; readonly quiet?: boolean } = {},
+	options: { readonly input?: string; readonly quiet?: boolean; readonly sessionDir?: string } = {},
 ): Promise<boolean> {
 	const command = args[0];
 	if (!command || !COMMANDS.has(command)) return false;
@@ -64,6 +64,7 @@ export async function runPythonProductCommand(
 	}
 	const host = await connectPythonHost({
 		cwd,
+		...(options.sessionDir ? {sessionDir:options.sessionDir} : {}),
 		...(url === undefined ? {} : { url, token }),
 	});
 	const child = spawn(

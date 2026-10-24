@@ -266,11 +266,11 @@ test("interactive CLI carries the initial text, file and image into the Python T
         if (descriptor) Object.defineProperty(stream, "isTTY", descriptor);
         else Reflect.deleteProperty(stream, "isTTY");
     }));
-    await main(["--python-url", "http://target", "--python-token", "private", `@${textPath}`, `@${imagePath}`, "-e", "./tools/helper.py", "first", "second"]);
+    await main(["--python-url", "http://target", "--python-token", "private", `@${textPath}`, `@${imagePath}`, "-e", "./tools/helper.py", "--theme", "./colors.json", "--no-themes", "first", "second"]);
     expect(runPythonSessionTui).toHaveBeenCalledOnce();
     expect(runPythonSessionTui).toHaveBeenCalledWith(expect.objectContaining({
         url:"http://target", token:"private", workspace:"primary", prompt:expect.stringContaining("file content"),
-        extensions:[join(process.cwd(), "tools/helper.py")],
+        extensions:[join(process.cwd(), "tools/helper.py")], themes:[join(process.cwd(), "colors.json")], noThemes:true,
         images:[expect.objectContaining({type:"image",mimeType:"image/png"})],
     }));
     expect(vi.mocked(runPythonSessionTui).mock.calls[0]?.[0].prompt).toContain("first\nsecond");
@@ -286,4 +286,12 @@ test("thinking selection reaches the Python request options", () => {
 test("explicit Python extensions bind their launch directory and no-extensions disables unselected plugin tools", () => {
     expect(requestOptions(parseArgs(["--no-extensions"]))).toEqual({excluded_tools:["plugin_*"]});
     expect(requestOptions(parseArgs(["--no-extensions", "-e", "./tool.py"]))).toEqual({});
+});
+
+
+test("custom history selects the same Python profile for product model configuration", async () => {
+    await runPythonProductCommand(["models"], "/project", {sessionDir:"/history"});
+    expect(connectPythonHost).toHaveBeenCalledWith({cwd:"/project", sessionDir:"/history"});
+    await expect(main(["--session-dir", "/history", "--no-session", "hello"])).rejects.toThrow("session_dir_requires_local_persistent_host");
+    await expect(main(["--session-dir", "/history", "--python-url", "http://target", "--python-token", "token", "hello"])).rejects.toThrow("session_dir_requires_local_persistent_host");
 });

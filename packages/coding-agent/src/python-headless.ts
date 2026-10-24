@@ -37,6 +37,7 @@ export interface PythonRunOptions {
 }
 
 export interface PythonHeadlessOptions extends PythonRunOptions {
+	readonly sessionDir?: string;
 	readonly extensions?: readonly string[];
 	readonly mode: "text" | "json" | "rpc";
 	readonly workspace?: string;
@@ -1049,7 +1050,7 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 		process.stderr.write("decision_target_conflict\n");
 		return 1;
 	}
-	const host = await connectPythonHost({cwd:options.cwd, url:options.url, token:options.token,
+	const host = await connectPythonHost({cwd:options.cwd, url:options.url, token:options.token, sessionDir:options.sessionDir,
 		...(options.noSession ? {noSession:true,workspace:options.workspace} : {})});
 	try {
 		const client = new HostClient(host.url, host.token, options);

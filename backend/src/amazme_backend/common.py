@@ -143,7 +143,7 @@ class Profile:
 
     @property
     def account_path(self) -> Path:
-        # A no-session profile uses the original locked vault; refresh ownership stays there.
+        # Linked history profiles use the original locked vault; refresh ownership stays there.
         return Path(self.config.account_profile).resolve(strict=True) if self.config.account_profile else self.path
 
     def reload_provider(self) -> None:

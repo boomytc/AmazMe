@@ -70,6 +70,7 @@ export async function main(args: string[]): Promise<void> {
 	if ((parsed.pythonUrl === undefined) !== (parsed.pythonToken === undefined))
 		throw new Error("python_target_required");
 	if (parsed.noSession && parsed.pythonUrl) throw new Error("no_session_requires_local_host");
+	if (parsed.sessionDir && (parsed.noSession || parsed.pythonUrl)) throw new Error("session_dir_requires_local_persistent_host");
 	const target = [
 		...(parsed.pythonUrl === undefined ? [] : ["--python-url", parsed.pythonUrl]),
 		...(parsed.pythonToken === undefined ? [] : ["--python-token", parsed.pythonToken]),
@@ -78,6 +79,7 @@ export async function main(args: string[]): Promise<void> {
 		await runPythonProductCommand(
 			["models", ...target, ...(typeof parsed.listModels === "string" ? ["--search", parsed.listModels] : [])],
 			cwd,
+			{sessionDir:parsed.sessionDir},
 		);
 		return;
 	}
@@ -97,19 +99,20 @@ export async function main(args: string[]): Promise<void> {
 			await runPythonProductCommand(
 				["auth", "login", "--provider", parsed.provider, "--method", "api-key", ...target],
 				cwd,
-				{ input: parsed.apiKey, quiet: true },
+				{ input: parsed.apiKey, quiet: true, sessionDir:parsed.sessionDir },
 			);
 			if (process.exitCode) return;
 		}
 		await runPythonProductCommand(
 			["model", "--model", parsed.model, ...(parsed.provider ? ["--provider", parsed.provider] : []), ...target],
 			cwd,
-			{ quiet: true },
+			{ quiet: true, sessionDir:parsed.sessionDir },
 		);
 		if (process.exitCode) return;
 	}
 	const runOptions = requestOptions(parsed);
 	const sessionOptions = {
+		...(parsed.sessionDir ? {sessionDir:resolve(cwd,parsed.sessionDir)} : {}),
 		...(parsed.extensions?.length ? {extensions:parsed.extensions.map((entry) => resolve(cwd,entry))} : {}),
         ...(parsed.noSession ? {noSession:true} : {}),
 		...(parsed.continue
@@ -120,6 +123,12 @@ export async function main(args: string[]): Promise<void> {
 		...(parsed.name ? { title: parsed.name } : {}),
 	};
 	const interactive = !parsed.print && parsed.mode === undefined && process.stdin.isTTY && process.stdout.isTTY;
+	const appearance = {
+		...(parsed.tuiMode ? {tuiMode:parsed.tuiMode} : {}),
+		...(parsed.useTheme ? {theme:parsed.useTheme} : {}),
+		...(parsed.noThemes ? {noThemes:true} : {}),
+		...(parsed.themes?.length ? {themes:parsed.themes.map((entry) => resolve(cwd,entry))} : {}),
+	};
 	if (parsed.mode === "rpc" && parsed.fileArgs.length) throw new Error("RPC mode does not accept @file arguments");
 	const stdinContent = interactive || parsed.mode === "rpc" ? undefined : await pipedInput();
 	const files = parsed.fileArgs.length
@@ -141,8 +150,7 @@ export async function main(args: string[]): Promise<void> {
 				...runOptions,
 				...sessionOptions,
 				...initial,
-				...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
-				...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
+				...appearance,
 				url: parsed.pythonUrl,
 				token: parsed.pythonToken,
 				workspace: parsed.workspace || "primary",
@@ -153,8 +161,7 @@ export async function main(args: string[]): Promise<void> {
 				...runOptions,
 				...sessionOptions,
 				...initial,
-				...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
-				...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
+				...appearance,
 				cwd,
 				...(parsed.workspace === undefined ? {} : {workspace:parsed.workspace}),
 				...(session === undefined ? {} : { session }),

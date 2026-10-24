@@ -13,7 +13,8 @@ import { getAgentDir } from "./config.ts";
 import { KeybindingsManager } from "./core/keybindings.ts";
 import { CustomEditor } from "./modes/interactive/components/custom-editor.ts";
 import { getEditorTheme,
-	getSelectListTheme, initTheme } from "./modes/interactive/theme/theme.ts";
+	getSelectListTheme, initTheme, loadThemeFromPath, setRegisteredThemes,
+	setThemeJsonValidator } from "./modes/interactive/theme/theme.ts";
 import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
 import { HostClient, type ImageContent, type PythonRunOptions, type ThinkingLevel } from "./python-headless.ts";
 
@@ -27,6 +28,8 @@ export interface PythonSessionTarget extends PythonRunOptions {
 	readonly title?: string;
 	readonly tuiMode?: "regular" | "fullscreen";
 	readonly theme?: string;
+	readonly themes?: readonly string[];
+	readonly noThemes?: boolean;
 	readonly prompt?: string;
 	readonly images?: readonly ImageContent[];
 }
@@ -355,11 +358,20 @@ async function selectSession(
 	}
 }
 
+export async function configureTuiThemes(options: Pick<PythonSessionTarget, "theme" | "themes" | "noThemes">): Promise<void> {
+	if (options.themes?.length) {
+		const { validateThemeJson } = await import("./modes/interactive/theme/theme-schema.ts");
+		setThemeJsonValidator(validateThemeJson);
+	}
+	setRegisteredThemes(options.noThemes || options.themes?.length ? (options.themes ?? []).map(path => loadThemeFromPath(path)) : undefined, !options.noThemes);
+	initTheme(options.theme);
+}
+
 export async function runPythonSessionTui(target: PythonSessionTarget): Promise<void> {
 	if (!target.url || !target.token || !target.workspace) fail("python_target_required");
 	const client = new HostClient(target.url, target.token, target);
 	await client.bootstrap();
-	initTheme(target.theme);
+	await configureTuiThemes(target);
 	const selected = await selectSession(client, target);
 	if (selected === null) return;
 	const opened = selected
@@ -583,10 +595,18 @@ function startServe(command: string, profile: string): Promise<string> {
 	});
 }
 
-function ensurePythonProfile(cwd: string): string {
+function ensurePythonProfile(cwd: string, sessionDir?: string): string {
+	if (sessionDir && resolve(cwd,sessionDir) === resolve(getAgentDir())) return ensurePythonProfile(cwd);
 	const command = backendCommand();
-	const profile = join(getAgentDir(), "python-host");
+	const profile = join(sessionDir ? resolve(cwd, sessionDir) : getAgentDir(), "python-host");
 	if (!existsSync(join(profile, "config.json"))) {
+		if (sessionDir) {
+			const source = ensurePythonProfile(cwd);
+			const init = spawnSync(command, ["init", "--profile", profile, "--workspace", resolve(cwd),
+				"--source-profile", source], {encoding:"utf8"});
+			if (init.error || init.status !== 0) fail("python_init_failed");
+			return profile;
+		}
 		mkdirSync(getAgentDir(), { recursive: true });
 		const staging = mkdtempSync(join(getAgentDir(), ".python-init-"));
 		const providerPath = join(staging, "provider.json");
@@ -680,18 +700,19 @@ export async function connectPythonHost(options: {
 	readonly token?: string;
 	readonly noSession?: boolean;
 	readonly workspace?: string;
+	readonly sessionDir?: string;
 }): Promise<PythonHostConnection> {
 	if ((options.url === undefined) !== (options.token === undefined)) fail("python_target_required");
+	if (options.sessionDir && (options.url || options.noSession)) fail("session_dir_requires_local_persistent_host");
 	if (options.noSession) {
 		if (options.url || options.token) fail("no_session_requires_local_host");
 		return transientHost(options.cwd, options.workspace);
 	}
 	if (options.url && options.token) return { url: options.url, token: options.token };
 	const command = backendCommand();
-	const profile = join(getAgentDir(), "python-host");
+	const profile = ensurePythonProfile(options.cwd, options.sessionDir);
 	const tokenPath = join(profile, "web.token");
 	const readyPath = join(profile, "ready.json");
-	ensurePythonProfile(options.cwd);
 	const existing = await liveUrl(readyPath, tokenPath);
 	const url = existing || (await startServe(command, profile));
 	return { url, token: readFileSync(tokenPath, "utf8").trim() };
@@ -702,8 +723,9 @@ export async function runOwnedPythonInteractive(options: Omit<PythonSessionTarge
 	readonly cwd:string;
 	readonly workspace?:string;
 	readonly noSession?:boolean;
+	readonly sessionDir?:string;
 }): Promise<void> {
-	const host = await connectPythonHost({cwd:options.cwd, ...(options.noSession ? {noSession:true,workspace:options.workspace} : {})});
+	const host = await connectPythonHost({cwd:options.cwd, sessionDir:options.sessionDir, ...(options.noSession ? {noSession:true,workspace:options.workspace} : {})});
 	try {
 		const client = new HostClient(host.url, host.token);
 		await client.bootstrap();

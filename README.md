@@ -60,7 +60,7 @@ Python factory 注册会话插件工具和命令，Codemode 通过现有 QuickJS
 | --- | --- |
 | 唯一现行契约 | [Python 本机方案](docs/python-backend-plan.md) |
 | 实施状态与证据 | [完成台账](docs/python-backend-completion.md) |
-| SDK、RPC 与插件 | [客户端文档](packages/coding-agent/docs/index.md) |
+| SDK、RPC 与插件 | [客户端文档](packages/coding-agent/docs/sdk.md) |
 | Electron 与本地构建 | [桌面说明](packages/gui/README.md) |
 | QuickJS helper | [Codemode](packages/codemode/README.md) |
 | 上游移植依据 | [UPSTREAM](UPSTREAM.md) |

@@ -693,8 +693,8 @@ const registeredThemes = new Map<string, Theme>();
 let resourceThemeSelection = false;
 
 /** A loaded resource set is authoritative; undefined releases it for standalone theme helpers. */
-export function setRegisteredThemes(themes: readonly Theme[] | undefined): void {
-	resourceThemeSelection = themes !== undefined;
+export function setRegisteredThemes(themes: readonly Theme[] | undefined, includeCustom = false): void {
+	resourceThemeSelection = themes !== undefined && !includeCustom;
 	registeredThemes.clear();
 	for (const theme of themes ?? []) {
 		if (theme.name) {

@@ -54,6 +54,7 @@ def main() -> None:
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--provider-config", type=Path)
+    parser.add_argument("--source-profile", type=Path)
     parser.add_argument("--session")
     parser.add_argument("--instance")
     parser.add_argument("--lifetime-fd", type=int)
@@ -66,6 +67,24 @@ def main() -> None:
     args = parser.parse_args()
     os.umask(0o077)
     if args.mode == "init":
+        if args.source_profile:
+            if not args.workspace or args.provider_config:
+                parser.error("init --source-profile requires --workspace and excludes --provider-config")
+            workspace = args.workspace.resolve(strict=True)
+            if not workspace.is_dir():
+                parser.error("workspace must be a directory")
+            source = Profile(args.source_profile)
+            from .providers import stored_provider
+            config = source.config.model_copy(update={
+                "profile_id": secrets.token_hex(16), "workspace": str(workspace), "testing": False,
+                "provider": stored_provider(source.config.provider), "account_profile": str(source.account_path),
+            })
+            args.profile.mkdir(parents=True, mode=0o700, exist_ok=False)
+            private_write(args.profile / "config.json", config.model_dump_json())
+            private_write(args.profile / "control.token", secrets.token_hex(32))
+            private_write(args.profile / "web.token", secrets.token_hex(24))
+            print(json.dumps({"profile": str(args.profile.resolve()), "workspace": str(workspace), "version": "0.1.0"}))
+            return
         if not args.workspace or not args.provider_config:
             parser.error("init requires --workspace and --provider-config")
         workspace = args.workspace.resolve(strict=True)
