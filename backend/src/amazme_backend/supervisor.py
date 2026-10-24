@@ -1193,13 +1193,14 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             self._admit()
-            recorded = session_workspace(self.profile.path, value.session_id)
-            workspace = value.workspace or recorded
             old = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
             if old is not None:
+                workspace = value.workspace or str(old["workspace"])
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
                     raise BackendError("mcp_server_conflict")
                 return self._mcp_view(old)
+            recorded = session_workspace(self.profile.path, value.session_id)
+            workspace = value.workspace or recorded
             count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_servers WHERE clean=0").fetchone()[0])
             if count >= 8:
                 raise BackendError("mcp_server_capacity", status=429)
@@ -1888,13 +1889,14 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             self._admit()
-            recorded = session_workspace(self.profile.path, value.session_id)
-            workspace = value.workspace or recorded
             old = await self._terminal_row(value.terminal_id)
             if old is not None:
+                workspace = value.workspace or str(old["workspace"])
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
                     raise BackendError("terminal_conflict")
                 return self._view(old)
+            recorded = session_workspace(self.profile.path, value.session_id)
+            workspace = value.workspace or recorded
             count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM terminals WHERE clean=0").fetchone()[0])
             if count >= 8:
                 raise BackendError("terminal_capacity", status=429)

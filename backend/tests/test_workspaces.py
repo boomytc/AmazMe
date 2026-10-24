@@ -230,6 +230,105 @@ async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path:
         await owner.close()
 
 
+async def test_unreadable_workspace_does_not_start_shell_terminal_or_mcp(tmp_path: Path) -> None:
+    session = "e" * 32
+    owners: list[Supervisor] = []
+
+    async def start(name: str) -> tuple[Supervisor, Path]:
+        root = tmp_path / name
+        primary = root / "primary"
+        primary.mkdir(parents=True)
+        private_write(root / "config.json", json.dumps({
+            "format": 2, "profile_id": name, "workspace": str(primary), "resources": "unused",
+            "provider": {"provider": "faux"}}))
+        private_write(root / "control.token", "test-token")
+        owner = Supervisor(Profile(root), name)
+        await owner.initialize()
+        owners.append(owner)
+        return owner, primary
+
+    async def refuse(owner: Supervisor, primary: Path, code: str) -> None:
+        fence = {"build_id": owner.build, "host_epoch": owner.host_epoch, "session_id": session}
+        terminal = os.urandom(16).hex()
+        server = os.urandom(16).hex()
+        with pytest.raises(BackendError, match=code):
+            await owner.open_terminal(OpenTerminal(
+                **fence, terminal_id=terminal, command="printf z > leaked.txt", workspace="primary"))
+        with pytest.raises(BackendError, match=code):
+            await owner.open_mcp(OpenMcp(
+                **fence, server_id=server, command="python3 demo.py", workspace="primary"))
+        worker_id = os.urandom(16).hex()
+        reservation = ProcessReservation(owner.profile.path, "worker", worker_id)
+        try:
+            info = WorkerInfo(
+                session_id=session, worker_id=worker_id, pid=123, socket=str(owner.profile.worker_socket(session)),
+                build_id=owner.build, process_lease=reservation.lease, state="ready", purpose="business",
+                host_epoch=owner.host_epoch, fingerprint=owner.build)
+            await owner.db.call(lambda db: db.execute(
+                "INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
+                (worker_id, session, info.model_dump_json())), write=True)
+            epoch = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=worker_id, build_id=owner.build))
+            with pytest.raises(BackendError, match=code):
+                await owner.run_tool(RunTool(
+                    **epoch.model_dump(), call_id="unreadable-shell", request_id="request",
+                    command="printf z > leaked.txt", effect="write"))
+        finally:
+            reservation.close()
+        assert not (primary / "leaked.txt").exists()
+        for suffix, kind in ((terminal, "terminal:"), (server, "mcp:")):
+            instance = hashlib.sha256((kind + suffix).encode()).hexdigest()[:32]
+            assert not (owner.profile.path / "executions" / instance).exists()
+
+    try:
+        missing_db, primary = await start("missing-db")
+        await refuse(missing_db, primary, "workspace_unresolved")
+
+        missing_table, primary = await start("missing-table")
+        sqlite3.connect(missing_table.profile.path / "host.sqlite").close()
+        await refuse(missing_table, primary, "workspace_unresolved")
+
+        corrupt, primary = await start("corrupt")
+        (corrupt.profile.path / "host.sqlite").write_bytes(b"not a database")
+        await refuse(corrupt, primary, "workspace_unresolved")
+
+        blank, primary = await start("blank")
+        connection = sqlite3.connect(blank.profile.path / "host.sqlite")
+        try:
+            connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+            connection.execute("INSERT INTO sessions(id, workspace) VALUES(?, '')", (session,))
+            connection.commit()
+        finally:
+            connection.close()
+        await refuse(blank, primary, "workspace_unresolved")
+
+        present, primary = await start("present")
+        connection = sqlite3.connect(present.profile.path / "host.sqlite")
+        try:
+            connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+            connection.execute("INSERT INTO sessions(id, workspace) VALUES(?, 'primary')", (session,))
+            connection.commit()
+        finally:
+            connection.close()
+        fence = {"build_id": present.build, "host_epoch": present.host_epoch, "session_id": session}
+        terminal = "f" * 32
+        opened = await present.open_terminal(OpenTerminal(
+            **fence, terminal_id=terminal, command="sh", workspace="primary"))
+        assert opened.workspace == "primary" and opened.phase == "running"
+        (present.profile.path / "host.sqlite").unlink()
+        query = TerminalQuery(**fence, terminal_id=terminal)
+        assert (await present.read_terminal(query)).phase == "running"
+        closed = await present.close_terminal(query)
+        assert closed.phase == "exited" and closed.clean
+        with pytest.raises(BackendError, match="workspace_unresolved"):
+            await present.open_terminal(OpenTerminal(
+                **fence, terminal_id="a" * 32, command="printf z > after.txt", workspace="primary"))
+        assert not (primary / "after.txt").exists()
+        assert (await present.read_terminal(query)).phase == "exited"
+    finally:
+        for owner in owners:
+            await owner.close()
+
+
 def _seed_host(profile: Path, session: str, grant: Path) -> None:
     database = sqlite3.connect(profile / "host.sqlite")
     try:

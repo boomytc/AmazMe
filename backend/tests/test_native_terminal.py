@@ -1,5 +1,6 @@
 import asyncio
 import json
+import sqlite3
 
 import pytest
 import pytest_asyncio
@@ -23,6 +24,13 @@ async def terminal_owner(tmp_path):
     private_write(tmp_path / "control.token", "test-token")
     owner = Supervisor(Profile(tmp_path), "terminal-owner")
     await owner.initialize()
+    connection = sqlite3.connect(tmp_path / "host.sqlite")
+    try:
+        connection.execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+        connection.execute("INSERT INTO sessions(id, workspace) VALUES(?, 'primary')", ("a" * 32,))
+        connection.commit()
+    finally:
+        connection.close()
     try:
         yield owner
     finally:

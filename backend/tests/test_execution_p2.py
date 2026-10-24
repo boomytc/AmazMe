@@ -57,7 +57,21 @@ async def owner(profile):
         await owner.close()
 
 
+def seed_session(profile: Path, session_id: str, workspace: str = "primary") -> None:
+    connection = sqlite3.connect(profile / "host.sqlite")
+    try:
+        connection.execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+        connection.execute(
+            "INSERT INTO sessions(id, workspace) VALUES(?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET workspace=excluded.workspace",
+            (session_id, workspace))
+        connection.commit()
+    finally:
+        connection.close()
+
+
 async def worker(owner, session="a" * 32, purpose="business", build=None):
+    seed_session(owner.profile.path, session)
     instance = os.urandom(16).hex()
     directory = owner.profile.path / "sessions" / session
     directory.mkdir(parents=True, exist_ok=True)
