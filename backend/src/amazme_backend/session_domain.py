@@ -10,7 +10,7 @@ from .contracts import (
     BackendError,
     Cleanup,
     ComputerInspect,
-    ComputerPoint,
+    ComputerMutation,
     ComputerToolResult,
     DelegateTasks,
     EffectHold,
@@ -37,7 +37,7 @@ from .web_tools import validate_fetch_url
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | ComputerInspect | ComputerPoint = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | ComputerInspect | ComputerMutation = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
@@ -59,8 +59,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = McpToolCall.model_validate_json(call.arguments)
     elif call.name == "computer_observe":
         value = ComputerInspect.model_validate_json(call.arguments)
-    elif call.name == "computer_click":
-        value = ComputerPoint.model_validate_json(call.arguments)
+    elif call.name == "computer_act":
+        value = ComputerMutation.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
     if isinstance(value, ReadFile):

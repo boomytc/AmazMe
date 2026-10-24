@@ -59,9 +59,9 @@ async def opened(tmp_path, policy='mutations'):
 async def test_desktop_mutation_waits_for_bound_approval_and_denial_sends_nothing(tmp_path: Path) -> None:
     store = await opened(tmp_path)
     try:
-        assert isinstance(await propose(store, 'computer_click', {'capture_id': 'frame', 'x': 1, 'y': 2}), Park)
+        assert isinstance(await propose(store, 'computer_act', {'capture_id':'frame', 'delivery_mode':'foreground', 'action':{'action':'click','point':{'x':1,'y':2}}}), Park)
         approval = (await store.snapshot()).approvals[-1]
-        assert approval.state == 'pending' and approval.call.name == 'computer_click'
+        assert approval.state == 'pending' and approval.call.name == 'computer_act'
         await store.approve(ApprovalDecision(decision_id='deny', approval_id=approval.approval_id,
             expected_revision=approval.revision, proposal_digest=approval.proposal_digest, approve=False), FENCE)
         assert not isinstance(await advance(store), ComputerRetrieval)
@@ -98,7 +98,7 @@ async def test_observation_image_reaches_next_model_without_event_base64(tmp_pat
 async def test_unknown_click_is_terminal_and_not_automatically_replayed(tmp_path: Path, transport_failure: bool) -> None:
     store = await opened(tmp_path, 'auto')
     try:
-        action = await propose(store, 'computer_click', {'capture_id': 'frame', 'x': 1, 'y': 2})
+        action = await propose(store, 'computer_act', {'capture_id':'frame', 'delivery_mode':'foreground', 'action':{'action':'click','point':{'x':1,'y':2}}})
         assert isinstance(action, ComputerRetrieval)
         observation = Failed(action, 'lost') if transport_failure else ComputerReturned(action, ComputerToolResult(phase='unknown'))
         await store.advance(observation)
@@ -111,7 +111,7 @@ async def test_unknown_click_is_terminal_and_not_automatically_replayed(tmp_path
 async def test_cancelled_desktop_intent_settles_without_dispatch(tmp_path: Path) -> None:
     store = await opened(tmp_path, 'auto')
     try:
-        action = await propose(store, 'computer_click', {'capture_id': 'frame', 'x': 1, 'y': 2})
+        action = await propose(store, 'computer_act', {'capture_id':'frame', 'delivery_mode':'foreground', 'action':{'action':'click','point':{'x':1,'y':2}}})
         assert isinstance(action, ComputerRetrieval)
         await store.cancel('root', FENCE)
         assert not isinstance(await advance(store), ComputerRetrieval)
@@ -129,7 +129,7 @@ def test_all_model_wire_paths_include_tool_images() -> None:
               anthropic_body(config, messages, None)[0], google_body(config, messages, None)]
     assert all(PNG in json.dumps(body) for body in bodies)
     names = {item['function']['name'] for item in tool_definitions()}
-    assert {'computer_observe', 'computer_click'} <= names
+    assert {'computer_observe', 'computer_act'} <= names
 
 
 def test_tool_images_follow_the_entire_parallel_tool_batch() -> None:

@@ -491,7 +491,7 @@
           "type": "string"
         },
         "name": {
-          "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_click|mcp_tool|mcp_[a-f0-9]{20})$",
+          "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20})$",
           "title": "Name",
           "type": "string"
         },

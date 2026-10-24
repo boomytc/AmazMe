@@ -8,6 +8,7 @@ import json
 import os
 import platform
 import plistlib
+import secrets
 import select
 import shutil
 import stat
@@ -20,7 +21,18 @@ from pathlib import Path
 import psutil
 from pydantic import JsonValue, TypeAdapter
 
-from .contracts import BackendError
+from .contracts import (
+    BackendError,
+    ComputerClick,
+    ComputerElement,
+    ComputerHotkey,
+    ComputerKey,
+    ComputerMutation,
+    ComputerPixel,
+    ComputerScroll,
+    ComputerText,
+    ComputerWindow,
+)
 from .native_execution import tool_environment
 
 RECORD = TypeAdapter(dict[str, JsonValue])
@@ -86,7 +98,7 @@ def owned_processes(app: Path, marker: str) -> list[psutil.Process]:
 
 
 def permissions(app: Path, directory: Path) -> dict[str, JsonValue]:
-    output = directory / "permissions.json"
+    output = directory / ("permissions-" + secrets.token_hex(8) + ".json")
     fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     os.close(fd)
     env = environment()
@@ -141,6 +153,9 @@ class ComputerDriver:
         self.buffer = bytearray()
         self.tools: dict[str, dict[str, JsonValue]] = {}
         self.capture_id, self.driver_capture = "", ""
+        self.target: ComputerWindow | None = None
+        self.snapshot_id = ""
+        self.elements: list[dict[str, JsonValue]] = []
         self.session = "amazme-" + directory.name
 
     @property
@@ -248,11 +263,33 @@ class ComputerDriver:
             raise BackendError("computer_driver_lost") from exc
 
     def _request(self, payload: dict[str, object]) -> dict[str, object]:
+        if payload.get("op") == "permissions":
+            report = permissions(self.app, self.directory)
+            self.hello.update(accessibility=report["accessibility"], screen=report["screen_recording"])
+            return {"accessibility": report["accessibility"], "screen": report["screen_recording"]}
+        if payload.get("op") == "inspect":
+            name = "list_apps" if payload.get("action") == "apps" else "list_windows"
+            pid = payload.get("pid")
+            return {"data": self.call(name, {"pid": pid} if isinstance(pid, int) else {})["data"]}
         if payload.get("op") == "observe":
             self.capture_id, self.driver_capture = "", ""
+            self.target = ComputerWindow.model_validate(payload["target"]) if payload.get("target") else None
+            self.elements = []
             # CUA records the resize transform in capture_id. Keep RGBA PNGs within the model's 8 MiB image budget.
-            result = self.call("get_desktop_state", {"max_image_dimension": 1400})
+            if self.target:
+                tool = "get_window_state"
+                fields = RECORD.validate_python(self.tools.get(tool, {}).get("properties", {}))
+                args: dict[str, JsonValue] = {**self.target.model_dump(), "include_accessibility_tree": True,
+                    "include_screenshot": True, "max_elements": 500, "max_image_dimension": 1400}
+                if "tree_format" in fields:
+                    args["tree_format"] = "both"
+            else:
+                tool = "get_desktop_state"
+                args = {"max_image_dimension": 1400}
+            result = self.call(tool, args)
             data = RECORD.validate_python(result["data"])
+            if self.target and (data.get("pid") != self.target.pid or data.get("window_id") != self.target.window_id):
+                raise BackendError("computer_target_mismatch")
             content = result["content"]
             if not isinstance(content, list):
                 raise BackendError("computer_driver_protocol")
@@ -275,15 +312,71 @@ class ComputerDriver:
             # CUA normalizes PNG orientation and maps screenshot pixels to Retina screen points itself.
             self.hello.update(raw_width=width, raw_height=height, orientation=1, scale=1)
             self.capture_id, self.driver_capture = str(payload["capture_id"]), capture
-            return {"op": "capture", "capture_id": self.capture_id, "image_base64": encoded}
+            self.snapshot_id = str(data.get("snapshot_id") or "")
+            self.elements = TypeAdapter(list[dict[str, JsonValue]]).validate_python(data.get("elements", []))[:500]
+            return {"op": "capture", "capture_id": self.capture_id, "image_base64": encoded,
+                    "snapshot_id": self.snapshot_id, "elements": self.elements,
+                    "tree": str(data.get("tree_markdown") or "")[:20000]}
         if payload.get("op") != "act" or payload.get("capture_id") != self.capture_id or not self.driver_capture:
-            raise BackendError("computer_stale")
-        fields = RECORD.validate_python(self.tools["click"].get("properties", {}))
-        if not {"target", "delivery_mode", "capture_id"} <= fields.keys():
+            return {"op": "rejected", "error": "computer_stale"}
+        value = ComputerMutation.model_validate({key: payload[key] for key in ("capture_id", "action", "target", "delivery_mode")})
+        if value.target != self.target:
+            return {"op": "rejected", "error": "computer_target_mismatch"}
+        try:
+            tool, args = self.plan(value)
+        except BackendError as exc:
+            return {"op": "rejected", "error": exc.code}
+        self.capture_id, self.driver_capture = "", ""
+        self.call(tool, args)
+        return {"op": "acted"}
+
+    def plan(self, value: ComputerMutation) -> tuple[str, dict[str, JsonValue]]:
+        action = value.action
+        tool = "click" if isinstance(action, ComputerClick) else action.action
+        fields = RECORD.validate_python(self.tools.get(tool, {}).get("properties", {}))
+        if "delivery_mode" not in fields:
             raise BackendError("computer_driver_protocol")
-        self.call("click", {"target": {"kind": "desktop", "display_id": "primary"}, "delivery_mode": "foreground",
-                            "capture_id": self.driver_capture, "x": int(str(payload["x"])), "y": int(str(payload["y"]))})
-        return {"op": "acted", "x": payload["x"], "y": payload["y"]}
+        args: dict[str, JsonValue] = {"delivery_mode": value.delivery_mode}
+        if "target" in fields:
+            args["target"] = {"kind": "window", **value.target.model_dump()} if value.target else {"kind": "desktop", "display_id": "primary"}
+        elif value.target and {"pid", "window_id"} <= fields.keys():
+            args.update(value.target.model_dump())
+        else:
+            raise BackendError("computer_driver_protocol")
+        token = action.point.element_token if isinstance(action, ComputerClick) and isinstance(action.point, ComputerElement) else (
+            action.element_token if isinstance(action, ComputerText) else "")
+        if token:
+            element = next((item for item in self.elements if item.get("element_token") == token), None)
+            if (value.target is None or not self.snapshot_id or not token.startswith(self.snapshot_id + ":")
+                    or element is None or element.get("enabled") is False or element.get("visible") is False
+                    or element.get("offscreen") is True):
+                raise BackendError("computer_element_stale")
+            if isinstance(action, ComputerText):
+                role = str(element.get("role", "")).lower().removeprefix("ax")
+                if role not in {"textfield", "textarea", "searchfield", "securetextfield", "edit", "entry", "text", "passwordtext"} and not (
+                        action.action == "set_value" and role in {"popupbutton", "combobox", "menubutton"}):
+                    raise BackendError("computer_text_target")
+            args["element_token"] = token
+        if isinstance(action, ComputerClick):
+            if isinstance(action.point, ComputerPixel):
+                args.update(x=action.point.x, y=action.point.y, capture_id=self.driver_capture)
+            if action.action == "double_click":
+                args["count"] = 2
+            elif action.action == "right_click":
+                args["button"] = "right"
+        elif isinstance(action, ComputerText):
+            args["value" if action.action == "set_value" else "text"] = action.text
+        elif isinstance(action, ComputerKey):
+            args["key"] = action.key
+        elif isinstance(action, ComputerHotkey):
+            args["keys"] = list(action.keys)
+        elif isinstance(action, ComputerScroll):
+            args.update(x=action.x, y=action.y, direction=action.direction, amount=action.amount)
+        else:
+            args.update(from_x=action.x, from_y=action.y, to_x=action.to_x, to_y=action.to_y)
+        if not args.keys() <= fields.keys():
+            raise BackendError("computer_driver_protocol")
+        return tool, args
 
     def stop(self) -> int | None:
         if self.lifetime is not None:

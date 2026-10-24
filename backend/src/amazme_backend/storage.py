@@ -1187,7 +1187,7 @@ class SessionStore:
             request = self._request(db, value.request_id)
             if (step.phase != "intent" or step.request_id != value.request_id or step.generation != value.generation
                     or request.generation != value.generation or request.cancel_requested or request.decision
-                    or step.call != value.call or value.call.name not in {"computer_observe", "computer_click"}
+                    or step.call != value.call or value.call.name not in {"computer_observe", "computer_act"}
                     or self._meta(db, "freeze_id") or self._meta(db, "stopping") or self._meta(db, "blocked")):
                 raise BackendError("computer_intent_mismatch")
         await self.db.call(operation)
@@ -1346,7 +1346,7 @@ class SessionStore:
         assert step.call is not None
         binding = self._binding(db, request.request_id, step.call)
         required = self.approval_policy == "all" or (
-            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_click"})
+            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_act"})
         if not required:
             return True
         approval: Approval | None = None
@@ -1462,7 +1462,7 @@ class SessionStore:
         steps = self._steps(db, request.request_id)
         for step in steps:
             if (step.kind == "tool" and step.phase == "intent" and step.call
-                    and step.call.name in {"computer_observe", "computer_click"}):
+                    and step.call.name in {"computer_observe", "computer_act"}):
                 if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
                     return Park("frozen")
                 if request.cancel_requested or request.decision:
@@ -1550,7 +1550,7 @@ class SessionStore:
                 if step.call.name == "delegate_task":
                     self._delegate(db, c, request, step)
                     return Continue()
-                if step.call.name in {"computer_observe", "computer_click"}:
+                if step.call.name in {"computer_observe", "computer_act"}:
                     self._consume(db, c, step)
                     step.phase, step.generation = "intent", request.generation
                     self._save_step(db, step)

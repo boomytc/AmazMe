@@ -136,7 +136,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       {form:'remote-command',key:s=>[...Array(sessionStorage.length)].map((_,i)=>sessionStorage.key(i)).find(k=>k.startsWith('remote-call:host-1:'+s)),out:'remote-result',payload:{phase:'done',result:'old'}},
     ];
     async function start(test) {
-      if(test.form==='computer-act'){$('computer-observe').click();await until(()=>$('computer-state').textContent==='100×100');}
+      if(test.form==='computer-act'){$('computer-observe').click();await until(()=>$('computer-state').textContent.startsWith('100×100'));}
       if(test.form==='remote-command'){$('remote-form').requestSubmit();await until(()=>$('remote-state').textContent==='已连接');}
       const node=$(test.form);node.tagName==='FORM'?node.requestSubmit():node.click();
     }

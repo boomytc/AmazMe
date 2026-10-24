@@ -20,7 +20,7 @@ import uvicorn
 from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, JsonValue, SecretStr, TypeAdapter
 
 from .accounts import AccountStore, AccountsView, ApiKeyCredential
 from .artifacts import (
@@ -63,9 +63,14 @@ from .contracts import (
     ComputerActionView,
     ComputerCaptureView,
     ComputerCleanup,
+    ComputerClick,
+    ComputerDrag,
+    ComputerInspect,
+    ComputerMutation,
     ComputerObserve,
-    ComputerPoint,
+    ComputerPixel,
     ComputerPolicy,
+    ComputerScroll,
     ComputerToolRequest,
     ComputerToolResult,
     CreateSession,
@@ -1379,7 +1384,7 @@ class Host:
 
     async def _computer_enter(self, session: str) -> bool:
         async with self.computer_mu:
-            if session in self.computer_held:
+            if self.computer_held:
                 return False
             self.computer_held.add(session)
             return True
@@ -1434,21 +1439,21 @@ class Host:
         await self._read_session(value.session_id, lambda store: store.check_computer_intent(value))
         try:
             if value.call.name == "computer_observe":
-                observed = await self.computer_observe(value.session_id)
+                observed = await self.computer_observe(value.session_id, ComputerInspect.model_validate_json(value.call.arguments))
                 result = observed.model_dump_json(exclude={"image_base64"})
                 images = [ImagePart(media_type="image/png", data_base64=observed.image_base64)] if observed.image_base64 else []
                 return ComputerToolResult(phase="done", result=result, images=images)
-            if value.call.name != "computer_click":
+            if value.call.name != "computer_act":
                 raise BackendError("computer_tool_missing")
-            point = ComputerPoint.model_validate_json(value.call.arguments)
+            point = ComputerMutation.model_validate_json(value.call.arguments)
             acted = await self.computer_action(value.session_id, ComputerActionRequest(
                 action_id=value.step_id, **point.model_dump()))
             return ComputerToolResult(phase=acted.phase, result=acted.model_dump_json())
         except BackendError as exc:
             # The action ledger remains authoritative when a send was admitted.
-            if value.call.name == "computer_click":
-                point = ComputerPoint.model_validate_json(value.call.arguments)
-                body = json.dumps(point.model_dump(), sort_keys=True, separators=(",", ":"))
+            if value.call.name == "computer_act":
+                point = ComputerMutation.model_validate_json(value.call.arguments)
+                body = json.dumps(point.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
                 prior = await self._with_session(value.session_id,
                     lambda store: store.find_computer_action(value.step_id, body), write=False)
                 if prior is not None:
@@ -1481,7 +1486,11 @@ class Host:
                 await asyncio.to_thread(driver.stop)
             raise
 
-    async def computer_observe(self, session: str) -> ComputerObserve:
+    async def computer_observe(self, session: str, value: ComputerInspect | None = None) -> ComputerObserve:
+        value = value or ComputerInspect()
+        if (value.action == "window" and value.target is None
+                or value.action != "window" and value.target is not None):
+            raise BackendError("computer_target_required")
         self._admit()
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
@@ -1506,12 +1515,22 @@ class Host:
             accessibility = hello.get("accessibility") is True
             screen = hello.get("screen") is True
             identity = str(hello.get("identity") or "")
+            if value.action == "permissions":
+                report = await self._computer_request(driver, {"op": "permissions"})
+                accessibility, screen = report.get("accessibility") is True, report.get("screen") is True
+                return ComputerObserve(permitted=accessibility and screen, accessibility=accessibility, screen=screen,
+                                       identity=identity)
             if not accessibility or not screen:
                 await self._park_driver(session, driver)
                 return ComputerObserve(permitted=False, accessibility=accessibility, screen=screen,
                                        identity=identity, error="permission_required")
+            if value.action in {"apps", "windows"}:
+                reply = await self._computer_request(driver, {"op": "inspect", "action": value.action, "pid": value.pid})
+                return ComputerObserve(permitted=True, accessibility=True, screen=True, identity=identity,
+                                       data=TypeAdapter(dict[str, JsonValue]).validate_python(reply.get("data", {})))
             capture_id = hashlib.sha256(f"{session}:{identity}:{time.time_ns()}".encode()).hexdigest()[:32]
-            reply = await self._computer_request(driver, {"op": "observe", "capture_id": capture_id})
+            reply = await self._computer_request(driver, {"op": "observe", "capture_id": capture_id,
+                "target": value.target.model_dump() if value.target else None})
             if reply.get("capture_id") != capture_id:
                 raise BackendError("computer_driver_lost")
             raw_width = self._driver_int(hello, "raw_width")
@@ -1521,7 +1540,9 @@ class Host:
             width, height = upright_size(raw_width, raw_height, orientation)
             capture = ComputerCaptureView(
                 capture_id=capture_id, width=width, height=height, raw_width=raw_width, raw_height=raw_height,
-                orientation=orientation, scale=scale, observed_ms=time.time_ns() // 1_000_000)
+                orientation=orientation, scale=scale, observed_ms=time.time_ns() // 1_000_000, target=value.target,
+                snapshot_id=str(reply.get("snapshot_id", "")), tree=str(reply.get("tree", ""))[:20000],
+                elements=TypeAdapter(list[dict[str, JsonValue]]).validate_python(reply.get("elements", [])))
             await self._with_session(session, lambda store: store.save_computer_capture(capture))
             return ComputerObserve(permitted=True, accessibility=True, screen=True, identity=identity, capture=capture,
                                    image_base64=str(reply.get("image_base64", "")))
@@ -1530,25 +1551,36 @@ class Host:
 
     async def computer_action(self, session: str, value: ComputerActionRequest) -> ComputerActionView:
         policy = await self.computer_policy(session)
-        body = json.dumps({"capture_id": value.capture_id, "x": value.x, "y": value.y},
-                          sort_keys=True, separators=(",", ":"))
+        body = json.dumps(value.model_dump(mode="json", exclude={"action_id"}), sort_keys=True, separators=(",", ":"))
         found = await self._with_session(
             session, lambda store: store.find_computer_action(value.action_id, body), require_active=False, write=False)
         if found is not None:
             return found
         if not policy.enabled:
             raise BackendError("computer_disabled")
-        if not policy.allow_foreground:
+        if (value.delivery_mode == "foreground" and not policy.allow_foreground
+                or value.target is None and value.delivery_mode != "foreground"):
             raise BackendError("computer_foreground_disabled")
         if await self._with_session(session, lambda store: store.computer_blocked(), write=False):
             raise BackendError("computer_blocked")
         capture = await self._with_session(
             session, lambda store: store.latest_computer_capture(), write=False)
-        if (capture is None or capture.capture_id != value.capture_id
+        if (capture is None or capture.capture_id != value.capture_id or capture.target != value.target
                 or time.time_ns() // 1_000_000 - capture.observed_ms > policy.max_age_ms):
             raise BackendError("computer_stale")
-        point = driver_point(value.x, value.y, capture.raw_width, capture.raw_height,
-                             capture.orientation, capture.scale)
+        action = value.action
+        point: tuple[int, int] | None = None
+        mutation = action.model_dump(mode="json")
+        if isinstance(action, ComputerClick) and isinstance(action.point, ComputerPixel):
+            point = driver_point(action.point.x, action.point.y, capture.raw_width, capture.raw_height,
+                                 capture.orientation, capture.scale)
+            mutation["point"] = {"x": point[0], "y": point[1]}
+        elif isinstance(action, (ComputerScroll, ComputerDrag)):
+            point = driver_point(action.x, action.y, capture.raw_width, capture.raw_height, capture.orientation, capture.scale)
+            mutation.update(x=point[0], y=point[1])
+            if isinstance(action, ComputerDrag):
+                dest = driver_point(action.to_x, action.to_y, capture.raw_width, capture.raw_height, capture.orientation, capture.scale)
+                mutation.update(to_x=dest[0], to_y=dest[1])
         if not await self._computer_enter(session):
             raise BackendError("computer_busy")
         try:
@@ -1563,17 +1595,18 @@ class Host:
                     value.action_id, "unknown", "computer_driver_lost", None, None))
             try:
                 reply = await self._computer_request(driver, {
-                    "op": "act", "capture_id": value.capture_id, "x": point[0], "y": point[1]})
+                    "op": "act", "capture_id": value.capture_id, "action": mutation,
+                    "target": value.target.model_dump() if value.target else None, "delivery_mode": value.delivery_mode})
             except BackendError:
                 code = await self._park_driver(session, driver)
                 await self._with_session(session, lambda store: store.note_computer_exit(code))
                 return await self._with_session(session, lambda store: store.settle_computer_action(
                     value.action_id, "unknown", "computer_driver_lost", None, None))
-            if reply.get("op") != "acted" or reply.get("x") != point[0] or reply.get("y") != point[1]:
+            if reply.get("op") != "acted":
                 return await self._with_session(session, lambda store: store.settle_computer_action(
-                    value.action_id, "failed", "computer_rejected", None, None))
+                    value.action_id, "failed", str(reply.get("error") or "computer_rejected"), None, None))
             return await self._with_session(session, lambda store: store.settle_computer_action(
-                value.action_id, "done", "", point[0], point[1]))
+                value.action_id, "done", "", point[0] if point else None, point[1] if point else None))
         finally:
             await self._computer_leave(session)
 
@@ -2471,8 +2504,8 @@ def application(owner: Host) -> FastAPI:
         return await owner.save_computer_policy(session, value)
 
     @app.post("/api/v1/sessions/{session}/computer/observe")
-    async def computer_observe(session: str) -> ComputerObserve:
-        return await owner.computer_observe(session)
+    async def computer_observe(session: str, value: ComputerInspect) -> ComputerObserve:
+        return await owner.computer_observe(session, value)
 
     @app.post("/api/v1/sessions/{session}/computer/actions")
     async def computer_action(session: str, value: ComputerActionRequest) -> ComputerActionView:

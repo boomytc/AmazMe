@@ -21,6 +21,7 @@ from .contracts import (
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
+    ComputerInspect,
     ComputerObserve,
     ComputerPolicy,
     CreateSession,
@@ -51,6 +52,7 @@ from .workspace_files import FileContent
 
 
 class RpcParams(Model):
+    computer_inspect: ComputerInspect | None = None
     computer_policy: ComputerPolicy | None = None
     computer_action: ComputerActionRequest | None = None
     provider: str = ""
@@ -111,7 +113,7 @@ class RpcHost(Protocol):
 
     async def save_computer_policy(self, session: str, value: ComputerPolicy) -> ComputerPolicy: ...
 
-    async def computer_observe(self, session: str) -> ComputerObserve: ...
+    async def computer_observe(self, session: str, value: ComputerInspect | None = None) -> ComputerObserve: ...
 
     async def computer_action(self, session: str, value: ComputerActionRequest) -> ComputerActionView: ...
 
@@ -214,7 +216,7 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
             raise BackendError("computer_policy_required")
         return await owner.save_computer_policy(await _bound(owner, params), params.computer_policy)
     if method == "computer.observe":
-        return await owner.computer_observe(await _bound(owner, params))
+        return await owner.computer_observe(await _bound(owner, params), params.computer_inspect)
     if method == "computer.act":
         if params.computer_action is None:
             raise BackendError("computer_action_required")

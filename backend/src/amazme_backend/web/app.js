@@ -512,6 +512,7 @@ function startClient() {
       $("web-state").textContent = "";
       $("web-enabled").checked = false;
       computerCapture = "";
+      computerTarget = null;
       $("computer-state").textContent = "";
       $("computer-enabled").checked = false;
       $("computer-foreground").checked = false;
@@ -1287,7 +1288,7 @@ function startClient() {
       else $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }
   };
-  let computerCapture = "";
+  let computerCapture = "", computerTarget = null;
   async function loadComputerPolicy() {
     const operation = beginOperation("computer-action");
     if (!operation || !operation.identity) return;
@@ -1317,14 +1318,21 @@ function startClient() {
     const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/computer/observe`, "POST", {}, connection);
+      const kind = $("computer-observation").value;
+      const target = kind === "window" ? {pid:Number($("computer-pid").value), window_id:Number($("computer-window").value)} : null;
+      const view = await api(`/api/v1/sessions/${selected}/computer/observe`, "POST", {action:kind, target}, connection);
       if (!operation.active()) return;
       computerCapture = view.capture ? view.capture.capture_id : "";
+      computerTarget = view.capture?.target || null;
+      if (view.capture) $("computer-delivery").value = computerTarget ? "background" : "foreground";
       const image = $("computer-image");
       image.hidden = !view.image_base64;
       if (view.image_base64) image.src = `data:image/png;base64,${view.image_base64}`;
       else image.removeAttribute("src");
-      $("computer-state").textContent = view.permitted ? `${view.capture.width}×${view.capture.height}` : view.error;
+      const elements = (view.capture?.elements || []).filter(item=>item.element_token).slice(0,24)
+        .map(item=>`${item.element_token} · ${item.role || ""} · ${item.label || ""}`).join("\n");
+      $("computer-state").textContent = view.capture ? `${view.capture.width}×${view.capture.height}\n${view.capture.tree || ""}\n${elements}` :
+        view.error || JSON.stringify(view.data || {accessibility:view.accessibility, screen:view.screen});
       $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }
   };
@@ -1335,22 +1343,32 @@ function startClient() {
     const {connection, session:selected, identity} = operation;
     const key = `computer-action:${identity.profile_id}:${selected}`;
     if (!selected || !computerCapture || !identity || health?.state !== "ready") return;
-    const point = {capture_id: computerCapture, x: Number($("computer-x").value), y: Number($("computer-y").value)};
+    const kind = $("computer-kind").value;
+    const pixel = {x:Number($("computer-x").value), y:Number($("computer-y").value)};
+    const element_token = $("computer-element").value.trim();
+    let action;
+    if (["click","double_click","right_click"].includes(kind)) action = {action:kind, point:element_token ? {element_token} : pixel};
+    else if (["type_text","set_value"].includes(kind)) action = {action:kind, element_token, text:$("computer-text").value};
+    else if (kind === "press_key") action = {action:kind, key:$("computer-text").value};
+    else if (kind === "hotkey") action = {action:kind, keys:$("computer-text").value.split(",").map(key=>key.trim())};
+    else if (kind === "scroll") action = {action:kind, ...pixel, direction:$("computer-direction").value, amount:Number($("computer-amount").value)};
+    else action = {action:kind, ...pixel, to_x:Number($("computer-to-x").value), to_y:Number($("computer-to-y").value)};
+    const point = {capture_id:computerCapture, target:computerTarget, delivery_mode:$("computer-delivery").value, action};
     let pending = null;
     try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
     if (pending && pending.phase === "unknown" && (
-      pending.capture_id !== point.capture_id || pending.x !== point.x || pending.y !== point.y)) {
+      JSON.stringify(pending.operation) !== JSON.stringify(point))) {
       error(new Error("上次桌面动作结果未知，未自动重发；请用同一画面和坐标再查。"));
       return;
     }
     if (!pending || pending.phase !== "unknown") {
-      pending = {action_id: crypto.randomUUID().replaceAll("-", ""), ...point, phase: "unknown"};
+      pending = {action_id: crypto.randomUUID().replaceAll("-", ""), operation:point, phase:"unknown"};
       sessionStorage.setItem(key, JSON.stringify(pending));
     }
     try {
       const view = await api(`/api/v1/sessions/${selected}/computer/actions`, "POST", {
-        action_id: pending.action_id, capture_id: pending.capture_id, x: pending.x, y: pending.y,
+        action_id: pending.action_id, ...pending.operation,
       }, connection);
       pending.phase = view.phase;
       settlePending(key, "action_id", pending.action_id, view.phase === "unknown" ? pending : null);

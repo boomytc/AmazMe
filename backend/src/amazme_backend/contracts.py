@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, field_validator
 
@@ -179,7 +179,7 @@ class Receipt(Model):
 class ToolCall(Model):
     id: str
     # mcp_tool is the session's canonical call. mcp_<20 hex> is only the name offered to a provider.
-    name: str = Field(pattern=r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_click|mcp_tool|mcp_[a-f0-9]{20})$")
+    name: str = Field(pattern=r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20})$")
     arguments: str
 
 
@@ -573,6 +573,11 @@ class ComputerPolicy(Model):
     max_age_ms: int = Field(default=55000, ge=1, le=55000)
 
 
+class ComputerWindow(Model):
+    pid: int = Field(ge=1)
+    window_id: int = Field(ge=1)
+
+
 class ComputerCaptureView(Model):
     capture_id: str
     width: int
@@ -582,6 +587,10 @@ class ComputerCaptureView(Model):
     orientation: int
     scale: int
     observed_ms: int
+    target: ComputerWindow | None = None
+    snapshot_id: str = ""
+    tree: str = Field(default="", max_length=20000)
+    elements: list[dict[str, JsonValue]] = Field(default_factory=lambda: list[dict[str, JsonValue]](), max_length=500)
 
 
 class ComputerObserve(Model):
@@ -592,19 +601,75 @@ class ComputerObserve(Model):
     error: str = ""
     capture: ComputerCaptureView | None = None
     image_base64: str = Field(default="", max_length=48 * 1024 * 1024)
+    data: dict[str, JsonValue] = Field(default_factory=lambda: dict[str, JsonValue]())
 
 
-class ComputerPoint(Model):
-    capture_id: str = Field(min_length=1, max_length=128)
+class ComputerPixel(Model):
     x: int = Field(ge=0, le=100000)
     y: int = Field(ge=0, le=100000)
 
 
+class ComputerElement(Model):
+    element_token: str = Field(min_length=1, max_length=256)
+
+
+class ComputerClick(Model):
+    action: Literal["click", "double_click", "right_click"]
+    point: ComputerPixel | ComputerElement
+
+
+class ComputerText(ComputerElement):
+    action: Literal["type_text", "set_value"]
+    text: str = Field(max_length=16000)
+
+
+class ComputerKey(Model):
+    action: Literal["press_key"]
+    key: str = Field(min_length=1, max_length=80)
+
+
+class ComputerHotkey(Model):
+    action: Literal["hotkey"]
+    keys: list[str] = Field(min_length=2, max_length=8)
+
+    @field_validator("keys")
+    @classmethod
+    def bounded_keys(cls, value: list[str]) -> list[str]:
+        if any(not key or len(key) > 80 for key in value):
+            raise ValueError("keys must contain 1 to 80 characters")
+        return value
+
+
+class ComputerScroll(ComputerPixel):
+    action: Literal["scroll"]
+    direction: Literal["up", "down", "left", "right"]
+    amount: int = Field(default=3, ge=1, le=100)
+
+
+class ComputerDrag(ComputerPixel):
+    action: Literal["drag"]
+    to_x: int = Field(ge=0, le=100000)
+    to_y: int = Field(ge=0, le=100000)
+
+
+ComputerAction = Annotated[ComputerClick | ComputerText | ComputerKey | ComputerHotkey | ComputerScroll | ComputerDrag,
+                           Field(discriminator="action")]
+
+
+class ComputerMutation(Model):
+    capture_id: str = Field(min_length=1, max_length=128)
+    target: ComputerWindow | None = None
+    delivery_mode: Literal["background", "foreground"] = "background"
+    action: ComputerAction
+
+
 class ComputerInspect(Model):
-    pass
+    action: Literal["desktop", "window", "apps", "windows", "permissions"] = "desktop"
+    target: ComputerWindow | None = None
+    pid: int | None = Field(default=None, ge=1)
 
 
-class ComputerActionRequest(ComputerPoint):
+class ComputerActionRequest(ComputerMutation):
     action_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
 
 

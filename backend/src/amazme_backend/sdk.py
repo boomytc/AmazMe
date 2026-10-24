@@ -18,6 +18,7 @@ from .contracts import (
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
+    ComputerInspect,
     ComputerObserve,
     ComputerPolicy,
     CredentialUpdate,
@@ -92,9 +93,9 @@ class Client:
         return ComputerPolicy.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer",
             json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
 
-    async def observe_computer(self, session_id: str, attachment_id: str) -> ComputerObserve:
+    async def observe_computer(self, session_id: str, attachment_id: str, value: ComputerInspect | None = None) -> ComputerObserve:
         return ComputerObserve.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/observe",
-            json_body={}, headers=self._write(attachment_id)))
+            json_body=(value or ComputerInspect()).model_dump(mode="json"), headers=self._write(attachment_id)))
 
     async def act_computer(self, session_id: str, attachment_id: str, value: ComputerActionRequest) -> ComputerActionView:
         return ComputerActionView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/actions",

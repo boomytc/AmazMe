@@ -46,6 +46,9 @@ def main() -> None:
         op = message.get("op")
         if op == "stop":
             sys.exit(0)
+        if op == "permissions":
+            reply({"accessibility": accessibility, "screen": screen})
+            continue
         if op == "observe":
             capture = message.get("capture_id")
             if not isinstance(capture, str) or not capture:
@@ -64,7 +67,9 @@ def main() -> None:
             continue
         if scenario == "hold":
             time.sleep(0.25)
-        point: dict[str, object] = {"op": "act", "capture_id": current, "x": message.get("x"), "y": message.get("y")}
+        action = as_record(message.get("action")) or {}
+        position = as_record(action.get("point")) or {}
+        point: dict[str, object] = {"op": "act", "capture_id": current, "x": position.get("x"), "y": position.get("y")}
         with record.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(point, separators=(",", ":")) + "\n")
         reply({"op": "acted", "x": point["x"], "y": point["y"]})

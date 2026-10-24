@@ -800,6 +800,16 @@
             }
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerInspect"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5193,17 +5203,61 @@
             "minLength": 1,
             "title": "Capture Id"
           },
-          "x": {
-            "type": "integer",
-            "maximum": 100000.0,
-            "minimum": 0.0,
-            "title": "X"
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
-          "y": {
-            "type": "integer",
-            "maximum": 100000.0,
-            "minimum": 0.0,
-            "title": "Y"
+          "delivery_mode": {
+            "type": "string",
+            "enum": [
+              "background",
+              "foreground"
+            ],
+            "title": "Delivery Mode",
+            "default": "background"
+          },
+          "action": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ComputerClick"
+              },
+              {
+                "$ref": "#/components/schemas/ComputerText"
+              },
+              {
+                "$ref": "#/components/schemas/ComputerKey"
+              },
+              {
+                "$ref": "#/components/schemas/ComputerHotkey"
+              },
+              {
+                "$ref": "#/components/schemas/ComputerScroll"
+              },
+              {
+                "$ref": "#/components/schemas/ComputerDrag"
+              }
+            ],
+            "title": "Action",
+            "discriminator": {
+              "propertyName": "action",
+              "mapping": {
+                "click": "#/components/schemas/ComputerClick",
+                "double_click": "#/components/schemas/ComputerClick",
+                "drag": "#/components/schemas/ComputerDrag",
+                "hotkey": "#/components/schemas/ComputerHotkey",
+                "press_key": "#/components/schemas/ComputerKey",
+                "right_click": "#/components/schemas/ComputerClick",
+                "scroll": "#/components/schemas/ComputerScroll",
+                "set_value": "#/components/schemas/ComputerText",
+                "type_text": "#/components/schemas/ComputerText"
+              }
+            }
           },
           "action_id": {
             "type": "string",
@@ -5217,8 +5271,7 @@
         "type": "object",
         "required": [
           "capture_id",
-          "x",
-          "y",
+          "action",
           "action_id"
         ],
         "title": "ComputerActionRequest"
@@ -5312,6 +5365,38 @@
           "observed_ms": {
             "type": "integer",
             "title": "Observed Ms"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "snapshot_id": {
+            "type": "string",
+            "title": "Snapshot Id",
+            "default": ""
+          },
+          "tree": {
+            "type": "string",
+            "maxLength": 20000,
+            "title": "Tree",
+            "default": ""
+          },
+          "elements": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 500,
+            "title": "Elements"
           }
         },
         "additionalProperties": false,
@@ -5346,6 +5431,184 @@
           "cleared"
         ],
         "title": "ComputerCleanup"
+      },
+      "ComputerClick": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "click",
+              "double_click",
+              "right_click"
+            ],
+            "title": "Action"
+          },
+          "point": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerPixel"
+              },
+              {
+                "$ref": "#/components/schemas/ComputerElement"
+              }
+            ],
+            "title": "Point"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "point"
+        ],
+        "title": "ComputerClick"
+      },
+      "ComputerDrag": {
+        "properties": {
+          "x": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Y"
+          },
+          "action": {
+            "type": "string",
+            "const": "drag",
+            "title": "Action"
+          },
+          "to_x": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "To X"
+          },
+          "to_y": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "To Y"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "action",
+          "to_x",
+          "to_y"
+        ],
+        "title": "ComputerDrag"
+      },
+      "ComputerElement": {
+        "properties": {
+          "element_token": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Element Token"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "element_token"
+        ],
+        "title": "ComputerElement"
+      },
+      "ComputerHotkey": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "hotkey",
+            "title": "Action"
+          },
+          "keys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 2,
+            "title": "Keys"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "keys"
+        ],
+        "title": "ComputerHotkey"
+      },
+      "ComputerInspect": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "desktop",
+              "window",
+              "apps",
+              "windows",
+              "permissions"
+            ],
+            "title": "Action",
+            "default": "desktop"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pid": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ComputerInspect"
+      },
+      "ComputerKey": {
+        "properties": {
+          "action": {
+            "type": "string",
+            "const": "press_key",
+            "title": "Action"
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "action",
+          "key"
+        ],
+        "title": "ComputerKey"
       },
       "ComputerObserve": {
         "properties": {
@@ -5388,6 +5651,13 @@
             "maxLength": 50331648,
             "title": "Image Base64",
             "default": ""
+          },
+          "data": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Data"
           }
         },
         "additionalProperties": false,
@@ -5396,6 +5666,29 @@
           "permitted"
         ],
         "title": "ComputerObserve"
+      },
+      "ComputerPixel": {
+        "properties": {
+          "x": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Y"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "ComputerPixel"
       },
       "ComputerPolicy": {
         "properties": {
@@ -5420,6 +5713,84 @@
         "additionalProperties": false,
         "type": "object",
         "title": "ComputerPolicy"
+      },
+      "ComputerScroll": {
+        "properties": {
+          "x": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "integer",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Y"
+          },
+          "action": {
+            "type": "string",
+            "const": "scroll",
+            "title": "Action"
+          },
+          "direction": {
+            "type": "string",
+            "enum": [
+              "up",
+              "down",
+              "left",
+              "right"
+            ],
+            "title": "Direction"
+          },
+          "amount": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 1.0,
+            "title": "Amount",
+            "default": 3
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "action",
+          "direction"
+        ],
+        "title": "ComputerScroll"
+      },
+      "ComputerText": {
+        "properties": {
+          "element_token": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Element Token"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "type_text",
+              "set_value"
+            ],
+            "title": "Action"
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 16000,
+            "title": "Text"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "element_token",
+          "action",
+          "text"
+        ],
+        "title": "ComputerText"
       },
       "ComputerToolRequest": {
         "properties": {
@@ -5499,6 +5870,27 @@
           "phase"
         ],
         "title": "ComputerToolResult"
+      },
+      "ComputerWindow": {
+        "properties": {
+          "pid": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Pid"
+          },
+          "window_id": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Window Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "pid",
+          "window_id"
+        ],
+        "title": "ComputerWindow"
       },
       "CreateSession": {
         "properties": {
@@ -7835,6 +8227,16 @@
       },
       "RpcParams": {
         "properties": {
+          "computer_inspect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerInspect"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "computer_policy": {
             "anyOf": [
               {
@@ -8825,7 +9227,7 @@
           },
           "name": {
             "type": "string",
-            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_click|mcp_tool|mcp_[a-f0-9]{20})$",
+            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20})$",
             "title": "Name"
           },
           "arguments": {
