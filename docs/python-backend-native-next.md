@@ -60,7 +60,8 @@
 | 页面终端改用 xterm 缓冲区 | `96a337c6a555b4da6bc907e389e45ec3ffd5092d` | `backend/tests/test_pty.py`：备用屏幕退出后不留下备用内容，宽字符按列换行，颜色序列不出现在正文里。非 BMP、组合字符和增量重同步仍按 UTF-16 游标 |
 | 页面打开 xterm 画面 | `d9ad5d197d5e81acb63cb285e25ce8b97121618a` | `backend/tests/test_pty.py`：当前终端把彩色文字画成 `xterm-fg-1`。键盘输入仍走原来的编号。鼠标没有交给 PTY |
 | Electron 页面打开同一 xterm 画面 | `c67440d67ffd815bcb2fe136c2c0f47cb14292f6` | `.artifacts/native/electron-vv1fjgl1/report.json`：真实 Electron 进程里红色 `RED` 画成 `xterm-fg-1`。丢回执、resize、刷新、关闭、审批、检查点和 MCP 仍按原范围通过 |
-| 终端应答和鼠标走同一输入编号 | 包含本文件的提交 | `backend/tests/test_pty.py`：光标位置应答丢失后再次上报沿用同一编号。`.artifacts/native/terminal-55t23f71/report.json`：Chrome 里点击画面后，SGR 鼠标上报进入终端输入 |
+| 终端应答和鼠标走同一输入编号 | `37fbca34ddd111bb5b65cc36e30405507386460b` | `backend/tests/test_pty.py`：光标位置应答丢失后再次上报沿用同一编号。`.artifacts/native/terminal-55t23f71/report.json`：Chrome 里点击画面后，SGR 鼠标上报进入终端输入 |
+| 更新冻结后仍能读取已完成的脚本和插件 | 包含本文件的提交 | `backend/tests/test_workspaces.py`：监督器冻结编号与更新一致时，已完成的脚本和插件调用返回原结果；新的运行和调用拒绝。监督器尚未冻结时也不开始 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。

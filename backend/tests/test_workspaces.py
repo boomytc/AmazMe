@@ -16,6 +16,7 @@ from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
     BackendError,
     CodeRun,
+    CodeView,
     CreateSession,
     HostFence,
     McpCallRequest,
@@ -24,15 +25,18 @@ from amazme_backend.contracts import (
     OpenMcp,
     OpenTerminal,
     PluginCallRequest,
+    PluginCallView,
     ProcessLease,
     ReadFile,
     RemoteOpen,
     RemoteRun,
     RunTool,
+    SupervisorHealth,
     TerminalInput,
     TerminalOpen,
     TerminalQuery,
     TerminalType,
+    UpdateRecord,
     WorkerInfo,
     WorkerRequest,
     WriteFile,
@@ -168,6 +172,53 @@ async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_
         with pytest.raises(BackendError, match="stopped_after_check"):
             await host.open_terminal(present, TerminalOpen(terminal_id="f" * 32, command="sh"))
         assert calls == ["/pty/open"]
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _host(tmp_path)
+    await _ready(host)
+    session = "a" * 32
+    await host.store.create_session(session, CreateSession(title="冻结", workspace="primary"))
+    update = UpdateRecord(update_id="upd-1", source_build="a" * 64, target_build="b" * 64,
+                          phase="freezing", revision="1", cancel_work=False)
+    calls: list[str] = []
+
+    async def active() -> UpdateRecord:
+        return update
+
+    async def supervisor(method: str, path: str, _model: object, body: object = None) -> object:
+        calls.append(path)
+        if path == "/health":
+            return SupervisorHealth(identity=host.identity(), registry_revision="1", freeze_id=update.update_id,
+                                    workers=[], epochs=[])
+        if path == "/code/run" and getattr(body, "run_id") == "b" * 32:
+            return CodeView(run_id="b" * 32, phase="success", value="3")
+        if path == "/plugins/call" and getattr(body, "call_id") == "d" * 32:
+            return PluginCallView(call_id="d" * 32, phase="done", result="ok")
+        raise BackendError("supervisor_frozen", status=503)
+
+    monkeypatch.setattr(host.store, "active_update", active)
+    monkeypatch.setattr(host.supervisor, "call", supervisor)
+    try:
+        code = await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
+        plugin = await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="d" * 32, text="hi"))
+        assert code.value == "3" and plugin.result == "ok"
+        with pytest.raises(BackendError, match="update_frozen"):
+            await host.run_code(session, CodeRun(run_id="e" * 32, source="9"))
+        with pytest.raises(BackendError, match="update_frozen"):
+            await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="f" * 32, text="no"))
+        assert calls == ["/health", "/code/run", "/health", "/plugins/call", "/health", "/code/run", "/health", "/plugins/call"]
+
+        async def unmatched() -> UpdateRecord:
+            return update.model_copy(update={"update_id": "other"})
+
+        monkeypatch.setattr(host.store, "active_update", unmatched)
+        with pytest.raises(BackendError, match="update_frozen"):
+            await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
+        assert calls[-1] == "/health" and "/code/run" not in calls[8:]
     finally:
         await host.supervisor.close()
         await host.store.db.close()

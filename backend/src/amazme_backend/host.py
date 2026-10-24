@@ -12,7 +12,7 @@ import sqlite3
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NoReturn
 from urllib.parse import quote
 
 import httpx
@@ -704,14 +704,30 @@ class Host:
                           remote_id=value.remote_id, host=value.host, host_key=value.host_key,
                           daemon_id=daemon_identity(), generation=value.generation, endpoint=value.endpoint)
 
+    async def _update_matches_supervisor(self) -> bool:
+        active = await self.store.active_update()
+        if active is None:
+            return False
+        health = await self.supervisor.call("GET", "/health", SupervisorHealth)
+        if health.freeze_id != active.update_id:
+            raise BackendError("update_frozen", status=503)
+        return True
+
+    def _stored_during_update(self, frozen: bool, error: BackendError) -> NoReturn:
+        if frozen and error.code == "supervisor_frozen":
+            raise BackendError("update_frozen", status=503) from error
+        raise error
+
     async def run_code(self, session_id: str, value: CodeRun) -> CodeView:
         self._admit()
-        if await self.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self._require_session(session_id)
-        return await self.supervisor.call("POST", "/code/run", CodeView, OpenCode(
-            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
-            run_id=value.run_id, source=value.source))
+        frozen = await self._update_matches_supervisor()
+        try:
+            return await self.supervisor.call("POST", "/code/run", CodeView, OpenCode(
+                host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
+                run_id=value.run_id, source=value.source))
+        except BackendError as error:
+            self._stored_during_update(frozen, error)
 
     async def cancel_code(self, session_id: str, run_id: str) -> CodeView:
         self._admit()
@@ -1425,12 +1441,14 @@ class Host:
 
     async def call_plugin(self, session_id: str, plugin_id: str, value: PluginCallRequest) -> PluginCallView:
         self._admit()
-        if await self.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self._require_session(session_id)
-        return await self.supervisor.call("POST", "/plugins/call", PluginCallView, PluginCallEnvelope(
-            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
-            plugin_id=plugin_id, call_id=value.call_id, text=value.text))
+        frozen = await self._update_matches_supervisor()
+        try:
+            return await self.supervisor.call("POST", "/plugins/call", PluginCallView, PluginCallEnvelope(
+                host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
+                plugin_id=plugin_id, call_id=value.call_id, text=value.text))
+        except BackendError as error:
+            self._stored_during_update(frozen, error)
 
     async def archive_session(self, session: str, archived: bool) -> Session:
         self._admit()
