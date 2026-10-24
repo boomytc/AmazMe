@@ -4,6 +4,7 @@
  * and does not cancel accepted work or close the session terminal or MCP service.
  */
 
+import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -22,17 +23,23 @@ export interface PythonSessionTarget {
 	readonly session?: string;
 }
 
-interface Held {
+export interface Held {
 	readonly kind: "request" | "mcp";
 	readonly requestId: string;
 	readonly callId: string;
 	readonly summary: string;
 }
 
-interface ScreenState {
+interface PendingInput {
+	inputId: string;
+	prompt: string;
+}
+
+export interface ScreenState {
 	terminalId: string;
 	serverId: string;
 	held: Held | null;
+	pendingInput: PendingInput | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -115,7 +122,7 @@ async function decideHeld(client: HostClient, sessionId: string, attachmentId: s
 	return [receiptLine(receipt)];
 }
 
-async function handleLine(client: HostClient, sessionId: string, attachmentId: string, workspace: string, state: ScreenState, prompt: string): Promise<string[]> {
+export async function handleLine(client: HostClient, sessionId: string, attachmentId: string, workspace: string, state: ScreenState, prompt: string): Promise<string[]> {
 	if (state.held) {
 		if (prompt !== "批准" && prompt !== "拒绝") return ["先输入批准或拒绝"];
 		return decideHeld(client, sessionId, attachmentId, state, prompt === "批准");
@@ -146,14 +153,25 @@ async function handleLine(client: HostClient, sessionId: string, attachmentId: s
 		const view = await client.readTerminal(sessionId, attachmentId, terminalId);
 		return [`终端 ${String(view.cols)} ${String(view.rows)}`];
 	}
+	if (prompt === "/pty-ack") {
+		if (!state.pendingInput) return ["没有未确认的输入"];
+		state.pendingInput = null;
+		return ["已由用户核对；原输入不会重放"];
+	}
 	if (prompt.startsWith("/pty ")) {
+		if (state.pendingInput && state.pendingInput.prompt !== prompt) {
+			return ["上次输入结果未确认；先重试同一输入，或输入 /pty-ack 核对后继续。"];
+		}
 		const terminalId = state.terminalId || (await client.runningTerminal(sessionId)) || (await client.openTerminal(sessionId, attachmentId, workspace));
 		state.terminalId = terminalId;
+		const pending = state.pendingInput ?? { inputId: randomBytes(16).toString("hex"), prompt };
+		state.pendingInput = pending;
 		try {
-			await client.writeTerminal(sessionId, attachmentId, terminalId, `${prompt.slice("/pty ".length)}\n`);
+			await client.writeTerminal(sessionId, attachmentId, terminalId, `${prompt.slice("/pty ".length)}\n`, pending.inputId);
 		} catch (error) {
 			return [error instanceof Error && error.message === "terminal_input_unconfirmed" ? "输入未确认" : error instanceof Error ? error.message : "request_failed"];
 		}
+		state.pendingInput = null;
 		return ["输入已接收", ...visibleLines(await stableOutput(client, sessionId, attachmentId, terminalId))];
 	}
 	if (prompt === "/mcp-close") {
@@ -287,7 +305,7 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 	};
 	const onSignal = (): void => leave();
 	process.on("SIGINT", onSignal);
-	const state: ScreenState = { terminalId: "", serverId: "", held: null };
+	const state: ScreenState = { terminalId: "", serverId: "", held: null, pendingInput: null };
 	let busy = false;
 	let queued = "";
 	if (target.session) {

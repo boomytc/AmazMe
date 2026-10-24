@@ -17,8 +17,8 @@
 | CLI print/JSON | 已通过此单元范围 | 包入口 print/JSON 进程：显式审批、文件、检查点、终端、MCP、离开不关闭、再次进入后显式关闭 |
 | RPC | 已通过此单元范围 | `--mode rpc` 进程：显式审批、文件、检查点、终端、MCP、松开绑定不关闭、显式关闭 |
 | Python SDK | 已通过此单元范围 | 独立进程里的 `sdk.Client`：显式审批、文件、检查点、终端、MCP、进程退出不关闭、显式关闭 |
-| 默认交互画面 | 已通过此单元范围 | 包入口交互进程：显式审批、文件、检查点、终端、MCP、离开不关闭、再次进入后显式关闭 |
-| C3 客户端未重复实验 | 未验收 | Electron、CLI、RPC、SDK 和默认交互画面的输入丢回执；各客户端的更新冻结、worker 或监督器被杀；完整终端模拟。TUI 只在当前进程内沿用未确认输入 |
+| 默认交互画面 | 已通过此单元范围 | 包入口交互进程：显式审批、文件、检查点、终端、MCP、离开不关闭、再次进入后显式关闭。进程内未确认的 `/pty` 沿用同一次编号 |
+| C3 客户端未重复实验 | 未验收 | Electron、CLI、RPC 和 SDK 的输入丢回执；各客户端的更新冻结、worker 或监督器被杀；完整终端模拟。TUI 和默认交互画面只在当前进程内沿用未确认输入 |
 | D 剩余功能与签名安装 | 待本机链路验收 | 供应商、OAuth、TCC、SSH、完整产品/签名分发与旧依赖清理 |
 
 本轮三份运行报告的 build_id 均为 `c3f544e9061ff51f12d8fde261ad9018b4dda363f78b298643585f0d6e7af6ce`：
@@ -139,7 +139,7 @@ Chrome 155 驱动真实本机官方 Python MCP SDK 1.26.0 探针服务：拒绝�
 终端输出里出现 `SCREEN_TERM_OK` 和 `输入已接收`，`stty size` 观察到 `40 100`。MCP 拒绝没有副作用，一次批准写入一次。
 另一个交互会话看不到这条终端。Ctrl-C 松开绑定，不取消推迟的请求，也不停止终端和 MCP。再次进入同一会话后，显式关闭使两者以 clean 退出。无关的 sleep 进程仍在。
 预算高水位 49,483,776 字节，耗时约 7.4 秒，空闲约 266.7 GiB，所属进程和全局普查都已收回。没有构建冻结安装包，没有启动或恢复 VM。
-这次没有在交互画面里重做输入丢回执、更新冻结，或杀掉 worker 与监督器。画面保留最近的可见行，不是完整 VT。
+进程内未确认的 `/pty` 沿用同一次编号，改内容不会发送；`/pty-ack` 核对后不再重放。离开这个进程后本地编号不保留。`packages/coding-agent/test/python-screen-terminal.test.ts` 用假客户端核对画面状态，并用真实 serve 核对同一编号只写入一次。这不是另一次包入口画面验收，也不是更新冻结、杀掉 worker 或完整终端。画面保留最近的可见行，不是完整 VT。
 
 ### 命令行决定
 
@@ -286,7 +286,7 @@ backend/.venv/bin/python backend/tools/verify_p2.py \
 | CLI 与非交互 | P3 | `amazme-backend client` 的 create、submit、release、cancel、rpc、decide。服务命令是 init、serve、worker、supervisor、stop、pair，另有 tui、pty-gate、mcp-gate。没有 destroy-vm | 部分通过 | `backend/tests/test_client.py`；`backend/tools/verify_frozen_clients.py` | `77101bd` 在源码入口上通过。`26ffe5e` 用冻结 onedir 再跑了同一组命令，build_id `6d4ba35edcfd8e8f7f00241883c168f70d87320eeff9a7f35ecd62b2164c7c47`，报告 `docs/python-backend-frozen-clients.json`。`submit` 的回答是 `已收到：你好`。松开绑定后旧绑定再写被拒绝。错工作区时 stderr 只有 `workspace_mismatch`。令牌不在输出里。这不是已签名 DMG，也没有覆盖文件或远端。`destroy-vm` 不是服务命令，拒绝后不创建 profile。桌面更新测试不再调用它。历史 `verify_p2.py`、`verify_relocated_bundle.py` 和 `measure_runtime.py` 仍写着这个命令，不要运行 |
 | RPC | P3 | `POST /api/v1/rpc` | 部分通过 | 源码测试和 `verify_frozen_clients.py` 都打到这条路由 | `77101bd`。冻结包上的同一检查在 `26ffe5e`，build_id `6d4ba35edcfd8e8f7f00241883c168f70d87320eeff9a7f35ecd62b2164c7c47`。提交和取消要带工作区，不一致就拒绝并且不执行。`session.release` 只丢掉绑定。这不是已签名 DMG |
 | 异步 SDK | P3 | `amazme_backend.sdk.Client`；冻结包里的 `client` 子命令走同一条实现 | 部分通过 | 同上 | `77101bd`。`26ffe5e` 里 SDK 对着冻结 serve 松开绑定，任务仍在等待，旧绑定再写得到 `stale_client_binding`。冻结 `client submit` 拿到 `已收到：你好`。这不是已签名 DMG |
-| TUI | P3 | 默认 `amazme` 交互；`amazme-backend tui`；`--python-url` 与 `--python-token` 接到指定宿主 | 部分通过 | `backend/tests/test_tui.py`；`verify_frozen_clients.py`；`backend/tests/test_python_interactive.py`；`test/durable-main-startup.test.ts` | `ac0c7f1` 让默认交互不再打开旧 durable 界面。不带参数时从 PATH 的 `amazme-backend` 拉起或接上已有 Python 宿主，工作区是 primary，画面写出会话和绑定。Ctrl-C 后宿主还在，等待任务不取消，第二次输入得到 `已收到：你好`。已有 `config.json` 不会被清空。第一次 profile 用 faux。`--python-url` 和 `--python-token` 必须成对出现，用来连指定宿主。`AMAZME_DURABLE_TUI=1` 不在帮助里，也不再切换运行时。设了这个变量仍然走 Python。测试不再用 `legacy-durable-cli` 启动旧界面。产品 `--session` 拒绝旧会话，不打开旧会话库。默认的 `--print`、`--mode json` 和 `--mode rpc` 也走 Python：文本输出是 `已收到：你好`，JSON 带工作区和状态，RPC 转发到 `POST /api/v1/rpc`，松开绑定不取消等待任务。冻结 `tui` 又跑过一次，build_id 仍是 `6d4ba35edcfd8e8f7f00241883c168f70d87320eeff9a7f35ecd62b2164c7c47`，pid 是 32224 和 32263。这不是已签名 DMG。进程内未确认的 `/pty` 输入沿用同一次编号，改内容不会发送；`/pty-ack` 核对后不再重放。离开这个进程后本地编号不保留。这不是更新冻结、杀掉 worker 或完整终端 |
+| TUI | P3 | 默认 `amazme` 交互；`amazme-backend tui`；`--python-url` 与 `--python-token` 接到指定宿主 | 部分通过 | `backend/tests/test_tui.py`；`verify_frozen_clients.py`；`backend/tests/test_python_interactive.py`；`test/durable-main-startup.test.ts` | `ac0c7f1` 让默认交互不再打开旧 durable 界面。不带参数时从 PATH 的 `amazme-backend` 拉起或接上已有 Python 宿主，工作区是 primary，画面写出会话和绑定。Ctrl-C 后宿主还在，等待任务不取消，第二次输入得到 `已收到：你好`。已有 `config.json` 不会被清空。第一次 profile 用 faux。`--python-url` 和 `--python-token` 必须成对出现，用来连指定宿主。`AMAZME_DURABLE_TUI=1` 不在帮助里，也不再切换运行时。设了这个变量仍然走 Python。测试不再用 `legacy-durable-cli` 启动旧界面。产品 `--session` 拒绝旧会话，不打开旧会话库。默认的 `--print`、`--mode json` 和 `--mode rpc` 也走 Python：文本输出是 `已收到：你好`，JSON 带工作区和状态，RPC 转发到 `POST /api/v1/rpc`，松开绑定不取消等待任务。冻结 `tui` 又跑过一次，build_id 仍是 `6d4ba35edcfd8e8f7f00241883c168f70d87320eeff9a7f35ecd62b2164c7c47`，pid 是 32224 和 32263。这不是已签名 DMG。进程内未确认的 `/pty` 输入沿用同一次编号，改内容不会发送；`/pty-ack` 核对后不再重放。离开这个进程后本地编号不保留。这不是更新冻结、杀掉 worker 或完整终端。默认交互画面的未确认 `/pty` 也只在当前进程内沿用同一次编号 |
 | 多窗口、多宿主、绑定代际 | P3 | Web 有 A-B-A 草稿测试；两个 `amazme-backend tui` 对同一个 serve | 部分通过 | `test_streams_p2.py` 的所有权测试；`verify_client.py`；`test_tui.py` 的两个终端 | `eae6735`。两个终端同时在线时，离开一个不会取消另一个会话里的等待任务，留下的那个仍能看到 faux 回答。Electron 两个窗口在 `6e0d96d`，现场记录是 `docs/python-backend-electron-windows.json`。远端多宿主还没有 |
 
 ## 4. P4 交付

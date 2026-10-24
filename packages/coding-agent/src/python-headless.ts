@@ -169,9 +169,9 @@ export class HostClient {
 		return terminalId;
 	}
 
-	async writeTerminal(sessionId: string, attachmentId: string, terminalId: string, data: string): Promise<void> {
+	async writeTerminal(sessionId: string, attachmentId: string, terminalId: string, data: string, inputId = hexId()): Promise<void> {
 		const written = await this.#send("POST", `/api/v1/sessions/${sessionId}/terminals/${terminalId}/input`, {
-			input_id: hexId(),
+			input_id: inputId,
 			data,
 		}, attachmentId);
 		if (written.input_status !== "accepted") fail("terminal_input_unconfirmed");
