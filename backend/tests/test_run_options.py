@@ -146,3 +146,44 @@ async def test_sdk_and_rpc_preserve_run_options() -> None:
                     attachment_id='binding', request_id='original', text='hello', **options))
     assert owner.deliver.call_args.args[3] == sent[0]
     assert sent[0].model_dump(include=set(options)) == options
+
+
+async def test_structured_user_tool_uses_the_same_approval_and_result_without_a_model_call(tmp_path: Path) -> None:
+    from amazme_backend.contracts import (
+        ApprovalDecision,
+        PluginCallView,
+        PluginResult,
+        PluginToolCall,
+        plugin_alias,
+    )
+    from amazme_backend.session_domain import PluginRetrieval, PluginReturned
+    store = await opened(tmp_path / 'session.sqlite')
+    store.approval_policy = 'mutations'
+    payload = PluginToolCall(plugin_id='a'*32,call_id='e'*32,workspace='primary',fingerprint='f'*64,
+                             load_id='load',name='hello',schema_digest='f'*64,arguments={'name':'Bob'})
+    original = Submit(request_id='structured',text='Script call hello',allowed_tools=[plugin_alias('a'*32,'hello')],tool_call=ToolCall(id='caller-id',name='plugin_tool',arguments=payload.model_dump_json()))
+    try:
+        await store.accept(original,FENCE)
+        assert isinstance(await next_action(store),Park)
+        approval = (await store.snapshot()).approvals[-1]
+        assert approval.call.name=='plugin_tool'
+        with pytest.raises(BackendError,match='direct_tool_steer_unsupported'):
+            await store.accept(Submit(request_id='steer',text='change',mode='steer',target_run_id='structured'),FENCE)
+        await store.approve(ApprovalDecision(decision_id='allow',approval_id=approval.approval_id,
+            expected_revision=approval.revision,proposal_digest=approval.proposal_digest,approve=True),FENCE)
+        action = await next_action(store)
+        assert isinstance(action,PluginRetrieval)
+        pinned = PluginToolCall.model_validate_json(action.call.arguments)
+        assert pinned.call_id==action.step_id[:32] and pinned.call_id!='e'*32
+        result = PluginCallView(call_id=pinned.call_id,phase='done',result=PluginResult(content=[{'type':'text','text':'Hello, Bob!'}]))
+        await store.advance(PluginReturned(action,result,'Hello, Bob!'))
+        assert isinstance(await next_action(store),Park)
+        receipt = await store.get('structured')
+        assert receipt.status=='succeeded' and receipt.answer=='Hello, Bob!'
+        assert await store.accept(original,FENCE)==receipt
+        messages = (await store.snapshot()).requests
+        assert len(messages)==1
+        with sqlite3.connect(store.db.path) as db:
+            assert db.execute("SELECT count(*) FROM steps WHERE json_extract(payload,'$.kind')='model'").fetchone()[0]==0
+    finally:
+        await store.db.close()

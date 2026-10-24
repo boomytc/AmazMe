@@ -34,6 +34,7 @@ from .contracts import (
     Event,
     HostFence,
     ImagePart,
+    McpToolCall,
     Message,
     Model,
     PluginOffer,
@@ -55,8 +56,10 @@ from .contracts import (
     WorkflowChild,
     WorkflowView,
     checked_images,
+    plugin_alias,
 )
 from .faults import Faults
+from .mcp_session import mcp_alias
 from .providers import Completion, stored_provider, token_cost_micro
 from .session_domain import (
     Action,
@@ -671,7 +674,21 @@ class SessionStore:
         if value.allowed_tools is not None:
             config.allowed_tools = value.allowed_tools
         config.excluded_tools = list(dict.fromkeys([*config.excluded_tools, *value.excluded_tools]))
-        self._save_run(db, Run(request_id=value.request_id, config=config, depth=depth))
+        direct = normalized_call(value.tool_call) if value.tool_call is not None else None
+        if direct is not None:
+            selected = direct.name
+            step_id = digest(f"direct:{self.session_id}:{value.request_id}")
+            if direct.name == "plugin_tool":
+                args = PluginToolCall.model_validate_json(direct.arguments).model_copy(update={"call_id":step_id[:32]})
+                selected = plugin_alias(args.plugin_id,args.name)
+                direct = direct.model_copy(update={"arguments":args.model_dump_json()})
+            elif direct.name == "mcp_tool":
+                args_mcp = McpToolCall.model_validate_json(direct.arguments).model_copy(update={"call_id":step_id[:32]})
+                selected = mcp_alias(args_mcp.server_id,args_mcp.tool)
+                direct = direct.model_copy(update={"arguments":args_mcp.model_dump_json()})
+            if not config.tool_allowed(selected):
+                raise BackendError("tool_not_allowed")
+        self._save_run(db, Run(request_id=value.request_id, config=config, depth=depth, direct_call=direct))
         c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
         c.hit("accepted", receipt.request_id)
         return receipt
@@ -711,10 +728,12 @@ class SessionStore:
             if value.mode == "reject_busy" and pending and not tombstone:
                 raise BackendError("session_busy")
             if value.mode == "steer" and not tombstone:
-                if value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools:
+                if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools:
                     raise BackendError("run_options_immutable")
                 if value.not_before_ms:
                     raise BackendError("scheduled_steer_unsupported")
+                if self._run(db, value.target_run_id).direct_call is not None:
+                    raise BackendError("direct_tool_steer_unsupported")
                 target = self._request(db, value.target_run_id)
                 if target.status in TERMINAL or target.decision or target.kind == "steer":
                     raise BackendError("steer_target_settled")
@@ -1378,6 +1397,13 @@ class SessionStore:
         request.status = "running"
         request.generation += 1
         self._save_request(db, c, request)
+        run = self._run(db, request.request_id)
+        if run.direct_call is not None:
+            call = run.direct_call
+            step_id = digest(f"direct:{self.session_id}:{request.request_id}")
+            self._message(db, c, request.request_id, "direct-call", Message(role="assistant", content="", tool_calls=[call]))
+            self._save_step(db, Step(step_id=step_id, request_id=request.request_id, ordinal=1,
+                kind="tool",phase="proposed",generation=request.generation,call=call))
         c.hit("claimed", request.request_id)
 
     def _grant(self, db: sqlite3.Connection, c: Changes, request: Receipt, step: Step) -> bool:
@@ -1453,6 +1479,8 @@ class SessionStore:
                           Message(role="tool", content=step.result, tool_call_id=step.call.id,
                                   images=self._computer_images(db, step.step_id)
                                   if step.call.name in {"computer_observe", "plugin_tool"} else []))
+            if self._run(db, request.request_id).direct_call is not None:
+                self._decide(db, c, request, Decision(status="succeeded", answer=step.result))
         step.phase = "applied"
         self._save_step(db, step)
 

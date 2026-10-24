@@ -20,6 +20,7 @@ REQUIRED_IDENTITY = (
     "plugin_gate.py",
     "model_catalog.json",
     "quickjs-wasi/quickjs.wasm",
+    "@amazme/codemode/dist/index.js",
 )
 
 
@@ -57,6 +58,13 @@ def install_codemode_runtime(bundle: Path) -> None:
         raise SystemExit("packaged helper or plugin gate is missing")
     modules = helper.parent / "node_modules" / "quickjs-wasi"
     shutil.copytree(REPO / "node_modules" / "quickjs-wasi", modules, symlinks=False)
+    package = REPO / "packages/codemode"
+    if not (package / "dist/index.js").is_file():
+        raise SystemExit("build @amazme/codemode before packaging the backend")
+    target = helper.parent / "node_modules/@amazme/codemode"
+    target.mkdir(parents=True)
+    shutil.copy2(package / "package.json", target / "package.json")
+    shutil.copytree(package / "dist", target / "dist", symlinks=False)
 
 
 def main() -> None:

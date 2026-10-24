@@ -57,6 +57,10 @@ from .contracts import (
     Cleanup,
     ClosePlugin,
     CodeRun,
+    CodeToolBinding,
+    CodeToolDispatch,
+    CodeToolReceipt,
+    CodeTools,
     CodeView,
     Compaction,
     CompactSession,
@@ -738,6 +742,24 @@ class Host:
         if frozen and error.code == "supervisor_frozen":
             raise BackendError("update_frozen", status=503) from error
         raise error
+
+    async def code_tools(self, session_id: str) -> CodeTools:
+        await self._require_session(session_id)
+        return await self.supervisor.call("GET", "/code/tools?session_id=" + session_id, CodeTools)
+
+    async def dispatch_code_tool(self, value: CodeToolDispatch, *, cancel: bool = False) -> CodeToolReceipt:
+        if value.build_id != self.build or value.host_epoch != self.fence.host_epoch:
+            raise BackendError("stale_host_epoch")
+        await self._require_session(value.session_id)
+        binding = await self.supervisor.call("POST", "/code/tools/bind", CodeToolBinding,value.model_copy(update={"cancel":cancel}))
+        if cancel:
+            receipt = await self.deliver(value.session_id,"cancel",binding.request_id,
+                Cancel(**self.fence.model_dump(),request_id=binding.request_id))
+        else:
+            receipt = await self.deliver(value.session_id,"submit",binding.request_id,
+                Submit(request_id=binding.request_id,text=f"Script {value.run_id} tool {value.name}",tool_call=binding.call))
+        messages = await self._read_session(value.session_id,lambda store:store.messages(binding.request_id)) if receipt.status == "succeeded" else []
+        return CodeToolReceipt(receipt=receipt,images=[image for message in messages if message.role == "tool" for image in message.images])
 
     async def run_code(self, session_id: str, value: CodeRun) -> CodeView:
         self._admit()
@@ -2890,6 +2912,18 @@ def application(owner: Host) -> FastAPI:
     @app.post("/control/file-writes/prepare")
     async def prepare_tool_write(value: PrepareFileWrite) -> PreparedFileWrite:
         return await owner.prepare_tool_write(value)
+
+    @app.post("/control/code/tool")
+    async def code_tool(value: CodeToolDispatch) -> CodeToolReceipt:
+        return await owner.dispatch_code_tool(value)
+
+    @app.post("/control/code/tool/cancel")
+    async def cancel_code_tool(value: CodeToolDispatch) -> CodeToolReceipt:
+        return await owner.dispatch_code_tool(value,cancel=True)
+
+    @app.get("/api/v1/sessions/{session_id}/code/tools")
+    async def code_tools(session_id: str) -> CodeTools:
+        return await owner.code_tools(session_id)
 
     @app.post("/control/computer/tool")
     async def computer_tool(value: ComputerToolRequest) -> ComputerToolResult:

@@ -507,7 +507,7 @@ function startClient() {
     if (selected !== id) {
       workflowId = ""; workflowView = null;
       remoteId = "";
-      for (const id of ["code-result", "code-state", "plugin-result", "remote-state", "remote-result"]) $(id).textContent = "";
+      for (const id of ["code-result", "code-state", "code-tools", "code-media", "plugin-result", "remote-state", "remote-result"]) $(id).textContent = "";
       webPolicy = null;
       $("web-state").textContent = "";
       $("web-enabled").checked = false;
@@ -1936,6 +1936,31 @@ function startClient() {
     } catch (failure) { if (operation.active()) error(failure); }
   };
   const codeRuns = new Map();
+  function showCode(view) {
+    $("code-result").textContent = view.phase === "success" ? view.value : view.phase;
+    if (view.error) $("code-result").textContent += "\n" + view.error;
+    $("code-media").replaceChildren();
+    for (const item of view.output || []) {
+      if (item.type === "text") $("code-result").textContent += "\n" + item.text;
+      if (item.type === "image" && /^image\/(png|jpeg|webp|gif)$/.test(item.mimeType)) {
+        const img = document.createElement("img");
+        img.src = `data:${item.mimeType};base64,${item.data}`;
+        img.alt = "脚本输出";
+        $("code-media").append(img);
+      }
+    }
+    $("code-state").textContent = view.phase === "success" ? view.state : "";
+  }
+  $("code-catalog").onclick = async () => {
+    const operation = beginOperation("code-catalog");
+    if (!operation) return;
+    const {connection,session:selected} = operation;
+    if (!selected) return;
+    try {
+      const catalog = await api(`/api/v1/sessions/${selected}/code/tools`, "GET", undefined, connection);
+      if (operation.active()) $("code-tools").textContent = JSON.stringify(catalog.tools,null,2);
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
   $("code-run").onclick = async () => {
     const operation = beginOperation("code-run");
     if (!operation) return;
@@ -1958,10 +1983,9 @@ function startClient() {
     try {
       const view = await api(`/api/v1/sessions/${selected}/code`, "POST", {run_id: pending.run_id, source: pending.source}, connection);
       pending.phase = view.phase;
-      settlePending(key, "run_id", pending.run_id, view.phase === "unknown" ? pending : null);
+      settlePending(key, "run_id", pending.run_id, view.phase === "unknown" && !(view.clean && view.cancel_requested) ? pending : null);
       if (!operation.active()) return;
-      $("code-result").textContent = view.phase === "success" ? view.value : view.phase;
-      $("code-state").textContent = view.phase === "success" ? view.state : "";
+      showCode(view);
       if (view.phase === "unknown") error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
       else $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }
@@ -1979,10 +2003,9 @@ function startClient() {
     try {
       const view = await api(`/api/v1/sessions/${selected}/code/${runId}/cancel`, "POST", {}, connection);
       codeRuns.set(key, runId);
-      if (view.phase !== "unknown") settlePending(key, "run_id", runId);
+      if (view.phase !== "unknown" || (view.clean && view.cancel_requested)) settlePending(key, "run_id", runId);
       if (!operation.active()) return;
-      $("code-result").textContent = view.phase;
-      if (view.phase !== "success") $("code-state").textContent = "";
+      showCode(view);
       if (view.phase === "unknown") error(new Error("上次脚本结果未知，未自动重发；请用同一脚本来源查询或取消。"));
       else $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }

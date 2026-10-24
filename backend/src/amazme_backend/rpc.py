@@ -18,6 +18,9 @@ from .contracts import (
     Cancel,
     CheckpointCreate,
     CheckpointView,
+    CodeRun,
+    CodeTools,
+    CodeView,
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
@@ -52,6 +55,7 @@ from .contracts import (
     TerminalSize,
     TerminalType,
     TerminalView,
+    ToolCall,
     UpdateModelSettings,
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
@@ -59,6 +63,9 @@ from .workspace_files import FileContent
 
 
 class RpcParams(RunOptions):
+    code_run: CodeRun | None = None
+    run_id: str = ""
+    tool_call: ToolCall | None = None
     plugin_id: str = ""
     plugin_draft: PluginDraft | None = None
     plugin_reload: PluginReload | None = None
@@ -120,6 +127,12 @@ def rpc_error(identity: str, code: str) -> dict[str, object]:
 
 
 class RpcHost(Protocol):
+    async def code_tools(self, session_id: str) -> CodeTools: ...
+
+    async def run_code(self, session_id: str, value: CodeRun) -> CodeView: ...
+
+    async def cancel_code(self, session_id: str, run_id: str) -> CodeView: ...
+
     async def computer_policy(self, session: str) -> ComputerPolicy: ...
 
     async def save_computer_policy(self, session: str, value: ComputerPolicy) -> ComputerPolicy: ...
@@ -232,6 +245,18 @@ def _decision(params: RpcParams) -> bool:
 
 
 async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
+    if method == "code.tools":
+        return await owner.code_tools(await _bound(owner, params))
+    if method == "code.run":
+        session = await _bound(owner, params)
+        if params.code_run is None:
+            raise BackendError("codemode_request_required")
+        return await owner.run_code(session, params.code_run)
+    if method == "code.cancel":
+        session = await _bound(owner, params)
+        if not params.run_id:
+            raise BackendError("codemode_binding_required")
+        return await owner.cancel_code(session, params.run_id)
     if method == "computer.policy":
         return await owner.computer_policy(await _bound(owner, params))
     if method == "computer.configure":
@@ -321,7 +346,7 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
             session, "submit", params.request_id,
             Submit(request_id=params.request_id, text=params.text, not_before_ms=params.not_before_ms,
                    system_prompt=params.system_prompt, append_system_prompt=params.append_system_prompt,
-                   allowed_tools=params.allowed_tools, excluded_tools=params.excluded_tools))
+                   allowed_tools=params.allowed_tools, excluded_tools=params.excluded_tools, tool_call=params.tool_call))
     if method == "request.cancel":
         if not params.request_id:
             raise BackendError("binding_required")

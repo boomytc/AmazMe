@@ -39,6 +39,7 @@ def test_package_identity_requires_helpers_without_vm_tools() -> None:
         "_internal/amazme_backend/model_catalog.json": "abc",
         "_internal/amazme_backend/node_modules/quickjs-wasi/quickjs.wasm": "abc",
         "runtime/node/bin/node": "abc",
+        "_internal/amazme_backend/node_modules/@amazme/codemode/dist/index.js": "abc",
     }
     assert missing_identity(nested) == []
 

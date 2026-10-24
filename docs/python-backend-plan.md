@@ -141,7 +141,12 @@ Web/Electron 的插件面板、Python SDK 和 `plugin.list/register/reload/call/
 模型工具目录以 `plugin_` 别名提供会话工具，命令保留用户显式调用。模型调用绑定加载代际和参数 schema，
 沿原会话审批及动作账本执行，媒体不进入事件日志。未知插件副作用阻止新的写入，必须先收回已知进程，
 再用原来的 `EffectResolution` 提供用户核对证据；同 ID 仍返回原未知结果。
-Codemode 对真实工具的桥接继续在当前任务表中收敛。
+Codemode 复用 Pi 的 `@amazme/codemode` QuickJS helper；Python 绑定当前会话的工具目录。
+`tools` / `ALL_TOOLS`、`text` / `image`、`store` / `load` 由原沙箱提供。每个工具序号生成稳定子调用 ID，
+经原 Host/worker 执行及审批；脚本工具不另开模型回合。状态只在脚本成功后提交，回执保存本次状态快照和输出。
+每次脚本使用原 service-runner 及继承进程锁，HTTP 断连不取消监督器任务。返回时取消未等待的工具。
+脚本结果未知时保留原 ID；显式取消并证明脚本进程退出可解除脚本准入阻塞，但不清除各工具的未知副作用。
+Web/Electron、SDK 和 `code.tools/run/cancel` RPC 共用此路径。脚本及 Node 不持有 Host 控制令牌。
 
 ## 构建与操作约束
 

@@ -12,8 +12,8 @@ from resource_census import apply_cleanup, raise_pending, release_named_slot
 from verify_runtime import ROOT, Runtime, until
 
 OFFICIAL_NODE = Path.home() / "Library/Caches/amazme-release/node-v22.23.3-darwin-arm64/bin/node"
-SOURCE = """const n = (bridge.state.get("n") || 0) + 1;
-bridge.state.set("n", n);
+SOURCE = """const n = (load("n") || 0) + 1;
+store("n", n);
 return n;
 """
 

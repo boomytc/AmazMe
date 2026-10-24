@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import contextlib
 import fcntl
 import hashlib
@@ -23,7 +24,7 @@ import uvicorn
 from fastapi import FastAPI
 from pydantic import TypeAdapter
 
-from .codemode_run import json_object, run_codemode
+from .codemode_run import CodemodeOutcome, json_object, run_codemode
 from .common import Peer, Profile, build_id, child_command, lock, private_write, unix_listener
 from .contracts import (
     BackendError,
@@ -31,12 +32,17 @@ from .contracts import (
     CancelPlugin,
     Cleanup,
     ClosePlugin,
+    CodeToolBinding,
+    CodeToolDispatch,
+    CodeToolReceipt,
+    CodeTools,
     CodeView,
     EffectHold,
     EpochHealth,
     ExecutionResource,
     FreezeSupervisor,
     HostFence,
+    HostReady,
     Identity,
     Lease,
     McpCall,
@@ -57,6 +63,7 @@ from .contracts import (
     PluginCallEnvelope,
     PluginCallView,
     PluginList,
+    PluginOffer,
     PluginResult,
     PluginTool,
     PluginView,
@@ -79,6 +86,7 @@ from .contracts import (
     TerminalResize,
     TerminalSession,
     TerminalView,
+    ToolCall,
     ToolLookup,
     ToolObservation,
     ToolResult,
@@ -87,7 +95,7 @@ from .contracts import (
     WorkerSpec,
 )
 from .faults import Faults
-from .mcp_session import McpClient, catalog_schema_digest, mcp_digest
+from .mcp_session import McpClient, catalog_payload, catalog_schema_digest, mcp_digest, offers_from_views
 from .memories import session_workspace
 from .native_execution import LocalPermit, LocalProcess, ProcessIdentity, reconcile, stop_tracked
 from .native_services import ServiceProcess
@@ -100,8 +108,10 @@ from .plugin_run import (
     validate_config,
 )
 from .processes import ProcessReservation, exited, wait_exited
+from .providers import tool_definitions
 from .pty_session import PtyClient
 from .remote_session import RemoteClient
+from .session_domain import resolve_model_call
 from .transport import app_factory
 from .workspace_map import PRIMARY, load_grants, tool_path
 
@@ -272,7 +282,7 @@ class Supervisor:
         self.remote_clients: dict[str, RemoteClient] = {}
         self.remote_control = asyncio.Lock()
         self.code_cancels: dict[str, threading.Event] = {}
-        self.code_cancel_ids: set[str] = set()
+        self.code_jobs: dict[str, asyncio.Task[CodeView]] = {}
         self.instance = instance or secrets.token_hex(16)
         self.process_lease = process_lease
         self.initialized_marker = profile.path / "execution.initialized"
@@ -348,6 +358,11 @@ class Supervisor:
               CREATE TABLE IF NOT EXISTS code_runs(id TEXT PRIMARY KEY,session TEXT NOT NULL,source TEXT NOT NULL,
                 phase TEXT NOT NULL,value TEXT NOT NULL DEFAULT '',committed INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS code_state(session TEXT PRIMARY KEY,document TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS code_results(id TEXT PRIMARY KEY,document TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS code_cancellations(id TEXT PRIMARY KEY,session TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS code_tools(id TEXT PRIMARY KEY,tools TEXT NOT NULL,mcp TEXT NOT NULL,plugins TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS code_tool_calls(id TEXT PRIMARY KEY,run TEXT NOT NULL,sequence INTEGER NOT NULL,
+                  payload TEXT NOT NULL,binding TEXT NOT NULL,UNIQUE(run,sequence));
               CREATE TABLE IF NOT EXISTS plugins(id TEXT PRIMARY KEY,name TEXT NOT NULL,
                 capabilities TEXT NOT NULL,config TEXT NOT NULL,fingerprint TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS plugin_calls(id TEXT PRIMARY KEY,plugin TEXT NOT NULL,
@@ -1151,6 +1166,8 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             self.draining = True
+        await self._stop_codes()
+        async with self.control:
             await self._close_services()
             await self._reconcile_scopes("registered_processes_stopped")
             pending: list[WorkerInfo] = []
@@ -1206,6 +1223,8 @@ class Supervisor:
                 await self.db.call(lambda db: db.execute("UPDATE control SET freeze=? WHERE id=1", (self.freeze_id,)), write=True)
             await self.db.call(lambda db: db.execute("UPDATE control SET epoch=? WHERE id=1", (value.host_epoch,)), write=True)
             self.host_epoch = value.host_epoch
+        await self._stop_codes()
+        async with self.control:
             await self._shutdown(value)
             self.fence_ready = True
             await self.db.call(lambda db: db.execute("UPDATE control SET fence_ready=1 WHERE id=1"), write=True)
@@ -1620,88 +1639,258 @@ class Supervisor:
                     await asyncio.to_thread(client.cancel)
             return await self._close_mcp(row)
 
-    async def run_code(self, value: OpenCode) -> CodeView:
+    async def code_tools(self, session_id: str) -> CodeTools:
+        workspace = session_workspace(self.profile.path, session_id)
+        servers = (await self.mcp_state(McpSession(host_epoch=self.host_epoch,build_id=self.build,session_id=session_id))).servers
+        offers = offers_from_views(servers)
+        plugins = [offer for view in (await self.list_plugins(session_id)).plugins for offer in PluginOffer.from_view(view,workspace)]
+        return CodeTools.model_validate({"tools":[tool["function"] for tool in tool_definitions(offers,self.profile.config.provider,plugins)]})
+
+    async def bind_code_tool(self, value: CodeToolDispatch) -> CodeToolBinding:
         self.check_host(value)
-        existing = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
-        if existing is not None:
-            if existing["session"] != value.session_id or existing["source"] != value.source:
+        request_id = hashlib.sha256(f"code:{value.session_id}:{value.run_id}:{value.sequence}".encode()).hexdigest()
+        payload = json.dumps(value.model_dump(mode="json",exclude={"host_epoch","build_id","cancel"}),sort_keys=True)
+        def bind(db: sqlite3.Connection) -> CodeToolBinding:
+            prior = db.execute("SELECT * FROM code_tool_calls WHERE id=?", (request_id,)).fetchone()
+            if prior is not None:
+                if str(prior["payload"]) != payload:
+                    raise BackendError("codemode_tool_conflict")
+                return CodeToolBinding.model_validate_json(str(prior["binding"]))
+            run = db.execute("SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id,value.session_id)).fetchone()
+            catalog = db.execute("SELECT * FROM code_tools WHERE id=?", (value.run_id,)).fetchone()
+            if (run is None or catalog is None or str(run["phase"]) != "unknown" or value.run_id not in self.code_cancels
+                    or (self.code_cancels[value.run_id].is_set() and not value.cancel)):
+                raise BackendError("codemode_run_inactive")
+            definitions = TypeAdapter(list[dict[str, object]]).validate_json(str(catalog["tools"]))
+            if not any(tool.get("name") == value.name for tool in definitions):
+                raise BackendError("tool_not_offered")
+            step_id = hashlib.sha256(f"direct:{value.session_id}:{request_id}".encode()).hexdigest()
+            call = resolve_model_call(str(catalog["mcp"]),ToolCall(id=str(value.sequence),name=value.name,arguments=json.dumps(value.arguments)),
+                step_id[:32],str(catalog["plugins"]))
+            result = CodeToolBinding(request_id=request_id,call=call)
+            db.execute("INSERT INTO code_tool_calls VALUES(?,?,?,?,?)", (request_id,value.run_id,value.sequence,payload,result.model_dump_json()))
+            return result
+        return await self.db.call(bind,write=True)
+
+    async def run_code(self, value: OpenCode) -> CodeView:
+        async with self.control:
+            self.check_host(value)
+            existing = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
+            if existing is not None:
+                if existing["session"] != value.session_id or existing["source"] != value.source:
+                    raise BackendError("codemode_conflict")
+                return await self._code_view_with_state(existing)
+            self._admit()
+            if len(self.code_jobs) >= 8:
+                raise BackendError("codemode_capacity")
+            await self._code_blocked(value.session_id)
+            workspace = session_workspace(self.profile.path,value.session_id)
+            servers = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE session=?", (value.session_id,)).fetchall())
+            offers = offers_from_views([self._mcp_view(row) for row in servers])
+            plugins = [offer for view in (await self.list_plugins(value.session_id)).plugins for offer in PluginOffer.from_view(view,workspace)]
+            definitions = [dict(tool["function"]) for tool in tool_definitions(offers,self.profile.config.provider,plugins)]
+            cancelled = await self.db.call(lambda db: db.execute(
+                "SELECT session FROM code_cancellations WHERE id=?", (value.run_id,)).fetchone())
+            if cancelled is not None and cancelled["session"] != value.session_id:
                 raise BackendError("codemode_conflict")
-            return await self._code_view_with_state(existing)
-        self._admit()
-        await self._code_blocked(value.session_id)
-        await self.db.call(lambda db: db.execute(
-            "INSERT INTO code_runs(id,session,source,phase) VALUES(?,?,?,'unknown')",
-            (value.run_id, value.session_id, value.source)), write=True)
+            def reserve(db: sqlite3.Connection) -> None:
+                db.execute("INSERT INTO code_runs(id,session,source,phase) VALUES(?,?,?,'unknown')", (value.run_id,value.session_id,value.source))
+                db.execute("INSERT INTO code_tools VALUES(?,?,?,?)",(value.run_id,json.dumps(definitions),catalog_payload(offers),
+                    json.dumps([offer.model_dump() for offer in plugins],sort_keys=True)))
+            await self.db.call(reserve,write=True)
+            event = threading.Event()
+            if cancelled is not None:
+                event.set()
+            self.code_cancels[value.run_id] = event
+            task = asyncio.create_task(self._run_code(value, definitions, event))
+            self.code_jobs[value.run_id] = task
+            def finished(result: asyncio.Task[CodeView]) -> None:
+                self.code_jobs.pop(value.run_id, None)
+                self.code_cancels.pop(value.run_id, None)
+                if not result.cancelled():
+                    result.exception()
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
+
+    async def _run_code(self, value: OpenCode, definitions: list[dict[str, object]], event: threading.Event) -> CodeView:
         saved = await self.db.call(lambda db: db.execute(
             "SELECT document FROM code_state WHERE session=?", (value.session_id,)).fetchone())
         loaded: object = json.loads(str(saved["document"])) if saved else {}
         state = json_object(loaded)
-        event = threading.Event()
-        if value.run_id in self.code_cancel_ids:
-            event.set()
-        self.code_cancels[value.run_id] = event
+        loop = asyncio.get_running_loop()
+        dispatched: list[CodeToolDispatch] = []
+        uncertain = threading.Event()
+
+        async def invoke(request: CodeToolDispatch) -> dict[str, object]:
+            ready = HostReady.model_validate_json((self.profile.path / "ready.json").read_bytes())
+            if ready.host_epoch != value.host_epoch or ready.build_id != self.build or ready.profile_id != self.profile.config.profile_id:
+                raise BackendError("stale_host_epoch")
+            client = httpx.AsyncClient(base_url=ready.url,trust_env=False,timeout=10,
+                headers={"Authorization":"Bearer " + self.profile.token})
+            cancelled = False
+            try:
+                while True:
+                    if event.is_set():
+                        cancelled = True
+                    response = await client.post("/control/code/tool/cancel" if cancelled else "/control/code/tool",
+                        content=request.model_dump_json(),headers={"Content-Type":"application/json"})
+                    if response.is_error:
+                        raise BackendError("codemode_tool_transport",status=response.status_code)
+                    received = CodeToolReceipt.model_validate_json(response.content)
+                    receipt = received.receipt
+                    if receipt.status in {"succeeded", "failed", "cancelled", "unknown", "interrupted"}:
+                        if receipt.status == "unknown":
+                            uncertain.set()
+                            event.set()
+                        if receipt.status != "succeeded":
+                            return {"error":receipt.error or receipt.status,"_phase":receipt.status}
+                        if request.name.startswith("plugin_") or request.name.startswith("mcp_"):
+                            try:
+                                result: object = json.loads(receipt.answer)
+                                mapped = json_object(result)
+                                if isinstance(result,dict) and received.images:
+                                    result = {**mapped,"images":[{"type":"image","mimeType":image.media_type,"data":image.data_base64} for image in received.images]}
+                                return {"result":result,"_phase":receipt.status}
+                            except ValueError:
+                                pass
+                        return {"result":{"text":receipt.answer,"images":[{"type":"image","mimeType":image.media_type,"data":image.data_base64} for image in received.images]},"_phase":receipt.status} if received.images else {"result":receipt.answer,"_phase":receipt.status}
+                    await asyncio.sleep(.1)
+            finally:
+                await client.aclose()
+
+        def call_tool(message: dict[str, object]) -> dict[str, object]:
+            request = CodeToolDispatch.model_validate({"host_epoch":value.host_epoch,"build_id":self.build,
+                "session_id":value.session_id,"run_id":value.run_id,"sequence":int(str(message.get("id"))),
+                "name":message.get("name"),"arguments":message.get("arguments")})
+            dispatched.append(request)
+            future = asyncio.run_coroutine_threadsafe(invoke(request),loop)
+            try:
+                deadline = time.monotonic() + 310
+                while True:
+                    try:
+                        result = future.result(timeout=.2)
+                        break
+                    except concurrent.futures.TimeoutError:
+                        if event.is_set() or time.monotonic() >= deadline:
+                            event.set()
+                            future.cancel()
+                            raise BackendError("codemode_tool_outcome_unknown") from None
+            except BaseException:
+                uncertain.set()
+                event.set()
+                future.cancel()
+                raise
+            return {"op":"tool_result","id":message["id"],**result}
+
+        outcome = CodemodeOutcome("unknown")
         try:
-            outcome = await asyncio.to_thread(run_codemode, value.source, state, cancel=event)
+            outcome = CodemodeOutcome("cancelled",clean=True) if event.is_set() else await asyncio.to_thread(
+                run_codemode, value.source, state, profile=self.profile.path,run_id=value.run_id,cancel=event,
+                tools=[dict(tool) for tool in definitions],call_tool=call_tool)
+        except Exception as error:
+            before_spawn = isinstance(error,BackendError) and error.code in {"codemode_source_limit","codemode_runtime_missing"}
+            outcome = CodemodeOutcome("failed" if before_spawn else "unknown",clean=before_spawn,
+                error=error.code if isinstance(error, BackendError) else "codemode_runner_failed")
         finally:
-            self.code_cancels.pop(value.run_id, None)
+            event.set()
+            # Every dispatched child has its own durable cancellation/cleanup contract.
+            cleanup = [asyncio.create_task(invoke(request)) for request in dispatched]
+            if cleanup:
+                try:
+                    results = await asyncio.wait_for(asyncio.gather(*cleanup,return_exceptions=True),12)
+                    if any(isinstance(result,BaseException) or result.get("_phase") == "unknown" for result in results):
+                        outcome.phase, outcome.state = "unknown", None
+                    else:
+                        uncertain.clear()
+                except TimeoutError:
+                    outcome.phase, outcome.state = "unknown", None
+        if uncertain.is_set():
+            outcome.phase, outcome.state = "unknown", None
         kept = outcome.state
-        if outcome.phase == "success" and kept is not None:
-            document = json.dumps(kept, ensure_ascii=False, sort_keys=True)
-            payload = json.dumps(outcome.value, ensure_ascii=False) if outcome.value is not None else "null"
-
-            def commit(db: sqlite3.Connection) -> None:
-                db.execute("UPDATE code_runs SET phase='success',value=?,committed=1 WHERE id=?", (payload, value.run_id))
+        if outcome.phase == "success" and kept is None:
+            outcome.phase = "unknown"
+        view = CodeView(run_id=value.run_id, phase=outcome.phase,
+            value=json.dumps(outcome.value,ensure_ascii=False) if outcome.phase == "success" else "",
+            state=json.dumps(kept,ensure_ascii=False,sort_keys=True) if outcome.phase == "success" else "",
+            output=outcome.items,calls=outcome.calls,error=outcome.error,clean=outcome.clean,
+            cancel_requested=await self.db.call(lambda db: db.execute("SELECT 1 FROM code_cancellations WHERE id=?", (value.run_id,)).fetchone() is not None))
+        def commit(db: sqlite3.Connection) -> None:
+            db.execute("UPDATE code_runs SET phase=?,value=?,committed=? WHERE id=?",
+                (view.phase,view.value,int(view.phase == "success"),value.run_id))
+            if view.phase == "success":
                 db.execute("INSERT INTO code_state(session,document) VALUES(?,?) ON CONFLICT(session) DO UPDATE SET document=excluded.document",
-                           (value.session_id, document))
-
-            await self.db.call(commit, write=True)
-        else:
-            await self.db.call(lambda db: db.execute(
-                "UPDATE code_runs SET phase=?,committed=0 WHERE id=?", (outcome.phase, value.run_id)), write=True)
-        current = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
-        assert current is not None
-        return await self._code_view_with_state(current)
+                    (value.session_id,view.state))
+            db.execute("INSERT INTO code_results VALUES(?,?)", (value.run_id,view.model_dump_json()))
+        await self.db.call(commit,write=True)
+        return view
 
     async def _code_blocked(self, session_id: str) -> None:
         blocked = await self.db.call(lambda db: db.execute(
-            "SELECT 1 FROM code_runs WHERE session=? AND phase='unknown'", (session_id,)).fetchone())
+            "SELECT 1 FROM code_runs c WHERE session=? AND phase='unknown' AND NOT EXISTS "
+            "(SELECT 1 FROM code_results r JOIN code_cancellations x ON x.id=r.id "
+            "WHERE r.id=c.id AND json_extract(r.document,'$.clean')=1)", (session_id,)).fetchone())
         if blocked is not None:
             raise BackendError("execution_cleanup_pending", status=503)
 
     async def _code_view_with_state(self, row: sqlite3.Row) -> CodeView:
-        phase = str(row["phase"])
-        if phase not in {"success", "failed", "cancelled", "unknown", "conflict"}:
-            phase = "unknown"
-        state = ""
-        if int(row["committed"]):
-            saved = await self.db.call(lambda db: db.execute(
-                "SELECT document FROM code_state WHERE session=?", (row["session"],)).fetchone())
-            state = "" if saved is None else str(saved["document"])
-        return CodeView(run_id=str(row["id"]), phase=phase, value=str(row["value"]), state=state)  # type: ignore[arg-type]
+        saved = await self.db.call(lambda db: db.execute(
+            "SELECT document FROM code_results WHERE id=?", (row["id"],)).fetchone())
+        view = CodeView.model_validate_json(str(saved["document"])) if saved is not None else CodeView(run_id=str(row["id"]), phase="unknown")
+        cancelled = await self.db.call(lambda db: db.execute("SELECT 1 FROM code_cancellations WHERE id=?", (row["id"],)).fetchone())
+        return view.model_copy(update={"cancel_requested":cancelled is not None})
+
+    async def _retire_code(self, row: sqlite3.Row) -> CodeView:
+        view = await self._code_view_with_state(row)
+        if view.clean or view.run_id in self.code_jobs:
+            return view
+        instance = "code-" + view.run_id
+        path = self.profile.path / "processes" / ("execution-"+instance+".lock")
+        try:
+            lease = ProcessLease.model_validate_json(path.read_bytes())
+            if (lease.instance_id,lease.role,lease.profile_path,lease.path) != (instance,"execution",str(self.profile.path),str(path)):
+                raise BackendError("process_lease_owner_mismatch")
+            clean = await reconcile(self.profile.path / "executions" / instance,lease,permitted=True)
+        except (OSError,ValueError,BackendError):
+            return view
+        if clean:
+            view.clean = True
+            await self.db.call(lambda db: db.execute("INSERT INTO code_results VALUES(?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document",
+                (view.run_id,view.model_dump_json())),write=True)
+        return view
 
     async def cancel_code(self, value: CancelCode) -> CodeView:
-        self.check_host(value)
-        self.code_cancel_ids.add(value.run_id)
-        event = self.code_cancels.get(value.run_id)
-        if event is not None:
-            event.set()
-        for _ in range(50):
-            row = await self.db.call(lambda db: db.execute(
-                "SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id, value.session_id)).fetchone())
-            if row is None:
-                await asyncio.sleep(0.05)
-                continue
+        async with self.control:
+            self.check_host(value)
+            session_workspace(self.profile.path, value.session_id)
+            def cancel(db: sqlite3.Connection) -> None:
+                run = db.execute("SELECT session FROM code_runs WHERE id=?", (value.run_id,)).fetchone()
+                prior = db.execute("SELECT session FROM code_cancellations WHERE id=?", (value.run_id,)).fetchone()
+                if any(row is not None and row["session"] != value.session_id for row in (run,prior)):
+                    raise BackendError("codemode_conflict")
+                db.execute("INSERT OR IGNORE INTO code_cancellations VALUES(?,?)", (value.run_id,value.session_id))
+            await self.db.call(cancel,write=True)
             event = self.code_cancels.get(value.run_id)
-            if event is not None and not event.is_set():
+            if event is not None:
                 event.set()
-            if str(row["phase"]) != "unknown":
-                return await self._code_view_with_state(row)
-            await asyncio.sleep(0.05)
-        missing = await self.db.call(lambda db: db.execute(
+            task = self.code_jobs.get(value.run_id)
+        if task is not None:
+            try:
+                return await asyncio.wait_for(asyncio.shield(task),2.5)
+            except TimeoutError:
+                pass
+        row = await self.db.call(lambda db: db.execute(
             "SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id, value.session_id)).fetchone())
-        if missing is None:
-            raise BackendError("codemode_not_found", status=404)
-        return await self._code_view_with_state(missing)
+        return CodeView(run_id=value.run_id,phase="unknown",cancel_requested=True) if row is None else await self._retire_code(row)
+
+    async def _stop_codes(self) -> None:
+        for event in list(self.code_cancels.values()):
+            event.set()
+        tasks = list(self.code_jobs.values())
+        if tasks:
+            try:
+                await asyncio.wait_for(asyncio.shield(asyncio.gather(*tasks,return_exceptions=True)),25)
+            except TimeoutError:
+                raise BackendError("codemode_cleanup_pending",status=503) from None
 
     async def plugin_set_fingerprint(self, session_id: str = "") -> str:
         rows = await self.db.call(lambda db: db.execute("SELECT fingerprint FROM plugins WHERE session=?", (session_id,)).fetchall())
@@ -2442,6 +2631,7 @@ class Supervisor:
         if self.monitor_task:
             self.monitor_task.cancel()
             await asyncio.gather(self.monitor_task, return_exceptions=True)
+        await self._stop_codes()
         await self._cancel_jobs()
         for channel in list(self.channels.values()):
             await channel.close()
@@ -2495,6 +2685,8 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/mcp/cancel")(owner.cancel_mcp)
     app.post("/mcp/state")(owner.mcp_state)
     app.post("/code/run")(owner.run_code)
+    app.get("/code/tools")(owner.code_tools)
+    app.post("/code/tools/bind")(owner.bind_code_tool)
     app.post("/code/cancel")(owner.cancel_code)
     app.get("/plugins")(owner.list_plugins)
     app.post("/plugins/register")(owner.register_plugin)

@@ -4313,6 +4313,121 @@
         }
       }
     },
+    "/control/code/tool": {
+      "post": {
+        "summary": "Code Tool",
+        "operationId": "code_tool_control_code_tool_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeToolDispatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeToolReceipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/control/code/tool/cancel": {
+      "post": {
+        "summary": "Cancel Code Tool",
+        "operationId": "cancel_code_tool_control_code_tool_cancel_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CodeToolDispatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeToolReceipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/code/tools": {
+      "get": {
+        "summary": "Code Tools",
+        "operationId": "code_tools_api_v1_sessions__session_id__code_tools_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodeTools"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/control/computer/tool": {
       "post": {
         "summary": "Computer Tool",
@@ -5183,6 +5298,69 @@
         ],
         "title": "Cleanup"
       },
+      "CodeCall": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "durationMs": {
+            "type": "number",
+            "minimum": 0.0,
+            "title": "Durationms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "status",
+          "durationMs"
+        ],
+        "title": "CodeCall"
+      },
+      "CodeImage": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "image",
+            "title": "Type",
+            "default": "image"
+          },
+          "data": {
+            "type": "string",
+            "maxLength": 8388608,
+            "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+            "title": "Data"
+          },
+          "mimeType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/webp",
+              "image/gif"
+            ],
+            "title": "Mimetype"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "data",
+          "mimeType"
+        ],
+        "title": "CodeImage"
+      },
       "CodeRun": {
         "properties": {
           "run_id": {
@@ -5204,6 +5382,125 @@
           "source"
         ],
         "title": "CodeRun"
+      },
+      "CodeText": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "text",
+            "title": "Type",
+            "default": "text"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "console": {
+            "type": "boolean",
+            "title": "Console",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "CodeText"
+      },
+      "CodeToolDispatch": {
+        "properties": {
+          "host_epoch": {
+            "type": "integer",
+            "title": "Host Epoch"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Session Id"
+          },
+          "run_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Run Id"
+          },
+          "sequence": {
+            "type": "integer",
+            "maximum": 128.0,
+            "minimum": 1.0,
+            "title": "Sequence"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "arguments": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Arguments"
+          },
+          "cancel": {
+            "type": "boolean",
+            "title": "Cancel",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host_epoch",
+          "build_id",
+          "session_id",
+          "run_id",
+          "sequence",
+          "name"
+        ],
+        "title": "CodeToolDispatch"
+      },
+      "CodeToolReceipt": {
+        "properties": {
+          "receipt": {
+            "$ref": "#/components/schemas/Receipt"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImagePart"
+            },
+            "type": "array",
+            "title": "Images"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "receipt"
+        ],
+        "title": "CodeToolReceipt"
+      },
+      "CodeTools": {
+        "properties": {
+          "tools": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tools"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "CodeTools"
       },
       "CodeView": {
         "properties": {
@@ -5231,6 +5528,42 @@
             "type": "string",
             "title": "State",
             "default": ""
+          },
+          "output": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CodeText"
+                },
+                {
+                  "$ref": "#/components/schemas/CodeImage"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Output"
+          },
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/CodeCall"
+            },
+            "type": "array",
+            "title": "Calls"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          },
+          "clean": {
+            "type": "boolean",
+            "title": "Clean",
+            "default": false
+          },
+          "cancel_requested": {
+            "type": "boolean",
+            "title": "Cancel Requested",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -8569,6 +8902,31 @@
             "maxItems": 128,
             "title": "Excluded Tools"
           },
+          "code_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run_id": {
+            "type": "string",
+            "title": "Run Id",
+            "default": ""
+          },
+          "tool_call": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCall"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "plugin_id": {
             "type": "string",
             "title": "Plugin Id",
@@ -9296,6 +9654,16 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "tool_call": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolCall"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "request_id": {
             "type": "string",

@@ -29,7 +29,11 @@ IDENTITY_SUFFIXES = {".py", ".html", ".js", ".css", ".json", ".mjs"}
 def source_identity_files() -> list[Path]:
     """Source bytes that define a build, including the JS helper and plugin gate."""
     root = Path(__file__).parent
-    return [path for path in sorted(root.rglob("*")) if path.is_file() and path.suffix in IDENTITY_SUFFIXES]
+    files = [path for path in sorted(root.rglob("*")) if path.is_file() and path.suffix in IDENTITY_SUFFIXES]
+    sandbox = root.parents[2] / "packages/codemode"
+    files.extend(path for path in sorted((sandbox / "dist").rglob("*")) if path.is_file() and path.suffix == ".js")
+    files.append(sandbox / "package.json")
+    return files
 
 
 def frozen_identity(root: Path) -> str:
@@ -73,7 +77,7 @@ def build_id() -> str:
     root = Path(__file__).parent
     h = hashlib.sha256()
     for path in source_identity_files():
-        h.update(str(path.relative_to(root)).encode() + path.read_bytes())
+        h.update(os.path.relpath(path, root).encode() + path.read_bytes())
     h.update((root.parents[1] / "uv.lock").read_bytes())
     return h.hexdigest()
 

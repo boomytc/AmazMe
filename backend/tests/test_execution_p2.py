@@ -236,6 +236,8 @@ async def test_freeze_returns_finished_code_and_plugin_calls(owner):
     await owner.db.call(lambda db: db.execute(
         "INSERT INTO code_runs(id,session,source,phase,value,committed) VALUES(?,?,?,'success','3',1)",
         (run_id, session, "1+2")), write=True)
+    await owner.db.call(lambda db: db.execute("INSERT INTO code_results VALUES(?,?)",
+        (run_id,json.dumps({"run_id":run_id,"phase":"success","value":"3"}))),write=True)
     await owner.db.call(lambda db: db.execute(
         "INSERT INTO plugins(id,name,session,capabilities,config,fingerprint) VALUES(?,?,?,?,?,?)",
         (plugin_id, "greeting", session, "[]", "{}", "fp")), write=True)

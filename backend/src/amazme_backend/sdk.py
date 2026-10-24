@@ -15,6 +15,9 @@ from .contracts import (
     Attachment,
     BackendError,
     CheckpointView,
+    CodeRun,
+    CodeTools,
+    CodeView,
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
@@ -45,6 +48,7 @@ from .contracts import (
     Snapshot,
     TerminalList,
     TerminalView,
+    ToolCall,
     UpdateModelSettings,
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
@@ -94,6 +98,20 @@ class Client:
 
     async def plugins(self, session_id: str = "") -> PluginList:
         return PluginList.model_validate(await self._send("GET", "/api/v1/plugins" + ("?session_id=" + quote(session_id, safe="") if session_id else "")))
+
+    async def code_tools(self, session_id: str, workspace: str) -> CodeTools:
+        await self._require_workspace(session_id, workspace)
+        return CodeTools.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/code/tools"))
+
+    async def run_code(self, session_id: str, workspace: str, attachment_id: str, value: CodeRun) -> CodeView:
+        await self._require_workspace(session_id, workspace)
+        return CodeView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/code",
+            json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
+
+    async def cancel_code(self, session_id: str, workspace: str, attachment_id: str, run_id: str) -> CodeView:
+        await self._require_workspace(session_id, workspace)
+        return CodeView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/code/{run_id}/cancel",
+            json_body={}, headers=self._write(attachment_id)))
 
     async def register_plugin(self, value: PluginDraft) -> PluginView:
         return PluginView.model_validate(await self._send("POST", "/api/v1/plugins",
@@ -214,11 +232,13 @@ class Client:
     async def submit(self, *, session_id: str, workspace: str, attachment_id: str, request_id: str, text: str,
                      not_before_ms: int = 0, images: list[ImagePart] | None = None,
                      system_prompt: str | None = None, append_system_prompt: str = "",
-                     allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None) -> Receipt:
+                     allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None,
+                     tool_call: ToolCall | None = None) -> Receipt:
         await self._require_workspace(session_id, workspace)
         body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms,
                                    "system_prompt": system_prompt, "append_system_prompt": append_system_prompt,
-                                   "allowed_tools": allowed_tools, "excluded_tools": excluded_tools or []}
+                                   "allowed_tools": allowed_tools, "excluded_tools": excluded_tools or [],
+                                   "tool_call":tool_call.model_dump() if tool_call is not None else None}
         if images:
             body["images"] = [image.model_dump() for image in images]
         payload = await self._send(

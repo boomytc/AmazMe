@@ -18,10 +18,19 @@ from .native_execution import LocalReport, ProcessIdentity, stop_tracked, tool_e
 from .processes import ProcessReservation, retain_inherited
 
 
-def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path, kind: Literal["pty", "mcp", "plugin"]) -> None:
+def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path, kind: Literal["pty", "mcp", "plugin", "codemode"]) -> None:
     retain_inherited(lifetime_fd, profile, "execution", instance)
     control = socket.socket(fileno=0)
-    gate = subprocess.Popen(child_command({"pty":"pty-gate", "mcp":"mcp-gate", "plugin":"plugin-gate"}[kind]), stdin=0, stdout=1,
+    if kind == "codemode":
+        import sys
+
+        from .codemode_run import HELPER, bundled_node
+        from .common import Profile
+        root = None if getattr(sys, "frozen", False) else Path(Profile(profile).config.resources)
+        command = [str(bundled_node(root)), str(HELPER)]
+    else:
+        command = child_command({"pty":"pty-gate", "mcp":"mcp-gate", "plugin":"plugin-gate"}[kind])
+    gate = subprocess.Popen(command, stdin=0, stdout=1,
                             stderr=subprocess.DEVNULL, env=tool_environment(), start_new_session=True)
     tracked = {gate.pid: ProcessIdentity.capture(psutil.Process(gate.pid))}
     observed: tuple[int, ...] = ()
@@ -61,7 +70,7 @@ class ServiceProcess:
 
     @classmethod
     async def start(cls, profile: Path, instance: str, directory: Path,
-                    reservation: ProcessReservation, kind: Literal["pty", "mcp", "plugin"]) -> ServiceProcess:
+                    reservation: ProcessReservation, kind: Literal["pty", "mcp", "plugin", "codemode"]) -> ServiceProcess:
         parent, child = socket.socketpair()
         try:
             process = await asyncio.create_subprocess_exec(*child_command(

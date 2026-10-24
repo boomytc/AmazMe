@@ -163,6 +163,7 @@ def checked_images(images: list[ImagePart]) -> list[ImagePart]:
 
 
 class Submit(RunOptions):
+    tool_call: ToolCall | None = None
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     text: str = Field(min_length=1, max_length=16000)
     mode: Literal["queue", "steer", "reject_busy"] = "queue"
@@ -937,11 +938,58 @@ class CancelCode(HostFence):
     run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
+class CodeToolDispatch(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    sequence: int = Field(ge=1, le=128)
+    name: str = Field(min_length=1, max_length=128)
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    cancel: bool = False
+
+
+class CodeToolBinding(Model):
+    request_id: str
+    call: ToolCall
+
+
+class CodeToolReceipt(Model):
+    receipt: Receipt
+    images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart]())
+
+
+class CodeTools(Model):
+    tools: list[dict[str, JsonValue]] = Field(default_factory=lambda: list[dict[str, JsonValue]]())
+
+
+class CodeText(Model):
+    type: Literal["text"] = "text"
+    text: str
+    console: bool = False
+
+
+class CodeImage(Model):
+    type: Literal["image"] = "image"
+    data: str = Field(max_length=8 * 1024 * 1024, pattern=r"^[A-Za-z0-9+/]*={0,2}$")
+    mimeType: Literal["image/png", "image/jpeg", "image/webp", "image/gif"]
+
+
+class CodeCall(Model):
+    name: str
+    status: Literal["ok", "error", "cancelled"]
+    durationMs: float = Field(ge=0)
+
+
 class CodeView(Model):
     run_id: str
     phase: Literal["success", "failed", "cancelled", "unknown", "conflict"]
     value: str = ""
     state: str = ""
+    output: list[CodeText | CodeImage] = Field(default_factory=lambda: list[CodeText | CodeImage]())
+    calls: list[CodeCall] = Field(default_factory=lambda: list[CodeCall]())
+    error: str = ""
+    # The script service has exited; child tools retain their own independent effect holds.
+    clean: bool = False
+    cancel_requested: bool = False
 
 
 class SshTarget(Model):
@@ -1131,6 +1179,10 @@ class PluginList(Model):
     plugins: list[PluginView]
 
 
+def plugin_alias(plugin_id: str, name: str) -> str:
+    return "plugin_" + hashlib.sha256(f"{plugin_id}\n{name}".encode()).hexdigest()[:20]
+
+
 class PluginOffer(Model):
     alias: str = Field(pattern=r"^plugin_[a-f0-9]{20}$")
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -1147,7 +1199,7 @@ class PluginOffer(Model):
     def from_view(cls, view: PluginView, workspace: str) -> list[PluginOffer]:
         if view.phase != "ready":
             return []
-        return [cls(alias="plugin_" + hashlib.sha256(f"{view.plugin_id}\n{tool.name}".encode()).hexdigest()[:20],
+        return [cls(alias=plugin_alias(view.plugin_id,tool.name),
                     plugin_id=view.plugin_id, session_id=view.session_id, workspace=workspace,
                     fingerprint=view.fingerprint, load_id=view.load_id, name=tool.name, description=tool.description,
                     parameters=tool.parameters, schema_digest=tool.schema_digest())
