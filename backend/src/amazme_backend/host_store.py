@@ -41,6 +41,17 @@ def checkpoint_id(workspace: str, path: str, digest: str) -> str:
     return hashlib.sha256(f"{workspace}\n{path}\n{digest}".encode()).hexdigest()[:32]
 
 
+def _grant_present(db: sqlite3.Connection, workspace: str) -> bool:
+    """Primary is the profile directory. Any other name must still be granted."""
+    if workspace == "primary":
+        return True
+    try:
+        row = db.execute("SELECT 1 FROM workspace_grants WHERE name=?", (workspace,)).fetchone()
+    except sqlite3.OperationalError:
+        return False
+    return row is not None
+
+
 class Delivery(Model):
     delivery_id: str
     session_id: str
@@ -372,8 +383,9 @@ class HostStore:
                 (now_ms,)).fetchone()
             if row is None:
                 return None
-            session = db.execute("SELECT archived FROM sessions WHERE id=?", (str(row["session"]),)).fetchone()
-            if session is None or int(session["archived"]):
+            session = db.execute("SELECT archived, workspace FROM sessions WHERE id=?", (str(row["session"]),)).fetchone()
+            workspace = "" if session is None else str(session["workspace"] or "primary")
+            if session is None or int(session["archived"]) or workspace != str(row["workspace"] or "primary") or not _grant_present(db, workspace):
                 db.execute("UPDATE automations SET phase='unknown' WHERE id=? AND phase='scheduled'", (str(row["id"]),))
                 updated = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
                 assert updated is not None

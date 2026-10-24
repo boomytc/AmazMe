@@ -1033,6 +1033,7 @@ class Host:
         if not await self.store.exists(value.session_id):
             raise BackendError("session_not_found", status=404)
         session = next(item for item in (await self.sessions()).sessions if item.session_id == value.session_id)
+        await self._require_workspace(session.workspace)
         row = await self.store.save_automation(
             value.automation_id, value.session_id, session.workspace, value.text.strip(),
             value.zone, value.local, fold, due_ms)

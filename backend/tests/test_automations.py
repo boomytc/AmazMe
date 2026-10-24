@@ -1,13 +1,14 @@
 """One scheduler fires a zoned automation once and keeps the receipt."""
 
 import json
+import shutil
 from pathlib import Path
 
 import httpx
 import pytest
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import CreateSession, HostFence, ProcessLease
+from amazme_backend.contracts import CreateSession, HostFence, ProcessLease, WorkspaceGrantRequest
 from amazme_backend.host import Host, application
 
 SESSION = "a" * 32
@@ -101,6 +102,55 @@ async def test_scheduler_fires_each_due_automation_once_and_rejects_dst_guesses(
     finally:
         await host.supervisor.close()
         await host.store.db.close()
+
+
+async def test_removed_grant_does_not_submit_a_due_automation(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    grant = tmp_path.parent / f"auto-{tmp_path.name}"
+    grant.mkdir()
+    (grant / "kept.txt").write_text("stay", encoding="utf-8")
+    try:
+        await host.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
+        created = await host.create_session(CreateSession(title="授予", workspace="docs"))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
+            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
+            "x-amazme-epoch": str(host.fence.host_epoch),
+        }) as client:
+            scheduled = await client.post("/api/v1/automations", json={
+                "automation_id": "6" * 32, "session_id": created.session_id, "text": "write later",
+                "zone": "America/New_York", "local": "2026-01-15T10:00"})
+            assert scheduled.status_code == 200
+            await host.remove_workspace("docs")
+            fired = await client.post("/api/v1/automations/tick")
+            assert fired.status_code == 200
+            body = fired.json()["fired"]
+            assert body["automation_id"] == "6" * 32 and body["phase"] == "unknown" and body["delivery_id"] == ""
+            assert await _deliveries(host, created.session_id) == 0
+            refused = await client.post("/api/v1/automations", json={
+                "automation_id": "7" * 32, "session_id": created.session_id, "text": "again",
+                "zone": "America/New_York", "local": "2026-01-15T11:00"})
+            assert refused.status_code == 404 and refused.json()["code"] == "workspace_not_found"
+            assert await _deliveries(host, created.session_id) == 0
+            home = await host.create_session(CreateSession(title="主目录"))
+            moved = await client.post("/api/v1/automations", json={
+                "automation_id": "8" * 32, "session_id": home.session_id, "text": "elsewhere",
+                "zone": "America/New_York", "local": "2026-01-15T12:00"})
+            assert moved.status_code == 200
+            await host.store.transaction(lambda db: db.execute(
+                "UPDATE automations SET workspace='docs' WHERE id=?", ("8" * 32,)))
+            drifted = await client.post("/api/v1/automations/tick")
+            drifted_body = drifted.json()["fired"]
+            assert drifted_body["automation_id"] == "8" * 32 and drifted_body["phase"] == "unknown"
+            assert drifted_body["delivery_id"] == ""
+            assert await _deliveries(host, home.session_id) == 0
+        assert (grant / "kept.txt").read_text(encoding="utf-8") == "stay"
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()
+        shutil.rmtree(grant, ignore_errors=True)
 
 
 def test_browser_schedules_the_selected_session() -> None:
