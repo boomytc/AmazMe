@@ -33,6 +33,12 @@ from .contracts import (
     McpView,
     ModelCatalog,
     ModelSettings,
+    PluginCallRequest,
+    PluginCallView,
+    PluginDraft,
+    PluginList,
+    PluginReload,
+    PluginView,
     Receipt,
     Session,
     SessionList,
@@ -85,6 +91,34 @@ class Client:
         self.build_id = identity.build_id
         self.host_epoch = identity.host_epoch
         return identity
+
+    async def plugins(self, session_id: str = "") -> PluginList:
+        return PluginList.model_validate(await self._send("GET", "/api/v1/plugins" + ("?session_id=" + quote(session_id, safe="") if session_id else "")))
+
+    async def register_plugin(self, value: PluginDraft) -> PluginView:
+        return PluginView.model_validate(await self._send("POST", "/api/v1/plugins",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def reload_plugin(self, plugin_id: str, value: PluginReload) -> PluginView:
+        return PluginView.model_validate(await self._send("POST", f"/api/v1/plugins/{plugin_id}/reload",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def call_plugin(self, session_id: str, workspace: str, attachment_id: str, plugin_id: str,
+                          value: PluginCallRequest) -> PluginCallView:
+        await self._require_workspace(session_id, workspace)
+        return PluginCallView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/plugins/{plugin_id}/calls",
+            json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
+
+    async def close_plugin(self, session_id: str, workspace: str, attachment_id: str, plugin_id: str) -> PluginView:
+        await self._require_workspace(session_id, workspace)
+        return PluginView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/plugins/{plugin_id}/close",
+            json_body={}, headers=self._write(attachment_id)))
+
+    async def cancel_plugin(self, session_id: str, workspace: str, attachment_id: str,
+                            plugin_id: str, call_id: str) -> PluginCallView:
+        await self._require_workspace(session_id, workspace)
+        return PluginCallView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/plugins/{plugin_id}/calls/{call_id}/cancel",
+            json_body={}, headers=self._write(attachment_id)))
 
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))

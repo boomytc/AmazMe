@@ -105,6 +105,41 @@ setsid/双重 fork 用例验证诚实结果、不误杀、不重放，不再以�
 不另设计并行逻辑；不要求用户提供账号、TCC 授权或远端设备完成实机验收。
 必要的类型、语法、定向回归和本地构建保留；记录源码、替身和实机证据的区别，不伪称已实机验收。
 
+## Python 插件入口
+
+插件按会话加载，入口是用户明确登记的本机 `.py` 文件，导出 `setup(api)`。
+沿 Pi 的 extension factory、工具/命令注册和参数校验职责移植；不执行旧 TS/Chord 业务宿主。
+插件进程在该会话的真实工作区启动；闭包状态、当前目录和取消信号不跨会话复用。
+同一入口可在其他会话独立登记。工具与命令使用独立名字空间。
+
+```python
+from pydantic import BaseModel
+from amazme_backend.plugin_api import PluginResult, ToolDefinition
+
+class Greeting(BaseModel):
+    name: str
+
+def setup(api):
+    def execute(call_id, params, context):
+        return PluginResult(content=[{"type": "text", "text": f"Hello, {params.name}!"}])
+    api.register_tool(ToolDefinition("hello", "Greeting", "Greet a name", Greeting, execute))
+```
+
+`execute` 可以是同步或异步函数。参数先经声明的 Pydantic 模型严格校验，再进入用户函数。
+`context` 提供会话 ID、真实工作区、配置和协作取消信号；`api.context` 在 factory 阶段也可用。
+`register_command(name, description=..., handler=...)` 的 handler 接收字符串参数和同一上下文。
+结果使用文本/媒体 `content`、JSON `details` 和 `is_error`，不把任意 stdout 当作协议。
+插件使用本机用户权限；工具环境不继承供应商密钥或 Host 控制令牌。
+
+登记 ID、加载 ID、调用 ID 分别持久化。入口内容摘要与每次加载代际参与插件指纹。
+同 ID 不同参数冲突；加载或工具回执未知不重新导入或重发工具。显式新加载不改写旧调用结果。停止保留登记和结果，只收回该会话插件的已知进程。
+当前会话未结束任务或仍持有旧指纹的 worker 会阻止切换；其他会话的插件状态独立。
+进程经原有 service-runner 登记与清理；取消请求与已知进程退出证明分开返回，
+不承诺任意脱离后代退出。每个监督器最多保留 8 个活动插件服务。
+
+Web/Electron 的插件面板、Python SDK 和 `plugin.list/register/reload/call/cancel/close` RPC 共用这些入口。
+模型工具目录、会话动作账本和 Codemode 对插件工具的接入继续在当前任务表中收敛。
+
 ## 构建与操作约束
 
 严禁重复构建和测试盘积累；不恢复已清理的 VM。源码验证先行，只在需要验证安装行为时构建。

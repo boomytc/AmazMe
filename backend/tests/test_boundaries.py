@@ -32,9 +32,9 @@ def test_generated_event_contracts_do_not_drift():
 
 
 def test_business_modules_cannot_spawn_native_processes():
-    # Only the registered native execution module and fixed service owners may spawn.
+    # Only the registered native execution module and service owners may spawn.
     permitted = {"host.py", "supervisor.py", "native_execution.py", "native_services.py", "pty_gate.py", "mcp_gate.py", "codemode_run.py",
-                 "plugin_run.py", "computer_run.py"}
+                 "ssh.py", "remote_session.py", "remote_daemon.py", "computer_run.py"}
     for path in (ROOT / "src/amazme_backend").glob("*.py"):
         if path.name in permitted:
             continue

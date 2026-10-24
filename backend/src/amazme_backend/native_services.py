@@ -18,10 +18,10 @@ from .native_execution import LocalReport, ProcessIdentity, stop_tracked, tool_e
 from .processes import ProcessReservation, retain_inherited
 
 
-def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path, kind: Literal["pty", "mcp"]) -> None:
+def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path, kind: Literal["pty", "mcp", "plugin"]) -> None:
     retain_inherited(lifetime_fd, profile, "execution", instance)
     control = socket.socket(fileno=0)
-    gate = subprocess.Popen(child_command("pty-gate" if kind == "pty" else "mcp-gate"), stdin=0, stdout=1,
+    gate = subprocess.Popen(child_command({"pty":"pty-gate", "mcp":"mcp-gate", "plugin":"plugin-gate"}[kind]), stdin=0, stdout=1,
                             stderr=subprocess.DEVNULL, env=tool_environment(), start_new_session=True)
     tracked = {gate.pid: ProcessIdentity.capture(psutil.Process(gate.pid))}
     observed: tuple[int, ...] = ()
@@ -61,7 +61,7 @@ class ServiceProcess:
 
     @classmethod
     async def start(cls, profile: Path, instance: str, directory: Path,
-                    reservation: ProcessReservation, kind: Literal["pty", "mcp"]) -> ServiceProcess:
+                    reservation: ProcessReservation, kind: Literal["pty", "mcp", "plugin"]) -> ServiceProcess:
         parent, child = socket.socketpair()
         try:
             process = await asyncio.create_subprocess_exec(*child_command(

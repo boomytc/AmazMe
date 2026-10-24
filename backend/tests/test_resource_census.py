@@ -259,6 +259,8 @@ def test_session_gates_follow_the_owner_profile(tmp_path):
         proc(7, 1, ["amazme-backend", "execute", "--profile", profile, "--instance", "e"], cwd="/tmp"),
         proc(8, 1, ["amazme-backend", "mcp-gate"], cwd="/Users/keep/proj"),
         proc(9, 1, ["amazme-backend", "service-runner", "--profile", "/tmp/am2-x/p", "--instance", "j"]),
+        proc(10, 4, ["amazme-backend", "plugin-gate"]),
+        proc(11, 1, ["amazme-backend", "plugin-gate"]),
     ]
     report, _arts, _vm, _temp = assembled(tmp_path, processes, 60 * GIB)
     rows = {row["pid"]: row for row in [*report["observed"], *report["leaks"]]}
@@ -268,6 +270,8 @@ def test_session_gates_follow_the_owner_profile(tmp_path):
     assert rows[7]["role"] == "execute" and rows[7]["disposition"] == "observed"
     assert rows[8]["role"] == "mcp-gate" and rows[8]["disposition"] == "leak" and rows[8]["via"] == "orphan"
     assert rows[9]["role"] == "service-runner" and rows[9]["disposition"] == "leak"
+    assert rows[10]["role"] == "plugin-gate" and rows[10]["disposition"] == "observed"
+    assert rows[11]["role"] == "plugin-gate" and rows[11]["disposition"] == "leak"
     assert report["build_allowed"] is False
 
 

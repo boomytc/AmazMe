@@ -35,6 +35,12 @@ from .contracts import (
     Model,
     ModelCatalog,
     ModelSettings,
+    PluginCallRequest,
+    PluginCallView,
+    PluginDraft,
+    PluginList,
+    PluginReload,
+    PluginView,
     Receipt,
     RunOptions,
     Session,
@@ -53,6 +59,10 @@ from .workspace_files import FileContent
 
 
 class RpcParams(RunOptions):
+    plugin_id: str = ""
+    plugin_draft: PluginDraft | None = None
+    plugin_reload: PluginReload | None = None
+    plugin_call: PluginCallRequest | None = None
     computer_inspect: ComputerInspect | None = None
     computer_policy: ComputerPolicy | None = None
     computer_action: ComputerActionRequest | None = None
@@ -173,6 +183,18 @@ class RpcHost(Protocol):
 
     async def open_mcp(self, session_id: str, value: McpOpen) -> McpView: ...
 
+    async def register_plugin(self, value: PluginDraft) -> PluginView: ...
+
+    async def reload_plugin(self, plugin_id: str, value: PluginReload) -> PluginView: ...
+
+    async def call_plugin(self, session_id: str, plugin_id: str, value: PluginCallRequest) -> PluginCallView: ...
+
+    async def close_plugin(self, session_id: str, plugin_id: str) -> PluginView: ...
+
+    async def cancel_plugin(self, session_id: str, plugin_id: str, call_id: str) -> PluginCallView: ...
+
+    async def plugins(self, session_id: str = "") -> PluginList: ...
+
     async def request_mcp(self, session_id: str, server_id: str, value: McpCallRequest) -> McpCall: ...
 
     async def decide_mcp(self, session_id: str, server_id: str, call_id: str, value: McpDecision) -> McpCall: ...
@@ -264,6 +286,31 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if not params.request_id:
             raise BackendError("binding_required")
         return await owner.request_receipt(await _bound(owner, params), params.request_id)
+    if method == "plugin.list":
+        return await owner.plugins(params.session_id)
+    if method == "plugin.register":
+        if params.plugin_draft is None:
+            raise BackendError("plugin_draft_required")
+        return await owner.register_plugin(params.plugin_draft)
+    if method == "plugin.reload":
+        if not params.plugin_id or params.plugin_reload is None:
+            raise BackendError("plugin_binding_required")
+        return await owner.reload_plugin(params.plugin_id, params.plugin_reload)
+    if method == "plugin.close":
+        session = await _bound(owner, params)
+        if not params.plugin_id:
+            raise BackendError("plugin_binding_required")
+        return await owner.close_plugin(session, params.plugin_id)
+    if method == "plugin.cancel":
+        session = await _bound(owner, params)
+        if not params.plugin_id or not params.call_id:
+            raise BackendError("plugin_binding_required")
+        return await owner.cancel_plugin(session, params.plugin_id, params.call_id)
+    if method == "plugin.call":
+        session = await _bound(owner, params)
+        if not params.plugin_id or params.plugin_call is None:
+            raise BackendError("plugin_binding_required")
+        return await owner.call_plugin(session, params.plugin_id, params.plugin_call)
     if method == "request.submit":
         if not params.request_id:
             raise BackendError("binding_required")

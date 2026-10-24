@@ -1084,23 +1084,41 @@ class WorkerInfo(Model):
     storage_ready: bool = False
 
 
+class PluginTool(Model):
+    name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+    label: str = Field(min_length=1, max_length=100)
+    description: str = Field(max_length=4000)
+    parameters: dict[str, JsonValue]
+    kind: Literal["tool", "command"] = "tool"
+
+
 class PluginDraft(Model):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    entry: str = Field(min_length=1, max_length=4096)
     config: dict[str, str] = Field(default_factory=dict)
 
 
 class PluginReload(Model):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    reload_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    entry: str = Field(default="", max_length=4096)
     config: dict[str, str] = Field(default_factory=dict)
 
 
 class PluginView(Model):
+    session_id: str
     plugin_id: str
     name: str
     capabilities: list[str]
     config: dict[str, str]
     fingerprint: str
     entry: str
+    tools: list[PluginTool] = Field(default_factory=lambda: list[PluginTool]())
+    phase: Literal["loading", "ready", "disconnected", "failed", "unknown"] = "disconnected"
+    load_id: str = ""
+    error: str = ""
 
 
 class PluginList(Model):
@@ -1108,32 +1126,56 @@ class PluginList(Model):
 
 
 class PluginCallRequest(Model):
+    kind: Literal["tool", "command"] = "tool"
     call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    text: str = Field(min_length=1, max_length=200)
+    name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class OpenPlugin(HostFence):
+class OpenPlugin(PluginDraft, HostFence):
+    pass
+
+
+class ReloadPlugin(PluginReload, HostFence):
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    config: dict[str, str] = Field(default_factory=dict)
 
 
-class ReloadPlugin(HostFence):
-    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    config: dict[str, str] = Field(default_factory=dict)
-
-
-class PluginCallEnvelope(HostFence):
+class PluginCallEnvelope(PluginCallRequest, HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    workspace: str = "primary"
+
+
+class ClosePlugin(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class CancelPlugin(ClosePlugin):
     call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    text: str = Field(min_length=1, max_length=200)
+
+
+class PluginResult(Model):
+    content: list[dict[str, JsonValue]] = Field(default_factory=lambda: list[dict[str, JsonValue]](), max_length=16)
+    details: JsonValue = None
+    is_error: bool = False
 
 
 class PluginCallView(Model):
     call_id: str
-    phase: Literal["done", "failed", "unknown", "conflict"]
-    result: str = ""
+    phase: Literal["done", "failed", "unknown", "conflict", "cancelled"]
+    cancel_requested: bool = False
+    clean: bool = False
+    result: PluginResult | None = None
+    error: str = ""
+
+
+class PluginReply(Model):
+    phase: Literal["ready", "done", "failed"]
+    call_id: str = ""
+    tools: list[PluginTool] = Field(default_factory=lambda: list[PluginTool](), max_length=64)
+    result: PluginResult | None = None
+    error: str = ""
 
 
 class WorkerRequest(Model):

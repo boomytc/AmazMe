@@ -549,6 +549,7 @@ function startClient() {
       if ($("computer").open) void loadComputerPolicy().catch(error);
       if ($("terminal").open) void loadTerminals().catch(error);
       if ($("mcp").open) void loadMcp().catch(error);
+      if ($("plugins").open) void loadPlugins();
       const url = new URL(`/api/v1/events/${id}`, location.origin); url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(url); connection.ws = ws;
       connection.helloTimer = setTimeout(() => reconnect(connection, true), 40000);
@@ -1553,76 +1554,147 @@ function startClient() {
     } catch (failure) { if (operation.active()) error(failure); }
   };
   let pluginId = "";
-  async function loadPlugins() {
-    const list = await api("/api/v1/plugins");
-    $("plugin-list").textContent = list.plugins.length ? list.plugins.map(item => item.name).join("\n") : "还没有插件";
+  let pluginViews = [];
+  let pluginProfile = "", pluginSession = "";
+  function showPlugin(view, call) {
+    $("plugin-state").textContent = `${view.name} · ${view.phase} · ${view.entry} · ${view.fingerprint.slice(0, 12)}${view.error ? " · " + view.error : ""}`;
+    $("plugin-name").value = view.name;
+    $("plugin-entry").value = view.entry;
+    $("plugin-label").value = JSON.stringify(view.config);
+    $("plugin-tool").replaceChildren(...view.tools.map(tool => {
+      const option = document.createElement("option"); option.value = `${tool.kind}:${tool.name}`;
+      option.textContent = `${tool.label} (${tool.name})`; return option;
+    }));
+    if (call) $("plugin-result").textContent = call.phase === "done" ? JSON.stringify(call.result, null, 2) : `${call.phase} ${call.error || ""}`;
   }
+  async function loadPlugins(preferred = "") {
+    const operation = beginOperation("plugin-list");
+    if (!operation || !operation.identity || !operation.session) return;
+    let list;
+    try { list = await api("/api/v1/plugins?session_id=" + encodeURIComponent(operation.session), undefined, undefined, operation.connection); }
+    catch (failure) { if (operation.active()) error(failure); return; }
+    if (!operation.active()) return;
+    pluginProfile = operation.identity.profile_id;
+    pluginSession = operation.session;
+    pluginViews = list.plugins;
+    $("plugin-list").textContent = list.plugins.length ? list.plugins.map(item => `${item.name} · ${item.phase}`).join("\n") : "还没有插件";
+    $("plugin-selected").replaceChildren(...list.plugins.map(view => {
+      const option = document.createElement("option"); option.value = view.plugin_id; option.textContent = view.name; return option;
+    }));
+    pluginId = preferred && list.plugins.some(view => view.plugin_id === preferred) ? preferred : $("plugin-selected").value;
+    $("plugin-selected").value = pluginId;
+    const view = list.plugins.find(view => view.plugin_id === pluginId);
+    if (view) showPlugin(view);
+  }
+  $("plugin-selected").onchange = () => {
+    pluginId = $("plugin-selected").value;
+    const view = pluginViews.find(view => view.plugin_id === pluginId);
+    if (view) showPlugin(view);
+  };
   $("plugins").addEventListener("toggle", () => {
     if ($("plugins").open) loadPlugins().catch(error);
   });
-  function showPlugin(view, call) {
-    $("plugin-state").textContent = `${view.name} · ${view.entry} · ${view.fingerprint.slice(0, 12)}`;
-    if (call) $("plugin-result").textContent = call.phase === "done" ? call.result : call.phase;
-  }
   $("plugin-form").onsubmit = async event => {
     event.preventDefault();
     const operation = beginOperation("plugin-call");
-    if (!operation) return;
-    const {connection, session:selected, identity} = operation;
-    if (!identity || health?.state !== "ready") return;
-    pluginId = pluginId || crypto.randomUUID().replaceAll("-", "");
+    if (!operation || !operation.identity || !operation.session || health?.state !== "ready") return;
+    const {connection, identity, session:selected} = operation;
+    const key = `plugin-register:${identity.profile_id}:${selected}`;
     try {
-      const result = await api("/api/v1/plugins", "POST", {plugin_id: pluginId, name: $("plugin-name").value, config: {label: $("plugin-label").value}}, connection);
+      const payload = {session_id:selected, name:$("plugin-name").value, entry:$("plugin-entry").value, config:JSON.parse($("plugin-label").value)};
+      let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (pending && JSON.stringify(pending.payload) !== JSON.stringify(payload)) throw new Error("原插件登记尚未确认，请先核对原 ID。");
+      if (!pending) {
+        pending = {plugin_id:crypto.randomUUID().replaceAll("-", ""), payload};
+        sessionStorage.setItem(key, JSON.stringify(pending));
+      }
+      const result = await api("/api/v1/plugins", "POST", {plugin_id:pending.plugin_id, ...pending.payload}, connection);
+      if (!["unknown", "loading"].includes(result.phase)) settlePending(key, "plugin_id", pending.plugin_id);
       if (!operation.active()) return;
+      pluginProfile = identity.profile_id; pluginSession = selected;
+      pluginId = result.plugin_id;
       showPlugin(result);
-      await loadPlugins();
-      if (!operation.active()) return;
-      $("error").textContent = "";
+      await loadPlugins(result.plugin_id);
+      if (operation.active()) $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }
   };
   $("plugin-call").onsubmit = async event => {
     event.preventDefault();
     const operation = beginOperation("plugin-call");
-    if (!operation) return;
+    if (!operation || !operation.session || !operation.identity || health?.state !== "ready") return;
     const {connection, session:selected, identity} = operation;
-    const key = `plugin-call:${identity.profile_id}:${selected}:${pluginId}`;
-    const targetPlugin = pluginId;
-    if (!pluginId || !selected || !identity || health?.state !== "ready") return;
-    const text = $("plugin-text").value;
-    let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
-    catch { pending = null; }
-    if (pending && pending.phase === "unknown" && pending.text !== text) {
-      error(new Error("上次插件调用结果未知，未自动重发；请用同一文本查询。"));
-      return;
-    }
-    if (!pending || pending.phase !== "unknown") {
-      pending = {call_id: crypto.randomUUID().replaceAll("-", ""), text, phase: "unknown"};
-      sessionStorage.setItem(key, JSON.stringify(pending));
-    }
+    const targetPlugin = $("plugin-selected").value;
+    if (!targetPlugin || (pluginProfile !== identity.profile_id || pluginSession !== operation.session)) { await loadPlugins(); return; }
+    const key = `plugin-call:${identity.profile_id}:${selected}:${targetPlugin}`;
     try {
-      const call = await api(`/api/v1/sessions/${selected}/plugins/${targetPlugin}/calls`, "POST",
-        {call_id: pending.call_id, text: pending.text}, connection);
+      const [kind, name] = $("plugin-tool").value.split(":");
+      const payload = {kind, name, arguments:JSON.parse($("plugin-text").value)};
+      let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (pending && JSON.stringify(pending.payload) !== JSON.stringify(payload)) throw new Error("上次插件调用结果未知；请先用原参数和原 ID 核对。");
+      if (!pending) {
+        pending = {call_id:crypto.randomUUID().replaceAll("-", ""), payload, phase:"unknown"};
+        sessionStorage.setItem(key, JSON.stringify(pending));
+      }
+      const call = await api(`/api/v1/sessions/${selected}/plugins/${targetPlugin}/calls`, "POST", {call_id:pending.call_id, ...pending.payload}, connection);
       pending.phase = call.phase;
       settlePending(key, "call_id", pending.call_id, call.phase === "unknown" ? pending : null);
       if (!operation.active()) return;
-      $("plugin-result").textContent = call.phase === "done" ? call.result : call.phase;
-      if (call.phase === "unknown") error(new Error("上次插件调用结果未知，未自动重发；请用同一文本查询。"));
-      else $("error").textContent = "";
+      $("plugin-result").textContent = call.phase === "done" ? JSON.stringify(call.result, null, 2) : `${call.phase} ${call.error || ""}`;
+      $("error").textContent = call.phase === "unknown" ? "结果未知；原 ID 已保留，不会自动重放。" : "";
     } catch (failure) { if (operation.active()) error(failure); }
   };
-  $("plugin-reload").onclick = async () => {
+  $("plugin-close").onclick = async () => {
     const operation = beginOperation("plugin-call");
-    if (!operation) return;
-    const {connection, session:selected, identity} = operation;
-    if (!pluginId || !identity || health?.state !== "ready") return;
+    if (!operation || !operation.session || !operation.identity) return;
+    const targetPlugin = $("plugin-selected").value;
+    if (!targetPlugin || pluginProfile !== operation.identity.profile_id || pluginSession !== operation.session) return;
     try {
-      const result = await api(`/api/v1/plugins/${pluginId}/reload`, "POST", {config: {label: $("plugin-label").value}}, connection);
+      const view = await api(`/api/v1/sessions/${operation.session}/plugins/${targetPlugin}/close`, "POST", {}, operation.connection);
+      if (operation.active()) showPlugin(view);
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
+  $("plugin-cancel").onclick = async () => {
+    const operation = beginOperation("plugin-call");
+    if (!operation || !operation.session || !operation.identity) return;
+    const {connection, session:selected, identity} = operation;
+    const targetPlugin = $("plugin-selected").value;
+    if (!targetPlugin || (pluginProfile !== identity.profile_id || pluginSession !== operation.session)) { await loadPlugins(); return; }
+    const key = `plugin-call:${identity.profile_id}:${selected}:${targetPlugin}`;
+    try {
+      const pending = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (!pending) throw new Error("没有未确认的插件调用。");
+      const call = await api(`/api/v1/sessions/${selected}/plugins/${targetPlugin}/calls/${pending.call_id}/cancel`, "POST", {}, connection);
+      settlePending(key, "call_id", pending.call_id, call.phase === "unknown" ? pending : null);
+      if (!operation.active()) return;
+      $("plugin-result").textContent = `${call.phase} · ${["done", "failed"].includes(call.phase) ? "调用已完成" : call.clean ? "已确认已知执行进程退出" : "退出未确认"}`;
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
+  async function reloadPlugin(fresh) {
+    const operation = beginOperation("plugin-call");
+    if (!operation || !operation.identity || health?.state !== "ready") return;
+    const {connection, identity} = operation;
+    const targetPlugin = $("plugin-selected").value;
+    if (!targetPlugin || (pluginProfile !== identity.profile_id || pluginSession !== operation.session)) { await loadPlugins(); return; }
+    const key = `plugin-reload:${identity.profile_id}:${targetPlugin}`;
+    try {
+      let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (pending && fresh) {
+        sessionStorage.setItem(`${key}:${pending.reload_id}`, JSON.stringify(pending));
+        settlePending(key, "reload_id", pending.reload_id); pending = null;
+      }
+      if (!pending) {
+        pending = {reload_id:crypto.randomUUID().replaceAll("-", ""), session_id:operation.session, entry:$("plugin-entry").value, config:JSON.parse($("plugin-label").value)};
+        sessionStorage.setItem(key, JSON.stringify(pending));
+      }
+      const result = await api(`/api/v1/plugins/${targetPlugin}/reload`, "POST", pending, connection);
+      if (!["unknown", "loading"].includes(result.phase)) settlePending(key, "reload_id", pending.reload_id);
       if (!operation.active()) return;
       showPlugin(result);
-      $("error").textContent = "";
+      $("error").textContent = result.phase === "unknown" ? "原加载结果未知；核对后可显式发起新加载。" : "";
     } catch (failure) { if (operation.active()) error(failure); }
-  };
+  }
+  $("plugin-reload").onclick = () => reloadPlugin(false);
+  $("plugin-reload-new").onclick = () => reloadPlugin(true);
   $("history-form").onsubmit = async event => {
     event.preventDefault();
     const operation = beginOperation("history");

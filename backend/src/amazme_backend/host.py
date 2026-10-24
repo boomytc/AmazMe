@@ -48,12 +48,14 @@ from .contracts import (
     BranchSession,
     Cancel,
     CancelCode,
+    CancelPlugin,
     CheckpointCreate,
     CheckpointList,
     CheckpointPreview,
     CheckpointRestore,
     CheckpointView,
     Cleanup,
+    ClosePlugin,
     CodeRun,
     CodeView,
     Compaction,
@@ -1697,8 +1699,10 @@ class Host:
             return SessionDiagnostic(session_id=session, present=False, state="absent")
         return await self._read_session(session, lambda store: store.diagnostic())
 
-    async def _plugin_work_pending(self) -> bool:
+    async def _plugin_work_pending(self, session_id: str) -> bool:
         for session in (await self.sessions()).sessions:
+            if session.session_id != session_id:
+                continue
             path = session_database(self.profile.path, session.session_id)
             if not path.is_file():
                 continue
@@ -1707,35 +1711,59 @@ class Host:
                 return True
         return False
 
+    async def plugins(self, session_id: str = "") -> PluginList:
+        if session_id:
+            await self._require_session(session_id)
+        return await self.supervisor.call("GET", "/plugins" + ("?session_id=" + session_id if session_id else ""), PluginList)
+
     async def register_plugin(self, value: PluginDraft) -> PluginView:
         self._admit()
+        if contains_secret(value.model_dump_json(), self._provider_secret()):
+            raise BackendError("plugin_secret")
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
-        if await self._plugin_work_pending():
+        await self._require_session(value.session_id)
+        if await self._plugin_work_pending(value.session_id):
             raise BackendError("plugin_reload_blocked", status=409)
         return await self.supervisor.call("POST", "/plugins/register", PluginView, OpenPlugin(
             host_epoch=self.fence.host_epoch, build_id=self.build, plugin_id=value.plugin_id,
-            name=value.name, config=value.config))
+            name=value.name, entry=value.entry, session_id=value.session_id, config=value.config))
 
     async def reload_plugin(self, plugin_id: str, value: PluginReload) -> PluginView:
         self._admit()
+        if contains_secret(value.model_dump_json(), self._provider_secret()):
+            raise BackendError("plugin_secret")
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
-        if await self._plugin_work_pending():
+        await self._require_session(value.session_id)
+        if await self._plugin_work_pending(value.session_id):
             raise BackendError("plugin_reload_blocked", status=409)
         return await self.supervisor.call("POST", "/plugins/reload", PluginView, ReloadPlugin(
-            host_epoch=self.fence.host_epoch, build_id=self.build, plugin_id=plugin_id, config=value.config))
+            host_epoch=self.fence.host_epoch, build_id=self.build, plugin_id=plugin_id, reload_id=value.reload_id, session_id=value.session_id, entry=value.entry, config=value.config))
 
     async def call_plugin(self, session_id: str, plugin_id: str, value: PluginCallRequest) -> PluginCallView:
         self._admit()
         await self._require_session(session_id)
+        session = next(item for item in (await self.sessions()).sessions if item.session_id == session_id)
         frozen = await self._update_matches_supervisor()
+        if contains_secret(value.model_dump_json(), self._provider_secret()):
+            raise BackendError("plugin_secret")
         try:
             return await self.supervisor.call("POST", "/plugins/call", PluginCallView, PluginCallEnvelope(
                 host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
-                plugin_id=plugin_id, call_id=value.call_id, text=value.text))
+                plugin_id=plugin_id, call_id=value.call_id, name=value.name, arguments=value.arguments, workspace=session.workspace))
         except BackendError as error:
             self._stored_during_update(frozen, error)
+
+    async def close_plugin(self, session_id: str, plugin_id: str) -> PluginView:
+        await self._require_session(session_id)
+        return await self.supervisor.call("POST", "/plugins/close", PluginView, ClosePlugin(
+            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id, plugin_id=plugin_id))
+
+    async def cancel_plugin(self, session_id: str, plugin_id: str, call_id: str) -> PluginCallView:
+        await self._require_session(session_id)
+        return await self.supervisor.call("POST", "/plugins/cancel", PluginCallView, CancelPlugin(
+            host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id, plugin_id=plugin_id, call_id=call_id))
 
     async def archive_session(self, session: str, archived: bool) -> Session:
         self._admit()
@@ -2769,8 +2797,8 @@ def application(owner: Host) -> FastAPI:
         return await handle_rpc(owner, value)
 
     @app.get("/api/v1/plugins")
-    async def plugins() -> PluginList:
-        return await owner.supervisor.call("GET", "/plugins", PluginList)
+    async def plugins(session_id: str = "") -> PluginList:
+        return await owner.plugins(session_id)
 
     @app.post("/api/v1/plugins")
     async def register_plugin(value: PluginDraft) -> PluginView:
@@ -2783,6 +2811,14 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session_id}/plugins/{plugin_id}/calls")
     async def call_plugin(session_id: str, plugin_id: str, value: PluginCallRequest) -> PluginCallView:
         return await owner.call_plugin(session_id, plugin_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/plugins/{plugin_id}/close")
+    async def close_plugin(session_id: str, plugin_id: str) -> PluginView:
+        return await owner.close_plugin(session_id, plugin_id)
+
+    @app.post("/api/v1/sessions/{session_id}/plugins/{plugin_id}/calls/{call_id}/cancel")
+    async def cancel_plugin(session_id: str, plugin_id: str, call_id: str) -> PluginCallView:
+        return await owner.cancel_plugin(session_id, plugin_id, call_id)
 
     @app.get("/api/v1/sessions/{session_id}/search")
     async def search_session(session_id: str, q: str) -> SearchResults:

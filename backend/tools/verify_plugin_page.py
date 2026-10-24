@@ -1,4 +1,4 @@
-"""Chrome page path for one plugin stamp. Happy-dom is not this proof."""
+"""Chrome path for a user Python extension and a lost call receipt."""
 
 import json
 import sys
@@ -24,6 +24,8 @@ def main() -> None:
     root = Path(tempfile.mkdtemp(prefix="plugin-page-", dir=parent))
     provider = root / "faux.json"
     provider.write_text('{"provider":"faux"}')
+    entry = root / "extension.py"
+    entry.write_text((ROOT / "backend/tests/helpers/plugin_fixture.py").read_text())
     runtime = Runtime([sys.executable, "-m", "amazme_backend"], root, provider)
     report: dict[str, object] = {
         "status": "running", "execution": "chrome-plugin-page", "vm_created": False, "checks": [],
@@ -44,15 +46,16 @@ def main() -> None:
                 page.get_by_label("输入本机配对码").fill((runtime.profile / "web.token").read_text())
                 page.get_by_role("button", name="连接", exact=True).click()
                 expect(page.locator("#login")).to_be_hidden()
-                page.locator("#plugins summary").click()
-                page.locator("#plugin-name").fill("stamp")
-                page.locator("#plugin-label").fill("page")
-                page.locator("#plugin-form button").click()
-                expect(page.locator("#plugin-state")).to_contain_text("stamp", timeout=15000)
                 page.locator("#create").click()
                 expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
+                page.locator("#plugins summary").click()
+                page.locator("#plugin-name").fill("greeting")
+                page.locator("#plugin-entry").fill(str(entry))
+                page.locator("#plugin-label").fill('{"label":"page"}')
+                page.locator("#plugin-form button").click()
+                expect(page.locator("#plugin-state")).to_contain_text("ready", timeout=15000)
                 registered = page.locator("#plugin-list").inner_text()
-                assert "stamp" in registered
+                assert "greeting" in registered
                 calls: list[str] = []
                 attempts = {"count": 0}
 
@@ -68,25 +71,26 @@ def main() -> None:
                     route.continue_()
 
                 page.route("**/plugins/**/calls", lose_first)
-                page.locator("#plugin-text").fill("mark-once")
+                page.locator("#plugin-tool").select_option("tool:hello")
+                page.locator("#plugin-text").fill('{"name":"Bob"}')
                 page.locator("#plugin-call button").click()
                 expect(page.locator("#error")).not_to_have_text("", timeout=15000)
                 stamp = until(
-                    lambda: list((runtime.profile / "plugin-work").glob("*/stamp.txt")),
-                    lambda found: len(found) == 1 and found[0].read_text() == "mark-once\n",
+                    lambda: list(runtime.workspace.glob("effects.txt")),
+                    lambda found: len(found) == 1 and found[0].read_text().endswith(":Bob\n"),
                     timeout=20,
                 )[0]
                 page.locator("#plugin-call button").click()
-                expect(page.locator("#plugin-result")).to_have_text("mark-once", timeout=15000)
-                assert stamp.read_text() == "mark-once\n"
+                expect(page.locator("#plugin-result")).to_contain_text("Hello, Bob!", timeout=15000)
+                assert stamp.read_text().splitlines() == [calls[0] + ":Bob"]
                 assert len(calls) >= 2 and calls[0] == calls[1]
                 page.unroute("**/plugins/**/calls", lose_first)
                 assert not errors, errors
                 report["checks"].append(
-                    "chrome page reused one plugin call after the receipt was lost; stamp.txt stayed one line"
+                    "chrome page reused one plugin call after the receipt was lost; the extension effect stayed one line"
                 )
                 report["page_errors"] = errors
-                report["stamp"] = str(stamp.relative_to(runtime.profile))
+                report["stamp"] = str(stamp.relative_to(root))
             finally:
                 context.close()
                 browser.close()

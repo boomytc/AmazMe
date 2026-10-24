@@ -21,7 +21,7 @@ PACKAGE_SLOTS = 2
 CHECKED = ["processes", "vm_dirs", "temp_dirs", "packages", "free_bytes"]
 SCOPE = (
     "processes classified by mode token and parentage (serve, supervisor, worker, execute, "
-    "service-runner, pty-gate, mcp-gate, computer-driver, lima, hostagent, owned headless browsers, descendants); "
+    "service-runner, pty-gate, mcp-gate, plugin-gate, computer-driver, lima, hostagent, owned headless browsers, descendants); "
     "VM directories; am2-/amcu- temp directories; package-* retention; free space on the artifact volume"
 )
 NOTE = (
@@ -169,7 +169,7 @@ def gate_role(argv: list[str]) -> str | None:
     if not _backend(argv):
         return None
     for token in argv:
-        if token in {"pty-gate", "mcp-gate"}:
+        if token in {"pty-gate", "mcp-gate", "plugin-gate"}:
             return token
     return None
 

@@ -3429,6 +3429,18 @@
       "get": {
         "summary": "Plugins",
         "operationId": "plugins_api_v1_plugins_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Session Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -3439,6 +3451,16 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
         }
       },
@@ -3446,14 +3468,14 @@
         "summary": "Register Plugin",
         "operationId": "register_plugin_api_v1_plugins_post",
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/PluginDraft"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "200": {
@@ -3562,6 +3584,111 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginCallView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/plugins/{plugin_id}/close": {
+      "post": {
+        "summary": "Close Plugin",
+        "operationId": "close_plugin_api_v1_sessions__session_id__plugins__plugin_id__close_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/plugins/{plugin_id}/calls/{call_id}/cancel": {
+      "post": {
+        "summary": "Cancel Plugin",
+        "operationId": "cancel_plugin_api_v1_sessions__session_id__plugins__plugin_id__calls__call_id__cancel_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "plugin_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Plugin Id"
+            }
+          },
+          {
+            "name": "call_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Call Id"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -7336,23 +7463,38 @@
       },
       "PluginCallRequest": {
         "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tool",
+              "command"
+            ],
+            "title": "Kind",
+            "default": "tool"
+          },
           "call_id": {
             "type": "string",
             "pattern": "^[a-f0-9]{32}$",
             "title": "Call Id"
           },
-          "text": {
+          "name": {
             "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Text"
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$",
+            "title": "Name"
+          },
+          "arguments": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Arguments"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "call_id",
-          "text"
+          "name"
         ],
         "title": "PluginCallRequest"
       },
@@ -7368,13 +7510,34 @@
               "done",
               "failed",
               "unknown",
-              "conflict"
+              "conflict",
+              "cancelled"
             ],
             "title": "Phase"
           },
+          "cancel_requested": {
+            "type": "boolean",
+            "title": "Cancel Requested",
+            "default": false
+          },
+          "clean": {
+            "type": "boolean",
+            "title": "Clean",
+            "default": false
+          },
           "result": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error": {
             "type": "string",
-            "title": "Result",
+            "title": "Error",
             "default": ""
           }
         },
@@ -7388,6 +7551,11 @@
       },
       "PluginDraft": {
         "properties": {
+          "session_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Session Id"
+          },
           "plugin_id": {
             "type": "string",
             "pattern": "^[a-f0-9]{32}$",
@@ -7397,6 +7565,12 @@
             "type": "string",
             "pattern": "^[A-Za-z0-9_-]{1,64}$",
             "title": "Name"
+          },
+          "entry": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Entry"
           },
           "config": {
             "additionalProperties": {
@@ -7409,8 +7583,10 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "session_id",
           "plugin_id",
-          "name"
+          "name",
+          "entry"
         ],
         "title": "PluginDraft"
       },
@@ -7433,6 +7609,22 @@
       },
       "PluginReload": {
         "properties": {
+          "session_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Session Id"
+          },
+          "reload_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Reload Id"
+          },
+          "entry": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Entry",
+            "default": ""
+          },
           "config": {
             "additionalProperties": {
               "type": "string"
@@ -7443,10 +7635,89 @@
         },
         "additionalProperties": false,
         "type": "object",
+        "required": [
+          "session_id",
+          "reload_id"
+        ],
         "title": "PluginReload"
+      },
+      "PluginResult": {
+        "properties": {
+          "content": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 16,
+            "title": "Content"
+          },
+          "details": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "PluginResult"
+      },
+      "PluginTool": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$",
+            "title": "Name"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Description"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Parameters"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "tool",
+              "command"
+            ],
+            "title": "Kind",
+            "default": "tool"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "label",
+          "description",
+          "parameters"
+        ],
+        "title": "PluginTool"
       },
       "PluginView": {
         "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
           "plugin_id": {
             "type": "string",
             "title": "Plugin Id"
@@ -7476,11 +7747,41 @@
           "entry": {
             "type": "string",
             "title": "Entry"
+          },
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/PluginTool"
+            },
+            "type": "array",
+            "title": "Tools"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "loading",
+              "ready",
+              "disconnected",
+              "failed",
+              "unknown"
+            ],
+            "title": "Phase",
+            "default": "disconnected"
+          },
+          "load_id": {
+            "type": "string",
+            "title": "Load Id",
+            "default": ""
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "session_id",
           "plugin_id",
           "name",
           "capabilities",
@@ -8267,6 +8568,41 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "plugin_id": {
+            "type": "string",
+            "title": "Plugin Id",
+            "default": ""
+          },
+          "plugin_draft": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginDraft"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plugin_reload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginReload"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plugin_call": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginCallRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "computer_inspect": {
             "anyOf": [

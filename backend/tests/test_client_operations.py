@@ -100,6 +100,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
     const $=id=>document.getElementById(id);
     const identity={build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
     const response=value=>new Response(JSON.stringify(value),{headers:{'Content-Type':'application/json'}});
+    const plugin={session_id:a,plugin_id:'c'.repeat(32),name:'greeting',entry:'/test/extension.py',fingerprint:'f'.repeat(64),phase:'ready',config:{},tools:[{name:'hello',label:'Greeting',kind:'tool'}]};
     const held=[];
     let bindings=0;
     globalThis.fetch=async(path,options={})=>{
@@ -108,8 +109,8 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       if(path==='/api/v1/health')return response({state:'ready',identity});
       if(path==='/api/v1/models')return response({models:[],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
       if(path==='/api/v1/sessions')return response({sessions:[{session_id:a,title:'A',workspace:'primary'},{session_id:b,title:'B',workspace:'primary'}]});
-      if(path==='/api/v1/plugins' && method==='POST')return response({name:'p',entry:'stamp',fingerprint:'f'.repeat(64)});
-      if(path==='/api/v1/plugins')return response({plugins:[]});
+      if(path==='/api/v1/plugins' && method==='POST'){plugin.plugin_id=body.plugin_id;plugin.session_id=body.session_id;return response(plugin);}
+      if(path.startsWith('/api/v1/plugins?'))return response({plugins:[{...plugin,session_id:new URL(path,location.href).searchParams.get('session_id')}]});
       if(path.endsWith('/attachments')&&method==='POST'){bindings++;return response({attachment_id:'binding-'+path.split('/')[4],session_id:path.split('/')[4],build_id:'build',host_epoch:1});}
       if(method==='DELETE')return response({detached:true});
       if(path.endsWith('/computer/observe'))return response({permitted:true,capture:{capture_id:path.split('/')[4],width:100,height:100}});
@@ -125,13 +126,15 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
     const until=async check=>{for(let n=0;n<1000;n++){if(check())return;await new Promise(r=>setTimeout(r,1));}throw Error('timeout '+$('error').textContent);};
     await import(appURL);
     await until(()=>$('connection').textContent==='已连接');
-    async function select(id){const before=bindings;document.querySelectorAll('#sessions button')[id===a?0:1].click();await until(()=>bindings>before&&new URL(location.href).searchParams.get('session')===id&&$('connection').textContent==='已连接');}
+    async function select(id){const before=bindings;document.querySelectorAll('#sessions button')[id===a?0:1].click();await until(()=>bindings>before&&new URL(location.href).searchParams.get('session')===id&&$('connection').textContent==='已连接'); await new Promise(resolve=>setTimeout(resolve,5));}
+    $('plugins').open=true;
+    $('plugin-name').value='greeting'; $('plugin-entry').value=plugin.entry; $('plugin-label').value='{}'; $('plugin-text').value=JSON.stringify({name:'Bob'});
     $('plugin-form').requestSubmit();
-    await until(()=>$('plugin-state').textContent.includes('stamp'));
+    await until(()=>$('plugin-selected').value===plugin.plugin_id);
     const cases=[
       {form:'code-run',key:s=>'code-run:host-1:'+s,out:'code-result',payload:{phase:'success',value:'old',state:'old'}},
       {form:'web-search',key:s=>'web-call:host-1:'+s,out:'web-state',payload:{phase:'done',result:'old'}},
-      {form:'plugin-call',key:s=>[...Array(sessionStorage.length)].map((_,i)=>sessionStorage.key(i)).find(k=>k.startsWith('plugin-call:host-1:'+s)),out:'plugin-result',payload:{phase:'done',result:'old'}},
+      {form:'plugin-call',key:s=>[...Array(sessionStorage.length)].map((_,i)=>sessionStorage.key(i)).find(k=>k.startsWith('plugin-call:host-1:'+s)),out:'plugin-result',payload:{phase:'done',result:{content:[{type:'text',text:'old'}]}}},
       {form:'computer-act',key:s=>'computer-action:host-1:'+s,out:'computer-state',payload:{phase:'done',driver_x:99,driver_y:99}},
       {form:'remote-command',key:s=>[...Array(sessionStorage.length)].map((_,i)=>sessionStorage.key(i)).find(k=>k.startsWith('remote-call:host-1:'+s)),out:'remote-result',payload:{phase:'done',result:'old'}},
     ];

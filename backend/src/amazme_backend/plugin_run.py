@@ -1,110 +1,115 @@
-"""Run the fixed plugin gate. Plugin code never receives a database handle."""
+"""Pinned Python plugin entry and its bounded native service channel."""
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
-import os
-import re
-import subprocess
-import sys
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
-from .contracts import BackendError
-from .native_execution import tool_environment
+from pydantic import JsonValue
 
-GATE = Path(__file__).with_name("plugin_gate.py").read_text()
-CAPABILITY = "stamp"
-_KEY = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,31}")
-_FORBIDDEN = {"sqlite", "command", "shell", "path", "entry"}
+from .contracts import BackendError, PluginReply, PluginTool
+from .native_services import ServiceProcess
 
-
-class PluginOutcome:
-    def __init__(self, phase: Literal["done", "failed", "unknown"], *, exit_code: int | None = None) -> None:
-        self.phase = phase
-        self.exit_code = exit_code
+LIMIT = 8 * 1024 * 1024
 
 
 def stored_config(value: object) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    result: dict[str, str] = {}
-    for key, item in cast(dict[object, object], value).items():
-        if isinstance(key, str) and isinstance(item, str):
-            result[key] = item
-    return result
+    from pydantic import TypeAdapter
+    return TypeAdapter(dict[str, str]).validate_python(value)
 
 
 def validate_config(config: dict[str, str]) -> dict[str, str]:
-    if len(config) > 8:
-        raise BackendError("plugin_config_rejected")
-    clean: dict[str, str] = {}
-    for key, value in config.items():
-        if key.lower() in _FORBIDDEN or _KEY.fullmatch(key) is None:
-            raise BackendError("plugin_config_rejected")
-        if len(value) > 200 or "\n" in value or "\x00" in value:
-            raise BackendError("plugin_config_rejected")
-        clean[key] = value
-    return dict(sorted(clean.items()))
+    if len(config) > 64 or any(len(key) > 64 or len(value) > 4096 or '\x00' in key + value for key, value in config.items()):
+        raise BackendError('plugin_config_rejected')
+    return dict(sorted(config.items()))
 
 
-def plugin_fingerprint(plugin_id: str, name: str, config: dict[str, str]) -> str:
-    body = {"capabilities": [CAPABILITY], "config": config, "id": plugin_id, "name": name}
-    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+def entry_digest(entry: str) -> tuple[str, str]:
+    path = Path(entry).expanduser()
+    if not path.is_absolute() or path.suffix != '.py' or not path.is_file() or path.stat().st_size > 1024 * 1024:
+        raise BackendError('plugin_entry_invalid')
+    path = path.resolve(strict=True)
+    with path.open("rb") as stream:
+        source = stream.read(1024 * 1024 + 1)
+    if len(source) > 1024 * 1024:
+        raise BackendError("plugin_entry_invalid")
+    return str(path), hashlib.sha256(source).hexdigest()
+
+
+def plugin_fingerprint(plugin_id: str, name: str, config: dict[str, str], *, entry: str,
+                       source_digest: str, load_id: str) -> str:
+    body = {'config':config, 'id':plugin_id, 'name':name, 'entry':entry, 'source_digest':source_digest, 'load_id':load_id}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 
 def set_fingerprint(fingerprints: list[str]) -> str:
-    return hashlib.sha256(json.dumps(sorted(fingerprints), separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(sorted(fingerprints), separators=(',', ':')).encode()).hexdigest()
 
 
-def run_plugin_gate(workspace: Path, text: str) -> PluginOutcome:
-    """Start the shipped gate. The permit names the capability, not a command or database."""
-    workspace.mkdir(mode=0o700, parents=True, exist_ok=True)
-    permit = {"capability": CAPABILITY, "text": text}
-    process = subprocess.Popen(
-        [sys.executable, "-I", "-c", GATE],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=workspace, env=tool_environment(), start_new_session=True, text=True,
-    )
-    stdin = process.stdin
-    stdout = process.stdout
-    if stdin is None or stdout is None:
-        process.kill()
-        return PluginOutcome("failed")
-    try:
-        stdin.write(json.dumps(permit) + "\n")
-        stdin.flush()
-    except OSError:
-        pass
-    line = ""
-    try:
-        line = stdout.readline(65536)
-    except OSError:
-        line = ""
-    try:
-        code: int | None = process.wait(timeout=2)
-    except subprocess.TimeoutExpired:
+class PluginClient:
+    def __init__(self, process: ServiceProcess):
+        self.process = process
+        self.process.sock.setblocking(False)
+        self.buffer = bytearray()
+        self.tools: list[PluginTool] = []
+        self.pending = ''
+        self.ready = False
+        self.closed = asyncio.Event()
+
+    async def send(self, value: dict[str, object]) -> None:
+        data = (json.dumps(value, ensure_ascii=False) + '\n').encode()
+        if len(data) > LIMIT:
+            raise BackendError('plugin_protocol_limit')
+        await asyncio.wait_for(asyncio.get_running_loop().sock_sendall(self.process.sock, data), 5)
+
+    async def read(self) -> PluginReply:
+        while b'\n' not in self.buffer:
+            receive = asyncio.create_task(asyncio.get_running_loop().sock_recv(self.process.sock, 65536))
+            closed = asyncio.create_task(self.closed.wait())
+            try:
+                done, _ = await asyncio.wait({receive, closed}, return_when=asyncio.FIRST_COMPLETED)
+                if closed in done:
+                    raise BackendError('plugin_disconnected')
+                chunk = receive.result()
+            finally:
+                for task in (receive, closed):
+                    task.cancel()
+                await asyncio.gather(receive, closed, return_exceptions=True)
+            if not chunk:
+                raise BackendError('plugin_disconnected')
+            self.buffer.extend(chunk)
+            if len(self.buffer) > LIMIT:
+                raise BackendError('plugin_protocol_limit')
+        raw, _, remaining = self.buffer.partition(b'\n')
+        self.buffer = bytearray(remaining)
+        return PluginReply.model_validate_json(raw)
+
+    async def load(self, entry: str, digest: str, config: dict[str, str], session_id: str, workspace: str) -> PluginReply:
+        await self.send({'entry':entry, 'digest':digest, 'config':config, 'session_id':session_id, 'workspace':workspace})
+        reply = await asyncio.wait_for(self.read(), 15)
+        if reply.phase == 'ready':
+            self.tools = reply.tools
+            self.ready = True
+        return reply
+
+    async def call(self, call_id: str, name: str, arguments: dict[str, JsonValue], workspace: str, session_id: str, kind: Literal["tool", "command"] = "tool") -> PluginReply:
+        if self.pending or not self.ready:
+            raise BackendError('plugin_busy')
+        self.pending = call_id
         try:
-            os.killpg(process.pid, 9)
-        except OSError:
-            pass
-        try:
-            code = process.wait(timeout=2)
-        except subprocess.TimeoutExpired:
-            code = None
-    stdin.close()
-    if process.stderr is not None:
-        process.stderr.close()
-    if code is None:
-        return PluginOutcome("unknown")
-    accepted = False
-    try:
-        parsed: object = json.loads(line) if line else {}
-    except json.JSONDecodeError:
-        parsed = {}
-    if isinstance(parsed, dict) and cast(dict[object, object], parsed).get("ok") is True:
-        accepted = True
-    if code == 0 and accepted:
-        return PluginOutcome("done", exit_code=code)
-    return PluginOutcome("failed", exit_code=code)
+            await self.send({'op':'call', 'call_id':call_id, 'name':name, 'kind':kind, 'arguments':arguments,
+                             'workspace':workspace, 'session_id':session_id})
+            reply = await asyncio.wait_for(self.read(), 120)
+            if reply.call_id != call_id or reply.phase not in {'done', 'failed'}:
+                raise BackendError('plugin_protocol_identity')
+            return reply
+        finally:
+            self.pending = ''
+
+    async def close(self) -> None:
+        self.closed.set()
+        self.ready = False
+        await self.process.close()

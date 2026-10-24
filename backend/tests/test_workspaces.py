@@ -146,7 +146,7 @@ async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_
         lambda: host.open_terminal(missing, TerminalOpen(terminal_id="f" * 32, command="sh", workspace="primary")),
         lambda: host.open_mcp(missing, McpOpen(server_id="a" * 32, command="python3 demo.py")),
         lambda: host.run_code(missing, CodeRun(run_id="b" * 32, source="1")),
-        lambda: host.call_plugin(missing, "c" * 32, PluginCallRequest(call_id="d" * 32, text="hi")),
+        lambda: host.call_plugin(missing, "c" * 32, PluginCallRequest(call_id="d" * 32, name="hello", arguments={"name":"hi"})),
         lambda: host.open_remote(missing, remote),
         lambda: host.submit_remote(missing, RemoteRun(**remote.model_dump(), call_id="1" * 32, command="echo")),
         lambda: host.request_mcp(missing, "a" * 32, McpCallRequest(call_id="2" * 32, name="echo")),
@@ -197,19 +197,19 @@ async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, mo
         if path == "/code/run" and getattr(body, "run_id") == "b" * 32:
             return CodeView(run_id="b" * 32, phase="success", value="3")
         if path == "/plugins/call" and getattr(body, "call_id") == "d" * 32:
-            return PluginCallView(call_id="d" * 32, phase="done", result="ok")
+            return PluginCallView.model_validate({"call_id":"d" * 32, "phase":"done", "result":{"content":[{"type":"text","text":"ok"}]}})
         raise BackendError("supervisor_frozen", status=503)
 
     monkeypatch.setattr(host.store, "active_update", active)
     monkeypatch.setattr(host.supervisor, "call", supervisor)
     try:
         code = await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
-        plugin = await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="d" * 32, text="hi"))
-        assert code.value == "3" and plugin.result == "ok"
+        plugin = await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="d" * 32, name="hello", arguments={"name":"hi"}))
+        assert code.value == "3" and plugin.result.content[0]["text"] == "ok"
         with pytest.raises(BackendError, match="update_frozen"):
             await host.run_code(session, CodeRun(run_id="e" * 32, source="9"))
         with pytest.raises(BackendError, match="update_frozen"):
-            await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="f" * 32, text="no"))
+            await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="f" * 32, name="hello", arguments={"name":"no"}))
         assert calls == ["/health", "/code/run", "/health", "/plugins/call", "/health", "/code/run", "/health", "/plugins/call"]
 
         async def unmatched() -> UpdateRecord:

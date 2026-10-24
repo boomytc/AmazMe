@@ -18,13 +18,16 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "pty-gate":
         from .pty_gate import main as pty_main
         raise SystemExit(pty_main())
+    if len(sys.argv) > 1 and sys.argv[1] == "plugin-gate":
+        from .plugin_gate import main as plugin_main
+        raise SystemExit(plugin_main())
     if len(sys.argv) > 1 and sys.argv[1] == "mcp-gate":
         from .mcp_gate import main as mcp_main
         raise SystemExit(mcp_main())
     if len(sys.argv) > 1 and sys.argv[1] in {"execute", "service-runner"}:
         parser = argparse.ArgumentParser()
         if sys.argv[1] == "service-runner":
-            parser.add_argument("--kind", choices=["pty", "mcp"], required=True)
+            parser.add_argument("--kind", choices=["pty", "mcp", "plugin"], required=True)
         parser.add_argument("--profile", type=Path, required=True)
         parser.add_argument("--instance", required=True)
         parser.add_argument("--lifetime-fd", type=int, required=True)
