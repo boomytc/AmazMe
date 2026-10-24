@@ -5036,6 +5036,11 @@
             "type": "string",
             "title": "Project Id",
             "default": ""
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "default": ""
           }
         },
         "additionalProperties": false,

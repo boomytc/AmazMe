@@ -339,6 +339,7 @@ class CreateSession(Model):
     title: str = Field(default="新会话", min_length=1, max_length=100)
     workspace: str = "primary"
     project_id: str = ""
+    session_id: str = ""
 
 
 class ProjectWrite(Model):

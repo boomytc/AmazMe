@@ -55,7 +55,8 @@
 | Chrome 页面插件丢回执不另写一次 | `c319173574a5d4632ca321bf884b5c38e71313b2` | `backend/tools/verify_plugin_page.py`：真实 Chrome 登记固定 stamp 插件，回执丢失后同一调用只追加一行。这不是 Codemode，也不是任意第三方插件 |
 | Chrome 页面脚本丢回执不另跑一次 | `ff746083829a31cf8ddadcf16f2a40703101cf52` | `backend/tools/verify_code_page.py`：真实 Chrome 用包内布局的 Node 跑脚本；回执丢失后同一运行的状态仍是 n=1 |
 | 反馈和分享丢回执不另存一次 | `646701c4caeb456587ff26e8f2798fd3c9b7b8d2` | `backend/tests/test_management.py`：结果未知时沿用同一反馈或分享编号；反馈改内容不发送。成功之后再分享是新的一次 |
-| 记忆和检查点丢回执不另存一次 | 包含本文件的提交 | `backend/tests/test_memories.py`、`backend/tests/test_checkpoints.py`：结果未知时沿用同一记忆或检查点；改内容或改文件不发送。成功之后再保存是新的一次 |
+| 记忆和检查点丢回执不另存一次 | `27c9732113dc28e07bae6b9ab215651b72426aab` | `backend/tests/test_memories.py`、`backend/tests/test_checkpoints.py`：结果未知时沿用同一记忆或检查点；改内容或改文件不发送。成功之后再保存是新的一次 |
+| 项目和新会话丢回执不另开一次 | 包含本文件的提交 | `backend/tests/test_management.py`：同一会话编号再次创建返回原行；编号相同但标题不同则拒绝。页面结果未知时沿用同一项目和会话编号；改名称不发送。成功之后再创建是新的一次 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。

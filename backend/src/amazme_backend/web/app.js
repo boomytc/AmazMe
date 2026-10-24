@@ -1463,14 +1463,31 @@ function startClient() {
     if (!$("manage").open) return;
     loadProjects().catch(error);
   });
-  let manageProject = "";
   $("manage-project").onsubmit = async event => {
     event.preventDefault();
     if (!identity || health?.state !== "ready") return;
-    manageProject = manageProject || crypto.randomUUID().replaceAll("-", "");
+    const name = $("manage-project-name").value;
+    const key = `project-open:${identity.profile_id}`;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); } catch { pending = null; }
+    if (pending?.phase === "unknown" && pending.name !== name) {
+      $("error").textContent = "上次项目结果未知，未自动重发；请用同一名称查询。";
+      return;
+    }
+    if (!pending || pending.phase !== "unknown") {
+      pending = {
+        project_id: crypto.randomUUID().replaceAll("-", ""),
+        session_id: crypto.randomUUID().replaceAll("-", ""),
+        name, phase: "unknown",
+      };
+      sessionStorage.setItem(key, JSON.stringify(pending));
+    }
     try {
-      const project = await api("/api/v1/projects", "POST", {project_id: manageProject, name: $("manage-project-name").value}, current);
-      const session = await api("/api/v1/sessions", "POST", {title: project.name, project_id: project.project_id}, current);
+      const project = await api("/api/v1/projects", "POST", {project_id: pending.project_id, name: pending.name}, current);
+      const session = await api("/api/v1/sessions", "POST", {
+        title: project.name, project_id: project.project_id, session_id: pending.session_id,
+      }, current);
+      sessionStorage.removeItem(key);
       await load();
       await select(session.session_id);
       await loadProjects();
@@ -1734,7 +1751,15 @@ function startClient() {
     $("create").disabled = true;
     try {
       const workspace = namedTarget().workspace || "primary";
-      const value = await api("/api/v1/sessions", "POST", {title:"工作区任务", workspace});
+      const key = `session-open:${identity?.profile_id || ""}:${workspace}`;
+      let pending = null;
+      try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); } catch { pending = null; }
+      if (!pending || pending.phase !== "unknown") {
+        pending = {session_id: crypto.randomUUID().replaceAll("-", ""), phase: "unknown"};
+        sessionStorage.setItem(key, JSON.stringify(pending));
+      }
+      const value = await api("/api/v1/sessions", "POST", {title:"工作区任务", workspace, session_id: pending.session_id});
+      sessionStorage.removeItem(key);
       const bound = value.workspace || workspace;
       if (!identity?.profile_id) throw new Error("请在地址中写明宿主、会话和工作区");
       rememberWindow(value.session_id, bound, identity.profile_id);

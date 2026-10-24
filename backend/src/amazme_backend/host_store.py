@@ -434,10 +434,17 @@ class HostStore:
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
-            if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
-                raise BackendError("session_capacity", status=429)
             workspace = value.workspace or "primary"
             project_id = value.project_id
+            row = db.execute("SELECT title, workspace FROM sessions WHERE id=?", (session_id,)).fetchone()
+            if row is not None:
+                linked = db.execute("SELECT project FROM project_sessions WHERE session=?", (session_id,)).fetchone()
+                stored_project = "" if linked is None else str(linked[0])
+                if str(row[0]) != value.title or str(row[1] or "primary") != workspace or stored_project != project_id:
+                    raise BackendError("session_conflict")
+                return Session(session_id=session_id, title=value.title, workspace=workspace, project_id=project_id)
+            if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
+                raise BackendError("session_capacity", status=429)
             if project_id and db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
                 raise BackendError("project_not_found", status=404)
             db.execute("INSERT INTO sessions(id,title,workspace) VALUES(?,?,?)", (session_id, value.title, workspace))

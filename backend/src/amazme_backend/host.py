@@ -813,7 +813,10 @@ class Host:
     async def create_session(self, value: CreateSession) -> Session:
         self._admit()
         await self._require_workspace(value.workspace)
-        return await self.store.create_session(secrets.token_hex(16), value)
+        chosen = value.session_id
+        if chosen and (len(chosen) != 32 or any(item not in "0123456789abcdef" for item in chosen)):
+            raise BackendError("invalid_session_id", status=400)
+        return await self.store.create_session(chosen or secrets.token_hex(16), value)
 
     def _provider_secret(self) -> str:
         return self.profile.config.provider.api_key.get_secret_value()

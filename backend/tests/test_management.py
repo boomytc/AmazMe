@@ -96,6 +96,17 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             session = created.json()["session_id"]
             kept = await client.post("/api/v1/sessions", json={"title": "保留"})
             assert kept.status_code == 201
+            chosen = "f" * 32
+            first_fixed = await client.post("/api/v1/sessions", json={"title": "固定", "session_id": chosen})
+            second_fixed = await client.post("/api/v1/sessions", json={"title": "固定", "session_id": chosen})
+            assert first_fixed.status_code == 201 and second_fixed.status_code == 201
+            assert first_fixed.json()["session_id"] == second_fixed.json()["session_id"] == chosen
+            clash = await client.post("/api/v1/sessions", json={"title": "别的", "session_id": chosen})
+            assert clash.status_code == 409 and clash.json()["code"] == "session_conflict"
+            invalid = await client.post("/api/v1/sessions", json={"title": "坏", "session_id": "nope"})
+            assert invalid.status_code == 400 and invalid.json()["code"] == "invalid_session_id"
+            listed_ids = [item["session_id"] for item in (await client.get("/api/v1/sessions")).json()["sessions"]]
+            assert listed_ids.count(chosen) == 1
             await _message(host, session, "hello", "你好")
             settings = await client.get("/api/v1/settings")
             assert settings.json() == {"display_name": "", "revision": 0}
@@ -278,6 +289,11 @@ def test_browser_manages_the_selected_session() -> None:
         const seen = [];
         const feedbackIds = [];
         const shareIds = [];
+        const projectIds = [];
+        const projectSessions = [];
+        const opened = [];
+        globalThis.allowProject = false;
+        globalThis.allowSession = true;
         let projectPosted = false;
         const session = ''' + json.dumps(SESSION) + r''';
         globalThis.fetch = async (path, options={})=>{
@@ -288,6 +304,12 @@ def test_browser_manages_the_selected_session() -> None:
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
           if(path==='/api/v1/sessions' && method==='GET') return response({sessions:[{session_id:session,title:'演示',archived:false,workspace:'primary',project_id:'project'}]});
           if(path==='/api/v1/sessions' && method==='POST') {
+            if (body.title === '工作区任务') {
+              opened.push(body.session_id);
+              if (!globalThis.allowSession) throw new Error('lost');
+              return response({session_id:session,title:body.title,workspace:body.workspace||'primary',archived:false,project_id:''},201);
+            }
+            projectSessions.push(body.session_id || '');
             seen.push('session '+body.project_id);
             return response({session_id:session,title:body.title,project_id:body.project_id,parent_id:'',fork_request_id:'',archived:false,workspace:'primary'},201);
           }
@@ -300,6 +322,11 @@ def test_browser_manages_the_selected_session() -> None:
             return response({projects});
           }
           if(path==='/api/v1/projects' && method==='POST') {
+            if (body.name === '第二次' && !globalThis.allowProject) {
+              projectIds.push(body.project_id);
+              throw new Error('lost');
+            }
+            projectIds.push(body.project_id);
             projectPosted = true;
             seen.push('project '+body.name);
             return response({project_id:body.project_id,name:body.name});
@@ -386,6 +413,39 @@ def test_browser_manages_the_selected_session() -> None:
         await until(()=>shareIds.length===4);
         assert.notEqual(shareIds[3], shareIds[2]);
         assert.equal(seen.some(item => item.startsWith('share-get /api/v1/sessions/'+session+'/shares/')), true);
+        $('error').textContent = '';
+        $('manage-project-name').value = '第二次';
+        await $('manage-project').onsubmit({preventDefault(){}});
+        assert.equal($('error').textContent, 'lost');
+        assert.equal(projectIds.length, 2);
+        $('manage-project-name').value = '第三次';
+        await $('manage-project').onsubmit({preventDefault(){}});
+        assert.equal($('error').textContent.includes('同一名称'), true);
+        assert.equal(projectIds.length, 2);
+        $('manage-project-name').value = '第二次';
+        globalThis.allowProject = true;
+        const sessionsBefore = projectSessions.length;
+        await $('manage-project').onsubmit({preventDefault(){}});
+        assert.equal(projectIds.length, 3);
+        assert.equal(projectSessions.length, sessionsBefore + 1);
+        assert.equal(projectIds[1], projectIds[2]);
+        $('manage-project-name').value = '第四次';
+        await $('manage-project').onsubmit({preventDefault(){}});
+        assert.equal(projectIds.length, 4);
+        assert.equal(projectSessions.length, sessionsBefore + 2);
+        assert.notEqual(projectIds[3], projectIds[2]);
+        assert.notEqual(projectSessions.at(-1), projectSessions.at(-2));
+        globalThis.allowSession = false;
+        await $('create').onclick();
+        assert.equal($('error').textContent, 'lost');
+        assert.equal(opened.length, 1);
+        globalThis.allowSession = true;
+        await $('create').onclick();
+        assert.equal(opened.length, 2);
+        assert.equal(opened[0], opened[1]);
+        await $('create').onclick();
+        assert.equal(opened.length, 3);
+        assert.notEqual(opened[2], opened[1]);
         assert.equal(seen.includes('export'), true);
         assert.equal(seen.includes('import amazme-export/1 false'), true);
         window.happyDOM && await window.happyDOM.abort();
