@@ -87,7 +87,7 @@ WebSocket 的 attachment、ACK、有界重放、快照重同步保留。客户�
 
 B 全面审查、修复、验证后原子提交，再继续 C。阶段中未就绪的接口明确返回不可用，不回退到 VM。
 C 按会话 PTY、stdio MCP、其余客户端分别形成可验收提交。PTY 输入先登记稳定 ID 再发送，
-重连查询同一终端；不确定输入不重放。协议窗口 32 KiB，重连记录最多 256 KiB，页面解释终端状态。Electron、`amazme-backend tui`、print/JSON CLI 和 RPC 已按各自范围验收。默认交互画面和 SDK 的本机链路仍单独验收。
+重连查询同一终端；不确定输入不重放。协议窗口 32 KiB，重连记录最多 256 KiB，页面解释终端状态。Electron、`amazme-backend tui`、print/JSON CLI、RPC 和 Python SDK 已按各自范围验收。默认交互画面的本机链路仍单独验收。
 stdio MCP 在会话本机工作目录启动，复用已验证的受管服务生命周期；不继承全部环境或凭据。
 启动命令由用户明确提交，工具调用另行审批。持久保存原始 JSON 参数、调用 ID、审批摘要及结果；
 支持工具目录的 inputSchema、分页与结构化结果。发出调用之后的超时/失联不能伪装成尚未执行。
