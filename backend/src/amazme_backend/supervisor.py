@@ -21,6 +21,7 @@ from typing import Literal
 import httpx
 import uvicorn
 from fastapi import FastAPI
+from pydantic import TypeAdapter
 
 from .codemode_run import json_object, run_codemode
 from .common import Peer, Profile, build_id, child_command, lock, private_write, unix_listener
@@ -64,6 +65,7 @@ from .contracts import (
     ResolveEffect,
     RetireSupervisor,
     RunTool,
+    SshTarget,
     StopWorker,
     SubmitRemote,
     SupervisorHealth,
@@ -83,7 +85,7 @@ from .contracts import (
 from .faults import Faults
 from .mcp_session import McpClient, catalog_schema_digest, mcp_digest
 from .memories import session_workspace
-from .native_execution import LocalPermit, LocalProcess, reconcile
+from .native_execution import LocalPermit, LocalProcess, ProcessIdentity, reconcile, stop_tracked
 from .native_services import ServiceProcess
 from .plugin_run import plugin_fingerprint, run_plugin_gate, set_fingerprint, stored_config, validate_config
 from .processes import ProcessReservation, exited, wait_exited
@@ -227,6 +229,7 @@ class Supervisor:
         self.mcp_clients: dict[str, McpClient] = {}
         self.mcp_processes: dict[str, ServiceProcess] = {}
         self.remote_clients: dict[str, RemoteClient] = {}
+        self.remote_control = asyncio.Lock()
         self.code_cancels: dict[str, threading.Event] = {}
         self.code_cancel_ids: set[str] = set()
         self.instance = instance or secrets.token_hex(16)
@@ -299,7 +302,7 @@ class Supervisor:
                 decision_id TEXT NOT NULL DEFAULT '',decision TEXT NOT NULL DEFAULT '');
               CREATE TABLE IF NOT EXISTS remotes(id TEXT PRIMARY KEY,session TEXT NOT NULL,host TEXT NOT NULL,
                 host_key TEXT NOT NULL,daemon_id TEXT NOT NULL,generation INTEGER NOT NULL,phase TEXT NOT NULL,
-                endpoint TEXT NOT NULL);
+                target TEXT NOT NULL,transport TEXT NOT NULL DEFAULT '');
               CREATE TABLE IF NOT EXISTS remote_calls(id TEXT PRIMARY KEY,remote TEXT NOT NULL,command TEXT NOT NULL,
                 phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '');
               CREATE TABLE IF NOT EXISTS code_runs(id TEXT PRIMARY KEY,session TEXT NOT NULL,source TEXT NOT NULL,
@@ -312,6 +315,11 @@ class Supervisor:
               PRAGMA user_version=3;
               COMMIT;
             """)
+            remote_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(remotes)")}
+            if "transport" not in remote_columns:
+                db.execute("ALTER TABLE remotes ADD COLUMN transport TEXT NOT NULL DEFAULT ''")
+            if "endpoint" in remote_columns:
+                db.execute("ALTER TABLE remotes RENAME COLUMN endpoint TO target")
             columns = {str(row[1]) for row in db.execute("PRAGMA table_info(terminals)")}
             if columns and "workspace" not in columns:
                 db.execute("ALTER TABLE terminals ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
@@ -1446,9 +1454,32 @@ class Supervisor:
         if require_clean and any(isinstance(result, McpView) and not result.clean for result in results):
             raise BackendError("mcp_stop_unconfirmed", status=503)
 
+    async def _stop_remote_transport(self, row: sqlite3.Row) -> bool:
+        raw = str(row["transport"])
+        leases = TypeAdapter(list[ProcessIdentity]).validate_json(raw) if raw else []
+        stopped = await asyncio.to_thread(stop_tracked, leases)
+        if stopped:
+            await self.db.call(lambda db: db.execute("UPDATE remotes SET transport='' WHERE id=?", (row["id"],)), write=True)
+        return stopped
+
+    async def _close_remotes(self, *, require_clean: bool = True) -> None:
+        async with self.remote_control:
+            rows = await self.db.call(lambda db: db.execute("SELECT * FROM remotes").fetchall())
+            errors: list[Exception] = []
+            for row in rows:
+                try:
+                    await self.disconnect_remote_id(str(row["id"]))
+                    if not await self._stop_remote_transport(row) and require_clean:
+                        errors.append(BackendError("ssh_transport_stop_unconfirmed", status=503))
+                except Exception as exc:
+                    errors.append(exc)
+            if errors:
+                raise errors[0]
+
     async def _close_services(self, *, require_clean: bool = True) -> None:
         results = await asyncio.gather(self._close_terminals(require_clean=require_clean),
-                                       self._close_mcps(require_clean=require_clean), return_exceptions=True)
+                                       self._close_mcps(require_clean=require_clean),
+                                       self._close_remotes(require_clean=require_clean), return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
                 raise result
@@ -1721,15 +1752,23 @@ class Supervisor:
         return row is not None
 
     def _hello_matches(self, row: sqlite3.Row, hello: dict[str, object]) -> bool:
-        return (hello.get("host_key") == row["host_key"] and hello.get("daemon_id") == row["daemon_id"]
+        return (hello.get("op") == "hello" and hello.get("daemon_id") == row["daemon_id"]
                 and hello.get("generation") == int(row["generation"]))
 
     async def _dial_remote(self, row: sqlite3.Row) -> RemoteClient | None:
+        if not await self._stop_remote_transport(row):
+            raise BackendError("ssh_transport_stop_unconfirmed", status=503)
         try:
-            client = await asyncio.to_thread(RemoteClient.connect, str(row["endpoint"]))
-        except (OSError, BackendError):
+            target = SshTarget.model_validate_json(str(row["target"]))
+            directory = self.profile.path / "remotes" / str(row["id"])
+            client = await asyncio.to_thread(RemoteClient.connect, target, directory, str(row["host_key"]), str(row["id"]))
+        except (OSError, BackendError, ValueError) as exc:
+            phase = "blocked" if isinstance(exc, (ValueError, BackendError)) and (
+                not isinstance(exc, BackendError) or exc.code in {"ssh_host_key_unknown", "ssh_host_key_changed", "invalid_ssh_host_key"}) else "disconnected"
             await self.db.call(lambda db: db.execute(
-                "UPDATE remotes SET phase='disconnected' WHERE id=?", (row["id"],)), write=True)
+                "UPDATE remotes SET phase=? WHERE id=?", (phase, row["id"])), write=True)
+            if isinstance(exc, BackendError):
+                raise
             return None
         if not self._hello_matches(row, client.hello):
             client.close()
@@ -1738,7 +1777,8 @@ class Supervisor:
             return None
         self.remote_clients[str(row["id"])] = client
         await self.db.call(lambda db: db.execute(
-            "UPDATE remotes SET phase='connected' WHERE id=?", (row["id"],)), write=True)
+            "UPDATE remotes SET phase='connected',transport=? WHERE id=?",
+            (TypeAdapter(list[ProcessIdentity]).dump_json(client.leases).decode(), row["id"])), write=True)
         return client
 
     async def _absorb_remote(self, remote_id: str, client: RemoteClient) -> None:
@@ -1756,22 +1796,31 @@ class Supervisor:
                     "UPDATE remote_calls SET phase='done',result=? WHERE id=? AND phase='unknown'",
                     (text, cid)), write=True)
 
+    @staticmethod
+    def _remote_matches(row: sqlite3.Row, value: OpenRemote) -> bool:
+        target = SshTarget.model_validate(value.model_dump(include=set(SshTarget.model_fields))).model_dump_json()
+        return (row["session"], row["host"], row["host_key"], row["daemon_id"], int(row["generation"]), row["target"]) == (
+            value.session_id, value.host, value.host_key, value.daemon_id, value.generation, target)
+
     async def open_remote(self, value: OpenRemote) -> RemoteView:
+        async with self.remote_control:
+            return await self._open_remote(value)
+
+    async def _open_remote(self, value: OpenRemote) -> RemoteView:
         self.check_host(value)
         self._admit()
+        target = SshTarget.model_validate(value.model_dump(include=set(SshTarget.model_fields))).model_dump_json()
         existing = await self._remote_row(value.remote_id)
         if existing is not None:
-            same = (existing["session"], existing["host"], existing["host_key"], existing["daemon_id"],
-                    int(existing["generation"]), existing["endpoint"])
-            if same != (value.session_id, value.host, value.host_key, value.daemon_id, value.generation, value.endpoint):
+            if not self._remote_matches(existing, value):
                 raise BackendError("remote_conflict")
-            await self.reconnect_remote(value)
+            await self._reconnect_remote(value)
             current = await self._remote_row(value.remote_id)
             assert current is not None
             return self._remote_view(current)
         await self.db.call(lambda db: db.execute(
-            "INSERT INTO remotes(id,session,host,host_key,daemon_id,generation,phase,endpoint) VALUES(?,?,?,?,?,?,'disconnected',?)",
-            (value.remote_id, value.session_id, value.host, value.host_key, value.daemon_id, value.generation, value.endpoint)),
+            "INSERT INTO remotes(id,session,host,host_key,daemon_id,generation,phase,target) VALUES(?,?,?,?,?,?,'disconnected',?)",
+            (value.remote_id, value.session_id, value.host, value.host_key, value.daemon_id, value.generation, target)),
             write=True)
         row = await self._remote_row(value.remote_id)
         assert row is not None
@@ -1787,14 +1836,21 @@ class Supervisor:
         return self._remote_view(current)
 
     async def reconnect_remote(self, value: OpenRemote) -> RemoteView:
+        async with self.remote_control:
+            return await self._reconnect_remote(value)
+
+    async def _reconnect_remote(self, value: OpenRemote) -> RemoteView:
         self.check_host(value)
         self._admit()
         row = await self._remote_row(value.remote_id)
         if row is None or row["session"] != value.session_id:
             raise BackendError("remote_not_found", status=404)
-        old = self.remote_clients.pop(value.remote_id, None)
-        if old is not None:
-            old.close()
+        if not self._remote_matches(row, value):
+            raise BackendError("remote_conflict")
+        if value.remote_id in self.remote_clients:
+            await self.disconnect_remote_id(value.remote_id)
+            row = await self._remote_row(value.remote_id)
+            assert row is not None
         client = await self._dial_remote(row)
         if client is None:
             current = await self._remote_row(value.remote_id)
@@ -1808,29 +1864,47 @@ class Supervisor:
         return self._remote_view(current)
 
     async def disconnect_remote_id(self, remote_id: str) -> None:
-        client = self.remote_clients.pop(remote_id, None)
+        client = self.remote_clients.get(remote_id)
         if client is not None:
-            client.close()
+            try:
+                await asyncio.to_thread(client.close)
+            finally:
+                # Persist any descendants observed while stopping before releasing the live handle.
+                await self.db.call(lambda db: db.execute("UPDATE remotes SET transport=? WHERE id=?",
+                    (TypeAdapter(list[ProcessIdentity]).dump_json(client.leases).decode(), remote_id)), write=True)
+            self.remote_clients.pop(remote_id, None)
         await self.db.call(lambda db: db.execute(
             "UPDATE remotes SET phase='disconnected' WHERE id=? AND phase!='blocked'", (remote_id,)), write=True)
 
     async def disconnect_remote(self, value: OpenRemote) -> RemoteView:
+        async with self.remote_control:
+            return await self._disconnect_remote(value)
+
+    async def _disconnect_remote(self, value: OpenRemote) -> RemoteView:
         self.check_host(value)
         self._admit()
         row = await self._remote_row(value.remote_id)
         if row is None or row["session"] != value.session_id:
             raise BackendError("remote_not_found", status=404)
+        if not self._remote_matches(row, value):
+            raise BackendError("remote_conflict")
         await self.disconnect_remote_id(value.remote_id)
         current = await self._remote_row(value.remote_id)
         assert current is not None
         return self._remote_view(current)
 
     async def submit_remote(self, value: OpenRemote, call: RemoteCallRequest) -> RemoteCallView:
+        async with self.remote_control:
+            return await self._submit_remote(value, call)
+
+    async def _submit_remote(self, value: OpenRemote, call: RemoteCallRequest) -> RemoteCallView:
         self.check_host(value)
         self._admit()
         row = await self._remote_row(value.remote_id)
         if row is None or row["session"] != value.session_id:
             raise BackendError("remote_not_found", status=404)
+        if not self._remote_matches(row, value):
+            raise BackendError("remote_conflict")
         if row["phase"] != "connected":
             raise BackendError("remote_unreachable", status=503)
         if await self._unknown_remote(value.remote_id):
@@ -2110,6 +2184,9 @@ class Supervisor:
             self.terminals.clear()
             self.mcp_processes.clear()
             self.mcp_clients.clear()
+            for client in self.remote_clients.values():
+                await asyncio.to_thread(client.close)
+            self.remote_clients.clear()
             await self.db.close()
 
 

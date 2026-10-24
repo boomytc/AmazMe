@@ -819,22 +819,35 @@ class CodeView(Model):
     state: str = ""
 
 
-class RemoteOpen(Model):
+class SshTarget(Model):
+    host: str = Field(min_length=1, max_length=200, pattern=r"^[^-\s\x00-\x1f\x7f][^\s\x00-\x1f\x7f]*$")
+    user: str = Field(default="", max_length=100)
+    port: int | None = Field(default=None, ge=1, le=65535)
+    identity_file: str = Field(default="", max_length=1024)
+    config_file: str = Field(default="", max_length=1024)
+
+
+class RemoteKeyScan(SshTarget):
     remote_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    host: str = Field(min_length=1, max_length=200)
-    host_key: str = Field(min_length=16, max_length=128)
+
+
+class RemoteHostKey(Model):
+    line: str
+    fingerprint: str
+
+
+class RemoteHostKeys(Model):
+    keys: list[RemoteHostKey]
+
+
+class RemoteOpen(RemoteKeyScan):
+    host_key: str = Field(min_length=16, max_length=2048)
     generation: int = Field(default=1, ge=1, le=1_000_000)
-    endpoint: str = Field(pattern=r"^127\.0\.0\.1:[0-9]{1,5}$")
 
 
-class OpenRemote(HostFence):
+class OpenRemote(RemoteOpen, HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    remote_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    host: str = Field(min_length=1, max_length=200)
-    host_key: str = Field(min_length=16, max_length=128)
     daemon_id: str = Field(pattern=r"^[a-f0-9]{64}$")
-    generation: int = Field(ge=1, le=1_000_000)
-    endpoint: str = Field(pattern=r"^127\.0\.0\.1:[0-9]{1,5}$")
 
 
 class RemoteView(Model):

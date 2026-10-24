@@ -1,13 +1,18 @@
-"""Remote daemon. A dropped client connection does not stop the process or erase receipts."""
+"""Python remote command daemon over SSH stdio; persist intent before running user code."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import socket
+import os
+import re
+import signal
+import sqlite3
+import subprocess
 import sys
+import threading
 from pathlib import Path
-from typing import cast
+from typing import BinaryIO, cast
 
 LIMIT = 65536
 
@@ -16,131 +21,101 @@ def identity() -> str:
     return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
-def _load(path: Path) -> dict[str, dict[str, str]]:
-    if not path.exists():
-        return {}
-    value = json.loads(path.read_text())
-    if not isinstance(value, dict):
-        return {}
-    loaded = cast(dict[object, object], value)
-    receipts: dict[str, dict[str, str]] = {}
-    for key, item in loaded.items():
-        if not isinstance(item, dict):
-            continue
-        body = cast(dict[object, object], item)
-        command = body.get("command")
-        result = body.get("result")
-        if isinstance(key, str) and isinstance(command, str) and isinstance(result, str):
-            receipts[key] = {"command": command, "result": result}
-    return receipts
+def execute(command: str) -> str:
+    process = subprocess.Popen(command, shell=True, stdin=subprocess.DEVNULL,
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    output: list[bytearray] = [bytearray(), bytearray()]
 
-
-def _save(path: Path, receipts: dict[str, dict[str, str]]) -> None:
-    path.write_text(json.dumps(receipts, ensure_ascii=False, sort_keys=True))
-
-
-def _line(buf: bytearray) -> bytes | None:
-    if b"\n" not in buf:
-        if len(buf) > LIMIT:
-            raise SystemExit(125)
-        return None
-    line, _, rest = bytes(buf).partition(b"\n")
-    buf[:] = rest
-    return line
-
-
-def _send(conn: socket.socket, message: dict[str, object]) -> None:
-    conn.sendall((json.dumps(message, ensure_ascii=False) + "\n").encode())
-
-
-def _apply(state: Path, call_id: str, command: str) -> dict[str, object]:
-    path = state / "receipts.json"
-    receipts = _load(path)
-    current = receipts.get(call_id)
-    if current is not None:
-        if current["command"] != command:
-            return {"op": "conflict", "call_id": call_id}
-        return {"op": "result", "call_id": call_id, "text": current["result"]}
-    with (state / "effects.txt").open("a") as handle:
-        handle.write(command + "\n")
-    text = "ran:" + command
-    receipts[call_id] = {"command": command, "result": text}
-    _save(path, receipts)
-    return {"op": "result", "call_id": call_id, "text": text}
-
-
-def _query(state: Path, call_id: str) -> dict[str, object]:
-    current = _load(state / "receipts.json").get(call_id)
-    if current is None:
-        return {"op": "unknown", "call_id": call_id}
-    return {"op": "result", "call_id": call_id, "text": current["result"]}
-
-
-def _serve_connection(conn: socket.socket, state: Path) -> None:
-    host_key = (state / "host_key").read_text().strip()
-    generation = int((state / "generation").read_text().strip())
-    _send(conn, {"op": "hello", "host_key": host_key, "daemon_id": identity(), "generation": generation})
-    buf = bytearray()
-    while True:
-        part = conn.recv(4096)
-        if not part:
+    def drain(pipe: BinaryIO | None, buf: bytearray) -> None:
+        if pipe is None:
             return
-        buf.extend(part)
-        while True:
-            line = _line(buf)
-            if line is None:
-                break
-            if not line:
-                continue
-            message = json.loads(line)
-            op = message.get("op")
-            call_id = message.get("call_id")
-            if not isinstance(call_id, str):
-                _send(conn, {"op": "reject"})
-                continue
-            if op == "call" and isinstance(message.get("command"), str):
-                reply = _apply(state, call_id, message["command"])
-                if message["command"] == "drop":
-                    return
-                _send(conn, reply)
-            elif op == "query":
-                _send(conn, _query(state, call_id))
-            elif op == "cancel":
-                # A finished receipt stays. No receipt means the stop is unproven.
-                known = _query(state, call_id)
-                _send(conn, known if known["op"] == "result" else {"op": "unknown", "call_id": call_id})
-            else:
-                _send(conn, {"op": "reject"})
-
-
-def serve(state: Path) -> None:
-    state.mkdir(parents=True, exist_ok=True)
-    sock = socket.socket()
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", 0))
-    sock.listen(8)
-    port = sock.getsockname()[1]
-    (state / "port").write_text(str(port))
-    while True:
-        conn, _ = sock.accept()
         try:
-            _serve_connection(conn, state)
-        except (OSError, json.JSONDecodeError, SystemExit):
-            pass
+            while part := pipe.read(4096):
+                buf.extend(part[:max(0, 16000 - len(buf))])
         finally:
-            conn.close()
+            pipe.close()
+
+    readers = [threading.Thread(target=drain, args=(pipe, buf), daemon=True)
+               for pipe, buf in zip((process.stdout, process.stderr), output)]
+    for reader in readers:
+        reader.start()
+    timed_out = False
+    try:
+        process.wait(timeout=120)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        # The directly owned process group is the limit of this stop request.
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=5)
+    for reader in readers:
+        reader.join(2)
+    return json.dumps({"exit_code": process.returncode, "stdout": output[0].decode(errors="replace"),
+                       "stderr": output[1].decode(errors="replace"), "timed_out": timed_out,
+                       "output_incomplete": any(reader.is_alive() for reader in readers)}, ensure_ascii=False)
+
+
+def request(db: sqlite3.Connection, value: dict[str, object]) -> dict[str, object]:
+    op, call_id = value.get("op"), value.get("call_id")
+    if not isinstance(call_id, str) or re.fullmatch(r"[a-f0-9]{32}", call_id) is None:
+        return {"op": "reject"}
+    found = db.execute("SELECT command,result FROM calls WHERE id=?", (call_id,)).fetchone()
+    if op in {"query", "cancel"}:
+        if found is not None and found[1] is not None:
+            return {"op": "result", "call_id": call_id, "text": found[1]}
+        # Disconnect or a cancellation request cannot prove a remote process stopped.
+        return {"op": "unknown", "call_id": call_id}
+    command = value.get("command")
+    if op != "call" or not isinstance(command, str) or not command or len(command) > 16000:
+        return {"op": "reject"}
+    if found is not None:
+        if command != found[0]:
+            return {"op": "conflict", "call_id": call_id}
+        return {"op": "result", "call_id": call_id, "text": found[1]} if found[1] is not None else {
+            "op": "unknown", "call_id": call_id}
+    if int(db.execute("SELECT count(*) FROM calls").fetchone()[0]) >= 4096:
+        return {"op": "unknown", "call_id": call_id}
+    # A second connection may race this insert; only its winner executes.
+    changed = db.execute("INSERT OR IGNORE INTO calls(id,command) VALUES(?,?)", (call_id, command)).rowcount
+    db.commit()
+    if not changed:
+        return request(db, value)
+    result = execute(command)
+    db.execute("UPDATE calls SET result=? WHERE id=?", (result, call_id))
+    db.commit()
+    return {"op": "result", "call_id": call_id, "text": result}
 
 
 def main() -> int:
     state = Path(sys.argv[1])
-    state.mkdir(parents=True, exist_ok=True)
-    key = state / "host_key"
-    generation = state / "generation"
-    if not key.exists():
-        key.write_text(sys.argv[2])
-    if not generation.exists():
-        generation.write_text(sys.argv[3])
-    serve(state)
+    state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.umask(0o077)
+    db = sqlite3.connect(state / "receipts.sqlite3", timeout=5)
+    db.execute("PRAGMA journal_mode=WAL")
+    db.execute("PRAGMA synchronous=FULL")
+    db.execute("CREATE TABLE IF NOT EXISTS calls(id TEXT PRIMARY KEY,command TEXT NOT NULL,result TEXT)")
+    generation_path = state / "generation"
+    if not generation_path.exists():
+        generation_path.write_text("1")
+    generation = int(generation_path.read_text())
+
+    def send(value: dict[str, object]) -> None:
+        sys.stdout.write(json.dumps(value, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+
+    send({"op": "hello", "daemon_id": identity(), "generation": generation})
+    try:
+        while line := sys.stdin.buffer.readline(LIMIT + 1):
+            if len(line) > LIMIT or not line.endswith(b"\n"):
+                return 125
+            value: object = json.loads(line)
+            if not isinstance(value, dict):
+                return 125
+            send(request(db, {str(k): v for k, v in cast(dict[object, object], value).items()}))
+    finally:
+        db.close()
     return 0
 
 

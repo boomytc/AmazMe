@@ -141,7 +141,7 @@ async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_
         raise AssertionError(path)
 
     monkeypatch.setattr(host.supervisor, "call", blocked)
-    remote = RemoteOpen(remote_id="a" * 32, host="remote-a", host_key="k" * 16, endpoint="127.0.0.1:9")
+    remote = RemoteOpen(remote_id="a" * 32, host="remote-a", host_key="k" * 16)
     refused = [
         lambda: host.open_terminal(missing, TerminalOpen(terminal_id="f" * 32, command="sh", workspace="primary")),
         lambda: host.open_mcp(missing, McpOpen(server_id="a" * 32, command="python3 demo.py")),

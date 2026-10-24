@@ -532,6 +532,10 @@ function startClient() {
       }
       identity = boot; connection.identity = boot;
       remoteId = sessionStorage.getItem(`remote-connection:${boot.profile_id}:${id}`) || "";
+      const remoteConfig = JSON.parse(sessionStorage.getItem(`remote-config:${boot.profile_id}:${id}`) || "null");
+      for (const [field, name] of [["host","host"], ["key","host_key"], ["user","user"], ["port","port"], ["identity","identity_file"], ["config","config_file"]]) {
+        $("remote-" + field).value = remoteConfig?.[name] ?? "";
+      }
       health = {state:boot.state};
       connection.attachment = await api(`/api/v1/sessions/${id}/attachments`, "POST", {}, null, boot);
       if (!owns(connection)) { void detach(connection); return; }
@@ -1776,12 +1780,27 @@ function startClient() {
   let remoteId = "";
   const remoteState = {connected:"已连接",disconnected:"已断开，远端未证明停止",blocked:"身份不符，已阻塞"};
   function remoteBody() {
-    return {remote_id: remoteId, host: $("remote-host").value, host_key: $("remote-key").value, endpoint: $("remote-endpoint").value, generation: 1};
+    return {remote_id: remoteId, host: $("remote-host").value, host_key: $("remote-key").value, user: $("remote-user").value, port: $("remote-port").value ? Number($("remote-port").value) : null, identity_file: $("remote-identity").value, config_file: $("remote-config").value, generation: 1};
   }
   function showRemote(view, call) {
     $("remote-state").textContent = remoteState[view.phase] || view.phase;
     if (call) $("remote-result").textContent = call.result || call.phase;
   }
+  $("remote-scan").onclick = async () => {
+    const operation = beginOperation("remote-call");
+    if (!operation || health?.state !== "ready") return;
+    const {connection, session:selected, identity} = operation;
+    remoteId = remoteId || crypto.randomUUID().replaceAll("-", "");
+    sessionStorage.setItem(`remote-connection:${identity.profile_id}:${selected}`, remoteId);
+    const {host_key, generation, ...target} = remoteBody();
+    try {
+      const result = await api(`/api/v1/sessions/${selected}/remotes/keys`, "POST", target, connection);
+      if (!operation.active()) return;
+      $("remote-keys").textContent = result.keys.map(key => `${key.fingerprint}\n${key.line}`).join("\n");
+      $("remote-state").textContent = "请与可信来源核对指纹，将认可的主机密钥行填入后连接";
+      $("error").textContent = "";
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
   $("remote-form").onsubmit = async event => {
     event.preventDefault();
     const operation = beginOperation("remote-call");
@@ -1790,6 +1809,7 @@ function startClient() {
     if (!selected || !identity || health?.state !== "ready") return;
     remoteId = remoteId || crypto.randomUUID().replaceAll("-", "");
     sessionStorage.setItem(`remote-connection:${identity.profile_id}:${selected}`, remoteId);
+    sessionStorage.setItem(`remote-config:${identity.profile_id}:${selected}`, JSON.stringify(remoteBody()));
     try {
       const result = await api(`/api/v1/sessions/${selected}/remotes`, "POST", remoteBody(), connection);
       if (!operation.active()) return;

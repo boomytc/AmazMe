@@ -1827,6 +1827,55 @@
         }
       }
     },
+    "/api/v1/sessions/{session_id}/remotes/keys": {
+      "post": {
+        "summary": "Scan Remote Key",
+        "operationId": "scan_remote_key_api_v1_sessions__session_id__remotes_keys_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoteKeyScan"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RemoteHostKeys"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/remotes": {
       "post": {
         "summary": "Open Remote",
@@ -6929,64 +6978,144 @@
         ],
         "title": "RemoteCallView"
       },
-      "RemoteOpen": {
+      "RemoteHostKey": {
         "properties": {
-          "remote_id": {
+          "line": {
             "type": "string",
-            "pattern": "^[a-f0-9]{32}$",
-            "title": "Remote Id"
+            "title": "Line"
           },
-          "host": {
+          "fingerprint": {
             "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Host"
-          },
-          "host_key": {
-            "type": "string",
-            "maxLength": 128,
-            "minLength": 16,
-            "title": "Host Key"
-          },
-          "generation": {
-            "type": "integer",
-            "maximum": 1000000.0,
-            "minimum": 1.0,
-            "title": "Generation",
-            "default": 1
-          },
-          "endpoint": {
-            "type": "string",
-            "pattern": "^127\\.0\\.0\\.1:[0-9]{1,5}$",
-            "title": "Endpoint"
+            "title": "Fingerprint"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "remote_id",
-          "host",
-          "host_key",
-          "endpoint"
+          "line",
+          "fingerprint"
         ],
-        "title": "RemoteOpen"
+        "title": "RemoteHostKey"
       },
-      "RemoteRun": {
+      "RemoteHostKeys": {
         "properties": {
+          "keys": {
+            "items": {
+              "$ref": "#/components/schemas/RemoteHostKey"
+            },
+            "type": "array",
+            "title": "Keys"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "title": "RemoteHostKeys"
+      },
+      "RemoteKeyScan": {
+        "properties": {
+          "host": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^-\\s\\x00-\\x1f\\x7f][^\\s\\x00-\\x1f\\x7f]*$",
+            "title": "Host"
+          },
+          "user": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "User",
+            "default": ""
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "identity_file": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Identity File",
+            "default": ""
+          },
+          "config_file": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Config File",
+            "default": ""
+          },
+          "remote_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Remote Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host",
+          "remote_id"
+        ],
+        "title": "RemoteKeyScan"
+      },
+      "RemoteOpen": {
+        "properties": {
+          "host": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^-\\s\\x00-\\x1f\\x7f][^\\s\\x00-\\x1f\\x7f]*$",
+            "title": "Host"
+          },
+          "user": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "User",
+            "default": ""
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "identity_file": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Identity File",
+            "default": ""
+          },
+          "config_file": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Config File",
+            "default": ""
+          },
           "remote_id": {
             "type": "string",
             "pattern": "^[a-f0-9]{32}$",
             "title": "Remote Id"
           },
-          "host": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Host"
-          },
           "host_key": {
             "type": "string",
-            "maxLength": 128,
+            "maxLength": 2048,
             "minLength": 16,
             "title": "Host Key"
           },
@@ -6996,11 +7125,74 @@
             "minimum": 1.0,
             "title": "Generation",
             "default": 1
-          },
-          "endpoint": {
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host",
+          "remote_id",
+          "host_key"
+        ],
+        "title": "RemoteOpen"
+      },
+      "RemoteRun": {
+        "properties": {
+          "host": {
             "type": "string",
-            "pattern": "^127\\.0\\.0\\.1:[0-9]{1,5}$",
-            "title": "Endpoint"
+            "maxLength": 200,
+            "minLength": 1,
+            "pattern": "^[^-\\s\\x00-\\x1f\\x7f][^\\s\\x00-\\x1f\\x7f]*$",
+            "title": "Host"
+          },
+          "user": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "User",
+            "default": ""
+          },
+          "port": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Port"
+          },
+          "identity_file": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Identity File",
+            "default": ""
+          },
+          "config_file": {
+            "type": "string",
+            "maxLength": 1024,
+            "title": "Config File",
+            "default": ""
+          },
+          "remote_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Remote Id"
+          },
+          "host_key": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 16,
+            "title": "Host Key"
+          },
+          "generation": {
+            "type": "integer",
+            "maximum": 1000000.0,
+            "minimum": 1.0,
+            "title": "Generation",
+            "default": 1
           },
           "call_id": {
             "type": "string",
@@ -7017,10 +7209,9 @@
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "remote_id",
           "host",
+          "remote_id",
           "host_key",
-          "endpoint",
           "call_id",
           "command"
         ],

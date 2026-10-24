@@ -119,6 +119,9 @@ from .contracts import (
     Recovery,
     ReloadPlugin,
     RemoteCallView,
+    RemoteHostKey,
+    RemoteHostKeys,
+    RemoteKeyScan,
     RemoteOpen,
     RemoteRun,
     RemoteView,
@@ -175,6 +178,7 @@ from .providers import CATALOG, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
 from .rpc import RpcCall, handle_rpc
 from .session_ops import SessionOps, SessionRelay
+from .ssh import scan_host_key
 from .storage import (
     TERMINAL,
     SessionStore,
@@ -701,8 +705,7 @@ class Host:
 
     def _remote_body(self, session_id: str, value: RemoteOpen) -> OpenRemote:
         return OpenRemote(host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
-                          remote_id=value.remote_id, host=value.host, host_key=value.host_key,
-                          daemon_id=daemon_identity(), generation=value.generation, endpoint=value.endpoint)
+                          **value.model_dump(include=set(RemoteOpen.model_fields)), daemon_id=daemon_identity())
 
     async def _update_matches_supervisor(self) -> bool:
         active = await self.store.active_update()
@@ -736,6 +739,12 @@ class Host:
         self._admit()
         return await self.supervisor.call("POST", "/code/cancel", CodeView, CancelCode(
             host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id, run_id=run_id))
+
+    async def scan_remote_key(self, session_id: str, value: RemoteKeyScan) -> RemoteHostKeys:
+        self._admit()
+        await self._require_session(session_id)
+        keys = await asyncio.to_thread(scan_host_key, value, "amazme-remote-" + value.remote_id)
+        return RemoteHostKeys(keys=[RemoteHostKey(line=line, fingerprint=fingerprint) for line, fingerprint in keys])
 
     async def open_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
         self._admit()
@@ -2306,6 +2315,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session_id}/code/{run_id}/cancel")
     async def cancel_code(session_id: str, run_id: str) -> CodeView:
         return await owner.cancel_code(session_id, run_id)
+
+    @app.post("/api/v1/sessions/{session_id}/remotes/keys")
+    async def scan_remote_key(session_id: str, value: RemoteKeyScan) -> RemoteHostKeys:
+        return await owner.scan_remote_key(session_id, value)
 
     @app.post("/api/v1/sessions/{session_id}/remotes")
     async def open_remote(session_id: str, value: RemoteOpen) -> RemoteView:

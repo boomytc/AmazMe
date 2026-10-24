@@ -10,10 +10,9 @@ import pytest
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import BackendError, OpenRemote, RemoteCallRequest
-from amazme_backend.remote_session import daemon_identity
 from amazme_backend.supervisor import Supervisor
 
-DAEMON = Path(__file__).parents[1] / "src/amazme_backend/remote_daemon.py"
+DAEMON = Path(__file__).parent / "helpers/remote_probe.py"
 PIN = "correct-host-key"
 
 
@@ -42,6 +41,8 @@ async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Supervi
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
+    from helpers.remote_probe_client import RemoteClient as ProbeClient
+    monkeypatch.setattr("amazme_backend.supervisor.RemoteClient.connect", lambda target, *args: ProbeClient.connect(target.host))
     owner = Supervisor(Profile(tmp_path), "supervisor-remote")
     await owner.initialize()
     owner.monitor_task.cancel()
@@ -50,16 +51,16 @@ async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Supervi
 
 def opener(owner: Supervisor, endpoint: str, *, key: str = PIN, generation: int = 1) -> OpenRemote:
     return OpenRemote(host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32,
-                      remote_id="b" * 32, host="remote-a", host_key=key, daemon_id=daemon_identity(),
-                      generation=generation, endpoint=endpoint)
+                      remote_id="b" * 32, host=endpoint, host_key=key,
+                      daemon_id=__import__("hashlib").sha256(DAEMON.read_bytes()).hexdigest(), generation=generation)
 
 
-async def test_wrong_host_key_sends_no_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wrong_daemon_identity_sends_no_work(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     process, endpoint = start_daemon(tmp_path / "daemon")
     owner = await supervisor(tmp_path, monkeypatch)
     try:
         with pytest.raises(BackendError, match="remote_identity_mismatch"):
-            await owner.open_remote(opener(owner, endpoint, key="wrong-host-key!!"))
+            await owner.open_remote(opener(owner, endpoint).model_copy(update={"daemon_id": "0" * 64}))
         view = await owner._remote_row("b" * 32)
         assert view is not None and view["phase"] == "blocked"
         assert not (tmp_path / "daemon" / "effects.txt").exists()
@@ -172,7 +173,7 @@ def test_browser_shows_disconnect_without_calling_the_remote_stopped() -> None:
         await until(()=>$('sessions').textContent.includes('工作区'));
         $('remote-host').value = 'remote-a';
         $('remote-key').value = 'correct-host-key';
-        $('remote-endpoint').value = '127.0.0.1:9';
+
         $('remote-form').requestSubmit();
         await until(()=>$('remote-state').textContent==='已连接');
         $('remote-drop').click();
