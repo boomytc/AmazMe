@@ -17,6 +17,7 @@ from amazme_backend.contracts import (
     BranchSession,
     Cleanup,
     CompactSession,
+    ComputerPolicy,
     CreateSession,
     HostFence,
     Lease,
@@ -27,6 +28,7 @@ from amazme_backend.contracts import (
     Stream,
     Submit,
     ToolResult,
+    WebPolicy,
     WorkspaceGrantRequest,
 )
 from amazme_backend.host import Host, application
@@ -191,6 +193,42 @@ async def test_branch_keeps_parent_history_and_drops_later_turns(owner: Host) ->
             assert "beta" in parent_context and "gamma" not in parent_context
             assert any(item.request_id == "r2" and item.status == "succeeded"
                        for item in (await parent.snapshot()).requests)
+        finally:
+            await child.db.close()
+    finally:
+        await parent.db.close()
+
+
+async def test_branch_keeps_session_switches_and_leaves_calls_behind(owner: Host) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+        await parent.save_web_policy(WebPolicy(enabled=True, base_url="https://user:secret@tools.example/v1"))
+        before = [item.session_id for item in (await owner.sessions()).sessions]
+        with pytest.raises(BackendError, match="web_address"):
+            await owner.branch_session(PARENT, BranchSession(request_id="r1"))
+        assert [item.session_id for item in (await owner.sessions()).sessions] == before
+        web = WebPolicy(
+            enabled=True, base_url="https://tools.example/v1", count=3,
+            send_original_question=False, timeout_ms=5000)
+        computer = ComputerPolicy(enabled=True, max_age_ms=1000)
+        await parent.save_web_policy(web)
+        await parent.save_computer_policy(computer)
+        await parent.begin_web_call("paid", "search", "query")
+        await parent.note_computer_exit(7)
+        created = await owner.branch_session(PARENT, BranchSession(request_id="r1"))
+        child = SessionStore(session_database(owner.profile.path, created.session_id), created.session_id,
+                             build=owner.build, approval_policy="auto", instance="child-worker",
+                             require_existing=True)
+        await child.initialize()
+        try:
+            assert await child.web_policy() == web
+            assert await child.computer_policy() == computer
+            assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM web_calls").fetchone()[0]) == 0
+            assert await child.computer_runtime() == (False, None, "")
+            await child.save_web_policy(WebPolicy())
+            assert await parent.web_policy() == web
+            assert (await parent.computer_runtime())[:2] == (True, 7)
         finally:
             await child.db.close()
     finally:

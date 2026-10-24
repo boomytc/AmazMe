@@ -30,7 +30,8 @@
 | 终端和 MCP 跟随会话目录 | `426cc44a6a7fee16b201e68746637caf7d1685c7` | `backend/tests/test_workspaces.py`：文件区停在另一个授予目录时，新建终端和连接 MCP 仍提交空工作区，由宿主按会话目录打开 |
 | 未知会话不进入主工作区 | `2d1a85602d50eebc837bc2df3c8cbd7e6b2d7b02` | `backend/tests/test_workspaces.py`：没有这条会话时，终端、MCP、脚本、远端和插件调用都不联系监督器 |
 | 监督器拒绝缺失的会话行 | `ccfbaf38fd0e143176b13b38051f029d84d6db8a` | `backend/tests/test_workspaces.py`：宿主库已有会话表而没有这一行时，空工作区终端和 shell 在写入主目录之前拒绝 |
-| 写明工作区仍核对会话行 | 包含本文件的提交 | `backend/tests/test_workspaces.py`：写明 primary 的终端和 MCP 在会话行缺失时拒绝，执行目录不会创建 |
+| 写明工作区仍核对会话行 | `c3e30b66876ca4b428bd37f0c488becef58e5d7b` | `backend/tests/test_workspaces.py`：写明 primary 的终端和 MCP 在会话行缺失时拒绝，执行目录不会创建 |
+| 分支沿用会话开关 | 包含本文件的提交 | `backend/tests/test_session_branch.py`：子会话得到父会话的网页和桌面开关；已发出的调用和被挡住的桌面状态留在父会话；地址带账号时不分出新会话 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -59,6 +60,7 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 未知会话不进入主工作区的源码 build_id 为 `2a33e729171c47466dacf2982b68ec9d011dc4d6e220bff9b6aae3a6e91ecabb`。没有这条会话时，终端、MCP、脚本、远端和插件调用都不联系监督器。已有会话仍会继续打开。
 监督器拒绝缺失会话行的源码 build_id 为 `f72091af61e53d0319c34ce6beeae58a24eaf79ab185fec746e22bd23281fc89`。宿主库已有会话表而没有这一行时，shell 和空工作区终端不会写入主目录。库文件或会话表还不存在时，监督器单测仍把目录当作 primary。
 写明工作区仍核对会话行的源码 build_id 为 `bda5082f9311adea67b4087c2e4830b1b749fb9bf63cb1744980458aca513f00`。写明 primary 的终端和 MCP 在会话行缺失时拒绝。会话存在时，写明的名称仍指向那个授予目录。
+分支沿用会话开关的源码 build_id 为 `fe0dad4d3b59706cc091aa04c7e3809fa56714808de7411d1fe78909988b2078`。子会话得到父会话的网页和桌面开关。已发出的网页调用和被挡住的桌面状态留在父会话。地址带账号时不分出新会话。没有真实付费调用，也没有读 macOS TCC。
 
 资源普查命令只报告。用户主目录里的常驻服务保持 observed。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
 下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
@@ -69,7 +71,7 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
    这些实验仍要按同一契约补证。先追踪已有实现，不另建一套业务运行时。
 2. **按真实需求补齐产品功能。** 多工作区已在本机目录上核对：会话 shell、终端和没有 grant/ 前缀的文件工具进入授予目录，文件区显示当前浏览目录，侧栏显示当前会话的本机目录，取消授予不删文件。页面新建终端和连接 MCP 不跟随文件区。没有对应会话时，这些启动不会落到主工作区。宿主库已有会话表而缺少这一行时，监督器不改用主目录；写明工作区名称也会先核对会话行。会话存在时，显式 grant/名称 仍指向那个目录。
    `amazme-backend client decide` 已核对显式批准和拒绝。`client submit` 仍只等待终态。
-   供应商密钥可以更换和清除。OAuth 仍未做。导入会先核对每个会话的工作区，以及反馈指向的会话。缺任何一项时不写入。分支在工作区已取消时拒绝，复制失败不留下项目关联。
+   供应商密钥可以更换和清除。OAuth 仍未做。导入会先核对每个会话的工作区，以及反馈指向的会话。缺任何一项时不写入。分支在工作区已取消时拒绝，复制失败不留下项目关联。分支会复制网页和桌面开关，不复制已发出的调用或桌面运行状态。
    真实 SSH、插件、Codemode、computer-use、记忆、工作流、定时任务、网页工具及分享仍要逐项区分。
    需要 TCC、真实 SSH 或真实供应商的功能取得对应证据，不能用模拟结果代替。MCP 动态目录刷新、HTTP/OAuth、媒体与更多服务兼容性独立验收。
 3. **本机安装与交付。** 只构建一份当前包；更新实验最多明确 A/B 两份。验证独立安装、含空格路径、受控 PATH、

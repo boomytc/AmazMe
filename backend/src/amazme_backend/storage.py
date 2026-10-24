@@ -153,6 +153,33 @@ def read_settled_root(path: Path, request_id: str) -> tuple[str, Receipt, list[t
         return str(row[0]), receipt, messages, str(run_row[0])
     finally:
         connection.close()
+
+
+def read_session_policies(path: Path) -> tuple[WebPolicy, ComputerPolicy]:
+    """Read the parent's switches. Call history and driver state stay on the parent."""
+    if not path.is_file():
+        raise BackendError("branch_point_missing", status=404)
+    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        web = _optional_policy(connection, "SELECT payload FROM web_policies WHERE id='policy'", WebPolicy)
+        computer = _optional_policy(
+            connection, "SELECT payload FROM computer_policies WHERE id='policy'", ComputerPolicy)
+        return web, computer
+    finally:
+        connection.close()
+
+
+def _optional_policy[T: Model](connection: sqlite3.Connection, query: str, model: type[T]) -> T:
+    try:
+        row = connection.execute(query).fetchone()
+    except sqlite3.OperationalError:
+        return model()
+    if row is None:
+        return model()
+    try:
+        return model.model_validate_json(row[0])
+    except ValueError as exc:
+        raise BackendError("storage_corrupt", status=503) from exc
 PENDING_LIMIT = 128
 RETAIN_BATCHES = 256
 RETAIN_BYTES = 2 * 1024 * 1024

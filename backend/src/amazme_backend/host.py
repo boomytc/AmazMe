@@ -179,6 +179,7 @@ from .storage import (
     TERMINAL,
     SessionStore,
     compaction_basis,
+    read_session_policies,
     read_settled_root,
     remove_session_directory,
     session_database,
@@ -1303,6 +1304,8 @@ class Host:
             raise BackendError("session_not_found", status=404)
         parent_path = session_database(self.profile.path, parent)
         read_settled_root(parent_path, value.request_id)
+        web, computer = read_session_policies(parent_path)
+        web = web.model_copy(update={"base_url": validate_base_url(web.base_url)})
         source = next(item for item in (await self.sessions()).sessions if item.session_id == parent)
         if source.archived:
             raise BackendError("session_archived")
@@ -1319,6 +1322,8 @@ class Host:
                                  approval_policy=self.profile.config.approval_policy)
             await child.initialize()
             await child.import_settled_root(parent_path, value.request_id)
+            await child.save_web_policy(web)
+            await child.save_computer_policy(computer)
         except Exception:
             if child is not None:
                 await child.db.close()
