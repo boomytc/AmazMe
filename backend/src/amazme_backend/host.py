@@ -2124,6 +2124,8 @@ def application(owner: Host) -> FastAPI:
             owner.storage_failed = True
             return JSONResponse({"code": "storage_failed", "message": "Storage unavailable; admission closed"}, status_code=503)
         except httpx.TransportError:
+            if await owner.store.active_update():
+                return JSONResponse({"code": "update_prepared", "message": "update_prepared"}, status_code=503)
             return JSONResponse({"code": "runtime_recovering", "message": "Runtime recovering; retry the same request ID"}, status_code=503)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"

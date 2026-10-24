@@ -228,6 +228,15 @@ async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, mo
         with pytest.raises(BackendError, match="update_prepared"):
             await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
         assert calls[-1] == "/health"
+        async with _client(host) as client:
+            attached = await client.post(f"/api/v1/sessions/{session}/attachments")
+            assert attached.status_code == 201
+            client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+            blocked = await client.post(
+                f"/api/v1/sessions/{session}/terminals/{'f' * 32}/input",
+                json={"input_id": "typed", "data": "pwd\n"},
+            )
+            assert blocked.status_code == 503 and blocked.json()["code"] == "update_prepared"
     finally:
         await host.supervisor.close()
         await host.store.db.close()

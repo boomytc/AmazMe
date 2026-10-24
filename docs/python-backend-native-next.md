@@ -68,7 +68,8 @@
 | 当前包在进程出站被拒绝时首次启动 | `5c0a5f878d7609b8716e0bd7f3f9ffab88768250` | 同一份包。seatbelt 拒绝 `1.1.1.1:443`，本机 `127.0.0.1:9` 仍是连接被拒。然后在这个限制里完成 init 和 serve，`build_id` 与清单一致。`stop` 打印 `services stopped`。这是进程出站限制，不是拔掉网线 |
 | 更新准备好后新的脚本不再要求重试 | `6dfc6ac6f9a3392f3bd949e1ddd68e75f9eb7400` | 监督器已退出时，新的脚本返回 `update_prepared`。准备更新到另一个构建后，新脚本得到 `update_prepared` |
 | 当前包改为 Developer ID 和 hardened runtime | `3d0045c38c3ec8d0985da485c3ef4617dbefe0cb` | `package-mnk7cmvu` 的 69 个 Mach-O 已签名。`codesign --verify --strict` 通过，flags 为 runtime。签名后清单 `build_id` 是 `40b5c6059646f8141ecbd80ba2ee1687543993cfb2f34e62d5186d97878afb10`，启动身份与清单一致。Gatekeeper 评估是 `rejected`，`source=Unnotarized Developer ID`。还没有公证和 staple |
-| 公证历史没有提交成功 | 包含本文件的提交 | 只读查询 `notarytool history` 时，`appstoreconnect.apple.com` 返回的证书签给了 `iadsdk.apple.com`。没有提交归档，也没有关闭证书校验 |
+| 公证历史没有提交成功 | `505de532a83a731bccd1ce4117a574b6e5720522` | 只读查询 `notarytool history` 时，`appstoreconnect.apple.com` 返回的证书签给了 `iadsdk.apple.com`。没有提交归档，也没有关闭证书校验 |
+| 更新已退出监督器时终端输入不再要求重试 | 包含本文件的提交 | `backend/tests/test_workspaces.py`：更新进行中且监督器连接失败时，终端输入返回 `update_prepared`，不是 `runtime_recovering` |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
