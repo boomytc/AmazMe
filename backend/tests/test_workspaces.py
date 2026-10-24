@@ -14,13 +14,23 @@ import pytest
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
     BackendError,
+    CodeRun,
+    CreateSession,
     HostFence,
+    McpCallRequest,
+    McpDecision,
+    McpOpen,
     OpenTerminal,
+    PluginCallRequest,
     ProcessLease,
     ReadFile,
+    RemoteOpen,
+    RemoteRun,
     RunTool,
     TerminalInput,
+    TerminalOpen,
     TerminalQuery,
+    TerminalType,
     WorkerInfo,
     WorkerRequest,
     WriteFile,
@@ -109,6 +119,53 @@ async def test_grant_rejects_home_symlink_profile_and_socket(tmp_path: Path) -> 
                 assert rejected.json()["code"] in {"workspace_grant_forbidden", "workspace_symlink"}
             again = await client.get("/api/v1/workspaces")
             assert [item["name"] for item in again.json()["workspaces"]] == ["primary"]
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _host(tmp_path)
+    await _ready(host)
+    missing = "e" * 32
+    calls: list[str] = []
+
+    async def blocked(_method: str, path: str, _model: object, _body: object) -> object:
+        calls.append(path)
+        raise AssertionError(path)
+
+    monkeypatch.setattr(host.supervisor, "call", blocked)
+    remote = RemoteOpen(remote_id="a" * 32, host="remote-a", host_key="k" * 16, endpoint="127.0.0.1:9")
+    refused = [
+        lambda: host.open_terminal(missing, TerminalOpen(terminal_id="f" * 32, command="sh", workspace="primary")),
+        lambda: host.open_mcp(missing, McpOpen(server_id="a" * 32, command="python3 demo.py")),
+        lambda: host.run_code(missing, CodeRun(run_id="b" * 32, source="1")),
+        lambda: host.call_plugin(missing, "c" * 32, PluginCallRequest(call_id="d" * 32, text="hi")),
+        lambda: host.open_remote(missing, remote),
+        lambda: host.submit_remote(missing, RemoteRun(**remote.model_dump(), call_id="1" * 32, command="echo")),
+        lambda: host.request_mcp(missing, "a" * 32, McpCallRequest(call_id="2" * 32, name="echo")),
+        lambda: host.decide_mcp(missing, "a" * 32, "2" * 32, McpDecision(
+            decision_id="once", approve=True, digest="ab" * 32)),
+        lambda: host.type_terminal(missing, "f" * 32, TerminalType(input_id="typed", data="pwd\n")),
+    ]
+    try:
+        for attempt in refused:
+            with pytest.raises(BackendError, match="session_not_found"):
+                await attempt()
+        assert calls == []
+        assert not (tmp_path / "executions").exists()
+        assert not (tmp_path / "plugin-work").exists()
+        present = "a" * 32
+        await host.store.create_session(present, CreateSession(title="在", workspace="primary"))
+
+        async def reached(_method: str, path: str, _model: object, _body: object) -> object:
+            calls.append(path)
+            raise BackendError("stopped_after_check")
+
+        monkeypatch.setattr(host.supervisor, "call", reached)
+        with pytest.raises(BackendError, match="stopped_after_check"):
+            await host.open_terminal(present, TerminalOpen(terminal_id="f" * 32, command="sh"))
+        assert calls == ["/pty/open"]
     finally:
         await host.supervisor.close()
         await host.store.db.close()

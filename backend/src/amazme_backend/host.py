@@ -639,6 +639,7 @@ class Host:
         self._admit()
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/pty/open", TerminalView, OpenTerminal(
             host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
             terminal_id=value.terminal_id, command=value.command, cols=value.cols, rows=value.rows,
@@ -646,11 +647,13 @@ class Host:
 
     async def type_terminal(self, session_id: str, terminal_id: str, value: TerminalType) -> TerminalView:
         self._admit()
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/pty/input", TerminalView, TerminalInput(
             **self._terminal_fence(session_id, terminal_id).model_dump(), input_id=value.input_id, data=value.data))
 
     async def resize_terminal(self, session_id: str, terminal_id: str, value: TerminalSize) -> TerminalView:
         self._admit()
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/pty/resize", TerminalView, TerminalResize(
             **self._terminal_fence(session_id, terminal_id).model_dump(), cols=value.cols, rows=value.rows))
 
@@ -674,6 +677,7 @@ class Host:
         self._admit()
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/mcp/open", McpView, OpenMcp(
             **self._mcp_fence(session_id), server_id=value.server_id, command=value.command, workspace=value.workspace))  # type: ignore[arg-type]
 
@@ -684,11 +688,13 @@ class Host:
 
     async def request_mcp(self, session_id: str, server_id: str, value: McpCallRequest) -> McpCall:
         self._admit()
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/mcp/calls", McpCall, McpCallEnvelope(
             **self._mcp_fence(session_id), server_id=server_id, call=value))  # type: ignore[arg-type]
 
     async def decide_mcp(self, session_id: str, server_id: str, call_id: str, value: McpDecision) -> McpCall:
         self._admit()
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/mcp/decision", McpCall, McpDecisionEnvelope(
             **self._mcp_fence(session_id), server_id=server_id, call_id=call_id, decision=value))  # type: ignore[arg-type]
 
@@ -701,6 +707,7 @@ class Host:
         self._admit()
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/code/run", CodeView, OpenCode(
             host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
             run_id=value.run_id, source=value.source))
@@ -714,10 +721,12 @@ class Host:
         self._admit()
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/remotes/open", RemoteView, self._remote_body(session_id, value))
 
     async def reconnect_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
         self._admit()
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/remotes/reconnect", RemoteView, self._remote_body(session_id, value))
 
     async def disconnect_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
@@ -726,6 +735,7 @@ class Host:
 
     async def submit_remote(self, session_id: str, value: RemoteRun) -> RemoteCallView:
         self._admit()
+        await self._require_session(session_id)
         body = self._remote_body(session_id, value)
         return await self.supervisor.call("POST", "/remotes/calls", RemoteCallView, SubmitRemote(
             **body.model_dump(), call_id=value.call_id, command=value.command))
@@ -793,6 +803,11 @@ class Host:
         validate_workspace(name)
         if name not in {item for item, _host in await self.store.workspace_grants()}:
             raise BackendError("workspace_not_found", status=404)
+
+    async def _require_session(self, session_id: str) -> None:
+        """A missing session must not fall through to the primary directory."""
+        if not await self.store.exists(session_id):
+            raise BackendError("session_not_found", status=404)
 
     async def create_session(self, value: CreateSession) -> Session:
         self._admit()
@@ -1375,6 +1390,7 @@ class Host:
         self._admit()
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
+        await self._require_session(session_id)
         return await self.supervisor.call("POST", "/plugins/call", PluginCallView, PluginCallEnvelope(
             host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
             plugin_id=plugin_id, call_id=value.call_id, text=value.text))
