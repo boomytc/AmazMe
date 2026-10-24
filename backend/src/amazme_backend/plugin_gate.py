@@ -71,6 +71,7 @@ async def run() -> int:
         spec = importlib.util.spec_from_file_location('amazme_user_plugin', entry)
         if spec is None or spec.loader is None:
             raise ValueError('plugin_entry_invalid')
+        sys.path.insert(0, str(entry.parent))
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module
         # Execute the bytes that were hashed, even if the source path changes afterward.

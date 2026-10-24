@@ -21,6 +21,7 @@ from amazme_backend.contracts import (
     Identity,
     OpenCode,
     PluginCallEnvelope,
+    PluginResult,
     ResolveEffect,
     RetireSupervisor,
     RunTool,
@@ -236,23 +237,24 @@ async def test_freeze_returns_finished_code_and_plugin_calls(owner):
         "INSERT INTO code_runs(id,session,source,phase,value,committed) VALUES(?,?,?,'success','3',1)",
         (run_id, session, "1+2")), write=True)
     await owner.db.call(lambda db: db.execute(
-        "INSERT INTO plugins(id,name,capabilities,config,fingerprint) VALUES(?,?,?,?,?)",
-        (plugin_id, "stamp", "[]", "{}", "fp")), write=True)
-    await owner.db.call(lambda db: db.execute(
-        "INSERT INTO plugin_calls(id,plugin,session,text,phase,result) VALUES(?,?,?,?,'done','hi')",
-        (call_id, plugin_id, session, "hi")), write=True)
+        "INSERT INTO plugins(id,name,session,capabilities,config,fingerprint) VALUES(?,?,?,?,?,?)",
+        (plugin_id, "greeting", session, "[]", "{}", "fp")), write=True)
     fence = {"build_id": owner.build, "host_epoch": owner.host_epoch}
+    request = PluginCallEnvelope(**fence,session_id=session,plugin_id=plugin_id,call_id=call_id,name="hello",arguments={"name":"Bob"})
+    result = PluginResult(content=[{"type":"text","text":"hi"}])
+    await owner.db.call(lambda db: db.execute(
+        "INSERT INTO plugin_calls(id,plugin,session,text,phase,result) VALUES(?,?,?,?,'done',?)",
+        (call_id, plugin_id, session, request.intent_payload(),result.model_dump_json())), write=True)
     await owner.freeze(FreezeSupervisor(**fence, freeze_id="hold"))
     code = await owner.run_code(OpenCode(**fence, session_id=session, run_id=run_id, source="1+2"))
     assert code.phase == "success" and code.value == "3"
-    plugin = await owner.call_plugin(PluginCallEnvelope(
-        **fence, session_id=session, plugin_id=plugin_id, call_id=call_id, text="hi"))
-    assert plugin.phase == "done" and plugin.result == "hi"
+    plugin = await owner.call_plugin(request)
+    assert plugin.phase == "done" and plugin.result == result
     with pytest.raises(BackendError, match="supervisor_frozen"):
         await owner.run_code(OpenCode(**fence, session_id=session, run_id="e" * 32, source="1"))
     with pytest.raises(BackendError, match="supervisor_frozen"):
         await owner.call_plugin(PluginCallEnvelope(
-            **fence, session_id=session, plugin_id=plugin_id, call_id="f" * 32, text="no"))
+            **fence, session_id=session, plugin_id=plugin_id, call_id="f" * 32, name="hello", arguments={"name":"new"}))
     assert await owner.db.call(lambda db: db.execute("SELECT count(*) FROM code_runs").fetchone()[0]) == 1
     assert await owner.db.call(lambda db: db.execute("SELECT count(*) FROM plugin_calls").fetchone()[0]) == 1
 

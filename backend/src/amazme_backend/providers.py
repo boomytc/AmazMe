@@ -24,6 +24,7 @@ from .contracts import (
     Message,
     Model,
     ModelSettings,
+    PluginOffer,
     ProviderConfig,
     ReadFile,
     RunOptions,
@@ -264,7 +265,8 @@ def _object_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return schema
 
 
-def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions | None = None) -> list[ChatCompletionToolParam]:
+def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions | None = None,
+                     plugins: list[PluginOffer] | None = None) -> list[ChatCompletionToolParam]:
     tools: list[ChatCompletionToolParam] = [
         {"type": "function", "function": {"name": "shell", "description": "Execute a command with the local user shell in the selected project directory. This has the current user permissions, including network access. Commands may have side effects; never retry an unknown result.", "parameters": Shell.model_json_schema()}},
         {"type": "function", "function": {"name": "read_file", "description": "Read a relative UTF-8 workspace file.", "parameters": ReadFile.model_json_schema()}},
@@ -284,6 +286,10 @@ def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions |
             "name": offer.alias, "description": description[:1000],
             "parameters": cast(dict[str, object], _object_schema(offer.input_schema)),
         }})
+    for plugin in plugins or []:
+        tools.append({"type":"function", "function":{"name":plugin.alias,
+            "description":f"Plugin tool {plugin.name} in workspace {plugin.workspace}. {plugin.description} Do not retry an unknown result."[:4000],
+            "parameters":cast(dict[str, object], plugin.parameters)}})
     return tools if options is None else [tool for tool in tools if options.tool_allowed(tool["function"]["name"])]
 
 
@@ -339,6 +345,7 @@ def provider_messages(messages: list[Message], provider: str = "", config: Provi
         "web_search and web_fetch use the saved web policy. "
         "Session MCP tools are the mcp_ names for this turn. They run on a connected local service. "
         "Do not call approval or decision endpoints, and do not retry an unknown MCP result. "
+        "Session plugin tools are the plugin_ names for this turn. Never retry an unknown plugin result. "
         "Report actual tool results. "
         "Never claim a command ran unless a tool result confirms it. Keep answers concise."
     )}]
@@ -399,7 +406,8 @@ async def summarize(config: ProviderConfig, messages: list[Message]) -> str:
 
 
 async def stream(config: ProviderConfig, messages: list[Message],
-                 offers: list[McpOffer] | None = None) -> AsyncIterator[str | Completion]:
+                 offers: list[McpOffer] | None = None,
+                 plugins: list[PluginOffer] | None = None) -> AsyncIterator[str | Completion]:
     if not messages or not any(message.role == "user" for message in messages):
         raise BackendError("missing_user_context")
     if config.provider == "faux":
@@ -456,7 +464,7 @@ async def stream(config: ProviderConfig, messages: list[Message],
         raise BackendError("provider_not_configured")
     if config.api != "openai-completions":
         from .provider_wire import stream as wire_stream
-        async for item in wire_stream(config, messages, offers):
+        async for item in wire_stream(config, messages, offers, plugins):
             yield item
         return
     calls: dict[int, PendingCall] = {}
@@ -475,7 +483,7 @@ async def stream(config: ProviderConfig, messages: list[Message],
             metadata = INDEX.get((config.provider, config.model))
             completion_limit = metadata is not None and metadata.compat.get("maxTokensField") == "max_completion_tokens"
             response = await client.chat.completions.create(
-                model=config.model, messages=provider_messages(messages, config.provider, config), tools=tool_definitions(offers, config) or omit,
+                model=config.model, messages=provider_messages(messages, config.provider, config), tools=tool_definitions(offers, config, plugins) or omit,
                 max_tokens=omit if completion_limit else config.max_tokens,
                 max_completion_tokens=config.max_tokens if completion_limit else omit,
                 stream=True, stream_options={"include_usage": True},

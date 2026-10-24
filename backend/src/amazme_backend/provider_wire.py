@@ -10,7 +10,7 @@ from urllib.parse import quote
 import httpx
 from pydantic import JsonValue, TypeAdapter
 
-from .contracts import BackendError, Message, ProviderConfig, ToolCall
+from .contracts import BackendError, Message, PluginOffer, ProviderConfig, ToolCall
 from .mcp_session import McpOffer
 from .model_catalog import INDEX
 from .oauth import COPILOT_HEADERS
@@ -48,8 +48,8 @@ def text(value: JsonValue) -> str:
     return value if isinstance(value, str) else ''
 
 
-def tools(offers: list[McpOffer] | None, config: ProviderConfig) -> list[Record]:
-    return [record(item['function']) for item in RECORDS.validate_python(tool_definitions(offers, config))]
+def tools(offers: list[McpOffer] | None, config: ProviderConfig, plugins: list[PluginOffer] | None = None) -> list[Record]:
+    return [record(item['function']) for item in RECORDS.validate_python(tool_definitions(offers, config, plugins))]
 
 
 def replay(message: Message) -> list[Record]:
@@ -95,7 +95,7 @@ def base_headers(config: ProviderConfig, messages: list[Message]) -> dict[str, s
     return headers
 
 
-def responses_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None) -> Record:
+def responses_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None, plugins: list[PluginOffer] | None = None) -> Record:
     converted: list[JsonValue] = []
     for message in tool_image_messages(messages):
         if message.role == 'user':
@@ -115,7 +115,7 @@ def responses_body(config: ProviderConfig, messages: list[Message], offers: list
                           for call in message.tool_calls])
     body: Record = {'model': config.model, 'stream': True, 'store': False, 'input': converted,
         'instructions': text(RECORDS.validate_python(provider_messages([], config.provider, config))[0].get('content')),
-        'tools': [{'type': 'function', **tool} for tool in tools(offers, config)],
+        'tools': [{'type': 'function', **tool} for tool in tools(offers, config, plugins)],
         'include': ['reasoning.encrypted_content'], 'tool_choice': 'auto', 'parallel_tool_calls': True}
     if not body['tools']:
         for key in ('tools', 'tool_choice', 'parallel_tool_calls'):
@@ -128,7 +128,7 @@ def responses_body(config: ProviderConfig, messages: list[Message], offers: list
 
 
 async def responses(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None,
-                    client: httpx.AsyncClient) -> AsyncIterator[str | Completion]:
+                    client: httpx.AsyncClient, plugins: list[PluginOffer] | None = None) -> AsyncIterator[str | Completion]:
     headers = base_headers(config, messages)
     endpoint = config.base_url.rstrip('/') + '/responses'
     if config.api == 'openai-codex-responses':
@@ -143,7 +143,7 @@ async def responses(config: ProviderConfig, messages: list[Message], offers: lis
         except (ValueError, IndexError, KeyError) as exc:
             raise BackendError('oauth_account_id_missing') from exc
     answer, finished = '', False
-    async for event in events(client, endpoint, headers, responses_body(config, messages, offers)):
+    async for event in events(client, endpoint, headers, responses_body(config, messages, offers, plugins)):
         kind = event.get('type')
         if kind in {'response.output_text.delta', 'response.refusal.delta'}:
             delta = text(event.get('delta'))
@@ -177,7 +177,7 @@ _CANONICAL = {'shell': 'Bash', 'read_file': 'Read', 'write_file': 'Write', 'dele
               'web_search': 'WebSearch', 'web_fetch': 'WebFetch'}
 
 
-def anthropic_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None) -> tuple[Record, dict[str, str]]:
+def anthropic_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None, plugins: list[PluginOffer] | None = None) -> tuple[Record, dict[str, str]]:
     oauth = config.provider == 'anthropic' and (config.auth_type == 'oauth' or config.api_key.get_secret_value().startswith('sk-ant-oat'))
     names = _CANONICAL if oauth else {}
     converted: list[JsonValue] = []
@@ -202,7 +202,7 @@ def anthropic_body(config: ProviderConfig, messages: list[Message], offers: list
         'system': ([{'type': 'text', 'text': "You are Claude Code, Anthropic's official CLI for Claude."},
                     {'type': 'text', 'text': system}] if oauth else system),
         'messages': converted, 'tools': [{'name': names.get(text(tool['name']), tool['name']),
-            'description': tool.get('description', ''), 'input_schema': tool['parameters']} for tool in tools(offers, config)]}
+            'description': tool.get('description', ''), 'input_schema': tool['parameters']} for tool in tools(offers, config, plugins)]}
     if not body['tools']:
         body.pop('tools')
     metadata = INDEX.get((config.provider, config.model))
@@ -220,8 +220,8 @@ def anthropic_body(config: ProviderConfig, messages: list[Message], offers: list
 
 
 async def anthropic(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None,
-                    client: httpx.AsyncClient) -> AsyncIterator[str | Completion]:
-    body, headers = anthropic_body(config, messages, offers)
+                    client: httpx.AsyncClient, plugins: list[PluginOffer] | None = None) -> AsyncIterator[str | Completion]:
+    body, headers = anthropic_body(config, messages, offers, plugins)
     base = config.base_url.rstrip('/')
     endpoint = base + ('/messages' if base.endswith('/v1') else '/v1/messages')
     blocks: dict[int, Record] = {}
@@ -278,7 +278,7 @@ async def anthropic(config: ProviderConfig, messages: list[Message], offers: lis
         input_tokens=input_tokens, output_tokens=output_tokens, cache_read_tokens=cached, cache_write_tokens=written))
 
 
-def google_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None) -> Record:
+def google_body(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None, plugins: list[PluginOffer] | None = None) -> Record:
     converted: list[JsonValue] = []
     names: dict[str, str] = {}
     for message in tool_image_messages(messages):
@@ -301,14 +301,14 @@ def google_body(config: ProviderConfig, messages: list[Message], offers: list[Mc
     body: Record = {'contents': converted, 'systemInstruction': {'parts': [{'text': text(RECORDS.validate_python(provider_messages([], config.provider, config))[0].get('content'))}]},
         'generationConfig': {'maxOutputTokens': config.max_tokens},
         'tools': [{'functionDeclarations': [{'name': tool['name'], 'description': tool.get('description', ''),
-                   'parametersJsonSchema': tool['parameters']} for tool in tools(offers, config)]}]}
-    if not tools(offers, config):
+                   'parametersJsonSchema': tool['parameters']} for tool in tools(offers, config, plugins)]}]}
+    if not tools(offers, config, plugins):
         body.pop('tools')
     return body
 
 
 async def google(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None,
-                 client: httpx.AsyncClient) -> AsyncIterator[str | Completion]:
+                 client: httpx.AsyncClient, plugins: list[PluginOffer] | None = None) -> AsyncIterator[str | Completion]:
     endpoint = config.base_url.rstrip('/') + '/models/' + quote(config.model, safe='') + ':streamGenerateContent?alt=sse'
     headers = dict(config.headers)
     headers['x-goog-api-key'] = config.api_key.get_secret_value()
@@ -316,7 +316,7 @@ async def google(config: ProviderConfig, messages: list[Message], offers: list[M
     calls: list[ToolCall] = []
     signature: list[object] = []
     usage: Record = {}
-    async for event in events(client, endpoint, headers, google_body(config, messages, offers)):
+    async for event in events(client, endpoint, headers, google_body(config, messages, offers, plugins)):
         response_id = text(event.get('responseId')) or response_id
         usage = record(event.get('usageMetadata', {})) or usage
         for raw in items(event.get('candidates', [])):
@@ -347,14 +347,14 @@ async def google(config: ProviderConfig, messages: list[Message], offers: list[M
         cache_read_tokens=number(usage.get('cachedContentTokenCount'))))
 
 
-async def stream(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None) -> AsyncIterator[str | Completion]:
+async def stream(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None, plugins: list[PluginOffer] | None = None) -> AsyncIterator[str | Completion]:
     async with httpx.AsyncClient(proxy=config.proxy or None, trust_env=False, timeout=60) as client:
         if config.api in {'openai-responses', 'openai-codex-responses'}:
-            operation = responses(config, messages, offers, client)
+            operation = responses(config, messages, offers, client, plugins)
         elif config.api == 'anthropic-messages':
-            operation = anthropic(config, messages, offers, client)
+            operation = anthropic(config, messages, offers, client, plugins)
         elif config.api == 'google-generative-ai':
-            operation = google(config, messages, offers, client)
+            operation = google(config, messages, offers, client, plugins)
         else:
             raise BackendError('model_api_unknown')
         async for item in operation:

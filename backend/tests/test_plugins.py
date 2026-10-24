@@ -313,3 +313,201 @@ async def test_waiting_work_blocks_plugin_registration_and_history_remains(tmp_p
         await store.db.close()
         await host.supervisor.close()
         await host.store.db.close()
+
+
+@pytest_asyncio.fixture
+async def model_rig(owner):
+    from types import SimpleNamespace
+
+    from amazme_backend.contracts import HostFence, PluginOffer, WorkerInfo, WorkerRequest
+    from amazme_backend.processes import ProcessReservation
+    from amazme_backend.storage import SessionStore, session_database
+    from amazme_backend.worker import Worker
+
+    view = await owner.register_plugin(register(owner))
+    path = session_database(owner.profile.path, SESSION)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    store = SessionStore(path,SESSION,build=owner.build,config=owner.profile.config.provider,approval_policy='mutations',instance='2'*32)
+    await store.initialize()
+    fence = HostFence(host_epoch=owner.host_epoch,build_id=owner.build)
+    await store.fence(fence)
+    class Peer:
+        def __init__(self):
+            self.lose = False
+            self.calls = []
+        async def call(self, method, path, model, body=None):
+            self.calls.append((path,body))
+            if path == '/plugins/call':
+                result = await owner.call_plugin(body)
+                if self.lose:
+                    self.lose = False
+                    raise BackendError('peer_unavailable')
+                return result
+            if path == '/plugins/cancel':
+                return await owner.cancel_plugin(body)
+            if path == '/effects/resolve':
+                return await owner.resolve_effect(body)
+            if path == '/health':
+                return await owner.health()
+            raise AssertionError(path)
+    worker = Worker.__new__(Worker)
+    worker.profile,worker.store,worker.session,worker.instance = owner.profile,store,SESSION,'2'*32
+    worker.build,worker.validation,worker.storage_ready = owner.build,False,True
+    worker.owner = WorkerRequest(session_id=SESSION,worker_id=worker.instance,build_id=owner.build)
+    worker.supervisor = Peer()
+    with ProcessReservation(owner.profile.path,'worker',worker.instance) as reservation:
+        info = WorkerInfo(session_id=SESSION,worker_id=worker.instance,pid=0,socket='',build_id=owner.build,
+            process_lease=reservation.lease,state='ready',plugin_fingerprint=await owner.plugin_set_fingerprint(SESSION))
+        try:
+            await owner.db.call(lambda db:db.execute("INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
+                (info.worker_id,info.session_id,info.model_dump_json())),write=True)
+            yield SimpleNamespace(owner=owner,store=store,worker=worker,fence=fence,offer=PluginOffer.from_view(view,'primary')[0])
+        finally:
+            await store.db.close()
+
+
+async def observable(store):
+    from amazme_backend.session_domain import Continue
+    for _ in range(30):
+        action = await store.advance()
+        if not isinstance(action,Continue):
+            return action
+    pytest.fail('no observable progress')
+
+
+async def model_proposal(rig,mode='',approve=True):
+    from amazme_backend.contracts import ApprovalDecision, Message, Submit, ToolCall
+    from amazme_backend.providers import Completion
+    from amazme_backend.session_domain import ModelInvocation, ModelReturned, Park
+    await rig.store.accept(Submit(request_id='root',text='Use the greeting plugin'),rig.fence)
+    model = await observable(rig.store)
+    assert isinstance(model,ModelInvocation)
+    await rig.store.bind_model_tools(model.step_id,model.generation,'[]',json.dumps([rig.offer.model_dump()]))
+    await rig.store.advance(ModelReturned(model,Completion(response_id='response',message=Message(role='assistant',content='',tool_calls=[
+        ToolCall(id='provider-call',name=rig.offer.alias,arguments=json.dumps({'name':'Bob','mode':mode}))]))))
+    assert isinstance(await observable(rig.store),Park)
+    if not approve:
+        return
+    approval = (await rig.store.snapshot()).approvals[-1]
+    await rig.store.approve(ApprovalDecision(decision_id='allow',approval_id=approval.approval_id,
+        expected_revision=approval.revision,proposal_digest=approval.proposal_digest,approve=True),rig.fence)
+    return await observable(rig.store)
+
+
+async def test_model_plugin_waits_for_approval_and_lost_receipt_reuses_one_effect(model_rig):
+    from amazme_backend.contracts import ApprovalDecision
+    from amazme_backend.session_domain import Failed, ModelInvocation, PluginRetrieval
+    rig = model_rig
+    await model_proposal(rig,approve=False)
+    assert not (rig.owner.profile.path/'effects.txt').exists()
+    approval = (await rig.store.snapshot()).approvals[-1]
+    await rig.store.approve(ApprovalDecision(decision_id='allow',approval_id=approval.approval_id,
+        expected_revision=approval.revision,proposal_digest=approval.proposal_digest,approve=True),rig.fence)
+    action = await observable(rig.store)
+    assert isinstance(action,PluginRetrieval)
+    rig.worker.supervisor.lose = True
+    with pytest.raises(BackendError,match='peer_unavailable'):
+        await rig.worker.perform(action)
+    await rig.store.advance(Failed(action,'peer_unavailable'))
+    again = await observable(rig.store)
+    assert again == action
+    observed = await rig.worker.perform(again)
+    await rig.store.advance(observed)
+    follow = await observable(rig.store)
+    assert isinstance(follow,ModelInvocation)
+    assert any(message.role=='tool' and 'Hello, Bob!' in message.content for message in follow.messages)
+    assert len((rig.owner.profile.path/'effects.txt').read_text().splitlines()) == 1
+    calls = [body.call_id for path,body in rig.worker.supervisor.calls if path=='/plugins/call']
+    assert len(calls)==2 and calls[0]==calls[1]==action.step_id[:32]
+
+
+async def test_unknown_plugin_uses_shared_effect_resolution_and_blocks_new_writes(model_rig):
+    from amazme_backend.contracts import EffectResolution, PluginToolCall
+    from amazme_backend.session_domain import ReconcileEffect
+    rig = model_rig
+    action = await model_proposal(rig,mode='crash')
+    observed = await rig.worker.perform(action)
+    assert observed.view.phase=='unknown' and observed.view.clean
+    await rig.store.advance(observed)
+    await observable(rig.store)
+    hold = (await rig.store.snapshot()).effects[0]
+    assert hold.call_id==action.step_id and hold.resource_clean and not hold.reconciled
+    assert await rig.owner._write_conflict(SESSION)
+    args = PluginToolCall.model_validate_json(action.call.arguments)
+    original = next(body for path,body in rig.worker.supervisor.calls if path=='/plugins/call')
+    with pytest.raises(BackendError,match='unknown_effect_conflict'):
+        await rig.owner.call_plugin(original.model_copy(update={'call_id':'f'*32,'step_id':'f'*64}))
+    resolution = EffectResolution(resolution_id='inspect',call_id=action.step_id,outcome='applied',evidence='The workspace effect file contains the original call once')
+    await rig.store.resolve(resolution,rig.fence)
+    reconcile = await observable(rig.store)
+    assert isinstance(reconcile,ReconcileEffect)
+    await rig.store.advance(await rig.worker.perform(reconcile))
+    assert (await rig.store.snapshot()).effects[0].reconciled
+    assert not await rig.owner._write_conflict(SESSION)
+    assert (await rig.owner.call_plugin(original)).phase=='unknown'
+    assert (rig.owner.profile.path/'effects.txt').read_text() == args.call_id+':Bob\n'
+
+
+async def test_model_media_uses_private_tool_images_and_late_cleanup_proofs_do_not_reconcile(model_rig):
+    from amazme_backend.contracts import EffectHold
+    from amazme_backend.session_domain import ModelInvocation
+    rig = model_rig
+    action = await model_proposal(rig,mode='image')
+    observed = await rig.worker.perform(action)
+    assert observed.images and 'Hello, Bob!' in observed.text
+    encoded = observed.images[0].data_base64
+    await rig.store.advance(observed)
+    next_model = await observable(rig.store)
+    assert isinstance(next_model,ModelInvocation)
+    assert any(message.role=='tool' and message.images[0].data_base64==encoded for message in next_model.messages if message.images)
+    assert encoded not in (await rig.store.events(0)).model_dump_json()
+    # A proof refresh may establish cleanup, never substitute for the user's evidence.
+    hold = EffectHold(call_id='held',session_id=SESSION,request_id='root',reason='plugin_outcome_unknown',resource_clean=False)
+    await rig.store.db.call(lambda db:db.execute('INSERT INTO effects VALUES(?,?)',('held',hold.model_dump_json())))
+    await rig.store.refresh_effect_proofs([hold.model_copy(update={'session_id':'9'*32,'resource_clean':True})])
+    assert not (await rig.store.snapshot()).effects[0].resource_clean
+    await rig.store.refresh_effect_proofs([hold.model_copy(update={'resource_clean':True,'reconciled':True})])
+    saved = (await rig.store.snapshot()).effects[0]
+    assert saved.resource_clean and not saved.reconciled
+
+
+async def test_disconnected_waiter_does_not_cancel_the_supervisor_owned_plugin_job(owner):
+    await owner.register_plugin(register(owner))
+    original = call(owner,mode='wait')
+    waiter = asyncio.create_task(owner.call_plugin(original))
+    for _ in range(100):
+        if (owner.profile.path/'effects.txt').exists():
+            break
+        await asyncio.sleep(.01)
+    assert (owner.profile.path/'effects.txt').exists()
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert CALL in owner.plugin_jobs and not owner.plugin_jobs[CALL].done()
+    stopped = await owner.cancel_plugin(CancelPlugin(host_epoch=owner.host_epoch,build_id=owner.build,
+        session_id=SESSION,plugin_id=PLUGIN,call_id=CALL))
+    assert stopped.clean and stopped.cancel_requested
+    assert (await owner.call_plugin(original)).phase=='unknown'
+    assert len((owner.profile.path/'effects.txt').read_text().splitlines())==1
+
+
+async def test_model_denial_or_stale_plugin_catalog_never_runs_the_function(model_rig):
+    from amazme_backend.contracts import ApprovalDecision, PluginToolCall
+    rig = model_rig
+    await model_proposal(rig,approve=False)
+    approval = (await rig.store.snapshot()).approvals[-1]
+    await rig.store.approve(ApprovalDecision(decision_id='deny',approval_id=approval.approval_id,
+        expected_revision=approval.revision,proposal_digest=approval.proposal_digest,approve=False),rig.fence)
+    await observable(rig.store)
+    assert (await rig.store.get('root')).error=='approval_denied'
+    assert not (rig.owner.profile.path/'effects.txt').exists()
+    args = PluginToolCall(plugin_id=PLUGIN,call_id='e'*32,workspace='primary',fingerprint=rig.offer.fingerprint,
+        load_id=rig.offer.load_id,schema_digest='0'*64,name='hello',arguments={'name':'Bob'})
+    envelope = PluginCallEnvelope(**rig.fence.model_dump(),origin='model',worker_id=rig.worker.instance,
+        session_id=SESSION,plugin_id=PLUGIN,call_id=args.call_id,name=args.name,arguments=args.arguments,
+        step_id='e'*64,request_id='next',expected_fingerprint=args.fingerprint,expected_load_id=args.load_id,
+        expected_schema_digest=args.schema_digest)
+    with pytest.raises(BackendError,match='plugin_catalog_conflict'):
+        await rig.owner.call_plugin(envelope)
+    assert not (rig.owner.profile.path/'effects.txt').exists()
+    assert await rig.owner.db.call(lambda db:db.execute('SELECT count(*) FROM plugin_calls').fetchone()[0])==0

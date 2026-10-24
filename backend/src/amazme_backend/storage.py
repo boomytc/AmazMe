@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import IO, Literal
 
+from pydantic import TypeAdapter
+
 from .common import lock
 from .contracts import (
     Approval,
@@ -34,6 +36,8 @@ from .contracts import (
     ImagePart,
     Message,
     Model,
+    PluginOffer,
+    PluginToolCall,
     Preview,
     ProviderConfig,
     Receipt,
@@ -71,6 +75,8 @@ from .session_domain import (
     Observation,
     OpenEpoch,
     Park,
+    PluginRetrieval,
+    PluginReturned,
     Previewed,
     QueryTool,
     ReconcileEffect,
@@ -1176,18 +1182,24 @@ class SessionStore:
             return request
         return await self._tx(operation)
 
-    async def bind_mcp_catalog(self, step_id: str, generation: int, catalog_json: str) -> None:
+    async def bind_model_tools(self, step_id: str, generation: int, catalog_json: str, plugin_catalog_json: str = "[]") -> None:
         """Persist the tool list before the provider stream. A later catalog cannot replace it."""
+        plugins = TypeAdapter(list[PluginOffer]).validate_json(plugin_catalog_json)
+        if any(plugin.session_id != self.session_id for plugin in plugins):
+            raise BackendError("plugin_session_mismatch")
         def operation(db: sqlite3.Connection, _changes: Changes) -> None:
             step = self._step(db, step_id)
             request = self._request(db, step.request_id)
             if (step.kind != "model" or step.phase != "intent" or step.generation != generation
                     or request.generation != generation):
                 raise BackendError("stale_generation")
+            if step.plugin_catalog and step.plugin_catalog != plugin_catalog_json:
+                raise BackendError("plugin_catalog_conflict")
             if step.mcp_catalog and step.mcp_catalog != catalog_json:
                 raise BackendError("mcp_catalog_conflict")
-            if step.mcp_catalog != catalog_json:
+            if step.mcp_catalog != catalog_json or step.plugin_catalog != plugin_catalog_json:
                 step.mcp_catalog = catalog_json
+                step.plugin_catalog = plugin_catalog_json
                 self._save_step(db, step)
         await self._tx(operation)
 
@@ -1202,6 +1214,21 @@ class SessionStore:
                     or self._meta(db, "freeze_id") or self._meta(db, "stopping") or self._meta(db, "blocked")):
                 raise BackendError("computer_intent_mismatch")
         await self.db.call(operation)
+
+    async def refresh_effect_proofs(self, proofs: list[EffectHold]) -> None:
+        """Accept monotone cleanup facts from the current execution authority, never user reconciliation."""
+        def operation(db: sqlite3.Connection, c: Changes) -> None:
+            for proof in proofs:
+                row = db.execute("SELECT payload FROM effects WHERE id=?", (proof.call_id,)).fetchone()
+                if row is None or proof.session_id != self.session_id or not proof.resource_clean:
+                    continue
+                hold = EffectHold.model_validate_json(str(row[0]))
+                if hold.resource_clean or hold.request_id != proof.request_id:
+                    continue
+                hold.resource_clean = True
+                db.execute("UPDATE effects SET payload=? WHERE id=?", (hold.model_dump_json(), hold.call_id))
+                c.emit("effect", hold.request_id, hold.model_dump_json())
+        await self._tx(operation)
 
     async def resolve(self, value: EffectResolution, fence: HostFence) -> Receipt:
         def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
@@ -1357,7 +1384,7 @@ class SessionStore:
         assert step.call is not None
         binding = self._binding(db, request.request_id, step.call)
         required = self.approval_policy == "all" or (
-            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_act"})
+            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_act", "plugin_tool"})
         if not required:
             return True
         approval: Approval | None = None
@@ -1416,7 +1443,7 @@ class SessionStore:
                 for i, call in enumerate(message.tool_calls):
                     tool_id = digest(f"{self.session_id}:{step.step_id}:{i}:{call.id}")
                     # The call id is the step id's prefix and is stored before approval or any send.
-                    call = resolve_model_call(step.mcp_catalog, call, tool_id[:32])
+                    call = resolve_model_call(step.mcp_catalog, call, tool_id[:32], step.plugin_catalog)
                     self._save_step(db, Step(step_id=tool_id, request_id=request.request_id,
                                             ordinal=step.ordinal + i + 1, kind="tool", phase="proposed",
                                             generation=request.generation, call=call))
@@ -1425,7 +1452,7 @@ class SessionStore:
             self._message(db, c, request.request_id, step.step_id,
                           Message(role="tool", content=step.result, tool_call_id=step.call.id,
                                   images=self._computer_images(db, step.step_id)
-                                  if step.call.name == "computer_observe" else []))
+                                  if step.call.name in {"computer_observe", "plugin_tool"} else []))
         step.phase = "applied"
         self._save_step(db, step)
 
@@ -1485,6 +1512,9 @@ class SessionStore:
                     self._decide(db, c, request, Decision(status="cancelled"))
                     return Continue()
                 return ComputerRetrieval(step.step_id, request.request_id, request.generation, step.call)
+            if step.kind == "tool" and step.phase == "intent" and step.call and step.call.name == "plugin_tool":
+                return PluginRetrieval(step.step_id, request.request_id, request.generation, step.call,
+                    stop=bool(request.cancel_requested or request.decision or self._meta(db, "freeze_id") or self._meta(db, "stopping")))
             mcp_intent = step.kind == "tool" and step.phase == "intent" and step.call and step.call.name == "mcp_tool"
             if mcp_intent:
                 if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
@@ -1572,6 +1602,14 @@ class SessionStore:
                     self._save_request(db, c, request)
                     c.emit("tool", request.request_id, step.model_dump_json())
                     return ComputerRetrieval(step.step_id, request.request_id, request.generation, step.call)
+                if step.call.name == "plugin_tool":
+                    self._consume(db, c, step)
+                    step.phase, step.generation = "intent", request.generation
+                    self._save_step(db, step)
+                    request.status = "running"
+                    self._save_request(db, c, request)
+                    c.emit("tool", request.request_id, step.model_dump_json())
+                    return PluginRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if step.call.name == "mcp_tool":
                     self._consume(db, c, step)
                     step.phase, step.generation = "intent", request.generation
@@ -1735,6 +1773,37 @@ class SessionStore:
                 self._materialize(db, c, request, step)
                 self._decide(db, c, request, Decision(status="cancelled"))
             return
+        if isinstance(observation, PluginReturned):
+            action, view = observation.invocation, observation.view
+            request = self._request(db, action.request_id)
+            step = self._step(db, action.step_id)
+            if (request.generation != action.generation or step.phase != "intent" or step.call != action.call
+                    or step.request_id != request.request_id):
+                raise BackendError("stale_generation")
+            args = PluginToolCall.model_validate_json(action.call.arguments)
+            if view.call_id != args.call_id:
+                raise BackendError("plugin_call_identity")
+            if view.phase == "unknown":
+                step.phase = "unknown"
+                self._save_step(db, step)
+                hold = EffectHold(call_id=step.step_id, session_id=self.session_id, request_id=request.request_id,
+                                  reason="plugin_outcome_unknown", resource_clean=view.clean)
+                db.execute("INSERT INTO effects VALUES(?,?) ON CONFLICT(id) DO NOTHING", (hold.call_id, hold.model_dump_json()))
+                c.emit("effect", request.request_id, hold.model_dump_json())
+                self._decide(db, c, request, Decision(status="cancelled" if request.cancel_requested and view.clean else "unknown",
+                                                     error="plugin_outcome_unknown"))
+            elif view.phase in {"done", "failed"}:
+                step.result, step.phase = observation.text or view.error, "result"
+                if observation.images:
+                    checked_images(observation.images)
+                    db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
+                               (step.step_id, json.dumps([image.model_dump() for image in observation.images])))
+                self._save_step(db, step)
+                c.emit("tool", request.request_id, step.model_dump_json())
+            else:
+                self._decide(db, c, request, Decision(status="cancelled" if view.phase == "cancelled" else "failed",
+                                                     error=view.error))
+            return
         if isinstance(observation, McpReturned):
             action = observation.invocation
             request = self._request(db, action.request_id)
@@ -1774,7 +1843,7 @@ class SessionStore:
                 self._set_meta(db, "blocked", observation.error)
                 c.emit("cleanup", action.request_id, observation.error)
                 return
-            if isinstance(action, McpRetrieval):
+            if isinstance(action, (McpRetrieval, PluginRetrieval)):
                 # The call may already exist. Leave the intent so the next advance queries it.
                 return
             if isinstance(action, (ModelInvocation, ToolInvocation, WebRetrieval, ComputerRetrieval)):

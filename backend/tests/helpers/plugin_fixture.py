@@ -23,7 +23,10 @@ def setup(api):
         if params.mode == 'wait':
             time.sleep(30)
         text = 'Hello, ' + params.name + '!'
-        return PluginResult(content=[{'type':'text','text':text}], details={'count':count, 'session':ctx.session_id,
+        content = [{'type':'text','text':text}]
+        if params.mode == 'image':
+            content.append({'type':'image','mimeType':'image/png','data':'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='})
+        return PluginResult(content=content, details={'count':count, 'session':ctx.session_id,
             'secret_inherited':'OPENAI_API_KEY' in os.environ or 'AMAZME_CONTROL_TOKEN' in os.environ})
     api.register_tool(ToolDefinition('hello', 'Greeting', 'Greet a name', Greeting, greet))
     api.register_command('hello', description='Say hello', handler=lambda args,ctx:PluginResult(content=[{'type':'text','text':args}]))

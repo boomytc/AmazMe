@@ -1,6 +1,6 @@
 """Session-owned checkpoints and driver actions; no execution or database handles escape."""
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import PurePosixPath
 from typing import Literal
 
@@ -15,10 +15,14 @@ from .contracts import (
     DelegateTasks,
     EffectHold,
     EffectResolution,
+    ImagePart,
     Lease,
     McpToolCall,
     Message,
     Model,
+    PluginCallView,
+    PluginOffer,
+    PluginToolCall,
     Preview,
     ProviderConfig,
     ReadFile,
@@ -37,7 +41,7 @@ from .web_tools import validate_fetch_url
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | ComputerInspect | ComputerMutation = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
@@ -55,6 +59,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
     elif call.name == "web_fetch":
         parsed_fetch = WebFetch.model_validate_json(call.arguments)
         value = parsed_fetch.model_copy(update={"url": validate_fetch_url(parsed_fetch.url)})
+    elif call.name == "plugin_tool":
+        value = PluginToolCall.model_validate_json(call.arguments)
     elif call.name == "mcp_tool":
         value = McpToolCall.model_validate_json(call.arguments)
     elif call.name == "computer_observe":
@@ -70,8 +76,23 @@ def normalized_call(call: ToolCall) -> ToolCall:
     return call.model_copy(update={"arguments": value.model_dump_json()})
 
 
-def resolve_model_call(catalog_json: str, call: ToolCall, call_id: str) -> ToolCall:
+def resolve_model_call(catalog_json: str, call: ToolCall, call_id: str, plugin_catalog_json: str = "") -> ToolCall:
     """Rewrite a provider alias using the catalog saved before that model call. Live catalogs are ignored."""
+    if call.name.startswith("plugin_"):
+        if call.name == "plugin_tool" or not plugin_catalog_json:
+            raise BackendError("plugin_tool_unknown")
+        try:
+            plugins = TypeAdapter(list[PluginOffer]).validate_json(plugin_catalog_json)
+            plugin = next((item for item in plugins if item.alias == call.name), None)
+            if plugin is None:
+                raise BackendError("plugin_tool_unknown")
+            arguments = TypeAdapter(dict[str, JsonValue]).validate_json(call.arguments or "{}")
+        except (json.JSONDecodeError, ValidationError):
+            raise BackendError("plugin_catalog_conflict") from None
+        payload = PluginToolCall(plugin_id=plugin.plugin_id, call_id=call_id, workspace=plugin.workspace,
+            fingerprint=plugin.fingerprint, load_id=plugin.load_id, name=plugin.name,
+            schema_digest=plugin.schema_digest, arguments=arguments)
+        return normalized_call(ToolCall(id=call.id, name="plugin_tool", arguments=payload.model_dump_json()))
     if call.name == "mcp_tool" or (call.name.startswith("mcp_") and not catalog_json):
         raise BackendError("mcp_tool_unknown")
     if not call.name.startswith("mcp_"):
@@ -113,6 +134,7 @@ class Step(Model):
     call: ToolCall | None = None
     result: str = ""
     mcp_catalog: str = ""
+    plugin_catalog: str = ""
     approval_id: str = ""
     proposal_digest: str = ""
     children: list[str] = Field(default_factory=list)
@@ -201,9 +223,18 @@ class ComputerRetrieval:
     call: ToolCall
 
 
+@dataclass(frozen=True)
+class PluginRetrieval:
+    step_id: str
+    request_id: str
+    generation: int
+    call: ToolCall
+    stop: bool = False
+
+
 type Action = (
     Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect
-    | WebRetrieval | McpRetrieval | ComputerRetrieval
+    | WebRetrieval | McpRetrieval | ComputerRetrieval | PluginRetrieval
 )
 
 
@@ -278,7 +309,15 @@ class ComputerReturned:
     result: ComputerToolResult
 
 
+@dataclass(frozen=True)
+class PluginReturned:
+    invocation: PluginRetrieval
+    view: PluginCallView
+    text: str = ""
+    images: list[ImagePart] = field(default_factory=lambda: list[ImagePart]())
+
+
 type Observation = (
     ModelReturned | ToolReturned | ToolObserved | EpochOpened | EpochClosed | EffectResolved | Failed | Previewed
-    | WebReturned | McpReturned | ComputerReturned
+    | WebReturned | McpReturned | ComputerReturned | PluginReturned
 )

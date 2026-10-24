@@ -44,7 +44,7 @@ async def test_model_call_injects_only_the_session_workspace(tmp_path: Path, mon
     host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
     captured: list[list[Message]] = []
 
-    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None):
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None):
         del config, offers
         captured.append(messages)
         yield Completion(message=Message(role="assistant", content="ok"), response_id="faux")
@@ -102,7 +102,7 @@ async def test_provider_secret_is_not_stored_or_sent_as_memory(tmp_path: Path, m
     host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
     captured: list[list[Message]] = []
 
-    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None):
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None):
         del config, offers
         captured.append(messages)
         yield Completion(message=Message(role="assistant", content="ok"), response_id="faux")

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import json
 import re
 from fnmatch import fnmatchcase
@@ -18,7 +19,7 @@ ProviderApi = Literal["openai-completions", "openai-responses", "openai-codex-re
                       "anthropic-messages", "google-generative-ai"]
 
 
-TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20})$"
+TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$"
 
 
 class RunOptions(Model):
@@ -1092,6 +1093,11 @@ class PluginTool(Model):
     kind: Literal["tool", "command"] = "tool"
 
 
+    def schema_digest(self) -> str:
+        payload = json.dumps(self.parameters, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+
 class PluginDraft(Model):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -1125,6 +1131,40 @@ class PluginList(Model):
     plugins: list[PluginView]
 
 
+class PluginOffer(Model):
+    alias: str = Field(pattern=r"^plugin_[a-f0-9]{20}$")
+    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    workspace: str = Field(min_length=1, max_length=64)
+    fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    load_id: str
+    name: str
+    description: str
+    parameters: dict[str, JsonValue]
+    schema_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    @classmethod
+    def from_view(cls, view: PluginView, workspace: str) -> list[PluginOffer]:
+        if view.phase != "ready":
+            return []
+        return [cls(alias="plugin_" + hashlib.sha256(f"{view.plugin_id}\n{tool.name}".encode()).hexdigest()[:20],
+                    plugin_id=view.plugin_id, session_id=view.session_id, workspace=workspace,
+                    fingerprint=view.fingerprint, load_id=view.load_id, name=tool.name, description=tool.description,
+                    parameters=tool.parameters, schema_digest=tool.schema_digest())
+                for tool in view.tools if tool.kind == "tool"]
+
+
+class PluginToolCall(Model):
+    plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    workspace: str = Field(min_length=1, max_length=64)
+    fingerprint: str = Field(pattern=r"^[a-f0-9]{64}$")
+    load_id: str
+    name: str
+    schema_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 class PluginCallRequest(Model):
     kind: Literal["tool", "command"] = "tool"
     call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -1141,9 +1181,21 @@ class ReloadPlugin(PluginReload, HostFence):
 
 
 class PluginCallEnvelope(PluginCallRequest, HostFence):
+    origin: Literal["manual", "model"] = "manual"
+    worker_id: str = ""
+    step_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{64})?$")
+    request_id: str = ""
+    expected_fingerprint: str = ""
+    expected_load_id: str = ""
+    expected_schema_digest: str = ""
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     workspace: str = "primary"
+
+
+    def intent_payload(self) -> str:
+        return json.dumps(self.model_dump(mode="json", exclude={"host_epoch", "build_id", "worker_id"}),
+                          sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 class ClosePlugin(HostFence):

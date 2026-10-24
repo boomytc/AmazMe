@@ -11,13 +11,13 @@ export function requestOptions(parsed: Args): PythonRunOptions {
 	const modifiers = tools.some((name) => /^[+-]/.test(name));
 	const allowed = modifiers
 		? [
-				...(parsed.noTools ? [] : parsed.noBuiltinTools ? ["mcp_*"] : ["*"]),
+				...(parsed.noTools ? [] : parsed.noBuiltinTools ? ["mcp_*", "plugin_*"] : ["*"]),
 				...tools
 					.filter((name) => name.startsWith("+"))
 					.map((name) => name.slice(1)),
 			]
 		: (parsed.tools ??
-			(parsed.noTools ? [] : parsed.noBuiltinTools ? ["mcp_*"] : undefined));
+			(parsed.noTools ? [] : parsed.noBuiltinTools ? ["mcp_*", "plugin_*"] : undefined));
 	const excluded = [
 		...(parsed.excludeTools ?? []),
 		...(modifiers

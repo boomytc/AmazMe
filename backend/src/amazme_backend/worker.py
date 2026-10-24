@@ -16,6 +16,7 @@ from .contracts import (
     ApprovalEnvelope,
     BackendError,
     Cancel,
+    CancelPlugin,
     Cleanup,
     Command,
     ComputerToolRequest,
@@ -26,6 +27,7 @@ from .contracts import (
     HostFence,
     HostReady,
     Identity,
+    ImagePart,
     Lease,
     McpCall,
     McpCallEnvelope,
@@ -37,6 +39,11 @@ from .contracts import (
     McpState,
     McpToolCall,
     Message,
+    PluginCallEnvelope,
+    PluginCallView,
+    PluginList,
+    PluginOffer,
+    PluginToolCall,
     PreparedFileWrite,
     PrepareFileWrite,
     Preview,
@@ -50,6 +57,7 @@ from .contracts import (
     Snapshot,
     StopWorker,
     Submission,
+    SupervisorHealth,
     ToolCall,
     ToolLookup,
     ToolObservation,
@@ -61,6 +69,7 @@ from .contracts import (
     WorkerRequest,
     WorkerState,
     WriteFile,
+    checked_images,
 )
 from .faults import Faults
 from .manage import contains_secret
@@ -84,6 +93,8 @@ from .session_domain import (
     Observation,
     OpenEpoch,
     Park,
+    PluginRetrieval,
+    PluginReturned,
     Previewed,
     QueryTool,
     ReconcileEffect,
@@ -233,7 +244,7 @@ class Worker:
 
     def _interrupt(self) -> None:
         # Open/close/reconciliation boundaries are never cancelled with business work.
-        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval)):
+        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval, PluginRetrieval)):
             self.run_task.cancel()
 
     async def cancel(self, value: Cancel) -> Receipt:
@@ -241,7 +252,7 @@ class Worker:
         self.last_demand = time.monotonic()
         async with self.dispatch_lock:
             receipt = await self.store.cancel(value.request_id, value)
-            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval)):
+            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval, PluginRetrieval)):
                 current = await self.store.get(self.current.request_id)
                 if current.cancel_requested:
                     self._interrupt()
@@ -457,6 +468,65 @@ class Worker:
             raise BackendError("file_preparation_mismatch")
         return prepared
 
+    async def refresh_effect_proofs(self) -> None:
+        if self.validation or not self.storage_ready:
+            return
+        snapshot = await self.store.snapshot()
+        if not any(not hold.resource_clean for hold in snapshot.effects):
+            return
+        try:
+            health = await asyncio.wait_for(self.supervisor.call("GET", "/health", SupervisorHealth), 2)
+        except (OSError, BackendError, TimeoutError, ValueError):
+            return
+        if (health.identity.profile_id != self.profile.config.profile_id or health.identity.build_id != self.build
+                or health.identity.host_epoch != await self.store.host_epoch()
+                or not any(worker.worker_id == self.instance and worker.session_id == self.session for worker in health.workers)):
+            return
+        await self.store.refresh_effect_proofs([hold for hold in health.effects if hold.session_id == self.session])
+
+    async def _plugin_offers(self) -> list[PluginOffer]:
+        workspace = session_workspace(self.profile.path, self.session)
+        loaded = await self.supervisor.call("GET", "/plugins?session_id=" + self.session, PluginList)
+        if any(view.session_id != self.session for view in loaded.plugins):
+            raise BackendError("plugin_session_mismatch")
+        return [offer for view in loaded.plugins for offer in PluginOffer.from_view(view, workspace)]
+
+    async def _retrieve_plugin(self, action: PluginRetrieval) -> PluginReturned:
+        args = PluginToolCall.model_validate_json(action.call.arguments)
+        fence = await self._mcp_fence()
+        try:
+            if action.stop:
+                view = await self.supervisor.call("POST", "/plugins/cancel", PluginCallView, CancelPlugin(
+                    **fence.model_dump(), session_id=self.session, plugin_id=args.plugin_id, call_id=args.call_id))
+            else:
+                view = await self.supervisor.call("POST", "/plugins/call", PluginCallView, PluginCallEnvelope(
+                    **fence.model_dump(), origin="model", session_id=self.session, worker_id=self.instance,
+                    plugin_id=args.plugin_id, call_id=args.call_id, name=args.name, arguments=args.arguments,
+                    workspace=args.workspace, step_id=action.step_id, request_id=action.request_id,
+                    expected_fingerprint=args.fingerprint, expected_load_id=args.load_id, expected_schema_digest=args.schema_digest))
+        except BackendError as error:
+            if error.code not in {"plugin_catalog_conflict", "plugin_session_mismatch", "plugin_disconnected", "plugin_busy",
+                                  "plugin_tool_not_found", "workspace_mismatch", "plugin_model_identity", "unknown_effect_conflict"}:
+                raise
+            return PluginReturned(action, PluginCallView(call_id=args.call_id, phase="conflict", error=error.code))
+        images: list[ImagePart] = []
+        text = view.error or view.phase
+        if view.result is not None:
+            parts = [part for part in view.result.content if part.get("type") != "image"]
+            for part in view.result.content:
+                if part.get("type") == "image":
+                    try:
+                        images.append(ImagePart.model_validate({"media_type":part.get("mimeType"), "data_base64":part.get("data")}))
+                    except ValueError:
+                        parts.append({"type":"text", "text":"Plugin execution completed; an invalid image was omitted. Do not repeat the call."})
+            try:
+                checked_images(images)
+            except BackendError:
+                images = []
+                parts.append({"type":"text", "text":"Plugin execution completed; invalid media was omitted. Do not repeat the call."})
+            text = json.dumps({"content":parts, "details":view.result.details, "is_error":view.result.is_error}, ensure_ascii=False)[:64000]
+        return PluginReturned(action, view, text, images)
+
     async def _retrieve_computer(self, action: ComputerRetrieval) -> ComputerReturned:
         ready = HostReady.model_validate_json((self.profile.path / "ready.json").read_bytes())
         epoch = await self.store.host_epoch()
@@ -485,8 +555,10 @@ class Worker:
             messages = await self.model_input(action.messages)
             # A direct model probe has no session database. A live turn binds the catalog before any token.
             offers = await self._mcp_offers() if self.storage_ready else []
+            plugins = await self._plugin_offers() if self.storage_ready else []
             if self.storage_ready:
-                await self.store.bind_mcp_catalog(action.step_id, action.generation, catalog_payload(offers))
+                await self.store.bind_model_tools(action.step_id, action.generation, catalog_payload(offers),
+                    json.dumps([offer.model_dump() for offer in plugins], ensure_ascii=False, sort_keys=True))
             # Read the key after the awaits. A logout that landed first must not be sent.
             # A queued workflow check is not this turn's typed prompt. Leave that prompt intact.
             check = await self.store.workflow_check_text(action.request_id) if self.storage_ready else ""
@@ -494,7 +566,7 @@ class Worker:
             if contains_secret(check, AccountStore(self.profile.path).secrets()):
                 raise BackendError("workflow_secret")
             config = await AccountStore(self.profile.path).configured(action.config)
-            async for item in stream(config, messages, offers):
+            async for item in stream(config, messages, offers, plugins):
                 if isinstance(item, Completion):
                     completion = item
                 else:
@@ -523,6 +595,8 @@ class Worker:
             return await self._retrieve_mcp(action)
         if isinstance(action, ComputerRetrieval):
             return await self._retrieve_computer(action)
+        if isinstance(action, PluginRetrieval):
+            return await self._retrieve_plugin(action)
         if isinstance(action, ToolInvocation):
             prepared = await self.prepare_file_write(action) if action.call.name == "write_file" else None
             command = command_for(action.call)
@@ -643,6 +717,7 @@ def application(owner: Worker) -> FastAPI:
 
     @app.get("/snapshot")
     async def snapshot() -> Snapshot:
+        await owner.refresh_effect_proofs()
         return await owner.store.snapshot(owner.state)
 
     @app.post("/session-ops")
@@ -651,6 +726,7 @@ def application(owner: Worker) -> FastAPI:
 
     @app.get("/events")
     async def events(after: int = 0, stream_id: str = "") -> Replay:
+        await owner.refresh_effect_proofs()
         return await owner.store.events(after, stream_id)
 
     @app.get("/activity")

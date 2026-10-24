@@ -178,7 +178,7 @@ test("CLI tool selectors and prompts use native per-run options", async () => {
 		allowed_tools: [],
 	});
 	expect(requestOptions(parseArgs(["--no-builtin-tools"]))).toEqual({
-		allowed_tools: ["mcp_*"],
+		allowed_tools: ["mcp_*", "plugin_*"],
 	});
 	expect(
 		requestOptions(parseArgs(["--no-mcp", "--tools", "+shell,-write_file"])),

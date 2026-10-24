@@ -111,6 +111,33 @@ MCP_IDENTITY_LIMIT = 4096
 MCP_TERMINAL_WINDOW = 100
 
 
+RESOLUTION_SCHEMA = """CREATE TABLE IF NOT EXISTS resolutions(
+    id TEXT PRIMARY KEY,call TEXT NOT NULL UNIQUE,session TEXT NOT NULL,payload TEXT NOT NULL,
+    native_call TEXT,plugin_call TEXT,
+    CHECK((native_call IS NOT NULL AND plugin_call IS NULL AND call=native_call)
+          OR (native_call IS NULL AND plugin_call IS NOT NULL)),
+    FOREIGN KEY(native_call) REFERENCES scopes(id),
+    FOREIGN KEY(plugin_call,call) REFERENCES plugin_calls(id,step_id));"""
+
+
+def ensure_resolution_schema(db: sqlite3.Connection) -> None:
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS plugin_call_step ON plugin_calls(id,step_id)")
+    resolution_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(resolutions)")}
+    if "native_call" not in resolution_columns:
+        # Preserve the current journal while making the two real receipt owners explicit.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute("ALTER TABLE resolutions RENAME TO previous_resolutions")
+            db.execute(RESOLUTION_SCHEMA)
+            db.execute("INSERT INTO resolutions(id,call,session,payload,native_call) "
+                       "SELECT id,call,session,payload,call FROM previous_resolutions")
+            db.execute("DROP TABLE previous_resolutions")
+            db.execute("COMMIT")
+        except BaseException:
+            db.execute("ROLLBACK")
+            raise
+
+
 class ExecutionDB:
     """One SQL owner. Unsupported/corrupt stores are inspected before any writable open."""
 
@@ -240,6 +267,8 @@ class Supervisor:
         self.mcp_clients: dict[str, McpClient] = {}
         self.mcp_processes: dict[str, ServiceProcess] = {}
         self.plugin_clients: dict[str, PluginClient] = {}
+        self.plugin_jobs: dict[str, asyncio.Task[PluginCallView]] = {}
+        self.plugin_job_requests: dict[str, str] = {}
         self.remote_clients: dict[str, RemoteClient] = {}
         self.remote_control = asyncio.Lock()
         self.code_cancels: dict[str, threading.Event] = {}
@@ -277,7 +306,7 @@ class Supervisor:
 
     async def initialize(self) -> None:
         def init(db: sqlite3.Connection) -> sqlite3.Row:
-            db.executescript("""
+            db.executescript(f"""
               BEGIN IMMEDIATE;
               CREATE TABLE IF NOT EXISTS control(id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER NOT NULL,
                 revision INTEGER NOT NULL,fence_ready INTEGER NOT NULL,freeze TEXT NOT NULL,
@@ -295,8 +324,7 @@ class Supervisor:
                 result TEXT NOT NULL DEFAULT '',clean INTEGER NOT NULL DEFAULT 0,effect TEXT NOT NULL,
                 FOREIGN KEY(session,epoch) REFERENCES epochs(session,epoch));
               CREATE INDEX IF NOT EXISTS scope_epoch ON scopes(session,epoch);
-              CREATE TABLE IF NOT EXISTS resolutions(id TEXT PRIMARY KEY,call TEXT NOT NULL UNIQUE,
-                session TEXT NOT NULL,payload TEXT NOT NULL,FOREIGN KEY(call) REFERENCES scopes(id));
+              {RESOLUTION_SCHEMA}
               CREATE TABLE IF NOT EXISTS budgets(session TEXT PRIMARY KEY,attempts INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS recoveries(id TEXT PRIMARY KEY,session TEXT NOT NULL,state TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS thaws(id TEXT PRIMARY KEY,build TEXT NOT NULL);
@@ -332,7 +360,8 @@ class Supervisor:
                            "tools":"TEXT NOT NULL DEFAULT '[]'", "load_id":"TEXT NOT NULL DEFAULT ''",
                            "phase":"TEXT NOT NULL DEFAULT 'disconnected'", "error":"TEXT NOT NULL DEFAULT ''",
                            "lease":"TEXT NOT NULL DEFAULT ''", "directory":"TEXT NOT NULL DEFAULT ''"},
-                "plugin_calls":{"error":"TEXT NOT NULL DEFAULT ''", "fingerprint":"TEXT NOT NULL DEFAULT ''",
+                "plugin_calls":{"step_id":"TEXT NOT NULL DEFAULT ''", "request_id":"TEXT NOT NULL DEFAULT ''",
+                                "origin":"TEXT NOT NULL DEFAULT 'manual'", "error":"TEXT NOT NULL DEFAULT ''", "fingerprint":"TEXT NOT NULL DEFAULT ''",
                                 "cancel_requested":"INTEGER NOT NULL DEFAULT 0", "clean":"INTEGER NOT NULL DEFAULT 0"},
             }.items():
                 present = {str(row[1]) for row in db.execute("PRAGMA table_info(" + table + ")")}
@@ -341,6 +370,7 @@ class Supervisor:
                         db.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
             db.execute("CREATE TABLE IF NOT EXISTS plugin_cancels(id TEXT PRIMARY KEY,plugin TEXT NOT NULL,session TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS plugin_loads(id TEXT PRIMARY KEY,plugin TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL DEFAULT '')")
+            ensure_resolution_schema(db)
             remote_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(remotes)")}
             if "transport" not in remote_columns:
                 db.execute("ALTER TABLE remotes ADD COLUMN transport TEXT NOT NULL DEFAULT ''")
@@ -655,17 +685,27 @@ class Supervisor:
             "UPDATE scopes SET phase=? WHERE id=? AND outcome='pending'", (phase, call)), write=True)
 
     async def _holds(self) -> list[EffectHold]:
-        return await self.db.call(lambda db: [EffectHold(
-            call_id=str(r["id"]), session_id=str(r["session"]), request_id=str(r["request"]),
-            reason="tool_outcome_unknown", resource_clean=bool(r["clean"]), reconciled=bool(r["resolved"]))
-            for r in db.execute("SELECT s.*,EXISTS(SELECT 1 FROM resolutions r WHERE r.call=s.id) resolved "
-                                "FROM scopes s WHERE effect='write' AND outcome='unknown' ORDER BY rowid")])
+        active_plugins = {key for key, task in self.plugin_jobs.items() if not task.done()}
+        def read(db: sqlite3.Connection) -> list[EffectHold]:
+            native = [EffectHold(call_id=str(row["id"]), session_id=str(row["session"]), request_id=str(row["request"]),
+                reason="tool_outcome_unknown", resource_clean=bool(row["clean"]), reconciled=bool(row["resolved"]))
+                for row in db.execute("SELECT s.*,EXISTS(SELECT 1 FROM resolutions r WHERE r.call=s.id) resolved "
+                    "FROM scopes s WHERE effect='write' AND outcome='unknown' ORDER BY rowid")]
+            plugins = [EffectHold(call_id=str(row["step_id"]), session_id=str(row["session"]), request_id=str(row["request_id"]),
+                reason="plugin_outcome_unknown", resource_clean=bool(row["clean"]), reconciled=bool(row["resolved"]))
+                for row in db.execute("SELECT p.*,EXISTS(SELECT 1 FROM resolutions r WHERE r.call=p.step_id) resolved "
+                    "FROM plugin_calls p WHERE origin='model' AND phase='unknown' AND step_id!='' ORDER BY rowid") if str(row["id"]) not in active_plugins]
+            return [*native, *plugins]
+        return await self.db.call(read)
 
     async def _write_conflict(self, session: str) -> bool:
-        return await self.db.call(lambda db: db.execute(
-            "SELECT 1 FROM scopes s WHERE session=? AND effect='write' AND ((outcome='unknown' AND NOT EXISTS "
-            "(SELECT 1 FROM resolutions r WHERE r.call=s.id)) OR (outcome='completed' AND clean=0)) LIMIT 1",
-            (session,)).fetchone() is not None)
+        def read(db: sqlite3.Connection) -> bool:
+            native = db.execute("SELECT 1 FROM scopes s WHERE session=? AND effect='write' AND ((outcome='unknown' AND NOT EXISTS "
+                "(SELECT 1 FROM resolutions r WHERE r.call=s.id)) OR (outcome='completed' AND clean=0)) LIMIT 1", (session,)).fetchone()
+            plugin = db.execute("SELECT 1 FROM plugin_calls p WHERE session=? AND origin='model' AND phase='unknown' AND step_id!='' "
+                "AND (clean=0 OR NOT EXISTS (SELECT 1 FROM resolutions r WHERE r.call=p.step_id)) LIMIT 1", (session,)).fetchone()
+            return native is not None or plugin is not None
+        return await self.db.call(read)
 
     async def execute(self, value: RunTool) -> ToolResult:
         channel: LocalProcess | None = None
@@ -799,9 +839,17 @@ class Supervisor:
             if not resolution.evidence.strip():
                 raise BackendError("effect_evidence_required")
             scope = await self._scope(resolution.call_id)
-            if scope is None or scope["session"] != value.session_id or scope["effect"] != "write" or scope["outcome"] != "unknown":
+            plugin = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_calls WHERE step_id=? AND origin='model'",
+                (resolution.call_id,)).fetchone()) if scope is None else None
+            if plugin is not None:
+                if str(plugin["session"]) != value.session_id or str(plugin["phase"]) != "unknown":
+                    raise BackendError("effect_scope_mismatch")
+                clean, request_id, reason = bool(plugin["clean"]), str(plugin["request_id"]), "plugin_outcome_unknown"
+            elif scope is not None and scope["session"] == value.session_id and scope["effect"] == "write" and scope["outcome"] == "unknown":
+                clean, request_id, reason = bool(scope["clean"]), str(scope["request"]), "tool_outcome_unknown"
+            else:
                 raise BackendError("effect_scope_mismatch")
-            if not scope["clean"]:
+            if not clean:
                 raise BackendError("execution_cleanup_pending", status=503)
             def resolve(db: sqlite3.Connection) -> None:
                 old = db.execute("SELECT * FROM resolutions WHERE id=? OR call=?",
@@ -810,11 +858,12 @@ class Supervisor:
                     if old["payload"] != resolution.model_dump_json() or old["session"] != value.session_id:
                         raise BackendError("effect_resolution_conflict")
                 else:
-                    db.execute("INSERT INTO resolutions VALUES(?,?,?,?)", (resolution.resolution_id,
-                               resolution.call_id, value.session_id, resolution.model_dump_json()))
+                    db.execute("INSERT INTO resolutions(id,call,session,payload,native_call,plugin_call) VALUES(?,?,?,?,?,?)",
+                               (resolution.resolution_id, resolution.call_id, value.session_id, resolution.model_dump_json(),
+                                None if plugin is not None else resolution.call_id, str(plugin["id"]) if plugin is not None else None))
             await self.db.call(resolve, write=True)
-            return EffectHold(call_id=resolution.call_id, session_id=value.session_id, request_id=str(scope["request"]),
-                              reason="tool_outcome_unknown", resource_clean=True, reconciled=True)
+            return EffectHold(call_id=resolution.call_id, session_id=value.session_id, request_id=request_id,
+                              reason=reason, resource_clean=True, reconciled=True)
 
     async def _clean_scope(self, scope: sqlite3.Row) -> None:
         if scope["clean"]:
@@ -1818,6 +1867,24 @@ class Supervisor:
                                               "result":result, "error":str(row["error"]), "cancel_requested":bool(row["cancel_requested"]), "clean":bool(row["clean"])})
 
     async def call_plugin(self, value: PluginCallEnvelope) -> PluginCallView:
+        self.check_host(value)
+        identity = value.intent_payload()
+        if value.call_id in self.plugin_job_requests and self.plugin_job_requests[value.call_id] != identity:
+            raise BackendError("plugin_call_conflict")
+        if value.call_id not in self.plugin_jobs:
+            task = asyncio.create_task(self._execute_plugin(value))
+            self.plugin_jobs[value.call_id] = task
+            self.plugin_job_requests[value.call_id] = identity
+            def finished(result: asyncio.Task[PluginCallView]) -> None:
+                if self.plugin_jobs.get(value.call_id) is result:
+                    self.plugin_jobs.pop(value.call_id, None)
+                    self.plugin_job_requests.pop(value.call_id, None)
+                if not result.cancelled():
+                    result.exception()
+            task.add_done_callback(finished)
+        return await asyncio.shield(self.plugin_jobs[value.call_id])
+
+    async def _execute_plugin(self, value: PluginCallEnvelope) -> PluginCallView:
         async with self.control:
             self.check_host(value)
             plugin = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
@@ -1825,11 +1892,20 @@ class Supervisor:
                 raise BackendError("plugin_not_found", status=404)
             if str(plugin["session"]) != value.session_id:
                 raise BackendError("plugin_session_mismatch")
-            payload = json.dumps({"kind":value.kind, "name":value.name, "arguments":value.arguments}, sort_keys=True)
+            if value.origin == "model":
+                worker = await self.validate_worker(WorkerRequest(session_id=value.session_id,worker_id=value.worker_id,build_id=value.build_id))
+                if (worker.purpose == "validation" or value.kind != "tool" or not value.request_id or len(value.step_id) != 64
+                        or value.call_id != value.step_id[:32]):
+                    raise BackendError("plugin_model_identity")
+            payload = value.intent_payload()
             existing = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_calls WHERE id=?", (value.call_id,)).fetchone())
             if existing is not None:
                 if (str(existing["plugin"]), str(existing["session"]), str(existing["text"])) != (value.plugin_id, value.session_id, payload):
                     raise BackendError("plugin_call_conflict")
+                if not existing["clean"] and value.plugin_id not in self.plugin_clients:
+                    await self._close_plugin(plugin)
+                    existing = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_calls WHERE id=?", (value.call_id,)).fetchone())
+                    assert existing is not None
                 return self._plugin_call(existing)
             cancelled = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_cancels WHERE id=?", (value.call_id,)).fetchone())
             if cancelled is not None:
@@ -1839,6 +1915,8 @@ class Supervisor:
                     (value.call_id, value.plugin_id, value.session_id, payload)), write=True)
                 return PluginCallView(call_id=value.call_id, phase="cancelled", cancel_requested=True, clean=True)
             self._admit()
+            if await self._write_conflict(value.session_id):
+                raise BackendError("unknown_effect_conflict", status=503)
             await self._plugin_fingerprint_ready(await self.plugin_set_fingerprint(value.session_id), value.session_id)
             if session_workspace(self.profile.path, value.session_id) != value.workspace:
                 raise BackendError("workspace_mismatch")
@@ -1852,9 +1930,15 @@ class Supervisor:
                 raise BackendError("plugin_busy", status=429)
             if not any(tool.name == value.name and tool.kind == value.kind for tool in client.tools):
                 raise BackendError("plugin_tool_not_found", status=404)
+            if value.origin == "model":
+                tool = next(tool for tool in client.tools if tool.name == value.name and tool.kind == value.kind)
+                if (value.expected_fingerprint != str(plugin["fingerprint"]) or value.expected_load_id != str(plugin["load_id"])
+                        or value.expected_schema_digest != tool.schema_digest()):
+                    raise BackendError("plugin_catalog_conflict")
             await self.db.call(lambda db: db.execute(
-                "INSERT INTO plugin_calls(id,plugin,session,text,phase,fingerprint) VALUES(?,?,?,?,'unknown',?)",
-                (value.call_id, value.plugin_id, value.session_id, payload, str(plugin["fingerprint"]))), write=True)
+                "INSERT INTO plugin_calls(id,plugin,session,text,phase,fingerprint,step_id,request_id,origin) VALUES(?,?,?,?,'unknown',?,?,?,?)",
+                (value.call_id, value.plugin_id, value.session_id, payload, str(plugin["fingerprint"]),
+                 value.step_id, value.request_id, value.origin)), write=True)
             # Reserve before releasing control, so another call cannot overtake the journaled one.
             client.pending = value.call_id
         phase, result, error, clean = "unknown", "", "plugin_outcome_unknown", False
@@ -2354,6 +2438,7 @@ class Supervisor:
             "UPDATE terminals SET phase='unknown' WHERE id=? AND exit_code IS NULL", (terminal_id,)), write=True)
 
     async def close(self) -> None:
+        self.draining = True
         if self.monitor_task:
             self.monitor_task.cancel()
             await asyncio.gather(self.monitor_task, return_exceptions=True)
@@ -2365,12 +2450,13 @@ class Supervisor:
                 await self._close_services(require_clean=False)
         finally:
             # Storage failure must not prevent closing already-owned process handles.
-            for process in self.terminal_processes.values():
+            for process in list(self.terminal_processes.values()):
                 await process.close()
-            for process in self.mcp_processes.values():
+            for process in list(self.mcp_processes.values()):
                 await process.close()
-            for client in self.plugin_clients.values():
+            for client in list(self.plugin_clients.values()):
                 await client.close()
+            await asyncio.gather(*list(self.plugin_jobs.values()), return_exceptions=True)
             self.plugin_clients.clear()
             self.terminal_processes.clear()
             self.terminals.clear()

@@ -394,7 +394,7 @@ async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
     await host.store.create_session(SESSION, CreateSession(title="检查"))
     captured: list[list[Message]] = []
 
-    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None):
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None):
         del config, offers
         captured.append(messages)
         yield Completion(message=Message(role="assistant", content="ok"), response_id="faux")
@@ -405,6 +405,7 @@ async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
 
     monkeypatch.setattr("amazme_backend.worker.stream", fake_stream)
     monkeypatch.setattr(Worker, "_mcp_offers", empty_offers)
+    monkeypatch.setattr(Worker, "_plugin_offers", empty_offers)
     session_database(tmp_path, SESSION).parent.mkdir(parents=True, mode=0o700)
     worker = Worker(host.profile, SESSION, "worker-flow")
     await worker.store.initialize()

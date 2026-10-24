@@ -1666,7 +1666,7 @@ function startClient() {
       const call = await api(`/api/v1/sessions/${selected}/plugins/${targetPlugin}/calls/${pending.call_id}/cancel`, "POST", {}, connection);
       settlePending(key, "call_id", pending.call_id, call.phase === "unknown" ? pending : null);
       if (!operation.active()) return;
-      $("plugin-result").textContent = `${call.phase} · ${["done", "failed"].includes(call.phase) ? "调用已完成" : call.clean ? "已确认已知执行进程退出" : "退出未确认"}`;
+      $("plugin-result").textContent = `${call.phase} · ${call.phase === "cancelled" ? "调用未发送" : ["done", "failed"].includes(call.phase) ? "调用已完成" : call.clean ? "已确认已知执行进程退出" : "退出未确认"}`;
     } catch (failure) { if (operation.active()) error(failure); }
   };
   async function reloadPlugin(fresh) {

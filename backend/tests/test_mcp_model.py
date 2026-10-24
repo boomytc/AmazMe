@@ -76,7 +76,7 @@ async def propose(store: SessionStore, chosen: McpOffer, arguments: dict | None 
     await store.accept(Submit(request_id="root", text=prompt), FENCE)
     action = await next_action(store)
     assert isinstance(action, ModelInvocation)
-    await store.bind_mcp_catalog(action.step_id, action.generation, catalog_payload([chosen]))
+    await store.bind_model_tools(action.step_id, action.generation, catalog_payload([chosen]))
     await store.advance(ModelReturned(action, await completion_of(action)))
     return await next_action(store)
 
@@ -126,10 +126,10 @@ async def test_snapshot_cannot_be_replaced_after_it_is_saved(tmp_path: Path) -> 
         action = await next_action(store)
         assert isinstance(action, ModelInvocation)
         payload = catalog_payload([chosen])
-        await store.bind_mcp_catalog(action.step_id, action.generation, payload)
-        await store.bind_mcp_catalog(action.step_id, action.generation, payload)
+        await store.bind_model_tools(action.step_id, action.generation, payload)
+        await store.bind_model_tools(action.step_id, action.generation, payload)
         with pytest.raises(BackendError, match="mcp_catalog_conflict"):
-            await store.bind_mcp_catalog(action.step_id, action.generation, catalog_payload([offer(name="other")]))
+            await store.bind_model_tools(action.step_id, action.generation, catalog_payload([offer(name="other")]))
     finally:
         await store.db.close()
 
@@ -194,7 +194,7 @@ async def test_unknown_cancel_and_interrupt_keep_the_same_call(tmp_path: Path) -
             {"alias": offer().alias, "arguments": {"text": "x"}})), FENCE)
         started = await next_action(store)
         assert isinstance(started, ModelInvocation)
-        await store.bind_mcp_catalog(started.step_id, started.generation, catalog_payload([offer()]))
+        await store.bind_model_tools(started.step_id, started.generation, catalog_payload([offer()]))
         await store.advance(ModelReturned(started, await completion_of(started)))
         running = await next_action(store)
         assert isinstance(running, McpRetrieval) and running.stop is False
@@ -210,7 +210,7 @@ async def test_unknown_cancel_and_interrupt_keep_the_same_call(tmp_path: Path) -
             {"alias": offer().alias, "arguments": {"text": "y"}})), FENCE)
         invoked = await next_action(store)
         assert isinstance(invoked, ModelInvocation)
-        await store.bind_mcp_catalog(invoked.step_id, invoked.generation, catalog_payload([offer()]))
+        await store.bind_model_tools(invoked.step_id, invoked.generation, catalog_payload([offer()]))
         await store.advance(ModelReturned(invoked, await completion_of(invoked)))
         live = await next_action(store)
         assert isinstance(live, McpRetrieval)
@@ -235,7 +235,7 @@ async def test_alias_outside_the_snapshot_is_rejected(tmp_path: Path) -> None:
         await store.accept(Submit(request_id="root", text=prompt), FENCE)
         invoked = await next_action(store)
         assert isinstance(invoked, ModelInvocation)
-        await store.bind_mcp_catalog(invoked.step_id, invoked.generation, catalog_payload([offer()]))
+        await store.bind_model_tools(invoked.step_id, invoked.generation, catalog_payload([offer()]))
         await store.advance(ModelReturned(invoked, await completion_of(invoked)))
         await next_action(store)
         receipt = await store.get("root")
