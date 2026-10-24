@@ -154,6 +154,12 @@ def test_browser_shows_disconnect_without_calling_the_remote_stopped() -> None:
           if(path.endsWith('/remotes') && method==='POST') return response({remote_id:'r',host:'remote-a',phase:'connected',generation:1});
           if(path.endsWith('/disconnect')) return response({remote_id:'r',host:'remote-a',phase:'disconnected',generation:1});
           if(path.endsWith('/reconnect')) return response({remote_id:'r',host:'remote-a',phase:'connected',generation:1});
+          if(path.includes('/calls') && method==='POST') {
+            const body = JSON.parse(options.body);
+            seen.push(body.call_id+' '+body.command);
+            const repeat = seen.filter(item=>item.startsWith(body.call_id+' ')).length > 1;
+            return response({call_id:body.call_id, phase:repeat?'done':'unknown', result:repeat?'ok':''});
+          }
           if(path==='/api/v1/files') return response({path:'',entries:[],truncated:false});
           throw Error('unexpected '+method+' '+path);
         };
@@ -174,6 +180,28 @@ def test_browser_shows_disconnect_without_calling_the_remote_stopped() -> None:
         assert.ok(seen.some(path=>path.endsWith('/disconnect')));
         $('remote-again').click();
         await until(()=>seen.some(path=>path.endsWith('/reconnect')));
+        $('remote-run').value = 'drop';
+        $('remote-command').requestSubmit();
+        await until(()=>$('remote-result').textContent==='unknown' && $('error').textContent.includes('同一命令'));
+        const first = seen.filter(item=>item.endsWith(' drop'));
+        assert.equal(first.length, 1);
+        $('error').textContent = '';
+        $('remote-run').value = 'other';
+        $('remote-command').requestSubmit();
+        await until(()=>$('error').textContent.includes('同一命令'));
+        assert.equal(seen.filter(item=>item.includes(' ')).length, 1);
+        $('remote-run').value = 'drop';
+        $('remote-command').requestSubmit();
+        await until(()=>$('remote-result').textContent==='ok');
+        const repeated = seen.filter(item=>item.endsWith(' drop'));
+        assert.equal(repeated.length, 2);
+        assert.equal(repeated[0], repeated[1]);
+        $('remote-run').value = 'next';
+        $('remote-command').requestSubmit();
+        await until(()=>seen.some(item=>item.endsWith(' next')));
+        const next = seen.filter(item=>item.endsWith(' next'));
+        assert.equal(next.length, 1);
+        assert.notEqual(next[0].split(' ')[0], repeated[0].split(' ')[0]);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

@@ -1475,14 +1475,31 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
+  const remoteCallKey = () => `remote-call:${identity.profile_id}:${selected}:${remoteId}`;
   $("remote-command").onsubmit = async event => {
     event.preventDefault();
-    if (!remoteId || !selected) return;
+    if (!remoteId || !selected || !identity || health?.state !== "ready") return;
+    const command = $("remote-run").value;
+    let pending = null;
+    try { pending = JSON.parse(sessionStorage.getItem(remoteCallKey()) || "null"); }
+    catch { pending = null; }
+    if (pending && pending.phase === "unknown" && pending.command !== command) {
+      error(new Error("上次远端命令结果未知，未自动重发；请用同一命令查询。"));
+      return;
+    }
+    if (!pending || pending.phase === "done" || pending.phase === "conflict") {
+      pending = {call_id: crypto.randomUUID().replaceAll("-", ""), command, phase: "unknown"};
+      sessionStorage.setItem(remoteCallKey(), JSON.stringify(pending));
+    }
     try {
       const call = await api(`/api/v1/sessions/${selected}/remotes/${remoteId}/calls`, "POST",
-        {...remoteBody(), call_id: crypto.randomUUID().replaceAll("-", ""), command: $("remote-run").value}, current);
+        {...remoteBody(), call_id: pending.call_id, command: pending.command}, current);
+      pending.phase = call.phase;
+      if (call.phase === "done" || call.phase === "conflict") sessionStorage.removeItem(remoteCallKey());
+      else sessionStorage.setItem(remoteCallKey(), JSON.stringify(pending));
       $("remote-result").textContent = call.result || call.phase;
-      $("error").textContent = "";
+      if (call.phase === "unknown") error(new Error("上次远端命令结果未知，未自动重发；请用同一命令查询。"));
+      else $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
   $("remote-drop").onclick = async () => {
