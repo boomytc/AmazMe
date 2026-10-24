@@ -34,6 +34,14 @@ def split_client_path(relative: str) -> tuple[str, str]:
     return parts[1], "/".join(parts[2:])
 
 
+def tool_path(session_workspace: str, relative: str) -> tuple[str, str]:
+    """A tool path without an explicit grant uses the session workspace."""
+    name, inner = split_client_path(relative)
+    if name == PRIMARY:
+        return validate_workspace(session_workspace), inner
+    return name, inner
+
+
 def client_path(name: str, inner: str) -> str:
     if name == PRIMARY:
         return inner

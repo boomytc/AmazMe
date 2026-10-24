@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import shutil
 from unittest.mock import AsyncMock
 
 import httpx
@@ -14,12 +15,14 @@ from amazme_backend.contracts import (
     BackendError,
     EpochHealth,
     HostFence,
+    HostReady,
     Identity,
     Lease,
     PrepareFileWrite,
     SupervisorHealth,
     ToolCall,
     WorkerInfo,
+    WorkspaceGrantRequest,
     WriteFile,
 )
 from amazme_backend.host import Host, application
@@ -96,6 +99,73 @@ async def test_prepare_is_private_durable_and_idempotent_before_any_write(contex
     conflict = request.model_copy(update={"write": WriteFile(path="note.txt", content="other")})
     with pytest.raises(BackendError, match="call_conflict"):
         await host.prepare_tool_write(conflict)
+
+
+async def test_prepare_and_worker_bind_a_relative_path_to_the_session_workspace(context):
+    host, root, request, _ = context
+    grant = host.profile.path.parent / f"grant-{host.profile.path.name}"
+    grant.mkdir()
+    session = "a" * 32
+    try:
+        (root / "note.txt").write_text("primary\n")
+        (grant / "note.txt").write_text("granted\n")
+        await host.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
+        await host.store.transaction(lambda db: db.execute(
+            "INSERT INTO sessions(id,title,workspace) VALUES('s','host','docs'),(?, 'worker','docs')", (session,)))
+        prepared = await host.prepare_tool_write(request)
+        assert prepared.path == "grant/docs/note.txt"
+        assert prepared.expected_digest == hashlib.sha256(b"granted\n").hexdigest()
+        assert (root / "note.txt").read_text() == "primary\n"
+        assert (grant / "note.txt").read_text() == "granted\n"
+        saved = await host.store.checkpoint(prepared.checkpoint_id)
+        assert saved is not None and saved[1] == "docs" and saved[2] == "grant/docs/note.txt"
+        worker = Worker(host.profile, session, "worker")
+        worker.store.db.path.parent.mkdir(parents=True, mode=0o700)
+        await worker.store.initialize()
+        await worker.store.fence(HostFence(host_epoch=request.host_epoch, build_id=host.build))
+        private_write(host.profile.path / "ready.json", HostReady(
+            build_id=host.build, profile_id=host.profile.config.profile_id, instance_id=host.instance,
+            pid=os.getpid(), host_epoch=request.host_epoch, role="host", fingerprint=host.build,
+            url="http://127.0.0.1:9").model_dump_json())
+        action = ToolInvocation(step_id=request.call_id, request_id="r", generation=1,
+            call=ToolCall(id="call", name="write_file", arguments=request.write.model_dump_json()),
+            lease=Lease(session_id=session, worker_id="worker", execution_epoch=1,
+                        build_id=host.build, supervisor_id="supervisor"))
+
+        class FakeResponse:
+            def __init__(self, payload: bytes) -> None:
+                self.content, self.is_error, self.status_code = payload, False, 200
+
+        class FakeClient:
+            payload = b""
+
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            async def __aenter__(self) -> "FakeClient":
+                return self
+
+            async def __aexit__(self, *exc: object) -> None:
+                return None
+
+            async def post(self, url: str, json: object, headers: dict[str, str]) -> FakeResponse:
+                return FakeResponse(FakeClient.payload)
+
+        original_client = httpx.AsyncClient
+        httpx.AsyncClient = FakeClient  # type: ignore[misc,assignment]
+        try:
+            FakeClient.payload = prepared.model_dump_json().encode()
+            accepted = await worker.prepare_file_write(action)
+            assert accepted.path == "grant/docs/note.txt"
+            FakeClient.payload = prepared.model_copy(update={"path": "note.txt"}).model_dump_json().encode()
+            with pytest.raises(BackendError, match="file_preparation_mismatch"):
+                await worker.prepare_file_write(action)
+        finally:
+            httpx.AsyncClient = original_client  # type: ignore[misc,assignment]
+            await worker.store.db.close()
+            await worker.supervisor.close()
+    finally:
+        shutil.rmtree(grant, ignore_errors=True)
 
 
 async def test_local_write_rejects_change_after_checkpoint_and_created_file_conflict(context):

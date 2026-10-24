@@ -168,7 +168,7 @@ from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord, checkpoint_id
 from .manage import bundle_digest, bundle_text, contains_secret, transcript_digest
 from .manage import digest as content_digest
-from .memories import match_memories, remember
+from .memories import match_memories, remember, session_workspace
 from .page_boot import boot_document
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, summarize
@@ -196,7 +196,14 @@ from .workspace_files import (
     read_file,
     write_file,
 )
-from .workspace_map import PRIMARY, check_grant_directory, client_path, split_client_path, validate_workspace
+from .workspace_map import (
+    PRIMARY,
+    check_grant_directory,
+    client_path,
+    split_client_path,
+    tool_path,
+    validate_workspace,
+)
 
 
 class Login(Model):
@@ -489,8 +496,8 @@ class Host:
             raise BackendError("workspace_grant_forbidden")
         await self.store.remove_workspace_grant(name)
 
-    async def _mapped_root(self, relative: str) -> tuple[str, str, Path]:
-        name, inner = split_client_path(relative)
+    async def _mapped_root(self, relative: str, *, session_name: str | None = None) -> tuple[str, str, Path]:
+        name, inner = tool_path(session_name, relative) if session_name is not None else split_client_path(relative)
         if name == "grant":
             raise BackendError("workspace_not_file")
         if name == PRIMARY:
@@ -585,7 +592,8 @@ class Host:
         prepared = await self.store.file_write_preparation(value.session_id, value.call_id, value.write)
         if prepared is not None:
             return prepared
-        name, inner, root = await self._mapped_root(value.write.path)
+        name, inner, root = await self._mapped_root(
+            value.write.path, session_name=session_workspace(self.profile.path, value.session_id))
         previous = capture_text(root, inner)
         return await self.store.prepare_file_write(value.session_id, value.call_id, value.write,
                                                     name, client_path(name, inner), previous)

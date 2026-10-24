@@ -90,7 +90,7 @@ from .processes import ProcessReservation, exited, wait_exited
 from .pty_session import PtyClient
 from .remote_session import RemoteClient
 from .transport import app_factory
-from .workspace_map import PRIMARY, load_grants, split_client_path
+from .workspace_map import PRIMARY, load_grants, tool_path
 
 MCP_UNRESOLVED_LIMIT = 512
 MCP_ACTIVE_LIMIT = 16
@@ -658,9 +658,12 @@ class Supervisor:
                 root = Path(location)
                 file = value.file
                 if file is not None:
-                    name, inner = split_client_path(file.path)
-                    root = Path(self.profile.config.workspace)
-                    if name != PRIMARY:
+                    name, inner = tool_path(workspace, file.path)
+                    if name == "grant" or not inner:
+                        raise BackendError("invalid_workspace_path")
+                    if name == PRIMARY:
+                        root = Path(self.profile.config.workspace)
+                    else:
                         location = dict(load_grants(self.profile.path)).get(name)
                         if location is None:
                             raise BackendError("workspace_not_found")

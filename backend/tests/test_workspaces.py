@@ -17,11 +17,13 @@ from amazme_backend.contracts import (
     HostFence,
     OpenTerminal,
     ProcessLease,
+    ReadFile,
     RunTool,
     TerminalInput,
     TerminalQuery,
     WorkerInfo,
     WorkerRequest,
+    WriteFile,
 )
 from amazme_backend.host import Host, application
 from amazme_backend.processes import ProcessReservation
@@ -157,6 +159,33 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
         assert result.exit_code == 0 and str(grant) in result.stdout
         assert (grant / "granted.txt").read_text() == "y"
         assert not (primary / "granted.txt").exists()
+        other = tmp_path / "other-dir"
+        other.mkdir()
+        (grant / "from-grant.txt").write_text("grant-only\n")
+        (primary / "from-grant.txt").write_text("primary-only\n")
+        database = sqlite3.connect(tmp_path / "host.sqlite")
+        try:
+            database.execute("INSERT INTO workspace_grants(name, host_path) VALUES('other', ?)", (str(other),))
+            database.commit()
+        finally:
+            database.close()
+        written = await owner.run_tool(RunTool(
+            **epoch.model_dump(), call_id="grant-write", request_id="request", command="write_file",
+            effect="write", file=WriteFile(path="from-tool.txt", content="tool\n"), expected_digest=""))
+        assert written.exit_code == 0, written.stderr
+        assert (grant / "from-tool.txt").read_text() == "tool\n"
+        assert not (primary / "from-tool.txt").exists()
+        read = await owner.run_tool(RunTool(
+            **epoch.model_dump(), call_id="grant-read", request_id="request", command="read_file",
+            effect="read", file=ReadFile(path="from-grant.txt")))
+        assert read.exit_code == 0 and read.stdout == "grant-only\n"
+        explicit = await owner.run_tool(RunTool(
+            **epoch.model_dump(), call_id="other-write", request_id="request", command="write_file",
+            effect="write", file=WriteFile(path="grant/other/explicit.txt", content="other\n"), expected_digest=""))
+        assert explicit.exit_code == 0, explicit.stderr
+        assert (other / "explicit.txt").read_text() == "other\n"
+        assert not (grant / "explicit.txt").exists()
+        assert not (primary / "explicit.txt").exists()
 
         terminal = "d" * 32
         opened = await owner.open_terminal(OpenTerminal(
@@ -193,6 +222,14 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
         if reservation is not None:
             reservation.close()
         await owner.close()
+
+
+def test_tool_path_uses_the_session_workspace_unless_the_grant_is_explicit() -> None:
+    from amazme_backend.workspace_map import tool_path
+    assert tool_path("docs", "note.txt") == ("docs", "note.txt")
+    assert tool_path("docs", "dir/note.txt") == ("docs", "dir/note.txt")
+    assert tool_path("docs", "grant/other/note.txt") == ("other", "note.txt")
+    assert tool_path("primary", "note.txt") == ("primary", "note.txt")
 
 
 def test_terminal_gate_uses_native_cwd_and_rejects_relative_path() -> None:

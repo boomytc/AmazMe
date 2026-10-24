@@ -91,7 +91,7 @@ from .session_ops import SessionOp, SessionOpResult, run_session_op
 from .storage import SessionStore, now_ms, session_database
 from .transport import app_factory
 from .web_tools import execute_web_call
-from .workspace_map import client_path, split_client_path
+from .workspace_map import client_path, tool_path
 
 
 def command_for(call: ToolCall) -> Command:
@@ -434,7 +434,7 @@ class Worker:
             error = ErrorBody.model_validate_json(response.content)
             raise BackendError(error.code, status=response.status_code)
         prepared = PreparedFileWrite.model_validate_json(response.content)
-        name, inner = split_client_path(write.path)
+        name, inner = tool_path(session_workspace(self.profile.path, self.session), write.path)
         if prepared.call_id != action.step_id or prepared.path != client_path(name, inner):
             raise BackendError("file_preparation_mismatch")
         return prepared
