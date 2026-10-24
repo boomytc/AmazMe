@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
+from resource_census import release_named_slot
 from verify_runtime import ROOT, Runtime, until
 from verify_web import approve_and_finish, assert_protocol, configure_approvals, finish, login, observe
 
@@ -16,6 +17,7 @@ def main():
     args = parser.parse_args()
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
+    release_named_slot(parent, "client-", 2)
     root = Path(tempfile.mkdtemp(prefix="client-", dir=parent))
     provider = root / "faux.json"
     provider.write_text('{"provider":"faux"}')

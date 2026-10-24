@@ -6,6 +6,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 from resource_budget import ResourceBudget
+from resource_census import apply_cleanup, raise_pending, release_named_slot
 from verify_runtime import ROOT, Runtime, until
 from verify_web import login
 
@@ -13,8 +14,7 @@ from verify_web import login
 def main():
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
-    if len(list(parent.glob("terminal-*"))) >= 2:
-        raise SystemExit("Review the two existing terminal runs before creating another")
+    release_named_slot(parent, "terminal-", 2)
     root = Path(tempfile.mkdtemp(prefix="terminal-", dir=parent))
     provider = root / "provider.json"
     provider.write_text('{"provider":"faux"}')
@@ -96,17 +96,11 @@ def main():
         report.update(status="failed", error=f"{type(error).__name__}: {error}")
         raise
     finally:
-        try:
-            if runtime:
-                runtime.close()
-            report["cleanup"] = "browser and owned native services exited"
-        except BaseException as error:
-            report.update(status="failed", cleanup_error=str(error))
-            raise
-        finally:
-            report["budget"] = budget.snapshot()
-            (root / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-            print(root / "report.json")
+        report["budget"] = budget.snapshot()
+        pending = apply_cleanup(runtime, report)
+        (root / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        print(root / "report.json")
+        raise_pending(pending)
 
 
 if __name__ == "__main__":

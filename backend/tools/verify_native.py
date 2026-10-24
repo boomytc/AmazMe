@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from resource_budget import ResourceBudget
+from resource_census import apply_cleanup, raise_pending, release_named_slot
 from verify_runtime import ROOT, Runtime, until
 
 
@@ -18,8 +19,7 @@ def main():
     args = parser.parse_args()
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
-    if len(list(parent.glob("run-*"))) >= 2:
-        raise SystemExit("Native evidence directory limit reached; review existing runs before another run")
+    release_named_slot(parent, "run-", 2)
     root = Path(tempfile.mkdtemp(prefix="run-", dir=parent))
     provider = root / "faux.json"
     provider.write_text('{"provider":"faux"}')
@@ -106,18 +106,12 @@ def main():
         report.update(status="failed", error=f"{type(error).__name__}: {error}")
         raise
     finally:
-        try:
-            if runtime:
-                runtime.close()
-            report["cleanup"] = "owned processes exited; no VM created"
-        except BaseException as error:
-            report.update(status="failed", cleanup_error=str(error))
-            raise
-        finally:
-            report["budget"] = budget.snapshot()
-            report["ended"] = time.time()
-            (root / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False)+"\n")
-            print(root / "report.json", flush=True)
+        report["budget"] = budget.snapshot()
+        report["ended"] = time.time()
+        pending = apply_cleanup(runtime, report)
+        (root / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+        print(root / "report.json", flush=True)
+        raise_pending(pending)
 
 
 if __name__ == "__main__":

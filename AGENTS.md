@@ -17,6 +17,22 @@
 - OAuth 沿用 Pi 源码中的客户端 ID、回调配置和供应商请求身份，不随 AmazMe 产品重命名改写。
 - 界面只针对桌面端适配：窗口和浏览器视口按宽窗布局，不为手机、触屏、软键盘或安全区另做版式，也不加粗指针热区和触屏专用文案。桌面壳的最小窗口宽度与这个范围一致。
 
+## 资源
+
+持续打包、生命周期跑分，以及阶段结束、上下文压缩、进程退出、Goal 暂停或准备写「清理完成」之前，运行：
+
+```bash
+backend/.venv/bin/python backend/tools/resource_census.py
+```
+
+阈值、归类和退出码以 `backend/tools/resource_census.py` 为准。空闲磁盘低于 50 GiB 预警，退出码 2。低于 20 GiB，或仍有临时 profile 上的 serve / supervisor / worker / execute / service-runner、无主 pty-gate / mcp-gate、Lima / hostagent、带本机产物路径的无头浏览器、VM 目录、`am2-` 临时目录、超过两份的 `package-*`，退出码 1。用户主目录里的常驻服务只记为 observed，不当作泄漏，也不按进程名停止。
+
+`reclaimed` 只对应该次输出的 `scope`。测试 passed、某次 cleanup 字符串、或只匹配 `amazme_backend serve` 的 pgrep，都不是资源已经收回。
+
+普查命令只报告，不删除目录。打包可以在锁内去掉产物根下没有进程引用、超出保留份数的旧 `package-*`。运行器达到自己的目录上限时，先去掉最旧且没有进程引用的那一份，不提高上限。VM 目录要先确认 owner；不要为了清理去安装或启动虚拟机。
+
+台账在 `.artifacts/resource-ledger.jsonl`。
+
 ## 命令
 
 改完一个包后，先构建再跑这个包的测试：

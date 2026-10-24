@@ -65,6 +65,7 @@ def main() -> None:
     parent = args.output_root.resolve()
     parent.mkdir(parents=True, exist_ok=True)
     from resource_budget import ResourceBudget, require_budget
+    from resource_census import PACKAGE_SLOTS, admit, collect, live_processes, record, retire_unused_packages
 
     from amazme_backend.common import lock
 
@@ -72,12 +73,32 @@ def main() -> None:
     lock_path = REPO / ".artifacts/native-package.lock"
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     with lock(lock_path):
-        existing = {p.resolve() for root in {REPO / ".artifacts", parent} for p in root.rglob("package-*") if p.is_dir()}
-        if len(existing) >= 2:
-            raise SystemExit("Two package directories already exist; review them before creating another")
-        require_budget([REPO / ".artifacts", parent], reserve_bytes=1024**3)
-        with ResourceBudget([REPO / ".artifacts", parent], deadline_seconds=600):
-            build_once(parent)
+        roots = [REPO / ".artifacts", parent]
+        before = collect(extra_artifact_roots=[parent])
+        retired: list[str] = []
+        try:
+            retire_unused_packages(
+                before, live_processes(), keep=PACKAGE_SLOTS - 1, roots=roots, removed=retired,
+            )
+            if retired:
+                before = collect(extra_artifact_roots=[parent])
+            admit(before, purpose="package")
+            require_budget(roots, reserve_bytes=1024**3)
+            with ResourceBudget(roots, deadline_seconds=600):
+                build_once(parent)
+        finally:
+            after = collect(extra_artifact_roots=[parent])
+            record(after, purpose="package", event="after", before=before, retired=retired)
+            print(json.dumps({
+                "event": "package_disk",
+                "free_before": before["free_bytes"],
+                "free_after": after["free_bytes"],
+                "artifact_before": before["artifact_bytes"],
+                "artifact_after": after["artifact_bytes"],
+                "retired": retired,
+                "scope": after["scope"],
+                "reclaimed": after["reclaimed"],
+            }))
 
 
 def build_once(parent: Path) -> None:

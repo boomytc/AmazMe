@@ -6,6 +6,7 @@ import shlex
 import signal
 import sqlite3
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -14,6 +15,14 @@ import httpx
 from amazme_backend.common import private_write
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _census():
+    tools = str(Path(__file__).resolve().parent)
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import resource_census
+    return resource_census
 
 
 def until(operation, predicate, timeout=30):
@@ -40,6 +49,10 @@ class Runtime:
         self.attachments = {}
 
     def start(self):
+        census = _census()
+        report = census.collect()
+        self.resource_before = report
+        census.admit(report, purpose="serve")
         self.process = subprocess.Popen([*self.command, "serve", "--profile", str(self.profile)], env=self.env,
                                         stdout=subprocess.PIPE, stderr=self.log, text=True)
         if not select.select([self.process.stdout], [], [], 30)[0]:
@@ -128,6 +141,18 @@ class Runtime:
             value = json.loads(config.read_text())
             value["provider"]["api_key"] = ""
             private_write(config, json.dumps(value))
+            census = _census()
+            try:
+                report, processes = census.scan()
+                self.resource_report = census.owned_after(
+                    [self.root, self.profile], report, processes, before=getattr(self, "resource_before", None),
+                )
+                census.record(report, purpose="serve", event="after", before=getattr(self, "resource_before", None))
+            except Exception as error:
+                self.resource_report = {
+                    "reclaimed": False, "owned_reclaimed": False, "global_reclaimed": False,
+                    "scope": census.SCOPE, "error": str(error), "deletion": "not_performed", "note": census.NOTE,
+                }
 
 
 def daemon_command(marker):

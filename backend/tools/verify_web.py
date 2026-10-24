@@ -8,6 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
+from resource_census import apply_cleanup, raise_pending, release_named_slot
 from verify_runtime import ROOT, Runtime
 
 from amazme_backend.common import private_write
@@ -79,16 +80,10 @@ def assert_protocol(sent, received, writes, build):
 
 
 def finish(runtime, root, report):
-    try:
-        runtime.close()
-        report["cleanup"] = "browser and owned native services closed"
-    except BaseException as error:
-        report["status"] = "failed"
-        report["cleanup_error"] = f"{type(error).__name__}: {error}"
-        raise
-    finally:
-        (root / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
-        print(root / "report.json", flush=True)
+    pending = apply_cleanup(runtime, report)
+    (root / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
+    print(root / "report.json", flush=True)
+    raise_pending(pending)
 
 
 def main():
@@ -98,6 +93,7 @@ def main():
     args = parser.parse_args()
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
+    release_named_slot(parent, "browser-", 2)
     root = Path(tempfile.mkdtemp(prefix="browser-", dir=parent))
     provider = args.provider_config.resolve() if args.provider_config else root / "faux.json"
     if not args.provider_config:

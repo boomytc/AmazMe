@@ -7,6 +7,7 @@ from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 from resource_budget import ResourceBudget
+from resource_census import release_named_slot
 from verify_runtime import ROOT, Runtime, until
 from verify_web import finish, login
 
@@ -14,8 +15,7 @@ from verify_web import finish, login
 def main():
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
-    if len(list(parent.glob("mcp-*"))) >= 2:
-        raise SystemExit("Review the two existing MCP runs before creating another")
+    release_named_slot(parent, "mcp-", 2)
     root = Path(tempfile.mkdtemp(prefix="mcp-", dir=parent))
     provider = root / "provider.json"
     provider.write_text('{"provider":"faux"}')
