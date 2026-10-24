@@ -458,8 +458,12 @@ class Worker:
             if self.storage_ready:
                 await self.store.bind_mcp_catalog(action.step_id, action.generation, catalog_payload(offers))
             # Read the key after the awaits. A logout that landed first must not be sent.
+            # A queued workflow check is not this turn's typed prompt. Leave that prompt intact.
+            check = await self.store.workflow_check_text(action.request_id) if self.storage_ready else ""
             self.profile.reload_provider()
             live = self.profile.config.provider
+            if contains_secret(check, live.api_key.get_secret_value()):
+                raise BackendError("workflow_secret")
             config = action.config.model_copy(update={
                 "api_key": live.api_key, "proxy": live.proxy, "headers": dict(live.headers),
             })

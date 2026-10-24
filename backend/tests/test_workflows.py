@@ -13,11 +13,14 @@ from pydantic import SecretStr
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
+    BackendError,
     Cleanup,
     CreateSession,
     HostFence,
     Lease,
+    Message,
     ProcessLease,
+    ProviderConfig,
     Submit,
     ToolResult,
     WorkspaceGrantRequest,
@@ -30,6 +33,7 @@ from amazme_backend.session_domain import (
     Continue,
     EpochClosed,
     EpochOpened,
+    Failed,
     ModelInvocation,
     ModelReturned,
     OpenEpoch,
@@ -38,6 +42,7 @@ from amazme_backend.session_domain import (
     ToolReturned,
 )
 from amazme_backend.storage import SessionStore, correction_text, session_database
+from amazme_backend.worker import Worker
 
 SESSION = "a" * 32
 SECRET = "父会话秘密"
@@ -377,6 +382,84 @@ async def test_workflow_check_does_not_store_the_provider_secret(tmp_path: Path)
     finally:
         await host.supervisor.close()
         await host.store.db.close()
+
+
+async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _host(tmp_path)
+    host.profile.save_provider(host.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    await host.store.create_session(SESSION, CreateSession(title="检查"))
+    captured: list[list[Message]] = []
+
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None):
+        del config, offers
+        captured.append(messages)
+        yield Completion(message=Message(role="assistant", content="ok"), response_id="faux")
+
+    async def empty_offers(self: Worker) -> list[object]:
+        del self
+        return []
+
+    monkeypatch.setattr("amazme_backend.worker.stream", fake_stream)
+    monkeypatch.setattr(Worker, "_mcp_offers", empty_offers)
+    session_database(tmp_path, SESSION).parent.mkdir(parents=True, mode=0o700)
+    worker = Worker(host.profile, SESSION, "worker-flow")
+    await worker.store.initialize()
+    worker.storage_ready = True
+    fence = HostFence(host_epoch=0, build_id=worker.store.build)
+    try:
+        await worker.store.accept(Submit(request_id="typed", text=f"我说 {KEY}"), fence)
+        typed = await _run_until_park(worker)
+        assert typed.reason == "idle"
+        sent = "\n".join(message.content for call in captured for message in call)
+        assert f"我说 {KEY}" in sent
+        before = len(captured)
+        opened = await worker.store.open_workflow("c" * 32, f"检查 {KEY}", 1)
+        assert opened.check == f"检查 {KEY}"
+        action = await _next_model(worker)
+        with pytest.raises(BackendError) as raised:
+            await worker.perform(action)
+        assert raised.value.code == "workflow_secret" and KEY not in str(raised.value)
+        await worker.store.advance(Failed(action, "workflow_secret"))
+        parked = await _run_until_park(worker)
+        assert parked.reason == "children"
+        assert len(captured) == before
+        view = await worker.store.workflow("c" * 32)
+        assert view.check == f"检查 {KEY}"
+        assert view.children[0].status == "unknown"
+        receipt = await worker.store.get(view.children[0].request_id)
+        assert receipt.error == "workflow_secret" and KEY not in receipt.error
+    finally:
+        await worker.store.db.close()
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+async def _next_model(worker: Worker) -> ModelInvocation:
+    for _ in range(20):
+        action = await worker.store.advance()
+        if isinstance(action, ModelInvocation):
+            return action
+        if isinstance(action, Park):
+            pytest.fail(action.reason)
+    pytest.fail("model call never started")
+
+
+async def _run_until_park(worker: Worker) -> Park:
+    for _ in range(20):
+        action = await worker.store.advance()
+        if isinstance(action, Continue):
+            continue
+        if isinstance(action, Park):
+            return action
+        if isinstance(action, ModelInvocation):
+            await worker.store.advance(await worker.perform(action))
+            continue
+        pytest.fail(type(action).__name__)
+    pytest.fail("session did not park")
 
 
 def _request_count(profile: Path, session: str) -> int:

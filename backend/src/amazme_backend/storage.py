@@ -829,6 +829,20 @@ class SessionStore:
             return self._refresh_workflow(db, self._workflow_row(db, workflow_id)[1])
         return await self.db.call(operation)
 
+    async def workflow_check_text(self, request_id: str) -> str:
+        """The stored check when this request is that child. Empty when it is ordinary user text."""
+        def operation(db: sqlite3.Connection) -> str:
+            try:
+                rows = db.execute("SELECT payload FROM workflows").fetchall()
+            except sqlite3.OperationalError:
+                return ""
+            for row in rows:
+                view = WorkflowView.model_validate_json(row[0])
+                if any(child.request_id == request_id and child.role == "check" for child in view.children):
+                    return view.check
+            return ""
+        return await self.db.call(operation)
+
     async def resume_workflow(self, workflow_id: str) -> WorkflowView:
         def operation(db: sqlite3.Connection, _c: Changes) -> WorkflowView:
             return self._refresh_workflow(db, self._workflow_row(db, workflow_id)[1])
