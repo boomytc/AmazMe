@@ -41,6 +41,7 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
         response = await client.get("/")
         again = await client.get("/index.html")
         script_file = await client.get("/app.js")
+        emulator = await client.get("/xterm-terminal.js")
     assert response.status_code == 200
     assert response.text == again.text == boot_page(identity, host.origin)
     marker = "globalThis.__AMAZME_BOOT__="
@@ -59,6 +60,10 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     assert f"script-src 'self' 'sha256-{digest}'" in policy
     assert "unsafe-inline" not in policy
     assert script_file.status_code == 200
+    assert emulator.status_code == 200
+    assert "javascript" in emulator.headers["content-type"]
+    assert "export const Terminal" in emulator.text
+    assert "xterm-terminal.js" in script_file.text
     assert "sha256-" not in script_file.headers["content-security-policy"]
     assert "unsafe-inline" not in script_file.headers["content-security-policy"]
 

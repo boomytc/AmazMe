@@ -173,7 +173,8 @@ def test_browser_sends_terminal_input_and_resize() -> None:
     source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
     app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
     session = "d" * 32
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\nconst boundSession=" + json.dumps(session) + ";\n" + r'''
+    xterm_url = (web / "xterm-terminal.js").resolve().as_uri()
+    script = "const appURL=" + json.dumps(app_url) + ";\nconst xtermURL=" + json.dumps(xterm_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\nconst boundSession=" + json.dumps(session) + ";\n" + r'''
         import assert from 'node:assert/strict';
         import {Window} from 'happy-dom';
         const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session='+boundSession+'&workspace=primary'});
@@ -206,6 +207,7 @@ def test_browser_sends_terminal_input_and_resize() -> None:
           for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
           throw Error('timed out '+$('error').textContent);
         }
+            globalThis.AMAZME_XTERM_URL = xtermURL;
             await import(appURL);
         await until(()=>$('sessions').textContent.includes('工作区'));
         $('terminal').open = true;
@@ -229,25 +231,36 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         assert.equal(typed[1].body.input_id.length, 32);
         assert.notEqual(typed[0].body.input_id, typed[1].body.input_id);
         const emojiView = {id:'emoji'};
-            const first = globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A', output_seq:1});
-            const second = globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A🙂', output_seq:3});
+        await globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A', output_seq:1});
+        const second = await globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A🙂', output_seq:3});
         assert.equal(second.includes('🙂'), true);
         assert.equal(second.includes('\uDE42') && !second.includes('🙂'), false);
-            const third = globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A🙂', output_seq:3});
+        const third = await globalThis.renderTerminal(emojiView, {cols:80, rows:24, output:'A🙂', output_seq:3});
         assert.equal(third, second);
         const cjk = {id:'cjk'};
-            globalThis.renderTerminal(cjk, {cols:80, rows:24, output:'你', output_seq:1});
-            assert.equal(globalThis.renderTerminal(cjk, {cols:80, rows:24, output:'你好', output_seq:2}).includes('你好'), true);
-            const mark = {id:'mark'};
-            globalThis.renderTerminal(mark, {cols:40, rows:4, output:'e', output_seq:1});
-            assert.equal(globalThis.renderTerminal(mark, {cols:40, rows:4, output:'e\u0301', output_seq:2}).includes('e\u0301'), true);
-            const resized = globalThis.renderTerminal(emojiView, {cols:100, rows:40, output:'A🙂', output_seq:3});
+        await globalThis.renderTerminal(cjk, {cols:80, rows:24, output:'你', output_seq:1});
+        assert.equal((await globalThis.renderTerminal(cjk, {cols:80, rows:24, output:'你好', output_seq:2})).includes('你好'), true);
+        const mark = {id:'mark'};
+        await globalThis.renderTerminal(mark, {cols:40, rows:4, output:'e', output_seq:1});
+        assert.equal((await globalThis.renderTerminal(mark, {cols:40, rows:4, output:'e\u0301', output_seq:2})).includes('e\u0301'), true);
+        const resized = await globalThis.renderTerminal(emojiView, {cols:100, rows:40, output:'A🙂', output_seq:3});
         assert.equal(resized.includes('🙂'), true);
         const longView = {id:'long'};
-            globalThis.renderTerminal(longView, {cols:80, rows:8, output:'hello', output_seq:5});
-            const replaced = globalThis.renderTerminal(longView, {cols:80, rows:8, output:'xy', output_seq:100});
+        await globalThis.renderTerminal(longView, {cols:80, rows:8, output:'hello', output_seq:5});
+        const replaced = await globalThis.renderTerminal(longView, {cols:80, rows:8, output:'xy', output_seq:100});
         assert.equal(replaced.includes('xy'), true);
         assert.equal(replaced.includes('hello'), false);
+        const altText = 'top\r\n\x1b[?1049h\x1b[2J\x1b[HALT\x1b[?1049l';
+        const altShown = await globalThis.renderTerminal({id:'alt'}, {cols:4, rows:3, output:altText, output_seq:altText.length});
+        assert.equal(altShown.includes('top'), true);
+        assert.equal(altShown.includes('ALT'), false);
+        const wide = await globalThis.renderTerminal({id:'wide'}, {cols:2, rows:4, output:'你好', output_seq:2});
+        assert.equal(wide.split('\n')[0], '你');
+        assert.equal(wide.split('\n')[1], '好');
+        const colored = '\x1b[31mred\x1b[0m';
+        const colorShown = await globalThis.renderTerminal({id:'color'}, {cols:20, rows:2, output:colored, output_seq:colored.length});
+        assert.equal(colorShown.includes('red'), true);
+        assert.equal(colorShown.includes('[31m'), false);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

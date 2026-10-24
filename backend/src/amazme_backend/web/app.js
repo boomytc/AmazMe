@@ -711,175 +711,86 @@ function startClient() {
       await listing;
     } catch (failure) { if (appliedNavigation === fileNavigation && (view === fileView || !fileView)) error(failure); }
   };
-  function TerminalScreen(cols, rows) {
-    this.cols = Math.max(1, cols || 80);
-    this.rows = Math.max(1, rows || 24);
-    this.scroll = [];
-    this.pending = "";
-    this.seq = 0;
-    this.ready = false;
-    this.resetGrid();
-  }
-  TerminalScreen.prototype.resetGrid = function () {
-    this.grid = Array.from({length: this.rows}, () => Array(this.cols).fill(" "));
-    this.x = 0;
-    this.y = 0;
-  };
-  TerminalScreen.prototype.blank = function () { return Array(this.cols).fill(" "); };
-  TerminalScreen.prototype.scrollUp = function () {
-    this.scroll.push(this.grid[0].join("").replace(/\s+$/, ""));
-    if (this.scroll.length > 1000) this.scroll.shift();
-    this.grid.shift();
-    this.grid.push(this.blank());
-    this.y = this.rows - 1;
-  };
-  TerminalScreen.prototype.put = function (ch) {
-    if (this.x >= this.cols) this.newline();
-    if (this.y >= this.rows) this.scrollUp();
-    this.grid[this.y][this.x] = ch;
-    this.x += 1;
-  };
-  TerminalScreen.prototype.newline = function () {
-    this.x = 0;
-    this.y += 1;
-    if (this.y >= this.rows) this.scrollUp();
-  };
-  TerminalScreen.prototype.erase = function (row, from, to) {
-    const line = this.grid[row];
-    if (!line) return;
-    for (let x = Math.max(0, from); x < Math.min(this.cols, to); x += 1) line[x] = " ";
-  };
-  TerminalScreen.prototype.clamp = function () {
-    this.x = Math.max(0, Math.min(this.cols - 1, this.x));
-    this.y = Math.max(0, Math.min(this.rows - 1, this.y));
-  };
-  TerminalScreen.prototype.write = function (text) {
-    const data = this.pending + text;
-    this.pending = "";
-    let i = 0;
-    while (i < data.length) {
-      const ch = data[i];
-      if (ch === "\u001b") {
-        const next = this.consumeEscape(data, i);
-        if (next < 0) { this.pending = data.slice(i).slice(0, 64); return; }
-        i = next;
-        continue;
-      }
-      if (ch === "\r") { this.x = 0; i += 1; continue; }
-      if (ch === "\n") { this.newline(); i += 1; continue; }
-      if (ch === "\b" || ch === "\u007f") { this.x = Math.max(0, this.x - 1); i += 1; continue; }
-      if (ch === "\t") {
-        this.x = Math.min(this.cols, (Math.floor(this.x / 8) + 1) * 8);
-        if (this.x >= this.cols) this.newline();
-        i += 1;
-        continue;
-      }
-      if (ch < " ") { i += 1; continue; }
-      const point = data.codePointAt(i);
-      const size = point > 0xFFFF ? 2 : 1;
-      let glyph = data.slice(i, i + size);
-      i += size;
-      while (i < data.length) {
-        const mark = data.codePointAt(i);
-        const combining = (mark >= 0x0300 && mark <= 0x036F) || (mark >= 0x1AB0 && mark <= 0x1AFF)
-          || (mark >= 0x1DC0 && mark <= 0x1DFF) || (mark >= 0x20D0 && mark <= 0x20FF)
-          || (mark >= 0xFE20 && mark <= 0xFE2F);
-        if (!combining) break;
-        const markSize = mark > 0xFFFF ? 2 : 1;
-        glyph += data.slice(i, i + markSize);
-        i += markSize;
-      }
-      this.put(glyph);
-    }
-  };
-  TerminalScreen.prototype.consumeEscape = function (data, i) {
-    if (i + 1 >= data.length) return -1;
-    const kind = data[i + 1];
-    if (kind === "[") return this.consumeCsi(data, i + 2);
-    if (kind === "]") return this.consumeOsc(data, i + 2);
-    return i + 2;
-  };
-  TerminalScreen.prototype.consumeOsc = function (data, i) {
-    for (let n = i; n < data.length; n += 1) {
-      if (data[n] === "\u0007") return n + 1;
-      if (data[n] === "\u001b" && data[n + 1] === "\\") return n + 2;
-    }
-    return data.length - i > 64 ? data.length : -1;
-  };
-  TerminalScreen.prototype.consumeCsi = function (data, i) {
-    let n = i;
-    while (n < data.length && (data[n] < "@" || data[n] > "~")) n += 1;
-    if (n >= data.length) return data.length - i > 64 ? data.length : -1;
-    this.applyCsi(data.slice(i, n), data[n]);
-    return n + 1;
-  };
-  TerminalScreen.prototype.applyCsi = function (body, final) {
-    let source = body;
-    if (source.startsWith("?") || source.startsWith(">")) source = source.slice(1);
-    const nums = source.length ? source.split(";").map(part => {
-      const value = Number.parseInt(part, 10);
-      return Number.isFinite(value) ? value : 0;
-    }) : [];
-    const n1 = nums[0] || 1;
-    if (final === "A") this.y -= n1;
-    else if (final === "B") this.y += n1;
-    else if (final === "C") this.x += n1;
-    else if (final === "D") this.x -= n1;
-    else if (final === "G") this.x = n1 - 1;
-    else if (final === "H" || final === "f") { this.y = (nums[0] || 1) - 1; this.x = (nums[1] || 1) - 1; }
-    else if (final === "J") {
-      const mode = nums[0] || 0;
-      if (mode === 2) this.resetGrid();
-      else if (mode === 1) { for (let y = 0; y < this.y; y += 1) this.erase(y, 0, this.cols); this.erase(this.y, 0, this.x + 1); }
-      else { this.erase(this.y, this.x, this.cols); for (let y = this.y + 1; y < this.rows; y += 1) this.erase(y, 0, this.cols); }
-    } else if (final === "K") {
-      const mode = nums[0] || 0;
-      if (mode === 2) this.erase(this.y, 0, this.cols);
-      else if (mode === 1) this.erase(this.y, 0, this.x + 1);
-      else this.erase(this.y, this.x, this.cols);
-    }
-    this.clamp();
-  };
-  TerminalScreen.prototype.visible = function () {
-    const rows = this.grid.map(line => line.join("").replace(/\s+$/, ""));
-    return [...this.scroll, ...rows].join("\n");
-  };
   const terminalScreens = new Map();
-  function renderTerminal(view, value) {
-    const cols = value.cols || 80, rows = value.rows || 24;
+  const terminalQueues = new Map();
+  let terminalEngine = null;
+  function loadTerminalEngine() {
+    if (!terminalEngine) {
+      const specifier = globalThis.AMAZME_XTERM_URL || new URL("./xterm-terminal.js", import.meta.url).href;
+      terminalEngine = import(specifier).then(mod => {
+        if (!mod.Terminal) throw new Error("终端模拟器未提供 Terminal");
+        return mod.Terminal;
+      });
+    }
+    return terminalEngine;
+  }
+  function terminalText(term) {
+    const buffer = term.buffer.active;
+    const lines = [];
+    for (let i = 0; i < buffer.length; i += 1) {
+      const line = buffer.getLine(i);
+      lines.push(line ? line.translateToString(true) : "");
+    }
+    while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+    return lines.join("\n");
+  }
+  async function renderTerminalNow(view, value) {
+    const Terminal = await loadTerminalEngine();
+    const cols = Math.max(1, value.cols || 80);
+    const rows = Math.max(1, value.rows || 24);
     let screen = terminalScreens.get(view.id);
     if (!screen || screen.cols !== cols || screen.rows !== rows) {
-      screen = new TerminalScreen(cols, rows);
+      if (screen) screen.term.dispose();
+      screen = {
+        term: new Terminal({cols, rows, scrollback: 1000, convertEol: false, allowProposedApi: true}),
+        cols, rows, seq: 0, ready: false,
+      };
       terminalScreens.set(view.id, screen);
     }
     const text = value.output || "";
     const seq = Number(value.output_seq || text.length);
     const delta = seq - screen.seq;
+    let chunk = "";
     if (!screen.ready || seq < screen.seq || delta > text.length) {
-      screen.resetGrid();
-      screen.scroll = [];
-      screen.pending = "";
-      screen.write(text);
-    } else if (delta > 0) screen.write(text.slice(text.length - delta));
+      screen.term.reset();
+      chunk = text;
+    } else if (delta > 0) chunk = text.slice(text.length - delta);
+    if (chunk) await new Promise(resolve => screen.term.write(chunk, resolve));
     screen.seq = seq;
     screen.ready = true;
-    return screen.visible();
+    return terminalText(screen.term);
+  }
+  function renderTerminal(view, value) {
+    const previous = terminalQueues.get(view.id) || Promise.resolve();
+    const next = previous.then(() => renderTerminalNow(view, value), () => renderTerminalNow(view, value));
+    terminalQueues.set(view.id, next);
+    return next;
   }
   globalThis.renderTerminal = renderTerminal;
   let terminalView = null, terminalPoll = null, terminalNavigation = 0;
   const terminalKey = (connection, suffix) => `terminal:${identity.profile_id}:${connection.session}:${suffix}`;
   const terminalOwns = view => view && terminalView === view && owns(view.connection);
-  function showTerminal(value, view = terminalView) {
+  async function showTerminal(value, view = terminalView) {
     if (!terminalOwns(view)) return;
     view.phase = value.phase;
-    $("terminal-output").textContent = renderTerminal(view, value);
+    try {
+      const text = await renderTerminal(view, value);
+      if (!terminalOwns(view)) return;
+      $("terminal-output").textContent = text;
+    } catch (failure) {
+      if (terminalOwns(view)) error(failure);
+      return;
+    }
     $("terminal-state").textContent = value.phase === "unknown" ? "通道失联；命令未自动重启" : value.phase === "exited" ? "已退出" : "运行中";
     if (value.exit_code !== null && value.exit_code !== undefined) $("terminal-state").textContent += ` · 退出码 ${value.exit_code}`;
     if (value.clean === false && value.phase !== "running") $("terminal-state").textContent += " · 停止尚未确认";
   }
   async function pollTerminal(view) {
     if (!terminalOwns(view) || !$("terminal").open || view.phase !== "running") return;
-    try { showTerminal(await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/read`, "POST", {}, view.connection), view); }
+    try {
+      const value = await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/read`, "POST", {}, view.connection);
+      await showTerminal(value, view);
+    }
     catch (failure) { if (terminalOwns(view)) error(failure); }
     if (terminalOwns(view) && $("terminal").open && view.phase === "running") terminalPoll = setTimeout(() => pollTerminal(view), 750);
   }
