@@ -55,6 +55,7 @@ export interface Args {
 	pythonSession?: string;
 	decision?: string;
 	request?: string;
+	approvalId?: string;
 	call?: string;
 	workspace?: string;
 	verbose?: boolean;
@@ -253,6 +254,7 @@ export function parseArgs(args: string[]): Args {
 			arg === "--python-session" ||
 			arg === "--decision" ||
 			arg === "--request" ||
+			arg === "--approval-id" ||
 			arg === "--call" ||
 			arg === "--workspace"
 		) {
@@ -266,6 +268,7 @@ export function parseArgs(args: string[]): Args {
 				else if (arg === "--python-session") result.pythonSession = value;
 				else if (arg === "--decision") result.decision = value;
 				else if (arg === "--request") result.request = value;
+				else if (arg === "--approval-id") result.approvalId = value;
 				else if (arg === "--call") result.call = value;
 				else result.workspace = value;
 			}
@@ -330,7 +333,7 @@ export function printHelp(output: Pick<NodeJS.WriteStream, "write"> = process.st
   --workspace NAME                       已登记工作区（本机默认按启动目录选择）
   -e | --extension PATH                  加载 Python setup(api) 插件；RPC 同时指定 --session
   --no-extensions                        禁用未显式选择的插件工具
-  --decision 批准|拒绝 --request ID       对已保存的请求明确审批
+  --decision 批准|拒绝 --request ID --approval-id ID  对明确提案审批，重试沿用原提案
   --decision 批准|拒绝 --call ID          对已保存的 MCP 调用明确审批
   --provider NAME --model ID [--api-key KEY]  配置账号后提交问题
   --list-models [关键词]                  查看模型

@@ -100,7 +100,7 @@ def main() -> None:
             request = str(body["request_id"])
             checks.append("print mode left a shell approval pending and wrote no file")
 
-            denied = _expect(_cli(agent, url, token, "--mode", "json", "--python-session", session, "--decision", "拒绝", "--request", request), 1)
+            denied = _expect(_cli(agent, url, token, "--mode", "json", "--python-session", session, "--decision", "拒绝", "--request", request, "--approval-id", str(body["approval_id"])), 1)
             denied_body = _json_line(denied)
             assert denied_body["status"] == "failed" and denied_body["error"] == "approval_denied"
             assert not (runtime.workspace / "cli-shell.txt").exists()

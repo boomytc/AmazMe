@@ -295,3 +295,10 @@ test("custom history selects the same Python profile for product model configura
     await expect(main(["--session-dir", "/history", "--no-session", "hello"])).rejects.toThrow("session_dir_requires_local_persistent_host");
     await expect(main(["--session-dir", "/history", "--python-url", "http://target", "--python-token", "token", "hello"])).rejects.toThrow("session_dir_requires_local_persistent_host");
 });
+
+
+test("an unpinned request decision is rejected before connecting to a host", async () => {
+    await expect(main(["--session", "a".repeat(32), "--decision", "批准", "--request", "original"])).rejects.toThrow("approval_id_required");
+    expect(connectPythonHost).not.toHaveBeenCalled();
+    expect(parseArgs(["--approval-id", "reviewed"]).approvalId).toBe("reviewed");
+});

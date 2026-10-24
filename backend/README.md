@@ -13,7 +13,9 @@ AmazMe 正在按 [本机优先方案](../docs/python-backend-plan.md) 将 shell�
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
 终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 可以装载这份页面；关闭窗口不停止后端，显式退出才停止它所启动的后端。`amazme-backend tui`、print/JSON CLI、`--mode rpc`、Python SDK 和默认 `amazme` 交互画面在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
-`amazme-backend client submit` 只等待终态。`client decide` 必须单独给出「批准」或「拒绝」，并只指向一个请求或一次 MCP 调用；已经结束的调用再次决定只返回原结果。提交文本里的「批准」不是决定。
+`amazme-backend client submit` 返回终态或待审批项，待审批退出码为 2，并给出原提案编号；退出释放本次 attachment。
+`client request --session ID --request-id ID` 查询原回执。`client decide` 必须单独给出「批准」或「拒绝」；请求审批还需 `--approval-id ID`，MCP 则指向原调用。
+重试只核对原提案，不能批准后续工具；已经结算的决定只返回原请求状态。提交文本里的「批准」不是决定。
 模型选择请求不携带密钥。更换或清除密钥走单独入口；过期代际不会覆盖新密钥，响应里也不出现密钥。
 MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
 

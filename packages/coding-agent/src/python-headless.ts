@@ -59,6 +59,7 @@ export interface PythonHeadlessOptions extends PythonRunOptions, PythonModelOpti
 	readonly title?: string;
 	readonly decision?: string;
 	readonly request?: string;
+	readonly approvalId?: string;
 	readonly call?: string;
 }
 
@@ -418,21 +419,23 @@ export class HostClient {
 		attachmentId: string,
 		requestId: string,
 		approve: boolean,
-		reviewedApproval?: Record<string, unknown>,
-		decisionId = hexId(),
+		reviewedApproval: Record<string, unknown>,
+		decisionId = "",
 	): Promise<Record<string, unknown>> {
-		const approval = reviewedApproval ?? await this.pendingApproval(sessionId, requestId);
+		const approval = reviewedApproval;
 		if (!approval || approval.request_id !== requestId) fail("approval_not_found");
 		const approvalId = approval.approval_id;
 		const revision = approval.revision;
 		const digest = approval.proposal_digest;
 		if (typeof approvalId !== "string" || typeof revision !== "string" || typeof digest !== "string")
 			fail("invalid_approval");
+		if (["approved","consumed","denied"].includes(String(approval.state)))
+			return (await this.#untilDecision(sessionId,requestId)).receipt;
 		await this.#send(
 			"POST",
 			`/api/v1/sessions/${sessionId}/approvals`,
 			{
-				decision_id: decisionId,
+				decision_id: decisionId || createHash("sha256").update(JSON.stringify([sessionId, approvalId, approve])).digest("hex").slice(0,32),
 				approval_id: approvalId,
 				expected_revision: revision,
 				proposal_digest: digest,
@@ -585,7 +588,7 @@ export class HostClient {
 		attachmentId: string,
 		callId: string,
 		approve: boolean,
-		decisionId = hexId(),
+		decisionId = "",
 	): Promise<Record<string, unknown>> {
 		const state = await this.#send("GET", `/api/v1/sessions/${sessionId}/mcp`);
 		const calls = state.calls;
@@ -598,7 +601,7 @@ export class HostClient {
 			"POST",
 			`/api/v1/sessions/${sessionId}/mcp/${found.server_id}/calls/${callId}/decision`,
 			{
-				decision_id: decisionId,
+				decision_id: decisionId || createHash("sha256").update(JSON.stringify([sessionId,found.server_id,callId,approve])).digest("hex").slice(0,32),
 				approve,
 				digest: found.digest,
 			},
@@ -620,6 +623,15 @@ export class HostClient {
 		const approvals = snapshot.approvals;
 		if (!Array.isArray(approvals)) return undefined;
 		return approvals.find((item) => isRecord(item) && item.request_id === requestId && item.state === "pending");
+	}
+
+	async reviewedApproval(sessionId: string, requestId: string, approvalId?: string): Promise<Record<string, unknown>> {
+		if (!approvalId) fail("approval_id_required");
+		const snapshot = await this.#send("GET", `/api/v1/sessions/${sessionId}/snapshot`);
+		if (!Array.isArray(snapshot.approvals)) fail("approval_not_found");
+		const found = snapshot.approvals.find((item:unknown) => isRecord(item) && item.approval_id === approvalId && item.request_id === requestId);
+		if (!isRecord(found)) fail("approval_not_found");
+		return found;
 	}
 
 	async #requireWorkspace(sessionId: string, workspace: string): Promise<void> {
@@ -733,7 +745,7 @@ async function emitReceipt(
 	} else if (status === "succeeded") {
 		await writeRawStdout(`${answer}\n`);
 	} else if (approval) {
-		process.stderr.write(`${approvalSummary(approval)}\n`);
+		process.stderr.write(`${approvalSummary(approval)} session=${sessionId} request=${String(receipt.request_id)} approval=${String(approval.approval_id)}\n`);
 	} else {
 		process.stderr.write(
 			`${status}${error} session=${sessionId} request=${String(receipt.request_id)}\n`,
@@ -1051,13 +1063,18 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions & {r
 			);
 		}
 		if (!prompt && options.request && decision) {
+			const current = await client.inspectRequest(opened.sessionId, options.request);
+			if (!current.approval) return emitReceipt(options.workspace,opened.sessionId,current.receipt,jsonMode);
+			const reviewed = await client.reviewedApproval(opened.sessionId,options.request,options.approvalId);
 			const receipt = await client.decideRequest(
 				opened.sessionId,
 				opened.attachmentId,
 				options.request,
 				decision === "批准",
+				reviewed,
 			);
-			return emitReceipt(options.workspace, opened.sessionId, receipt, jsonMode);
+			return emitReceipt(options.workspace, opened.sessionId, receipt, jsonMode,
+				receipt.status === "waiting_approval" ? await client.pendingApproval(opened.sessionId,options.request) : undefined);
 		}
 		if (!prompt && options.call && decision) {
 			const call = await client.decideCall(opened.sessionId, opened.attachmentId, options.call, decision === "批准");
@@ -1092,8 +1109,10 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions & {r
 		if (polled.approval && decision) {
 			const requestId = polled.receipt.request_id;
 			if (typeof requestId !== "string") fail("invalid_approval");
-			const receipt = await client.decideRequest(opened.sessionId, opened.attachmentId, requestId, decision === "批准");
-			return emitReceipt(options.workspace, opened.sessionId, receipt, jsonMode);
+			process.stderr.write(`审批 session=${opened.sessionId} request=${requestId} approval=${String(polled.approval.approval_id)}\n`);
+			const receipt = await client.decideRequest(opened.sessionId, opened.attachmentId, requestId, decision === "批准",polled.approval);
+			return emitReceipt(options.workspace, opened.sessionId, receipt, jsonMode,
+				receipt.status === "waiting_approval" ? await client.pendingApproval(opened.sessionId,requestId) : undefined);
 		}
 		return emitReceipt(options.workspace, opened.sessionId, polled.receipt, jsonMode, polled.approval);
 	} finally {
@@ -1127,6 +1146,12 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 		process.stderr.write("decision_target_conflict\n");
 		return 1;
 	}
+	if (options.decision && options.request && !options.approvalId) {
+        process.stderr.write("approval_id_required\n"); return 1;
+    }
+    if (options.decision && (options.request || options.call) && (options.prompt || options.images?.length)) {
+        process.stderr.write("decision_target_conflict\n"); return 1;
+    }
 	const host = await connectPythonHost({cwd:options.cwd, url:options.url, token:options.token, sessionDir:options.sessionDir,
 		...(options.noSession ? {noSession:true,workspace:options.workspace} : {})});
 	try {

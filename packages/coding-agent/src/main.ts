@@ -70,6 +70,9 @@ export async function main(args: string[]): Promise<void> {
 	if ((parsed.pythonUrl === undefined) !== (parsed.pythonToken === undefined))
 		throw new Error("python_target_required");
 	if (parsed.noSession && parsed.pythonUrl) throw new Error("no_session_requires_local_host");
+	if (parsed.decision && !["批准","拒绝"].includes(parsed.decision)) throw new Error("invalid_decision");
+	if ((parsed.request && parsed.call) || (parsed.approvalId && !parsed.request)) throw new Error("decision_target_conflict");
+	if (parsed.decision && parsed.request && !parsed.approvalId) throw new Error("approval_id_required");
 	if (parsed.sessionDir && (parsed.noSession || parsed.pythonUrl)) throw new Error("session_dir_requires_local_persistent_host");
 	const target = [
 		...(parsed.pythonUrl === undefined ? [] : ["--python-url", parsed.pythonUrl]),
@@ -176,6 +179,7 @@ export async function main(args: string[]): Promise<void> {
 		...(session === undefined ? {} : { session }),
 		...(parsed.decision === undefined ? {} : { decision: parsed.decision }),
 		...(parsed.request === undefined ? {} : { request: parsed.request }),
+		...(parsed.approvalId === undefined ? {} : {approvalId:parsed.approvalId}),
 		...(parsed.call === undefined ? {} : { call: parsed.call }),
 	});
 }

@@ -177,3 +177,45 @@ test("retrying an unconfirmed approval keeps its original proposal and decision 
     expect(state.held?.summary).toContain("new");
     expect(state.held?.decision).toBeUndefined();
 });
+
+test("a CLI retry names the reviewed proposal and cannot approve the next pending tool", async () => {
+    const posted: Record<string,unknown>[] = [];
+    const old = {request_id:"original",approval_id:"old",revision:"1",proposal_digest:"old-digest",state:"consumed"};
+    const next = {...old,approval_id:"next",revision:"2",proposal_digest:"next-digest",state:"pending"};
+    vi.stubGlobal("fetch",vi.fn(async (url:string, init?:RequestInit) => {
+        if (url.endsWith("/bootstrap")) return reply({build_id:"build",host_epoch:1});
+        if (url.endsWith("/snapshot")) return reply({approvals:[old,next]});
+        if (url.includes("/requests/")) return reply({request_id:"original",status:"waiting_approval"});
+        if (url.endsWith("/approvals")) { posted.push(JSON.parse(String(init?.body)) as Record<string,unknown>); return reply({}); }
+        throw new Error(url);
+    }));
+    const client = new HostClient("http://host","token");
+    await client.bootstrap();
+    const reviewed = await client.reviewedApproval("session","original","old");
+    expect(await client.decideRequest("session","attachment","original",true,reviewed)).toMatchObject({status:"waiting_approval"});
+    expect(posted).toEqual([]);
+    await expect(client.reviewedApproval("session","original")).rejects.toThrow("approval_id_required");
+});
+
+test("recreating a CLI client after a lost decision keeps its original decision ID", async () => {
+    const posted: Record<string,unknown>[] = [];
+    const approval = {request_id:"original",approval_id:"reviewed",revision:"1",proposal_digest:"digest",state:"pending"};
+    vi.stubGlobal("fetch",vi.fn(async (url:string,init?:RequestInit) => {
+        if (url.endsWith("/bootstrap")) return reply({build_id:"build",host_epoch:1});
+        if (url.endsWith("/approvals")) {
+            posted.push(JSON.parse(String(init?.body)) as Record<string,unknown>);
+            if (posted.length === 1) throw new TypeError("lost receipt");
+            return reply({});
+        }
+        if (url.includes("/requests/")) return reply({request_id:"original",status:"succeeded"});
+        throw new Error(url);
+    }));
+    const first = new HostClient("http://host","token");
+    await first.bootstrap();
+    await expect(first.decideRequest("session","attachment","original",true,approval)).rejects.toThrow("lost receipt");
+    const retry = new HostClient("http://host","token");
+    await retry.bootstrap();
+    await retry.decideRequest("session","other-attachment","original",true,approval);
+    expect(posted).toHaveLength(2);
+    expect(posted[1]).toEqual(posted[0]);
+});

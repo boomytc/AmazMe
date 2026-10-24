@@ -51,3 +51,6 @@ Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿
 
 `--model provider/id` 为本次会话选择模型；`--models 'provider/*:high,other/model'` 设置候选顺序。
 TUI 用 `/model provider/id` 选择、`/model next` 按候选循环；模型和推理选项随原请求固定，重试不读取另一窗口的新选择。
+
+无界面审批先用 `--session ID --request ID` 查询，再用 `--decision 批准 --request ID --approval-id ID` 指向显示的原提案。
+重试保留这些编号；已结算提案只查询，不能自动批准同一请求的下一项工具。待审批退出码为 2。

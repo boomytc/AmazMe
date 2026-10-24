@@ -199,6 +199,7 @@ def test_decide_rejects_bad_targets_before_connect() -> None:
     base = ["decide", "--session", "s", "--workspace", "primary"]
     cases = [
         ([*base, "--decision", "yes"], "invalid_decision"),
+        ([*base, "--request", "a", "--decision", "批准"], "approval_id_required"),
         ([*base, "--decision", "批准"], "decision_target_conflict"),
         ([*base, "--request", "a", "--call", "b", "--decision", "批准"], "decision_target_conflict"),
         ([*base, "--call", "b", "--decision", "批准"], "decision_target_conflict"),
@@ -222,13 +223,13 @@ async def test_client_decide_records_one_shell_and_mcp_effect(tmp_path: Path) ->
         session_id = str(json.loads(created.stdout)["session_id"])
         waiting = _cli(url, token, "submit", "--session", session_id, "--workspace", "primary",
                        "--request-id", "hold-shell", "--text", "/shell printf u > undecided.txt")
-        assert waiting.returncode == 1, waiting.stdout
-        assert waiting.stderr.strip() == "request_pending"
+        assert waiting.returncode == 2, waiting.stdout
+        held_approval_id = str(json.loads(waiting.stdout)["approval_id"])
         assert not (workspace / "undecided.txt").exists()
         assert token not in waiting.stdout and token not in waiting.stderr
 
         denied = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
-                      "--request", "hold-shell", "--decision", "拒绝")
+                      "--request", "hold-shell", "--approval-id", held_approval_id, "--decision", "拒绝")
         assert denied.returncode == 0, denied.stderr
         denied_receipt = json.loads(denied.stdout)
         assert denied_receipt["status"] == "failed"
@@ -242,23 +243,27 @@ async def test_client_decide_records_one_shell_and_mcp_effect(tmp_path: Path) ->
                 session_id=session_id, workspace="primary", attachment_id=attachment.attachment_id,
                 request_id="run-shell", text="/shell printf y > decided.txt")
             assert held.status in {"queued", "running", "waiting_approval"}
+            _, pending_approval = await client.await_user_decision(session_id=session_id, request_id="run-shell")
+            assert pending_approval is not None
+            run_approval_id = pending_approval.approval_id
+            await client.release(session_id=session_id,attachment_id=attachment.attachment_id)
         granted = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
-                       "--request", "run-shell", "--decision", "批准")
+                       "--request", "run-shell", "--approval-id", run_approval_id, "--decision", "批准")
         assert granted.returncode == 0, granted.stderr
         assert json.loads(granted.stdout)["status"] == "succeeded"
         assert (workspace / "decided.txt").read_text() == "y"
         assert token not in granted.stdout and token not in granted.stderr
 
         mismatch = _cli(url, token, "decide", "--session", session_id, "--workspace", "other",
-                        "--request", "run-shell", "--decision", "批准")
+                        "--request", "run-shell", "--approval-id", run_approval_id, "--decision", "批准")
         assert mismatch.returncode == 1
         assert mismatch.stderr.strip() == "workspace_mismatch"
         repeated = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
-                        "--request", "run-shell", "--decision", "批准")
+                        "--request", "run-shell", "--approval-id", run_approval_id, "--decision", "批准")
         assert repeated.returncode == 0, repeated.stderr
         assert json.loads(repeated.stdout)["status"] == "succeeded"
         opposite = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
-                        "--request", "hold-shell", "--decision", "批准")
+                        "--request", "hold-shell", "--approval-id", held_approval_id, "--decision", "批准")
         assert opposite.returncode == 1
         assert json.loads(opposite.stdout)["error"] == "approval_denied"
         assert (workspace / "decided.txt").read_text() == "y"
@@ -325,3 +330,32 @@ async def test_client_decide_records_one_shell_and_mcp_effect(tmp_path: Path) ->
             assert state.servers[0].phase == "exited"
     finally:
         _stop(proc, profile)
+
+
+async def test_cli_retry_of_consumed_proposal_cannot_approve_the_next_tool(capsys) -> None:
+    from types import SimpleNamespace
+
+    from amazme_backend.client_cmd import _apply_decision
+    from amazme_backend.contracts import Approval, Receipt, ToolCall
+
+    receipt = Receipt(request_id="original",text="task",status="waiting_approval")
+    old = Approval(approval_id="old",request_id="original",run_id="original",call_id="first",
+        call=ToolCall(id="first",name="shell",arguments='{"command":"first"}'),build_id="build",
+        proposal_digest="first-digest",revision="1",state="consumed")
+    next_approval = old.model_copy(update={"approval_id":"next","revision":"2","state":"pending"})
+
+    class FakeClient:
+        released = False
+        async def session(self, _session): return SimpleNamespace(workspace="primary")
+        async def attach(self, _session): return SimpleNamespace(attachment_id="attachment")
+        async def request(self, **_kwargs): return receipt
+        async def snapshot(self, _session): return SimpleNamespace(approvals=[old,next_approval])
+        async def decide(self, **_kwargs): raise AssertionError("A settled proposal must only be queried")
+        async def await_user_decision(self, **_kwargs): return receipt,next_approval
+        async def release(self, **_kwargs): self.released = True
+
+    client = FakeClient()
+    status = await _apply_decision(client,session_id="session",workspace="primary",request="original",
+        call="",server="",approve=True,approval_id="old")
+    assert status == 2 and client.released
+    assert json.loads(capsys.readouterr().out)["approval_id"] == "next"
