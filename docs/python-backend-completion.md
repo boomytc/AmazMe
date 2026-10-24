@@ -39,7 +39,7 @@ Web/Electron、SDK、RPC 同批迁入；固定场景只保留在 `backend/tests/
 模型目录绑定插件指纹、加载代际、schema 和会话；别名在调用账本中解析为稳定 ID，模型不能提供执行身份。
 审批前不发工具；丢回执查询原 ID，媒体进入私有工具图片表。未知副作用进入同一冲突/人工核对机制。
 监督器持有调用任务，断开的等待方不会撤销执行。取消与清理证明分别保存，后续只单调更新退出证明。
-旧 TS 宿主消费者已删除；CLI 恢复/资源选项及独立 JS 包消费者仍需继续收敛，不据此宣称剩余重构全部完成。
+旧 TS 宿主消费者已删除；Electron 通过纯文案/图标包取呈现资源，不再因 Web 包带入 Durable；CLI 恢复/资源选项及独立 JS 包消费者仍需继续收敛，不据此宣称剩余重构全部完成。
 
 Codemode 单元：产品不再暴露固定 echo/mark/block；复用现有 `@amazme/codemode` QuickJS 沙箱。
 `tools` / `ALL_TOOLS`、`text` / `image`、`store` / `load` 沿用 Pi 接口；Python 绑定会话目录与稳定子调用 ID，

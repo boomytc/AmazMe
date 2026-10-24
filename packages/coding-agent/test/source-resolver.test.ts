@@ -11,14 +11,12 @@ const sourceResolverUrl = pathToFileURL(resolve(__dirname, "../src/source-resolv
 const webEntryUrl = pathToFileURL(resolve(__dirname, "../../web/src/index.ts")).href;
 const webAssetsUrl = pathToFileURL(resolve(__dirname, "../../web/src/assets.ts")).href;
 
-// Static imports: host/web/boot.ts loads @amazme/web the same way. A resolver that
-// stops on dist/index.d.ts lets Node follow that file's ./actions.ts specifier into
-// dist, where only the declaration and the compiled JavaScript exist.
+// Desktop source imports must resolve implementation modules, never declarations.
 const sourceResolverProbe = [
-	'import { BOOT_GLOBAL } from "@amazme/web";',
-	'import { PAGE_SCRIPT } from "@amazme/web/assets";',
-	'if (BOOT_GLOBAL !== "__AMAZME_BOOT__") throw new Error("web entry did not evaluate");',
-	'if (PAGE_SCRIPT !== "/page.js") throw new Error("web assets did not evaluate");',
+	'import { errorCodeCopy } from "@amazme/web";',
+	'import { PAGE_DIRECTORY } from "@amazme/web/assets";',
+	'if (errorCodeCopy("en", "ENOENT") === undefined) throw new Error("web entry did not evaluate");',
+	'if (!PAGE_DIRECTORY.endsWith("/page/")) throw new Error("web assets did not evaluate");',
 	'const entry = import.meta.resolve("@amazme/web");',
 	'const assets = import.meta.resolve("@amazme/web/assets");',
 	'process.stdout.write(entry + "\\n" + assets + "\\n");',

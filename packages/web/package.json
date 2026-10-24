@@ -9,7 +9,7 @@
 		"README.md",
 		"LICENSE"
 	],
-	"description": "Loopback page for a running AmazMe host: document, boot contract, and the projection the browser renders",
+	"description": "Shared desktop icons, locale and presentation copy for AmazMe Python clients",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -32,9 +32,6 @@
 			"import": "./dist/typography.js"
 		}
 	},
-	"dependencies": {
-		"@amazme/durable": "0.3.4"
-	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "npm run clean && tsc -p tsconfig.build.json && shx cp -r src/page dist/page",
@@ -42,6 +39,7 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"devDependencies": {
-		"happy-dom": "20.10.5"
+		"shx": "0.3.4",
+		"vitest": "4.1.12"
 	}
 }

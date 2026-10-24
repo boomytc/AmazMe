@@ -14,10 +14,10 @@
 | 会话 SDK | `amazme_backend.sdk.Client`；Python 示例与 eval | 旧 Durable SDK、包根/子路径导出、拒绝占位及失效示例已删除 |
 | evals | Vitest → `run_eval.py` → 现有 Python SDK/Host | 真实 Python 插件与供应商配置；删除 Docker、旧模型/扩展宿主消费者及三个内部 JS 依赖 |
 | 原生插件 | Python factory；CUA 构建/安装/清理脚本使用原清单 helper | 旧 TS 动作/分类/facet 已删除；保留固定原生配方、安装完整性校验与权限 App helper |
-| `@amazme/web` / `@amazme/durable` 的页面值导入 | Electron 呈现依赖 | 沿实际导入清理，不能机械删除整个包 |
+| `@amazme/web` | Electron 的图标、语言/错误文案、字体 helper | 删除旧 Durable 会话投影、DOM 页面与业务依赖；保留纯呈现 helper，产品页面来自 Python |
 
 CLI 单元已删除没有产品消费者的 `cli/auth-check.ts`、`credential-print.ts`、
 `provider-auth.ts`、`list-models.ts`、`setup.ts` 和对应旧认证测试。
-Node 包的旧 Host、session-worker 和业务导出已经删除。独立库与 Electron 的页面/文案依赖仍需沿实际消费者收敛，CLI 恢复和资源选项也不能据此宣称全部闭环。
+Node 包的旧 Host、session-worker 和业务导出已经删除。独立库的剩余消费者仍需核对，Electron 依赖已收敛为无业务内核的文案/图标包，CLI 恢复和资源选项也不能据此宣称全部闭环。
 
 构建身份以最终候选包的 `build.json` 及同次生成报告为准，本清单不复制“当前 build_id”。

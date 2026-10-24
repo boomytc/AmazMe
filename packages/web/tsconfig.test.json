@@ -4,10 +4,13 @@
 		"noEmit": true,
 		"module": "NodeNext",
 		"moduleResolution": "NodeNext",
-		"types": ["node", "vitest"],
-		"paths": {
-			"@amazme/durable": ["../durable/src/index.ts"]
-		}
+		"types": [
+			"node",
+			"vitest"
+		]
 	},
-	"include": ["src/**/*.ts", "test/**/*.ts"]
+	"include": [
+		"src/**/*.ts",
+		"test/**/*.ts"
+	]
 }
