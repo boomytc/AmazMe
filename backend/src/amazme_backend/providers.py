@@ -140,14 +140,6 @@ class Completion(Model):
     price_cache_write_micro_per_million: int | None = None
 
 
-# Published rates, in micro-USD per million tokens: input, output, cache read, cache write.
-# DeepSeek rates match packages/ai/src/providers/data/deepseek.json.
-# faux matches the zero rates on the local faux model.
-_PRICE_MICRO_PER_MILLION: dict[tuple[str, str], tuple[int, int, int, int]] = {
-    ("faux", "faux"): (0, 0, 0, 0),
-    ("deepseek", "deepseek-flash"): (300_000, 1_200_000, 6_000, 0),
-    ("deepseek", "deepseek-v4-pro"): (1_320_000, 3_960_000, 44_000, 0),
-}
 _SIGNATURE_LIMIT = 65536
 
 
@@ -158,9 +150,6 @@ def catalog_price(provider: str, model: str) -> tuple[int, int, int, int] | None
     """
     if provider == "faux":
         return (0, 0, 0, 0)
-    fixed = _PRICE_MICRO_PER_MILLION.get((provider, model))
-    if fixed is not None:
-        return fixed
     entry = INDEX.get((provider, model))
     if entry is None or entry.cost.get("tiers"):
         return None

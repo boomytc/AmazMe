@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import "./quiet-warnings.ts";
 import { APP_NAME } from "./config.ts";
 
 process.title = APP_NAME;

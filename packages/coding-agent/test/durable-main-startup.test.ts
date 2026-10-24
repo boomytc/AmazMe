@@ -40,7 +40,7 @@ describe("main's default interactive startup", () => {
 		for (const stream of [process.stdin, process.stdout])
 			Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
 		await main([]);
-		expect(runOwnedPythonInteractive).toHaveBeenCalledWith({ workspace: "primary", cwd });
+		expect(runOwnedPythonInteractive).toHaveBeenCalledWith({ cwd, prompt: "" });
 	});
 
 	it("keeps the Python host when AMAZME_DURABLE_TUI is set", async () => {
@@ -56,6 +56,6 @@ describe("main's default interactive startup", () => {
 		for (const stream of [process.stdin, process.stdout])
 			Object.defineProperty(stream, "isTTY", { configurable: true, value: true });
 		await main([]);
-		expect(runOwnedPythonInteractive).toHaveBeenCalledWith({ workspace: "primary", cwd });
+		expect(runOwnedPythonInteractive).toHaveBeenCalledWith({ cwd, prompt: "" });
 	});
 });

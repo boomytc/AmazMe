@@ -1,7 +1,0 @@
-{
-	"extends": "../../tsconfig.node.json",
-	"compilerOptions": {
-		"tsBuildInfoFile": "../../.artifacts/typecheck/issues.tsbuildinfo"
-	},
-	"include": ["*.ts"]
-}

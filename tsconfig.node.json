@@ -7,9 +7,7 @@
 	"include": [
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
-		"packages/coding-agent/examples/**/*",
-		"packages/agent/examples/**/*",
-		"packages/durable/test-workers/**/*"
+		"packages/coding-agent/examples/**/*"
 	],
 	"exclude": [
 		"**/dist/**",

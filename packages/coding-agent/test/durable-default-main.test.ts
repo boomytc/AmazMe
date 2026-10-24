@@ -42,19 +42,22 @@ describe("default headless runtime", () => {
 	it("uses the Python host for a new print session", async () => {
 		await main(["--offline", "--print", "hello"]);
 		expect(runPythonHeadless).toHaveBeenCalledOnce();
-		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello", workspace: "primary" });
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello" });
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0].workspace).toBeUndefined();
 	});
 
 	it("uses the Python host for JSON mode", async () => {
 		await main(["--offline", "--mode", "json", "hello"]);
 		expect(runPythonHeadless).toHaveBeenCalledOnce();
-		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "json", prompt: "hello", workspace: "primary" });
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "json", prompt: "hello" });
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0].workspace).toBeUndefined();
 	});
 
 	it("keeps the Python host for print when AMAZME_DURABLE_TUI is set", async () => {
 		vi.stubEnv("AMAZME_DURABLE_TUI", "1");
 		await main(["--offline", "--print", "hello"]);
 		expect(runPythonHeadless).toHaveBeenCalledOnce();
-		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello", workspace: "primary" });
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0]).toMatchObject({ cwd, mode: "text", prompt: "hello" });
+		expect(vi.mocked(runPythonHeadless).mock.calls[0]?.[0].workspace).toBeUndefined();
 	});
 });

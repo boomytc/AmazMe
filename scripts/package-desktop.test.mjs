@@ -10,13 +10,5 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 test("the desktop package closure does not include the old coding-agent host", () => {
 	assert.deepEqual(DESKTOP_PACKAGES, ["@amazme/gui"]);
 	const names = runtimePackages(workspacePackages(repoRoot), DESKTOP_PACKAGES).map((pkg) => pkg.manifest.name);
-	assert.deepEqual(names, [
-		"@amazme/telemetry",
-		"@amazme/ai",
-		"@amazme/chord",
-		"@amazme/codemode",
-		"@amazme/durable",
-		"@amazme/web",
-		"@amazme/gui",
-	]);
+	assert.deepEqual(names, ["@amazme/web", "@amazme/gui"]);
 });

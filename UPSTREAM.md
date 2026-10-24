@@ -1,6 +1,10 @@
 # 上游对齐
 
-实现来自 [Pi](https://github.com/earendil-works/pi)。本文件记录当前对齐的上游基线、基线之后已处理的提交、刻意偏离和跟进方法，供后续吸收改进时使用。
+实现来自 [Pi](https://github.com/earendil-works/pi)。当前产品行为按本地 Pi `be14d9732f98fcc33929cf103a92b96afaa6523e` 的源码移植到 Python；OAuth 客户端 ID、回调和供应商请求身份保持原样。当前执行与持久化契约见 [本机方案](docs/python-backend-plan.md)，完成状态见 [任务表](docs/python-backend-completion.md)。TS 仅保留客户端、TUI、纯呈现与 QuickJS helper。
+
+## 历史上游吸收记录（归档）
+
+以下描述迁移前各次 TS 实现和当时基线，不是当前运行时或依赖清单。保留提交依据供后续移植核对；旧 Chord/Durable、VM 和插件路径均不能用于当前产品启动。
 
 ## DeepSeek Harness 行为增量
 

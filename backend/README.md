@@ -9,7 +9,7 @@ AmazMe 正在按 [本机优先方案](../docs/python-backend-plan.md) 将 shell�
 本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。用户可以连接服务、
 选择工具、填写 JSON 参数并审批调用。已连接服务的工具目录也会交给模型；模型提出的调用走会话审批，
 不能调用 Host 的用户审批接口代替决定，批准后的结果进入后续模型上下文。
-动态目录刷新、HTTP/OAuth、媒体呈现和任意第三方服务兼容性尚未验收。
+动态目录刷新及媒体回传已有定向检查；HTTP/OAuth 等其他 MCP 传输不属于当前 stdio 主路径。
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
 终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 可以装载这份页面；关闭窗口不停止后端，显式退出才停止它所启动的后端。`amazme-backend tui`、print/JSON CLI、`--mode rpc`、Python SDK 和默认 `amazme` 交互画面在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
@@ -47,7 +47,7 @@ backend/.venv/bin/python backend/tools/verify_screen.py
 `verify_native.py` 使用 faux 和真实本机进程；`verify_client.py` 使用已安装 Chrome。
 `verify_mcp.py` 用 Chrome 操作本机官方 MCP Python SDK 探针服务，覆盖审批、丢回执、结构化结果和停止。
 `verify_mcp_model.py` 用隔离 profile 和现有 DeepSeek 配置，让模型选择已连接的本机探针工具；拒绝无副作用，批准后的结果回到模型。
-两者都不代表动态目录、其他传输或任意第三方服务已通过。
+这些旧运行报告只证明当时构建；当前状态以完成台账为准。
 真实模型与 Chrome 用 `verify_web.py --provider-config /private/provider.json`，会产生模型费用。
 这些运行器创建自己的隔离 profile、记录报告并关闭所属进程；不会接管用户原有服务。
 报告保存在 `.artifacts/native`，两个 native `run-*` 之后先核对已有证据再运行，避免无界积累。

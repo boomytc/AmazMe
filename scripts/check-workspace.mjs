@@ -23,19 +23,9 @@ import { API } from "typescript/unstable/sync";
 import { runtimePackages, workspacePackages } from "./package-artifacts.mjs";
 
 const layers = new Map([
-	["@amazme/chord", 0],
 	["@amazme/codemode", 0],
-	["@amazme/mcp", 0],
-	["@amazme/telemetry", 0],
 	["@amazme/tui", 0],
-	["@amazme/ai", 1],
-	["@amazme/agent", 2],
-	["@amazme/durable", 2],
-	["@amazme/protocol", 2],
-	["@amazme/env", 3],
-	["@amazme/client", 3],
 	["@amazme/web", 3],
-	["@amazme/server", 4],
 	["@amazme/gui", 6],
 	["@amazme/coding-agent", 5],
 	["@amazme/evals", 6],
@@ -283,9 +273,6 @@ export function checkVersionLiterals(repoRoot, files) {
  */
 export const sourceTempDirAllowlist = {
 	"packages/coding-agent/src/utils/clipboard.ts": "WSL clipboard hand-off file",
-	"packages/durable/src/env/node.ts": "ExecutionEnv.createTempDir contract (not used for spills)",
-	"packages/env/src/ssh.ts": "SSH host-key scratch directory",
-	"packages/chord/src/manager.ts": "local IPC socket path",
 	"packages/tui/src/tui-main-screen.ts": "crash log fallback when no log directory is set",
 };
 
@@ -341,7 +328,7 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 		}
 	};
 	const banned = /\bmkdtemp(?:Sync)?\s*\(/;
-	const canonicalPath = join(packagesDirectory, "ai", "test", "temp-dir.ts");
+	const canonicalPath = join(packagesDirectory, "coding-agent", "test", "temp-dir.ts");
 	const canonical = existsSync(canonicalPath) ? readFileSync(canonicalPath) : undefined;
 	const walk = (testRoot, directory) => {
 		if (!existsSync(directory)) return;
@@ -375,7 +362,7 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 		const content = readFileSync(helper);
 		if (!content.equals(canonical))
 			failures.push(
-				`${relative(repoRoot, helper)}: must match packages/ai/test/temp-dir.ts byte-for-byte (vitest helper); only packages/tui/test/temp-dir.ts may differ`,
+				`${relative(repoRoot, helper)}: must match packages/coding-agent/test/temp-dir.ts byte-for-byte (vitest helper); only packages/tui/test/temp-dir.ts may differ`,
 			);
 	}
 	return failures;
@@ -595,11 +582,6 @@ export async function checkEntryContracts(repoRoot) {
 	const measurements = [];
 	for (const budget of [
 		{
-			entry: "packages/ai/src/models.ts",
-			maxFiles: 21,
-			forbid: ["packages/ai/src/providers/", "packages/ai/src/models.generated.ts", "packages/ai/src/index.ts"],
-		},
-		{
 			entry: "packages/codemode/src/index.ts",
 			maxFiles: 12,
 			forbid: ["packages/codemode/src/cloudflare.ts"],
@@ -614,19 +596,6 @@ export async function checkEntryContracts(repoRoot) {
 				"packages/codemode/src/wasm.ts",
 			],
 		})),
-		// Product branch summaries/search/file contracts and the new Chord host graph are included.
-		{
-			entry: "packages/durable/src/index.ts",
-			// Includes the Durable telemetry schema and host timer adapter.
-			maxFiles: 78,
-			forbid: ["packages/ai/src/index.ts", "packages/ai/src/utils/typebox-helpers.ts", "packages/durable/src/images/"],
-		},
-		{
-			entry: "packages/durable/src/tools/index.ts",
-			// File observations and portable search tools add their document and environment helpers.
-			maxFiles: 54,
-			forbid: ["packages/durable/src/images/"],
-		},
 	]) {
 		const result = await build({
 			entryPoints: [join(root, budget.entry)],
@@ -648,10 +617,6 @@ export async function checkEntryContracts(repoRoot) {
 				failures.push(`${budget.entry}: forbidden runtime import ${path}`);
 	}
 	for (const entry of [
-		"packages/ai/src/models.ts",
-		"packages/durable/src/index.ts",
-		"packages/durable/src/tools/index.ts",
-		"packages/durable/src/codemode/index.ts",
 		"packages/web/src/index.ts",
 		"packages/codemode/src/portable.ts",
 		"packages/codemode/src/cloudflare.ts",

@@ -47,25 +47,25 @@ function packageFixture(root, name, source, metadata = {}) {
 
 test("dependency checks reject registry ranges in every direct section and exact mismatched workspace versions", () => {
 	const root = fixture();
-	packageFixture(root, "ai", "export {};");
+	packageFixture(root, "web", "export {};");
 	packageFixture(root, "agent", "export {};", {
-		dependencies: { "@amazme/ai": "^1.0.0", external: "~2.0.0" },
+		dependencies: { "@amazme/web": "^1.0.0", external: "~2.0.0" },
 		devDependencies: { alias: "npm:@vendor/dep@^1.0.0" },
-		optionalDependencies: { "@amazme/ai": "0.9.0" },
+		optionalDependencies: { "@amazme/web": "0.9.0" },
 	});
 	const failures = checkDependencyVersions(root);
 	assert.equal(failures.length, 4);
 	assert.ok(
-		failures.some((message) => message.includes("optionalDependencies.@amazme/ai must match workspace version")),
+		failures.some((message) => message.includes("optionalDependencies.@amazme/web must match workspace version")),
 	);
 });
 
 test("dependency checks preserve exact registry aliases and non-registry references", () => {
 	const root = fixture();
-	packageFixture(root, "ai", "export {};");
+	packageFixture(root, "web", "export {};");
 	packageFixture(root, "agent", "export {};", {
 		dependencies: {
-			"@amazme/ai": "1.0.0",
+			"@amazme/web": "1.0.0",
 			external: "2.0.0-rc.1",
 			alias: "npm:@vendor/dep@0.9.0",
 		},
@@ -79,7 +79,7 @@ test("syntax checks distinguish type-only imports from runtime dependencies and 
 	const root = fixture();
 	packageFixture(
 		root,
-		"chord",
+		"codemode",
 		'import type { Value } from "types-only"; import { type Other } from "other-types"; export type { Third } from "third-types"; const sample = "import(\\\"unrelated\\\")"; // import("comment")\nexport const value = 1;',
 	);
 	assert.deepEqual(checkSourceContracts(root), []);
@@ -99,7 +99,7 @@ test("side effects, mixed imports, re-exports, dynamic imports and require must 
 	const root = fixture();
 	packageFixture(
 		root,
-		"chord",
+		"codemode",
 		'import "side-effect"; import { type Shape, value } from "mixed"; export { value } from "re-export"; import("dynamic"); require("commonjs"); require.resolve("resolved");',
 	);
 	const failures = checkSourceContracts(root);
@@ -114,7 +114,7 @@ test("relative imports, including type expressions, keep TypeScript extensions a
 	const root = fixture();
 	packageFixture(
 		root,
-		"chord",
+		"codemode",
 		'import "./old.js"; export { value } from "./extensionless"; type Shape = import("./types.js").Value; import "../../ai/src/index.ts";',
 	);
 	const failures = checkSourceContracts(root);
@@ -124,7 +124,7 @@ test("relative imports, including type expressions, keep TypeScript extensions a
 
 test("package sources must not suspend module evaluation with await", () => {
 	const root = fixture();
-	const directory = packageFixture(root, "ai", "export {};");
+	const directory = packageFixture(root, "web", "export {};");
 	writeFileSync(
 		join(directory, "src/flow.ts"),
 		'import { readFile } from "node:fs/promises";\nexport const value = await readFile("a");\nif (value) { for await (const part of value) { part; } }\nawait using handle = open();\n',
@@ -135,7 +135,7 @@ test("package sources must not suspend module evaluation with await", () => {
 
 test("await inside functions, methods, and arrows does not suspend the module", () => {
 	const root = fixture();
-	const directory = packageFixture(root, "ai", "export {};");
+	const directory = packageFixture(root, "web", "export {};");
 	writeFileSync(
 		join(directory, "src/flow.ts"),
 		"async function a() { await b(); }\nexport const c = async () => { await d(); };\nclass E { async f() { for await (const g of h) { g; } } }\n",
@@ -145,7 +145,7 @@ test("await inside functions, methods, and arrows does not suspend the module", 
 
 test("only bins and shebang entries may await at module scope", () => {
 	const root = fixture();
-	const directory = packageFixture(root, "ai", "export {};", { bin: { tool: "./dist/cli.js" } });
+	const directory = packageFixture(root, "web", "export {};", { bin: { tool: "./dist/cli.js" } });
 	writeFileSync(join(directory, "src/cli.ts"), 'await import("./index.ts");\n');
 	writeFileSync(join(directory, "src/hook.ts"), '#!/usr/bin/env node\nawait import("./index.ts");\n');
 	assert.deepEqual(checkSourceContracts(root), []);
@@ -153,11 +153,11 @@ test("only bins and shebang entries may await at module scope", () => {
 
 test("foundations cannot depend upward and runtime dependency cycles are refused", () => {
 	const root = fixture();
-	packageFixture(root, "chord", 'import type { Model } from "@amazme/ai";', {
-		dependencies: { "@amazme/ai": "1.0.0" },
+	packageFixture(root, "codemode", 'import type { Model } from "@amazme/web";', {
+		dependencies: { "@amazme/web": "1.0.0" },
 	});
-	packageFixture(root, "ai", "export const value = 1;", {
-		dependencies: { "@amazme/chord": "1.0.0" },
+	packageFixture(root, "web", "export const value = 1;", {
+		dependencies: { "@amazme/codemode": "1.0.0" },
 	});
 	const failures = checkSourceContracts(root);
 	assert.ok(failures.some((failure) => failure.includes("points upward")));
@@ -166,13 +166,13 @@ test("foundations cannot depend upward and runtime dependency cycles are refused
 
 test("manifest dependencies cannot point upward even when source does not import them", () => {
 	const root = fixture();
-	packageFixture(root, "chord", "export const value = 1;", {
-		dependencies: { "@amazme/ai": "1.0.0" },
+	packageFixture(root, "codemode", "export const value = 1;", {
+		dependencies: { "@amazme/web": "1.0.0" },
 	});
-	packageFixture(root, "ai", "export const value = 1;");
+	packageFixture(root, "web", "export const value = 1;");
 	assert.ok(
 		checkSourceContracts(root).some(
-			(failure) => failure.startsWith("packages/chord/package.json:") && failure.includes("points upward"),
+			(failure) => failure.startsWith("packages/codemode/package.json:") && failure.includes("points upward"),
 		),
 	);
 });
@@ -207,17 +207,6 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	);
 	writeFileSync(join(codemode, "src/portable.ts"), 'export { value } from "./runtime/host.ts";');
 	writeFileSync(join(codemode, "src/cloudflare.ts"), 'export { value } from "./portable.ts";');
-	const ai = packageFixture(root, "ai", "export const value = 1;");
-	writeFileSync(join(ai, "src/models.ts"), 'export { value } from "./index.ts";');
-	const durable = packageFixture(root, "durable", 'import fs from "node:fs"; export const read = fs.readFileSync;');
-	mkdirSync(join(durable, "src/codemode"), { recursive: true });
-	writeFileSync(
-		join(durable, "src/codemode/index.ts"),
-		'import fs from "node:fs"; export const read = fs.readFileSync;',
-	);
-	mkdirSync(join(durable, "src/tools"), { recursive: true });
-	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
-	packageFixture(root, "coding-agent", "export const value = 1;");
 	packageFixture(root, "web", "export const value = 1;");
 	mkdirSync(join(root, "packages/web/src"), { recursive: true });
 	writeFileSync(
@@ -225,7 +214,6 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 		'import fs from "node:fs"; export const read = fs.readFileSync;',
 	);
 	const { failures } = await checkEntryContracts(root);
-	assert.ok(failures.some((failure) => failure.includes("forbidden runtime import packages/ai/src/index.ts")));
 	assert.ok(
 		failures.some(
 			(failure) =>
@@ -247,46 +235,9 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 			),
 		);
 	}
-	for (const entry of ["index.ts", "codemode/index.ts"]) {
-		assert.ok(
-			failures.some((failure) => failure.startsWith(`packages/durable/src/${entry}:`) && failure.includes("node:fs")),
-		);
-	}
 	assert.ok(
 		failures.some((failure) => failure.startsWith("packages/web/src/index.ts:") && failure.includes("node:fs")),
 	);
-});
-
-test("Durable root and file tools keep the optional Photon processor in its own entry", async () => {
-	const root = fixture();
-	const ai = packageFixture(root, "ai", "export const value = 1;");
-	writeFileSync(join(ai, "src/models.ts"), "export const value = 1;");
-	const codemode = packageFixture(root, "codemode", "export const value = 1;");
-	for (const name of ["portable", "cloudflare"])
-		writeFileSync(join(codemode, `src/${name}.ts`), "export const value = 1;");
-	packageFixture(root, "coding-agent", "export const value = 1;");
-	packageFixture(root, "web", "export const value = 1;");
-	mkdirSync(join(root, "packages/web/src"), { recursive: true });
-	writeFileSync(join(root, "packages/web/src/index.ts"), "export const value = 1;");
-	const durable = packageFixture(root, "durable", 'export { photon } from "./images/index.ts";');
-	mkdirSync(join(durable, "src/codemode"), { recursive: true });
-	writeFileSync(join(durable, "src/codemode/index.ts"), "export const value = 1;");
-	mkdirSync(join(durable, "src/images"), { recursive: true });
-	mkdirSync(join(durable, "src/tools"), { recursive: true });
-	writeFileSync(join(durable, "src/images/index.ts"), "export const photon = 1;");
-	writeFileSync(join(durable, "src/tools/index.ts"), 'export { photon } from "../images/index.ts";');
-	const { failures } = await checkEntryContracts(root);
-	for (const entry of ["index.ts", "tools/index.ts"])
-		assert.ok(
-			failures.some(
-				(failure) =>
-					failure.startsWith(`packages/durable/src/${entry}:`) &&
-					failure.includes("forbidden runtime import packages/durable/src/images/index.ts"),
-			),
-		);
-	writeFileSync(join(durable, "src/index.ts"), "export const value = 1;");
-	writeFileSync(join(durable, "src/tools/index.ts"), "export const value = 1;");
-	assert.deepEqual((await checkEntryContracts(root)).failures, []);
 });
 
 function changelogFixture(root, name, text) {
@@ -346,11 +297,11 @@ test("build configs reject paths in the package config and in configs it extends
 	const root = fixture();
 	writeFileSync(
 		join(root, "tsconfig.base.json"),
-		JSON.stringify({ compilerOptions: { paths: { "@amazme/ai": ["x"] } } }),
+		JSON.stringify({ compilerOptions: { paths: { "@amazme/web": ["x"] } } }),
 	);
 	buildConfigFixture(root, "agent", {
 		extends: "../../tsconfig.base.json",
-		compilerOptions: { paths: { "@amazme/ai": ["../ai/dist/index.d.ts"] } },
+		compilerOptions: { paths: { "@amazme/web": ["../ai/dist/index.d.ts"] } },
 	});
 	buildConfigFixture(root, "client", { extends: "../../tsconfig.base.json" });
 	buildConfigFixture(root, "web", { compilerOptions: { outDir: "./dist" } });
@@ -458,22 +409,22 @@ test("temp dir checks allow only packages/*/test/temp-dir.ts and reject bare mkd
 	assert.equal(failures.filter((message) => message.includes("/test/temp-dir.ts:")).length, 0);
 });
 
-test("temp dir helpers match the ai vitest copy; tui may differ", () => {
+test("temp dir helpers match the client vitest copy; tui may differ", () => {
 	const root = fixture();
 	const helper =
 		'import { mkdtempSync } from "node:fs";\nexport const createTempDir = (prefix) => mkdtempSync("/tmp/" + prefix);\n';
-	mkdirSync(join(root, "packages", "ai", "test"), { recursive: true });
-	mkdirSync(join(root, "packages", "client", "test"), { recursive: true });
+	mkdirSync(join(root, "packages", "coding-agent", "test"), { recursive: true });
+	mkdirSync(join(root, "packages", "web", "test"), { recursive: true });
 	mkdirSync(join(root, "packages", "tui", "test"), { recursive: true });
-	writeFileSync(join(root, "packages", "ai", "test", "temp-dir.ts"), helper);
-	writeFileSync(join(root, "packages", "client", "test", "temp-dir.ts"), helper + "// drift\n");
+	writeFileSync(join(root, "packages", "coding-agent", "test", "temp-dir.ts"), helper);
+	writeFileSync(join(root, "packages", "web", "test", "temp-dir.ts"), helper + "// drift\n");
 	writeFileSync(
 		join(root, "packages", "tui", "test", "temp-dir.ts"),
 		'import type { TestContext } from "node:test";\nexport const createTempDir = (t, prefix) => prefix;\n',
 	);
 	const failures = checkTempDirUsage(root);
 	assert.equal(failures.length, 1, failures.join("\n"));
-	assert.ok(failures[0].includes("packages/client/test/temp-dir.ts:"));
+	assert.ok(failures[0].includes("packages/web/test/temp-dir.ts:"));
 	assert.ok(failures[0].includes("byte-for-byte"));
 });
 

@@ -18,6 +18,6 @@
 
 CLI 单元已删除没有产品消费者的 `cli/auth-check.ts`、`credential-print.ts`、
 `provider-auth.ts`、`list-models.ts`、`setup.ts` 和对应旧认证测试。
-Node 包的旧 Host、session-worker 和业务导出已经删除。独立库的剩余消费者仍需核对，Electron 依赖已收敛为无业务内核的文案/图标包，CLI 恢复和资源选项也不能据此宣称全部闭环。
+Node 包的旧 Host、session-worker 和业务导出已经删除。独立 TS 业务包 agent、ai、chord、durable、env、mcp、protocol、server、client、telemetry 已无当前产品消费者，同批删除源码和失效测试。模型/价格快照和目录同步属于 Python；Pi 议题维护脚本不属于产品，旧 TS 消费者也已移除。剩余 workspace 为 coding-agent、tui、web、gui、codemode、evals。CLI 的其余启动选项仍需收敛，最终集中检查尚未完成。
 
 构建身份以最终候选包的 `build.json` 及同次生成报告为准，本清单不复制“当前 build_id”。

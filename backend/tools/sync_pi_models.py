@@ -10,7 +10,7 @@ APIS = {'openai-completions', 'openai-responses', 'openai-codex-responses',
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--source', type=Path, default=Path(__file__).resolve().parents[2] / 'packages/ai/src/providers/data')
+    parser.add_argument('--source', type=Path, required=True, help='Pi hydrated packages/ai/src/providers/data directory')
     args = parser.parse_args()
     models: list[dict[str, object]] = []
     classifiers: list[dict[str, object]] = []

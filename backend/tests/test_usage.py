@@ -122,12 +122,13 @@ def test_deepseek_prices_match_the_published_catalog() -> None:
 
     from amazme_backend.providers import catalog_price, token_cost_micro
 
-    catalog = json.loads((Path(__file__).parents[2] / "packages/ai/src/providers/data/deepseek.json").read_text())
-    published = catalog["openai-completions"]
-    assert {item["id"] for item in published.values()} == {"deepseek-flash", "deepseek-v4-pro"}
-    for model in published.values():
+    catalog = json.loads((Path(__file__).parents[1] / "src/amazme_backend/model_catalog.json").read_text())
+    published = [item for item in catalog if item["provider"] == "deepseek"]
+    assert {item["id"] for item in published} == {"deepseek-flash", "deepseek-v4-pro"}
+    for model in published:
         rates = model["cost"]
         price = catalog_price("deepseek", model["id"])
+        assert price is not None
         assert price == (
             int(Decimal(str(rates["input"])) * 1_000_000),
             int(Decimal(str(rates["output"])) * 1_000_000),

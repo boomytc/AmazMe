@@ -6,23 +6,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 /** Build only the target's workspace closure, including workspace-only build-time dependencies. */
 export async function workspaceBuildPlan(root, targets) {
 	const packages = workspaceDependencyPackages(workspacePackages(root), targets, ["dependencies", "devDependencies", "optionalDependencies"]);
-	return packages.filter(({ manifest }) => typeof manifest.scripts?.build === "string").map(({ manifest }) => {
-		const name = manifest.name;
-		if (name === "@amazme/ai" && typeof manifest.scripts["build:offline"] !== "string") {
-			throw new Error("@amazme/ai must provide build:offline; desktop builds must not silently refresh model data");
-		}
-		return { name, script: name === "@amazme/ai" ? "build:offline" : "build" };
-	});
+	return packages.filter(({manifest}) => typeof manifest.scripts?.build === "string")
+		.map(({manifest}) => ({name:manifest.name, script:"build"}));
 }
 
-export async function buildWorkspaceDependencies(root, targets, run, hydrateModelData = false) {
+export async function buildWorkspaceDependencies(root, targets, run) {
 	const plan = await workspaceBuildPlan(root, targets);
-	if (plan.some(({ name }) => name === "@amazme/ai")) {
-		if (await run("@amazme/ai", "check:model-data") !== 0) {
-			if (!hydrateModelData) throw new Error("缺少模型目录数据；先运行 npm run hydrate:model-data，或显式使用 --hydrate-model-data。默认桌面构建不联网刷新数据。");
-			if (await run("@amazme/ai", "hydrate-model-data") !== 0) throw new Error("模型目录数据获取失败");
-		}
-	}
 	for (const { name, script } of plan) {
 		console.log(`desktop dependency: ${name} (${script})`);
 		if (await run(name, script) !== 0) throw new Error(`Workspace build failed: ${name}`);
@@ -32,7 +21,7 @@ export async function buildWorkspaceDependencies(root, targets, run, hydrateMode
 
 async function main() {
 	const args = process.argv.slice(2);
-	if (args.some((arg) => arg.startsWith("--") && !["--plan", "--hydrate-model-data"].includes(arg))) throw new Error("Unknown option");
+	if (args.some((arg) => arg.startsWith("--") && !["--plan"].includes(arg))) throw new Error("Unknown option");
 	const targets = args.filter((arg) => !arg.startsWith("--"));
 	if (targets.length === 0) throw new Error("Specify a target workspace");
 	const root = fileURLToPath(new URL("..", import.meta.url));
@@ -46,7 +35,7 @@ async function main() {
 		if (result.error) throw result.error;
 		return result.status ?? 1;
 	};
-	await buildWorkspaceDependencies(root, targets, run, args.includes("--hydrate-model-data"));
+	await buildWorkspaceDependencies(root, targets, run);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
