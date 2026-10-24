@@ -1,39 +1,51 @@
+import { afterAll, beforeAll } from "vitest";
 import { describeEval, StructuredOutputJudge } from "vitest-evals";
-import { inspectAddedModel, loadConfiguredModelRuntime, type AddedModelOutput } from "./configured-runtime.ts";
 import { createDocumentationEvalHarness } from "../src/harness.ts";
-
-const PROVIDER_ID = "openai";
-const MODEL_ID = "fixture-chat";
-const MODEL_NAME = "Fixture Chat";
-
-const expected: AddedModelOutput = {
-	result: {
-		model: {
-			id: MODEL_ID,
-			name: MODEL_NAME,
-			provider: PROVIDER_ID,
-			reasoning: true,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 32768,
-			maxTokens: 4096,
-		},
-		existingModelsPreserved: true,
-	},
-};
-
+import { createAcmeServer, OPENAI_MODEL_ID, OPENAI_PROBE_PROMPT, OPENAI_PROBE_RESPONSE } from "./acme-server.ts";
+import { configuredProvider } from "./configured-runtime.ts";
+const server = createAcmeServer("openai");
+beforeAll(() => server.start());
+afterAll(() => server.stop());
 const harness = createDocumentationEvalHarness({
-	output: async ({ agentDir }) => inspectAddedModel(await loadConfiguredModelRuntime(agentDir), PROVIDER_ID, MODEL_ID),
+	providerProbe: () => ({
+		provider: "openai",
+		model: OPENAI_MODEL_ID,
+		api: "openai-completions",
+		base_url: server.baseUrl(),
+		api_key: "resolved-acme-key",
+		prompt: OPENAI_PROBE_PROMPT,
+	}),
+	output: (result) => configuredProvider(result, server.validRequestReceived()),
 });
-const judge = StructuredOutputJudge({ expected, match: "strict", allowExtras: false });
-
-describeEval("Add model to existing provider", { harness, judges: [judge], judgeThreshold: null }, (it) => {
-	it("adds the model without replacing existing models", async ({ run }) => {
-		await run([
-			{
-				type: "prompt",
-				content: `Configure this running Pi installation with a new \`${PROVIDER_ID}/${MODEL_ID}\` model. Do not create project-local configuration. Show it as “${MODEL_NAME}”. It accepts text, supports reasoning, has a 32,768-token context window and a 4,096-token maximum output, and has no usage cost.`,
-			},
-		]);
-	});
-});
+describeEval(
+	"Add model to existing provider",
+	{
+		harness,
+		judgeThreshold: null,
+		judges: [
+			StructuredOutputJudge({
+				expected: {
+					validRequestReceived: true,
+					response: OPENAI_PROBE_RESPONSE,
+					existing_models_preserved: true,
+					settings: {
+						provider: "openai",
+						model: OPENAI_MODEL_ID,
+						api: "openai-completions",
+						max_tokens: 4096,
+						key_configured: true,
+					},
+				},
+				match: "strict",
+				allowExtras: false,
+			}),
+		],
+	},
+	(it) => {
+		it("selects a custom model without replacing the catalog", async ({ run }) => {
+			await run(
+				`Write provider.json in the workspace selecting openai/${OPENAI_MODEL_ID} for the AmazMe Python backend, at ${server.baseUrl()} with max output 4096. Retain the built-in model catalog. Do not include credentials.`,
+			);
+		});
+	},
+);

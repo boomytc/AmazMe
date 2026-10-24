@@ -329,7 +329,8 @@ class Worker:
         # Local durable fence is authoritative. No Supervisor callback: it may be recovering.
         async with self.dispatch_lock:
             await self.store.stopping(value, value.execution_epoch,
-                                      cancel_work=not self.validation and value.reason == "shutdown")
+                                      cancel_work=not self.validation and value.reason == "shutdown",
+                                      require_idle=value.require_idle)
             self.stop_requested = True
             self.state = "stopping"
             self._interrupt()

@@ -169,3 +169,16 @@ Web/Electron、SDK 和 `code.tools/run/cancel` RPC 共用此路径。脚本及 N
 
 历史证据入口：`python-backend-evidence.md`、`python-backend-p1-evidence.md`、`python-backend-p2-handoff.md`。
 当前实施状态与新证据统一记录在 `python-backend-completion.md`。
+
+## Python 模型配置与 SDK 消费者
+
+凭据由 `Client.update_account` 写入私有账号库，模型选择由 `Client.update_model(UpdateModelSettings(...))` 完成。
+配置中的 `provider`、`model`、`api`、`base_url` 和 `max_tokens` 对应当前原生协议；不恢复旧 models.json/TS ProviderRuntime。
+`api` 为 `openai-completions`、`openai-responses`、`openai-codex-responses`、`anthropic-messages` 或 `google-generative-ai`。
+外部模型地址要求 HTTPS；本机 `localhost` 或 IP 回环可使用 HTTP，不接纳 URL 内凭据、query 或 fragment。
+选择自定义模型不替换已有静态目录。账号修订与会话请求选项按原契约核对。
+
+文档评测的 `provider.json` 是工作区输出文件，由评测器解析为当前 `ProviderConfig`，再通过上述 API 应用；产品不监视这个文件。
+例如 `{"provider":"acme","model":"acme-chat","api":"openai-completions","base_url":"http://127.0.0.1:PORT/v1","max_tokens":4096}`。
+它不包含密钥；评测器在核对目标身份和地址后单独提供固定替身凭据。
+SDK 示例见 `packages/coding-agent/examples/sdk/`；Python Client 只连接现有 Host，不另开业务宿主。

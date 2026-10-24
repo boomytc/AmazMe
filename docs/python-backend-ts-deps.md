@@ -11,13 +11,13 @@
 | Electron / Web | `gui/main.ts` → 包内 Python，Python Web 页面 | 桌面闭包不包含 coding-agent；缺包内后端时明确失败 |
 | 受控 JS helper | Python `codemode_helper.mjs` → `@amazme/codemode` 的 QuickJS 沙箱；其余现有终端/媒体处理及打包辅助 | 有实际用途，保留；helper 不执行 TS 业务宿主 |
 | 旧 Host 与 session-worker | coding-agent 的包导出、构建入口、旧测试，以及旧插件侧的注册依赖 | 仍需迁移消费者并删除；不能据 CLI 迁移宣称整个 TS 内核已删除 |
-| `durable/sdk.ts` | 包根导出及 eval 类型消费者，函数目前拒绝旧会话 | 迁移 eval 后删除拒绝占位和旧导出，不保留兼容运行时 |
-| evals | 旧 harness、配置与容器工具，运行入口拒绝旧会话 | 改为本机 Python SDK 路线；不恢复 Docker 作为产品执行后端 |
+| 会话 SDK | `amazme_backend.sdk.Client`；Python 示例与 eval | 旧 Durable SDK、包根/子路径导出、拒绝占位及失效示例已删除 |
+| evals | Vitest → `run_eval.py` → 现有 Python SDK/Host | 真实 Python 插件与供应商配置；删除 Docker、旧模型/扩展宿主消费者及三个内部 JS 依赖 |
 | 原生插件 | 旧 facet 注册；CUA App 配方和原生驱动仍有用途 | 驱动及分类/定位/候选业务已迁 Python；旧 TS 宿主消费者待同批删除，保留原生配方/必要 JS helper |
 | `@amazme/web` / `@amazme/durable` 的页面值导入 | Electron 呈现依赖 | 沿实际导入清理，不能机械删除整个包 |
 
 CLI 单元已删除没有产品消费者的 `cli/auth-check.ts`、`credential-print.ts`、
 `provider-auth.ts`、`list-models.ts`、`setup.ts` 和对应旧认证测试。
-旧 Host、旧 SDK 和 eval 的拒绝占位仍是未完成项，不能算迁移完成。
+旧 Host 与 session-worker 的包导出和构建闭包仍是未完成项，不能算整个 TS 内核迁移完成。
 
 构建身份以最终候选包的 `build.json` 及同次生成报告为准，本清单不复制“当前 build_id”。

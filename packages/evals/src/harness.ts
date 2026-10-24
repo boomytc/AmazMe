@@ -1,38 +1,47 @@
-import type { DurableSession } from "@amazme/coding-agent";
-import {
-	createHarness,
-	type Harness,
-	type HarnessContext,
-	type JsonValue,
-	type SimpleHarnessResult,
-} from "vitest-evals/harness";
+import { spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { type JsonValue, NormalizedSessionSchema, UsageSummarySchema } from "@vitest-evals/core";
+import { createHarness, type Harness, type SimpleHarnessResult } from "vitest-evals/harness";
+import { z } from "zod";
 import type { DocumentationVariant } from "./plan.ts";
 
 export type CodingAgentInput = string | Array<{ type: "prompt"; content: string }>;
-
-export type CodingAgentModelSelection = {
+export type CodingAgentModelSelection = { provider: string; id: string };
+export type ProviderProbe = {
+	path?: string;
 	provider: string;
-	id: string;
+	model: string;
+	api: "openai-completions" | "anthropic-messages";
+	base_url: string;
+	api_key: string;
+	prompt: string;
 };
-
 export type CodingAgentHarnessOptions = {
 	name?: string;
 	model?: CodingAgentModelSelection;
-	noTools?: "all" | "builtin";
+	noTools?: "all";
 	tools?: readonly string[];
 	workspaceFiles?: Readonly<Record<string, string>>;
-	transformSystemPrompt?: (defaultPrompt: string) => string;
-	expectedDocumentation?: boolean;
+	systemPrompt?: string;
+	appendSystemPrompt?: string;
+	documentation?: DocumentationVariant;
+	pluginEntry?: string;
+	providerProbe?: () => ProviderProbe;
+	timeoutMs?: number;
 };
-
+const ResultSchema = z.object({
+	response: z.string(),
+	session: NormalizedSessionSchema,
+	usage: UsageSummarySchema,
+	evidence: z.record(z.string(), z.json()),
+	errors: z.array(z.string()),
+});
+export type NativeEvalResult = z.infer<typeof ResultSchema>;
 export type CodingAgentHarnessWithOutput<TOutput extends JsonValue> = CodingAgentHarnessOptions & {
-	output: (args: {
-		response: string;
-		session: DurableSession;
-		systemPrompt: string;
-		agentDir: string;
-	}) => TOutput | Promise<TOutput>;
+	output: (result: NativeEvalResult) => TOutput | Promise<TOutput>;
 };
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 export function resolveModelSelection(
 	explicitModel: CodingAgentModelSelection | undefined,
@@ -40,74 +49,74 @@ export function resolveModelSelection(
 ): CodingAgentModelSelection {
 	const provider = (explicitModel?.provider ?? environment.AMAZME_PROVIDER)?.trim();
 	const id = (explicitModel?.id ?? environment.AMAZME_MODEL)?.trim();
-	if (!provider || !id) {
+	if (!provider || !id)
 		throw new Error("Select a harness model explicitly or set both AMAZME_PROVIDER and AMAZME_MODEL as defaults.");
-	}
 	return { provider, id };
 }
 
-export function applyIsolatedEnvironment(home: string, agentDir: string): () => void {
-	const overrides = { HOME: home, USERPROFILE: home, AMAZME_CODING_AGENT_DIR: agentDir };
-	const previous = new Map<string, string | undefined>();
-	for (const name of Object.keys(process.env)) {
-		if (!name.startsWith("AMAZME_EVAL_")) continue;
-		previous.set(name, process.env[name]);
-		delete process.env[name];
-	}
-	for (const [name, value] of Object.entries(overrides)) {
-		if (!previous.has(name)) previous.set(name, process.env[name]);
-		process.env[name] = value;
-	}
-	return () => {
-		for (const [name, value] of previous) {
-			if (value === undefined) delete process.env[name];
-			else process.env[name] = value;
-		}
+export async function runNativeEval(
+	input: CodingAgentInput,
+	options: CodingAgentHarnessOptions,
+	signal?: AbortSignal,
+): Promise<NativeEvalResult> {
+	const model = resolveModelSelection(options.model);
+	if (model.provider !== "faux" && !process.env.AMAZME_EVAL_PROFILE)
+		throw new Error("AMAZME_EVAL_PROFILE must name an existing Python credential profile.");
+	signal?.throwIfAborted();
+	const request = {
+		provider: model.provider,
+		model: model.id,
+		prompts: typeof input === "string" ? [input] : input.map((item) => item.content),
+		credential_profile: process.env.AMAZME_EVAL_PROFILE ?? "",
+		tools: options.tools ?? (options.noTools ? [] : null),
+		system_prompt: options.systemPrompt ?? null,
+		append_system_prompt: options.appendSystemPrompt ?? "",
+		workspace_files: options.workspaceFiles ?? {},
+		documentation: options.documentation ?? null,
+		plugin_entry: options.pluginEntry ?? "",
+		provider_probe: options.providerProbe?.() ?? null,
+		timeout_ms: options.timeoutMs ?? 300_000,
 	};
-}
-
-type SandboxIdentity = { uid: number; gid: number };
-
-function parseSandboxId(name: "AMAZME_EVAL_SANDBOX_UID" | "AMAZME_EVAL_SANDBOX_GID"): number | undefined {
-	const value = process.env[name];
-	if (value === undefined) return undefined;
-	const id = Number(value);
-	if (!Number.isSafeInteger(id) || id < 1) throw new Error(`${name} must be a positive integer.`);
-	return id;
-}
-
-function resolveSandboxIdentity(): SandboxIdentity | undefined {
-	const uid = parseSandboxId("AMAZME_EVAL_SANDBOX_UID");
-	const gid = parseSandboxId("AMAZME_EVAL_SANDBOX_GID");
-	if (uid === undefined && gid === undefined) return undefined;
-	if (uid === undefined || gid === undefined) {
-		throw new Error("Set both AMAZME_EVAL_SANDBOX_UID and AMAZME_EVAL_SANDBOX_GID, or neither.");
-	}
-	return { uid, gid };
-}
-
-export function verifySystemPrompt(
-	systemPrompt: string,
-	options: Pick<CodingAgentHarnessOptions, "name" | "expectedDocumentation">,
-): string {
-	if (options.expectedDocumentation === undefined) return systemPrompt;
-	if (!systemPrompt.includes("\n<rules>\n")) {
-		throw new Error(`AmazMe system prompt lost its rules in the ${options.name} eval variant.`);
-	}
-	const hasDocumentation = systemPrompt.includes("\n<docs>\nAmazMe documentation (read only");
-	if (hasDocumentation !== options.expectedDocumentation) {
-		throw new Error(`AmazMe system prompt does not match the ${options.name} eval variant.`);
-	}
-	return systemPrompt;
-}
-
-async function runCodingAgent<TOutput extends JsonValue>(
-	_input: CodingAgentInput,
-	_signal: AbortSignal | undefined,
-	_setArtifact: HarnessContext["setArtifact"],
-	_options: CodingAgentHarnessOptions | CodingAgentHarnessWithOutput<TOutput>,
-): Promise<SimpleHarnessResult<string | TOutput>> {
-	throw new Error("old_session_runtime_removed\n会话由 Python 后端提供，不再创建旧 durable 会话");
+	return new Promise((accept, reject) => {
+		const child = spawn(resolve(root, "backend/.venv/bin/python"), [resolve(root, "backend/tools/run_eval.py")], {
+			cwd: root,
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		child.stdout.setEncoding("utf8");
+		let output = "";
+		let size = 0;
+		let failure: Error | undefined;
+		const cancel = () => child.kill("SIGINT");
+		signal?.addEventListener("abort", cancel, { once: true });
+		if (signal?.aborted) cancel();
+		child.stdout.on("data", (chunk: string) => {
+			size += Buffer.byteLength(chunk, "utf8");
+			if (size > 8 * 1024 * 1024) {
+				failure ??= new Error("eval_output_limit");
+				cancel();
+			} else output += chunk;
+		});
+		// The runner returns sanitized error codes; raw stderr may contain provider diagnostics.
+		child.stderr.resume();
+		child.stdin.on("error", () => {
+			failure ??= new Error("eval_input_failed");
+		});
+		child.on("error", (error) => {
+			failure ??= error;
+		});
+		child.on("close", (code) => {
+			signal?.removeEventListener("abort", cancel);
+			if (failure) return reject(failure);
+			if (signal?.aborted) return reject(signal.reason);
+			if (code !== 0) return reject(new Error("eval_runner_failed"));
+			try {
+				accept(ResultSchema.parse(JSON.parse(output)));
+			} catch {
+				reject(new Error("eval_result_invalid"));
+			}
+		});
+		child.stdin.end(`${JSON.stringify(request)}\n`);
+	});
 }
 
 export function createCodingAgentHarness<TOutput extends JsonValue>(
@@ -118,62 +127,41 @@ export function createCodingAgentHarness<TOutput extends JsonValue>(
 	options: CodingAgentHarnessOptions | CodingAgentHarnessWithOutput<TOutput> = {},
 ): Harness<CodingAgentInput, string | TOutput> {
 	return createHarness<CodingAgentInput, string | TOutput>({
-		name: options.name ?? "@amazme/coding-agent",
-		run: ({ input, signal, setArtifact }) => runCodingAgent(input, signal, setArtifact, options),
+		name: options.name ?? "AmazMe Python",
+		async run({ input, signal, setArtifact }): Promise<SimpleHarnessResult<string | TOutput>> {
+			const start = performance.now();
+			const result = await runNativeEval(input, options, signal);
+			setArtifact("native", result.evidence);
+			if (!result.session.events.length && result.errors.length) throw new Error(result.errors.join(","));
+			setArtifact("nativeSessionJsonl", result.session.events.map((event) => JSON.stringify(event)).join("\n") + "\n");
+			return {
+				output: "output" in options ? await options.output(result) : result.response,
+				events: result.session.events,
+				usage: result.usage,
+				errors: result.errors,
+				timings: { totalMs: performance.now() - start },
+			};
+		},
 	});
 }
 
-/** Documentation evals intentionally exclude shell and unrestricted network tools. */
-export const DOCUMENTATION_EVAL_TOOLS = ["read", "write", "edit", "grep", "find", "ls"] as const;
-
-export function resolveDocumentationVariant(
-	value: string | undefined = process.env.AMAZME_EVAL_VARIANT,
-): DocumentationVariant {
+export const DOCUMENTATION_EVAL_TOOLS = ["read_file", "write_file"] as const;
+export function resolveDocumentationVariant(value = process.env.AMAZME_EVAL_VARIANT): DocumentationVariant {
 	if (value === "without_docs" || value === "with_docs") return value;
 	throw new TypeError('AMAZME_EVAL_VARIANT must be "without_docs" or "with_docs".');
 }
-
-export function excludeDocumentation(defaultPrompt: string): string {
-	const documentationStartMarker = "\n<docs>\n";
-	const documentationEndMarker = "\n</docs>";
-	const documentationStart = defaultPrompt.indexOf(documentationStartMarker);
-	if (documentationStart === -1) throw new Error("Default AmazMe system prompt has no AmazMe documentation section.");
-	const documentationEnd = defaultPrompt.indexOf(documentationEndMarker, documentationStart);
-	if (documentationEnd === -1) throw new Error("Default AmazMe system prompt has no complete AmazMe documentation section.");
-	const cwdStart = defaultPrompt.lastIndexOf("\n<cwd>\n");
-	if (cwdStart < documentationEnd) throw new Error("Default AmazMe system prompt has no working-directory section.");
-	return (
-		defaultPrompt.slice(0, documentationStart) + defaultPrompt.slice(documentationEnd + documentationEndMarker.length)
-	);
-}
-
-type DocumentationHarnessOptions = Omit<
-	CodingAgentHarnessOptions,
-	"name" | "transformSystemPrompt" | "expectedDocumentation"
->;
-type DocumentationHarnessWithOutput<TOutput extends JsonValue> = Omit<
-	CodingAgentHarnessWithOutput<TOutput>,
-	"name" | "transformSystemPrompt" | "expectedDocumentation"
->;
-
 export function createDocumentationEvalHarness<TOutput extends JsonValue>(
-	options: DocumentationHarnessWithOutput<TOutput>,
+	options: CodingAgentHarnessWithOutput<TOutput>,
 ): Harness<CodingAgentInput, TOutput>;
-export function createDocumentationEvalHarness(
-	options?: DocumentationHarnessOptions,
-): Harness<CodingAgentInput, string>;
+export function createDocumentationEvalHarness(options?: CodingAgentHarnessOptions): Harness<CodingAgentInput, string>;
 export function createDocumentationEvalHarness<TOutput extends JsonValue>(
-	options: DocumentationHarnessOptions | DocumentationHarnessWithOutput<TOutput> = {},
+	options: CodingAgentHarnessOptions | CodingAgentHarnessWithOutput<TOutput> = {},
 ) {
-	if (process.env.AMAZME_EVAL_CONTAINER !== "1" || !resolveSandboxIdentity()) {
-		throw new Error("Documentation evals must run in the isolated container sandbox.");
-	}
 	const variant = resolveDocumentationVariant();
 	return createCodingAgentHarness({
 		...options,
 		name: variant,
-		tools: options.tools ?? [...DOCUMENTATION_EVAL_TOOLS],
-		...(variant === "without_docs" ? { transformSystemPrompt: excludeDocumentation } : {}),
-		expectedDocumentation: variant === "with_docs",
+		documentation: variant,
+		tools: options.tools ?? DOCUMENTATION_EVAL_TOOLS,
 	});
 }

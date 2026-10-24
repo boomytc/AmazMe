@@ -1,139 +1,96 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { buildSystemPrompt, getDocsPath, getExamplesPath, getReadmePath } from "@amazme/coding-agent";
-import { describe, expect, it, vi } from "vitest";
+import type { JsonValue } from "@vitest-evals/core";
+import { createHash } from "node:crypto";
+import { describe, expect, it } from "vitest";
 import {
-	applyIsolatedEnvironment,
 	createCodingAgentHarness,
-	createDocumentationEvalHarness,
-	DOCUMENTATION_EVAL_TOOLS,
-	excludeDocumentation,
 	resolveDocumentationVariant,
 	resolveModelSelection,
-	verifySystemPrompt,
+	runNativeEval,
 } from "../src/harness.ts";
+const model = { provider: "faux", id: "faux" };
 
-describe("resolveModelSelection", () => {
-	it("prefers an explicit harness model", () => {
-		expect(
-			resolveModelSelection(
-				{ provider: "anthropic", id: "claude-opus-4-6" },
-				{ AMAZME_PROVIDER: "openai-codex", AMAZME_MODEL: "gpt-5.6-sol" },
-			),
-		).toEqual({ provider: "anthropic", id: "claude-opus-4-6" });
+describe("native Python harness", () => {
+	it("requires an explicit complete model selection", () => {
+		expect(resolveModelSelection(model, { AMAZME_PROVIDER: "openai", AMAZME_MODEL: "other" })).toEqual(model);
+		expect(resolveModelSelection(undefined, { AMAZME_PROVIDER: " faux ", AMAZME_MODEL: " faux " })).toEqual(model);
+		expect(() => resolveModelSelection(undefined, {})).toThrow("Select a harness model explicitly");
+		expect(() => resolveDocumentationVariant("unknown")).toThrow("AMAZME_EVAL_VARIANT");
 	});
-
-	it("uses trimmed environment defaults", () => {
-		expect(resolveModelSelection(undefined, { AMAZME_PROVIDER: " openai-codex ", AMAZME_MODEL: " gpt-5.6-sol " })).toEqual({
-			provider: "openai-codex",
-			id: "gpt-5.6-sol",
-		});
-	});
-
-	it.each([{}, { AMAZME_PROVIDER: "openai-codex" }, { AMAZME_MODEL: "gpt-5.6-sol" }])(
-		"rejects incomplete model selection",
-		(environment) => {
-			expect(() => resolveModelSelection(undefined, environment)).toThrow("Select a harness model explicitly");
+	it.each(["without_docs", "with_docs"] as const)(
+		"runs a real Python session with %s, without changing HOME",
+		async (documentation) => {
+			const home = process.env.HOME;
+			const result = await runNativeEval("hello", { model, documentation, noTools: "all" });
+			expect(result.response).toBe("已收到：hello");
+			expect(result.errors).toEqual([]);
+			expect(result.session.events).toEqual([
+				{ type: "message", role: "user", content: "hello" },
+				{ type: "message", role: "assistant", content: "已收到：hello" },
+			]);
+			expect(result.evidence).toMatchObject({ documentation, build_id: expect.stringMatching(/^[a-f0-9]{64}$/) });
+			expect(result.usage.totalTokens).toBeGreaterThan(0);
+			expect(process.env.HOME).toBe(home);
 		},
 	);
-});
+	it("loads an actual Python factory, invokes its alias, and reports its full tool transcript", async () => {
+		const alias = `plugin_${createHash("sha256")
+			.update(`${"e".repeat(32)}\nhello`)
+			.digest("hex")
+			.slice(0, 20)}`;
+		const source = `from pydantic import BaseModel
+from amazme_backend.plugin_api import PluginResult, ToolDefinition
+class Greeting(BaseModel):
+    name: str
 
-describe("isolateProcessEnvironment", () => {
-	it("removes runner metadata and restores the process environment", () => {
-		vi.stubEnv("AMAZME_EVAL_VARIANT", "with_docs");
-		vi.stubEnv("AMAZME_EVAL_ARTIFACT_DIR", "/tmp/artifacts");
-		const oldHome = process.env.HOME;
-		try {
-			const restore = applyIsolatedEnvironment("/tmp/eval-home", "/tmp/eval-agent");
-			try {
-				expect(homedir()).toBe("/tmp/eval-home");
-				expect(process.env.AMAZME_CODING_AGENT_DIR).toBe("/tmp/eval-agent");
-				expect(process.env.AMAZME_EVAL_VARIANT).toBeUndefined();
-				expect(process.env.AMAZME_EVAL_ARTIFACT_DIR).toBeUndefined();
-			} finally {
-				restore();
-			}
-			expect(process.env.HOME).toBe(oldHome);
-			expect(process.env.AMAZME_EVAL_VARIANT).toBe("with_docs");
-		} finally {
-			vi.unstubAllEnvs();
-		}
-	});
-});
-
-describe("documentation variant", () => {
-	it.each(["without_docs", "with_docs"] as const)("accepts %s", (variant) => {
-		expect(resolveDocumentationVariant(variant)).toBe(variant);
-	});
-
-	it.each([undefined, "", "other"])("rejects invalid variant %s", (variant) => {
-		expect(() => resolveDocumentationVariant(variant)).toThrow("AMAZME_EVAL_VARIANT");
-	});
-
-	it("strips only the documentation routing section from the default AmazMe prompt", () => {
-		const prompt = buildSystemPrompt({
-			cwd: "/workspace",
-			selectedTools: [...DOCUMENTATION_EVAL_TOOLS],
+def setup(api):
+    def greet(call_id, args, ctx):
+        return PluginResult(content=[{"type":"text","text":"Hello, " + args.name + "!"}])
+    api.register_tool(ToolDefinition("hello", "Greeting", "Greet a name", Greeting, greet))
+`;
+		const harness = createCodingAgentHarness({
+			model,
+			pluginEntry: "plugin.py",
+			workspaceFiles: { "plugin.py": source },
+			tools: ["plugin_*"],
 		});
-		expect(prompt).toContain("\n<docs>\nAmazMe documentation (read only");
-		expect(prompt).toContain("\n<rules>\n");
-		expect(prompt).toContain("\n<cwd>\n/workspace\n</cwd>");
-		expect(prompt).toContain("docs/models.md");
-
-		const stripped = excludeDocumentation(prompt);
-		expect(stripped).toContain("\n<rules>\n");
-		expect(stripped).toContain("\n<cwd>\n/workspace\n</cwd>");
-		expect(stripped).not.toContain("<docs>");
-		expect(stripped).not.toContain("AmazMe documentation");
-		expect(stripped).not.toContain("docs/models.md");
-		expect(stripped).not.toContain(getReadmePath());
-		expect(stripped).not.toContain(getDocsPath());
-		expect(stripped).not.toContain(getExamplesPath());
-	});
-
-	it("verifies the prompt that was sent", () => {
-		const prompt = buildSystemPrompt({
-			cwd: "/workspace",
-			selectedTools: [...DOCUMENTATION_EVAL_TOOLS],
-		});
-		const stripped = excludeDocumentation(prompt);
-
-		expect(verifySystemPrompt(stripped, { name: "without_docs", expectedDocumentation: false })).toBe(stripped);
-		expect(verifySystemPrompt(prompt, { name: "with_docs", expectedDocumentation: true })).toBe(prompt);
-		expect(() => verifySystemPrompt(stripped, { name: "with_docs", expectedDocumentation: true })).toThrow(
-			"does not match",
-		);
-		expect(() => verifySystemPrompt(prompt, { name: "without_docs", expectedDocumentation: false })).toThrow(
-			"does not match",
-		);
-	});
-
-	it("fails closed when prompt markers are missing", () => {
-		expect(() => excludeDocumentation("Instructions")).toThrow("no AmazMe documentation section");
-		expect(() => excludeDocumentation("\n<docs>\nAmazMe documentation\n</docs>")).toThrow(
-			"no working-directory section",
-		);
-	});
-
-	it("rejects documentation harnesses outside the container sandbox", () => {
-		expect(() => createDocumentationEvalHarness()).toThrow("isolated container sandbox");
-	});
-});
-
-describe("coding agent harness run", () => {
-	it("refuses the old durable session before selecting a model", async () => {
-		const source = readFileSync(new URL("../src/harness.ts", import.meta.url), "utf8");
-		expect(source.includes("createDurableSession")).toBe(false);
-		const home = process.env.HOME;
-		const harness = createCodingAgentHarness();
-		await expect(
-			harness.run("hello", {
-				artifacts: {},
-				setArtifact() {
-					throw new Error("artifacts are not part of the refusal");
+		const artifacts: Record<string, JsonValue> = {};
+		const result = await harness.run(
+			[
+				{ type: "prompt", content: "load" },
+				{ type: "prompt", content: `/mcp ${JSON.stringify({ alias, arguments: { name: "Bob" } })}` },
+			],
+			{
+				artifacts,
+				setArtifact(key, value) {
+					artifacts[key] = value;
 				},
+			},
+		);
+		expect(result.errors).toEqual([]);
+		expect(result.session.events).toContainEqual(
+			expect.objectContaining({ type: "tool_call", name: alias, arguments: { name: "Bob" } }),
+		);
+		expect(result.session.events).toContainEqual(
+			expect.objectContaining({
+				type: "tool_result",
+				name: alias,
+				content: expect.objectContaining({ content: [{ type: "text", text: "Hello, Bob!" }], is_error: false }),
 			}),
-		).rejects.toThrow("old_session_runtime_removed");
-		expect(process.env.HOME).toBe(home);
+		);
+		expect(artifacts.nativeSessionJsonl).toContain("Hello, Bob!");
+	});
+	it("keeps errors observable and never grants a workspace traversal", async () => {
+		const result = await runNativeEval("hello", { model, workspaceFiles: { "../escape": "invalid" } });
+		expect(result.errors).toEqual(["eval_workspace_path"]);
+	});
+	it("waits for runner cleanup on cancellation", async () => {
+		const controller = new AbortController();
+		const pending = runNativeEval("/shell sleep 30", { model, tools: ["shell"] }, controller.signal);
+		const timer = setTimeout(() => controller.abort(new Error("test_cancel")), 6000);
+		try {
+			await expect(pending).rejects.toThrow("test_cancel");
+		} finally {
+			clearTimeout(timer);
+		}
 	});
 });

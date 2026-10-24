@@ -1923,11 +1923,29 @@ class Supervisor:
         return False
 
     async def _plugin_change_blocked(self, upcoming: str, session_id: str) -> None:
-        if await self._live_plugin_mismatch(upcoming, session_id):
-            raise BackendError("plugin_reload_blocked", status=409)
         plugin_ids = {view.plugin_id for view in (await self.list_plugins(session_id)).plugins}
         if any(client.pending for plugin_id, client in self.plugin_clients.items() if plugin_id in plugin_ids):
             raise BackendError("plugin_reload_blocked", status=409)
+        running_codes = await self.db.call(lambda db: db.execute("SELECT id FROM code_runs WHERE session=?", (session_id,)).fetchall())
+        if any(str(row[0]) in self.code_jobs for row in running_codes):
+            raise BackendError("plugin_reload_blocked", status=409)
+        for worker in await self._workers(session_id):
+            if worker.plugin_fingerprint == upcoming or worker.state == "stopped" or (worker.process_lease is not None and exited(worker.process_lease)):
+                continue
+            if worker.state != "ready" or worker.process_lease is None:
+                raise BackendError("plugin_reload_blocked", status=409)
+            # Idle admission and stopping share the worker's SQLite transaction. A racing submission
+            # either remains active and rejects this change, or observes stopping and keeps its ID.
+            try:
+                await self._peer_identity(worker, "POST", "/stop", StopWorker(
+                    build_id=worker.build_id, host_epoch=self.host_epoch, session_id=session_id,
+                    worker_id=worker.worker_id, execution_epoch=worker.execution_epoch,
+                    reason="update", require_idle=True))
+            except (BackendError, httpx.TransportError, TimeoutError) as error:
+                raise BackendError("plugin_reload_blocked", status=409) from error
+            proof = await self._retire_worker(worker, "update")
+            if proof.state != "clean":
+                raise BackendError("execution_cleanup_pending", status=503)
 
     async def _plugin_fingerprint_ready(self, expected: str, session_id: str) -> None:
         if await self._live_plugin_mismatch(expected, session_id):

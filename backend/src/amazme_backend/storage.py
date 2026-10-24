@@ -2128,11 +2128,15 @@ class SessionStore:
         await self._tx(operation)
 
     async def stopping(self, fence: HostFence, execution_epoch: int | None = None, *,
-                       cancel_work: bool = True) -> None:
+                       cancel_work: bool = True, require_idle: bool = False) -> None:
         def operation(db: sqlite3.Connection, c: Changes) -> None:
             self._fence(db, fence)
             if execution_epoch is not None and execution_epoch != int(self._meta(db, "execution_epoch")):
                 raise BackendError("stale_execution_epoch")
+            if require_idle:
+                activity = self._activity(db)
+                if activity.state != "ready" or activity.pending or activity.runnable:
+                    raise BackendError("worker_busy", status=409)
             self._set_meta(db, "stopping", "1")
             c.emit("status", text="stopping")
             if cancel_work:

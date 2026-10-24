@@ -12,14 +12,12 @@
 		"test": "vitest run --config vitest.test.config.ts"
 	},
 	"devDependencies": {
-		"@amazme/ai": "0.3.4",
-		"@amazme/coding-agent": "0.3.4",
-		"@amazme/tui": "0.3.4",
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
 		"autoevals": "0.3.0",
 		"shx": "0.3.4",
 		"vitest": "4.1.12",
-		"vitest-evals": "0.15.0"
+		"vitest-evals": "0.15.0",
+		"zod": "4.6.7"
 	}
 }

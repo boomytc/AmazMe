@@ -1,139 +1,27 @@
 # AmazMe evals
 
-Behavioral evals for AmazMe's coding agent, built with `vitest-evals`.
+评测通过 `backend/tools/run_eval.py` 启动现有 Python Host。Node 只负责 Vitest、用例计划、判分和报告；没有另一套会话运行时，也不构建容器。
 
-## File conventions
-
-Eval definitions are flat under `evals/`:
-
-- `*.docs.eval.ts` is a documentation-lift eval. `eval:docs` runs each case in isolated `without_docs` and `with_docs` containers and reports lift.
-- Other `*.eval.ts` files are host evals. `eval:host` runs them with Vitest on this machine. They are ordinary vitest-evals suites, not paired comparisons.
-
-Runner code lives in `src/`:
-
-- `cli.ts` orchestrates a comparison
-- `docker.ts` builds the two images, discovers cases, and runs one isolated arm
-- `plan.ts` expands cases into `(case, variant, repetition)` tasks
-- `report.ts` reads Vitest JSON, pairs arms, and computes lift
-- `harness.ts` is the vitest-evals adapter
-
-Eval suites and their fixtures live under `evals/`. Image build files live in `docker/`.
-
-## Run evals
-
-Host evals (smoke) and documentation-lift evals need `AMAZME_PROVIDER` and `AMAZME_MODEL`.
+先准备 Python 开发环境；真实模型必须显式选择，并通过 `AMAZME_EVAL_PROFILE` 指定现有 Python profile 的凭据库。源凭据库独占 OAuth refresh token，临时 profile 只借用 access token；每轮重新核对源凭据。评测结束停止自己持有的进程、清除借用凭据、检查退出证明，再删除自己创建的临时目录。不修改全局 HOME 或个人配置。
 
 ```bash
-AMAZME_PROVIDER=openai-codex AMAZME_MODEL=gpt-5.6-sol npm run eval -w packages/evals
-```
-
-That runs host evals, then the documentation comparison. Extra CLI flags after `--` go to `eval:docs` only.
-
-Host only:
-
-```bash
-AMAZME_PROVIDER=openai-codex AMAZME_MODEL=gpt-5.6-sol npm run eval:host -w packages/evals
-```
-
-One host suite:
-
-```bash
+AMAZME_EVAL_PROFILE=/absolute/path/to/profile \
 AMAZME_PROVIDER=openai-codex AMAZME_MODEL=gpt-5.6-sol \
-  npm run eval:host -w packages/evals -- evals/smoke.eval.ts
+npm run eval -w @amazme/evals
 ```
 
-## Run documentation comparisons
-
-From the repository root:
+`eval:host` 跑普通评测；`eval:docs` 跑成对文档评测，可传 `--provider`、`--model`、`--runs-per-variant`、用例路径和 `-t`。
 
 ```bash
-npm run eval:docs -w packages/evals -- \
-  --provider openai-codex \
-  --model gpt-5.6-sol
+npm run eval:docs -w @amazme/evals -- evals/extensions.docs.eval.ts --runs-per-variant 1
+npm run build -w @amazme/evals
+npm test -w @amazme/evals
 ```
 
-`AMAZME_PROVIDER` and `AMAZME_MODEL` provide the same defaults. Both values are required.
+`without_docs` 和 `with_docs` 使用相同后端、独立临时工作区、账号副本和会话。后者额外提供现行 Python 契约及其提示词入口。默认仅开放工作区文件读写；插件用例再开放该会话插件。它们是本机助手的评测工作区隔离，不是操作系统沙箱；用户 Python 插件仍以本机用户权限运行。不要将这些结果解释为对不可信代码的安全隔离证明。
 
-The default is one run per variant. Increase repetitions explicitly when measuring stability:
+模型配置用例生成工作区中的 `provider.json`，由评测器验证声明的供应商、模型、协议和地址，再经真实账号/模型 API 应用。只向明确声明的本机 HTTP 替身发送固定测试凭据。覆盖已有 OpenAI Chat Completions 和 Anthropic Messages 协议，不再加载旧 TS 自定义供应商宿主。插件用例生成 `setup(api)` 工厂，由真实 Python 服务加载并向模型提供工具别名。
 
-```bash
-npm run eval:docs -w packages/evals -- \
-  evals/extensions.docs.eval.ts \
-  --runs-per-variant 5
-```
+`src/plan.ts` 预先规划每个 `(case, variant, model, runNumber)`；`src/native.ts` 串行运行；`src/report.ts` 配对并计算差值。失败、缺失或重复结果阻止对应配对的结论，已有消耗仍计入运行总量。`.eval/<run>/` 保存协议摘要、计划、原始报告、完整已提交消息和实际后端 build_id。没有原始证据的历史运行数字不代表当前实现。
 
-`AMAZME_EVAL_RUNS_PER_VARIANT=5` is equivalent. Vitest filters are applied during discovery:
-
-```bash
-npm run eval:docs -w packages/evals -- -t "adds the model"
-```
-
-The runner:
-
-1. Mounts the repository ephemerally for a Docker build, packs the coding agent's runtime dependency closure with `scripts/package-artifacts.mjs`, verifies packed exports and artifact integrity, and installs those exact tarballs before creating the separate `without_docs` and `with_docs` images.
-2. Discovers the selected cases in both images and requires identical cohorts.
-3. Plans every `(case, variant, model, runNumber)` arm before execution.
-4. Runs each arm in a fresh container. A failed or missing arm is recorded and the planned cohort continues.
-5. Reads native Vitest JSON through `@vitest-evals/core/node` when a report exists.
-6. Pairs exact arms and writes the comparison report. Blocked pairs withhold headline lift; the process exits nonzero.
-
-Repetition order alternates by run number to reduce order bias. Packing and installation disable lifecycle scripts. The installer prunes the repository lockfile to the selected runtime and evaluator dependencies and uses `npm ci`, preserving the tested external dependency versions. Installation verifies local resolutions, versions and integrity in the consumer lockfile; a missing built entry or a registry copy of an internal package fails before model evaluation.
-
-The keyless engineering checks use real npm packing and offline installation of isolated fixture packages:
-
-```bash
-npm run test:engineering
-npm run build --workspace @amazme/evals
-npm test --workspace @amazme/evals
-```
-
-## Documentation variants
-
-`without_docs` omits the coding-agent `README.md`, `CHANGELOG.md`, `docs/`, and `examples/`, then removes the AmazMe documentation-routing section from the default system prompt.
-
-`with_docs` includes those files and uses the unchanged default prompt.
-
-`createCodingAgentHarness().run` rejects with `old_session_runtime_removed` before it selects a model or creates a directory. It does not call `createDurableSession`. Documentation evals do not run on the Python session yet.
-
-Both variants install the same local workspace tarballs. Existing npm overrides ensure coding-agent's internal AmazMe dependencies also come from the current repository rather than the registry. Documentation and source files from internal dependency packages are removed symmetrically so they cannot act as alternate instructions. Startup validates the image allowlist and verifies that the installed coding-agent package resolves from `dist/`. Eval definitions, evaluator helpers, fixtures, and Vitest configuration are root-owned and unreadable after the harness permanently drops to an unprivileged UID. Each run receives a new home, agent directory, workspace, session directory, and container filesystem.
-
-Documentation evals allow only `read`, `write`, `edit`, `grep`, `find`, and `ls` by default. They do not expose shell or web-search tools. Provider traffic still requires container network access, so Docker alone cannot prove that arbitrary code written by an agent never uses the network.
-
-## Results
-
-Each invocation creates an ignored `.eval/<timestamp>_<id>/` directory containing:
-
-- `protocol.json`: model, image IDs, cases, tasks, and protocol digest.
-- `expected-runs.json`: the complete planned cohort.
-- `observations.jsonl`: normalized outcomes and telemetry.
-- `tasks/*/vitest.json`: native JSON for each isolated arm.
-- `<variant>/sessions/*/session.jsonl`: native AmazMe sessions.
-- `report.json` and `report.txt`: paired comparisons.
-
-A pair contributes to pass-rate lift only when both arms produce exactly one score. Missing, duplicate, skipped, pending, unscored, or errored arms block the pair. If any pair in an eval set is blocked, headline pass rates are withheld. Missing telemetry remains unavailable rather than being treated as zero.
-
-The report flags no lift, negative deltas, saturated controls or treatments, and observed flakiness. One repetition cannot establish stability.
-
-Artifacts may contain prompts, responses, generated code, and tool output.
-
-## Write an eval
-
-Use one ordinary `describeEval(...)` suite and one explicit `run(...)` call per case:
-
-```ts
-import { describeEval, StructuredOutputJudge } from "vitest-evals";
-import { createDocumentationEvalHarness } from "../src/harness.ts";
-
-const harness = createDocumentationEvalHarness();
-const judge = StructuredOutputJudge({ expected: { ok: true }, match: "strict", allowExtras: false });
-
-describeEval("Target workflow", { harness, judges: [judge], judgeThreshold: null }, (it) => {
-  it("completes the task", async ({ run }) => {
-    await run("Complete the target task.");
-  });
-});
-```
-
-The outer runner owns variants, repetitions, isolation, identity, persistence, and reporting. Eval files should contain only scenario setup, the model task, and deterministic grading.
-
-Use `judgeThreshold: null` for comparative scoring. A low score is data, not an infrastructure failure. Reserve Vitest assertions for broken suite invariants.
+单元/定向测试仅使用 faux 与本机 HTTP 替身，不调用付费供应商。真实评测需要显式运行上述命令。

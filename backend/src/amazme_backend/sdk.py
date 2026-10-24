@@ -52,6 +52,7 @@ from .contracts import (
     TerminalView,
     ToolCall,
     UpdateModelSettings,
+    UsageReport,
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
 from .workspace_files import FileContent
@@ -142,6 +143,9 @@ class Client:
 
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
+
+    async def session_usage(self, session_id: str) -> UsageReport:
+        return UsageReport.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/usage"))
 
     async def health(self) -> Health:
         return Health.model_validate(await self._send("GET", "/api/v1/health"))

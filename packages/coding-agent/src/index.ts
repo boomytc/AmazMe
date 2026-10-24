@@ -1,4 +1,8 @@
-export { createMemoryFileObservations, type FileObservationScope, type FileObservationStore } from "./core/file-observations.ts";
+export {
+	createMemoryFileObservations,
+	type FileObservationScope,
+	type FileObservationStore,
+} from "./core/file-observations.ts";
 export type { FileToolOptions } from "./core/tools/file-runtime.ts";
 // Core session management
 
@@ -238,7 +242,6 @@ export { DefaultPackageManager } from "./core/package-manager.ts";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.ts";
 export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.ts";
 // SDK for programmatic usage
-export { createDurableSession, type DurablePromptOptions, type DurableSession, type DurableSessionOptions } from "./durable/sdk.ts";
 export {
 	createBashTool,
 	createCodingTools,

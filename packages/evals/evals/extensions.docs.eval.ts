@@ -1,44 +1,41 @@
-import { contentText } from "@amazme/ai";
+import { createHash } from "node:crypto";
+import { z } from "zod";
 import { describeEval, StructuredOutputJudge, ToolCallJudge } from "vitest-evals";
 import { createDocumentationEvalHarness, DOCUMENTATION_EVAL_TOOLS } from "../src/harness.ts";
-
-const TOOL_NAME = "hello";
-const TOOL_ARGUMENTS = { name: "Bob" };
-const TOOL_RESULT = "Hello, Bob!";
-
+const tool = `plugin_${createHash("sha256")
+	.update(`${"e".repeat(32)}\nhello`)
+	.digest("hex")
+	.slice(0, 20)}`;
+const Result = z.object({
+	content: z.array(z.object({ type: z.literal("text"), text: z.string() })),
+	is_error: z.literal(false),
+});
 const harness = createDocumentationEvalHarness({
-	tools: [...DOCUMENTATION_EVAL_TOOLS, TOOL_NAME],
+	pluginEntry: "plugin.py",
+	tools: [...DOCUMENTATION_EVAL_TOOLS, "plugin_*"],
 	output: ({ response, session }) => {
-		const result = [...session.messages()]
-			.reverse()
-			.find((message) => message.role === "toolResult" && message.toolName === TOOL_NAME && !message.isError);
+		const event = session.events.find((item) => item.type === "tool_result" && item.name === tool && !item.error);
+		const parsed = Result.safeParse(event?.type === "tool_result" ? event.content : null);
 		return {
 			response,
-			extensionErrors: [],
-			toolLoaded: result?.role === "toolResult",
-			toolResult: result?.role === "toolResult" ? contentText(result.content) : null,
+			toolLoaded: parsed.success,
+			toolResult: parsed.success ? parsed.data.content.map((item) => item.text).join("\n") : null,
 		};
 	},
 });
-
 describeEval(
-	"Create and use a tool extension",
+	"Create and use a Python tool extension",
 	{
 		harness,
+		judgeThreshold: null,
 		judges: [
 			StructuredOutputJudge({
-				expected: {
-					response: TOOL_RESULT,
-					extensionErrors: [],
-					toolLoaded: true,
-					toolResult: TOOL_RESULT,
-				},
+				expected: { response: "Hello, Bob!", toolLoaded: true, toolResult: "Hello, Bob!" },
 				match: "strict",
 				allowExtras: false,
 			}),
-			ToolCallJudge({ expectedTools: [{ name: TOOL_NAME, arguments: TOOL_ARGUMENTS }] }),
+			ToolCallJudge({ expectedTools: [{ name: tool, arguments: { name: "Bob" } }] }),
 		],
-		judgeThreshold: null,
 	},
 	(it) => {
 		it("creates and invokes the extension", async ({ run }) => {
@@ -46,11 +43,11 @@ describeEval(
 				{
 					type: "prompt",
 					content:
-						"Configure this running Pi installation with an extension containing a hello tool that takes a name and returns a greeting. Do not create project source. For example, passing Bob should return `Hello, Bob!`.",
+						"Write plugin.py in the workspace for AmazMe Python. Use a setup(api) factory to register a hello tool that takes a name and returns a greeting; Bob must return Hello, Bob!. The host will load this file after this turn.",
 				},
 				{
 					type: "prompt",
-					content: "Use the hello tool to greet Bob. Respond with exactly the tool's greeting and nothing else.",
+					content: "Use the hello tool to greet Bob. Respond with exactly the greeting and nothing else.",
 				},
 			]);
 		});

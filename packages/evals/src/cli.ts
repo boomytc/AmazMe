@@ -3,7 +3,7 @@ import { globSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildImages, createDockerContext, discoverCases, requireEvalAuthFile, runTask } from "./docker.ts";
+import { discoverCases, requireEvalProfile, runTask, type NativeContext } from "./native.ts";
 import { createTaskPlan, type DiscoveredEvalCase, DOCUMENTATION_VARIANTS, parseDiscoveredCases } from "./plan.ts";
 import {
 	type EvalObservation,
@@ -90,7 +90,7 @@ function artifactRunId(): string {
 	return `${new Date().toISOString().replaceAll(":", "-")}_${randomUUID()}`;
 }
 
-function containerPath(path: string): string {
+function packagePath(path: string): string {
 	const absolute = resolve(packageRoot, path);
 	const packageRelative = relative(packageRoot, absolute);
 	if (packageRelative.startsWith("..")) throw new Error(`Eval file must be inside ${packageRoot}: ${path}`);
@@ -98,9 +98,7 @@ function containerPath(path: string): string {
 }
 
 function normalizeDiscoveredFile(path: string): string {
-	const prefix = "/repo/packages/evals/";
-	if (!path.startsWith(prefix)) throw new Error(`Discovered eval path is outside the container package: ${path}`);
-	return path.slice(prefix.length);
+	return packagePath(path);
 }
 
 function compareDiscovery(left: readonly DiscoveredEvalCase[], right: readonly DiscoveredEvalCase[]): void {
@@ -113,13 +111,14 @@ function compareDiscovery(left: readonly DiscoveredEvalCase[], right: readonly D
 
 async function main(): Promise<void> {
 	const cli = parseEvalCli(process.argv.slice(2));
-	if (!cli.provider || !cli.model) throw new Error("Set AMAZME_PROVIDER and AMAZME_MODEL, or pass --provider and --model.");
+	if (!cli.provider || !cli.model)
+		throw new Error("Set AMAZME_PROVIDER and AMAZME_MODEL, or pass --provider and --model.");
 	const selectedModel = { provider: cli.provider, model: cli.model };
 	const modelIdentity = `${selectedModel.provider}/${selectedModel.model}`;
 	const files = (
 		cli.requestedFiles.length > 0 ? cli.requestedFiles : globSync("evals/**/*.docs.eval.ts", { cwd: packageRoot })
 	)
-		.map(containerPath)
+		.map(packagePath)
 		.sort();
 	if (files.length === 0) throw new Error("No documentation eval files were selected.");
 	for (const file of files) {
@@ -127,23 +126,13 @@ async function main(): Promise<void> {
 	}
 
 	const artifactDirectory = resolve(packageRoot, ".eval", artifactRunId());
-	const authPath = requireEvalAuthFile(selectedModel.provider);
+	requireEvalProfile(selectedModel.provider);
 	await mkdir(artifactDirectory, { recursive: true, mode: 0o700 });
-	const images = buildImages();
-	if (images.with_docs.id === images.without_docs.id)
-		throw new Error("Documentation variants resolved to the same image.");
-	const docker = createDockerContext(
-		images,
-		artifactDirectory,
-		authPath,
-		selectedModel.provider,
-		selectedModel.model,
-		cli.runsPerVariant,
-	);
+	const context: NativeContext = { artifactDirectory, ...selectedModel, runsPerVariant: cli.runsPerVariant };
 
 	const discoveries = [];
 	for (const variant of DOCUMENTATION_VARIANTS) {
-		const path = discoverCases(docker, variant, files, cli.discoveryArgs);
+		const path = discoverCases(context, variant, files, cli.discoveryArgs);
 		discoveries.push(parseDiscoveredCases(JSON.parse(await readFile(path, "utf8"))));
 	}
 	compareDiscovery(discoveries[0], discoveries[1]);
@@ -155,7 +144,7 @@ async function main(): Promise<void> {
 		schemaVersion: 1,
 		model: modelIdentity,
 		runsPerVariant: cli.runsPerVariant,
-		images,
+		runtime: "python-native",
 		files,
 		cases: cases.map(({ evalSet, caseId, file }) => ({ evalSet, caseId, file })),
 		tasks,
@@ -173,7 +162,7 @@ async function main(): Promise<void> {
 		console.log(
 			`\n[${index + 1}/${tasks.length}] ${task.evalSet} > ${task.caseId} | ${task.variant} | ${task.model} | run ${task.runNumber}`,
 		);
-		const reportPath = runTask(docker, task);
+		const reportPath = runTask(context, task);
 		const observation: EvalObservation = reportPath
 			? await readTaskObservation(task, reportPath, artifactDirectory)
 			: erroredObservation(task);

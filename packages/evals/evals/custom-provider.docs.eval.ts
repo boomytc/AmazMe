@@ -1,71 +1,58 @@
 import { afterAll, beforeAll, beforeEach } from "vitest";
 import { describeEval, StructuredOutputJudge } from "vitest-evals";
+import { createDocumentationEvalHarness } from "../src/harness.ts";
 import {
 	createAcmeServer,
-	STREAM_API_DOCUMENTATION,
-	STREAM_MODEL_ID,
-	STREAM_PROBE_PROMPT,
-	STREAM_PROBE_RESPONSE,
-	STREAM_PROVIDER_ID,
+	ANTHROPIC_PROVIDER_ID,
+	ANTHROPIC_MODEL_ID,
+	ANTHROPIC_PROBE_PROMPT,
+	ANTHROPIC_PROBE_RESPONSE,
 } from "./acme-server.ts";
-import { inspectConfiguredProvider, type ProviderRuntimeOutput } from "./configured-runtime.ts";
-import { createDocumentationEvalHarness } from "../src/harness.ts";
-
-const DOCUMENTATION_PATH = "fixtures/acme-stream-api.json";
-const STREAM_API_KEY = "resolved-stream-key";
-const server = createAcmeServer("stream");
-
-beforeAll(() => {
-	process.env.ACME_STREAM_API_KEY = STREAM_API_KEY;
-	return server.start();
-});
+import { configuredProvider } from "./configured-runtime.ts";
+const server = createAcmeServer("anthropic");
+beforeAll(() => server.start());
 beforeEach(() => server.reset());
-afterAll(() => {
-	delete process.env.ACME_STREAM_API_KEY;
-	return server.stop();
-});
-
-const expected: ProviderRuntimeOutput = {
-	result: {
-		validRequestReceived: true,
-		model: {
-			id: STREAM_MODEL_ID,
-			name: "Acme Stream Chat",
-			provider: STREAM_PROVIDER_ID,
-			reasoning: false,
-			input: ["text"],
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-			contextWindow: 16384,
-			maxTokens: 2048,
-		},
-		response: { text: STREAM_PROBE_RESPONSE, stopReason: "stop", inputTokens: 4, outputTokens: 3 },
-	},
-};
-
+afterAll(() => server.stop());
 const harness = createDocumentationEvalHarness({
-	workspaceFiles: { [DOCUMENTATION_PATH]: STREAM_API_DOCUMENTATION },
-	output: async ({ agentDir }) =>
-		inspectConfiguredProvider(agentDir, {
-			providerId: STREAM_PROVIDER_ID,
-			modelId: STREAM_MODEL_ID,
-			createContext: () => ({
-				messages: [{ role: "user", content: STREAM_PROBE_PROMPT, timestamp: 0 }],
+	providerProbe: () => ({
+		provider: ANTHROPIC_PROVIDER_ID,
+		model: ANTHROPIC_MODEL_ID,
+		api: "anthropic-messages",
+		base_url: server.baseUrl(),
+		api_key: "resolved-messages-key",
+		prompt: ANTHROPIC_PROBE_PROMPT,
+	}),
+	output: (result) => configuredProvider(result, server.validRequestReceived()),
+});
+describeEval(
+	"Add custom Messages endpoint",
+	{
+		harness,
+		judgeThreshold: null,
+		judges: [
+			StructuredOutputJudge({
+				expected: {
+					validRequestReceived: true,
+					response: ANTHROPIC_PROBE_RESPONSE,
+					existing_models_preserved: true,
+					settings: {
+						provider: ANTHROPIC_PROVIDER_ID,
+						model: ANTHROPIC_MODEL_ID,
+						api: "anthropic-messages",
+						max_tokens: 2048,
+						key_configured: true,
+					},
+				},
+				match: "strict",
+				allowExtras: false,
 			}),
-			options: { env: { ACME_STREAM_API_KEY: STREAM_API_KEY }, maxTokens: 32 },
-			validRequestReceived: server.validRequestReceived,
-		}),
-});
-const judge = StructuredOutputJudge({ expected, match: "strict", allowExtras: false });
-
-describeEval("Add custom streaming provider", { harness, judges: [judge], judgeThreshold: null }, (it) => {
-	it("implements a provider from an API fixture", async ({ run }) => {
-		await run([
-			{
-				type: "prompt",
-				content: `Configure this running Pi installation with Acme Stream as a provider. Do not create a project package or modify project source. Its provider ID is ${STREAM_PROVIDER_ID}, its API is at ${server.origin()}, and its API documentation is in ./${DOCUMENTATION_PATH}. Read its credential from the ACME_STREAM_API_KEY environment variable.
-
-It offers one model, ${STREAM_MODEL_ID}, shown as “Acme Stream Chat”. The model accepts text, does not support reasoning, has a 16,384-token context window and a 2,048-token maximum output, and has no usage cost.`,
-			},
-		]);
-	});
-});
+		],
+	},
+	(it) => {
+		it("configures the existing native Messages protocol", async ({ run }) => {
+			await run(
+				`Write provider.json in the workspace for the AmazMe Python backend: provider ${ANTHROPIC_PROVIDER_ID}, model ${ANTHROPIC_MODEL_ID}, Anthropic Messages streaming API at ${server.baseUrl()}, max output 2048. The account vault supplies credentials separately. Reuse the backend protocol without adding a provider runtime.`,
+			);
+		});
+	},
+);

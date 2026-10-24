@@ -15,7 +15,7 @@ node examples/rpc-client.ts "Explain this repository"
 ## Directories
 
 ### [sdk/](sdk/)
-Programmatic usage via `createDurableSession()`. Shows how to customize models, prompts, tools, native facets, and session storage.
+Python SDK connects to the existing Host with explicit session, workspace and stable request IDs; Python factories register session tools. See the SDK directory.
 
 ### [extensions/](extensions/)
 Example extensions demonstrating:

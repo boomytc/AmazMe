@@ -1361,6 +1361,7 @@ class StopWorker(WorkerSpec):
     worker_id: str
     execution_epoch: int = 0
     reason: Literal["shutdown", "recovery", "update"] = "shutdown"
+    require_idle: bool = False
 
 
 class Stream(Model):

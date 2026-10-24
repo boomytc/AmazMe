@@ -1,83 +1,18 @@
-# SDK Examples
+# Python SDK 示例
 
-Programmatic usage of the coding agent via `createDurableSession()`.
+现行会话 SDK 是 `amazme_backend.sdk.Client`，连接已有 Python Host。旧 `createDurableSession`、TS 内联扩展和模型运行时已移除；不读取旧 auth/settings/JSONL。
 
-The runtime example shows how to build a recreate function that closes over process-global fixed inputs and recreates cwd-bound services and sessions as the active session cwd changes.
-
-## Examples
-
-| File | Description |
-|------|-------------|
-| `01-minimal.ts` | Simplest usage with all defaults |
-| `02-custom-model.ts` | Select model and thinking level |
-| `03-custom-prompt.ts` | Replace or modify system prompt |
-| `04-skills.ts` | Discover, filter, or replace skills |
-| `05-tools.ts` | Built-in tool allowlists |
-| `06-extensions.ts` | Logging, blocking, result modification |
-| `07-context-files.ts` | AGENTS.md context files |
-| `08-prompt-templates.ts` | File-based prompt templates |
-| `09-api-keys-and-oauth.ts` | API key resolution, OAuth config |
-| `10-settings.ts` | Override compaction, retry, terminal settings |
-| `11-sessions.ts` | In-memory, persistent, continue, list sessions |
-| `12-full-control.ts` | Replace everything, no discovery |
-| `13-session-runtime.ts` | Manage runtime-backed session replacement |
-| `14-codemode-mcp.ts` | Add the `codemode`, `tool_search`, and MCP extensions |
-| `15-typesafe-crop.ts` | Jev 1.14: locate on a small image, crop the original, re-question and restore pixel coordinates |
-
-## Running
+- [session.py](session.py)：显式绑定 Host、会话、工作区、请求 ID；提交前核对工作区，未知回执只查询原 ID。
+- [plugin.py](plugin.py)：真实 Python factory 和 Pydantic 参数模型，由现有会话插件服务加载。
 
 ```bash
-cd packages/coding-agent
-node examples/sdk/01-minimal.ts
+backend/.venv/bin/python packages/coding-agent/examples/sdk/session.py \
+  --url http://127.0.0.1:PORT --token-file /absolute/profile/web.token \
+  --session SESSION_ID --workspace primary --request REQUEST_ID --prompt 'Read the project instructions'
 ```
 
-## TypeSafe crop and re-question
+省略 `--prompt` 查询原请求；示例不会自动给 unknown 换 ID。审批通过 `await_user_decision` / `decide`，取消通过 `cancel`；取消受理与执行资源退出分开核对。
 
-The TypeSafe example uses `TYPESAFE_API_KEY` or saved agent credentials:
+模型与凭据分别调用 `update_model` / `update_account`，OAuth 使用 `start_oauth` / `oauth` / `oauth_input`。工具范围、系统提示词、追加提示词属于 `submit` 请求并进入同 ID 核对。项目指令、技能和模板沿现行 Python 资源入口读取，不再接受已失效的 TS 构造器选项。
 
-```bash
-node examples/sdk/15-typesafe-crop.ts ./page.png "the complete table" ./crop-output
-```
-
-It sends PNGs prepared from upright pixels, first at a smaller resolution and then as a crop of the original. Both rounds require sufficient presence probability and Box confidence; rejected candidates are returned for review. `result.json` records status, original upright pixel coordinates, both responses and combined usage/cost. `target.png` is written only for an accepted final result. Ctrl+C cancels the active request and prevents the second call. The example conservatively uses a 280-pixel minimum side to accommodate observed service behavior; this does not change the official 256-pixel/78,400-total-pixel protocol limits. Tiny or extremely narrow images require caller preparation or tiling. The fixed thresholds are examples to calibrate, and no desktop actions are executed.
-
-## Quick Reference
-
-```typescript
-import { createDurableSession, SettingsManager } from "@amazme/coding-agent";
-
-const session = await createDurableSession({
-  provider: "anthropic",
-  model: "claude-opus-4-5",
-  thinkingLevel: "high",
-  tools: ["read", "grep", "find", "ls"],
-  noSession: true,
-  settingsManager: SettingsManager.inMemory(),
-  extensions: ["./my-facet.ts"],
-});
-
-session.subscribe((events) => {
-  for (const event of events) {
-    if (event.type !== "message_update") continue;
-    for (const change of event.changes) {
-      if (change.type === "text_delta") process.stdout.write(change.delta);
-    }
-  }
-});
-await session.prompt("Hello");
-await session.dispose();
-```
-
-## Options
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `cwd` | `process.cwd()` | Working directory |
-| `model` | From settings or the first available model | Model reference |
-| `thinkingLevel` | From settings | off, low, medium, high, and the levels the model accepts |
-| `tools` | Built-in defaults | Allowlist or `+name`/`-name` modifiers |
-| `noSession` | false | Memory storage |
-| `continueSession` | false | Resume the newest Durable session for `cwd` |
-| `sessionDir` | Durable default root | Storage root override |
-| `settingsManager` | File-backed settings | Settings overrides |
-| `extensions` | none | Native facet sources |
+插件、stdio MCP、PTY、Codemode、computer-use、检查点和产物均使用同一 Client；实际签名和数据结构见 [SDK](../../docs/sdk.md) 与 [Python 契约](../../../../docs/python-backend-plan.md)。独立图片分类示例 `15-typesafe-crop.ts` 仍使用现有 JS 图片 helper，未作为会话运行时。

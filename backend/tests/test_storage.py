@@ -248,3 +248,19 @@ async def test_logical_corruption_is_rejected_before_writable_open(store: Sessio
         assert (store.db.path.read_bytes(), store.db.path.stat().st_mtime_ns) == before
     finally:
         await reopened.db.close()
+
+
+@pytest.mark.parametrize("accept_first", [False,True])
+async def test_idle_retirement_and_new_submission_share_one_admission_transaction(store: SessionStore, accept_first: bool) -> None:
+    value = Submit(request_id="racing",text="preserve original work")
+    if accept_first:
+        receipt = await store.accept(value,FENCE)
+        with pytest.raises(BackendError,match="worker_busy"):
+            await store.stopping(FENCE,cancel_work=False,require_idle=True)
+        assert await store.get(value.request_id) == receipt
+        assert (await store.activity()).state == "ready"
+    else:
+        await store.stopping(FENCE,cancel_work=False,require_idle=True)
+        with pytest.raises(BackendError,match="worker_frozen"):
+            await store.accept(value,FENCE)
+        assert (await store.snapshot()).requests == []

@@ -42,7 +42,7 @@ amazme web -e /path/to/plugin
 
 修改原插件源码后，在任务空闲时运行 `/reload`。候选构建失败会保留可用版本；修复源码后可重试。应用壳及核心源码修改需要构建与重启。当前宿主会向模型提供已选插件的 manifest 位置，源码映射可定位原文件；默认终端直接加载源码时提供其位置。
 
-进程内 SDK 使用 `createDurableSession`。插件使用原生 facets。`docs/extensions.md` 描述的 `ExtensionAPI` 工厂不再是 CLI 或 SDK 入口。
+会话 SDK 使用 `amazme_backend.sdk.Client` 连接现有 Python Host；插件使用 Python `setup(api)` 工厂。见 [SDK](docs/sdk.md) 与 [现行契约](../../docs/python-backend-plan.md)。
 
 ## 会话与工具
 

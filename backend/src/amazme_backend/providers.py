@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import ipaddress
 import json
 import re
 from collections.abc import AsyncIterator
@@ -114,7 +115,11 @@ def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> Pro
     model = INDEX.get((requested.provider, requested.model))
     api = requested.api or (model.api if model is not None else current.api)
     parts = urlsplit((requested.base_url.strip() or (model.base_url if model is not None else "")))
-    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+    try:
+        loopback = parts.hostname == "localhost" or ipaddress.ip_address(parts.hostname or "").is_loopback
+    except ValueError:
+        loopback = False
+    if (parts.scheme != "https" and not (parts.scheme == "http" and loopback)) or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
         raise BackendError("invalid_model_endpoint")
     return current.model_copy(update={
         "provider": requested.provider, "model": requested.model, "api": api, "base_url": parts.geturl(), **transport,

@@ -398,3 +398,15 @@ def test_browser_saves_the_selected_catalog_model() -> None:
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
                             cwd=Path(__file__).parents[1])
     assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+@pytest.mark.parametrize("endpoint", ["http://127.0.0.1:11434/v1", "http://[::1]:11434/v1", "http://localhost:11434/v1"])
+async def test_native_loopback_model_endpoint(owner: Host, endpoint: str) -> None:
+    saved = await owner.update_model(UpdateModelSettings(provider="deepseek",model="local-model",base_url=endpoint))
+    assert saved.base_url == endpoint and saved.key_configured
+
+
+@pytest.mark.parametrize("endpoint", ["http://localhost.evil.example/v1", "http://192.168.1.1/v1", "http://127.0.0.1@evil.example/v1", "http://localhost/v1?token=secret"])
+async def test_http_endpoint_cannot_bypass_external_tls(owner: Host, endpoint: str) -> None:
+    with pytest.raises(BackendError,match="invalid_model_endpoint"):
+        await owner.update_model(UpdateModelSettings(provider="deepseek",model="local-model",base_url=endpoint))

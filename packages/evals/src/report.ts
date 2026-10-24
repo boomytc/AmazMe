@@ -6,7 +6,7 @@ import type { ReportCase } from "@vitest-evals/core";
 import { readReportWorkspace, readVitestJsonReportFile } from "@vitest-evals/core/node";
 import type { DocumentationVariant, EvalTask } from "./plan.ts";
 
-export const AMAZME_SESSION_SNAPSHOT_ARTIFACT = "piSessionJsonl";
+export const AMAZME_SESSION_SNAPSHOT_ARTIFACT = "nativeSessionJsonl";
 
 export type EvalRunIdentity = {
 	evalSet: string;

@@ -4,50 +4,26 @@ export const OPENAI_PROVIDER_ID = "acme";
 export const OPENAI_MODEL_ID = "acme-chat";
 export const OPENAI_PROBE_PROMPT = "Reply with ACME_OK.";
 export const OPENAI_PROBE_RESPONSE = "ACME_OK";
-export const STREAM_PROVIDER_ID = "acme-stream";
-export const STREAM_MODEL_ID = "acme-stream-chat";
-export const STREAM_PROBE_PROMPT = "Reply with ACME_STREAM_OK.";
-export const STREAM_PROBE_RESPONSE = "ACME_STREAM_OK";
-
-export const STREAM_API_DOCUMENTATION = `${JSON.stringify(
-	{
-		name: "Acme Streaming API",
-		request: {
-			method: "POST",
-			path: "/generate",
-			headers: { "content-type": "application/json", "x-acme-key": "resolved credential" },
-			body: { model: STREAM_MODEL_ID, messages: [{ role: "user", content: "Hello" }], stream: true },
-		},
-		response: {
-			contentType: "application/x-ndjson",
-			events: [
-				{ type: "text_delta", text: "Hello" },
-				{ type: "usage", input_tokens: 3, output_tokens: 2 },
-				{ type: "done", reason: "stop" },
-			],
-		},
-	},
-	null,
-	2,
-)}\n`;
-
-type ServerMode = "openai" | "stream";
-
+export const ANTHROPIC_PROVIDER_ID = "acme-messages";
+export const ANTHROPIC_MODEL_ID = "acme-messages-chat";
+export const ANTHROPIC_PROBE_PROMPT = "Reply with ACME_MESSAGES_OK.";
+export const ANTHROPIC_PROBE_RESPONSE = "ACME_MESSAGES_OK";
+type ServerMode = "openai" | "anthropic";
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-function rejectRequest(response: ServerResponse, status: number, message: string): void {
-	response.writeHead(status, { "content-type": "text/plain" });
-	response.end(message);
+function reject(response: ServerResponse, status: number): void {
+	response.writeHead(status);
+	response.end();
 }
-
 async function readJson(request: IncomingMessage): Promise<unknown> {
 	let body = "";
-	for await (const chunk of request) body += chunk.toString();
+	for await (const chunk of request) {
+		body += chunk.toString();
+		if (body.length > 1048576) throw new Error("request_limit");
+	}
 	return JSON.parse(body);
 }
-
 export type AcmeServer = {
 	start(): Promise<void>;
 	stop(): Promise<void>;
@@ -56,99 +32,111 @@ export type AcmeServer = {
 	baseUrl(): string;
 	validRequestReceived(): boolean;
 };
-
 export function createAcmeServer(mode: ServerMode): AcmeServer {
 	let server: Server | undefined;
-	let serverOrigin = "";
-	let receivedValidRequest = false;
-
+	let origin = "";
+	let valid = false;
 	async function handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
-		const expectedPath = mode === "openai" ? "/v1/chat/completions" : "/generate";
-		if (request.url !== expectedPath) return rejectRequest(response, 404, "Unknown endpoint");
-		if (request.method !== "POST") return rejectRequest(response, 405, "Expected POST");
-		if (!request.headers["content-type"]?.startsWith("application/json")) {
-			return rejectRequest(response, 415, "Expected application/json");
-		}
+		if (request.url !== (mode === "openai" ? "/v1/chat/completions" : "/v1/messages")) return reject(response, 404);
+		if (request.method !== "POST") return reject(response, 405);
+		if (!request.headers["content-type"]?.startsWith("application/json")) return reject(response, 415);
 		let payload: unknown;
 		try {
 			payload = await readJson(request);
 		} catch {
-			return rejectRequest(response, 400, "Invalid JSON");
+			return reject(response, 400);
 		}
-		if (!isRecord(payload)) return rejectRequest(response, 422, "Expected a JSON object");
+		if (!isRecord(payload)) return reject(response, 422);
 		const messages = Array.isArray(payload.messages) ? payload.messages : [];
-		const userMessage = messages.find(
+		const user = messages.find(
 			(message): message is Record<string, unknown> => isRecord(message) && message.role === "user",
 		);
-		const prompt = typeof userMessage?.content === "string" ? userMessage.content : undefined;
-
-		if (mode === "stream") {
-			if (request.headers["x-acme-key"] !== "resolved-stream-key") {
-				return rejectRequest(response, 401, "Invalid Acme Stream credential");
-			}
-			if (payload.model !== STREAM_MODEL_ID || prompt === undefined || payload.stream !== true) {
-				return rejectRequest(response, 422, "Invalid Acme Stream request");
-			}
-			receivedValidRequest = prompt === STREAM_PROBE_PROMPT;
-			response.writeHead(200, { "content-type": "application/x-ndjson" });
-			response.write(`${JSON.stringify({ type: "text_delta", text: "ACME_" })}\n`);
-			response.write(`${JSON.stringify({ type: "text_delta", text: "STREAM_OK" })}\n`);
-			response.write(`${JSON.stringify({ type: "usage", input_tokens: 4, output_tokens: 3 })}\n`);
-			response.end(`${JSON.stringify({ type: "done", reason: "stop" })}\n`);
-			return;
-		}
-
-		if (request.headers.authorization !== "Bearer resolved-acme-key") {
-			return rejectRequest(response, 401, "Invalid Acme credential");
-		}
-		if (payload.model !== OPENAI_MODEL_ID || prompt === undefined || payload.stream !== true) {
-			return rejectRequest(response, 422, "Invalid OpenAI-compatible request");
-		}
-		receivedValidRequest = prompt === OPENAI_PROBE_PROMPT;
+		const content = user?.content;
+		const prompt =
+			typeof content === "string"
+				? content
+				: Array.isArray(content)
+					? content
+							.filter(isRecord)
+							.filter((part) => part.type === "text")
+							.map((part) => part.text)
+							.join("")
+					: undefined;
+		const apiKey =
+			mode === "openai"
+				? request.headers.authorization === "Bearer resolved-acme-key"
+				: request.headers["x-api-key"] === "resolved-messages-key";
+		if (!apiKey) return reject(response, 401);
+		if (
+			payload.model !== (mode === "openai" ? OPENAI_MODEL_ID : ANTHROPIC_MODEL_ID) ||
+			prompt === undefined ||
+			payload.stream !== true
+		)
+			return reject(response, 422);
+		valid ||= prompt === (mode === "openai" ? OPENAI_PROBE_PROMPT : ANTHROPIC_PROBE_PROMPT);
 		response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-		response.write(
-			`data: ${JSON.stringify({
-				id: "chatcmpl-acme",
+		const send = (data: Record<string, unknown>) => response.write(`data: ${JSON.stringify(data)}\n\n`);
+		if (mode === "anthropic") {
+			send({
+				type: "message_start",
+				message: {
+					id: "msg-fixture",
+					type: "message",
+					role: "assistant",
+					model: ANTHROPIC_MODEL_ID,
+					content: [],
+					usage: { input_tokens: 4, output_tokens: 0 },
+				},
+			});
+			send({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } });
+			send({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: ANTHROPIC_PROBE_RESPONSE } });
+			send({ type: "content_block_stop", index: 0 });
+			send({ type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 3 } });
+			send({ type: "message_stop" });
+		} else {
+			send({
+				id: "chatcmpl-fixture",
 				object: "chat.completion.chunk",
 				created: 0,
 				model: OPENAI_MODEL_ID,
 				choices: [{ index: 0, delta: { role: "assistant", content: OPENAI_PROBE_RESPONSE }, finish_reason: null }],
-			})}\n\n`,
-		);
-		response.write(
-			`data: ${JSON.stringify({
-				id: "chatcmpl-acme",
+			});
+			send({
+				id: "chatcmpl-fixture",
 				object: "chat.completion.chunk",
 				created: 0,
 				model: OPENAI_MODEL_ID,
 				choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
 				usage: { prompt_tokens: 3, completion_tokens: 2 },
-			})}\n\n`,
-		);
-		response.end("data: [DONE]\n\n");
+			});
+			response.write("data: [DONE]\n\n");
+		}
+		response.end();
 	}
-
 	return {
 		async start() {
-			server = createServer((request, response) => void handle(request, response));
-			await new Promise<void>((resolve, reject) => {
+			server = createServer((req, res) => {
+				void handle(req, res).catch(() => reject(res, 500));
+			});
+			await new Promise<void>((accept, reject) => {
 				server?.once("error", reject);
-				server?.listen(0, "127.0.0.1", resolve);
+				server?.listen(0, "127.0.0.1", accept);
 			});
 			const address = server.address();
-			if (!address || typeof address === "string") throw new Error("Acme fixture server did not bind a TCP port.");
-			serverOrigin = `http://127.0.0.1:${address.port}`;
+			if (!address || typeof address === "string") throw new Error("fixture_bind_failed");
+			origin = `http://127.0.0.1:${address.port}`;
 		},
 		async stop() {
-			if (!server) return;
-			await new Promise<void>((resolve, reject) => server?.close((error) => (error ? reject(error) : resolve())));
+			const current = server;
+			if (current)
+				await new Promise<void>((accept, reject) => current.close((error) => (error ? reject(error) : accept())));
 			server = undefined;
 		},
 		reset() {
-			receivedValidRequest = false;
+			valid = false;
 		},
-		origin: () => serverOrigin,
-		baseUrl: () => `${serverOrigin}/v1`,
-		validRequestReceived: () => receivedValidRequest,
+		origin: () => origin,
+		baseUrl: () => `${origin}/v1`,
+		validRequestReceived: () => valid,
 	};
 }
