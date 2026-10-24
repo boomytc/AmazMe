@@ -59,6 +59,10 @@ from .contracts import (
     TerminalView,
     ToolCall,
     UpdateModelSettings,
+    WorkspaceGrantRequest,
+    WorkspaceGrantView,
+    WorkspaceList,
+    WorkspaceSelect,
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
 from .workspace_files import FileContent
@@ -166,6 +170,14 @@ class RpcHost(Protocol):
     async def oauth_input(self, login_id: str, value: OAuthInput) -> OAuthView: ...
 
     async def cancel_oauth(self, login_id: str) -> OAuthView: ...
+
+    async def workspaces(self) -> WorkspaceList: ...
+
+    async def select_workspace(self, value: WorkspaceSelect) -> WorkspaceGrantView: ...
+
+    async def add_workspace(self, value: WorkspaceGrantRequest) -> WorkspaceGrantView: ...
+
+    async def remove_workspace(self, name: str) -> None: ...
 
     async def sessions(self) -> SessionList: ...
 
@@ -313,9 +325,18 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.oauth_input(params.login_id, params.authorization)
     if method == "oauth.cancel":
         return await owner.cancel_oauth(params.login_id)
+    if method == "workspace.list":
+        return await owner.workspaces()
+    if method == "workspace.select":
+        return await owner.select_workspace(WorkspaceSelect(host_path=params.path, name=params.workspace))
+    if method == "workspace.add":
+        return await owner.add_workspace(WorkspaceGrantRequest(host_path=params.path, name=params.workspace))
+    if method == "workspace.remove":
+        await owner.remove_workspace(params.workspace)
+        return await owner.workspaces()
     if method == "session.create":
         _require_workspace(params)
-        return await owner.create_session(CreateSession(title=params.title or "新会话", workspace=params.workspace))
+        return await owner.create_session(CreateSession(title=params.title or "新会话", workspace=params.workspace, session_id=params.session_id))
     if method == "session.attach":
         _require_workspace(params)
         if not params.session_id:

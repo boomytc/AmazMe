@@ -13,6 +13,7 @@ const COMMANDS = new Set([
 	"import",
 	"export",
 	"doctor",
+	"workspaces",
 ]);
 
 export async function runPythonProductCommand(

@@ -126,7 +126,7 @@ export async function main(args: string[]): Promise<void> {
 				...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
 				...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
 				cwd,
-				workspace: parsed.workspace || "primary",
+				...(parsed.workspace === undefined ? {} : {workspace:parsed.workspace}),
 				...(session === undefined ? {} : { session }),
 			});
 		return;
@@ -147,7 +147,7 @@ export async function main(args: string[]): Promise<void> {
 		...sessionOptions,
 		mode: parsed.mode === "rpc" ? "rpc" : parsed.mode === "json" ? "json" : "text",
 		cwd,
-		workspace: parsed.workspace || "primary",
+		...(parsed.workspace === undefined ? {} : {workspace:parsed.workspace}),
 		prompt: [prepared.initialMessage, ...parsed.messages].filter(Boolean).join("\n"),
 		...(parsed.pythonUrl === undefined ? {} : { url: parsed.pythonUrl }),
 		...(parsed.pythonToken === undefined ? {} : { token: parsed.pythonToken }),

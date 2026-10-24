@@ -1226,6 +1226,44 @@
         }
       }
     },
+    "/api/v1/workspaces/select": {
+      "post": {
+        "summary": "Select Workspace",
+        "operationId": "select_workspace_api_v1_workspaces_select_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkspaceSelect"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceGrantView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/workspaces/{name}": {
       "delete": {
         "summary": "Remove Workspace",
@@ -11288,6 +11326,27 @@
           "workspaces"
         ],
         "title": "WorkspaceList"
+      },
+      "WorkspaceSelect": {
+        "properties": {
+          "host_path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Host Path"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "host_path"
+        ],
+        "title": "WorkspaceSelect"
       },
       "WriteFile": {
         "properties": {

@@ -127,3 +127,16 @@ test("a known rejection stays a rejection instead of an unknown accepted operati
 		),
 	).rejects.toMatchObject({ status: 409, message: "request_conflict" });
 });
+
+
+test("local launch directory selection goes through Python with the explicit workspace unchanged", async () => {
+    const calls: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init?: RequestInit) => {
+        calls.push(JSON.parse(String(init?.body)));
+        return reply({name:"cwd-owned",host_path:"/projects/current"});
+    });
+    const client = new HostClient("http://127.0.0.1:1000", "token");
+    expect(await client.selectWorkspace("/projects/current")).toBe("cwd-owned");
+    expect(await client.selectWorkspace("/projects/other", "selected")).toBe("cwd-owned");
+    expect(calls).toEqual([{host_path:"/projects/current",name:""},{host_path:"/projects/other",name:"selected"}]);
+});

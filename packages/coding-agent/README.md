@@ -25,3 +25,8 @@ npm test --workspace @amazme/coding-agent
 构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。CUA 原生驱动的固定构建配方及安装校验仍保留在 `plugins/computer-use`；产品驱动与分类逻辑属于 Python。
 
 1.0.0 前仅本机构建、自用，不公证、不发布。MIT 许可证与上游来源归属保持原样。
+
+本机 CLI 从启动目录选择对应的 Python 工作区；`--workspace NAME` 使用已登记名称。
+`amazme workspaces list` 查看目录，`workspaces add NAME /absolute/path` 显式登记。
+`--continue` 继续当前工作区最近的非归档会话；`--resume` 在 TUI 中选择，`--session ID` 指定会话。
+回执未确认时保留原请求 ID，使用 `--session ID --request ID` 或 TUI 的 `/request ID` 查询，不会自动重发。

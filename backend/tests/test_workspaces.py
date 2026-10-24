@@ -39,10 +39,14 @@ from amazme_backend.contracts import (
     UpdateRecord,
     WorkerInfo,
     WorkerRequest,
+    WorkspaceGrantRequest,
+    WorkspaceSelect,
     WriteFile,
 )
 from amazme_backend.host import Host, application
 from amazme_backend.processes import ProcessReservation
+from amazme_backend.rpc import RpcCall, RpcParams, handle_rpc
+from amazme_backend.sdk import Client
 from amazme_backend.supervisor import Supervisor
 
 SESSION = "b" * 32
@@ -606,3 +610,64 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
                             cwd=Path(__file__).parents[1])
     assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+async def test_select_launch_directory_is_stable_and_never_replaces_existing_grants(tmp_path: Path) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    host = _host(profile)
+    await _ready(host)
+    launch = tmp_path / "another-project"
+    launch.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(launch, target_is_directory=True)
+    try:
+        assert (await host.select_workspace(WorkspaceSelect(host_path=str(profile / "primary")))).primary
+        selected = await asyncio.gather(*(host.select_workspace(WorkspaceSelect(host_path=str(launch))) for _ in range(8)))
+        assert len({item.name for item in selected}) == 1
+        chosen = selected[0]
+        assert chosen.host_path == str(launch.resolve())
+        assert await host.select_workspace(WorkspaceSelect(host_path=str(alias))) == chosen
+        for index in range(7):
+            folder = tmp_path / f"other-{index}"
+            folder.mkdir()
+            await host.add_workspace(WorkspaceGrantRequest(name=f"other-{index}", host_path=str(folder)))
+        # Capacity must not turn an identical retry into an error.
+        assert await host.add_workspace(WorkspaceGrantRequest(name=chosen.name, host_path=str(launch))) == chosen
+        assert await host.select_workspace(WorkspaceSelect(host_path=str(launch))) == chosen
+        assert (await host.select_workspace(WorkspaceSelect(host_path=str(launch), name="primary"))).primary
+        missing = tmp_path / "ninth"
+        missing.mkdir()
+        with pytest.raises(BackendError, match="workspace_capacity"):
+            await host.select_workspace(WorkspaceSelect(host_path=str(missing)))
+        assert len((await host.workspaces()).workspaces) == 9  # primary plus eight grants
+        with pytest.raises(BackendError, match="workspace_not_found"):
+            await host.select_workspace(WorkspaceSelect(host_path=str(launch), name="absent"))
+    finally:
+        await host.store.db.close()
+
+
+async def test_workspace_selection_is_shared_by_sdk_rpc_and_stable_session_creation(tmp_path: Path) -> None:
+    profile = tmp_path / "profile"
+    profile.mkdir()
+    host = _host(profile)
+    await _ready(host)
+    launch = tmp_path / "another-project"
+    launch.mkdir()
+    client = Client(host.origin, "web-only")
+    await client._http.aclose()
+    client._http = httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin)
+    client.build_id, client.host_epoch = host.build, host.fence.host_epoch
+    try:
+        chosen = await client.select_workspace(str(launch))
+        rpc = await handle_rpc(host, RpcCall(id="select", method="workspace.select", params=RpcParams(path=str(launch))))
+        assert rpc["result"] == chosen.model_dump()
+        session = await client.create_session(title="stable", workspace=chosen.name, session_id=SESSION)
+        duplicate = await handle_rpc(host, RpcCall(id="same", method="session.create", params=RpcParams(
+            session_id=SESSION, title="stable", workspace=chosen.name)))
+        assert duplicate["result"] == session.model_dump()
+        assert (await client.workspaces()).workspaces[-1] == chosen
+        assert len((await client.sessions()).sessions) == 1
+    finally:
+        await client._http.aclose()
+        await host.store.db.close()

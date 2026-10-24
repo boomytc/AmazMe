@@ -600,11 +600,14 @@ export async function connectPythonHost(options: {
 }
 
 /** Start or attach to the local Python host. Leaving the screen does not stop it. */
-export async function runOwnedPythonInteractive(options: Omit<PythonSessionTarget, "url" | "token"> & {
-		readonly cwd: string;
-	}): Promise<void> {
-	if (!options.workspace) fail("workspace_required");
+export async function runOwnedPythonInteractive(options: Omit<PythonSessionTarget, "url" | "token" | "workspace"> & {
+	readonly cwd: string;
+	readonly workspace?: string;
+}): Promise<void> {
 	const host = await connectPythonHost({ cwd: options.cwd });
-	await runPythonSessionTui({ ...options, url: host.url, token: host.token, workspace: options.workspace,
+	const client = new HostClient(host.url, host.token);
+	await client.bootstrap();
+	const workspace = await client.selectWorkspace(options.cwd, options.workspace);
+	await runPythonSessionTui({ ...options, url: host.url, token: host.token, workspace,
 		...(options.session === undefined ? {} : {session:options.session}) });
 }

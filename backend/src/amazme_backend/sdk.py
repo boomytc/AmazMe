@@ -53,6 +53,10 @@ from .contracts import (
     ToolCall,
     UpdateModelSettings,
     UsageReport,
+    WorkspaceGrantRequest,
+    WorkspaceGrantView,
+    WorkspaceList,
+    WorkspaceSelect,
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
 from .workspace_files import FileContent
@@ -98,6 +102,21 @@ class Client:
         self.build_id = identity.build_id
         self.host_epoch = identity.host_epoch
         return identity
+
+    async def workspaces(self) -> WorkspaceList:
+        return WorkspaceList.model_validate(await self._send("GET", "/api/v1/workspaces"))
+
+    async def select_workspace(self, host_path: str, name: str = "") -> WorkspaceGrantView:
+        value = WorkspaceSelect(host_path=host_path, name=name)
+        return WorkspaceGrantView.model_validate(await self._send("POST", "/api/v1/workspaces/select",
+            json_body=value.model_dump(), headers=self._write()))
+
+    async def add_workspace(self, value: WorkspaceGrantRequest) -> WorkspaceGrantView:
+        return WorkspaceGrantView.model_validate(await self._send("POST", "/api/v1/workspaces",
+            json_body=value.model_dump(), headers=self._write()))
+
+    async def remove_workspace(self, name: str) -> None:
+        await self._send("DELETE", "/api/v1/workspaces/" + quote(name, safe=""), headers=self._write())
 
     async def plugins(self, session_id: str = "") -> PluginList:
         return PluginList.model_validate(await self._send("GET", "/api/v1/plugins" + ("?session_id=" + quote(session_id, safe="") if session_id else "")))
@@ -221,10 +240,10 @@ class Client:
             raise BackendError("session_not_found", status=404)
         return found
 
-    async def create_session(self, *, title: str, workspace: str) -> Session:
+    async def create_session(self, *, title: str, workspace: str, session_id: str = "") -> Session:
         if not workspace:
             raise BackendError("workspace_required")
-        payload = await self._send("POST", "/api/v1/sessions", json_body={"title": title, "workspace": workspace},
+        payload = await self._send("POST", "/api/v1/sessions", json_body={"title": title, "workspace": workspace, "session_id": session_id},
                                    headers=self._write())
         return Session.model_validate(payload)
 

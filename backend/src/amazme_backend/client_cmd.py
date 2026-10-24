@@ -12,7 +12,13 @@ from typing import cast
 
 from pydantic import SecretStr
 
-from .contracts import BackendError, CredentialUpdate, ExportBundle, UpdateModelSettings
+from .contracts import (
+    BackendError,
+    CredentialUpdate,
+    ExportBundle,
+    UpdateModelSettings,
+    WorkspaceGrantRequest,
+)
 from .oauth import OAuthInput, OAuthStart
 from .sdk import Client
 
@@ -25,6 +31,18 @@ def _parser() -> argparse.ArgumentParser:
     create = sub.add_parser("create")
     create.add_argument("--workspace", required=True)
     create.add_argument("--title", default="新会话")
+    create.add_argument("--session-id", default="")
+    workspaces = sub.add_parser("workspaces")
+    workspace_commands = workspaces.add_subparsers(dest="workspace_command")
+    workspace_commands.add_parser("list")
+    selected = workspace_commands.add_parser("select")
+    selected.add_argument("path")
+    selected.add_argument("--name", default="")
+    granted = workspace_commands.add_parser("add")
+    granted.add_argument("name")
+    granted.add_argument("path")
+    removed = workspace_commands.add_parser("remove")
+    removed.add_argument("name")
     submit = sub.add_parser("submit")
     submit.add_argument("--session", required=True)
     submit.add_argument("--workspace", required=True)
@@ -202,6 +220,17 @@ async def _run(argv: list[str]) -> int:
             return 1
     try:
         async with Client(args.url, args.token) as client:
+            if args.command == "workspaces":
+                if args.workspace_command == "select":
+                    result = await client.select_workspace(args.path, args.name)
+                elif args.workspace_command == "add":
+                    result = await client.add_workspace(WorkspaceGrantRequest(name=args.name, host_path=args.path))
+                else:
+                    if args.workspace_command == "remove":
+                        await client.remove_workspace(args.name)
+                    result = await client.workspaces()
+                print(result.model_dump_json())
+                return 0
             if args.command == "models":
                 catalog = await client.models()
                 catalog.models = [model for model in catalog.models if args.search.casefold() in (
@@ -246,7 +275,7 @@ async def _run(argv: list[str]) -> int:
                 print((await client.import_bundle(value)).model_dump_json())
                 return 0
             if args.command == "create":
-                session = await client.create_session(title=args.title, workspace=args.workspace)
+                session = await client.create_session(title=args.title, workspace=args.workspace, session_id=args.session_id)
                 print(session.model_dump_json())
                 return 0
             if args.command == "submit":

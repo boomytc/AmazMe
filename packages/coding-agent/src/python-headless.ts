@@ -27,7 +27,7 @@ export interface PythonRunOptions {
 
 export interface PythonHeadlessOptions extends PythonRunOptions {
 	readonly mode: "text" | "json" | "rpc";
-	readonly workspace: string;
+	readonly workspace?: string;
 	readonly cwd: string;
 	readonly url?: string;
 	readonly token?: string;
@@ -180,6 +180,12 @@ export class HostClient {
 		if (typeof body.build_id !== "string" || typeof body.host_epoch !== "number") fail("invalid_bootstrap");
 		this.#buildId = body.build_id;
 		this.#hostEpoch = body.host_epoch;
+	}
+
+	async selectWorkspace(cwd: string, name = ""): Promise<string> {
+		const body = await this.#send("POST", "/api/v1/workspaces/select", {host_path:cwd, name});
+		if (typeof body.name !== "string" || !body.name) fail("invalid_workspace");
+		return body.name;
 	}
 
 	async listSessions(workspace: string): Promise<SessionSummary[]> {
@@ -880,7 +886,7 @@ async function localCommand(
 	return undefined;
 }
 
-async function runPrompt(client: HostClient, options: PythonHeadlessOptions): Promise<number> {
+async function runPrompt(client: HostClient, options: PythonHeadlessOptions & {readonly workspace:string}): Promise<number> {
 	const jsonMode = options.mode === "json";
 	const prompt = options.prompt;
 	const decision = options.decision;
@@ -980,10 +986,6 @@ async function runRpc(client: HostClient): Promise<number> {
 }
 
 export async function runPythonHeadless(options: PythonHeadlessOptions): Promise<number> {
-	if (!options.workspace) {
-		process.stderr.write("workspace_required\n");
-		return 1;
-	}
 	if (options.decision !== undefined && options.decision !== "批准" && options.decision !== "拒绝") {
 		process.stderr.write("invalid_decision\n");
 		return 1;
@@ -997,7 +999,10 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 		const client = new HostClient(host.url, host.token, options);
 		await client.bootstrap();
 		if (options.mode === "rpc") return await runRpc(client);
-		return await runPrompt(client, options);
+		const workspace = options.url
+			? options.workspace ?? "primary"
+			: await client.selectWorkspace(options.cwd, options.workspace);
+		return await runPrompt(client, {...options, workspace});
 	} catch (error) {
 		process.stderr.write(`${error instanceof Error ? error.message : "python_headless_failed"}\n`);
 		return 1;

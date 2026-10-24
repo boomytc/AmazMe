@@ -199,6 +199,7 @@ from .contracts import (
     WorkspaceGrantRequest,
     WorkspaceGrantView,
     WorkspaceList,
+    WorkspaceSelect,
 )
 from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord, checkpoint_id
@@ -518,6 +519,31 @@ class Host:
             WorkspaceGrantView(name=PRIMARY, host_path=str(primary), primary=True),
             *grants,
         ])
+
+    async def select_workspace(self, value: WorkspaceSelect) -> WorkspaceGrantView:
+        current = (await self.workspaces()).workspaces
+        if value.name:
+            validate_workspace(value.name)
+            found = next((item for item in current if item.name == value.name), None)
+            if found is None:
+                raise BackendError("workspace_not_found", status=404)
+            return found
+        path = Path(value.host_path)
+        if not path.is_absolute():
+            raise BackendError("invalid_workspace_path")
+        try:
+            actual = path.resolve(strict=True)
+        except (OSError, ValueError) as error:
+            raise BackendError("workspace_not_directory") from error
+        if not actual.is_dir():
+            raise BackendError("workspace_not_directory")
+        for item in current:
+            if Path(item.host_path).resolve() == actual:
+                return item
+        # The client explicitly selects its launch directory. Use the existing
+        # grant admission and capacity; never replace another grant to make room.
+        name = "cwd-" + hashlib.sha256(str(actual).encode()).hexdigest()[:24]
+        return await self.add_workspace(WorkspaceGrantRequest(name=name, host_path=str(actual)))
 
     async def add_workspace(self, value: WorkspaceGrantRequest) -> WorkspaceGrantView:
         self._admit()
@@ -2826,6 +2852,10 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:
         return await owner.workspaces()
+
+    @app.post("/api/v1/workspaces/select")
+    async def select_workspace(value: WorkspaceSelect) -> WorkspaceGrantView:
+        return await owner.select_workspace(value)
 
     @app.post("/api/v1/workspaces")
     async def add_workspace(value: WorkspaceGrantRequest) -> WorkspaceGrantView:

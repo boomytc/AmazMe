@@ -847,6 +847,11 @@ class WorkspaceGrantRequest(Model):
     host_path: str = Field(min_length=1, max_length=1024)
 
 
+class WorkspaceSelect(Model):
+    host_path: str = Field(min_length=1, max_length=1024)
+    name: str = ""
+
+
 class WorkspaceGrantView(Model):
     name: str
     host_path: str

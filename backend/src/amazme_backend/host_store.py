@@ -229,11 +229,13 @@ class HostStore:
         def operation(db: sqlite3.Connection) -> None:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
-            if db.execute("SELECT count(*) FROM workspace_grants").fetchone()[0] >= 8:
-                raise BackendError("workspace_capacity", status=429)
             current = db.execute("SELECT host_path FROM workspace_grants WHERE name=?", (name,)).fetchone()
             if current is not None and str(current[0]) != host_path:
                 raise BackendError("workspace_conflict")
+            if current is not None:
+                return
+            if db.execute("SELECT count(*) FROM workspace_grants").fetchone()[0] >= 8:
+                raise BackendError("workspace_capacity", status=429)
             used = db.execute("SELECT name FROM workspace_grants WHERE host_path=?", (host_path,)).fetchone()
             if used is not None and str(used[0]) != name:
                 raise BackendError("workspace_conflict")
