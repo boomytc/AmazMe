@@ -994,6 +994,8 @@ class Host:
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
         text = value.text.strip()
+        if contains_secret(text, self._provider_secret()):
+            raise BackendError("memory_secret")
         digest = remember(value.workspace, text)
         await self._require_workspace(value.workspace)
         memory_id, workspace, stored = await self.store.save_memory(value.memory_id, value.workspace, text, digest)

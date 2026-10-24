@@ -60,6 +60,7 @@ from .contracts import (
     WriteFile,
 )
 from .faults import Faults
+from .manage import contains_secret
 from .mcp_session import catalog_payload, offers_from_views
 from .memories import inject_memories, relevant_memories, session_workspace
 from .providers import Completion, stream
@@ -325,7 +326,11 @@ class Worker:
     async def model_input(self, messages: list[Message]) -> list[Message]:
         query = next((item.content for item in reversed(messages) if item.role == "user"), "")
         workspace = session_workspace(self.profile.path, self.session)
-        return inject_memories(messages, relevant_memories(self.profile.path, workspace, query))
+        self.profile.reload_provider()
+        secret = self.profile.config.provider.api_key.get_secret_value()
+        memories = [item for item in relevant_memories(self.profile.path, workspace, query)
+                    if not contains_secret(item.text, secret)]
+        return inject_memories(messages, memories)
 
     async def _retrieve_web(self, action: WebRetrieval) -> WebReturned:
         self._use_current_provider()
