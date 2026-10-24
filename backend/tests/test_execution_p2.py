@@ -1,12 +1,9 @@
 """Execution fault tests; no VM, Docker daemon, network listener, or credentials."""
 
 import asyncio
-import contextlib
-import hashlib
 import json
 import os
 import sqlite3
-import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -14,7 +11,6 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import pytest_asyncio
-from pydantic import ValidationError
 
 from amazme_backend.common import Profile, lock, private_write
 from amazme_backend.contracts import (
@@ -23,154 +19,42 @@ from amazme_backend.contracts import (
     FreezeSupervisor,
     HostFence,
     Identity,
-    Lease,
-    Recovery,
     ResolveEffect,
     RetireSupervisor,
     RunTool,
     StopWorker,
     ToolLookup,
-    ToolResult,
     WorkerInfo,
     WorkerRequest,
     WorkerSpec,
 )
-from amazme_backend.docker_channel import GateChannel
 from amazme_backend.processes import ProcessReservation, exited
 from amazme_backend.supervisor import ExecutionDB, Supervisor, retirement_proof
-from amazme_backend.vm import VM, Container, Machine, ResourceManifest, VMStopProof
-
-
-class FakeVM:
-    def __init__(self, profile):
-        self.profile = profile
-        self.vm_id, self.image_id = "vm-owned", "sha256:image"
-        self.socket = profile.path / "fake-docker.sock"
-        self.containers = {}
-        self.stops = 0
-        self.starts = 0
-        self.fail_stop = False
-        self.fail_clean = False
-        self.boot = "boot-one"
-        self.barrier = False
-        self.on_clean = None
-        self.created_binds = []
-        self.http = httpx.AsyncClient(transport=httpx.MockTransport(self.request), base_url="http://docker")
-
-    def request(self, request):
-        path = request.url.path
-        if path == "/containers/create":
-            spec = json.loads(request.content)
-            cid = hashlib.sha256(request.url.params["name"].encode()).hexdigest()
-            self.created_binds.append(spec["HostConfig"]["Binds"])
-            item = Container.model_validate({"Id": cid, "Config": spec,
-                "State": {"Running": False, "Pid": 0, "ExitCode": 0, "Status": "created"}})
-            self.containers[cid] = item
-            self.containers[request.url.params["name"]] = item
-            return httpx.Response(201, json={"Id": cid})
-        cid = path.split("/")[2]
-        if path.endswith("/start"):
-            self.containers[cid].State.Running = True
-            self.containers[cid].State.Pid = 99
-            return httpx.Response(204)
-        if path.endswith("/wait"):
-            self.containers[cid].State.Running = False
-            return httpx.Response(200, json={"StatusCode": 0})
-        raise AssertionError(path)
-
-    async def start(self):
-        self.starts += 1
-        return self.boot
-
-    async def guest(self, *args):
-        assert args == ("cat", "/proc/sys/kernel/random/boot_id")
-        return self.boot
-
-    async def inspect(self, identity):
-        return self.containers.get(identity)
-
-    async def cgroup(self, container):
-        return "/sys/fs/cgroup/" + container.Id
-
-    async def kill_and_prove(self, cid, cgroup, boot):
-        if self.on_clean:
-            await self.on_clean()
-        if self.fail_clean or boot != self.boot:
-            raise BackendError("vm_boot_changed")
-        if cid in self.containers:
-            self.containers[cid].State.Running = False
-
-    @contextlib.asynccontextmanager
-    async def stopped(self):
-        self.stops += 1
-        if self.fail_stop:
-            raise BackendError("vm_stop_unproven")
-        self.barrier = True
-        self.containers.clear()
-        try:
-            yield VMStopProof(vm_id=self.vm_id, receipt_id="stopped-proof", instance_dir="owned")
-        finally:
-            self.barrier = False
-
-    async def close(self):
-        await self.http.aclose()
-
-
-class FakeChannel:
-    def __init__(self):
-        self.permits = []
-        self.closed = False
-        self.error = None
-        self.wait = None
-        self.collected = asyncio.Event()
-
-    async def permit(self, command, uid, gid):
-        self.permits.append(command)
-
-    async def collect(self):
-        self.collected.set()
-        if self.wait:
-            await self.wait.wait()
-        if self.error:
-            raise self.error
-        return "captured", "", False
-
-    async def close(self):
-        self.closed = True
 
 
 @pytest.fixture
 def profile(tmp_path, monkeypatch):
-    private_write(tmp_path / "config.json", json.dumps({"format": 2, "profile_id": "p2-test",
+    private_write(tmp_path / "config.json", json.dumps({"format": 2, "profile_id": "native-test",
         "workspace": str(tmp_path), "resources": "unused", "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "test-token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
-    monkeypatch.setattr("amazme_backend.supervisor.VM", FakeVM)
     return Profile(tmp_path)
 
 
 @pytest_asyncio.fixture
-async def owner(profile, monkeypatch):
+async def owner(profile):
     owner = Supervisor(profile, "supervisor-one")
     await owner.initialize()
     owner.monitor_task.cancel()
     await asyncio.gather(owner.monitor_task, return_exceptions=True)
     owner.reservations = []
-    owner.fake_channels = []
-
-    async def attach(*_):
-        channel = FakeChannel()
-        owner.fake_channels.append(channel)
-        return channel
-    monkeypatch.setattr("amazme_backend.supervisor.GateChannel.attach", attach)
     try:
         yield owner
     finally:
         await owner._cancel_jobs()
         for reservation in owner.reservations:
             reservation.close()
-        await owner.vm.close()
-        await owner.db.close()
+        await owner.close()
 
 
 async def worker(owner, session="a" * 32, purpose="business", build=None):
@@ -201,52 +85,6 @@ async def no_peer(*_):
     raise httpx.ConnectError("not listening")
 
 
-async def test_result_is_durable_before_cleanup_and_duplicate_never_replays(owner):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-
-    async def check_capture():
-        stored = await owner._scope(value.call_id)
-        assert stored["outcome"] == "completed"
-        assert ToolResult.model_validate_json(stored["result"]).stdout == "captured"
-        assert not stored["clean"]
-    owner.vm.on_clean = check_capture
-    result = await owner.run_tool(value)
-    assert result.stdout == "captured"
-    assert (await owner._scope(value.call_id))["clean"]
-    assert await owner.run_tool(value) == result
-    assert len(owner.fake_channels) == 1
-    assert owner.fake_channels[0].closed
-
-
-async def test_unknown_write_blocks_mutation_but_read_mount_is_enforced(owner):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    async def crash(point, **_):
-        if point == "permitted":
-            raise RuntimeError("lost outcome")
-    owner.faults.hit = crash
-    with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
-    owner.faults.hit = AsyncMock()
-    clean = await owner.cleanup(info.session_id, Lease(**value.model_dump(include=Lease.model_fields.keys())))
-    assert clean.state == "clean"
-    next_value = await call(owner, info, "write-two")
-    with pytest.raises(BackendError, match="unknown_effect_conflict"):
-        await owner.run_tool(next_value)
-    diagnostic = next_value.model_copy(update={"call_id": "diagnostic", "effect": "read"})
-    assert (await owner.run_tool(diagnostic)).stdout == "captured"
-    assert owner.vm.created_binds[-1] == ["/workspace:/workspace:ro"]
-    holds = await owner._holds()
-    assert len(holds) == 1 and holds[0].resource_clean and not holds[0].reconciled
-    resolution = ResolveEffect(**request(info).model_dump(), resolution=EffectResolution(
-        resolution_id="resolve", call_id=value.call_id, outcome="applied", evidence="inspected workspace content"))
-    assert (await owner.resolve_effect(resolution)).reconciled
-    assert await owner.resolve_effect(resolution) == await owner.resolve_effect(resolution)
-    assert (await owner.lookup_tool(ToolLookup(**request(info).model_dump(), call_id=value.call_id))).state == "unknown"
-    assert (await owner.run_tool(next_value)).stdout == "captured"
-
-
 async def test_resolution_cannot_waive_cleanup_or_change_scope(owner):
     info, _ = await worker(owner)
     value = await call(owner, info)
@@ -264,30 +102,6 @@ async def test_resolution_cannot_waive_cleanup_or_change_scope(owner):
         await owner.resolve_effect(ResolveEffect(**request(other).model_dump(), resolution=resolution))
 
 
-@pytest.mark.parametrize("point", ["create_intent", "create_accepted", "created", "registered", "start_accepted",
-                                  "started", "before_permit", "permit_sent", "permitted", "result", "cleanup_proven"])
-async def test_every_fault_window_preserves_scope_and_never_reexecutes(owner, point):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    async def crash(here, **_):
-        if here == point:
-            raise RuntimeError("fault")
-    owner.faults.hit = crash
-    with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
-    stored = await owner._scope(value.call_id)
-    assert stored["outcome"] == ("completed" if point in {"result", "cleanup_proven"} else "unknown")
-    owner.faults.hit = AsyncMock()
-    lease = Lease(**value.model_dump(include=Lease.model_fields.keys()))
-    cleanup = await owner.cleanup(info.session_id, lease)
-    assert cleanup.state == "clean" and cleanup.proof_id
-    count = len(owner.fake_channels)
-    with pytest.raises(BackendError, match="execution_epoch_closed"):
-        await owner.run_tool(value)
-    assert len(owner.fake_channels) == count
-    assert (await owner.lookup_tool(ToolLookup(**request(info).model_dump(), call_id=value.call_id))).resource_clean
-
-
 async def test_stale_close_cannot_close_new_epoch(owner):
     info, _ = await worker(owner)
     old = await owner.open_epoch(request(info))
@@ -299,69 +113,6 @@ async def test_stale_close_cannot_close_new_epoch(owner):
     forged = old.model_copy(update={"supervisor_id": "other"})
     with pytest.raises(BackendError, match="stale_execution_epoch"):
         await owner.cleanup(info.session_id, forged)
-
-
-async def test_scoped_cleanup_keeps_sibling_execution(owner):
-    one, _ = await worker(owner)
-    two, _ = await worker(owner, "b" * 32)
-    first, second = await call(owner, one), await call(owner, two, "second")
-    await owner.run_tool(first)
-    await owner.run_tool(second)
-    await owner.cleanup(one.session_id)
-    await owner.check_lease(second)
-    assert owner.vm.stops == 0
-
-
-async def test_boot_change_never_counts_as_clean_without_vm_stop(owner):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    async def crash(point, **_):
-        if point == "permitted":
-            raise RuntimeError()
-    owner.faults.hit = crash
-    with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
-    owner.vm.boot = "different-boot"
-    owner.vm.fail_stop = True
-    receipt = await owner.cleanup(info.session_id)
-    assert receipt.state == "blocked" and receipt.reason == "vm_stop_unproven"
-    assert not (await owner._scope(value.call_id))["clean"]
-    owner.vm.fail_stop = False
-    receipt = await owner.cleanup(info.session_id)
-    assert receipt.state == "clean" and receipt.proof_id == "stopped-proof"
-
-
-async def test_supervisor_recovery_stops_vm_and_seals_inside_barrier(owner, monkeypatch):
-    info, reservation = await worker(owner)
-    value = await call(owner, info)
-    async def crash(point, **_):
-        if point == "create_intent":
-            raise RuntimeError()
-    owner.faults.hit = crash
-    with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
-    reservation.close()
-    await owner.db.close()
-    next_owner = Supervisor(owner.profile, "supervisor-two")
-    original_call = next_owner.db.call
-    observed = []
-    async def checked(operation, *, write=False):
-        if write and next_owner.vm.barrier:
-            observed.append(True)
-        return await original_call(operation, write=write)
-    next_owner.db.call = checked
-    try:
-        await next_owner.initialize()
-        assert next_owner.vm.stops == 1 and observed
-        assert (await next_owner._scope(value.call_id))["clean"]
-        assert (await next_owner._worker(info.worker_id)).state == "stopped"
-        assert (await next_owner._holds())[0].reason == "tool_outcome_unknown"
-    finally:
-        next_owner.monitor_task.cancel()
-        await asyncio.gather(next_owner.monitor_task, return_exceptions=True)
-        await next_owner.vm.close()
-        await next_owner.db.close()
-        owner.db = ExecutionDB(owner.profile.path / "execution.sqlite")
 
 
 async def test_process_exit_and_writer_release_are_both_required(owner):
@@ -455,23 +206,6 @@ async def test_frozen_validation_cannot_execute_tools_and_revision_is_checked(ow
     assert not (await owner.thaw(freeze.model_copy(update={"expected_revision": health.registry_revision})) ).freeze_id
 
 
-async def test_budget_persists_and_recovery_cannot_reset_until_proven(owner):
-    for _ in range(4):
-        info, reservation = await worker(owner)
-        reservation.close()
-        await owner._retire_worker(info, "recovery", failed=True)
-    with pytest.raises(BackendError, match="worker_restart_budget_exhausted"):
-        await owner.ensure_worker(WorkerSpec(build_id=owner.build, host_epoch=0, session_id=info.session_id))
-    owner.vm.fail_stop = True
-    recovery = Recovery(build_id=owner.build, host_epoch=0, recovery_id="repair")
-    with pytest.raises(BackendError, match="vm_stop_unproven"):
-        await owner.recover(recovery)
-    assert (await owner.db.call(lambda db: db.execute("SELECT attempts FROM budgets").fetchone()))[0] == 4
-    owner.vm.fail_stop = False
-    await owner.recover(recovery)
-    assert (await owner.db.call(lambda db: db.execute("SELECT attempts FROM budgets").fetchone()))[0] == 0
-
-
 async def test_historical_lookup_by_replacement_never_replays(owner):
     info, reservation = await worker(owner)
     value = await call(owner, info)
@@ -530,64 +264,6 @@ async def test_sqlite_full_rolls_back_and_closes_admission(owner):
     assert error.value.code == "execution_storage_blocked"
     assert await owner.db.call(lambda db: db.execute("SELECT epoch FROM control").fetchone()[0]) == before
     assert owner.identity().state == "blocked"
-
-
-class Writer:
-    def __init__(self):
-        self.data = bytearray()
-        self.closed = False
-    def write(self, data):
-        self.data.extend(data)
-    async def drain(self):
-        pass
-    def close(self):
-        self.closed = True
-    async def wait_closed(self):
-        pass
-
-
-def frame(kind, data):
-    return bytes([kind, 0, 0, 0]) + len(data).to_bytes(4, "big") + data
-
-
-async def test_raw_hijack_demultiplexes_bounded_output_and_single_permit(monkeypatch, tmp_path):
-    reader, writer = asyncio.StreamReader(), Writer()
-    reader.feed_data(b"HTTP/1.1 101 UPGRADED\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n")
-    reader.feed_data(frame(1, b"x" * 70000) + frame(2, b"error"))
-    reader.feed_eof()
-    monkeypatch.setattr(asyncio, "open_unix_connection", AsyncMock(return_value=(reader, writer)))
-    channel = await GateChannel.attach(tmp_path / "unused.sock", "a" * 64)
-    await channel.permit("true", 501, 20)
-    with pytest.raises(BackendError, match="permit_already_sent"):
-        await channel.permit("false", 501, 20)
-    out, err, truncated = await channel.collect()
-    assert len(out) == 65536 and err == "error" and truncated
-    await channel.close()
-    assert writer.closed and b"/attach?stream=1" in writer.data
-
-
-async def test_partial_docker_frame_is_unknown():
-    reader, writer = asyncio.StreamReader(), Writer()
-    reader.feed_data(b"\x01\x00")
-    reader.feed_eof()
-    with pytest.raises(BackendError, match="docker_truncated_frame"):
-        await GateChannel(reader, writer).collect()
-
-
-async def test_vm_stop_retains_operation_lock_through_caller_commit(tmp_path):
-    vm = object.__new__(VM)
-    vm.home, vm.name, vm.vm_id = tmp_path, "execution", "owned"
-    vm.lima = tmp_path / "limactl"
-    vm.machine = AsyncMock(return_value=Machine(name="execution", status="Stopped", dir=str(tmp_path / "execution")))
-    vm.command = AsyncMock()
-    async with vm.stopped() as proof:
-        assert proof.vm_id == "owned"
-        with pytest.raises(BlockingIOError):
-            with lock(tmp_path / "operation.lock"):
-                pass
-    with lock(tmp_path / "operation.lock"):
-        pass
-    vm.command.assert_not_called()
 
 
 @pytest.mark.parametrize("contents", [None, b"", "version-zero"])
@@ -653,7 +329,6 @@ async def test_freeze_survives_restart_and_normal_shutdown_does_not_invent_updat
     finally:
         successor.monitor_task.cancel()
         await asyncio.gather(successor.monitor_task, return_exceptions=True)
-        await successor.vm.close()
         await successor.db.close()
         owner.db = ExecutionDB(owner.profile.path / "execution.sqlite")
 
@@ -664,105 +339,8 @@ async def test_readiness_cannot_hide_disconnected_registered_worker(owner):
     health = await owner.health()
     assert health.workers[0].worker_id == info.worker_id
     assert health.workers[0].state == "unknown"
-    assert health.blocked == ["worker_retirement_pending:" + info.worker_id]
-
-
-async def test_known_result_with_failed_cleanup_keeps_mutation_barrier(owner):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    owner.vm.fail_clean = True
-    with pytest.raises(BackendError):
-        await owner.run_tool(value)
-    assert (await owner._scope(value.call_id))["outcome"] == "completed"
-    other, _ = await worker(owner, "b" * 32)
-    second = await call(owner, other, "second")
-    with pytest.raises(BackendError, match="unknown_effect_conflict"):
-        await owner.run_tool(second)
-    owner.vm.fail_clean = False
-    assert (await owner.cleanup(info.session_id)).state == "clean"
-    assert (await owner.run_tool(second)).stdout == "captured"
-
-
-async def test_cancelled_epoch_cannot_late_release_next_generation(owner, monkeypatch):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    channel = FakeChannel()
-    channel.wait = asyncio.Event()
-    monkeypatch.setattr("amazme_backend.supervisor.GateChannel.attach", AsyncMock(return_value=channel))
-    task = asyncio.create_task(owner.run_tool(value))
-    await channel.collected.wait()
-    assert (await owner.cleanup(info.session_id)).state == "clean"
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    successor = await owner.open_epoch(request(info))
-    channel.wait.set()
-    assert (await owner._scope(value.call_id))["outcome"] == "unknown"
-    await owner.check_lease(successor)
-    assert await owner._write_conflict()
-
-
-async def test_lost_create_and_start_replies_force_owned_vm_reconciliation(owner, monkeypatch):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    real_request = owner.vm.request
-    def lost(request):
-        response = real_request(request)
-        if request.url.path.endswith("/start"):
-            raise httpx.ReadTimeout("accepted start, lost response")
-        return response
-    await owner.vm.http.aclose()
-    owner.vm.http = httpx.AsyncClient(transport=httpx.MockTransport(lost), base_url="http://docker")
-    with pytest.raises(httpx.ReadTimeout):
-        await owner.run_tool(value)
-    assert (await owner._scope(value.call_id))["phase"] == "starting"
-    assert not owner.fake_channels[0].permits
-    assert (await owner.cleanup(info.session_id)).proof_id == "stopped-proof"
-    assert owner.vm.stops == 1
-
-
-async def test_resource_fingerprint_change_stops_then_recreates_owned_vm(tmp_path):
-    vm = object.__new__(VM)
-    vm.home, vm.name, vm.vm_id = tmp_path, "execution", "owned"
-    vm.resources = tmp_path
-    vm.socket = tmp_path / "docker.sock"
-    vm.lima, vm.docker = tmp_path / "limactl", tmp_path / "docker"
-    vm.profile = SimpleNamespace(config=SimpleNamespace(workspace=str(tmp_path / "workspace")))
-    vm.resource_fingerprint, vm.image_id = "new-runtime", "sha256:image"
-    vm.manifest = SimpleNamespace(files={"base.img.gz": "digest"})
-    vm.verify_resources = AsyncMock()
-    vm.guest = AsyncMock(return_value="new-boot")
-    private_write(tmp_path / "resource-stamp.json", json.dumps({"fingerprint": "old-runtime", "vm_id": "owned"}))
-    current = Machine(name="execution", status="Running", dir=str(tmp_path / "execution"), hostAgentPID=1)
-    vm.machine = AsyncMock(side_effect=[current, current,
-        Machine(name="execution", status="Stopped", dir=str(tmp_path / "execution")), None])
-    commands = []
-    async def command(args, **kwargs):
-        commands.append(args[1])
-        assert kwargs["operation"].fileno() >= 0
-        with pytest.raises(BlockingIOError):
-            with lock(tmp_path / "operation.lock"):
-                pass
-        return ""
-    vm.command = command
-    vm.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={})),
-                                base_url="http://docker")
-    try:
-        assert await vm.start() == "new-boot"
-        assert commands == ["stop", "delete", "start"]
-        assert json.loads((tmp_path / "resource-stamp.json").read_text())["fingerprint"] == "new-runtime"
-    finally:
-        await vm.http.aclose()
-
-
-async def test_vm_operation_inode_replacement_is_not_adopted(tmp_path):
-    vm = object.__new__(VM)
-    vm.home, vm.vm_id = tmp_path, "owned"
-    async with vm.operation():
-        pass
-    (tmp_path / "operation.lock").rename(tmp_path / "old.lock")
-    with pytest.raises(BackendError, match="vm_operation_lease_replaced"):
-        async with vm.operation():
-            pytest.fail("replaced operation lock accepted")
+    assert health.session_errors[info.session_id] == ["worker_retirement_pending:" + info.worker_id]
+    assert not health.blocked
 
 
 async def test_validation_spawn_heartbeat_empty_epoch_and_stop_during_freeze(owner, monkeypatch):
@@ -915,130 +493,6 @@ async def test_retire_binds_auto_build_update_id_durably(owner):
     assert await owner.db.call(lambda db: db.execute("SELECT freeze FROM control").fetchone()[0]) == "auto-build"
 
 
-async def test_database_marker_precedes_vm_initialization_and_first_ack(profile, monkeypatch):
-    instances = []
-    def vm(profile):
-        assert (profile.path / "execution.initialized").read_text() == "2"
-        instance = FakeVM(profile)
-        instances.append(instance)
-        return instance
-    monkeypatch.setattr("amazme_backend.supervisor.VM", vm)
-    first = Supervisor(profile, "first")
-    await first.initialize()
-    await first.close()
-    (profile.path / "execution.sqlite").unlink()
-    second = Supervisor(profile, "second")
-    try:
-        with pytest.raises(BackendError, match="execution_store_missing"):
-            await second.initialize()
-        assert not (profile.path / "execution.sqlite").exists()
-        assert len(instances) == 1
-    finally:
-        await second.close()
-
-
-async def test_storage_ready_heartbeat_racing_epoch_open_is_monotonic(owner):
-    info, _ = await worker(owner)
-    async def start():
-        await owner.heartbeat(request(info).model_copy(update={"storage_ready": True}))
-        owner.boot = "boot-one"
-    owner._start_vm = start
-    await owner.open_epoch(request(info))
-    assert (await owner._worker(info.worker_id)).storage_ready
-
-
-async def test_wrong_vm_stop_proof_cannot_clean_historical_resources(owner):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    async def crash(point, **_):
-        if point == "create_intent":
-            raise RuntimeError()
-    owner.faults.hit = crash
-    with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
-    owner.faults.hit = AsyncMock()
-    @contextlib.asynccontextmanager
-    async def wrong_proof():
-        yield VMStopProof(vm_id="unrelated-vm", receipt_id="false", instance_dir="unrelated")
-    owner.vm.stopped = wrong_proof
-    result = await owner.cleanup(info.session_id)
-    assert result.state == "blocked" and result.reason == "vm_proof_identity_mismatch"
-    assert not (await owner._scope(value.call_id))["clean"]
-
-
-async def test_vm_owner_loss_cannot_replace_original_locator(tmp_path, monkeypatch):
-    short_home = tempfile.TemporaryDirectory(prefix="am", dir="/tmp")
-    home, resources, profile_dir = Path(short_home.name), tmp_path / "resources", tmp_path / "profile"
-    resources.mkdir()
-    profile_dir.mkdir()
-    (resources / "manifest.json").write_text(json.dumps({"format": 1, "lima_version": "test",
-        "lima_lease_protocol": "amazme-mutation-startup/1",
-        "container_image": "python@sha256:test", "files": {}}))
-    monkeypatch.setattr(Path, "home", lambda: home)
-    monkeypatch.setattr("amazme_backend.vm.resource_root", lambda: resources)
-    profile = SimpleNamespace(path=profile_dir, config=SimpleNamespace(profile_id="profile"))
-    first = VM(profile)
-    try:
-        locator = (profile_dir / "vm.json").read_bytes()
-        (first.home / "owner.json").unlink()
-        with pytest.raises(BackendError, match="vm_owner_missing"):
-            VM(profile)
-        assert (profile_dir / "vm.json").read_bytes() == locator
-    finally:
-        await first.close()
-        short_home.cleanup()
-
-
-async def test_channel_rejects_oversized_permit_before_writing():
-    reader, writer = asyncio.StreamReader(), Writer()
-    channel = GateChannel(reader, writer)
-    with pytest.raises(BackendError, match="permit_too_large"):
-        await channel.permit("界" * 65536, 501, 20)
-    assert not writer.data and not channel.sent
-
-
-@pytest.mark.parametrize("payload", [b"{}\n", b"[]\n", b"x" * 262145,
-    b'{"command":"true","uid":501,"gid":20}\nextra',
-    b'{"command":"true","uid":true,"gid":20}\n'])
-def test_gate_rejects_invalid_permit_before_fork(payload, monkeypatch):
-    from amazme_backend import gate
-    chunks = [payload, b""]
-    monkeypatch.setattr(gate.os, "read", lambda *_: chunks.pop(0))
-    monkeypatch.setattr(gate.os, "fork", lambda: pytest.fail("invalid permit forked"))
-    assert gate.main() == 125
-
-
-@pytest.mark.parametrize("point", ["create_intent", "create_accepted", "created", "registered", "start_accepted",
-                                  "started", "before_permit", "permit_sent", "permitted", "result", "cleanup_proven"])
-async def test_double_death_recovers_every_persisted_window(owner, point):
-    info, reservation = await worker(owner)
-    value = await call(owner, info)
-    async def crash(here, **_):
-        if here == point:
-            raise RuntimeError("lost ACK")
-    owner.faults.hit = crash
-    with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
-    reservation.close()
-    await owner.db.close()
-    successor = Supervisor(owner.profile, "supervisor-two")
-    try:
-        await successor.initialize()
-        stored = await successor._scope(value.call_id)
-        assert stored["clean"]
-        assert stored["outcome"] == ("completed" if point in {"result", "cleanup_proven"} else "unknown")
-        if stored["result"]:
-            assert ToolResult.model_validate_json(stored["result"]).stdout == "captured"
-        health = await successor.health()
-        assert health.workers[0].state == "stopped"
-        assert all(e.state == "clean" and e.cleanup.proof_id for e in health.epochs)
-        assert successor.vm.stops == 1 and successor.vm.starts == 0
-        assert not successor.vm.containers
-    finally:
-        await successor.close()
-        owner.db = ExecutionDB(owner.profile.path / "execution.sqlite", require_existing=True)
-
-
 async def test_lost_worker_stop_ack_still_requires_lease_exit(owner):
     info, reservation = await worker(owner)
     async def peer(current, _method, path, body):
@@ -1082,114 +536,6 @@ async def test_birth_reservations_count_toward_capacity(owner, monkeypatch):
     spawn.assert_not_called()
 
 
-async def test_vm_stop_lost_ack_is_not_proof_until_retry(tmp_path):
-    vm = object.__new__(VM)
-    vm.home, vm.name, vm.vm_id = tmp_path, "execution", "owned"
-    vm.lima = tmp_path / "limactl"
-    current = Machine(name="execution", status="Running", dir=str(tmp_path / "execution"), hostAgentPID=1)
-    async def machine():
-        return current
-    vm.machine = machine
-    async def stop_command(*_args, **_kwargs):
-        current.status, current.hostAgentPID = "Stopped", 0
-        raise TimeoutError("stop reply lost")
-    vm.command = stop_command
-    with pytest.raises(TimeoutError):
-        await vm.stop()
-    assert not (tmp_path / "last-stop.json").exists()
-    assert (await vm.stop()).vm_id == "owned"
-    assert (tmp_path / "last-stop.json").exists()
-
-
-async def test_lima_absent_vm_first_start_and_delete_use_unfiltered_inventory(tmp_path):
-    vm = object.__new__(VM)
-    vm.home, vm.name, vm.vm_id = tmp_path, "execution", "owned"
-    vm.resources, vm.socket = tmp_path, tmp_path / "docker.sock"
-    vm.lima, vm.docker = tmp_path / "limactl", tmp_path / "docker"
-    vm.profile = SimpleNamespace(config=SimpleNamespace(workspace=str(tmp_path / "workspace")))
-    vm.resource_fingerprint, vm.image_id = "runtime", "sha256:image"
-    vm.manifest = SimpleNamespace(files={"base.img.gz": "digest"})
-    vm.verify_resources = AsyncMock()
-    vm.guest = AsyncMock(return_value="boot")
-    commands = []
-    async def command(args, **_kwargs):
-        commands.append(args[1:])
-        if args[1:] == ["list", "--json"]:
-            return ""
-        if args[1:2] == ["list"] or args[1:2] == ["delete"]:
-            raise BackendError("vm_command_failed", "No instance matching execution found. unmatched instances", 503)
-        assert args[1] == "start"
-        return ""
-    vm.command = command
-    vm.http = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(200, json={})),
-                                base_url="http://docker")
-    try:
-        assert await vm.start() == "boot"
-        assert any(args[0] == "start" for args in commands)
-        assert (await vm.stop()).state == "Absent"
-        assert (await vm.delete()).state == "Absent"
-        assert (await vm.delete()).state == "Absent"
-        assert not any(args[0] == "delete" for args in commands)
-    finally:
-        await vm.close()
-
-
-@pytest.mark.parametrize("scenario", ["exact", "absent", "wrong-dir", "duplicate", "command-error"])
-async def test_lima_json_lines_match_only_exact_owned_instance(tmp_path, scenario):
-    vm = object.__new__(VM)
-    vm.home, vm.name, vm.lima = tmp_path, "execution", tmp_path / "limactl"
-    exact = Machine(name="execution", status="Stopped", dir=str(tmp_path / "execution"))
-    nearby = exact.model_copy(update={"name": "execution-old", "dir": str(tmp_path / "execution-old")})
-    entries = [nearby, exact]
-    if scenario == "absent":
-        entries = [nearby]
-    elif scenario == "wrong-dir":
-        entries = [exact.model_copy(update={"dir": str(tmp_path / "unrelated")})]
-    elif scenario == "duplicate":
-        entries.append(exact)
-    async def command(args, **_kwargs):
-        assert args == [str(vm.lima), "list", "--json"]
-        if scenario == "command-error":
-            raise BackendError("vm_command_failed", "unmatched instances", 503)
-        return "\n".join(entry.model_dump_json() for entry in entries) + "\n"
-    vm.command = command
-    if scenario == "command-error":
-        with pytest.raises(BackendError, match="unmatched instances"):
-            await vm.machine()
-    elif scenario in {"wrong-dir", "duplicate"}:
-        with pytest.raises(BackendError, match="vm_identity_mismatch"):
-            await vm.machine()
-    else:
-        assert await vm.machine() == (exact if scenario == "exact" else None)
-
-
-async def test_boot_change_blocks_new_permits_before_any_user_effect(owner):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    owner.vm.boot = "different-boot"
-    with pytest.raises(BackendError, match="vm_boot_changed"):
-        await owner.run_tool(value)
-    assert not owner.vm.containers and not owner.fake_channels
-    assert owner.identity().state == "blocked"
-    owner.vm.fail_stop = True
-    assert (await owner.cleanup(info.session_id)).state == "clean"  # Empty epoch has no runtime requests.
-    with pytest.raises(BackendError) as error:
-        await owner.open_epoch(request(info))
-    assert error.value.code == "execution_blocked"
-
-
-async def test_boot_change_between_registration_and_permit_never_releases_gate(owner):
-    info, _ = await worker(owner)
-    value = await call(owner, info)
-    async def reboot(point, **_):
-        if point == "before_permit":
-            owner.vm.boot = "different-boot"
-    owner.faults.hit = reboot
-    with pytest.raises(BackendError, match="vm_boot_changed"):
-        await owner.run_tool(value)
-    assert not owner.fake_channels[0].permits
-
-
 async def test_full_health_remains_readable_after_write_storage_failure(owner):
     info, _ = await worker(owner)
     owner.db.failed = "SQLITE_FULL"
@@ -1220,7 +566,8 @@ async def test_full_health_keeps_mismatched_registered_peer_visible(owner):
     owner._peer_identity = mismatch
     health = await owner.health()
     assert health.workers[0].worker_id == info.worker_id and health.workers[0].state == "unknown"
-    assert health.blocked == ["worker_retirement_pending:" + info.worker_id]
+    assert health.session_errors[info.session_id] == ["worker_retirement_pending:" + info.worker_id]
+    assert not health.blocked
 
 
 async def test_validation_worker_cannot_resolve_business_effects(owner):
@@ -1243,150 +590,6 @@ async def test_validation_worker_cannot_resolve_business_effects(owner):
     assert not (await owner._holds())[0].reconciled
 
 
-@pytest.fixture
-def protocol_vm(tmp_path, monkeypatch):
-    vm = object.__new__(VM)
-    vm.home, vm.name, vm.vm_id = tmp_path, "execution", "owned"
-    vm.resources = tmp_path / "resources"
-    vm.lima = vm.resources / "lima/bin/limactl"
-    vm.lima.parent.mkdir(parents=True)
-    vm.lima.write_bytes(b"pinned-test-lima")
-    vm.manifest = ResourceManifest(format=1, lima_version="2.2.1", container_image="python@sha256:test",
-        lima_lease_protocol="amazme-mutation-startup/1",
-        files={"lima/bin/limactl": hashlib.sha256(vm.lima.read_bytes()).hexdigest()})
-    vm._lease_protocol_verified = False
-    vm.profile = SimpleNamespace(path=tmp_path)
-    vm.env = {"LIMA_HOME": str(tmp_path), "AMAZME_MUTATION_LEASE_FD": "9999",
-              "AMAZME_STARTUP_LEASE_FD": "8888", "AMAZME_LEASE_PROTOCOL_PROBE": "1"}
-    calls = []
-    vm.probe_output = b"amazme-mutation-startup/1\n"
-    vm.probe_exit = 0
-    async def spawn(*args, **kwargs):
-        calls.append((args, kwargs))
-        probe = kwargs["env"].get("AMAZME_LEASE_PROTOCOL_PROBE") == "1"
-        if not probe and kwargs["pass_fds"]:
-            assert kwargs["env"]["AMAZME_MUTATION_LEASE_FD"] == str(kwargs["pass_fds"][0])
-            with pytest.raises(BlockingIOError):
-                with lock(tmp_path / "operation.lock"):
-                    pass
-        return SimpleNamespace(returncode=vm.probe_exit if probe else 0,
-                               communicate=AsyncMock(return_value=(vm.probe_output if probe else b"ok\n",
-                                                                   b"unpatched" if vm.probe_exit else b"")))
-    monkeypatch.setattr("amazme_backend.vm.asyncio.create_subprocess_exec", spawn)
-    return vm, calls
-
-
-@pytest.mark.parametrize("protocol", [None, "amazme-fd-cloexec/1", "amazme-mutation-startup/2"])
-def test_manifest_requires_exact_startup_lease_protocol(protocol):
-    data = {"format": 1, "lima_version": "2.2.1", "container_image": "python@sha256:test", "files": {}}
-    if protocol is not None:
-        data["lima_lease_protocol"] = protocol
-    with pytest.raises(ValidationError):
-        ResourceManifest.model_validate(data)
-
-
-async def test_vm_command_scrubs_ambient_protocol_and_only_passes_owned_lease(protocol_vm):
-    vm, calls = protocol_vm
-    original_env = dict(vm.env)
-    assert await vm.command([str(vm.lima), "list", "--json"]) == "ok"
-    _, read = calls.pop()
-    assert not read["pass_fds"]
-    assert read["env"] == {"LIMA_HOME": str(vm.home)}
-    assert await vm.command([str(vm.lima), "stop", "--tty=false", vm.name]) == "ok"
-    (_, probe), (_, mutation) = calls
-    assert probe["env"] == {"LIMA_HOME": str(vm.home), "AMAZME_LEASE_PROTOCOL_PROBE": "1"}
-    assert probe["pass_fds"] == ()
-    assert mutation["env"] == {"LIMA_HOME": str(vm.home),
-                               "AMAZME_MUTATION_LEASE_FD": str(mutation["pass_fds"][0])}
-    assert vm._lease_protocol_verified and vm.env == original_env
-    with lock(vm.home / "operation.lock"):
-        pass
-
-
-@pytest.mark.parametrize("reply", [b"", b"limactl version 2.2.1\n", b"amazme-fd-cloexec/1\n",
-                                    b"amazme-mutation-startup/1\nextra\n"])
-async def test_unpatched_or_wrong_protocol_never_reaches_mutator(protocol_vm, reply):
-    vm, calls = protocol_vm
-    vm.probe_output = reply
-    with pytest.raises(BackendError, match="lima_lease_protocol_mismatch"):
-        await vm.command([str(vm.lima), "stop", "--tty=false", vm.name])
-    assert len(calls) == 1 and calls[0][0] == (str(vm.lima), "--version")
-    assert not vm._lease_protocol_verified
-
-
-async def test_protocol_probe_exit_error_is_not_accepted(protocol_vm):
-    vm, calls = protocol_vm
-    vm.probe_exit = 1
-    with pytest.raises(BackendError) as error:
-        await vm.command([str(vm.lima), "delete", "--force", vm.name])
-    assert error.value.code == "vm_command_failed"
-    assert len(calls) == 1 and not vm._lease_protocol_verified
-
-
-async def test_protocol_probe_runs_only_after_digest_verification(protocol_vm):
-    vm, calls = protocol_vm
-    vm.lima.write_bytes(b"replaced-binary")
-    with pytest.raises(BackendError) as error:
-        await vm.command([str(vm.lima), "start", vm.name])
-    assert error.value.code == "runtime_resource_mismatch"
-    assert calls == [] and not vm._lease_protocol_verified
-
-
-@pytest.fixture
-def vm_path_profile(tmp_path, monkeypatch):
-    resources, profile_dir = tmp_path / "resources", tmp_path / "profile"
-    resources.mkdir()
-    profile_dir.mkdir()
-    (resources / "manifest.json").write_text(json.dumps({"format": 1, "lima_version": "2.2.1",
-        "lima_lease_protocol": "amazme-mutation-startup/1",
-        "container_image": "python@sha256:test", "files": {}}))
-    monkeypatch.setattr("amazme_backend.vm.resource_root", lambda: resources)
-    return SimpleNamespace(path=profile_dir, config=SimpleNamespace(profile_id="path-budget"))
-
-
-async def test_vm_persistent_home_uses_short_owned_profile_directory(vm_path_profile, monkeypatch):
-    with tempfile.TemporaryDirectory(prefix="am2-", dir="/private/tmp") as root:
-        home = Path(root) / "h"
-        home.mkdir()
-        monkeypatch.setattr(Path, "home", lambda: home)
-        vm = VM(vm_path_profile)
-        try:
-            expected = home / ".amazme-vm" / hashlib.sha256(str(vm_path_profile.path).encode()).hexdigest()[:24]
-            assert vm.home == expected
-            assert json.loads((vm_path_profile.path / "vm.json").read_text())["home"] == str(expected)
-            assert json.loads((expected / "owner.json").read_text())["profile_id"] == "path-budget"
-            assert len(os.fsencode(expected / "execution/ssh.sock.1234567890123456")) < 104
-        finally:
-            await vm.close()
-
-
-@pytest.mark.parametrize("total,unicode_home", [(103, False), (104, False), (111, False), (104, True)])
-async def test_vm_checks_longest_ssh_socket_byte_budget_before_writes(vm_path_profile, monkeypatch,
-                                                                     total, unicode_home):
-    with tempfile.TemporaryDirectory(prefix="am", dir="/tmp") as root:
-        tail = Path(".amazme-vm") / ("a" * 24) / "execution/ssh.sock.1234567890123456"
-        home_bytes = total - len(os.fsencode(tail)) - 1
-        leaf_bytes = home_bytes - len(os.fsencode(root)) - 1
-        leaf = "界" + "h" * (leaf_bytes - 3) if unicode_home else "h" * leaf_bytes
-        home = Path(root) / leaf
-        home.mkdir()
-        monkeypatch.setattr(Path, "home", lambda: home)
-        if total < 104:
-            vm = VM(vm_path_profile)
-            try:
-                assert len(os.fsencode(vm.home / "execution/ssh.sock.1234567890123456")) == total
-            finally:
-                await vm.close()
-        else:
-            with pytest.raises(BackendError) as error:
-                VM(vm_path_profile)
-            assert error.value.code == "vm_socket_path_too_long"
-            assert "ssh.sock.1234567890123456" in error.value.message
-            assert f"{total} bytes" in error.value.message and "< 104" in error.value.message
-            assert not (home / ".amazme-vm").exists()
-            assert not (vm_path_profile.path / "vm.json").exists()
-
-
 async def test_shutdown_releases_control_before_waiting_for_a_worker(owner, monkeypatch):
     info, reservation = await worker(owner)
     observed: list[bool] = []
@@ -1407,3 +610,66 @@ async def test_shutdown_releases_control_before_waiting_for_a_worker(owner, monk
     result = await owner.shutdown(HostFence(build_id=owner.build, host_epoch=owner.host_epoch))
     assert observed and observed[0] is False
     assert result.role == "supervisor" and result.state != "blocked"
+
+
+
+@pytest.mark.parametrize("point", ["create_intent", "registered", "before_permit", "permit_sent", "permitted", "result", "cleanup_proven"])
+async def test_native_fault_windows_preserve_call_identity_and_never_repeat(owner, point):
+    info, _ = await worker(owner)
+    value = await call(owner, info, identity="native-window")
+    value.command = "printf x >> once.txt"
+    once = owner.profile.path / "once.txt"
+
+    async def fail(here, **_):
+        if here == point:
+            raise RuntimeError("injected " + point)
+
+    owner.faults.hit = fail
+    with pytest.raises(RuntimeError, match="injected"):
+        await owner.run_tool(value)
+    content = once.read_text() if once.exists() else ""
+    if point in {"create_intent", "registered", "before_permit"}:
+        assert content == ""
+    assert content in {"", "x"}
+
+    async def no_fault(*_, **__):
+        return None
+
+    owner.faults.hit = no_fault
+    observed = await owner.lookup_tool(ToolLookup(**request(info).model_dump(), call_id=value.call_id))
+    if observed.state == "completed":
+        assert (await owner.run_tool(value)).stdout == observed.result.stdout
+    else:
+        with pytest.raises(BackendError, match="tool_outcome_unknown"):
+            await owner.run_tool(value)
+    proof = await owner.cleanup(info.session_id)
+    assert proof.state == "clean" and proof.observation == "registered_processes"
+    assert (once.read_text() if once.exists() else "") == content
+
+
+async def test_native_unknown_effect_is_scoped_and_readonly_diagnostics_remain_available(owner):
+    first, _ = await worker(owner)
+    second, _ = await worker(owner, session="b" * 32)
+    value = await call(owner, first, identity="first")
+
+    async def fail(point, **_):
+        if point == "registered":
+            raise RuntimeError("lost permit reply")
+
+    owner.faults.hit = fail
+    with pytest.raises(RuntimeError):
+        await owner.run_tool(value)
+
+    async def no_fault(*_, **__):
+        return None
+
+    owner.faults.hit = no_fault
+    await owner.cleanup(first.session_id)
+    blocked = await call(owner, first, identity="blocked")
+    with pytest.raises(BackendError, match="unknown_effect_conflict"):
+        await owner.run_tool(blocked)
+    other = await call(owner, second, identity="other")
+    assert (await owner.run_tool(other)).stdout == "ok\n"
+    diagnostic = await call(owner, first, identity="diagnostic", effect="read")
+    assert (await owner.run_tool(diagnostic)).stdout == "ok\n"
+    assert (await owner.lookup_tool(ToolLookup(**request(first).model_dump(), call_id="first"))).state == "unknown"

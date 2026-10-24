@@ -79,7 +79,7 @@ class Driver:
         elif isinstance(action, CloseEpoch):
             await self.store.advance(EpochClosed(action.request_id, action.lease, Cleanup(
                 session_id=self.store.session_id, execution_epoch=action.lease.execution_epoch,
-                state="clean", containers=[], proof_id="proof")))
+                state="clean", resources=[], proof_id="proof")))
         else:
             pytest.fail(f"unexpected action {type(action).__name__}")
 
@@ -171,7 +171,7 @@ async def test_branch_keeps_parent_history_and_drops_later_turns(owner: Host) ->
             assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM effects").fetchone()[0]) == 0
             assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM approvals").fetchone()[0]) == 0
             await child.recover(initial_cleanup=Cleanup(
-                session_id=created.session_id, execution_epoch=1, state="clean", containers=[], proof_id="proof"))
+                session_id=created.session_id, execution_epoch=1, state="clean", resources=[], proof_id="proof"))
             assert (await Driver(child).drain()).reason == "idle"
             await child.accept(Submit(request_id="gamma", text="gamma"), fence_for(owner.build))
             action = await Driver(child).until(ModelInvocation)

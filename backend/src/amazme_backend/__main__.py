@@ -5,7 +5,6 @@ import os
 import secrets
 import sys
 import time
-from contextlib import ExitStack
 from pathlib import Path
 
 import httpx
@@ -16,6 +15,16 @@ from .processes import retain_inherited
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "execute":
+        from .native_execution import runner
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--profile", type=Path, required=True)
+        parser.add_argument("--instance", required=True)
+        parser.add_argument("--lifetime-fd", type=int, required=True)
+        parser.add_argument("--directory", type=Path, required=True)
+        arguments = parser.parse_args(sys.argv[2:])
+        runner(arguments.profile, arguments.instance, arguments.lifetime_fd, arguments.directory)
+        return
     if len(sys.argv) > 1 and sys.argv[1] == "client":
         from .client_cmd import run_client
         raise SystemExit(run_client(sys.argv[2:]))
@@ -23,7 +32,7 @@ def main() -> None:
         from .tui import run_tui
         raise SystemExit(run_tui(sys.argv[2:]))
     parser = argparse.ArgumentParser(prog="amazme-backend")
-    parser.add_argument("mode", choices=["init", "serve", "worker", "supervisor", "stop", "pair", "destroy-vm"])
+    parser.add_argument("mode", choices=["init", "serve", "worker", "supervisor", "stop", "pair"])
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--workspace", type=Path)
     parser.add_argument("--provider-config", type=Path)
@@ -90,19 +99,6 @@ def main() -> None:
                     raise TimeoutError("shutdown still pending") from None
                 time.sleep(0.1)
         print("services stopped")
-    else:
-        from .vm import VM
-        async def destroy() -> None:
-            vm = VM(profile)
-            try:
-                await vm.delete()
-            finally:
-                await vm.close()
-        with ExitStack() as locks:
-            for path in [profile.path / "host.lock", profile.path / "supervisor.lock",
-                         *sorted((profile.path / "sessions").glob("*/writer.lock"))]:
-                locks.enter_context(lock(path))
-            asyncio.run(destroy())
 
 
 if __name__ == "__main__":

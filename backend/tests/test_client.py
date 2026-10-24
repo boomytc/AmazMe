@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from typing import cast
 
+from runtime_cleanup import stop_and_destroy
+
 from amazme_backend.contracts import BackendError
 from amazme_backend.sdk import Client
 
@@ -73,15 +75,16 @@ def _ready(proc: subprocess.Popen[bytes], deadline: float) -> dict[str, object]:
 
 
 def _stop(proc: subprocess.Popen[bytes], profile: Path) -> None:
-    subprocess.run([sys.executable, "-m", "amazme_backend", "stop", "--profile", str(profile)],
-                   check=False, capture_output=True, text=True, timeout=40)
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=10)
-    if proc.stdout is not None:
-        proc.stdout.close()
+        stop_and_destroy([sys.executable, "-m", "amazme_backend"], profile)
+    finally:
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def _cli(url: str, token: str, *args: str) -> subprocess.CompletedProcess[str]:

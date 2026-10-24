@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 
 from .contracts import BackendError, MemoryView, Message
-from .workspace_map import guest_path
+from .workspace_map import validate_workspace
 
 LIMIT = 5
 
@@ -83,5 +83,5 @@ def remember(workspace: str, text: str) -> str:
     if not cleaned or len(cleaned) > 500 or "\x00" in cleaned:
         raise BackendError("memory_rejected")
     if workspace != "primary":
-        guest_path(workspace)
+        validate_workspace(workspace)
     return digest(workspace, cleaned)

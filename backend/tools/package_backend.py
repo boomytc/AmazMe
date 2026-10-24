@@ -1,4 +1,4 @@
-"""Build an immutable onedir with its interpreter, VM manager, engine image and Web client."""
+"""Build an immutable onedir with its interpreter, required helpers and Web client."""
 
 import argparse
 import hashlib
@@ -16,8 +16,6 @@ REPO = ROOT.parent
 OFFICIAL_NODE = Path.home() / "Library/Caches/amazme-release/node-v22.23.3-darwin-arm64/bin/node"
 REQUIRED_IDENTITY = (
     "runtime/node/bin/node",
-    "runtime/docker",
-    "runtime/lima/bin/limactl",
     "codemode_helper.mjs",
     "plugin_gate.py",
     "quickjs-wasi/quickjs.wasm",
@@ -62,10 +60,27 @@ def install_codemode_runtime(bundle: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output-root", type=Path, default=ROOT.parent / ".artifacts/python-backend-p2")
+    parser.add_argument("--output-root", type=Path, default=ROOT.parent / ".artifacts/native")
     args = parser.parse_args()
     parent = args.output_root.resolve()
     parent.mkdir(parents=True, exist_ok=True)
+    from resource_budget import ResourceBudget, require_budget
+
+    from amazme_backend.common import lock
+
+    official_node()  # Fail before allocating a build tree when the required helper is absent.
+    lock_path = REPO / ".artifacts/native-package.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock(lock_path):
+        existing = {p.resolve() for root in {REPO / ".artifacts", parent} for p in root.rglob("package-*") if p.is_dir()}
+        if len(existing) >= 2:
+            raise SystemExit("Two package directories already exist; review them before creating another")
+        require_budget([REPO / ".artifacts", parent], reserve_bytes=1024**3)
+        with ResourceBudget([REPO / ".artifacts", parent], deadline_seconds=600):
+            build_once(parent)
+
+
+def build_once(parent: Path) -> None:
     output = Path(tempfile.mkdtemp(prefix="package-", dir=parent))
     entry = output / "entrypoint.py"
     entry.write_text("from amazme_backend.__main__ import main\nmain()\n")
@@ -78,7 +93,7 @@ def main() -> None:
             *[
                 item
                 for name in (
-                    "gate.py", "pty_gate.py", "mcp_gate.py", "plugin_gate.py",
+                    "pty_gate.py", "mcp_gate.py", "plugin_gate.py",
                     "computer_driver.py", "remote_daemon.py", "codemode_helper.mjs",
                 )
                 for item in ("--add-data", f"{ROOT / 'src/amazme_backend' / name}:amazme_backend")
@@ -87,7 +102,7 @@ def main() -> None:
         ], check=True, stdout=log, stderr=subprocess.STDOUT, timeout=300)
     bundle = output / "AmazMe Python 0.1.0"
     shutil.move(output / "dist/amazme-backend", bundle)
-    shutil.copytree(ROOT / "resources", bundle / "runtime")
+    (bundle / "runtime").mkdir()
     install_codemode_runtime(bundle)
     fingerprints = {}
     for path in sorted(bundle.rglob("*")):
@@ -101,6 +116,7 @@ def main() -> None:
     manifest["build_id"] = hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest()
     (bundle / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
     subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(bundle / "amazme-backend")], check=True)
+    shutil.rmtree(output / "build")  # Only this invocation owns the PyInstaller scratch tree.
     (parent / "latest-bundle").write_text(str(bundle))
     print(json.dumps({"bundle": str(bundle), "build_id": manifest["build_id"], "files": len(fingerprints),
                       "bytes": sum(p.stat().st_size for p in bundle.rglob("*") if p.is_file()),

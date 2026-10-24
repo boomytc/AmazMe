@@ -84,7 +84,7 @@ class Driver:
         elif isinstance(action, CloseEpoch):
             await self.store.advance(EpochClosed(action.request_id, action.lease, Cleanup(
                 session_id=self.store.session_id, execution_epoch=action.lease.execution_epoch,
-                state="clean", containers=[], proof_id="proof")))
+                state="clean", resources=[], proof_id="proof")))
         else:
             pytest.fail(f"unexpected action {type(action).__name__}")
 

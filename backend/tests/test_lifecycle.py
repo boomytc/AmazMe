@@ -333,7 +333,9 @@ class UpdateRuntime:
         from amazme_backend.contracts import SupervisorHealth
         return SupervisorHealth(identity=self.identity(), registry_revision=str(self.revision), freeze_id=self.freeze_id,
                                 workers=[w.model_copy(deep=True) for w in self.workers.values()], epochs=self.epochs,
-                                vm_id="vm", boot_id="boot", blocked=self.blocked)
+                                blocked=[v for v in self.blocked if not v.startswith("worker_restart_budget_exhausted:")],
+                                session_errors={v.split(":", 1)[1]: ["worker_restart_budget_exhausted"]
+                                                for v in self.blocked if v.startswith("worker_restart_budget_exhausted:")})
 
     async def await_service(self, service):
         assert self.service.instance_id == service.instance_id
@@ -363,7 +365,7 @@ class UpdateRuntime:
             info.execution_epoch = 1 + max((e.execution_epoch for e in self.epochs if e.session_id == session), default=0)
             self.epochs.append(EpochHealth(session_id=session, worker_id=identity, execution_epoch=info.execution_epoch,
                 state="clean", cleanup=Cleanup(session_id=session, execution_epoch=info.execution_epoch,
-                state="clean", containers=[], proof_id="probe-" + identity, vm_id="vm")))
+                state="clean", resources=[], proof_id="probe-" + identity)))
         self.workers[identity] = info
         if state != "stopped":
             self.alive.add(identity)
@@ -418,7 +420,7 @@ class UpdateRuntime:
             self.alive.discard(worker.worker_id)
             self.revision += 1
             return Cleanup(session_id=worker.session_id, execution_epoch=worker.execution_epoch,
-                           state="clean", proof_id="proof", containers=[])
+                           state="clean", proof_id="proof", resources=[])
         if path == "/retire":
             self.epoch = body.host_epoch
             self.freeze_id = body.freeze_id
@@ -710,7 +712,7 @@ async def test_validation_cancel_work_settles_started_run_only_after_cleanup_pro
             return Lease(session_id=session, worker_id="validation", execution_epoch=1,
                          supervisor_id="sup", build_id=owner.build)
         assert path == "/epochs/close"
-        return Cleanup(session_id=session, execution_epoch=value.execution_epoch, state="clean", containers=[], proof_id="verified")
+        return Cleanup(session_id=session, execution_epoch=value.execution_epoch, state="clean", resources=[], proof_id="verified")
     worker.supervisor.call.side_effect = private_call
     try:
         await worker.initialize()
@@ -840,7 +842,7 @@ async def test_shutdown_waits_for_inflight_service_registration(owner, runtime):
         await asyncio.gather(ensure, closing, return_exceptions=True)
 
 
-@pytest.mark.parametrize("defect", ["missing", "foreign_vm", "nonempty"])
+@pytest.mark.parametrize("defect", ["missing", "foreign_session", "nonempty"])
 async def test_update_never_activates_without_exact_empty_probe_receipt(owner, runtime, defect):
     await runtime.install(owner.build)
     record = await owner.store.begin_update(PrepareUpdate(update_id="probe", target_build=owner.build), "b" * 64)
@@ -854,10 +856,10 @@ async def test_update_never_activates_without_exact_empty_probe_receipt(owner, r
         else:
             for epoch in value.epochs:
                 if epoch.worker_id in validation:
-                    if defect == "foreign_vm":
-                        epoch.cleanup.vm_id = "another-vm"
+                    if defect == "foreign_session":
+                        epoch.cleanup.session_id = "another-session"
                     else:
-                        epoch.cleanup.containers = ["unexpected-user-scope"]
+                        epoch.cleanup.resources = ["unexpected-user-scope"]
         return value
 
     runtime.health = damaged_health
@@ -865,3 +867,12 @@ async def test_update_never_activates_without_exact_empty_probe_receipt(owner, r
         await owner.complete_update(CompleteUpdate(update_id=record.update_id, expected_revision=record.revision))
     assert not (await owner.store.active_update()).activated
     assert not any(path == "/thaw" for _, path in runtime.calls)
+
+
+async def test_one_session_budget_does_not_block_profile_health(owner, runtime):
+    await runtime.install(owner.build)
+    owner.attached = runtime.service.instance_id
+    runtime.blocked = ["worker_restart_budget_exhausted:" + "a" * 32]
+    health = await owner.health()
+    assert health.state == "ready" and health.errors == []
+    assert health.supervisor.session_errors["a" * 32] == ["worker_restart_budget_exhausted"]

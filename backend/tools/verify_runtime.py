@@ -1,4 +1,4 @@
-"""Run real Host/worker/supervisor/VM recovery checks in a new owned profile."""
+"""Run real native Host/worker/supervisor recovery checks in a new owned profile."""
 
 import json
 import select
@@ -42,7 +42,7 @@ class Runtime:
     def start(self):
         self.process = subprocess.Popen([*self.command, "serve", "--profile", str(self.profile)], env=self.env,
                                         stdout=subprocess.PIPE, stderr=self.log, text=True)
-        if not select.select([self.process.stdout], [], [], 260)[0]:
+        if not select.select([self.process.stdout], [], [], 30)[0]:
             raise TimeoutError("Host startup timeout")
         line = self.process.stdout.readline()
         if not line:
@@ -100,9 +100,6 @@ class Runtime:
             row = db.execute("SELECT state,receipt FROM epochs WHERE session=? ORDER BY epoch DESC LIMIT 1", (session,)).fetchone()
             return json.loads(row[1]) if row and row[0] == "clean" else None
 
-    def vm_socket(self):
-        return Path(json.loads((self.profile / "vm.json").read_text())["home"]) / "execution/sock/docker.sock"
-
     def stop(self):
         if self.process and self.process.poll() is None:
             if self.client is not None:
@@ -111,7 +108,7 @@ class Runtime:
                 r.raise_for_status()
             else:
                 self.process.send_signal(signal.SIGINT)
-            self.process.wait(timeout=180)
+            self.process.wait(timeout=30)
             if self.client is not None:
                 assert self.process.returncode == 0
         if self.client is not None:
@@ -121,11 +118,10 @@ class Runtime:
     def close(self):
         try:
             self.stop()
-            result = until(lambda: subprocess.run([*self.command, "destroy-vm", "--profile", str(self.profile)], env=self.env,
-                                                   capture_output=True, text=True, timeout=90),
-                           lambda r: "BlockingIOError" not in r.stderr, timeout=30)
-            if result.returncode:
-                raise RuntimeError(result.stderr[-1500:])
+            from amazme_backend.contracts import ProcessLease
+            from amazme_backend.processes import exited
+            for path in (self.profile / "processes").glob("*.lock"):
+                assert exited(ProcessLease.model_validate_json(path.read_bytes())), path.name
         finally:
             self.log.close()
             config = self.profile / "config.json"

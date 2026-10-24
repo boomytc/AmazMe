@@ -75,9 +75,6 @@ def build_id() -> str:
     for path in source_identity_files():
         h.update(str(path.relative_to(root)).encode() + path.read_bytes())
     h.update((root.parents[1] / "uv.lock").read_bytes())
-    manifest = resource_root() / "manifest.json"
-    if manifest.exists():
-        h.update(manifest.read_bytes())
     return h.hexdigest()
 
 

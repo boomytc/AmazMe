@@ -26,7 +26,10 @@ def codemode_resources() -> Path:
     dest.parent.mkdir(parents=True)
     shutil.copy2(OFFICIAL_NODE, dest)
     dest.chmod(0o755)
-    return root
+    try:
+        yield root
+    finally:
+        shutil.rmtree(root)
 
 
 @pytest.fixture(autouse=True)
@@ -88,14 +91,6 @@ def test_memory_limit_rejects_without_commit() -> None:
     assert failed.phase == "failed" and failed.state is None
 
 
-class IdleVM:
-    def __init__(self, profile: Profile):
-        self.profile = profile
-        self.image_id = "sha256:image"
-        self.socket = profile.path / "docker.sock"
-
-    async def close(self) -> None:
-        return None
 
 
 async def test_supervisor_commits_only_success_and_does_not_rerun(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -104,7 +99,6 @@ async def test_supervisor_commits_only_success_and_does_not_rerun(tmp_path: Path
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
-    monkeypatch.setattr("amazme_backend.supervisor.VM", IdleVM)
     owner = Supervisor(Profile(tmp_path), "supervisor-code")
     await owner.initialize()
     owner.monitor_task.cancel()
@@ -156,7 +150,6 @@ async def test_supervisor_cancel_does_not_commit(tmp_path: Path, monkeypatch: py
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
-    monkeypatch.setattr("amazme_backend.supervisor.VM", IdleVM)
     owner = Supervisor(Profile(tmp_path), "supervisor-cancel")
     await owner.initialize()
     owner.monitor_task.cancel()

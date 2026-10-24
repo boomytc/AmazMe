@@ -107,32 +107,3 @@ class PtyClient:
         elif kind == EXIT and len(payload) == 5:
             self.exit_code = int.from_bytes(payload[:4], "big", signed=True)
             self.pending_output = bool(payload[4])
-
-
-def pty_container(gate_source: str, image: str, labels: dict[str, str], binds: list[str] | None = None) -> dict[str, object]:
-    if "os.openpty" not in gate_source or "waitpid" not in gate_source:
-        raise BackendError("pty_gate_missing")
-    return {
-        "Image": image,
-        "Cmd": ["python", "-I", "-c", gate_source],
-        "OpenStdin": True,
-        "StdinOnce": True,
-        "AttachStdin": True,
-        "AttachStdout": True,
-        "AttachStderr": True,
-        "Tty": False,
-        "Labels": labels,
-        "HostConfig": {
-            "Binds": binds or ["/workspace:/workspace:rw"],
-            "NetworkMode": "none",
-            "ReadonlyRootfs": True,
-            "CapDrop": ["ALL"],
-            "CapAdd": ["SETUID", "SETGID"],
-            "SecurityOpt": ["no-new-privileges"],
-            "PidsLimit": 64,
-            "Memory": 268435456,
-            "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=67108864"},
-            "RestartPolicy": {"Name": "no"},
-            "LogConfig": {"Type": "none"},
-        },
-    }

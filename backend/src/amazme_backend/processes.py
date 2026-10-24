@@ -15,7 +15,7 @@ from .contracts import BackendError, ProcessLease
 
 
 class ProcessReservation:
-    def __init__(self, profile: Path, role: Literal["host", "worker", "supervisor"], instance: str):
+    def __init__(self, profile: Path, role: Literal["host", "worker", "supervisor", "execution"], instance: str):
         directory = profile / "processes"
         directory.mkdir(mode=0o700, exist_ok=True)
         info = directory.lstat()
@@ -68,7 +68,7 @@ def _validate(fd: int, lease: ProcessLease) -> None:
         raise BackendError("process_lease_content_mismatch", status=503)
 
 
-def retain_inherited(fd: int, profile: Path, role: Literal["host", "worker", "supervisor"], instance: str) -> ProcessLease:
+def retain_inherited(fd: int, profile: Path, role: Literal["host", "worker", "supervisor", "execution"], instance: str) -> ProcessLease:
     lease = ProcessLease.model_validate_json(os.pread(fd, 8192, 0))
     expected = profile / "processes" / f"{role}-{instance}.lock"
     if (lease.instance_id, lease.profile_path, lease.role, lease.path) != (instance, str(profile), role, str(expected)):

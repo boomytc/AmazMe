@@ -9,7 +9,6 @@ import hashlib
 import json
 import os
 import secrets
-import socket
 import sqlite3
 import stat
 import threading
@@ -32,6 +31,7 @@ from .contracts import (
     CodeView,
     EffectHold,
     EpochHealth,
+    ExecutionResource,
     FreezeSupervisor,
     HostFence,
     Identity,
@@ -75,17 +75,17 @@ from .contracts import (
     WorkerRequest,
     WorkerSpec,
 )
-from .docker_channel import GateChannel
 from .faults import Faults
-from .mcp_session import McpClient, mcp_container, mcp_digest
+from .mcp_session import McpClient, mcp_digest
+from .memories import session_workspace
+from .native_execution import LocalPermit, LocalProcess, reconcile
 from .plugin_run import plugin_fingerprint, run_plugin_gate, set_fingerprint, stored_config, validate_config
 from .processes import ProcessReservation, exited, wait_exited
 from .pty_gate import WINDOW
-from .pty_session import PtyClient, pty_container
+from .pty_session import PtyClient
 from .remote_session import RemoteClient
 from .transport import app_factory
-from .vm import VM
-from .workspace_map import container_binds, grant_names, guest_path
+from .workspace_map import PRIMARY, load_grants, split_client_path
 
 
 class ExecutionDB:
@@ -98,6 +98,7 @@ class ExecutionDB:
         self.pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="execution-sql")
         self.connection: sqlite3.Connection | None = None
         self.failed = ""
+        self.closed = False
 
     def _invoke[T](self, operation: Callable[[sqlite3.Connection], T], write: bool) -> T:
         if self.failed and write:
@@ -111,9 +112,9 @@ class ExecutionDB:
                     try:
                         version = probe.execute("PRAGMA user_version").fetchone()[0]
                         tables = probe.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
-                        if version != 2 and (self.require_existing or version != 0 or tables):
+                        if version != 3 and (self.require_existing or version != 0 or tables):
                             raise BackendError("unsupported_storage_format")
-                        if version == 2:
+                        if version == 3:
                             required = {"control", "workers", "epochs", "scopes", "budgets", "recoveries", "resolutions"}
                             if not required.issubset({str(r[0]) for r in tables}):
                                 raise BackendError("execution_storage_corrupt")
@@ -159,6 +160,9 @@ class ExecutionDB:
             self.pool, self._invoke, operation, write))
 
     async def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
         def close() -> None:
             if self.connection is not None:
                 self.connection.close()
@@ -205,7 +209,6 @@ class Supervisor:
                  *, require_existing: bool = False):
         self.profile = profile
         self.build = build_id()
-        self.gate = Path(__file__).with_name("gate.py").read_text()
         self.pty_gate = Path(__file__).with_name("pty_gate.py").read_text()
         self.mcp_gate = Path(__file__).with_name("mcp_gate.py").read_text()
         self.terminals: dict[str, PtyClient] = {}
@@ -217,14 +220,12 @@ class Supervisor:
         self.instance = instance or secrets.token_hex(16)
         self.process_lease = process_lease
         self.initialized_marker = profile.path / "execution.initialized"
-        if self.initialized_marker.exists() and self.initialized_marker.read_text() != "2":
+        if self.initialized_marker.exists() and self.initialized_marker.read_text() != "3":
             raise BackendError("unsupported_storage_format")
         self.db = ExecutionDB(profile.path / "execution.sqlite",
                               require_existing=require_existing or self.initialized_marker.exists())
-        self._vm: VM | None = None
         if build_id() != self.build:
             raise BackendError("build_changed_during_capture")
-        self.boot = ""
         self.registered = False
         self.host_epoch = 0
         self.fence_ready = True
@@ -236,15 +237,9 @@ class Supervisor:
         self.heartbeats: dict[str, float] = {}
         self.jobs: dict[str, asyncio.Task[ToolResult]] = {}
         self.job_requests: dict[str, RunTool] = {}
-        self.channels: dict[str, GateChannel] = {}
+        self.channels: dict[str, LocalProcess] = {}
         self.monitor_task: asyncio.Task[None] | None = None
         self.faults = Faults(profile.path, "supervisor", self.instance, enabled=profile.config.testing)
-
-    @property
-    def vm(self) -> VM:
-        if self._vm is None:
-            raise BackendError("execution_not_initialized", status=503)
-        return self._vm
 
     def identity(self) -> Identity:
         return Identity(build_id=self.build, profile_id=self.profile.config.profile_id,
@@ -259,8 +254,8 @@ class Supervisor:
               BEGIN IMMEDIATE;
               CREATE TABLE IF NOT EXISTS control(id INTEGER PRIMARY KEY CHECK(id=1),epoch INTEGER NOT NULL,
                 revision INTEGER NOT NULL,fence_ready INTEGER NOT NULL,freeze TEXT NOT NULL,
-                blocked TEXT NOT NULL,owner TEXT NOT NULL,vm_stopped INTEGER NOT NULL,boot TEXT NOT NULL);
-              INSERT OR IGNORE INTO control VALUES(1,0,0,1,'','','',1,'');
+                blocked TEXT NOT NULL,owner TEXT NOT NULL);
+              INSERT OR IGNORE INTO control VALUES(1,0,0,1,'','','');
               CREATE TABLE IF NOT EXISTS workers(worker TEXT PRIMARY KEY,session TEXT NOT NULL,
                 info TEXT NOT NULL,retirement TEXT NOT NULL DEFAULT '',failure_counted INTEGER NOT NULL DEFAULT 0);
               CREATE INDEX IF NOT EXISTS worker_session ON workers(session);
@@ -269,8 +264,7 @@ class Supervisor:
                 PRIMARY KEY(session,epoch),FOREIGN KEY(worker) REFERENCES workers(worker));
               CREATE TABLE IF NOT EXISTS scopes(id TEXT PRIMARY KEY,session TEXT NOT NULL,epoch INTEGER NOT NULL,
                 worker TEXT NOT NULL,supervisor TEXT NOT NULL,build TEXT NOT NULL,request TEXT NOT NULL,
-                name TEXT NOT NULL,cid TEXT NOT NULL DEFAULT '',cgroup TEXT NOT NULL DEFAULT '',boot TEXT NOT NULL,
-                vm TEXT NOT NULL,digest TEXT NOT NULL,phase TEXT NOT NULL,outcome TEXT NOT NULL DEFAULT 'pending',
+                directory TEXT NOT NULL,lease TEXT NOT NULL,digest TEXT NOT NULL,phase TEXT NOT NULL,outcome TEXT NOT NULL DEFAULT 'pending',
                 result TEXT NOT NULL DEFAULT '',clean INTEGER NOT NULL DEFAULT 0,effect TEXT NOT NULL,
                 FOREIGN KEY(session,epoch) REFERENCES epochs(session,epoch));
               CREATE INDEX IF NOT EXISTS scope_epoch ON scopes(session,epoch);
@@ -303,7 +297,7 @@ class Supervisor:
                 capabilities TEXT NOT NULL,config TEXT NOT NULL,fingerprint TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS plugin_calls(id TEXT PRIMARY KEY,plugin TEXT NOT NULL,
                 session TEXT NOT NULL,text TEXT NOT NULL,phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '');
-              PRAGMA user_version=2;
+              PRAGMA user_version=3;
               COMMIT;
             """)
             columns = {str(row[1]) for row in db.execute("PRAGMA table_info(terminals)")}
@@ -311,26 +305,26 @@ class Supervisor:
                 db.execute("ALTER TABLE terminals ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
             return db.execute("SELECT * FROM control WHERE id=1").fetchone()
         old = await self.db.call(init)
-        # This is independent of Host's first ACK and precedes VM/worker side effects.
-        private_write(self.initialized_marker, "2")
-        self._vm = VM(self.profile)
+        # This is independent of Host's first ACK and precedes execution/worker side effects.
+        private_write(self.initialized_marker, "3")
         if build_id() != self.build:
             raise BackendError("build_changed_during_capture")
         self.host_epoch, self.freeze_id = int(old["epoch"]), str(old["freeze"])
         self.fence_ready, self.blocked = bool(old["fence_ready"]), str(old["blocked"])
-        self.boot = str(old["boot"])
         self.registered = True
         async with self.control:
             if old["owner"] and old["owner"] != self.instance:
-                # No Docker reply or changed boot can disprove a request accepted before owner death.
+                # Reconcile registered invocations before accepting work from a replacement owner.
                 try:
-                    if not old["vm_stopped"] or await self._unclean_epochs():
-                        await self._reconcile_vm("supervisor_restarted")
+                    if await self._unclean_epochs():
+                        await self._reconcile_scopes("supervisor_restarted")
                     for worker in await self._workers():
                         if worker.state != "stopped":
-                            receipt = await self._retire_worker(worker, "recovery", failed=True)
-                            if receipt.state != "clean":
-                                raise BackendError("execution_cleanup_pending", receipt.reason, 503)
+                            try:
+                                await self._retire_worker(worker, "recovery", failed=True)
+                            except BackendError:
+                                worker.state = "blocked"
+                                await self._save_worker(worker)
                     await self._set_blocked("")
                 except Exception as error:
                     await self._set_blocked(self._reason(error))
@@ -426,7 +420,7 @@ class Supervisor:
                 if (worker.state not in {"starting", "ready", "frozen"}
                         or exited(worker.process_lease)):
                     receipt = await self._retire_worker(worker, "recovery", failed=True)
-                    if receipt.state != "clean":
+                    if receipt.state != "clean" and not exited(worker.process_lease):
                         raise BackendError("execution_cleanup_pending", receipt.reason, 503)
                     continue
                 ack = await self._peer_identity(worker, "POST", "/fence", value)
@@ -549,30 +543,6 @@ class Supervisor:
             "SELECT * FROM epochs WHERE state!='clean'" + (" AND session=?" if session else ""),
             (session,) if session else ()).fetchall())
 
-    async def _verify_vm_boot(self) -> None:
-        try:
-            boot = await self.vm.guest("cat", "/proc/sys/kernel/random/boot_id")
-        except Exception as error:
-            await self._set_blocked("vm_identity_unproven")
-            raise BackendError("vm_identity_unproven", status=503) from error
-        if not self.boot or boot != self.boot:
-            await self._set_blocked("vm_boot_changed")
-            raise BackendError("vm_boot_changed", status=503)
-
-    async def _start_vm(self) -> None:
-        if self.boot:
-            await self._verify_vm_boot()
-            return
-        # A lost startup reply is itself an unproven VM operation on the next boot.
-        await self.db.call(lambda db: db.execute("UPDATE control SET vm_stopped=0 WHERE id=1"), write=True)
-        try:
-            self.boot = await self.vm.start()
-            await self.db.call(lambda db: db.execute("UPDATE control SET boot=? WHERE id=1", (self.boot,)), write=True)
-        except BaseException:
-            self.blocked = "vm_start_unproven"
-            await self._set_blocked(self.blocked)
-            raise
-
     async def open_epoch(self, value: WorkerRequest) -> Lease:
         async with self.control:
             worker = await self.validate_worker(value)
@@ -588,7 +558,6 @@ class Supervisor:
                 raise BackendError("execution_cleanup_pending", status=503)
             if worker.purpose == "business" and worker.state == "frozen":
                 raise BackendError("worker_frozen")
-            await self._start_vm()
             def opened(db: sqlite3.Connection) -> int:
                 epoch = int(db.execute("SELECT COALESCE(MAX(epoch),0)+1 FROM epochs WHERE session=?",
                                        (value.session_id,)).fetchone()[0])
@@ -618,11 +587,9 @@ class Supervisor:
     async def _scope(self, call: str) -> sqlite3.Row | None:
         return await self.db.call(lambda db: db.execute("SELECT * FROM scopes WHERE id=?", (call,)).fetchone())
 
-    async def _phase(self, call: str, phase: str, *, cid: str = "", cgroup: str = "") -> None:
+    async def _phase(self, call: str, phase: str) -> None:
         await self.db.call(lambda db: db.execute(
-            "UPDATE scopes SET phase=?,cid=CASE WHEN ?='' THEN cid ELSE ? END,"
-            "cgroup=CASE WHEN ?='' THEN cgroup ELSE ? END WHERE id=? AND outcome='pending'",
-            (phase, cid, cid, cgroup, cgroup, call)), write=True)
+            "UPDATE scopes SET phase=? WHERE id=? AND outcome='pending'", (phase, call)), write=True)
 
     async def _holds(self) -> list[EffectHold]:
         return await self.db.call(lambda db: [EffectHold(
@@ -631,14 +598,14 @@ class Supervisor:
             for r in db.execute("SELECT s.*,EXISTS(SELECT 1 FROM resolutions r WHERE r.call=s.id) resolved "
                                 "FROM scopes s WHERE effect='write' AND outcome='unknown' ORDER BY rowid")])
 
-    async def _write_conflict(self) -> bool:
+    async def _write_conflict(self, session: str) -> bool:
         return await self.db.call(lambda db: db.execute(
-            "SELECT 1 FROM scopes s WHERE effect='write' AND ((outcome='unknown' AND NOT EXISTS "
-            "(SELECT 1 FROM resolutions r WHERE r.call=s.id)) OR (outcome='completed' AND clean=0)) LIMIT 1"
-        ).fetchone() is not None)
+            "SELECT 1 FROM scopes s WHERE session=? AND effect='write' AND ((outcome='unknown' AND NOT EXISTS "
+            "(SELECT 1 FROM resolutions r WHERE r.call=s.id)) OR (outcome='completed' AND clean=0)) LIMIT 1",
+            (session,)).fetchone() is not None)
 
     async def execute(self, value: RunTool) -> ToolResult:
-        channel: GateChannel | None = None
+        channel: LocalProcess | None = None
         admitted = False
         try:
             async with self.control:
@@ -654,73 +621,50 @@ class Supervisor:
                     if old["outcome"] == "completed":
                         return ToolResult.model_validate_json(str(old["result"]))
                     raise BackendError("tool_outcome_unknown")
-                if value.effect == "write" and await self._write_conflict():
+                if value.effect == "write" and await self._write_conflict(value.session_id):
                     raise BackendError("unknown_effect_conflict", status=503)
-                await self._verify_vm_boot()
-                name = "am-" + hashlib.sha256((self.vm.vm_id + value.call_id).encode()).hexdigest()[:40]
-                await self.db.call(lambda db: db.execute(
-                    "INSERT INTO scopes(id,session,epoch,worker,supervisor,build,request,name,boot,vm,digest,phase,effect) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,'creating',?)",
-                    (value.call_id, value.session_id, value.execution_epoch, value.worker_id, self.instance,
-                     self.build, value.request_id, name, self.boot, self.vm.vm_id, digest, value.effect)), write=True)
-                admitted = True
-                await self._hit("create_intent", value)
-                labels = {"amazme.profile": self.profile.config.profile_id, "amazme.scope": value.call_id,
-                          "amazme.epoch": str(value.execution_epoch), "amazme.worker": value.worker_id,
-                          "amazme.supervisor": self.instance, "amazme.vm": self.vm.vm_id}
-                response = await self.vm.http.post("/containers/create", params={"name": name}, json={
-                    "Image": self.vm.image_id, "Cmd": ["python", "-I", "-c", self.gate],
-                    "OpenStdin": True, "StdinOnce": True, "AttachStdin": True, "AttachStdout": True,
-                    "AttachStderr": True, "Tty": False, "Labels": labels,
-                    "HostConfig": {"Binds": container_binds(grant_names(self.profile.path), readonly=value.effect == "read"),
-                        "NetworkMode": "none", "ReadonlyRootfs": True, "CapDrop": ["ALL"], "CapAdd": ["SETUID", "SETGID"],
-                        "SecurityOpt": ["no-new-privileges"], "PidsLimit": 64, "Memory": 268435456,
-                        "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=67108864"},
-                        "RestartPolicy": {"Name": "no"}, "LogConfig": {"Type": "none"}},
-                })
-                response.raise_for_status()
-                await self._hit("create_accepted", value)
-                await self._phase(value.call_id, "created")
-                await self._hit("created", value)
-                container = await self.vm.inspect(name)
-                if (container is None or container.Config.Labels != labels or container.Config.Image != self.vm.image_id
-                        or container.State.Running):
-                    raise BackendError("container_identity_mismatch", status=503)
-                cid = container.Id
-                await self._phase(value.call_id, "registered", cid=cid)
+                workspace = session_workspace(self.profile.path, value.session_id)
+                location = self.profile.config.workspace if workspace == PRIMARY else dict(load_grants(self.profile.path)).get(workspace)
+                if location is None:
+                    raise BackendError("workspace_not_found")
+                root = Path(location)
+                file = value.file
+                if file is not None:
+                    name, inner = split_client_path(file.path)
+                    root = Path(self.profile.config.workspace)
+                    if name != PRIMARY:
+                        location = dict(load_grants(self.profile.path)).get(name)
+                        if location is None:
+                            raise BackendError("workspace_not_found")
+                        root = Path(location)
+                    file = file.model_copy(update={"path": inner})
+                instance = hashlib.sha256(value.call_id.encode()).hexdigest()[:32]
+                directory = self.profile.path / "executions" / instance
+                directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+                with ProcessReservation(self.profile.path, "execution", instance) as reservation:
+                    await self.db.call(lambda db: db.execute(
+                        "INSERT INTO scopes(id,session,epoch,worker,supervisor,build,request,directory,lease,digest,phase,effect) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,'registered',?)",
+                        (value.call_id, value.session_id, value.execution_epoch, value.worker_id, self.instance,
+                         self.build, value.request_id, str(directory), reservation.lease.model_dump_json(), digest,
+                         value.effect)), write=True)
+                    admitted = True
+                    await self._hit("create_intent", value)
+                    channel = await LocalProcess.start(self.profile.path, instance, directory, reservation)
+                    self.channels[value.call_id] = channel
                 await self._hit("registered", value)
-                channel = await GateChannel.attach(self.vm.socket, cid)
-                self.channels[value.call_id] = channel
-                await self._phase(value.call_id, "starting")
-                response = await self.vm.http.post(f"/containers/{cid}/start")
-                response.raise_for_status()
-                await self._hit("start_accepted", value)
-                container = await self.vm.inspect(cid)
-                if container is None or not container.State.Running:
-                    raise BackendError("container_start_unproven", status=503)
-                cgroup = await self.vm.cgroup(container)
-                await self._phase(value.call_id, "started", cgroup=cgroup)
-                await self._hit("started", value)
                 await self._hit("before_permit", value)
                 await self.check_lease(value)
-                await self._verify_vm_boot()
-                if value.effect == "write" and await self._write_conflict():
-                    raise BackendError("unknown_effect_conflict", status=503)
-                # This intent precedes the first possible user effect; failure can only become unknown.
                 await self._phase(value.call_id, "permit_intent")
-                await channel.permit(value.command, os.getuid(), os.getgid())
+                await channel.permit(LocalPermit(call_id=value.call_id, cwd=str(root), command=value.command,
+                    timeout_seconds=value.timeout_seconds, file=file, expected_digest=value.expected_digest))
                 await self._hit("permit_sent", value)
                 await self._phase(value.call_id, "permitted")
                 await self._hit("permitted", value)
-            async with asyncio.timeout(value.timeout_seconds):
-                out, err, truncated = await channel.collect()
-                response = await self.vm.http.post(f"/containers/{cid}/wait", params={"condition": "not-running"})
-                response.raise_for_status()
-                container = await self.vm.inspect(cid)
-                if container is None or container.State.Running:
-                    raise BackendError("tool_exit_unproven", status=503)
-                result = ToolResult(call_id=value.call_id, exit_code=container.State.ExitCode,
-                                    stdout=out, stderr=err, truncated=truncated, container_id=cid)
+            report = await channel.collect()
+            if report.call_id != value.call_id or report.result is None:
+                raise BackendError("tool_outcome_unknown")
+            result = report.result
             async with self.control:
                 def captured(db: sqlite3.Connection) -> None:
                     changed = db.execute("UPDATE scopes SET outcome='completed',phase='result',result=? "
@@ -731,22 +675,20 @@ class Supervisor:
                         raise BackendError("tool_outcome_unknown")
                 await self.db.call(captured, write=True)
                 await self._hit("result", value)
-                # Persist captured output before issuing ANY cleanup mutation.
                 scope = await self._scope(value.call_id)
                 assert scope is not None
                 await self._clean_scope(scope)
             return result
         except BaseException:
-            # Never rewrite an already captured result, including cleanup failure or late cancellation.
             if admitted:
                 await self.db.call(lambda db: db.execute("UPDATE scopes SET outcome='unknown' WHERE id=? "
                     "AND worker=? AND epoch=? AND supervisor=? AND outcome='pending'",
                     (value.call_id, value.worker_id, value.execution_epoch, self.instance)), write=True)
             raise
         finally:
-            self.channels.pop(value.call_id, None)
             if channel is not None:
                 await channel.close()
+            self.channels.pop(value.call_id, None)
 
     async def _hit(self, point: str, value: RunTool) -> None:
         await self.faults.hit(point, session_id=value.session_id, request_id=value.request_id, call_id=value.call_id)
@@ -810,28 +752,15 @@ class Supervisor:
     async def _clean_scope(self, scope: sqlite3.Row) -> None:
         if scope["clean"]:
             return
-        if scope["phase"] in {"creating", "starting"}:
-            raise BackendError("runtime_operation_uncertain", status=503)
-        container = await self.vm.inspect(str(scope["cid"] or scope["name"]))
-        cid, cgroup = str(scope["cid"]), str(scope["cgroup"])
-        if container is not None:
-            labels = container.Config.Labels
-            if any(labels.get(key) != str(value) for key, value in {
-                "amazme.profile": self.profile.config.profile_id, "amazme.scope": scope["id"],
-                "amazme.epoch": scope["epoch"], "amazme.worker": scope["worker"],
-                "amazme.supervisor": scope["supervisor"], "amazme.vm": scope["vm"],
-            }.items()) or (cid and container.Id != cid):
-                raise BackendError("container_identity_mismatch", status=503)
-            cid = container.Id
-            if container.State.Running and not cgroup:
-                cgroup = await self.vm.cgroup(container)
-        if not cid:
-            raise BackendError("resource_identity_missing", status=503)
-        await self.vm.kill_and_prove(cid, cgroup, str(scope["boot"]))
-        await self.faults.hit("cleanup_proven", session_id=str(scope["session"]),
-                              request_id=str(scope["request"]), call_id=str(scope["id"]))
-        await self.db.call(lambda db: db.execute("UPDATE scopes SET clean=1,cid=?,cgroup=? WHERE id=?",
-                                                (cid, cgroup, scope["id"])), write=True)
+        channel = self.channels.get(str(scope["id"]))
+        if channel:
+            await channel.close()
+        directory = Path(str(scope["directory"]))
+        lease = ProcessLease.model_validate_json(str(scope["lease"]))
+        if not await reconcile(directory, lease, permitted=scope["phase"] != "registered"):
+            raise BackendError("stop_unconfirmed", status=503)
+        await self.faults.hit("cleanup_proven", session_id=str(scope["session"]), call_id=str(scope["id"]))
+        await self.db.call(lambda db: db.execute("UPDATE scopes SET clean=1 WHERE id=?", (scope["id"],)), write=True)
 
     async def _cancel_jobs(self, session: str = "", epoch: int | None = None) -> None:
         tasks = [task for key, task in self.jobs.items() if task is not asyncio.current_task()
@@ -841,28 +770,11 @@ class Supervisor:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _reconcile_vm(self, reason: str) -> None:
+    async def _reconcile_scopes(self, reason: str) -> None:
         await self._cancel_jobs()
-        for channel in list(self.channels.values()):
-            await channel.close()
-        async with self.vm.stopped() as proof:
-            def seal(db: sqlite3.Connection) -> None:
-                if proof.vm_id != self.vm.vm_id or db.execute(
-                    "SELECT 1 FROM scopes WHERE clean=0 AND vm!=? LIMIT 1", (proof.vm_id,)
-                ).fetchone():
-                    raise BackendError("vm_proof_identity_mismatch", status=503)
-                db.execute("UPDATE scopes SET outcome='unknown' WHERE outcome='pending'")
-                db.execute("UPDATE scopes SET clean=1")
-                for row in db.execute("SELECT * FROM epochs WHERE state!='clean'").fetchall():
-                    ids = [str(r[0]) for r in db.execute("SELECT cid FROM scopes WHERE session=? AND epoch=? AND cid!=''",
-                                                       (row["session"], row["epoch"]))]
-                    receipt = Cleanup(session_id=str(row["session"]), execution_epoch=int(row["epoch"]), state="clean",
-                                      containers=ids, reason=reason, proof_id=proof.receipt_id, vm_id=proof.vm_id)
-                    db.execute("UPDATE epochs SET state='clean',receipt=? WHERE session=? AND epoch=?",
-                               (receipt.model_dump_json(), row["session"], row["epoch"]))
-                db.execute("UPDATE control SET vm_stopped=1,boot='' WHERE id=1")
-            await self.db.call(seal, write=True)
-            self.boot = ""
+        await self.db.call(lambda db: db.execute("UPDATE scopes SET outcome='unknown' WHERE outcome='pending'"), write=True)
+        for row in await self._unclean_epochs():
+            await self._cleanup_epoch(row)
 
     async def cleanup(self, session: str, lease: Lease | None = None) -> Cleanup:
         async with self.control:
@@ -876,8 +788,8 @@ class Supervisor:
                     raise BackendError("stale_execution_epoch")
                 return await self._cleanup_epoch(row)
             rows = await self._unclean_epochs(session)
-            result = Cleanup(session_id=session, execution_epoch=0, state="clean", containers=[],
-                             proof_id=secrets.token_hex(16), vm_id=self.vm.vm_id)
+            result = Cleanup(session_id=session, execution_epoch=0, state="clean", resources=[],
+                             proof_id=secrets.token_hex(16))
             for row in rows:
                 result = await self._cleanup_epoch(row)
                 if result.state != "clean":
@@ -893,31 +805,17 @@ class Supervisor:
         await self._cancel_jobs(session, epoch)
         scopes = await self.db.call(lambda db: db.execute("SELECT * FROM scopes WHERE session=? AND epoch=?",
                                                           (session, epoch)).fetchall())
-        ids: list[str] = []
-        try:
-            for scope in scopes:
-                await self._clean_scope(scope)
-                if scope["cid"]:
-                    ids.append(str(scope["cid"]))
-            result = Cleanup(session_id=session, execution_epoch=epoch, state="clean", containers=ids,
-                             proof_id=secrets.token_hex(16), vm_id=self.vm.vm_id)
-        except Exception as error:
+        ids = [str(scope["id"]) for scope in scopes]
+        reason = ""
+        for scope in scopes:
             try:
-                await self._reconcile_vm(self._reason(error))
-                fresh = await self.db.call(lambda db: db.execute("SELECT receipt FROM epochs WHERE session=? AND epoch=?",
-                                                                 (session, epoch)).fetchone())
-                await self.faults.hit("closed", session_id=session)
-                return Cleanup.model_validate_json(str(fresh[0]))
-            except Exception as stop_error:
-                result = Cleanup(session_id=session, execution_epoch=epoch, state="blocked", containers=ids,
-                                 reason=self._reason(stop_error), vm_id=self.vm.vm_id)
-                await self._set_blocked(result.reason)
-        def save(db: sqlite3.Connection) -> None:
-            db.execute("UPDATE scopes SET outcome='unknown' WHERE session=? AND epoch=? AND outcome='pending'",
-                       (session, epoch))
-            db.execute("UPDATE epochs SET state=?,receipt=? WHERE session=? AND epoch=?",
-                       (result.state, result.model_dump_json(), session, epoch))
-        await self.db.call(save, write=True)
+                await self._clean_scope(scope)
+            except BackendError as error:
+                reason = error.code
+        result = Cleanup(session_id=session, execution_epoch=epoch, state="blocked" if reason else "clean",
+                         resources=ids, reason=reason, proof_id=secrets.token_hex(16) if not reason else "")
+        await self.db.call(lambda db: db.execute("UPDATE epochs SET state=?,receipt=? WHERE session=? AND epoch=?",
+                          (result.state, result.model_dump_json(), session, epoch)), write=True)
         if result.state == "clean":
             await self.faults.hit("closed", session_id=session)
         return result
@@ -931,7 +829,7 @@ class Supervisor:
         worker.state = "stopping"
         await self._save_worker(worker)
         receipt = Cleanup(session_id=worker.session_id, execution_epoch=worker.execution_epoch, state="clean",
-                          containers=[], proof_id=secrets.token_hex(16), vm_id=self.vm.vm_id)
+                          resources=[], proof_id=secrets.token_hex(16))
         for row in await self._unclean_epochs(worker.session_id):
             if row["worker"] == worker.worker_id:
                 receipt = await self._cleanup_epoch(row)
@@ -1016,13 +914,25 @@ class Supervisor:
         blocked = ([self.blocked] if self.blocked else []) + ([self.db.failed] if self.db.failed else [])
         if not self.fence_ready:
             blocked.append("worker_fence_pending")
-        blocked.extend("worker_restart_budget_exhausted:" + session for session in budgets)
-        blocked.extend("worker_retirement_pending:" + w.worker_id for w in workers if w.state in {"blocked", "unknown", "stopping"})
+        session_errors = {session: ["worker_restart_budget_exhausted"] for session in budgets}
+        for worker in workers:
+            if worker.state in {"blocked", "unknown", "stopping"}:
+                session_errors.setdefault(worker.session_id, []).append("worker_retirement_pending:" + worker.worker_id)
+        scopes = await self.db.call(lambda db: db.execute(
+            "SELECT s.*,e.state AS epoch_state FROM scopes s JOIN epochs e "
+            "ON s.session=e.session AND s.epoch=e.epoch ORDER BY s.rowid DESC LIMIT 200").fetchall())
+        resources = [ExecutionResource.model_validate({
+            "call_id": row["id"], "session_id": row["session"], "request_id": row["request"],
+            "outcome": row["outcome"], "state": "exited" if row["clean"] else
+            "stop_unconfirmed" if row["epoch_state"] == "blocked" else
+            "stopping" if row["epoch_state"] == "closing" else
+            "registered" if row["phase"] == "registered" else "running",
+        }) for row in scopes]
         return SupervisorHealth(identity=self.identity(), registry_revision=revision, freeze_id=self.freeze_id,
             workers=workers, epochs=[EpochHealth(session_id=str(r["session"]), worker_id=str(r["worker"]),
                 execution_epoch=int(r["epoch"]), state=str(r["state"]),
                 cleanup=Cleanup.model_validate_json(str(r["receipt"])) if r["receipt"] else None) for r in rows],
-            effects=await self._holds(), vm_id=self.vm.vm_id, boot_id=self.boot, blocked=blocked)
+            effects=await self._holds(), execution="native", resources=resources, session_errors=session_errors, blocked=blocked)
 
     async def freeze(self, value: FreezeSupervisor) -> SupervisorHealth:
         async with self.control:
@@ -1084,7 +994,7 @@ class Supervisor:
                     if receipt.state != "clean":
                         raise BackendError("execution_cleanup_pending", receipt.reason, 503)
             if not value.session_id or self.blocked:
-                await self._reconcile_vm("explicit_recovery")
+                await self._reconcile_scopes("explicit_recovery")
             def recovered(db: sqlite3.Connection) -> None:
                 db.execute("UPDATE budgets SET attempts=0" + (" WHERE session=?" if value.session_id else ""),
                            (value.session_id,) if value.session_id else ())
@@ -1097,8 +1007,8 @@ class Supervisor:
     async def _shutdown(self, value: HostFence) -> None:
         self.check_host(value)
         self.draining = True
-        # Stop all VM effects first. Every registry instance still needs its independent process proof.
-        await self._reconcile_vm("owned_vm_stopped")
+        # Stop registered invocation resources first. Every registry instance still needs its independent process proof.
+        await self._reconcile_scopes("registered_processes_stopped")
         for worker in await self._workers():
             if worker.state != "stopped":
                 result = await self._retire_worker(worker, "update")
@@ -1113,7 +1023,7 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             self.draining = True
-            await self._reconcile_vm("owned_vm_stopped")
+            await self._reconcile_scopes("registered_processes_stopped")
             pending: list[WorkerInfo] = []
             for worker in await self._workers():
                 if worker.state == "stopped":
@@ -1219,53 +1129,10 @@ class Supervisor:
             raise BackendError("execution_cleanup_pending", status=503)
 
     async def connect_mcp(self, cid: str, spec: dict[str, object]) -> McpClient:
-        del spec
-        channel = await GateChannel.attach(self.vm.socket, cid)
-        left, right = socket.socketpair()
-        self.terminal_bridges[cid] = asyncio.create_task(self._bridge_pty(channel, right))
-        return McpClient(left)
+        raise BackendError("native_interactive_pending", status=503)
 
     async def open_mcp(self, value: OpenMcp) -> McpView:
-        self.check_host(value)
-        self._admit()
-        await self._mcp_blocked(value.session_id)
-        existing = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
-        if existing is not None:
-            if (existing["session"], existing["command"]) != (value.session_id, value.command):
-                raise BackendError("mcp_conflict")
-            return self._mcp_view(existing)
-        await self.db.call(lambda db: db.execute(
-            "INSERT INTO mcp_servers(id,session,command,phase) VALUES(?,?,?,'unknown')",
-            (value.server_id, value.session_id, value.command)), write=True)
-        labels = {"amazme.profile": self.profile.config.profile_id, "amazme.mcp": value.server_id,
-                  "amazme.supervisor": self.instance}
-        spec = mcp_container(self.mcp_gate, self.vm.image_id, labels, container_binds(grant_names(self.profile.path), readonly=False))
-        name = "am-" + hashlib.sha256(("mcp:" + value.server_id).encode()).hexdigest()[:40]
-        try:
-            response = await self.vm.http.post("/containers/create", params={"name": name}, json=spec)
-            response.raise_for_status()
-            cid = str(response.json()["Id"])
-            await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET cid=? WHERE id=?", (cid, value.server_id)), write=True)
-            started = await self.vm.http.post(f"/containers/{cid}/start")
-            started.raise_for_status()
-            container = await self.vm.inspect(cid)
-            if container is None or not container.State.Running or container.Config.Labels != labels:
-                raise BackendError("container_identity_mismatch", status=503)
-            client = await self.connect_mcp(cid, spec)
-            await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid())
-        except Exception as error:
-            await self.db.call(lambda db: db.execute(
-                "UPDATE mcp_servers SET phase='unknown' WHERE id=? AND exit_code IS NULL", (value.server_id,)), write=True)
-            if not isinstance(error, BackendError):
-                raise BackendError("mcp_start_failed", status=503) from error
-            raise
-        self.mcp_clients[value.server_id] = client
-        catalog = json.dumps(client.tools, ensure_ascii=False)
-        await self.db.call(lambda db: db.execute(
-            "UPDATE mcp_servers SET phase='ready',catalog=? WHERE id=?", (catalog, value.server_id)), write=True)
-        row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
-        assert row is not None
-        return self._mcp_view(row)
+        raise BackendError("native_interactive_pending", status=503)
 
     async def request_mcp_call(self, session_id: str, server_id: str, value: McpCallRequest, fence: HostFence) -> McpCall:
         self.check_host(fence)
@@ -1339,33 +1206,7 @@ class Supervisor:
         return self._mcp_call(current)
 
     async def cancel_mcp(self, value: OpenMcp) -> McpView:
-        self.check_host(value)
-        self._admit()
-        row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
-        if row is None or row["session"] != value.session_id or row["command"] != value.command:
-            raise BackendError("mcp_not_found", status=404)
-        client = self.mcp_clients.get(value.server_id)
-        exit_code = None if row["exit_code"] is None else int(row["exit_code"])
-        if client is not None and exit_code is None:
-            try:
-                await asyncio.to_thread(client.cancel)
-                exit_code = client.exit_code
-            except (OSError, BackendError):
-                exit_code = None
-        clean = 0
-        if exit_code is not None and row["cid"]:
-            try:
-                await self.vm.kill_and_prove(str(row["cid"]), "/sys/fs/cgroup/" + str(row["cid"]), self.boot)
-                clean = 1
-            except (AttributeError, BackendError, OSError):
-                clean = 0
-        phase = "exited" if exit_code is not None and clean else "unknown"
-        await self.db.call(lambda db: db.execute(
-            "UPDATE mcp_servers SET phase=?,exit_code=CASE WHEN ? IS NULL THEN exit_code ELSE ? END,clean=? WHERE id=?",
-            (phase, exit_code, exit_code, clean, value.server_id)), write=True)
-        current = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
-        assert current is not None
-        return self._mcp_view(current)
+        raise BackendError("native_interactive_pending", status=503)
 
     async def run_code(self, value: OpenCode) -> CodeView:
         self.check_host(value)
@@ -1762,93 +1603,10 @@ class Supervisor:
         await self.db.call(save, write=True)
 
     async def connect_gate(self, cid: str, spec: dict[str, object]) -> PtyClient:
-        del spec
-        channel = await GateChannel.attach(self.vm.socket, cid)
-        left, right = socket.socketpair()
-        self.terminal_bridges[cid] = asyncio.create_task(self._bridge_pty(channel, right))
-        return PtyClient(left)
-
-    async def _bridge_pty(self, channel: GateChannel, sock: socket.socket) -> None:
-        loop = asyncio.get_running_loop()
-        sock.setblocking(False)
-
-        async def outward() -> None:
-            while True:
-                try:
-                    header = await channel.reader.readexactly(8)
-                except asyncio.IncompleteReadError:
-                    return
-                if header[0] not in (1, 2) or header[1:4] != b"\0\0\0":
-                    return
-                remaining = int.from_bytes(header[4:], "big")
-                if remaining > 16 * 1024 * 1024:
-                    return
-                while remaining:
-                    chunk = await channel.reader.readexactly(min(remaining, 8192))
-                    remaining -= len(chunk)
-                    if header[0] == 1:
-                        await loop.sock_sendall(sock, chunk)
-
-        async def inward() -> None:
-            while True:
-                data = await loop.sock_recv(sock, 8192)
-                if not data:
-                    return
-                channel.writer.write(data)
-                await channel.writer.drain()
-
-        try:
-            await asyncio.gather(outward(), inward())
-        finally:
-            sock.close()
-            await channel.close()
+        raise BackendError("native_interactive_pending", status=503)
 
     async def open_terminal(self, value: OpenTerminal) -> TerminalView:
-        self.check_host(value)
-        self._admit()
-        existing = await self._terminal_row(value.terminal_id)
-        if existing is not None:
-            if (existing["session"], existing["command"], int(existing["cols"]), int(existing["rows"]), str(existing["workspace"])) != (
-                value.session_id, value.command, value.cols, value.rows, value.workspace
-            ):
-                raise BackendError("terminal_conflict")
-            return self._view(existing)
-        if value.workspace:
-            guest_path(value.workspace)
-            if value.workspace not in grant_names(self.profile.path):
-                raise BackendError("workspace_not_found", status=404)
-        await self.db.call(lambda db: db.execute(
-            "INSERT INTO terminals(id,session,command,cols,rows,phase,workspace) VALUES(?,?,?,?,?,'running',?)",
-            (value.terminal_id, value.session_id, value.command, value.cols, value.rows, value.workspace)), write=True)
-        labels = {"amazme.profile": self.profile.config.profile_id, "amazme.terminal": value.terminal_id,
-                  "amazme.supervisor": self.instance}
-        spec = pty_container(self.pty_gate, self.vm.image_id, labels,
-                             container_binds(grant_names(self.profile.path), readonly=False))
-        name = "am-" + hashlib.sha256(value.terminal_id.encode()).hexdigest()[:40]
-        try:
-            response = await self.vm.http.post("/containers/create", params={"name": name}, json=spec)
-            response.raise_for_status()
-            cid = str(response.json()["Id"])
-            await self.db.call(lambda db: db.execute(
-                "UPDATE terminals SET cid=? WHERE id=?", (cid, value.terminal_id)), write=True)
-            started = await self.vm.http.post(f"/containers/{cid}/start")
-            started.raise_for_status()
-            container = await self.vm.inspect(cid)
-            if container is None or not container.State.Running or container.Config.Labels != labels:
-                raise BackendError("container_identity_mismatch", status=503)
-            client = await self.connect_gate(cid, spec)
-            cwd = guest_path(value.workspace) if value.workspace else ""
-            await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), value.cols, value.rows, cwd)
-        except Exception as error:
-            await self._mark_terminal_unknown(value.terminal_id)
-            if not isinstance(error, BackendError):
-                raise BackendError("pty_start_failed", status=503) from error
-            raise
-        self.terminals[value.terminal_id] = client
-        await self._store_terminal(client, value.terminal_id, cols=value.cols, rows=value.rows, phase="running")
-        row = await self._terminal_row(value.terminal_id)
-        assert row is not None
-        return self._view(row)
+        raise BackendError("native_interactive_pending", status=503)
 
     async def write_terminal(self, value: TerminalInput) -> TerminalView:
         self.check_host(value)
@@ -1933,8 +1691,8 @@ class Supervisor:
             self.monitor_task.cancel()
             await asyncio.gather(self.monitor_task, return_exceptions=True)
         await self._cancel_jobs()
-        if self._vm is not None:
-            await self._vm.close()
+        for channel in list(self.channels.values()):
+            await channel.close()
         await self.db.close()
 
 

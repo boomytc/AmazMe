@@ -12,12 +12,10 @@ import httpx
 import pytest
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import HostFence, ProcessLease, ToolCall
+from amazme_backend.contracts import HostFence, ProcessLease
 from amazme_backend.host import Host, application
 from amazme_backend.pty_gate import WINDOW
 from amazme_backend.pty_session import PtyClient
-from amazme_backend.worker import command_for
-from amazme_backend.workspace_map import container_binds, vm_mounts
 
 SESSION = "b" * 32
 
@@ -47,7 +45,7 @@ def _client(host: Host) -> httpx.AsyncClient:
     })
 
 
-async def test_grant_maps_the_same_guest_path_for_files_and_tools(tmp_path: Path) -> None:
+async def test_grant_maps_the_same_absolute_path_for_files_and_tools(tmp_path: Path) -> None:
     host = _host(tmp_path)
     other = tmp_path.parent / f"grant-{tmp_path.name}"
     other.mkdir()
@@ -58,17 +56,16 @@ async def test_grant_maps_the_same_guest_path_for_files_and_tools(tmp_path: Path
         async with _client(host) as client:
             created = await client.post("/api/v1/workspaces", json={"name": "docs", "host_path": str(other)})
             assert created.status_code == 200
-            assert created.json()["guest_path"] == "/grant/docs"
-            assert Path.home().as_posix() not in json.dumps(created.json())
+            assert created.json()["host_path"] == str(other)
             listed = await client.get("/api/v1/files", params={"path": "grant/docs"})
-            assert listed.json()["guest_path"] == "/grant/docs"
+            assert listed.json()["absolute_path"] == str(other)
             assert any(item["name"] == "note.txt" for item in listed.json()["entries"])
             primary = await client.get("/api/v1/files/content", params={"path": "note.txt"})
             assert primary.json()["content"] == "from-primary\n"
-            assert primary.json()["guest_path"] == "/workspace/note.txt"
+            assert primary.json()["absolute_path"] == str(tmp_path / "primary/note.txt")
             extra = await client.get("/api/v1/files/content", params={"path": "grant/docs/note.txt"})
             assert extra.json()["content"] == "from-other\n"
-            assert extra.json()["guest_path"] == "/grant/docs/note.txt"
+            assert extra.json()["absolute_path"] == str(other / "note.txt")
             saved = await client.post("/api/v1/files/content", json={
                 "path": "grant/docs/note.txt", "content": "changed\n", "expected_digest": extra.json()["digest"]})
             assert saved.status_code == 200
@@ -79,13 +76,6 @@ async def test_grant_maps_the_same_guest_path_for_files_and_tools(tmp_path: Path
             missing = await client.get("/api/v1/files/content", params={"path": "grant/docs/note.txt"})
             assert missing.status_code == 404
         assert (other / "note.txt").read_text() == "changed\n"
-        command = command_for(ToolCall(id="read", name="read_file", arguments='{"path":"grant/docs/note.txt"}'), ["docs"])
-        assert command.command.endswith(" /grant/docs")
-        assert container_binds(["docs"], readonly=False) == ["/workspace:/workspace:rw", "/grant/docs:/grant/docs:rw"]
-        mounts = vm_mounts(str(tmp_path / "primary"), [("docs", str(other))])
-        assert mounts[0]["mountPoint"] == "/workspace"
-        assert mounts[1] == {"location": str(other), "mountPoint": "/grant/docs", "writable": True}
-        assert all(item["location"] != str(Path.home()) for item in mounts)
     finally:
         shutil.rmtree(other, ignore_errors=True)
         await host.supervisor.close()
@@ -130,7 +120,7 @@ def test_terminal_cwd_rejects_a_host_path() -> None:
         process.wait(timeout=5)
 
 
-def test_browser_switches_to_the_granted_guest_path() -> None:
+def test_browser_switches_to_the_granted_absolute_path() -> None:
     node = __import__("shutil").which("node")
     if node is None:
         pytest.skip("node unavailable")
@@ -159,12 +149,12 @@ def test_browser_switches_to_the_granted_guest_path() -> None:
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(SESSION) + r''',title:'工作区',archived:false}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(SESSION) + r''',build_id:'build',host_epoch:1});
           if(path==='/api/v1/workspaces' && method==='GET') return response({workspaces:[
-            {name:'primary',host_path:'/work',guest_path:'/workspace',primary:true},
-            {name:'docs',host_path:'/other',guest_path:'/grant/docs',primary:false}]});
+            {name:'primary',host_path:'/work',host_path:'/workspace',primary:true},
+            {name:'docs',host_path:'/other',host_path:'/grant/docs',primary:false}]});
           if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) {
             seen.push(path);
-            if(path.includes('grant%2Fdocs') || path.includes('grant/docs')) return response({path:'grant/docs',guest_path:'/grant/docs',entries:[{name:'note.txt',kind:'file',size:4}],truncated:false});
-            return response({path:'',guest_path:'/workspace',entries:[{name:'keep.txt',kind:'file',size:4}],truncated:false});
+            if(path.includes('grant%2Fdocs') || path.includes('grant/docs')) return response({path:'grant/docs',absolute_path:'/grant/docs',entries:[{name:'note.txt',kind:'file',size:4}],truncated:false});
+            return response({path:'',absolute_path:'/workspace',entries:[{name:'keep.txt',kind:'file',size:4}],truncated:false});
           }
           throw Error('unexpected '+method+' '+path);
         };
@@ -176,9 +166,9 @@ def test_browser_switches_to_the_granted_guest_path() -> None:
         await import(appURL);
         $('files').open = true;
         $('files').dispatchEvent(new window.Event('toggle'));
-        await until(()=>$('workspace-guest').textContent==='/workspace' && [...$('file-list').children].some(node=>node.textContent==='keep.txt'));
+        await until(()=>$('workspace-location').textContent==='/workspace' && [...$('file-list').children].some(node=>node.textContent==='keep.txt'));
         [...$('workspace-list').children].find(node=>node.textContent==='docs').click();
-        await until(()=>$('workspace-guest').textContent==='/grant/docs' && [...$('file-list').children].some(node=>node.textContent==='note.txt'));
+        await until(()=>$('workspace-location').textContent==='/grant/docs' && [...$('file-list').children].some(node=>node.textContent==='note.txt'));
         assert.ok(seen.some(path=>path.includes('grant')));
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);

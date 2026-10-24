@@ -103,6 +103,8 @@ from .contracts import (
     PluginList,
     PluginReload,
     PluginView,
+    PreparedFileWrite,
+    PrepareFileWrite,
     PrepareUpdate,
     ProcessLease,
     ProductSettings,
@@ -157,7 +159,7 @@ from .contracts import (
     WorkspaceList,
 )
 from .faults import Faults
-from .host_store import Delivery, HostStore, ServiceRecord
+from .host_store import Delivery, HostStore, ServiceRecord, checkpoint_id
 from .manage import bundle_digest, bundle_text, contains_secret, transcript_digest
 from .manage import digest as content_digest
 from .memories import match_memories, remember
@@ -183,15 +185,12 @@ from .workspace_files import (
     FileEntry,
     FileList,
     FileWrite,
+    capture_text,
     list_files,
     read_file,
     write_file,
 )
-from .workspace_map import PRIMARY, check_grant_directory, client_path, guest_path, split_client_path
-
-
-def _checkpoint_id(workspace: str, path: str, digest: str) -> str:
-    return hashlib.sha256(f"{workspace}\n{path}\n{digest}".encode()).hexdigest()[:32]
+from .workspace_map import PRIMARY, check_grant_directory, client_path, split_client_path, validate_workspace
 
 
 class Login(Model):
@@ -346,7 +345,7 @@ class Host:
     def _verify_clean(cls, health: SupervisorHealth) -> None:
         cls._verify_retired(health.workers)
         workers = {worker.worker_id: worker for worker in health.workers}
-        if health.blocked or health.identity.state == "blocked":
+        if health.blocked or health.session_errors or health.identity.state == "blocked":
             raise BackendError("update_health_blocked", status=503)
         for epoch in health.epochs:
             cleanup = epoch.cleanup
@@ -453,10 +452,10 @@ class Host:
     async def workspaces(self) -> WorkspaceList:
         self._admit()
         primary = self.workspace_root()
-        grants = [WorkspaceGrantView(name=name, host_path=host, guest_path=guest_path(name))
+        grants = [WorkspaceGrantView(name=name, host_path=host)
                   for name, host in await self.store.workspace_grants()]
         return WorkspaceList(workspaces=[
-            WorkspaceGrantView(name=PRIMARY, host_path=str(primary), guest_path="/workspace", primary=True),
+            WorkspaceGrantView(name=PRIMARY, host_path=str(primary), primary=True),
             *grants,
         ])
 
@@ -466,10 +465,10 @@ class Host:
             raise BackendError("update_frozen", status=503)
         if value.name in {PRIMARY, "grant"}:
             raise BackendError("invalid_workspace_name")
-        guest_path(value.name)
+        validate_workspace(value.name)
         host = check_grant_directory(Path(value.host_path), self.profile.path, self.workspace_root())
         await self.store.add_workspace_grant(value.name, str(host))
-        return WorkspaceGrantView(name=value.name, host_path=str(host), guest_path=guest_path(value.name))
+        return WorkspaceGrantView(name=value.name, host_path=str(host))
 
     async def remove_workspace(self, name: str) -> None:
         self._admit()
@@ -496,13 +495,13 @@ class Host:
         name, inner = split_client_path(relative)
         if name == "grant":
             grants = await self.store.workspace_grants()
-            return FileList(path="grant", guest_path="/grant", entries=[
+            return FileList(path="grant", entries=[
                 FileEntry(name=item, kind="dir", size=0) for item, _host in grants
             ])
         root_name, inner, root = await self._mapped_root(relative)
         listing = list_files(root, inner)
         listing.path = client_path(root_name, inner)
-        listing.guest_path = guest_path(root_name) if not inner else guest_path(root_name) + "/" + inner
+        listing.absolute_path = str(root / inner)
         return listing
 
     async def read_workspace(self, relative: str) -> FileContent:
@@ -510,7 +509,7 @@ class Host:
         name, inner, root = await self._mapped_root(relative)
         content = read_file(root, inner)
         content.path = client_path(name, content.path)
-        content.guest_path = guest_path(name) + "/" + inner
+        content.absolute_path = str(root / inner)
         return content
 
     async def write_workspace(self, value: FileWrite) -> FileChange:
@@ -526,21 +525,13 @@ class Host:
             raise BackendError("file_conflict")
         if current is not None:
             await self.store.save_checkpoint(
-                _checkpoint_id(name, shown, current[0]), name, shown, current[0], current[1])
+                checkpoint_id(name, shown, current[0]), name, shown, current[0], current[1])
         changed = write_file(root, value.model_copy(update={"path": inner}))
         changed.path = shown
         return changed
 
     def _current_text(self, root: Path, inner: str) -> tuple[str, str] | None:
-        try:
-            current = read_file(root, inner)
-        except BackendError as exc:
-            if exc.code == "workspace_not_file":
-                return None
-            raise
-        if current.truncated:
-            return None
-        return current.digest, current.content
+        return capture_text(root, inner)
 
     async def create_checkpoint(self, value: CheckpointCreate) -> CheckpointView:
         self._admit()
@@ -557,6 +548,37 @@ class Host:
         await self.store.save_checkpoint(value.checkpoint_id, name, client_path(name, inner), current[0], current[1])
         return CheckpointView(checkpoint_id=value.checkpoint_id, workspace=name, path=client_path(name, inner), digest=current[0])
 
+    async def prepare_tool_write(self, value: PrepareFileWrite) -> PreparedFileWrite:
+        self._admit()
+        if value.host_epoch != self.fence.host_epoch or value.build_id != self.build:
+            raise BackendError("stale_host_epoch")
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        service = await self.store.service()
+        if service is None or service.state != "running" or exited(service.process_lease):
+            raise BackendError("supervisor_unavailable", status=503)
+        health = await self.supervisor.call("GET", "/health", SupervisorHealth)
+        self._check_supervisor(health.identity, service, fenced=True)
+        if (health.freeze_id or health.blocked or health.session_errors.get(value.session_id) or health.identity.state != "ready"
+                or health.identity.instance_id != value.supervisor_id):
+            raise BackendError("execution_blocked", status=503)
+        worker = next((w for w in health.workers if w.worker_id == value.worker_id), None)
+        if (worker is None or worker.session_id != value.session_id or worker.build_id != self.build
+                or worker.host_epoch != value.host_epoch or worker.fingerprint != self.build
+                or worker.execution_epoch != value.execution_epoch or worker.purpose != "business"
+                or worker.state != "ready" or worker.process_lease is None or exited(worker.process_lease)):
+            raise BackendError("worker_identity_mismatch", status=503)
+        if not any(e.session_id == value.session_id and e.worker_id == value.worker_id
+                   and e.execution_epoch == value.execution_epoch and e.state == "open" for e in health.epochs):
+            raise BackendError("execution_cleanup_pending", status=503)
+        prepared = await self.store.file_write_preparation(value.session_id, value.call_id, value.write)
+        if prepared is not None:
+            return prepared
+        name, inner, root = await self._mapped_root(value.write.path)
+        previous = capture_text(root, inner)
+        return await self.store.prepare_file_write(value.session_id, value.call_id, value.write,
+                                                    name, client_path(name, inner), previous)
+
     async def list_checkpoints(self, workspace: str, path: str) -> CheckpointList:
         self._admit()
         rows = await self.store.checkpoints_for(workspace, path)
@@ -570,7 +592,7 @@ class Host:
         if saved is None:
             raise BackendError("checkpoint_not_found", status=404)
         _cid, workspace, path, digest, content = saved
-        name, inner, root = await self._mapped_root(path)
+        _name, inner, root = await self._mapped_root(path)
         current = self._current_text(root, inner) if inner else None
         current_text = "" if current is None else current[1]
         current_digest = "" if current is None else current[0]
@@ -579,7 +601,7 @@ class Host:
             fromfile=path, tofile=path))
         return CheckpointPreview(
             checkpoint_id=checkpoint_id, workspace=workspace, path=path,
-            guest_path=(guest_path(name) + "/" + inner) if inner else guest_path(name),
+            absolute_path=str(root / inner),
             digest=digest, content=content, current_digest=current_digest, diff=diff)
 
     async def restore_checkpoint(self, checkpoint_id: str, value: CheckpointRestore) -> FileChange:
@@ -710,7 +732,7 @@ class Host:
     async def _require_workspace(self, name: str) -> None:
         if name == PRIMARY:
             return
-        guest_path(name)
+        validate_workspace(name)
         if name not in {item for item, _host in await self.store.workspace_grants()}:
             raise BackendError("workspace_not_found", status=404)
 
@@ -1376,11 +1398,10 @@ class Host:
                     return ReadPeer(peer)
                 # The restart budget is already on the health list once the dead worker is retired.
                 # Reporting it as a missing diagnostic hides the durable refusal and never reaches spawn.
-                budget = "worker_restart_budget_exhausted:" + session
-                if (budget in health.blocked and health.identity.state != "blocked"
-                        and all(item == budget for item in health.blocked)):
+                failures = health.session_errors.get(session, [])
+                if "worker_restart_budget_exhausted" in failures:
                     raise BackendError("worker_restart_budget_exhausted", status=503)
-                if health.blocked or health.identity.state == "blocked":
+                if failures or health.blocked or health.identity.state == "blocked":
                     raise BackendError("diagnostic_worker_unavailable", status=503)
             if active:
                 raise BackendError("update_frozen", status=503)
@@ -1571,8 +1592,8 @@ class Host:
         probe = probes[0]
         proof = probe.cleanup
         if (probe.state != "clean" or proof is None or proof.state != "clean" or not proof.proof_id
-                or proof.vm_id != health.vm_id or proof.session_id != info.session_id
-                or proof.execution_epoch != info.execution_epoch or proof.containers):
+                or proof.session_id != info.session_id
+                or proof.execution_epoch != info.execution_epoch or proof.resources):
             raise BackendError("validation_probe_unproven", status=503)
 
     async def health(self) -> Health:
@@ -2320,6 +2341,10 @@ def application(owner: Host) -> FastAPI:
     @app.get("/control/updates/{identity}")
     async def update(identity: str) -> UpdateRecord:
         return await owner.store.update(identity)
+
+    @app.post("/control/file-writes/prepare")
+    async def prepare_tool_write(value: PrepareFileWrite) -> PreparedFileWrite:
+        return await owner.prepare_tool_write(value)
 
     @app.post("/control/recover")
     async def recover(value: Recovery) -> Health:

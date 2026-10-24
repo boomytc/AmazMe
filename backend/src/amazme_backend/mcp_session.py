@@ -88,32 +88,3 @@ class McpClient:
 def mcp_digest(name: str, arguments: dict[str, str]) -> str:
     body = json.dumps({"name": name, "arguments": arguments}, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(body.encode()).hexdigest()
-
-
-def mcp_container(gate_source: str, image: str, labels: dict[str, str], binds: list[str] | None = None) -> dict[str, object]:
-    if "tools/list" not in gate_source or "waitpid" not in gate_source:
-        raise BackendError("mcp_gate_missing")
-    return {
-        "Image": image,
-        "Cmd": ["python", "-I", "-c", gate_source],
-        "OpenStdin": True,
-        "StdinOnce": True,
-        "AttachStdin": True,
-        "AttachStdout": True,
-        "AttachStderr": True,
-        "Tty": False,
-        "Labels": labels,
-        "HostConfig": {
-            "Binds": binds or ["/workspace:/workspace:rw"],
-            "NetworkMode": "none",
-            "ReadonlyRootfs": True,
-            "CapDrop": ["ALL"],
-            "CapAdd": ["SETUID", "SETGID"],
-            "SecurityOpt": ["no-new-privileges"],
-            "PidsLimit": 64,
-            "Memory": 268435456,
-            "Tmpfs": {"/tmp": "rw,nosuid,nodev,size=67108864"},
-            "RestartPolicy": {"Name": "no"},
-            "LogConfig": {"Type": "none"},
-        },
-    }

@@ -15,6 +15,7 @@ from .contracts import (
     CreateSession,
     EffectResolution,
     Model,
+    PreparedFileWrite,
     PrepareUpdate,
     ProcessLease,
     Receipt,
@@ -26,12 +27,18 @@ from .contracts import (
     UpdateRecord,
     WorkerActivity,
     WorkerInfo,
+    WriteFile,
 )
 from .storage import Database
 
 
 def now_ms() -> int:
     return time.time_ns() // 1_000_000
+
+
+def checkpoint_id(workspace: str, path: str, digest: str) -> str:
+    """One id for the same workspace file bytes. A different file or digest is a different row."""
+    return hashlib.sha256(f"{workspace}\n{path}\n{digest}".encode()).hexdigest()[:32]
 
 
 class Delivery(Model):
@@ -125,7 +132,9 @@ class HostStore:
                 CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY, workspace TEXT NOT NULL,
                   text TEXT NOT NULL, digest TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS file_checkpoints(id TEXT PRIMARY KEY, workspace TEXT NOT NULL,
-                  path TEXT NOT NULL, digest TEXT NOT NULL, content TEXT NOT NULL);
+                  path TEXT NOT NULL, digest TEXT NOT NULL, content TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS file_write_preparations(session TEXT NOT NULL, call TEXT NOT NULL,
+                  request_digest TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(session,call));
                 CREATE TABLE IF NOT EXISTS automations(id TEXT PRIMARY KEY, session TEXT NOT NULL,
                   workspace TEXT NOT NULL, text TEXT NOT NULL, zone TEXT NOT NULL, local TEXT NOT NULL,
                   fold INTEGER NOT NULL, due_ms INTEGER NOT NULL, phase TEXT NOT NULL,
@@ -142,6 +151,10 @@ class HostStore:
                   session TEXT PRIMARY KEY, provider TEXT NOT NULL, model TEXT NOT NULL);
                 PRAGMA user_version=2;
             """)
+            checkpoints = {str(row[1]) for row in db.execute("PRAGMA table_info(file_checkpoints)")}
+            if "used" not in checkpoints:
+                db.execute("ALTER TABLE file_checkpoints ADD COLUMN used INTEGER NOT NULL DEFAULT 0")
+                db.execute("UPDATE file_checkpoints SET used=rowid")
             # Format 2 already shipped without branch columns. Adding them keeps every existing row.
             present = {str(row[1]) for row in db.execute("PRAGMA table_info(sessions)")}
             if "parent_id" not in present:
@@ -246,28 +259,71 @@ class HostStore:
             return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
         return await self._call(operation)
 
+    @staticmethod
+    def _save_checkpoint(db: sqlite3.Connection, cid: str, workspace: str, path: str,
+                         digest: str, content: str) -> None:
+        row = db.execute("SELECT workspace,path,digest,content FROM file_checkpoints WHERE id=?", (cid,)).fetchone()
+        if row is not None and tuple(row) != (workspace, path, digest, content):
+            raise BackendError("checkpoint_conflict")
+        used = int(db.execute("SELECT coalesce(max(used),0)+1 FROM file_checkpoints").fetchone()[0])
+        if row is None:
+            if db.execute("SELECT count(*) FROM file_checkpoints").fetchone()[0] >= 200:
+                raise BackendError("checkpoint_capacity", status=429)
+            db.execute("INSERT INTO file_checkpoints(id,workspace,path,digest,content,used) VALUES(?,?,?,?,?,?)",
+                       (cid, workspace, path, digest, content, used))
+        else:
+            db.execute("UPDATE file_checkpoints SET used=? WHERE id=?", (used, cid))
+
     async def save_checkpoint(self, checkpoint_id: str, workspace: str, path: str, digest: str, content: str) -> tuple[str, str, str, str]:
         def operation(db: sqlite3.Connection) -> tuple[str, str, str, str]:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
-            row = db.execute(
-                "SELECT workspace, path, digest, content FROM file_checkpoints WHERE id=?", (checkpoint_id,)).fetchone()
-            if row is not None:
-                if (str(row[0]), str(row[1]), str(row[2]), str(row[3])) != (workspace, path, digest, content):
-                    raise BackendError("checkpoint_conflict")
-                return checkpoint_id, workspace, path, digest
-            if db.execute("SELECT count(*) FROM file_checkpoints").fetchone()[0] >= 200:
-                raise BackendError("checkpoint_capacity", status=429)
-            db.execute(
-                "INSERT INTO file_checkpoints(id,workspace,path,digest,content) VALUES(?,?,?,?,?)",
-                (checkpoint_id, workspace, path, digest, content))
+            self._save_checkpoint(db, checkpoint_id, workspace, path, digest, content)
             return checkpoint_id, workspace, path, digest
+        return await self.transaction(operation)
+
+    async def file_write_preparation(self, session: str, call: str, write: WriteFile) -> PreparedFileWrite | None:
+        digest = hashlib.sha256(write.model_dump_json().encode()).hexdigest()
+
+        def operation(db: sqlite3.Connection) -> PreparedFileWrite | None:
+            row = db.execute("SELECT request_digest,payload FROM file_write_preparations WHERE session=? AND call=?",
+                             (session, call)).fetchone()
+            if row is None:
+                return None
+            if row[0] != digest:
+                raise BackendError("call_conflict")
+            return PreparedFileWrite.model_validate_json(row[1])
+
+        return await self._call(operation)
+
+    async def prepare_file_write(self, session: str, call: str, write: WriteFile, workspace: str,
+                                 path: str, previous: tuple[str, str] | None) -> PreparedFileWrite:
+        request_digest = hashlib.sha256(write.model_dump_json().encode()).hexdigest()
+
+        def operation(db: sqlite3.Connection) -> PreparedFileWrite:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            old = db.execute("SELECT request_digest,payload FROM file_write_preparations WHERE session=? AND call=?",
+                             (session, call)).fetchone()
+            if old:
+                if old[0] != request_digest:
+                    raise BackendError("call_conflict")
+                return PreparedFileWrite.model_validate_json(old[1])
+            digest, content = previous if previous is not None else ("", "")
+            cid = checkpoint_id(workspace, path, digest) if previous is not None else ""
+            if cid:
+                self._save_checkpoint(db, cid, workspace, path, digest, content)
+            prepared = PreparedFileWrite(call_id=call, path=path, expected_digest=digest, checkpoint_id=cid)
+            db.execute("INSERT INTO file_write_preparations VALUES(?,?,?,?)",
+                       (session, call, request_digest, prepared.model_dump_json()))
+            return prepared
+
         return await self.transaction(operation)
 
     async def checkpoints_for(self, workspace: str, path: str) -> list[tuple[str, str, str, str]]:
         def operation(db: sqlite3.Connection) -> list[tuple[str, str, str, str]]:
             rows = db.execute(
-                "SELECT id, workspace, path, digest FROM file_checkpoints WHERE workspace=? AND path=? ORDER BY rowid",
+                "SELECT id, workspace, path, digest FROM file_checkpoints WHERE workspace=? AND path=? ORDER BY used,rowid",
                 (workspace, path)).fetchall()
             return [(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in rows]
         return await self._call(operation)

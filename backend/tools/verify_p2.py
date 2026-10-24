@@ -1,4 +1,6 @@
-"""Opt-in real P2 fault matrix; never imports the concurrently edited backend.
+"""Historical VM contract, retired at the main entry point. Native replacement: stage B/D.
+
+Opt-in real P2 fault matrix; never imports the concurrently edited backend.
 
 Run with the backend venv's Python and an immutable packaged executable:
   python tools/verify_p2.py --executable '/bundle A/amazme-backend' --case core
@@ -1748,6 +1750,7 @@ def execute_case(runtime: Runtime, evidence: Evidence, builds: tuple[Build, ...]
 
 
 def main(argv: list[str] | None = None) -> int:
+    raise SystemExit("Historical VM matrix retired; run verify_native.py and native lifecycle tests")
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--executable", type=Path, help="Required immutable onedir executable; no source default")
     parser.add_argument("--target-executable", type=Path, help="Second immutable P2 0.1.0 executable for update cases")

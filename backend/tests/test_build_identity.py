@@ -26,19 +26,18 @@ def test_source_identity_includes_helper_and_plugin_bytes() -> None:
     assert {"codemode_helper.mjs", "plugin_gate.py", "mcp_gate.py"} <= names
 
 
-def test_package_identity_requires_node_helper_plugin_and_vm_tools() -> None:
+def test_package_identity_requires_helpers_without_vm_tools() -> None:
     module = load_packager()
     missing_identity = getattr(module, "missing_identity")
     required = getattr(module, "REQUIRED_IDENTITY")
     assert "runtime/node/bin/node" in missing_identity({})
+    assert not any("lima" in name or "docker" in name for name in required)
     assert missing_identity({name: "abc" for name in required}) == []
     nested = {
         "_internal/amazme_backend/codemode_helper.mjs": "abc",
         "_internal/amazme_backend/plugin_gate.py": "abc",
         "_internal/amazme_backend/node_modules/quickjs-wasi/quickjs.wasm": "abc",
         "runtime/node/bin/node": "abc",
-        "runtime/docker": "abc",
-        "runtime/lima/bin/limactl": "abc",
     }
     assert missing_identity(nested) == []
 

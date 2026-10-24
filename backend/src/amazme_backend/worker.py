@@ -1,10 +1,7 @@
 """Private session API and one checkpoint driver. Execution belongs to Supervisor."""
 import asyncio
-import base64
 import contextlib
-import json
 import logging
-import shlex
 import time
 
 import httpx
@@ -19,11 +16,15 @@ from .contracts import (
     Cleanup,
     Command,
     EffectHold,
+    ErrorBody,
     FreezeWorker,
     HostFence,
+    HostReady,
     Identity,
     Lease,
     Message,
+    PreparedFileWrite,
+    PrepareFileWrite,
     Preview,
     ReadFile,
     Receipt,
@@ -76,93 +77,19 @@ from .session_ops import SessionOp, SessionOpResult, run_session_op
 from .storage import SessionStore, now_ms, session_database
 from .transport import app_factory
 from .web_tools import execute_web_call
-from .workspace_map import PRIMARY, grant_names, guest_path, split_client_path
-
-_FILE_TOOL = """# Runs inside the granted workspace mount.
-import base64, json, os, pathlib, sys
-v = json.loads(base64.b64decode(sys.argv[1]))
-root = pathlib.Path(sys.argv[2]).resolve()
-raw = pathlib.Path(v["path"])
-parts = [part for part in raw.parts if part != "."]
-if raw.is_absolute() or not parts or ".." in parts:
-    raise SystemExit("invalid_workspace_path")
-current = root
-for part in parts[:-1]:
-    current = current / part
-    if current.is_symlink() or (current.exists() and (not current.is_dir() or not current.resolve().is_relative_to(root))):
-        raise SystemExit("workspace_symlink")
-    if not current.exists():
-        if v["mode"] != "write":
-            raise SystemExit("workspace_not_directory")
-        current.mkdir(0o755)
-target = current / parts[-1]
-if v["mode"] == "read":
-    if target.is_symlink():
-        dest = target.resolve()
-        if not dest.is_relative_to(root) or not dest.is_file():
-            raise SystemExit("workspace_path_escape")
-        target = dest
-    elif not target.is_file() or not target.resolve().is_relative_to(root):
-        raise SystemExit("workspace_not_file")
-    print(target.read_text()[:65536])
-else:
-    if target.is_symlink():
-        raise SystemExit("workspace_symlink")
-    if target.exists() and not target.is_file():
-        raise SystemExit("workspace_not_file")
-    if target.is_file() and target.stat().st_nlink > 1:
-        raise SystemExit("workspace_hardlink")
-    flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
-    previous = target.read_bytes() if target.is_file() else b""
-    if not target.exists():
-        flags |= os.O_CREAT | os.O_EXCL
-    fd = os.open(target, flags, 0o644)
-    try:
-        os.ftruncate(fd, 0)
-        view = memoryview(v["content"].encode())
-        offset = 0
-        while offset < len(view):
-            count = os.write(fd, view[offset:])
-            if count <= 0:
-                raise SystemExit("workspace_write_failed")
-            offset += count
-        os.fsync(fd)
-    except BaseException:
-        try:
-            os.lseek(fd, 0, os.SEEK_SET)
-            os.ftruncate(fd, 0)
-            os.write(fd, previous)
-            os.fsync(fd)
-        except OSError:
-            pass
-        raise
-    finally:
-        os.close(fd)
-    print("written")
-"""
+from .workspace_map import client_path, split_client_path
 
 
-def command_for(call: ToolCall, grants: list[str] | None = None) -> Command:
+def command_for(call: ToolCall) -> Command:
     if call.name == "shell":
         return Shell.model_validate_json(call.arguments)
     if call.name == "read_file":
-        value: ReadFile | WriteFile = ReadFile.model_validate_json(call.arguments)
-        mode = "read"
+        ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
-        value = WriteFile.model_validate_json(call.arguments)
-        mode = "write"
+        WriteFile.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
-    name, inner = split_client_path(value.path)
-    if not inner:
-        raise BackendError("invalid_workspace_path")
-    if name != PRIMARY and name not in (grants or []):
-        raise BackendError("workspace_not_found", status=404)
-    data = value.model_dump()
-    data["path"] = inner
-    data["mode"] = mode
-    payload = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
-    return Command(command="python -I -c " + shlex.quote(_FILE_TOOL) + " " + payload + " " + shlex.quote(guest_path(name)))
+    return Command(command=call.name)
 
 
 class Worker:
@@ -412,6 +339,27 @@ class Worker:
             raise BackendError("tool_result_identity_mismatch")
         return WebReturned(action, view.phase, view.error, view.result)
 
+    async def prepare_file_write(self, action: ToolInvocation) -> PreparedFileWrite:
+        ready = HostReady.model_validate_json((self.profile.path / "ready.json").read_bytes())
+        epoch = await self.store.host_epoch()
+        if (ready.profile_id != self.profile.config.profile_id or ready.build_id != self.build
+                or ready.fingerprint != self.build or ready.role != "host" or ready.host_epoch != epoch):
+            raise BackendError("stale_host_epoch")
+        write = WriteFile.model_validate_json(action.call.arguments)
+        request = PrepareFileWrite(**action.lease.model_dump(), host_epoch=epoch,
+                                   call_id=action.step_id, write=write)
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            response = await client.post(ready.url + "/control/file-writes/prepare", json=request.model_dump(),
+                                         headers={"Authorization": "Bearer " + self.profile.token})
+        if response.is_error:
+            error = ErrorBody.model_validate_json(response.content)
+            raise BackendError(error.code, status=response.status_code)
+        prepared = PreparedFileWrite.model_validate_json(response.content)
+        name, inner = split_client_path(write.path)
+        if prepared.call_id != action.step_id or prepared.path != client_path(name, inner):
+            raise BackendError("file_preparation_mismatch")
+        return prepared
+
     async def perform(self, action: Action) -> Observation:
         if self.validation:
             raise BackendError("validation_worker")
@@ -452,10 +400,14 @@ class Worker:
         if isinstance(action, WebRetrieval):
             return await self._retrieve_web(action)
         if isinstance(action, ToolInvocation):
-            command = command_for(action.call, grant_names(self.profile.path))
+            prepared = await self.prepare_file_write(action) if action.call.name == "write_file" else None
+            command = command_for(action.call)
+            file = (WriteFile.model_validate_json(action.call.arguments) if action.call.name == "write_file" else
+                    ReadFile.model_validate_json(action.call.arguments) if action.call.name == "read_file" else None)
             result = await self.supervisor.call("POST", "/tools/run", ToolResult, RunTool(
                 **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
-                command=command.command, timeout_seconds=command.timeout_seconds,
+                command=command.command, timeout_seconds=command.timeout_seconds, file=file,
+                expected_digest=prepared.expected_digest if prepared else None,
                 effect="read" if action.call.name == "read_file" else "write"))
             return ToolReturned(action, result)
         if isinstance(action, QueryTool):

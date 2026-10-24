@@ -240,12 +240,12 @@ class PendingCall:
 
 def tool_definitions() -> list[ChatCompletionToolParam]:
     return [
-        {"type": "function", "function": {"name": "shell", "description": "Execute a Linux shell command in the granted workspace. Network disabled. Commands may have side effects; never retry an unknown result.", "parameters": Shell.model_json_schema()}},
+        {"type": "function", "function": {"name": "shell", "description": "Execute a command with the local user shell in the selected project directory. This has the current user permissions, including network access. Commands may have side effects; never retry an unknown result.", "parameters": Shell.model_json_schema()}},
         {"type": "function", "function": {"name": "read_file", "description": "Read a relative UTF-8 workspace file.", "parameters": ReadFile.model_json_schema()}},
         {"type": "function", "function": {"name": "write_file", "description": "Write a relative UTF-8 workspace file.", "parameters": WriteFile.model_json_schema()}},
         {"type": "function", "function": {"name": "delegate_task", "description": "Delegate up to eight required independent tasks. Wait for their results before completing.", "parameters": DelegateTasks.model_json_schema()}},
-        {"type": "function", "function": {"name": "web_search", "description": "Search through the saved web policy. It stays off until the user enables that policy, does not run in the workspace container, and an unknown result must not be retried.", "parameters": WebSearch.model_json_schema()}},
-        {"type": "function", "function": {"name": "web_fetch", "description": "Fetch one http(s) page through the saved web policy. It stays off until the user enables that policy, does not run in the workspace container, and an unknown result must not be retried.", "parameters": WebFetch.model_json_schema()}},
+        {"type": "function", "function": {"name": "web_search", "description": "Search through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", "parameters": WebSearch.model_json_schema()}},
+        {"type": "function", "function": {"name": "web_fetch", "description": "Fetch one http(s) page through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", "parameters": WebFetch.model_json_schema()}},
     ]
 
 
@@ -274,9 +274,10 @@ def replay_reasoning_details(signature: str) -> list[object]:
 def provider_messages(messages: list[Message], provider: str = "") -> list[ChatCompletionMessageParam]:
     result: list[ChatCompletionMessageParam] = [{"role": "system", "content": (
         "You are AmazMe. Use the provided tools when asked to inspect or modify the workspace. "
-        "Commands execute in a Linux container at /workspace, not native macOS. "
-        "Only the granted workspace persists. Shell network is disabled. "
-        "web_search and web_fetch use the saved web policy and do not run in the container. "
+        "Commands execute on the user local machine in the selected project, using local tools and user permissions. "
+        "This is not an OS sandbox. Do not assume a Linux filesystem or /workspace directory. "
+        "Never read or transmit credentials unless explicitly authorized, or retry an unknown side effect. "
+        "web_search and web_fetch use the saved web policy. "
         "Report actual tool results. "
         "Never claim a command ran unless a tool result confirms it. Keep answers concise."
     )}]
@@ -340,6 +341,9 @@ async def stream(config: ProviderConfig, messages: list[Message]) -> AsyncIterat
         if prompt.startswith("/shell ") and not results:
             call = ToolCall(id=identity, name="shell",
                             arguments=Shell(command=prompt[7:], timeout_seconds=120).model_dump_json())
+        elif prompt.startswith("/write ") and not results:
+            call = ToolCall(id=identity, name="write_file",
+                            arguments=WriteFile.model_validate_json(prompt[7:]).model_dump_json())
         elif prompt.startswith("/delegate ") and not results:
             tasks = DelegateTasks(tasks=TypeAdapter(list[str]).validate_json(prompt[10:]))
             call = ToolCall(id=identity, name="delegate_task", arguments=tasks.model_dump_json())

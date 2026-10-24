@@ -34,14 +34,6 @@ def stop(process: subprocess.Popen[bytes]) -> None:
     process.wait(timeout=5)
 
 
-class IdleVM:
-    def __init__(self, profile: Profile):
-        self.profile = profile
-        self.image_id = "sha256:image"
-        self.socket = profile.path / "docker.sock"
-
-    async def close(self) -> None:
-        return None
 
 
 async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Supervisor:
@@ -50,7 +42,6 @@ async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Supervi
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
-    monkeypatch.setattr("amazme_backend.supervisor.VM", IdleVM)
     owner = Supervisor(Profile(tmp_path), "supervisor-remote")
     await owner.initialize()
     owner.monitor_task.cancel()

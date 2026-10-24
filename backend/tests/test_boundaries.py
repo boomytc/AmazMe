@@ -1,20 +1,28 @@
 import ast
-import base64
 import json
 import os
-import shlex
 import stat
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from native_file_fixture import run_file
 
 from amazme_backend.common import unix_listener
 from amazme_backend.contracts import RunTool, Stream, ToolCall, WriteFile
-from amazme_backend.worker import command_for
+from amazme_backend.native_execution import LocalPermit
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("tool", ["verify_p2.py", "measure_runtime.py", "verify_relocated_bundle.py"])
+def test_retired_vm_verifiers_refuse_before_creating_resources(tool, tmp_path):
+    result = subprocess.run([sys.executable, str(ROOT / "tools" / tool), "--help"],
+                            cwd=tmp_path, capture_output=True, text=True, timeout=10)
+    assert result.returncode != 0
+    assert "retired" in result.stderr.lower()
+    assert not list(tmp_path.iterdir())
 
 
 def test_generated_event_contracts_do_not_drift():
@@ -24,8 +32,8 @@ def test_generated_event_contracts_do_not_drift():
 
 
 def test_business_modules_cannot_spawn_native_processes():
-    # Container PID 1 programs and the Codemode helper supervisor may spawn a process.
-    permitted = {"host.py", "supervisor.py", "vm.py", "gate.py", "pty_gate.py", "mcp_gate.py", "codemode_run.py",
+    # Only the registered native execution module and fixed service owners may spawn.
+    permitted = {"host.py", "supervisor.py", "native_execution.py", "pty_gate.py", "mcp_gate.py", "codemode_run.py",
                  "plugin_run.py", "computer_run.py"}
     for path in (ROOT / "src/amazme_backend").glob("*.py"):
         if path.name in permitted:
@@ -53,22 +61,23 @@ def test_private_listener_is_owner_only(tmp_path):
 @pytest.mark.parametrize("content", ["\U0001f600" * 32000, ("'\n" * 16000)])
 def test_maximum_file_content_fits_all_transport_and_gate_boundaries(content):
     value = WriteFile(path="\U0001f600" * 1024, content=content)
-    command = command_for(ToolCall(id="call", name="write_file", arguments=value.model_dump_json()))
-    tool = RunTool(session_id="s", worker_id="w", execution_epoch=1, build_id="b", call_id="c", **command.model_dump())
+    tool = RunTool(session_id="s", worker_id="w", execution_epoch=1, build_id="b", call_id="c",
+                   command="write_file", file=value, expected_digest="")
     assert len(tool.model_dump_json().encode()) < 262144
-    assert len(json.dumps({"command": tool.command, "uid": 501, "gid": 20}).encode()) < 262144
-    tokens = shlex.split(command.command)
-    assert tokens[-1] == "/workspace"
-    assert json.loads(base64.b64decode(tokens[-2]))["content"] == content
+    permit = LocalPermit(call_id="c", cwd="/local/project", command="write_file", file=value,
+                         expected_digest="", timeout_seconds=30)
+    assert len(permit.model_dump_json().encode()) < 262144
+    assert LocalPermit.model_validate_json(permit.model_dump_json()).file == value
 
 
 def _run_file_tool(root: Path, call: ToolCall) -> subprocess.CompletedProcess[str]:
-    tokens = shlex.split(command_for(call).command)
-    return subprocess.run([sys.executable, "-I", "-c", tokens[3], tokens[4], str(root)],
-                          capture_output=True, text=True, check=False)
+    import hashlib
+    path = root / json.loads(call.arguments)["path"]
+    digest = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else ""
+    return run_file(root, call, digest)
 
 
-def test_guest_file_tool_does_not_follow_links_out_of_the_workspace(tmp_path: Path) -> None:
+def test_local_file_tool_does_not_follow_links_out_of_the_workspace(tmp_path: Path) -> None:
     root = tmp_path / "work"
     root.mkdir()
     (root / "note.txt").write_text("alpha\n")

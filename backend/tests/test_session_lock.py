@@ -12,6 +12,7 @@ from typing import cast
 
 import httpx
 import pytest
+from runtime_cleanup import stop_and_destroy
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import BackendError, CreateSession, HostFence, ProcessLease, Submit, WebPolicy
@@ -202,15 +203,16 @@ def _ready(proc: subprocess.Popen[bytes], deadline: float) -> dict[str, object]:
 
 
 def _stop(proc: subprocess.Popen[bytes], profile: Path) -> None:
-    subprocess.run([sys.executable, "-m", "amazme_backend", "stop", "--profile", str(profile)],
-                   check=False, capture_output=True, text=True, timeout=40)
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=10)
-    if proc.stdout is not None:
-        proc.stdout.close()
+        stop_and_destroy([sys.executable, "-m", "amazme_backend"], profile)
+    finally:
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 async def test_live_worker_keeps_the_lock_and_accepts_the_host_write(tmp_path: Path) -> None:

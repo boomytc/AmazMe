@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import cast
 
+from runtime_cleanup import stop_and_destroy
+
 from amazme_backend.contracts import BackendError
 from amazme_backend.sdk import Client
 
@@ -85,15 +87,16 @@ def _ready(proc: subprocess.Popen[bytes], deadline: float) -> dict[str, object]:
 
 def _stop(proc: subprocess.Popen[bytes], profile: Path) -> None:
     backend = [FROZEN] if FROZEN else [sys.executable, "-m", "amazme_backend"]
-    subprocess.run([*backend, "stop", "--profile", str(profile)],
-                   check=False, capture_output=True, text=True, timeout=40)
     try:
-        proc.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=10)
-    if proc.stdout is not None:
-        proc.stdout.close()
+        stop_and_destroy(backend, profile)
+    finally:
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=10)
+        if proc.stdout is not None:
+            proc.stdout.close()
 
 
 def _open_ui(url: str, token: str, home: Path) -> tuple[subprocess.Popen[bytes], int]:
@@ -297,8 +300,7 @@ async def test_default_interactive_starts_python_and_leave_keeps_the_host(tmp_pa
         elif master >= 0:
             os.close(master)
         if profile.is_dir():
-            subprocess.run([sys.executable, "-m", "amazme_backend", "stop", "--profile", str(profile)],
-                           check=False, capture_output=True, text=True, timeout=40)
+            stop_and_destroy([sys.executable, "-m", "amazme_backend"], profile)
 
 
 def _headless_env(tmp_path: Path) -> dict[str, str]:
@@ -388,5 +390,4 @@ async def test_print_json_and_rpc_use_the_python_host(tmp_path: Path) -> None:
         assert token not in mismatched.stdout and token not in mismatched.stderr
     finally:
         if profile.is_dir():
-            subprocess.run([sys.executable, "-m", "amazme_backend", "stop", "--profile", str(profile)],
-                           check=False, capture_output=True, text=True, timeout=40)
+            stop_and_destroy([sys.executable, "-m", "amazme_backend"], profile)

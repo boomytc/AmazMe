@@ -1,8 +1,4 @@
-"""One host/guest path map for files, tools, and terminals.
-
-The profile workspace stays at /workspace. Extra directories are explicit grants
-at /grant/<name>. HOME, SSH keys, keychains, and the profile itself are not grants.
-"""
+"""Logical workspace identifiers resolve to real local directories; not an OS sandbox."""
 
 from __future__ import annotations
 
@@ -16,12 +12,10 @@ PRIMARY = "primary"
 _NAME = re.compile(r"[a-z][a-z0-9-]{0,31}")
 
 
-def guest_path(name: str) -> str:
-    if name == PRIMARY:
-        return "/workspace"
-    if name == "grant" or _NAME.fullmatch(name) is None:
+def validate_workspace(name: str) -> str:
+    if name != PRIMARY and (name == "grant" or _NAME.fullmatch(name) is None):
         raise BackendError("invalid_workspace_name")
-    return "/grant/" + name
+    return name
 
 
 def split_client_path(relative: str) -> tuple[str, str]:
@@ -36,7 +30,7 @@ def split_client_path(relative: str) -> tuple[str, str]:
         return PRIMARY, text
     if len(parts) == 1:
         return "grant", ""
-    guest_path(parts[1])
+    validate_workspace(parts[1])
     return parts[1], "/".join(parts[2:])
 
 
@@ -45,31 +39,6 @@ def client_path(name: str, inner: str) -> str:
         return inner
     suffix = "/" + inner if inner else ""
     return "grant/" + name + suffix
-
-
-def allowed_cwd(value: str) -> bool:
-    if value == "/workspace":
-        return True
-    if not value.startswith("/grant/"):
-        return False
-    name = value.removeprefix("/grant/")
-    return "/" not in name and guest_path(name) == value
-
-
-def container_binds(names: list[str], *, readonly: bool) -> list[str]:
-    mode = "ro" if readonly else "rw"
-    binds = [f"/workspace:/workspace:{mode}"]
-    for name in names:
-        guest = guest_path(name)
-        binds.append(f"{guest}:{guest}:{mode}")
-    return binds
-
-
-def vm_mounts(primary: str, grants: list[tuple[str, str]]) -> list[dict[str, object]]:
-    mounts: list[dict[str, object]] = [{"location": primary, "mountPoint": "/workspace", "writable": True}]
-    for name, host in grants:
-        mounts.append({"location": host, "mountPoint": guest_path(name), "writable": True})
-    return mounts
 
 
 def check_grant_directory(path: Path, profile: Path, primary: Path) -> Path:

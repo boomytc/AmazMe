@@ -14,7 +14,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", type=Path)
     args = parser.parse_args()
-    parent = ROOT / ".artifacts/python-backend-p2"
+    parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="client-", dir=parent))
     provider = root / "faux.json"
@@ -147,6 +147,24 @@ def main():
                 assert page.evaluate("sessionStorage.getItem('pending')") is None
                 page.unroute("**/submissions")
                 report["checks"].append("definitive rejection released the pending request for editing")
+
+                note = runtime.workspace / "browser-note.txt"
+                note.write_text("before\n")
+                page.locator("#prompt").fill('/write {"path":"browser-note.txt","content":"after\\n"}')
+                page.locator("#send").click()
+                approve_and_finish(page)
+                assert note.read_text() == "after\n"
+                page.locator("#files").evaluate("node => node.open = true")
+                page.locator("#file-list").get_by_role("button", name="browser-note.txt", exact=True).click()
+                expect(page.locator("#file-content")).to_have_value("after\n")
+                expect(page.locator("#checkpoint-state")).to_contain_text("browser-note.txt")
+                page.locator("#checkpoint-preview").click()
+                expect(page.locator("#file-diff")).to_contain_text("before")
+                expect(page.locator("#file-content")).to_have_value("after\n")
+                page.locator("#checkpoint-restore").click()
+                expect(page.locator("#file-content")).to_have_value("before\n")
+                assert note.read_text() == "before\n"
+                report["checks"].append("live native file write auto-checkpoint discovered; preview preserved editor; restore changed only selected file")
 
                 def frozen_health(route):
                     response = route.fetch()

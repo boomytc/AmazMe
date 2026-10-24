@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import difflib
 import errno
+import fcntl
 import hashlib
 import os
 import stat
@@ -25,14 +26,14 @@ class FileEntry(Model):
 
 class FileList(Model):
     path: str
-    guest_path: str = ""
+    absolute_path: str = ""
     entries: list[FileEntry]
     truncated: bool = False
 
 
 class FileContent(Model):
     path: str
-    guest_path: str = ""
+    absolute_path: str = ""
     digest: str
     content: str
     truncated: bool = False
@@ -119,6 +120,48 @@ def _hash_file(path: Path) -> tuple[str, bytes, int]:
     return digest.hexdigest(), bytes(head), total
 
 
+def capture_text(root: Path, relative: str) -> tuple[str, str] | None:
+    """Capture complete text through directory handles without following write-path links."""
+    parts = _parts(relative)
+    try:
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError as exc:
+        raise _os_error(exc) from exc
+    try:
+        for part in parts[:-1]:
+            try:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            except FileNotFoundError:
+                return None
+            os.close(parent)
+            parent = child
+        try:
+            fd = os.open(parts[-1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+        except FileNotFoundError:
+            return None
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise BackendError("workspace_not_file")
+            if info.st_nlink > 1:
+                raise BackendError("workspace_hardlink_write")
+            with os.fdopen(os.dup(fd), "rb") as stream:
+                data = stream.read(_WRITE_LIMIT + 1)
+            if len(data) > _WRITE_LIMIT:
+                raise BackendError("checkpoint_unavailable")
+            try:
+                text = data.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise BackendError("file_not_text") from exc
+            return hashlib.sha256(data).hexdigest(), text
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise _os_error(exc) from exc
+    finally:
+        os.close(parent)
+
+
 def read_file(root: Path, relative: str) -> FileContent:
     parts = _parts(relative)
     if len(parts) > 1:
@@ -181,60 +224,64 @@ def write_file(root: Path, value: FileWrite) -> FileChange:
     if len(payload) > _WRITE_LIMIT:
         raise BackendError("file_too_large")
     parts = _parts(value.path)
-    parent = _walk(root, parts[:-1], "workspace_symlink_write") if len(parts) > 1 else root.resolve()
-    requested = parent / parts[-1]
-    if requested.is_symlink():
-        raise BackendError("workspace_symlink_write")
-    if requested.exists() and not requested.is_file():
-        raise BackendError("workspace_not_file")
-    existed = requested.is_file()
-    if existed and requested.stat().st_size > _WRITE_LIMIT:
-        raise BackendError("file_too_large")
+    # Resolve diagnostics first, then pin each directory for the actual write.
+    if len(parts) > 1:
+        _walk(root, parts[:-1], "workspace_symlink_write")
     try:
-        previous = requested.read_bytes() if existed else b""
-    except OSError as exc:
-        raise _os_error(exc) from exc
-    if existed:
+        parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
-            previous_text = previous.decode()
-        except UnicodeDecodeError as exc:
-            raise BackendError("file_not_text") from exc
-        digest = hashlib.sha256(previous).hexdigest()
-    else:
-        previous_text = ""
-        digest = ""
-    if value.expected_digest != digest:
-        raise BackendError("file_conflict")
-    if existed and requested.stat().st_nlink > 1:
-        raise BackendError("workspace_hardlink_write")
-    flags = os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC
-    if not existed:
-        flags |= os.O_CREAT | os.O_EXCL
-    try:
-        fd = os.open(requested, flags, 0o644)
+            for part in parts[:-1]:
+                child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                os.close(parent)
+                parent = child
+            try:
+                target = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                target = None
+            if target is not None:
+                if stat.S_ISLNK(target.st_mode):
+                    raise BackendError("workspace_symlink_write")
+                if not stat.S_ISREG(target.st_mode):
+                    raise BackendError("workspace_not_file")
+            flags = os.O_RDWR | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC
+            if not value.expected_digest:
+                flags |= os.O_CREAT | os.O_EXCL
+            fd = os.open(parts[-1], flags, 0o644, dir_fd=parent)
+        finally:
+            os.close(parent)
     except FileExistsError as exc:
         raise BackendError("file_conflict") from exc
     except OSError as exc:
         raise _os_error(exc) from exc
     try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise BackendError("file_conflict") from exc
         info = os.fstat(fd)
-        if not stat_is_file(info) or info.st_nlink > 1:
+        if not stat_is_file(info):
+            raise BackendError("workspace_not_file")
+        if info.st_nlink > 1:
             raise BackendError("workspace_hardlink_write")
-        current = os.pread(fd, info.st_size, 0)
-        if existed:
-            if hashlib.sha256(current).hexdigest() != value.expected_digest:
-                raise BackendError("file_conflict")
-        elif info.st_size:
+        previous = os.pread(fd, _WRITE_LIMIT + 1, 0)
+        if len(previous) > _WRITE_LIMIT:
+            raise BackendError("file_too_large")
+        try:
+            previous_text = previous.decode()
+        except UnicodeDecodeError as exc:
+            raise BackendError("file_not_text") from exc
+        digest = hashlib.sha256(previous).hexdigest() if value.expected_digest else ""
+        if digest != value.expected_digest or (not value.expected_digest and previous):
             raise BackendError("file_conflict")
         os.ftruncate(fd, 0)
         try:
             _write_all(fd, payload)
             os.fsync(fd)
-        except (OSError, BackendError) as exc:
+        except (OSError, BackendError):
             _restore(fd, previous)
-            if isinstance(exc, OSError):
-                raise _os_error(exc) from exc
             raise
+    except OSError as exc:
+        raise _os_error(exc) from exc
     finally:
         os.close(fd)
     written = "/".join(parts)

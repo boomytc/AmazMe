@@ -84,6 +84,10 @@ class Identity(Model):
     storage_format: Literal[2] = 2
 
 
+class HostReady(Identity):
+    url: str = Field(pattern=r"^http://127\.0\.0\.1:[1-9][0-9]{0,4}$")
+
+
 IMAGE_MEDIA_TYPES = ("image/png", "image/jpeg", "image/webp", "image/gif")
 IMAGE_MAX_BYTES = 8 * 1024 * 1024
 IMAGE_MAX_COUNT = 8
@@ -247,7 +251,7 @@ class ToolResult(Model):
     stdout: str
     stderr: str
     truncated: bool = False
-    container_id: str = ""
+    stop_reason: str = ""
 
 
 class Event(Model):
@@ -445,7 +449,7 @@ class CheckpointPreview(Model):
     checkpoint_id: str
     workspace: str
     path: str
-    guest_path: str
+    absolute_path: str
     digest: str
     content: str
     current_digest: str
@@ -634,7 +638,6 @@ class WorkspaceGrantRequest(Model):
 class WorkspaceGrantView(Model):
     name: str
     host_path: str
-    guest_path: str
     primary: bool = False
 
 
@@ -804,20 +807,35 @@ class Lease(Model):
     supervisor_id: str = ""
 
 
+class PrepareFileWrite(Lease):
+    host_epoch: int
+    call_id: str = Field(min_length=1, max_length=128)
+    write: WriteFile
+
+
+class PreparedFileWrite(Model):
+    call_id: str
+    path: str
+    expected_digest: str = Field(pattern=r"^(?:[a-f0-9]{64})?$")
+    checkpoint_id: str = ""
+
+
 class RunTool(Lease, Command):
     call_id: str
     request_id: str = ""
     effect: Literal["read", "write"] = "write"
+    file: WriteFile | ReadFile | None = None
+    expected_digest: str | None = None
 
 
 class Cleanup(Model):
     session_id: str
     execution_epoch: int
     state: Literal["clean", "blocked"]
-    containers: list[str]
+    resources: list[str]
     reason: str = ""
     proof_id: str = ""
-    vm_id: str = ""
+    observation: Literal["registered_processes"] = "registered_processes"
 
 
 class WorkerInfo(Model):
@@ -919,7 +937,7 @@ class ErrorBody(Model):
 
 class ProcessLease(Model):
     instance_id: str
-    role: Literal["host", "worker", "supervisor"]
+    role: Literal["host", "worker", "supervisor", "execution"]
     profile_path: str
     path: str
     device: int
@@ -1060,6 +1078,15 @@ class EpochHealth(Model):
     cleanup: Cleanup | None = None
 
 
+class ExecutionResource(Model):
+    call_id: str
+    session_id: str
+    request_id: str
+    state: Literal["registered", "running", "stopping", "exited", "stop_unconfirmed"]
+    outcome: Literal["pending", "completed", "unknown"]
+    observation: Literal["registered_processes"] = "registered_processes"
+
+
 class SupervisorHealth(Model):
     identity: Identity
     registry_revision: str
@@ -1067,8 +1094,9 @@ class SupervisorHealth(Model):
     workers: list[WorkerInfo]
     epochs: list[EpochHealth]
     effects: list[EffectHold] = Field(default_factory=lambda: list[EffectHold]())
-    vm_id: str
-    boot_id: str
+    execution: Literal["native"] = "native"
+    resources: list[ExecutionResource] = Field(default_factory=lambda: list[ExecutionResource]())
+    session_errors: dict[str, list[str]] = Field(default_factory=lambda: dict[str, list[str]]())
     blocked: list[str] = Field(default_factory=lambda: list[str]())
 
 

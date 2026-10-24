@@ -99,16 +99,17 @@ def test_browser_previews_a_checkpoint_without_replacing_the_editor() -> None:
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
           if(path==='/api/v1/sessions') return response({sessions:[]});
-          if(path==='/api/v1/workspaces') return response({workspaces:[{name:'primary',host_path:'/work',guest_path:'/workspace',primary:true}]});
-          if(path.startsWith('/api/v1/files/content') && method==='GET') return response({path:'note.txt',digest:'abc',content:'beta\n',truncated:false,guest_path:'/workspace/note.txt'});
-          if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) return response({path:'',guest_path:'/workspace',entries:[{name:'note.txt',kind:'file',size:5}],truncated:false});
+          if(path==='/api/v1/workspaces') return response({workspaces:[{name:'primary',host_path:'/work',host_path:'/workspace',primary:true}]});
+          if(path.startsWith('/api/v1/files/content') && method==='GET') return response({path:'note.txt',digest:'abc',content:'beta\n',truncated:false,absolute_path:'/workspace/note.txt'});
+          if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) return response({path:'',absolute_path:'/workspace',entries:[{name:'note.txt',kind:'file',size:5}],truncated:false});
+          if(method==='GET' && path.startsWith('/api/v1/checkpoints?')) return response({checkpoints:[]});
           if(path==='/api/v1/checkpoints' && method==='POST') {
             seen.push(body.path);
             return response({checkpoint_id:body.checkpoint_id,workspace:body.workspace,path:body.path,digest:'aaa'});
           }
           if(method==='GET' && path.startsWith('/api/v1/checkpoints/')) {
             seen.push('preview');
-            return response({checkpoint_id:'c',workspace:'primary',path:'note.txt',guest_path:'/workspace/note.txt',digest:'aaa',content:'alpha\n',current_digest:'abc',diff:'--- alpha\n+++ beta\n'});
+            return response({checkpoint_id:path.split('/').at(-1),workspace:'primary',path:'note.txt',absolute_path:'/workspace/note.txt',digest:'aaa',content:'alpha\n',current_digest:'abc',diff:'--- alpha\n+++ beta\n'});
           }
           throw Error('unexpected '+method+' '+path);
         };

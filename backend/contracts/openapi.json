@@ -3709,6 +3709,44 @@
         }
       }
     },
+    "/control/file-writes/prepare": {
+      "post": {
+        "summary": "Prepare Tool Write",
+        "operationId": "prepare_tool_write_control_file_writes_prepare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrepareFileWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparedFileWrite"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/control/recover": {
       "post": {
         "summary": "Recover",
@@ -4337,9 +4375,9 @@
             "type": "string",
             "title": "Path"
           },
-          "guest_path": {
+          "absolute_path": {
             "type": "string",
-            "title": "Guest Path"
+            "title": "Absolute Path"
           },
           "digest": {
             "type": "string",
@@ -4364,7 +4402,7 @@
           "checkpoint_id",
           "workspace",
           "path",
-          "guest_path",
+          "absolute_path",
           "digest",
           "content",
           "current_digest",
@@ -4432,12 +4470,12 @@
             ],
             "title": "State"
           },
-          "containers": {
+          "resources": {
             "items": {
               "type": "string"
             },
             "type": "array",
-            "title": "Containers"
+            "title": "Resources"
           },
           "reason": {
             "type": "string",
@@ -4449,10 +4487,11 @@
             "title": "Proof Id",
             "default": ""
           },
-          "vm_id": {
+          "observation": {
             "type": "string",
-            "title": "Vm Id",
-            "default": ""
+            "const": "registered_processes",
+            "title": "Observation",
+            "default": "registered_processes"
           }
         },
         "additionalProperties": false,
@@ -4461,7 +4500,7 @@
           "session_id",
           "execution_epoch",
           "state",
-          "containers"
+          "resources"
         ],
         "title": "Cleanup"
       },
@@ -5071,6 +5110,58 @@
         ],
         "title": "Event"
       },
+      "ExecutionResource": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "registered",
+              "running",
+              "stopping",
+              "exited",
+              "stop_unconfirmed"
+            ],
+            "title": "State"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "completed",
+              "unknown"
+            ],
+            "title": "Outcome"
+          },
+          "observation": {
+            "type": "string",
+            "const": "registered_processes",
+            "title": "Observation",
+            "default": "registered_processes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "session_id",
+          "request_id",
+          "state",
+          "outcome"
+        ],
+        "title": "ExecutionResource"
+      },
       "ExportBundle": {
         "properties": {
           "format": {
@@ -5270,9 +5361,9 @@
             "type": "string",
             "title": "Path"
           },
-          "guest_path": {
+          "absolute_path": {
             "type": "string",
-            "title": "Guest Path",
+            "title": "Absolute Path",
             "default": ""
           },
           "digest": {
@@ -5328,9 +5419,9 @@
             "type": "string",
             "title": "Path"
           },
-          "guest_path": {
+          "absolute_path": {
             "type": "string",
-            "title": "Guest Path",
+            "title": "Absolute Path",
             "default": ""
           },
           "entries": {
@@ -6106,6 +6197,56 @@
         ],
         "title": "PluginView"
       },
+      "PrepareFileWrite": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "worker_id": {
+            "type": "string",
+            "title": "Worker Id"
+          },
+          "execution_epoch": {
+            "type": "integer",
+            "title": "Execution Epoch"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "supervisor_id": {
+            "type": "string",
+            "title": "Supervisor Id",
+            "default": ""
+          },
+          "host_epoch": {
+            "type": "integer",
+            "title": "Host Epoch"
+          },
+          "call_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Call Id"
+          },
+          "write": {
+            "$ref": "#/components/schemas/WriteFile"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "worker_id",
+          "execution_epoch",
+          "build_id",
+          "host_epoch",
+          "call_id",
+          "write"
+        ],
+        "title": "PrepareFileWrite"
+      },
       "PrepareUpdate": {
         "properties": {
           "update_id": {
@@ -6132,6 +6273,36 @@
           "target_build"
         ],
         "title": "PrepareUpdate"
+      },
+      "PreparedFileWrite": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "expected_digest": {
+            "type": "string",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Expected Digest"
+          },
+          "checkpoint_id": {
+            "type": "string",
+            "title": "Checkpoint Id",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "path",
+          "expected_digest"
+        ],
+        "title": "PreparedFileWrite"
       },
       "Preview": {
         "properties": {
@@ -6178,7 +6349,8 @@
             "enum": [
               "host",
               "worker",
-              "supervisor"
+              "supervisor",
+              "execution"
             ],
             "title": "Role"
           },
@@ -7176,13 +7348,28 @@
             "type": "array",
             "title": "Effects"
           },
-          "vm_id": {
+          "execution": {
             "type": "string",
-            "title": "Vm Id"
+            "const": "native",
+            "title": "Execution",
+            "default": "native"
           },
-          "boot_id": {
-            "type": "string",
-            "title": "Boot Id"
+          "resources": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionResource"
+            },
+            "type": "array",
+            "title": "Resources"
+          },
+          "session_errors": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "type": "object",
+            "title": "Session Errors"
           },
           "blocked": {
             "items": {
@@ -7198,9 +7385,7 @@
           "identity",
           "registry_revision",
           "workers",
-          "epochs",
-          "vm_id",
-          "boot_id"
+          "epochs"
         ],
         "title": "SupervisorHealth"
       },
@@ -8081,10 +8266,6 @@
             "type": "string",
             "title": "Host Path"
           },
-          "guest_path": {
-            "type": "string",
-            "title": "Guest Path"
-          },
           "primary": {
             "type": "boolean",
             "title": "Primary",
@@ -8095,8 +8276,7 @@
         "type": "object",
         "required": [
           "name",
-          "host_path",
-          "guest_path"
+          "host_path"
         ],
         "title": "WorkspaceGrantView"
       },
@@ -8116,6 +8296,28 @@
           "workspaces"
         ],
         "title": "WorkspaceList"
+      },
+      "WriteFile": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 32000,
+            "title": "Content"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "WriteFile"
       }
     }
   }

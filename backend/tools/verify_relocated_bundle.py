@@ -1,4 +1,6 @@
-"""Move a frozen onedir onto a path that contains spaces and start it twice.
+"""Historical VM contract, retired at the main entry point. Native replacement: stage B/D.
+
+Move a frozen onedir onto a path that contains spaces and start it twice.
 
 The process gets a PATH that only contains the system directories. With the
 default seatbelt, a direct connect to a public IP is refused while localhost
@@ -530,6 +532,7 @@ def exercise_tools(executable: Path, root: Path, build_id: str, sandbox: Path | 
 
 
 def main() -> None:
+    raise SystemExit("Retired VM relocation contract; native installation verification belongs to stage D")
     parser = argparse.ArgumentParser()
     parser.add_argument("--bundle", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)

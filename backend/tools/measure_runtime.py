@@ -1,4 +1,6 @@
-"""Measure submit, history load, and cancel-to-exit on one frozen amazme-backend.
+"""Historical VM contract, retired at the main entry point. Native replacement: stage B/D.
+
+Measure submit, history load, and cancel-to-exit on one frozen amazme-backend.
 
 Submit latency is the POST that returns the durable receipt. History load is a
 later GET of the snapshot and of search. Cancel latency follows `/shell sleep`
@@ -142,6 +144,7 @@ def fetch_receipt(url: str, token: str, session: str, request_id: str) -> dict[s
 
 
 def main() -> None:
+    raise SystemExit("Retired VM measurement contract; native performance verification belongs to stage D")
     parser = argparse.ArgumentParser()
     parser.add_argument("--executable", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)

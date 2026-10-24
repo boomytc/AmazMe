@@ -1,4 +1,4 @@
-"""Drive the shipped P2 Web client in Chrome. Faux is the credential-free default."""
+"""Drive the native Web client in Chrome. Faux is the credential-free default."""
 
 import argparse
 import json
@@ -81,7 +81,7 @@ def assert_protocol(sent, received, writes, build):
 def finish(runtime, root, report):
     try:
         runtime.close()
-        report["cleanup"] = "browser, owned services and VM closed"
+        report["cleanup"] = "browser and owned native services closed"
     except BaseException as error:
         report["status"] = "failed"
         report["cleanup_error"] = f"{type(error).__name__}: {error}"
@@ -96,7 +96,7 @@ def main():
     parser.add_argument("--provider-config", type=Path, help="Explicit opt-in to a configured real provider")
     parser.add_argument("--executable", type=Path)
     args = parser.parse_args()
-    parent = ROOT / ".artifacts/python-backend-p2"
+    parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
     root = Path(tempfile.mkdtemp(prefix="browser-", dir=parent))
     provider = args.provider_config.resolve() if args.provider_config else root / "faux.json"
@@ -118,9 +118,9 @@ def main():
                 login(page, runtime)
                 page.locator("#create").click()
                 expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
-                prompt = "/shell printf 'AMAZME_P2_VM_OK\\n' > real-proof.txt; cat real-proof.txt"
+                prompt = "/shell printf 'AMAZME_NATIVE_OK\\n' > real-proof.txt; cat real-proof.txt"
                 if args.provider_config:
-                    prompt = "只调用一次 shell 执行：printf 'AMAZME_P2_VM_OK\\n' > real-proof.txt; cat real-proof.txt。报告实际内容。"
+                    prompt = "只调用一次 shell 执行：printf 'AMAZME_NATIVE_OK\\n' > real-proof.txt; cat real-proof.txt。报告实际内容。"
                 page.locator("#prompt").fill(prompt)
                 page.locator("#send").click()
                 expect(page.locator("#approvals article")).to_have_count(1, timeout=120000)
@@ -130,8 +130,8 @@ def main():
                 expect(page.locator("#approvals article")).to_have_count(1)
                 expect(page.locator("#conversation .status").last).to_contain_text("等待审批")
                 approve_and_finish(page)
-                assert (runtime.workspace / "real-proof.txt").read_text() == "AMAZME_P2_VM_OK\n"
-                expect(page.locator("#conversation .answer").last).to_contain_text("AMAZME_P2_VM_OK")
+                assert (runtime.workspace / "real-proof.txt").read_text() == "AMAZME_NATIVE_OK\n"
+                expect(page.locator("#conversation .answer").last).to_contain_text("AMAZME_NATIVE_OK")
                 report["checks"].append("approval survived reload; shell effect occurred only after approval")
                 if not args.provider_config:
                     page.locator("#prompt").fill('/delegate ["/shell printf one > child-one.txt", "/shell printf two > child-two.txt"]')

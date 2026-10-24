@@ -31,15 +31,6 @@ SESSION = "b" * 32
 CALL = "c" * 32
 
 
-class IdleVM:
-    def __init__(self, profile: Profile):
-        self.profile = profile
-        self.image_id = "sha256:image"
-        self.socket = profile.path / "docker.sock"
-        self.vm_id = "vm"
-
-    async def close(self) -> None:
-        return None
 
 
 async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> Supervisor:
@@ -48,7 +39,6 @@ async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str)
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
-    monkeypatch.setattr("amazme_backend.supervisor.VM", IdleVM)
     owner = Supervisor(Profile(tmp_path), name)
     await owner.initialize()
     owner.monitor_task.cancel()

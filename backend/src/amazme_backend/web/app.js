@@ -546,51 +546,124 @@ function startClient() {
       $("error").textContent = "";
     } catch (failure) { error(failure); }
   };
-  let fileDir = "", filePath = "", fileDigest = "", fileWorkspace = "";
+  let fileDir = "", fileWorkspace = "", fileView = null, fileNavigation = 0, fileListing = 0;
   const fileJoin = (dir, name) => dir ? `${dir}/${name}` : name;
+  const checkpointState = element("p", "", "muted");
+  checkpointState.id = "checkpoint-state";
+  checkpointState.setAttribute("role", "status");
+  $("checkpoint-save").before(checkpointState);
+  function fileControls() {
+    const ready = Boolean(fileView?.digest), busy = Boolean(fileView?.busy);
+    $("file-content").readOnly = !ready || fileView.truncated;
+    $("file-save").disabled = !ready || busy || fileView.truncated;
+    $("checkpoint-save").disabled = !ready || busy;
+    $("checkpoint-preview").disabled = !ready || busy || !fileView.checkpoint;
+    $("checkpoint-restore").disabled = !ready || busy || !fileView.checkpoint;
+    checkpointState.textContent = !ready ? "请先选择文件" : fileView.checkpoint ?
+      `${fileView.path} · 检查点 ${fileView.checkpoint.digest.slice(0, 12)}` : fileView.checkpointStatus;
+  }
+  function resetFile() {
+    fileView = null;
+    $("file-content").value = "";
+    $("file-diff").textContent = "";
+    $("error").textContent = "";
+    fileControls();
+  }
+  $("file-content").addEventListener("input", () => { if (fileView) fileView.editVersion++; });
+  function changeDirectory(dir, workspace = fileWorkspace, absolute = "") {
+    fileNavigation++;
+    fileDir = dir; fileWorkspace = workspace;
+    resetFile();
+    $("file-list").replaceChildren();
+    $("workspace-location").textContent = absolute;
+    return loadFiles();
+  }
   async function loadWorkspaces() {
+    const navigation = fileNavigation;
     const listed = await api("/api/v1/workspaces");
-    $("workspace-list").replaceChildren(...listed.workspaces.map(item => button(item.primary ? "主工作区" : item.name, () => {
-      fileWorkspace = item.primary ? "" : item.name;
-      fileDir = item.primary ? "" : `grant/${item.name}`;
-      filePath = "";
-      void loadFiles().catch(error);
-    })));
+    if (navigation !== fileNavigation) return;
+    $("workspace-list").replaceChildren(...listed.workspaces.map(item => button(item.primary ? "主工作区" : item.name, () =>
+      void changeDirectory(item.primary ? "" : `grant/${item.name}`, item.primary ? "" : item.name, item.host_path))));
     const current = listed.workspaces.find(item => (item.primary && !fileWorkspace) || item.name === fileWorkspace);
-    if (current) $("workspace-guest").textContent = current.guest_path;
+    if (current) $("workspace-location").textContent = current.host_path;
   }
   async function loadFiles() {
-    const listing = await api(fileDir ? `/api/v1/files?path=${encodeURIComponent(fileDir)}` : "/api/v1/files");
-    if (listing.guest_path) $("workspace-guest").textContent = listing.guest_path;
-    const nodes = [];
-    if (fileDir) nodes.push(button("上级", () => { fileDir = fileDir.split("/").slice(0, -1).join("/"); void loadFiles().catch(error); }));
-    for (const item of listing.entries) {
-      if (item.kind === "dir") nodes.push(button(`${item.name}/`, () => { fileDir = fileJoin(fileDir, item.name); void loadFiles().catch(error); }));
-      else if (item.kind === "file") nodes.push(button(item.name, () => void openFile(fileJoin(fileDir, item.name))));
+    const dir = fileDir, navigation = fileNavigation, request = ++fileListing;
+    const active = () => navigation === fileNavigation && request === fileListing;
+    try {
+      const listing = await api(dir ? `/api/v1/files?path=${encodeURIComponent(dir)}` : "/api/v1/files");
+      if (!active()) return;
+      if (listing.absolute_path) $("workspace-location").textContent = listing.absolute_path;
+      const nodes = [];
+      if (dir) nodes.push(button("上级", () => void changeDirectory(dir.split("/").slice(0, -1).join("/"))));
+      for (const item of listing.entries) {
+        if (item.kind === "dir") nodes.push(button(`${item.name}/`, () => void changeDirectory(fileJoin(dir, item.name))));
+        else if (item.kind === "file") nodes.push(button(item.name, () => void openFile(fileJoin(dir, item.name))));
+      }
+      if (listing.truncated) nodes.push(element("p", "只显示前 200 项", "muted"));
+      $("file-list").replaceChildren(...nodes);
+    } catch (failure) { if (active()) error(failure); }
+  }
+  function checkpointMatches(view, row) {
+    return row?.path === view.path && row.workspace === view.workspace &&
+      typeof row.checkpoint_id === "string" && row.checkpoint_id.length > 0 &&
+      typeof row.digest === "string" && row.digest.length > 0;
+  }
+  async function loadCheckpoints(view) {
+    const request = {};
+    view.discovery = request;
+    const active = () => fileView === view && view.discovery === request;
+    try {
+      const listed = await api(`/api/v1/checkpoints?workspace=${encodeURIComponent(view.workspace)}&path=${encodeURIComponent(view.path)}`);
+      if (!active()) return;
+      view.checkpoint = listed.checkpoints.filter(row => checkpointMatches(view, row)).at(-1) || null;
+      view.checkpointStatus = "暂无检查点";
+    } catch (failure) {
+      if (!active()) return;
+      view.checkpointStatus = "检查点加载失败";
+      error(failure);
+    } finally {
+      if (active()) fileControls();
     }
-    if (listing.truncated) nodes.push(element("p", "只显示前 200 项", "muted"));
-    $("file-list").replaceChildren(...nodes);
   }
   async function openFile(name) {
-    const file = await api(`/api/v1/files/content?path=${encodeURIComponent(name)}`);
-    filePath = file.path; fileDigest = file.truncated ? "" : file.digest;
-    $("file-content").value = file.content;
-    $("file-save").disabled = file.truncated;
-    $("file-diff").textContent = file.truncated ? "文件过大，只显示前一部分" : "";
+    resetFile();
+    const view = {path: "", workspace: "", digest: "", truncated: false, checkpoint: null,
+      checkpointStatus: "正在加载检查点", discovery: null, busy: false, editVersion: 0};
+    fileView = view;
+    try {
+      const file = await api(`/api/v1/files/content?path=${encodeURIComponent(name)}`);
+      if (fileView !== view) return;
+      view.path = file.path; view.digest = file.digest; view.truncated = file.truncated;
+      view.workspace = file.path.startsWith("grant/") ? file.path.split("/")[1] : "primary";
+      $("file-content").value = file.content;
+      $("file-diff").textContent = file.truncated ? "文件过大，只显示前一部分" : "";
+      fileControls();
+      await loadCheckpoints(view);
+    } catch (failure) { if (fileView === view) error(failure); }
   }
-  $("files").addEventListener("toggle", () => { if ($("files").open) void loadWorkspaces().then(loadFiles).catch(error); });
+  resetFile();
+  $("files").addEventListener("toggle", async () => {
+    if (!$("files").open) return;
+    const navigation = fileNavigation;
+    try {
+      await loadWorkspaces();
+      if (navigation === fileNavigation) await loadFiles();
+    } catch (failure) { if (navigation === fileNavigation) error(failure); }
+  });
   $("workspace-form").onsubmit = async event => {
     event.preventDefault();
     if (!identity || health?.state !== "ready") return;
+    const navigation = fileNavigation, view = fileView;
+    let appliedNavigation = navigation;
     try {
       const created = await api("/api/v1/workspaces", "POST", {name: $("workspace-name").value, host_path: $("workspace-path").value}, current);
-      fileWorkspace = created.name;
-      fileDir = `grant/${created.name}`;
-      $("workspace-guest").textContent = created.guest_path;
+      if (navigation !== fileNavigation || view !== fileView) return;
+      const listing = changeDirectory(`grant/${created.name}`, created.name, created.host_path);
+      appliedNavigation = fileNavigation;
       await loadWorkspaces();
-      await loadFiles();
-      $("error").textContent = "";
-    } catch (failure) { error(failure); }
+      await listing;
+    } catch (failure) { if (appliedNavigation === fileNavigation && (view === fileView || !fileView)) error(failure); }
   };
   let terminalId = "";
   async function showTerminal(view) {
@@ -1087,43 +1160,58 @@ function startClient() {
       showTerminal(await api(`/api/v1/sessions/${selected}/terminals/${terminalId}/resize`, "POST", {cols: 100, rows: 40}, current));
     } catch (failure) { error(failure); }
   };
-  let checkpointId = "";
-  $("checkpoint-save").onclick = async () => {
-    if (!filePath || !identity || health?.state !== "ready") return;
-    checkpointId = crypto.randomUUID().replaceAll("-", "");
-    const workspace = filePath.startsWith("grant/") ? filePath.split("/")[1] : "primary";
+  async function fileAction(action) {
+    const view = fileView;
+    if (!view?.digest || view.busy || !identity || health?.state !== "ready") return;
+    if (action === "save" && view.truncated) return;
+    const checkpoint = view.checkpoint;
+    if (["preview", "restore"].includes(action) && !checkpointMatches(view, checkpoint)) return;
+    const content = $("file-content").value, editVersion = view.editVersion;
+    const editorUnchanged = () => view.editVersion === editVersion && $("file-content").value === content;
+    const active = () => fileView === view;
+    view.busy = true;
+    fileControls();
     try {
-      const view = await api("/api/v1/checkpoints", "POST", {checkpoint_id: checkpointId, workspace, path: filePath}, current);
-      $("file-diff").textContent = `已保存 ${view.digest.slice(0, 12)}`;
+      if (action === "checkpoint") {
+        const checkpointId = crypto.randomUUID().replaceAll("-", "");
+        const saved = await api("/api/v1/checkpoints", "POST", {checkpoint_id: checkpointId, workspace: view.workspace, path: view.path}, current);
+        if (!active()) return;
+        if (!checkpointMatches(view, saved) || saved.checkpoint_id !== checkpointId) throw new Error("检查点与当前文件不一致");
+        view.discovery = null;
+        view.checkpoint = saved;
+        $("file-diff").textContent = `已保存 ${saved.digest.slice(0, 12)}`;
+      } else if (action === "preview") {
+        const preview = await api(`/api/v1/checkpoints/${checkpoint.checkpoint_id}`);
+        if (!active()) return;
+        if (!checkpointMatches(view, preview) || preview.checkpoint_id !== checkpoint.checkpoint_id || preview.digest !== checkpoint.digest)
+          throw new Error("检查点与当前文件不一致");
+        $("file-diff").textContent = preview.diff || "与当前文件相同";
+      } else {
+        const changed = action === "save" ?
+          await api("/api/v1/files/content", "POST", {path: view.path, content, expected_digest: view.digest}) :
+          await api(`/api/v1/checkpoints/${checkpoint.checkpoint_id}/restore`, "POST", {expected_digest: view.digest}, current);
+        if (!active()) return;
+        if (changed.path !== view.path || !changed.digest || (action === "restore" && changed.digest !== checkpoint.digest))
+          throw new Error("文件响应与当前文件不一致");
+        view.digest = changed.digest;
+        $("file-diff").textContent = changed.diff;
+        if (action === "restore") {
+          const file = await api(`/api/v1/files/content?path=${encodeURIComponent(view.path)}`);
+          if (!active()) return;
+          if (file.path !== view.path || !file.digest) throw new Error("文件响应与当前文件不一致");
+          view.digest = file.digest; view.truncated = file.truncated;
+          if (editorUnchanged()) $("file-content").value = file.content;
+          if (file.truncated) $("file-diff").textContent += "\n文件过大，只显示前一部分";
+        }
+      }
       $("error").textContent = "";
-    } catch (failure) { error(failure); }
-  };
-  $("checkpoint-preview").onclick = async () => {
-    if (!checkpointId) return;
-    try {
-      const view = await api(`/api/v1/checkpoints/${checkpointId}`);
-      $("file-diff").textContent = view.diff || "与当前文件相同";
-      $("error").textContent = "";
-    } catch (failure) { error(failure); }
-  };
-  $("checkpoint-restore").onclick = async () => {
-    if (!checkpointId || !fileDigest) return;
-    try {
-      const changed = await api(`/api/v1/checkpoints/${checkpointId}/restore`, "POST", {expected_digest: fileDigest}, current);
-      fileDigest = changed.digest;
-      $("file-diff").textContent = changed.diff;
-      $("error").textContent = "";
-    } catch (failure) { error(failure); }
-  };
-  $("file-save").onclick = async () => {
-    if (!filePath || !identity || health?.state !== "ready") return;
-    try {
-      const change = await api("/api/v1/files/content", "POST", {path: filePath, content: $("file-content").value, expected_digest: fileDigest});
-      fileDigest = change.digest;
-      $("file-diff").textContent = change.diff;
-      $("error").textContent = "";
-    } catch (failure) { error(failure); }
-  };
+    } catch (failure) { if (active()) error(failure); }
+    finally { view.busy = false; if (active()) fileControls(); }
+  }
+  $("checkpoint-save").onclick = () => fileAction("checkpoint");
+  $("checkpoint-preview").onclick = () => fileAction("preview");
+  $("checkpoint-restore").onclick = () => fileAction("restore");
+  $("file-save").onclick = () => fileAction("save");
   $("create").onclick = async () => {
     $("create").disabled = true;
     try {

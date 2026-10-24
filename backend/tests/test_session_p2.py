@@ -90,7 +90,7 @@ class Driver:
         elif isinstance(action, CloseEpoch):
             await self.store.advance(EpochClosed(action.request_id, action.lease, Cleanup(
                 session_id=self.store.session_id, execution_epoch=action.lease.execution_epoch,
-                state="clean", containers=[], proof_id="proof")))
+                state="clean", resources=[], proof_id="proof")))
         else:
             pytest.fail(f"unexpected action {action}")
 
@@ -314,7 +314,7 @@ async def test_decision_waits_for_cleanup_and_cleanup_failure_blocks(store: Sess
     assert isinstance(close, CloseEpoch)
     assert (await store.get("root")).status == "cleaning"
     await store.advance(EpochClosed(close.request_id, close.lease, Cleanup(session_id=SESSION,
-        execution_epoch=close.lease.execution_epoch, state="blocked", containers=[], reason="unproven")))
+        execution_epoch=close.lease.execution_epoch, state="blocked", resources=[], reason="unproven")))
     assert (await driver.next()) == Park("blocked")
     assert (await store.get("root")).status == "cleaning"
     with pytest.raises(BackendError, match="worker_blocked"):
@@ -461,7 +461,7 @@ class FakeSupervisor(Peer):
         elif path == "/epochs/close":
             assert isinstance(body, Lease)
             result = Cleanup(session_id=SESSION, execution_epoch=body.execution_epoch, state="clean",
-                             containers=[], proof_id="proof")
+                             resources=[], proof_id="proof")
         else:
             raise AssertionError(f"unexpected external call {path}")
         return response.model_validate(result.model_dump())

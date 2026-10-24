@@ -158,8 +158,9 @@ def test_browser_saves_a_workspace_file_with_its_digest() -> None:
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/sessions') return response({sessions:[]});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/workspaces') return response({workspaces:[{name:'primary',host_path:'/work',guest_path:'/workspace',primary:true}]});
+          if(path==='/api/v1/workspaces') return response({workspaces:[{name:'primary',host_path:'/work',host_path:'/workspace',primary:true}]});
           if(path.startsWith('/api/v1/files/content') && (options.method||'GET')==='GET') return response({path:'note.txt',digest:'abc',content:'alpha\n',truncated:false});
+          if(path.startsWith('/api/v1/checkpoints?')) return response({checkpoints:[]});
           if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) {
             if(path.includes('nested')) return response({path:'nested',entries:[{name:'inner.txt',kind:'file',size:3}],truncated:false});
             return response({path:'',entries:[{name:'note.txt',kind:'file',size:6},{name:'nested',kind:'dir',size:0}],truncated:false});
