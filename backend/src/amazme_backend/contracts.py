@@ -175,11 +175,18 @@ def checked_images(images: list[ImagePart]) -> list[ImagePart]:
 class Submit(RunOptions):
     tool_call: ToolCall | None = None
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
-    text: str = Field(min_length=1, max_length=16000)
+    text: str = Field(max_length=16000)
     mode: Literal["queue", "steer", "reject_busy"] = "queue"
     target_run_id: str = ""
     not_before_ms: int = Field(default=0, ge=0, le=253402300799000)
     images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart](), max_length=IMAGE_MAX_COUNT)
+
+
+    @model_validator(mode="after")
+    def user_context(self) -> Submit:
+        if not self.text and not self.images:
+            raise ValueError("missing_user_context")
+        return self
 
 
 TerminalStatus = Literal["succeeded", "cancelled", "interrupted", "failed", "unknown"]

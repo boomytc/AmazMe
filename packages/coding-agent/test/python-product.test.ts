@@ -1,11 +1,15 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { afterEach, expect, test, vi } from "vitest";
+import { writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { main, requestOptions } from "../src/main.ts";
 import { parseArgs } from "../src/cli/args.ts";
 import { HostClient } from "../src/python-headless.ts";
 import { runPythonProductCommand } from "../src/python-product.ts";
-import { connectPythonHost } from "../src/python-session-tui.ts";
+import { connectPythonHost, runPythonSessionTui } from "../src/python-session-tui.ts";
+
+import { createTempDir } from "./temp-dir.ts";
 
 const state = vi.hoisted(() => {
 	const input: string[] = [];
@@ -23,6 +27,8 @@ vi.mock("node:child_process", () => ({
 	spawnSync: vi.fn(),
 }));
 vi.mock("../src/python-session-tui.ts", () => ({
+    runPythonSessionTui: vi.fn(async () => {}),
+    runOwnedPythonInteractive: vi.fn(async () => {}),
 	connectPythonHost: vi.fn(async () => ({
 		url: "http://127.0.0.1:1234",
 		token: "web-token",
@@ -239,4 +245,28 @@ test("resource options reach Python without client-side discovery or expansion",
         "--no-prompt-templates", "--prompt-template", "/explicit/template.md"]));
     expect(options.resource_options).toEqual({no_context_files:true,no_skills:true,skill_paths:["/explicit/skills"],
         no_prompt_templates:true,prompt_paths:["/explicit/template.md"]});
+});
+
+
+test("interactive CLI carries the initial text, file and image into the Python TUI", async () => {
+    const directory = createTempDir("amazme-initial-input-");
+    onTestFinished(() => rmSync(directory, {recursive:true,force:true}));
+    const textPath = join(directory, "note.txt"), imagePath = join(directory, "dot.png");
+    writeFileSync(textPath, "file content");
+    writeFileSync(imagePath, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64"));
+    const streams = [process.stdin, process.stdout];
+    const previous = streams.map(stream => Object.getOwnPropertyDescriptor(stream, "isTTY"));
+    for (const stream of streams) Object.defineProperty(stream, "isTTY", {configurable:true,value:true});
+    onTestFinished(() => streams.forEach((stream, index) => {
+        const descriptor = previous[index];
+        if (descriptor) Object.defineProperty(stream, "isTTY", descriptor);
+        else Reflect.deleteProperty(stream, "isTTY");
+    }));
+    await main(["--python-url", "http://target", "--python-token", "private", `@${textPath}`, `@${imagePath}`, "first", "second"]);
+    expect(runPythonSessionTui).toHaveBeenCalledOnce();
+    expect(runPythonSessionTui).toHaveBeenCalledWith(expect.objectContaining({
+        url:"http://target", token:"private", workspace:"primary", prompt:expect.stringContaining("file content"),
+        images:[expect.objectContaining({type:"image",mimeType:"image/png"})],
+    }));
+    expect(vi.mocked(runPythonSessionTui).mock.calls[0]?.[0].prompt).toContain("first\nsecond");
 });

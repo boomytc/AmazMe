@@ -193,5 +193,35 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
     const next=held.shift();assert.notEqual(next.body.action_id,original.action_id);
     next.resolve({phase:'done',result:{status:'verified'}});
     await until(()=>sessionStorage.getItem(nativeKey)===null);
+    // Preparing an attachment cannot combine A's image with B's current text.
+    const readers=[];
+    globalThis.FileReader=class {
+      readAsDataURL(file){readers.push({file,resolve:()=>{this.result='data:image/png;base64,'+file.data;this.onload?.();}});}
+    };
+    await select(a);
+    $('prompt').value='A attachment';
+    Object.defineProperty($('images'),'files',{configurable:true,value:[{name:'a.png',type:'image/png',size:1,data:'YQ=='}]});
+    $('images').onchange();
+    const prepareA=$('composer').onsubmit({preventDefault(){}});
+    await until(()=>readers.length===1);
+    await select(b);
+    $('prompt').value='B attachment';
+    Object.defineProperty($('images'),'files',{configurable:true,value:[{name:'b.png',type:'image/png',size:1,data:'Yg=='}]});
+    $('images').onchange();
+    const prepareB=$('composer').onsubmit({preventDefault(){}});
+    await until(()=>readers.length===2);
+    readers[0].resolve();await prepareA;
+    assert.equal(sessionStorage.getItem('pending'),null);
+    assert.equal($('prompt').value,'B attachment');
+    assert.equal($('image-note').textContent,'b.png');
+    readers[1].resolve();await until(()=>held.length===1);
+    const submitted=held.shift();
+    assert.equal(submitted.path,'/api/v1/sessions/'+b+'/submissions');
+    assert.equal(submitted.body.text,'B attachment');
+    assert.equal(submitted.body.images[0].data_base64,'Yg==');
+    submitted.resolve({request_id:submitted.body.request_id,status:'queued'});await prepareB;
+    await select(a);
+    assert.equal($('prompt').value,'A attachment');
+    assert.equal($('image-note').textContent,'a.png');
     await window.happyDOM.abort();process.exit(0);
     ''')

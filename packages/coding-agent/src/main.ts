@@ -114,12 +114,27 @@ export async function main(args: string[]): Promise<void> {
 		...(parsed.name ? { title: parsed.name } : {}),
 	};
 	const interactive = !parsed.print && parsed.mode === undefined && process.stdin.isTTY && process.stdout.isTTY;
+	if (parsed.mode === "rpc" && parsed.fileArgs.length) throw new Error("RPC mode does not accept @file arguments");
+	const stdinContent = interactive || parsed.mode === "rpc" ? undefined : await pipedInput();
+	const files = parsed.fileArgs.length
+		? await processFileArguments(parsed.fileArgs, { autoResizeImages: false })
+		: undefined;
+	const prepared = buildInitialMessage({
+		parsed,
+		...(stdinContent === undefined ? {} : { stdinContent }),
+		...(files === undefined ? {} : { fileText: files.text, fileImages: files.images }),
+	});
+	const initial = {
+		prompt:[prepared.initialMessage, ...parsed.messages].filter(Boolean).join("\n"),
+		...(prepared.initialImages === undefined ? {} : {images:prepared.initialImages}),
+	};
 	if (interactive) {
 		const { runOwnedPythonInteractive, runPythonSessionTui } = await import("./python-session-tui.ts");
 		if (parsed.pythonUrl && parsed.pythonToken)
 			await runPythonSessionTui({
 				...runOptions,
 				...sessionOptions,
+				...initial,
 				...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
 				...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
 				url: parsed.pythonUrl,
@@ -131,6 +146,7 @@ export async function main(args: string[]): Promise<void> {
 			await runOwnedPythonInteractive({
 				...runOptions,
 				...sessionOptions,
+				...initial,
 				...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
 				...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
 				cwd,
@@ -139,30 +155,20 @@ export async function main(args: string[]): Promise<void> {
 			});
 		return;
 	}
-	if (parsed.mode === "rpc" && parsed.fileArgs.length) throw new Error("RPC mode does not accept @file arguments");
-	const stdinContent = parsed.mode === "rpc" ? undefined : await pipedInput();
-	const files = parsed.fileArgs.length
-		? await processFileArguments(parsed.fileArgs, { autoResizeImages: false })
-		: undefined;
-	const prepared = buildInitialMessage({
-		parsed,
-		...(stdinContent === undefined ? {} : { stdinContent }),
-		...(files === undefined ? {} : { fileText: files.text, fileImages: files.images }),
-	});
+
 	const { runPythonHeadless } = await import("./python-headless.ts");
 	process.exitCode = await runPythonHeadless({
 		...runOptions,
 		...sessionOptions,
+		...initial,
 		mode: parsed.mode === "rpc" ? "rpc" : parsed.mode === "json" ? "json" : "text",
 		cwd,
 		...(parsed.workspace === undefined ? {} : {workspace:parsed.workspace}),
-		prompt: [prepared.initialMessage, ...parsed.messages].filter(Boolean).join("\n"),
 		...(parsed.pythonUrl === undefined ? {} : { url: parsed.pythonUrl }),
 		...(parsed.pythonToken === undefined ? {} : { token: parsed.pythonToken }),
 		...(session === undefined ? {} : { session }),
 		...(parsed.decision === undefined ? {} : { decision: parsed.decision }),
 		...(parsed.request === undefined ? {} : { request: parsed.request }),
 		...(parsed.call === undefined ? {} : { call: parsed.call }),
-		...(prepared.initialImages === undefined ? {} : { images: prepared.initialImages }),
 	});
 }

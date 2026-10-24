@@ -9818,6 +9818,14 @@
             "title": "Text",
             "default": ""
           },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImagePart"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Images"
+          },
           "not_before_ms": {
             "type": "integer",
             "title": "Not Before Ms",
@@ -10430,7 +10438,6 @@
           "text": {
             "type": "string",
             "maxLength": 16000,
-            "minLength": 1,
             "title": "Text"
           },
           "mode": {

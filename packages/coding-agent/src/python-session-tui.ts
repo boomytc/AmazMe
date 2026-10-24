@@ -15,7 +15,7 @@ import { CustomEditor } from "./modes/interactive/components/custom-editor.ts";
 import { getEditorTheme,
 	getSelectListTheme, initTheme } from "./modes/interactive/theme/theme.ts";
 import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
-import { HostClient, type PythonRunOptions } from "./python-headless.ts";
+import { HostClient, type ImageContent, type PythonRunOptions } from "./python-headless.ts";
 
 export interface PythonSessionTarget extends PythonRunOptions {
 	readonly url: string;
@@ -26,14 +26,17 @@ export interface PythonSessionTarget extends PythonRunOptions {
 	readonly title?: string;
 	readonly tuiMode?: "regular" | "fullscreen";
 	readonly theme?: string;
+	readonly prompt?: string;
+	readonly images?: readonly ImageContent[];
 }
 
-export interface Held {
-	readonly kind: "request" | "mcp";
-	readonly requestId: string;
-	readonly callId: string;
-	readonly summary: string;
-}
+export type Held = (
+	| {readonly kind:"request"; readonly requestId:string; readonly approval:Record<string, unknown>}
+	| {readonly kind:"mcp"; readonly callId:string}
+) & {
+	readonly summary:string;
+	decision?: {readonly id:string; readonly approve:boolean};
+};
 
 interface PendingInput {
 	inputId: string;
@@ -117,18 +120,26 @@ async function stableOutput(client: HostClient, sessionId: string, attachmentId:
 async function decideHeld(client: HostClient, sessionId: string, attachmentId: string, state: ScreenState, approve: boolean): Promise<string[]> {
 	const held = state.held;
 	if (!held) return [];
+	if (held.decision && held.decision.approve !== approve) return ["原决定未确认，请重试原选择或 /request 核对"];
+	held.decision ??= {id:randomBytes(16).toString("hex"), approve};
 	if (held.kind === "mcp") {
-		const decided = await client.decideCall(sessionId, attachmentId, held.callId, approve);
+		const decided = await client.decideCall(sessionId, attachmentId, held.callId, approve, held.decision.id);
 		state.held = null;
 		return [mcpLine(decided)];
 	}
-	const receipt = await client.decideRequest(sessionId, attachmentId, held.requestId, approve);
-	state.held = null;
-	return [receiptLine(receipt)];
+	const receipt = await client.decideRequest(sessionId, attachmentId, held.requestId, approve, held.approval, held.decision.id);
+	const next = receipt.status === "waiting_approval" ? await client.pendingApproval(sessionId, held.requestId) : undefined;
+	state.held = next ? requestHeld(next) : null;
+	return [state.held?.summary ?? receiptLine(receipt)];
 }
 
-export async function handleLine(client: HostClient, sessionId: string, attachmentId: string, workspace: string, state: ScreenState, prompt: string): Promise<string[]> {
-	if (state.held) {
+function requestHeld(approval: Record<string, unknown>): Held {
+	if (typeof approval.request_id !== "string") fail("invalid_approval");
+	return {kind:"request",requestId:approval.request_id,approval,summary:approvalSummary(approval)};
+}
+
+export async function handleLine(client: HostClient, sessionId: string, attachmentId: string, workspace: string, state: ScreenState, prompt: string, images: readonly ImageContent[] = []): Promise<string[]> {
+	if (state.held && !prompt.startsWith("/request ")) {
 		if (prompt !== "批准" && prompt !== "拒绝") return ["先输入批准或拒绝"];
 		return decideHeld(client, sessionId, attachmentId, state, prompt === "批准");
 	}
@@ -144,14 +155,10 @@ export async function handleLine(client: HostClient, sessionId: string, attachme
 		if (!/^[A-Za-z0-9_-]{1,128}$/.test(requestId)) return ["请求编号无效"];
 		const polled = await client.inspectRequest(sessionId, requestId);
 		if (polled.approval) {
-			state.held = {
-				kind: "request",
-				requestId,
-				callId: "",
-				summary: approvalSummary(polled.approval),
-			};
+			state.held = requestHeld(polled.approval);
 			return [state.held.summary];
 		}
+		if (state.held?.kind === "request" && state.held.requestId === requestId) state.held = null;
 		return [receiptLine(polled.receipt)];
 	}
 	if (prompt.startsWith("/file ")) {
@@ -224,7 +231,7 @@ export async function handleLine(client: HostClient, sessionId: string, attachme
 		if (!isRecord(args)) return ["参数无效"];
 		const call = await client.requestMcp(sessionId, attachmentId, serverId, raw.slice(0, split), args);
 		if (call.phase === "waiting_approval" && typeof call.call_id === "string") {
-			state.held = { kind: "mcp", requestId: "", callId: call.call_id, summary: `等待审批 MCP ${typeof call.name === "string" ? call.name : ""}`.trim() };
+			state.held = { kind: "mcp", callId: call.call_id, summary: `等待审批 MCP ${typeof call.name === "string" ? call.name : ""}`.trim() };
 			return [state.held.summary];
 		}
 		return [mcpLine(call)];
@@ -234,15 +241,10 @@ export async function handleLine(client: HostClient, sessionId: string, attachme
 		state.serverId = serverId;
 		return ["MCP 已连接"];
 	}
-	const polled = await client.submit(sessionId, workspace, attachmentId, prompt);
+	const polled = await client.submit(sessionId, workspace, attachmentId, prompt, images);
 	const approval = polled.approval;
 	if (approval && typeof approval.request_id === "string" && typeof approval.approval_id === "string") {
-		state.held = {
-			kind: "request",
-			requestId: approval.request_id,
-			callId: "",
-			summary: approvalSummary(approval),
-		};
+		state.held = requestHeld(approval);
 		return [state.held.summary];
 	}
 	return [receiptLine(polled.receipt)];
@@ -371,6 +373,7 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		finish = resolveFinished;
 	});
 	const queued = new PendingPrompts();
+	let initialPending = target.prompt || target.images?.length ? {text:target.prompt ?? "", images:target.images ?? []} : null;
 	const releaseOnce = async (): Promise<void> => {
 		if (released) return;
 		released = true;
@@ -380,8 +383,8 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		if (closing) return;
 		closing = true;
 		tui.stop();
-		if (queued.length)
-			process.stderr.write(`离开前尚有 ${queued.length} 条输入未提交\n`);
+		const unsent = queued.length + (initialPending ? 1 : 0);
+		if (unsent) process.stderr.write(`离开前尚有 ${unsent} 条输入未提交\n`);
 		void releaseOnce()
 			.then(() => {
 				process.stdout.write("已松开绑定\n");
@@ -401,12 +404,12 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 	process.on("SIGINT", onSignal);
 	const state: ScreenState = { terminalId: "", serverId: "", held: null, pendingInput: null };
 	let busy = false;
-	const runLine = (prompt: string): void => {
+	const runLine = (prompt: string, images: readonly ImageContent[] = []): void => {
 		if (closing) return;
 		busy = true;
 		screen.addLine(prompt);
 		tui.requestRender();
-		void handleLine(client, opened.sessionId, opened.attachmentId, target.workspace, state, prompt)
+		void handleLine(client, opened.sessionId, opened.attachmentId, target.workspace, state, prompt, images)
 			.then((lines) => {
 				if (!closing) for (const line of lines) screen.addLine(line);
 			})
@@ -416,16 +419,32 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 			})
 			.finally(() => {
 				busy = false;
-				if (closing) return;
-				const next = queued.shift();
-				if (next !== undefined) runLine(next);
-				else tui.requestRender();
+				drain();
 			});
+	};
+	const drain = (): void => {
+		if (closing || busy) return;
+		if (state.held) { tui.requestRender(); return; }
+		if (initialPending) {
+			const initial = initialPending;
+			initialPending = null;
+			runLine(initial.text, initial.images);
+			return;
+		}
+		const next = queued.shift();
+		if (next !== undefined) runLine(next);
+		else tui.requestRender();
 	};
 	editor.onSubmit = (text) => {
 		const prompt = text.trim();
 		if (!prompt || closing) return;
-		if (busy) {
+		if (state.held && busy && (prompt === "批准" || prompt === "拒绝" || prompt.startsWith("/request "))) {
+			editor.setText(prompt);
+			screen.addLine("正在核对本次决定，请等待回执");
+			tui.requestRender();
+			return;
+		}
+		if (busy || (state.held && prompt !== "批准" && prompt !== "拒绝" && !prompt.startsWith("/request "))) {
 			if (!queued.push(prompt)) {
 				editor.setText(prompt);
 				screen.addLine("待发送队列已满，输入留在编辑器中；请稍后提交");
@@ -451,12 +470,7 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 				(item) => isRecord(item) && item.state === "pending",
 			);
 			if (isRecord(pending) && typeof pending.request_id === "string") {
-				state.held = {
-					kind: "request",
-					requestId: pending.request_id,
-					callId: "",
-					summary: approvalSummary(pending),
-				};
+				state.held = requestHeld(pending);
 				screen.addLine(state.held.summary);
 			}
 			state.terminalId = await client.runningTerminal(opened.sessionId);
@@ -466,8 +480,10 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		}
 		if (!closing) {
 			tui.addChild(screen);
-	tui.setFocus(screen);
-	tui.start();
+			tui.setFocus(screen);
+			tui.start();
+			if (initialPending && state.held) screen.addLine("审批完成后将提交首条输入");
+			drain();
 		}
 		await finished;
 	} finally {

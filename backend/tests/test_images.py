@@ -68,7 +68,8 @@ async def _open(host: Host) -> tuple[str, SessionStore]:
     return session, store
 
 
-async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_path: Path) -> None:
+@pytest.mark.parametrize("text", ["看图", ""])
+async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_path: Path, text: str) -> None:
     image = _image()
     raw = base64.b64decode(image.data_base64)
     assert raw.startswith(b"\x89PNG")
@@ -103,11 +104,11 @@ async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_
         session, store = await _open(host)
         try:
             receipt = await store.accept(
-                Submit(request_id="img", text="看图", images=[image]),
+                Submit(request_id="img", text=text, images=[image]),
                 HostFence(host_epoch=0, build_id=host.build))
             assert receipt.image_count == 1
             again = await store.accept(
-                Submit(request_id="img", text="看图", images=[image]),
+                Submit(request_id="img", text=text, images=[image]),
                 HostFence(host_epoch=0, build_id=host.build))
             assert again.image_count == 1 and again.revision == receipt.revision
             action: ModelInvocation | None = None
@@ -123,19 +124,18 @@ async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_
             stored = await store.messages("img")
             user = next(item for item in stored if item.role == "user" and item.images)
             assert user.images == [image]
-            assert user.content == "看图"
+            assert user.content == text
             replay = provider_messages([user], "deepseek")
             sent = next(item for item in replay if item["role"] == "user")
-            assert sent["content"] == [
-                {"type": "text", "text": "看图"},
-                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{PNG}"}},
-            ]
+            expected: list[dict[str, object]] = [{"type":"text", "text":text}] if text else []
+            expected.append({"type":"image_url", "image_url":{"url":f"data:image/png;base64,{PNG}"}})
+            assert sent["content"] == expected
             snapshot = await store.snapshot()
             assert PNG not in snapshot.model_dump_json()
             assert all(PNG not in event.text for event in snapshot.events)
             async with _client(host) as client:
                 report = (await client.get(f"/api/v1/sessions/{session}/usage")).json()
-            assert report["input_tokens"] == len("看图")
+            assert report["input_tokens"] == len(text)
             assert PNG not in json.dumps(report)
             await store.accept(Submit(request_id="again", text="再看"),
                                HostFence(host_epoch=0, build_id=host.build))
@@ -155,7 +155,7 @@ async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_
                     assert item.message.content == "看到了"
             request = json.loads(seen["body"])
             content = next(item["content"] for item in request["messages"] if item["role"] == "user")
-            assert content[1]["image_url"]["url"] == f"data:image/png;base64,{PNG}"
+            assert content == expected
         finally:
             await store.db.close()
     finally:
@@ -285,11 +285,12 @@ def test_page_sends_the_selected_image_and_shows_the_count() -> None:
         Object.defineProperty(input, 'files', {configurable:true, value:[file]});
         input.onchange();
         assert.equal($('image-note').textContent,'dot.png');
-        $('prompt').value = '看图';
+        $('prompt').value = '';
+        assert.equal($('prompt').required,false);
         await $('composer').onsubmit({preventDefault(){}});
         const submission = calls.find(call => String(call.path).endsWith('/submissions'));
         const body = JSON.parse(submission.body);
-        assert.equal(body.text,'看图');
+        assert.equal(body.text,'');
         assert.equal(body.images.length,1);
         assert.equal(body.images[0].media_type,'image/png');
         assert.equal(body.images[0].data_base64,png);
@@ -303,3 +304,9 @@ def test_page_sends_the_selected_image_and_shows_the_count() -> None:
         raise AssertionError(err[-1500:]) from None
     if result.returncode != 0:
         raise AssertionError((result.stderr or result.stdout)[-1500:])
+
+
+def test_empty_text_requires_image_context() -> None:
+    with pytest.raises(ValidationError, match="missing_user_context"):
+        Submit(request_id="empty", text="")
+    assert Submit(request_id="image-only", text="", images=[_image()]).images

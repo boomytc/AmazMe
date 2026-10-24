@@ -296,9 +296,11 @@ export class HostClient {
 		attachmentId: string,
 		requestId: string,
 		approve: boolean,
+		reviewedApproval?: Record<string, unknown>,
+		decisionId = hexId(),
 	): Promise<Record<string, unknown>> {
-		const approval = await this.pendingApproval(sessionId, requestId);
-		if (!approval) fail("approval_not_found");
+		const approval = reviewedApproval ?? await this.pendingApproval(sessionId, requestId);
+		if (!approval || approval.request_id !== requestId) fail("approval_not_found");
 		const approvalId = approval.approval_id;
 		const revision = approval.revision;
 		const digest = approval.proposal_digest;
@@ -308,7 +310,7 @@ export class HostClient {
 			"POST",
 			`/api/v1/sessions/${sessionId}/approvals`,
 			{
-				decision_id: hexId(),
+				decision_id: decisionId,
 				approval_id: approvalId,
 				expected_revision: revision,
 				proposal_digest: digest,
@@ -316,7 +318,7 @@ export class HostClient {
 			},
 			attachmentId,
 		);
-		return this.#untilTerminal(sessionId, requestId);
+		return (await this.#untilDecision(sessionId, requestId)).receipt;
 	}
 
 	async readFile(path: string): Promise<string> {
@@ -461,6 +463,7 @@ export class HostClient {
 		attachmentId: string,
 		callId: string,
 		approve: boolean,
+		decisionId = hexId(),
 	): Promise<Record<string, unknown>> {
 		const state = await this.#send("GET", `/api/v1/sessions/${sessionId}/mcp`);
 		const calls = state.calls;
@@ -468,12 +471,12 @@ export class HostClient {
 		const found = calls.find((item) => isRecord(item) && item.call_id === callId);
 		if (!isRecord(found) || typeof found.server_id !== "string" || typeof found.digest !== "string")
 			fail("mcp_call_not_found");
-		if (found.phase !== "waiting_approval") fail("mcp_call_conflict");
+		if (found.phase !== "waiting_approval") return this.#untilMcp(sessionId, callId, found);
 		const decided = await this.#send(
 			"POST",
 			`/api/v1/sessions/${sessionId}/mcp/${found.server_id}/calls/${callId}/decision`,
 			{
-				decision_id: hexId(),
+				decision_id: decisionId,
 				approve,
 				digest: found.digest,
 			},
@@ -519,14 +522,6 @@ export class HostClient {
 		fail("request_pending");
 	}
 
-	async #untilTerminal(sessionId: string, requestId: string): Promise<Record<string, unknown>> {
-		for (let attempt = 0; attempt < 800; attempt += 1) {
-			const receipt = await this.#send("GET", `/api/v1/sessions/${sessionId}/requests/${requestId}`);
-			if (typeof receipt.status === "string" && TERMINAL.has(receipt.status)) return receipt;
-			await sleep(50);
-		}
-		fail("request_pending");
-	}
 
 	async #untilMcp(
 		sessionId: string,
@@ -904,7 +899,7 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions & {r
 	const jsonMode = options.mode === "json";
 	const prompt = options.prompt;
 	const decision = options.decision;
-	if (!prompt && !(options.session && (options.request || (decision && options.call)))) {
+	if (!prompt && !options.images?.length && !(options.session && (options.request || (decision && options.call)))) {
 		process.stderr.write("missing_prompt\n");
 		return 1;
 	}

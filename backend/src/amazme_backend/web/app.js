@@ -217,6 +217,7 @@ function startClient() {
   let current = null, generation = 0, identity = null, selected = null, connecting = false, health = null;
   let pending = null, actions = {}, reconnectTimer = null;
   const drafts = new Map();
+  let composerFiles = [];
   const evidenceDrafts = new Map();
   let effectsSignature = "";
   const running = new Set();
@@ -281,7 +282,8 @@ function startClient() {
     const root = current?.model?.requests.find(row => row.kind === "root" && !terminal.has(row.status));
     $("send").disabled = !writable() || running.has(`submit:${selected}`) || Boolean(pending && pending.target !== selected);
     $("send").textContent = pending?.target === selected ? "重试原请求" : "发送";
-    $("prompt").readOnly = pending?.target === selected;
+    $("prompt").readOnly = pending?.target === selected || running.has(`submit:${selected}`);
+    $("images").disabled = $("prompt").readOnly;
     $("mode").disabled = Boolean(pending?.target === selected) || !writable();
     $("cancel").disabled = !root || !current?.ready || health?.state === "frozen" || current?.model?.state === "frozen";
     $("archive").disabled = !current?.ready || health?.state !== "ready" || current?.model?.state === "frozen";
@@ -502,7 +504,7 @@ function startClient() {
     if (named.host && named.host !== host) throw new Error("链接的宿主不一致");
     if (named.workspace && named.workspace !== workspace) throw new Error("链接的工作区与会话不一致");
     rememberWindow(id, workspace, host);
-    if (selected) drafts.set(selected, $("prompt").value);
+    if (selected) drafts.set(selected, {text:$("prompt").value, files:composerFiles});
     const cached = resume && current?.session === id ? current.model : null;
     if (selected !== id) {
       workflowId = ""; workflowView = null;
@@ -524,7 +526,10 @@ function startClient() {
     retire(); selected = id; const binding = ++generation;
     const connection = {generation:binding, session:id, ready:false, model:cached, ws:null, attachment:null};
     current = connection; connecting = true;
-    $("prompt").value = pending?.target === id ? pending.text : (drafts.get(id) || "");
+    $("prompt").value = pending?.target === id ? pending.text : (drafts.get(id)?.text || "");
+    composerFiles = drafts.get(id)?.files || [];
+    $("images").value = "";
+    showComposerFiles();
     $("connection").textContent = resume ? "正在重连" : "正在连接";
     render();
     void showSessionWorkspace(workspace, connection);
@@ -2313,56 +2318,60 @@ function startClient() {
       reader.readAsDataURL(file);
     });
   }
-  async function chosenImages() {
-    const files = [...($("images").files || [])];
-    if (!files.length) return [];
-    if (files.length > 8) { error(new Error("一次最多 8 张图片")); return null; }
+  async function chosenImages(files) {
+    if (files.length > 8) throw new Error("一次最多 8 张图片");
     const images = [];
     for (const file of files) {
-      if (!imageTypes.has(file.type)) { error(new Error("只能发送 PNG、JPEG、WebP 或 GIF")); return null; }
-      if (!file.size || file.size > 8 * 1024 * 1024) { error(new Error("图片超过 8 MB")); return null; }
+      if (!imageTypes.has(file.type)) throw new Error("只能发送 PNG、JPEG、WebP 或 GIF");
+      if (!file.size || file.size > 8 * 1024 * 1024) throw new Error("图片超过 8 MB");
       images.push(await readImage(file));
     }
     return images;
   }
+  function showComposerFiles() {
+    $("image-note").textContent = composerFiles.map(file => file.name).join("、");
+    $("prompt").required = !composerFiles.length && !(pending?.target === selected && pending.images?.length);
+  }
   $("images").onchange = () => {
-    const files = [...($("images").files || [])];
-    $("image-note").textContent = files.length ? files.map(file => file.name).join("、") : "";
+    composerFiles = [...($("images").files || [])];
+    showComposerFiles();
   };
   $("composer").onsubmit = async event => {
     event.preventDefault(); if (!writable()) return;
     const connection = current, target = connection.session, key = `submit:${target}`;
     if (running.has(key)) return;
-    if (!pending) {
-      if (!$("prompt").value.trim()) { error(new Error("请输入任务")); return; }
-      const mode = $("mode").value;
-      const run = connection.model.requests.find(row => row.kind === "root" && row.run_id && !terminal.has(row.status));
-      if (mode === "steer" && !run) { error(new Error("当前没有可以引导的任务")); return; }
-      const images = await chosenImages();
-      if (!images) return;
-      savePending({target, request_id:crypto.randomUUID(), text:$("prompt").value, mode, target_run_id:mode === "steer" ? run.run_id : "", images});
-    }
-    if (pending.target !== target) { error(new Error("请切回原会话重试待确认的请求")); return; }
-    const submitted = pending;
+    const text = $("prompt").value, files = composerFiles, mode = $("mode").value;
+    const run = connection.model.requests.find(row => row.kind === "root" && row.run_id && !terminal.has(row.status));
     running.add(key); $("error").textContent = ""; controls();
+    let submitted = pending;
     try {
+      if (!submitted) {
+        if (!text.trim() && !files.length) throw new Error("请输入任务或选择图片");
+        if (mode === "steer" && !run) throw new Error("当前没有可以引导的任务");
+        const images = await chosenImages(files);
+        // Preparation has no accepted side effect. A retired connection leaves
+        // its draft untouched and cannot create a pending request for a new page.
+        if (!owns(connection)) return;
+        submitted = {target, request_id:crypto.randomUUID(), text, mode,
+          target_run_id:mode === "steer" ? run.run_id : "", images};
+        savePending(submitted);
+      }
+      if (submitted.target !== target) throw new Error("请切回原会话重试待确认的请求");
       const body = {request_id:submitted.request_id, text:submitted.text, mode:submitted.mode || "queue", target_run_id:submitted.target_run_id || ""};
       if (submitted.images?.length) body.images = submitted.images;
       await api(`/api/v1/sessions/${target}/submissions`, "POST", body, connection, connection.identity);
-      // A response owned by an old connection leaves the retry ID intact until the
-      // current connection explicitly confirms it. It cannot turn a retained draft
-      // into a new submission, including A -> B -> A navigation.
       if (owns(connection)) {
         if (pending === submitted) savePending(null);
-        if (drafts.get(target) === submitted.text) drafts.delete(target);
+        if (drafts.get(target)?.text === submitted.text) drafts.delete(target);
         if ($("prompt").value === submitted.text) $("prompt").value = "";
+        composerFiles = [];
         $("images").value = "";
-        $("image-note").textContent = "";
+        showComposerFiles();
       }
     } catch (failure) {
       if (owns(connection) && definitive(failure) && pending === submitted) savePending(null);
       if (owns(connection)) {
-        error(new Error(`${failure.message}${definitive(failure) ? "" : "；再次发送会沿用原请求 ID"}`));
+        error(new Error(`${failure.message}${definitive(failure) || !submitted ? "" : "；再次发送会沿用原请求 ID"}`));
         if (bindingErrors.has(failure.code)) reconnect(connection);
       }
     } finally { running.delete(key); if (current?.session === target) controls(); }

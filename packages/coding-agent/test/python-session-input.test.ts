@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { HostClient } from "../src/python-headless.ts";
-import { PendingPrompts } from "../src/python-session-tui.ts";
+import { handleLine, PendingPrompts, type ScreenState } from "../src/python-session-tui.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -139,4 +139,41 @@ test("local launch directory selection goes through Python with the explicit wor
     expect(await client.selectWorkspace("/projects/current")).toBe("cwd-owned");
     expect(await client.selectWorkspace("/projects/other", "selected")).toBe("cwd-owned");
     expect(calls).toEqual([{host_path:"/projects/current",name:""},{host_path:"/projects/other",name:"selected"}]);
+});
+
+
+test("retrying an unconfirmed approval keeps its original proposal and decision ID", async () => {
+    let requestId = "", latest = "old";
+    const decisions: Array<Record<string, unknown>> = [];
+    const approval = () => ({request_id:requestId, approval_id:latest, revision:latest,
+        proposal_digest:`digest-${latest}`, state:"pending", call:{name:"shell",arguments:JSON.stringify({command:latest})}});
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+        if (url.endsWith("/bootstrap")) return reply({build_id:"build",host_epoch:7});
+        if (url.endsWith("/sessions")) return reply({sessions});
+        if (url.endsWith("/submissions")) {
+            const body: Record<string, unknown> = JSON.parse(String(init?.body));
+            requestId = String(body.request_id);
+            return reply({});
+        }
+        if (url.includes("/requests/")) return reply({request_id:requestId,status:"waiting_approval"});
+        if (url.endsWith("/snapshot")) return reply({approvals:[approval()]});
+        if (url.endsWith("/approvals")) {
+            decisions.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+            latest = "new";
+            if (decisions.length === 1) throw new TypeError("lost receipt");
+            return reply({});
+        }
+        throw new Error(`Unexpected ${url}`);
+    });
+    const client = new HostClient("http://127.0.0.1:1000", "token");
+    await client.bootstrap();
+    const state: ScreenState = {terminalId:"",serverId:"",held:null,pendingInput:null};
+    await handleLine(client, "a".repeat(32), "attachment", "primary", state, "do work");
+    await expect(handleLine(client, "a".repeat(32), "attachment", "primary", state, "批准")).rejects.toThrow("lost receipt");
+    await handleLine(client, "a".repeat(32), "attachment", "primary", state, "批准");
+    expect(decisions).toHaveLength(2);
+    expect(decisions[0]).toEqual(decisions[1]);
+    expect(decisions[1]).toMatchObject({approval_id:"old",proposal_digest:"digest-old",approve:true});
+    expect(state.held?.summary).toContain("new");
+    expect(state.held?.decision).toBeUndefined();
 });

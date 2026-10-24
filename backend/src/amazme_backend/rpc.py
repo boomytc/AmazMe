@@ -12,6 +12,7 @@ from pydantic import Field, JsonValue, ValidationError
 
 from .accounts import AccountsView
 from .contracts import (
+    IMAGE_MAX_COUNT,
     ApprovalDecision,
     Attachment,
     BackendError,
@@ -31,6 +32,7 @@ from .contracts import (
     ComputerPolicy,
     CreateSession,
     CredentialUpdate,
+    ImagePart,
     McpCall,
     McpCallRequest,
     McpDecision,
@@ -95,6 +97,7 @@ class RpcParams(RunOptions):
     request_id: str = ""
     title: str = ""
     text: str = ""
+    images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart](), max_length=IMAGE_MAX_COUNT)
     not_before_ms: int = 0
     decision_id: str = ""
     approval_id: str = ""
@@ -388,11 +391,11 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if not params.request_id:
             raise BackendError("binding_required")
         session = await _bound(owner, params)
-        if not params.text:
+        if not params.text and not params.images:
             raise BackendError("missing_user_context")
         return await owner.deliver(
             session, "submit", params.request_id,
-            Submit(request_id=params.request_id, text=params.text, not_before_ms=params.not_before_ms,
+            Submit(request_id=params.request_id, text=params.text, images=params.images, not_before_ms=params.not_before_ms,
                    system_prompt=params.system_prompt, append_system_prompt=params.append_system_prompt,
                    resource_options=params.resource_options,
                    allowed_tools=params.allowed_tools, excluded_tools=params.excluded_tools, tool_call=params.tool_call))
