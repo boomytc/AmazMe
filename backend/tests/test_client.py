@@ -2,7 +2,9 @@
 
 import json
 import os
+import secrets
 import select
+import shlex
 import subprocess
 import sys
 import time
@@ -188,5 +190,138 @@ async def test_release_does_not_cancel_and_cli_reads_the_answer(tmp_path: Path) 
                 request_id="parked")
             done = await client.wait(session_id=cli_session, request_id="parked")
             assert done.status == "cancelled"
+    finally:
+        _stop(proc, profile)
+
+
+def test_decide_rejects_bad_targets_before_connect() -> None:
+    token = "not-a-real-token"
+    base = ["decide", "--session", "s", "--workspace", "primary"]
+    cases = [
+        ([*base, "--decision", "yes"], "invalid_decision"),
+        ([*base, "--decision", "批准"], "decision_target_conflict"),
+        ([*base, "--request", "a", "--call", "b", "--decision", "批准"], "decision_target_conflict"),
+        ([*base, "--call", "b", "--decision", "批准"], "decision_target_conflict"),
+        ([*base, "--request", "a", "--server", "c", "--decision", "拒绝"], "decision_target_conflict"),
+    ]
+    for args, code in cases:
+        result = _cli("http://127.0.0.1:1", token, *args)
+        assert result.returncode == 1, result.stderr
+        assert result.stderr.strip() == code
+        assert token not in result.stdout and token not in result.stderr
+
+
+async def test_client_decide_records_one_shell_and_mcp_effect(tmp_path: Path) -> None:
+    proc, url, profile = _serve(tmp_path)
+    token = (profile / TOKEN_FILE).read_text().strip()
+    workspace = tmp_path / "workspace"
+    probe = Path(__file__).resolve().parents[1] / "tools" / "mcp_probe_server.py"
+    try:
+        created = _cli(url, token, "create", "--workspace", "primary", "--title", "决定")
+        assert created.returncode == 0, created.stderr
+        session_id = str(json.loads(created.stdout)["session_id"])
+        waiting = _cli(url, token, "submit", "--session", session_id, "--workspace", "primary",
+                       "--request-id", "hold-shell", "--text", "/shell printf u > undecided.txt")
+        assert waiting.returncode == 1, waiting.stdout
+        assert waiting.stderr.strip() == "request_pending"
+        assert not (workspace / "undecided.txt").exists()
+        assert token not in waiting.stdout and token not in waiting.stderr
+
+        denied = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                      "--request", "hold-shell", "--decision", "拒绝")
+        assert denied.returncode == 0, denied.stderr
+        denied_receipt = json.loads(denied.stdout)
+        assert denied_receipt["status"] == "failed"
+        assert denied_receipt["error"] == "approval_denied"
+        assert not (workspace / "undecided.txt").exists()
+        assert token not in denied.stdout and token not in denied.stderr
+
+        async with Client(url, token) as client:
+            attachment = await client.attach(session_id)
+            held = await client.submit(
+                session_id=session_id, workspace="primary", attachment_id=attachment.attachment_id,
+                request_id="run-shell", text="/shell printf y > decided.txt")
+            assert held.status in {"queued", "running", "waiting_approval"}
+        granted = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                       "--request", "run-shell", "--decision", "批准")
+        assert granted.returncode == 0, granted.stderr
+        assert json.loads(granted.stdout)["status"] == "succeeded"
+        assert (workspace / "decided.txt").read_text() == "y"
+        assert token not in granted.stdout and token not in granted.stderr
+
+        mismatch = _cli(url, token, "decide", "--session", session_id, "--workspace", "other",
+                        "--request", "run-shell", "--decision", "批准")
+        assert mismatch.returncode == 1
+        assert mismatch.stderr.strip() == "workspace_mismatch"
+        repeated = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                        "--request", "run-shell", "--decision", "批准")
+        assert repeated.returncode == 0, repeated.stderr
+        assert json.loads(repeated.stdout)["status"] == "succeeded"
+        opposite = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                        "--request", "hold-shell", "--decision", "批准")
+        assert opposite.returncode == 1
+        assert json.loads(opposite.stdout)["error"] == "approval_denied"
+        assert (workspace / "decided.txt").read_text() == "y"
+        assert not (workspace / "undecided.txt").exists()
+
+        prompt = _cli(url, token, "submit", "--session", session_id, "--workspace", "primary",
+                      "--request-id", "word", "--text", "批准")
+        assert prompt.returncode == 0, prompt.stderr
+        assert json.loads(prompt.stdout)["answer"] == "已收到：批准"
+        assert (workspace / "decided.txt").read_text() == "y"
+        assert not (workspace / "undecided.txt").exists()
+
+        command = shlex.join([sys.executable, str(probe), "--workspace", str(workspace)])
+        server_id = secrets.token_hex(16)
+        async with Client(url, token) as client:
+            attachment = await client.attach(session_id)
+            opened = await client.open_mcp(
+                session_id=session_id, attachment_id=attachment.attachment_id, server_id=server_id,
+                command=command, workspace="primary")
+            assert opened.phase == "ready"
+            assert any(tool.name == "native_echo" for tool in opened.tools)
+            refused_id = secrets.token_hex(16)
+            refused = await client.request_mcp(
+                session_id=session_id, attachment_id=attachment.attachment_id, server_id=server_id,
+                call_id=refused_id, name="native_echo", arguments={"text": "no", "numbers": [1]})
+            assert refused.phase == "waiting_approval"
+        refused_cli = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                           "--server", server_id, "--call", refused_id, "--decision", "拒绝")
+        assert refused_cli.returncode == 0, refused_cli.stderr
+        assert json.loads(refused_cli.stdout)["phase"] == "denied"
+        assert not (workspace / "mcp-effect.txt").exists()
+
+        accepted_id = secrets.token_hex(16)
+        async with Client(url, token) as client:
+            attachment = await client.attach(session_id)
+            accepted = await client.request_mcp(
+                session_id=session_id, attachment_id=attachment.attachment_id, server_id=server_id,
+                call_id=accepted_id, name="native_echo", arguments={"text": "from-client", "numbers": [1, 2]})
+            assert accepted.phase == "waiting_approval"
+        accepted_cli = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                            "--server", server_id, "--call", accepted_id, "--decision", "批准")
+        assert accepted_cli.returncode == 0, accepted_cli.stderr
+        body = json.loads(accepted_cli.stdout)
+        assert body["phase"] == "done"
+        assert body["is_error"] is False
+        assert (workspace / "mcp-effect.txt").read_text() == "from-client"
+        again = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                     "--server", server_id, "--call", accepted_id, "--decision", "批准")
+        assert again.returncode == 0, again.stderr
+        assert json.loads(again.stdout)["phase"] == "done"
+        flipped = _cli(url, token, "decide", "--session", session_id, "--workspace", "primary",
+                       "--server", server_id, "--call", refused_id, "--decision", "批准")
+        assert flipped.returncode == 1
+        assert json.loads(flipped.stdout)["phase"] == "denied"
+        assert (workspace / "mcp-effect.txt").read_text() == "from-client"
+
+        async with Client(url, token) as client:
+            attachment = await client.attach(session_id)
+            closed = await client.close_mcp(
+                session_id=session_id, attachment_id=attachment.attachment_id, server_id=server_id)
+            assert closed.phase == "exited"
+            assert closed.clean is True
+            state = await client.mcp_state(session_id)
+            assert state.servers[0].phase == "exited"
     finally:
         _stop(proc, profile)
