@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from .contracts import BackendError
+from .native_execution import tool_environment
 
 GATE = Path(__file__).with_name("plugin_gate.py").read_text()
 CAPABILITY = "stamp"
@@ -64,7 +65,7 @@ def run_plugin_gate(workspace: Path, text: str) -> PluginOutcome:
     process = subprocess.Popen(
         [sys.executable, "-I", "-c", GATE],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=workspace, start_new_session=True, text=True,
+        cwd=workspace, env=tool_environment(), start_new_session=True, text=True,
     )
     stdin = process.stdin
     stdout = process.stdout

@@ -50,6 +50,44 @@ def opened(owner: Supervisor, *, name: str = "notes", label: str = "记事") -> 
                       config={"label": label})
 
 
+def test_controlled_helpers_drop_secret_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+    monkeypatch.setenv("AMAZME_CONTROL_TOKEN", "control-token")
+    recorded: list[dict[str, str] | None] = []
+    real = __import__("subprocess").Popen
+
+    def spy(*args: object, **kwargs: object) -> object:
+        env = kwargs.get("env")
+        recorded.append(env if isinstance(env, dict) else None)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("amazme_backend.plugin_run.subprocess.Popen", spy)
+    monkeypatch.setattr("amazme_backend.computer_run.subprocess.Popen", spy)
+    monkeypatch.setattr("amazme_backend.codemode_run.subprocess.Popen", spy)
+    monkeypatch.setattr("amazme_backend.codemode_run.bundled_node", lambda: Path(sys.executable))
+    from amazme_backend.codemode_run import run_codemode
+    from amazme_backend.computer_run import start_driver
+    from amazme_backend.native_execution import tool_environment
+    from amazme_backend.plugin_run import run_plugin_gate
+
+    assert run_plugin_gate(tmp_path / "plugin", "hello").phase == "done"
+    driver = start_driver(tmp_path / "desk", "unconfigured")
+    assert driver.process.stdin is not None
+    driver.process.stdin.close()
+    assert driver.process.wait(timeout=5) == 0
+    run_codemode("1", {})
+    assert len(recorded) == 3
+    allowed = tool_environment()
+    for env in recorded:
+        assert env is not None
+        assert env.keys() == allowed.keys()
+        assert "DEEPSEEK_API_KEY" not in env
+        assert "SSH_AUTH_SOCK" not in env
+        assert "AMAZME_CONTROL_TOKEN" not in env
+        assert "sk-test-not-real" not in env.values()
+
+
 def test_gate_refuses_a_capability_it_does_not_implement(tmp_path: Path) -> None:
     source = (Path(__file__).parents[1] / "src/amazme_backend/plugin_gate.py").read_text()
     assert "sqlite" not in source and "subprocess" not in source

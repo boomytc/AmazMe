@@ -11,6 +11,7 @@ from typing import Literal, cast
 
 from .common import resource_root
 from .contracts import BackendError
+from .native_execution import tool_environment
 
 HELPER = Path(__file__).with_name("codemode_helper.mjs")
 SOURCE_LIMIT = 8000
@@ -91,7 +92,7 @@ def run_codemode(source: str, state: dict[str, object], *, mark_path: Path | Non
         raise BackendError("codemode_runtime_missing", status=503)
     process = subprocess.Popen(
         [str(node), str(HELPER)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        start_new_session=True, text=True,
+        env=tool_environment(), start_new_session=True, text=True,
     )
     stdin = process.stdin
     stdout = process.stdout

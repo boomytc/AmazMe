@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from .contracts import BackendError
+from .native_execution import tool_environment
 
 Scenario = Literal["unconfigured", "denied", "granted", "plain", "hold", "drop"]
 SOURCE = Path(__file__).with_name("computer_driver.py").read_text()
@@ -81,7 +82,7 @@ def start_driver(directory: Path, scenario: Scenario) -> ComputerDriver:
     process = subprocess.Popen(
         [sys.executable, "-I", "-c", SOURCE],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        cwd=directory, start_new_session=True, text=True,
+        cwd=directory, env=tool_environment(), start_new_session=True, text=True,
     )
     driver = ComputerDriver(process)
     try:
