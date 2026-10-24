@@ -708,7 +708,10 @@ class Host:
         active = await self.store.active_update()
         if active is None:
             return False
-        health = await self.supervisor.call("GET", "/health", SupervisorHealth)
+        try:
+            health = await self.supervisor.call("GET", "/health", SupervisorHealth)
+        except httpx.TransportError as error:
+            raise BackendError("update_prepared", status=503) from error
         if health.freeze_id != active.update_id:
             raise BackendError("update_frozen", status=503)
         return True

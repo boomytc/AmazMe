@@ -219,6 +219,15 @@ async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, mo
         with pytest.raises(BackendError, match="update_frozen"):
             await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
         assert calls[-1] == "/health" and "/code/run" not in calls[8:]
+
+        async def retired(_method: str, path: str, _model: object, _body: object = None) -> object:
+            calls.append(path)
+            raise httpx.TransportError("supervisor socket closed")
+
+        monkeypatch.setattr(host.supervisor, "call", retired)
+        with pytest.raises(BackendError, match="update_prepared"):
+            await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
+        assert calls[-1] == "/health"
     finally:
         await host.supervisor.close()
         await host.store.db.close()
