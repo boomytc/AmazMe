@@ -1,4 +1,4 @@
-"""Supervisor-owned native terminal with a registered lifetime and observed descendants."""
+"""Registered native PTY and stdio MCP process ownership, with observed descendants."""
 from __future__ import annotations
 
 import asyncio
@@ -9,6 +9,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
+from typing import Literal
 
 import psutil
 
@@ -17,10 +18,10 @@ from .native_execution import LocalReport, ProcessIdentity, stop_tracked, tool_e
 from .processes import ProcessReservation, retain_inherited
 
 
-def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> None:
+def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path, kind: Literal["pty", "mcp"]) -> None:
     retain_inherited(lifetime_fd, profile, "execution", instance)
     control = socket.socket(fileno=0)
-    gate = subprocess.Popen(child_command("pty-gate"), stdin=0, stdout=1,
+    gate = subprocess.Popen(child_command("pty-gate" if kind == "pty" else "mcp-gate"), stdin=0, stdout=1,
                             stderr=subprocess.DEVNULL, env=tool_environment(), start_new_session=True)
     tracked = {gate.pid: ProcessIdentity.capture(psutil.Process(gate.pid))}
     observed: tuple[int, ...] = ()
@@ -54,17 +55,17 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
                       reason=reason, tracked=list(tracked.values())).model_dump_json())
 
 
-class TerminalProcess:
+class ServiceProcess:
     def __init__(self, process: asyncio.subprocess.Process, sock: socket.socket):
         self.process, self.sock = process, sock
 
     @classmethod
     async def start(cls, profile: Path, instance: str, directory: Path,
-                    reservation: ProcessReservation) -> TerminalProcess:
+                    reservation: ProcessReservation, kind: Literal["pty", "mcp"]) -> ServiceProcess:
         parent, child = socket.socketpair()
         try:
             process = await asyncio.create_subprocess_exec(*child_command(
-                "terminal-runner", "--profile", str(profile), "--instance", instance,
+                "service-runner", "--kind", kind, "--profile", str(profile), "--instance", instance,
                 "--lifetime-fd", str(reservation.fd), "--directory", str(directory)),
                 stdin=child.fileno(), stdout=child.fileno(), stderr=asyncio.subprocess.DEVNULL,
                 pass_fds=(reservation.fd,), env=tool_environment(), start_new_session=True)

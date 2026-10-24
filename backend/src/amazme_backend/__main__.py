@@ -18,18 +18,24 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "pty-gate":
         from .pty_gate import main as pty_main
         raise SystemExit(pty_main())
-    if len(sys.argv) > 1 and sys.argv[1] in {"execute", "terminal-runner"}:
-        if sys.argv[1] == "execute":
-            from .native_execution import runner
-        else:
-            from .native_terminal import runner
+    if len(sys.argv) > 1 and sys.argv[1] == "mcp-gate":
+        from .mcp_gate import main as mcp_main
+        raise SystemExit(mcp_main())
+    if len(sys.argv) > 1 and sys.argv[1] in {"execute", "service-runner"}:
         parser = argparse.ArgumentParser()
+        if sys.argv[1] == "service-runner":
+            parser.add_argument("--kind", choices=["pty", "mcp"], required=True)
         parser.add_argument("--profile", type=Path, required=True)
         parser.add_argument("--instance", required=True)
         parser.add_argument("--lifetime-fd", type=int, required=True)
         parser.add_argument("--directory", type=Path, required=True)
         arguments = parser.parse_args(sys.argv[2:])
-        runner(arguments.profile, arguments.instance, arguments.lifetime_fd, arguments.directory)
+        if sys.argv[1] == "execute":
+            from .native_execution import runner
+            runner(arguments.profile, arguments.instance, arguments.lifetime_fd, arguments.directory)
+        else:
+            from .native_services import runner as service_runner
+            service_runner(arguments.profile, arguments.instance, arguments.lifetime_fd, arguments.directory, arguments.kind)
         return
     if len(sys.argv) > 1 and sys.argv[1] == "client":
         from .client_cmd import run_client

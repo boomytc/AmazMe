@@ -422,6 +422,7 @@ function startClient() {
       if (attachment.session_id !== id || attachment.build_id !== boot.build_id || attachment.host_epoch !== boot.host_epoch) throw new Error("会话绑定不匹配");
       if ($("web").open) void loadWebPolicy().catch(error);
       if ($("terminal").open) void loadTerminals().catch(error);
+      if ($("mcp").open) void loadMcp().catch(error);
       const url = new URL(`/api/v1/events/${id}`, location.origin); url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(url); connection.ws = ws;
       connection.helloTimer = setTimeout(() => reconnect(connection, true), 40000);
@@ -759,33 +760,108 @@ function startClient() {
     try { showTerminal(await api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/close`, "POST", {}, view.connection), view); }
     catch (failure) { if (terminalOwns(view)) error(failure); }
   };
-  let mcpServer = "", mcpCall = "", mcpDigest = "";
-  function showMcp(view) {
-    $("mcp-tools").replaceChildren(...(view.tools || []).map(tool => button(tool.name, () => {
-      mcpCall = crypto.randomUUID().replaceAll("-", "");
-      api(`/api/v1/sessions/${selected}/mcp/${mcpServer}/calls`, "POST", {call_id: mcpCall, name: tool.name, arguments: {text: "hi"}}, current)
-        .then(call => { mcpDigest = call.digest; $("mcp-approval").textContent = call.phase === "waiting_approval" ? "等待批准" : call.result; })
-        .catch(error);
-    })));
-    if (view.exit_code !== null && view.exit_code !== undefined) $("mcp-result").textContent = `退出 ${view.exit_code}`;
+  let mcpView = null, mcpPoll = null, mcpNavigation = 0;
+  const mcpOwns = view => view && mcpView === view && owns(view.connection);
+  const mcpKey = (connection, suffix) => `mcp:${identity.profile_id}:${connection.session}:${suffix}`;
+  function showMcpState(state, connection, preferred = mcpView?.id) {
+    if (!owns(connection)) return;
+    const openingKey = mcpKey(connection, "opening"), opening = JSON.parse(sessionStorage.getItem(openingKey) || "null");
+    if (opening && state.servers.some(row => row.server_id === opening.server_id)) sessionStorage.removeItem(openingKey);
+    const row = state.servers.find(row => row.server_id === preferred) || state.servers.find(row => row.phase === "ready") || state.servers[0];
+    $("mcp-server").replaceChildren(...state.servers.map(row => {
+      const option = document.createElement("option"); option.value = row.server_id;
+      option.textContent = `${row.server_id.slice(0, 8)} · ${row.workspace} · ${row.phase}`; return option;
+    }));
+    if (!row) { if (opening) $("mcp-command").value = opening.command; mcpView = null; $("mcp-state").textContent = "尚未连接服务"; $("mcp-tools").replaceChildren(); $("mcp-approval").replaceChildren(); return; }
+    const changing = !mcpView || mcpView.connection !== connection || mcpView.id !== row.server_id;
+    if (changing) {
+      mcpView = {id:row.server_id, connection, tool:null, busy:false};
+      $("mcp-arguments").value = "{}";
+      $("mcp-schema").textContent = "选择一个工具以查看参数";
+    }
+    const view = mcpView;
+    view.phase = row.phase;
+    $("mcp-server").value = row.server_id;
+    $("mcp-state").textContent = row.phase === "ready" ? `已连接 · ${row.protocol_version}` : row.phase === "exited" ? "已退出" : "通道失联，未自动重启";
+    if (row.exit_code !== null) $("mcp-state").textContent += ` · 退出码 ${row.exit_code}`;
+    if (!row.clean && row.phase !== "ready") $("mcp-state").textContent += " · 停止尚未确认";
+    $("mcp-tools").replaceChildren(...row.tools.map(tool => button(tool.name, () => {
+      if (!mcpOwns(view)) return;
+      view.tool = tool.name;
+      $("mcp-schema").textContent = `${tool.description || tool.name}\n${JSON.stringify(tool.input_schema, null, 2)}`;
+    }, row.phase !== "ready")));
+    const calls = state.calls.filter(call => call.server_id === row.server_id);
+    const pendingKey = mcpKey(connection, `call:${row.server_id}`), pendingCall = JSON.parse(sessionStorage.getItem(pendingKey) || "null");
+    if (pendingCall && calls.some(call => call.call_id === pendingCall.call_id)) sessionStorage.removeItem(pendingKey);
+    else if (changing && pendingCall) { view.tool = pendingCall.name; $("mcp-arguments").value = JSON.stringify(pendingCall.arguments, null, 2); }
+    for (const call of calls) if (call.phase !== "waiting_approval") sessionStorage.removeItem(mcpKey(connection, `decision:${call.call_id}`));
+    $("mcp-approval").replaceChildren(...calls.filter(call => call.phase === "waiting_approval").map(call => {
+      const article = element("article"); article.dataset.mcpCall = call.call_id;
+      article.append(element("pre", `${row.command}\n${call.name}\n${JSON.stringify(call.arguments, null, 2)}`));
+      for (const approve of [true, false]) article.append(button(approve ? "批准调用" : "拒绝调用", async () => {
+        if (!mcpOwns(view) || view.busy) return;
+        const key = mcpKey(connection, `decision:${call.call_id}`);
+        let decision = JSON.parse(sessionStorage.getItem(key) || "null");
+        if (decision && decision.approve !== approve) { error(new Error("原决定回执未确认，请沿用原决定查询结果。")); return; }
+        if (!decision) { decision = {decision_id:crypto.randomUUID().replaceAll("-", ""), approve, digest:call.digest}; sessionStorage.setItem(key, JSON.stringify(decision)); }
+        view.busy = true;
+        try {
+          await api(`/api/v1/sessions/${connection.session}/mcp/${view.id}/calls/${call.call_id}/decision`, "POST", decision, connection);
+          sessionStorage.removeItem(key);
+          if (mcpOwns(view)) await loadMcp();
+        } catch (failure) { if (mcpOwns(view)) error(failure); }
+        finally { view.busy = false; }
+      }));
+      return article;
+    }));
+    $("mcp-result").textContent = calls.filter(call => call.phase !== "waiting_approval").slice(0, 30).map(call =>
+      `${call.name} · ${call.phase}${call.is_error ? " · 工具报告错误" : ""}\n${call.result || ""}${call.result_data?.structuredContent ? "\n" + JSON.stringify(call.result_data.structuredContent, null, 2) : ""}`).join("\n\n");
+    $("mcp-server").onchange = () => { if (owns(connection)) showMcpState(state, connection, $("mcp-server").value); };
   }
+  async function loadMcp() {
+    clearTimeout(mcpPoll);
+    const connection = current, navigation = ++mcpNavigation;
+    if (!connection || !identity) return;
+    try {
+      const state = await api(`/api/v1/sessions/${connection.session}/mcp`);
+      if (owns(connection) && navigation === mcpNavigation) showMcpState(state, connection);
+    } finally {
+      if (owns(connection) && navigation === mcpNavigation && $("mcp").open) mcpPoll = setTimeout(() => loadMcp().catch(error), 750);
+    }
+  }
+  $("mcp").addEventListener("toggle", () => {
+    if ($("mcp").open && selected && identity) void loadMcp().catch(error); else clearTimeout(mcpPoll);
+  });
   $("mcp-form").onsubmit = async event => {
     event.preventDefault();
-    if (!selected || !identity || health?.state !== "ready") return;
-    mcpServer = crypto.randomUUID().replaceAll("-", "");
+    const connection = current;
+    if (!connection || health?.state !== "ready") return;
+    const key = mcpKey(connection, "opening"), command = $("mcp-command").value;
+    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (pending && (pending.command !== command || pending.workspace !== fileWorkspace)) { error(new Error("先用原命令核对连接结果，避免重复启动服务。")); return; }
+    if (!pending) { pending = {server_id:crypto.randomUUID().replaceAll("-", ""), command, workspace:fileWorkspace}; sessionStorage.setItem(key, JSON.stringify(pending)); }
     try {
-      showMcp(await api(`/api/v1/sessions/${selected}/mcp`, "POST", {server_id: mcpServer, command: $("mcp-command").value}, current));
-      $("error").textContent = "";
-    } catch (failure) { error(failure); }
+      const server = await api(`/api/v1/sessions/${connection.session}/mcp`, "POST", pending, connection);
+      sessionStorage.removeItem(key);
+      if (owns(connection)) { mcpView = {id:server.server_id, connection, tool:null, busy:false}; await loadMcp(); }
+    } catch (failure) { if (owns(connection)) error(failure); }
   };
-  $("mcp-approval").onclick = async () => {
-    if (!mcpServer || !mcpCall || !mcpDigest) return;
+  $("mcp-request").onclick = async () => {
+    const view = mcpView;
+    if (!mcpOwns(view) || !view.tool || view.busy || view.phase !== "ready") return;
+    const key = mcpKey(view.connection, `call:${view.id}`);
     try {
-      const call = await api(`/api/v1/sessions/${selected}/mcp/${mcpServer}/calls/${mcpCall}/decision`, "POST",
-        {decision_id: crypto.randomUUID().replaceAll("-", ""), approve: true, digest: mcpDigest}, current);
-      $("mcp-result").textContent = call.result;
-      $("mcp-approval").textContent = "";
-    } catch (failure) { error(failure); }
+      const args = JSON.parse($("mcp-arguments").value);
+      if (!args || Array.isArray(args) || typeof args !== "object") throw new Error("参数必须是 JSON 对象");
+      let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+      if (pending && (pending.name !== view.tool || JSON.stringify(pending.arguments) !== JSON.stringify(args))) throw new Error("原调用回执未确认，请保留参数并使用原 ID 重试。");
+      if (!pending) { pending = {call_id:crypto.randomUUID().replaceAll("-", ""), name:view.tool, arguments:args}; sessionStorage.setItem(key, JSON.stringify(pending)); }
+      view.busy = true;
+      await api(`/api/v1/sessions/${view.connection.session}/mcp/${view.id}/calls`, "POST", pending, view.connection);
+      sessionStorage.removeItem(key);
+      if (mcpOwns(view)) await loadMcp();
+    } catch (failure) { if (mcpOwns(view)) error(failure); }
+    finally { view.busy = false; }
   };
   let webPolicy = null;
   function showWebPolicy(policy) {
@@ -1219,11 +1295,10 @@ function startClient() {
     catch (failure) { error(failure); }
   };
   $("mcp-cancel").onclick = async () => {
-    if (!mcpServer) return;
-    try {
-      showMcp(await api(`/api/v1/sessions/${selected}/mcp/${mcpServer}/cancel`, "POST",
-        {server_id: mcpServer, command: $("mcp-command").value}, current));
-    } catch (failure) { error(failure); }
+    const view = mcpView;
+    if (!mcpOwns(view)) return;
+    try { await api(`/api/v1/sessions/${view.connection.session}/mcp/${view.id}/cancel`, "POST", {}, view.connection); if (mcpOwns(view)) await loadMcp(); }
+    catch (failure) { if (mcpOwns(view)) error(failure); }
   };
   $("terminal-resize").onclick = async () => {
     const view = terminalView;

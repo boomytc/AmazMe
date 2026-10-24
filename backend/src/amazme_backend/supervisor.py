@@ -41,7 +41,9 @@ from .contracts import (
     McpCallRequest,
     McpDecision,
     McpDecisionEnvelope,
-    McpTool,
+    McpQuery,
+    McpSession,
+    McpState,
     McpView,
     OpenCode,
     OpenMcp,
@@ -81,7 +83,7 @@ from .faults import Faults
 from .mcp_session import McpClient, mcp_digest
 from .memories import session_workspace
 from .native_execution import LocalPermit, LocalProcess, reconcile
-from .native_terminal import TerminalProcess
+from .native_services import ServiceProcess
 from .plugin_run import plugin_fingerprint, run_plugin_gate, set_fingerprint, stored_config, validate_config
 from .processes import ProcessReservation, exited, wait_exited
 from .pty_gate import WINDOW
@@ -118,7 +120,8 @@ class ExecutionDB:
                         if version != 3 and (self.require_existing or version != 0 or tables):
                             raise BackendError("unsupported_storage_format")
                         if version == 3:
-                            required = {"control", "workers", "epochs", "scopes", "budgets", "recoveries", "resolutions", "terminals", "terminal_inputs"}
+                            required = {"control", "workers", "epochs", "scopes", "budgets", "recoveries", "resolutions",
+                                        "terminals", "terminal_inputs", "mcp_servers", "mcp_calls"}
                             if not required.issubset({str(r[0]) for r in tables}):
                                 raise BackendError("execution_storage_corrupt")
                             if probe.execute("SELECT count(*) FROM control WHERE id=1").fetchone()[0] != 1:
@@ -215,8 +218,9 @@ class Supervisor:
         self.pty_gate = Path(__file__).with_name("pty_gate.py").read_text()
         self.mcp_gate = Path(__file__).with_name("mcp_gate.py").read_text()
         self.terminals: dict[str, PtyClient] = {}
-        self.terminal_processes: dict[str, TerminalProcess] = {}
+        self.terminal_processes: dict[str, ServiceProcess] = {}
         self.mcp_clients: dict[str, McpClient] = {}
+        self.mcp_processes: dict[str, ServiceProcess] = {}
         self.remote_clients: dict[str, RemoteClient] = {}
         self.code_cancels: dict[str, threading.Event] = {}
         self.code_cancel_ids: set[str] = set()
@@ -284,7 +288,7 @@ class Supervisor:
                 data TEXT NOT NULL,accepted INTEGER NOT NULL);
               CREATE TABLE IF NOT EXISTS mcp_servers(id TEXT PRIMARY KEY,session TEXT NOT NULL,
                 command TEXT NOT NULL,phase TEXT NOT NULL,exit_code INTEGER,catalog TEXT NOT NULL DEFAULT '[]',
-                cid TEXT NOT NULL DEFAULT '',clean INTEGER NOT NULL DEFAULT 0);
+                clean INTEGER NOT NULL DEFAULT 0);
               CREATE TABLE IF NOT EXISTS mcp_calls(id TEXT PRIMARY KEY,server TEXT NOT NULL,name TEXT NOT NULL,
                 arguments TEXT NOT NULL,digest TEXT NOT NULL,phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '',
                 decision_id TEXT NOT NULL DEFAULT '',decision TEXT NOT NULL DEFAULT '');
@@ -310,6 +314,15 @@ class Supervisor:
                                        "permitted": "INTEGER NOT NULL DEFAULT 0", "clean": "INTEGER NOT NULL DEFAULT 0"}.items():
                 if column not in columns:
                     db.execute(f"ALTER TABLE terminals ADD COLUMN {column} {definition}")
+            for table, additions in {
+                "mcp_servers": {"workspace": "TEXT NOT NULL DEFAULT 'primary'", "protocol_version": "TEXT NOT NULL DEFAULT ''",
+                                "lease": "TEXT NOT NULL DEFAULT ''", "directory": "TEXT NOT NULL DEFAULT ''", "permitted": "INTEGER NOT NULL DEFAULT 0"},
+                "mcp_calls": {"result_data": "TEXT", "is_error": "INTEGER NOT NULL DEFAULT 0"},
+            }.items():
+                present = {str(row[1]) for row in db.execute(f"PRAGMA table_info({table})")}
+                for column, definition in additions.items():
+                    if column not in present:
+                        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
             return db.execute("SELECT * FROM control WHERE id=1").fetchone()
         old = await self.db.call(init)
         # This is independent of Host's first ACK and precedes execution/worker side effects.
@@ -321,7 +334,7 @@ class Supervisor:
         self.registered = True
         async with self.control:
             if old["owner"] and old["owner"] != self.instance:
-                await self._close_terminals(require_clean=False)
+                await self._close_services(require_clean=False)
                 # Reconcile registered invocations before accepting work from a replacement owner.
                 try:
                     if await self._unclean_epochs():
@@ -924,6 +937,10 @@ class Supervisor:
             blocked.append("worker_fence_pending")
         session_errors = {session: ["worker_restart_budget_exhausted"] for session in budgets}
         terminals = await self.db.call(lambda db: db.execute("SELECT * FROM terminals WHERE clean=0").fetchall())
+        mcps = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE clean=0").fetchall())
+        for row in mcps:
+            if row["phase"] == "unknown":
+                session_errors.setdefault(str(row["session"]), []).append("mcp_stop_unconfirmed:" + str(row["id"]))
         for row in terminals:
             if row["phase"] == "unknown":
                 session_errors.setdefault(str(row["session"]), []).append("terminal_stop_unconfirmed:" + str(row["id"]))
@@ -945,7 +962,7 @@ class Supervisor:
                 execution_epoch=int(r["epoch"]), state=str(r["state"]),
                 cleanup=Cleanup.model_validate_json(str(r["receipt"])) if r["receipt"] else None) for r in rows],
             effects=await self._holds(), execution="native", resources=resources, session_errors=session_errors,
-            terminals=[self._view(row) for row in terminals], blocked=blocked)
+            terminals=[self._view(row) for row in terminals], mcp_servers=[self._mcp_view(row) for row in mcps], blocked=blocked)
 
     async def freeze(self, value: FreezeSupervisor) -> SupervisorHealth:
         async with self.control:
@@ -982,6 +999,7 @@ class Supervisor:
                         pass
             if (health.blocked or any(e.state != "clean" for e in health.epochs)
                     or any(not terminal.clean for terminal in health.terminals)
+                    or any(not server.clean for server in health.mcp_servers)
                     or any(w.state != "stopped" for w in health.workers)):
                 raise BackendError("update_health_unproven", status=503)
             def thawed(db: sqlite3.Connection) -> None:
@@ -1021,7 +1039,7 @@ class Supervisor:
     async def _shutdown(self, value: HostFence) -> None:
         self.check_host(value)
         self.draining = True
-        await self._close_terminals()
+        await self._close_services()
         # Stop registered invocation resources first. Every registry instance still needs its independent process proof.
         await self._reconcile_scopes("registered_processes_stopped")
         for worker in await self._workers():
@@ -1038,7 +1056,7 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             self.draining = True
-            await self._close_terminals()
+            await self._close_services()
             await self._reconcile_scopes("registered_processes_stopped")
             pending: list[WorkerInfo] = []
             for worker in await self._workers():
@@ -1105,6 +1123,16 @@ class Supervisor:
                 async with self.control:
                     if self.draining:
                         continue
+                    for server_id, client in list(self.mcp_clients.items()):
+                        row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
+                        if row is None:
+                            continue
+                        try:
+                            await self._sync_mcp(server_id)
+                            if client.closed or client.exit_code is not None:
+                                await self._close_mcp(row, interrupted=client.exit_code is None)
+                        except (OSError, BackendError, ValueError):
+                            await self._close_mcp(row, interrupted=True)
                     for terminal_id, client in list(self.terminals.items()):
                         row = await self._terminal_row(terminal_id)
                         if row is None:
@@ -1135,106 +1163,228 @@ class Supervisor:
                     await self._set_blocked(self.blocked)
 
     def _mcp_view(self, row: sqlite3.Row) -> McpView:
-        phase = str(row["phase"])
-        if phase not in {"ready", "exited", "unknown"}:
-            phase = "unknown"
-        tools = [McpTool.model_validate(item) for item in json.loads(str(row["catalog"]))]
-        return McpView(server_id=str(row["id"]), phase=phase,  # type: ignore[arg-type]
-                       exit_code=None if row["exit_code"] is None else int(row["exit_code"]),
-                       tools=tools, clean=bool(row["clean"]))
+        return McpView.model_validate({
+            "server_id": row["id"], "session_id": row["session"], "workspace": row["workspace"],
+            "command": row["command"], "protocol_version": row["protocol_version"],
+            "phase": row["phase"] if row["phase"] in {"ready", "exited", "unknown"} else "unknown",
+            "exit_code": row["exit_code"], "tools": json.loads(row["catalog"]), "clean": bool(row["clean"]),
+        })
 
     def _mcp_call(self, row: sqlite3.Row) -> McpCall:
-        phase = str(row["phase"])
-        if phase not in {"waiting_approval", "done", "denied", "unknown", "conflict"}:
-            phase = "unknown"
-        return McpCall(call_id=str(row["id"]), server_id=str(row["server"]), name=str(row["name"]),
-                       phase=phase, result=str(row["result"]), digest=str(row["digest"]))  # type: ignore[arg-type]
-
-    async def _mcp_blocked(self, session_id: str) -> None:
-        blocked = await self.db.call(lambda db: db.execute(
-            "SELECT 1 FROM mcp_servers WHERE session=? AND clean=0 AND phase!='ready'", (session_id,)).fetchone())
-        if blocked is not None:
-            raise BackendError("execution_cleanup_pending", status=503)
-
-    async def connect_mcp(self, cid: str, spec: dict[str, object]) -> McpClient:
-        raise BackendError("native_interactive_pending", status=503)
+        return McpCall.model_validate({
+            "call_id": row["id"], "server_id": row["server"], "name": row["name"],
+            "phase": row["phase"], "result": row["result"], "digest": row["digest"],
+            "arguments": json.loads(row["arguments"]), "is_error": bool(row["is_error"]),
+            "result_data": json.loads(row["result_data"]) if row["result_data"] else None,
+        })
 
     async def open_mcp(self, value: OpenMcp) -> McpView:
-        raise BackendError("native_interactive_pending", status=503)
+        async with self.control:
+            self.check_host(value)
+            self._admit()
+            workspace = value.workspace or session_workspace(self.profile.path, value.session_id)
+            old = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
+            if old is not None:
+                if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
+                    raise BackendError("mcp_server_conflict")
+                return self._mcp_view(old)
+            count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_servers WHERE clean=0").fetchone()[0])
+            if count >= 8:
+                raise BackendError("mcp_server_capacity", status=429)
+            blocked = await self.db.call(lambda db: db.execute(
+                "SELECT 1 FROM mcp_servers WHERE session=? AND phase='unknown' AND clean=0", (value.session_id,)).fetchone())
+            if blocked:
+                raise BackendError("execution_cleanup_pending", status=503)
+            location = self.profile.config.workspace if workspace == PRIMARY else dict(load_grants(self.profile.path)).get(workspace)
+            if location is None:
+                raise BackendError("workspace_not_found")
+            instance = hashlib.sha256(("mcp:" + value.server_id).encode()).hexdigest()[:32]
+            directory = self.profile.path / "executions" / instance
+            directory.mkdir(mode=0o700, parents=True, exist_ok=False)
+            try:
+                with ProcessReservation(self.profile.path, "execution", instance) as reservation:
+                    await self.db.call(lambda db: db.execute(
+                        "INSERT INTO mcp_servers(id,session,command,phase,workspace,lease,directory) VALUES(?,?,?,'unknown',?,?,?)",
+                        (value.server_id, value.session_id, value.command, workspace, reservation.lease.model_dump_json(), str(directory))), write=True)
+                    process = await ServiceProcess.start(self.profile.path, instance, directory, reservation, "mcp")
+                    self.mcp_processes[value.server_id] = process
+                client = McpClient(process.sock)
+                self.mcp_clients[value.server_id] = client
+                await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET permitted=1 WHERE id=?", (value.server_id,)), write=True)
+                await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), location)
+                catalog = json.dumps([tool.model_dump() for tool in client.tools], ensure_ascii=False)
+                await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET phase='ready',catalog=?,protocol_version=? WHERE id=?",
+                    (catalog, client.protocol_version, value.server_id)), write=True)
+            except BaseException:
+                row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
+                if row is not None:
+                    await self._close_mcp(row, interrupted=True)
+                raise
+            row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
+            assert row is not None
+            return self._mcp_view(row)
+
+    async def _sync_mcp(self, server_id: str) -> None:
+        client = self.mcp_clients.get(server_id)
+        if client is None:
+            return
+        await asyncio.to_thread(client.pump, 0)
+        for call_id, result in list(client.results.items()):
+            await self.db.call(lambda db: db.execute(
+                "UPDATE mcp_calls SET phase='done',result=?,result_data=?,is_error=? WHERE id=? AND server=? AND phase='running'",
+                (result.text, json.dumps(result.data, ensure_ascii=False), int(result.is_error), call_id, server_id)), write=True)
+            client.results.pop(call_id, None)
+        for call_id in list(client.conflicts):
+            await self.db.call(lambda db: db.execute("UPDATE mcp_calls SET phase='conflict' WHERE id=? AND server=? AND phase='running'",
+                                                    (call_id, server_id)), write=True)
+            client.conflicts.discard(call_id)
+
+    async def mcp_state(self, value: McpSession) -> McpState:
+        async with self.control:
+            self.check_host(value)
+            servers = await self.db.call(lambda db: db.execute(
+                "SELECT * FROM mcp_servers WHERE session=? ORDER BY clean,rowid DESC LIMIT 100", (value.session_id,)).fetchall())
+            for server in servers:
+                server_id = str(server["id"])
+                client = self.mcp_clients.get(server_id)
+                try:
+                    await self._sync_mcp(server_id)
+                    if client and (client.closed or client.exit_code is not None):
+                        await self._close_mcp(server, interrupted=client.exit_code is None)
+                except (OSError, BackendError, ValueError):
+                    await self._close_mcp(server, interrupted=True)
+            servers = await self.db.call(lambda db: db.execute(
+                "SELECT * FROM mcp_servers WHERE session=? ORDER BY clean,rowid DESC LIMIT 100", (value.session_id,)).fetchall())
+            calls = await self.db.call(lambda db: db.execute(
+                "SELECT c.* FROM mcp_calls c JOIN mcp_servers s ON s.id=c.server WHERE s.session=? "
+                "ORDER BY (c.phase IN ('waiting_approval','running')) DESC,c.rowid DESC LIMIT 100", (value.session_id,)).fetchall())
+            return McpState(servers=[self._mcp_view(row) for row in servers], calls=[self._mcp_call(row) for row in calls])
 
     async def request_mcp_call(self, session_id: str, server_id: str, value: McpCallRequest, fence: HostFence) -> McpCall:
-        self.check_host(fence)
-        self._admit()
-        server = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
-        if server is None or server["session"] != session_id or server["phase"] != "ready":
-            raise BackendError("mcp_not_ready", status=409)
-        digest = mcp_digest(value.name, value.arguments)
-        arguments = json.dumps(value.arguments, sort_keys=True, ensure_ascii=False)
-        existing = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
-        if existing is not None:
-            if existing["server"] != server_id or existing["digest"] != digest:
-                raise BackendError("mcp_call_conflict")
-            return self._mcp_call(existing)
-        names = {item["name"] for item in json.loads(str(server["catalog"]))}
-        if value.name not in names:
-            raise BackendError("mcp_tool_unknown")
-        await self.db.call(lambda db: db.execute(
-            "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase) VALUES(?,?,?,?,?,'waiting_approval')",
-            (value.call_id, server_id, value.name, arguments, digest)), write=True)
-        row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
-        assert row is not None
-        return self._mcp_call(row)
+        async with self.control:
+            self.check_host(fence)
+            self._admit()
+            server = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
+            if server is None or server["session"] != session_id:
+                raise BackendError("mcp_not_found", status=404)
+            digest = mcp_digest(server_id, str(server["command"]), str(server["workspace"]), self.build, value.name, value.arguments)
+            existing = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
+            if existing is not None:
+                if existing["server"] != server_id or existing["digest"] != digest:
+                    raise BackendError("mcp_call_conflict")
+                return self._mcp_call(existing)
+            if server["phase"] != "ready":
+                raise BackendError("mcp_not_ready")
+            if value.name not in {item["name"] for item in json.loads(server["catalog"])}:
+                raise BackendError("mcp_tool_unknown")
+            count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_calls").fetchone()[0])
+            if count >= 512:
+                raise BackendError("mcp_call_capacity", status=429)
+            active = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_calls WHERE phase IN ('waiting_approval','running')").fetchone()[0])
+            if active >= 16:
+                raise BackendError("mcp_call_capacity", status=429)
+            await self.db.call(lambda db: db.execute(
+                "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase) VALUES(?,?,?,?,?,'waiting_approval')",
+                (value.call_id, server_id, value.name, json.dumps(value.arguments, sort_keys=True, ensure_ascii=False), digest)), write=True)
+            row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
+            assert row is not None
+            return self._mcp_call(row)
 
     async def decide_mcp_call(self, session_id: str, server_id: str, call_id: str, value: McpDecision, fence: HostFence) -> McpCall:
-        self.check_host(fence)
-        self._admit()
-        row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (call_id,)).fetchone())
-        if row is None or row["server"] != server_id:
-            raise BackendError("mcp_call_not_found", status=404)
-        server = await self.db.call(lambda db: db.execute("SELECT session FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
-        if server is None or server["session"] != session_id:
-            raise BackendError("mcp_call_not_found", status=404)
-        if row["digest"] != value.digest:
-            raise BackendError("mcp_call_conflict")
-        decision = json.dumps({"approve": value.approve, "digest": value.digest})
-        if row["decision_id"]:
-            if row["decision_id"] != value.decision_id or row["decision"] != decision:
-                raise BackendError("mcp_decision_conflict")
-            return self._mcp_call(row)
-        if row["phase"] != "waiting_approval":
-            raise BackendError("mcp_call_conflict")
-        def claim(db: sqlite3.Connection) -> None:
-            changed = db.execute(
-                "UPDATE mcp_calls SET phase=?,decision_id=?,decision=? WHERE id=? AND phase='waiting_approval'",
-                ("denied" if not value.approve else "unknown", value.decision_id, decision, call_id)).rowcount
-            if changed != 1:
-                raise BackendError("mcp_decision_conflict")
-
-        await self.db.call(claim, write=True)
-        if not value.approve:
+        async with self.control:
+            self.check_host(fence)
+            self._admit()
+            row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (call_id,)).fetchone())
+            server = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
+            if row is None or row["server"] != server_id or server is None or server["session"] != session_id:
+                raise BackendError("mcp_call_not_found", status=404)
+            if row["digest"] != value.digest:
+                raise BackendError("mcp_call_conflict")
+            decision = json.dumps({"approve": value.approve, "digest": value.digest})
+            if row["decision_id"]:
+                if row["decision_id"] != value.decision_id or row["decision"] != decision:
+                    raise BackendError("mcp_decision_conflict")
+                return self._mcp_call(row)
+            if row["phase"] != "waiting_approval":
+                raise BackendError("mcp_call_conflict")
+            if value.approve:
+                busy = await self.db.call(lambda db: db.execute(
+                    "SELECT 1 FROM mcp_calls WHERE server=? AND phase IN ('running','unknown')", (server_id,)).fetchone())
+                if busy:
+                    raise BackendError("mcp_call_pending")
+                if server["phase"] != "ready" or server_id not in self.mcp_clients:
+                    raise BackendError("mcp_not_ready")
+            # Durable intent precedes the first byte to a third-party service.
+            await self.db.call(lambda db: db.execute(
+                "UPDATE mcp_calls SET phase=?,decision_id=?,decision=? WHERE id=?",
+                ("running" if value.approve else "denied", value.decision_id, decision, call_id)), write=True)
+            if value.approve:
+                client = self.mcp_clients[server_id]
+                try:
+                    await asyncio.to_thread(client.call, call_id, str(row["name"]), json.loads(row["arguments"]))
+                    await asyncio.to_thread(client.pump, .1)
+                    await self._sync_mcp(server_id)
+                except (OSError, BackendError, ValueError):
+                    await self._close_mcp(server, interrupted=True)
             current = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (call_id,)).fetchone())
             assert current is not None
             return self._mcp_call(current)
-        client = self.mcp_clients.get(server_id)
-        if client is None:
-            raise BackendError("mcp_channel_lost", status=503)
-        arguments = json.loads(str(row["arguments"]))
-        await asyncio.to_thread(client.call, call_id, str(row["name"]), arguments)
-        await asyncio.to_thread(client.pump, 2, lambda: call_id in client.results or call_id in client.conflicts or client.exit_code is not None)
-        if call_id in client.conflicts:
-            phase, result = "conflict", ""
-        elif call_id in client.results:
-            phase, result = "done", client.results[call_id]
-        else:
-            phase, result = "unknown", ""
-        await self.db.call(lambda db: db.execute(
-            "UPDATE mcp_calls SET phase=?,result=? WHERE id=?", (phase, result, call_id)), write=True)
-        current = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (call_id,)).fetchone())
-        assert current is not None
-        return self._mcp_call(current)
 
-    async def cancel_mcp(self, value: OpenMcp) -> McpView:
-        raise BackendError("native_interactive_pending", status=503)
+    async def _close_mcp(self, row: sqlite3.Row, *, interrupted: bool = False) -> McpView:
+        server_id = str(row["id"])
+        process, client = self.mcp_processes.get(server_id), self.mcp_clients.get(server_id)
+        if client:
+            with contextlib.suppress(OSError, BackendError, ValueError):
+                await self._sync_mcp(server_id)
+        if process:
+            await process.close()
+        self.mcp_processes.pop(server_id, None)
+        self.mcp_clients.pop(server_id, None)
+        clean = bool(row["clean"])
+        if not clean and row["lease"]:
+            clean = await reconcile(Path(row["directory"]), ProcessLease.model_validate_json(row["lease"]), permitted=bool(row["permitted"]))
+        phase = "exited" if clean and not interrupted else "unknown"
+        def closed(db: sqlite3.Connection) -> None:
+            db.execute("UPDATE mcp_servers SET phase=?,clean=?,exit_code=coalesce(?,exit_code) WHERE id=?",
+                       (phase, int(clean), client.exit_code if client else None, server_id))
+            db.execute("UPDATE mcp_calls SET phase=CASE WHEN phase='waiting_approval' THEN 'denied' ELSE 'unknown' END "
+                       "WHERE server=? AND phase IN ('waiting_approval','running')", (server_id,))
+        await self.db.call(closed, write=True)
+        current = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
+        assert current is not None
+        return self._mcp_view(current)
+
+    async def _close_mcps(self, *, require_clean: bool = True) -> None:
+        rows = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE clean=0").fetchall())
+        results = await asyncio.gather(*(self._close_mcp(row,
+            interrupted=str(row["id"]) not in self.mcp_processes) for row in rows), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        if require_clean and any(isinstance(result, McpView) and not result.clean for result in results):
+            raise BackendError("mcp_stop_unconfirmed", status=503)
+
+    async def _close_services(self, *, require_clean: bool = True) -> None:
+        results = await asyncio.gather(self._close_terminals(require_clean=require_clean),
+                                       self._close_mcps(require_clean=require_clean), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+
+    async def cancel_mcp(self, value: McpQuery) -> McpView:
+        async with self.control:
+            self.check_host(value)
+            row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
+            if row is None or row["session"] != value.session_id:
+                raise BackendError("mcp_not_found", status=404)
+            client = self.mcp_clients.get(value.server_id)
+            if client:
+                await self._sync_mcp(value.server_id)
+                await self.db.call(lambda db: db.execute("UPDATE mcp_calls SET phase='unknown' WHERE server=? AND phase='running'",
+                                                        (value.server_id,)), write=True)
+                with contextlib.suppress(OSError, BackendError, ValueError):
+                    await asyncio.to_thread(client.cancel)
+            return await self._close_mcp(row)
 
     async def run_code(self, value: OpenCode) -> CodeView:
         self.check_host(value)
@@ -1660,7 +1810,7 @@ class Supervisor:
                         "INSERT INTO terminals(id,session,command,cols,rows,phase,workspace,lease,directory) VALUES(?,?,?,?,?,'unknown',?,?,?)",
                         (value.terminal_id, value.session_id, value.command, value.cols, value.rows, workspace,
                          reservation.lease.model_dump_json(), str(directory))), write=True)
-                    process = await TerminalProcess.start(self.profile.path, instance, directory, reservation)
+                    process = await ServiceProcess.start(self.profile.path, instance, directory, reservation, "pty")
                     self.terminal_processes[value.terminal_id] = process
                 client = PtyClient(process.sock)
                 self.terminals[value.terminal_id] = client
@@ -1817,13 +1967,17 @@ class Supervisor:
             await channel.close()
         try:
             if not self.db.failed:
-                await self._close_terminals(require_clean=False)
+                await self._close_services(require_clean=False)
         finally:
             # Storage failure must not prevent closing already-owned process handles.
             for process in self.terminal_processes.values():
                 await process.close()
+            for process in self.mcp_processes.values():
+                await process.close()
             self.terminal_processes.clear()
             self.terminals.clear()
+            self.mcp_processes.clear()
+            self.mcp_clients.clear()
             await self.db.close()
 
 
@@ -1852,6 +2006,7 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/pty/close")(owner.close_terminal)
     app.post("/mcp/open")(owner.open_mcp)
     app.post("/mcp/cancel")(owner.cancel_mcp)
+    app.post("/mcp/state")(owner.mcp_state)
     app.post("/code/run")(owner.run_code)
     app.post("/code/cancel")(owner.cancel_code)
     app.get("/plugins")(owner.list_plugins)

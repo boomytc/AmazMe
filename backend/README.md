@@ -6,9 +6,11 @@ AmazMe 正在按 [本机优先方案](../docs/python-backend-plan.md) 将 shell�
 本机 shell 具有当前用户权限，文件 API 的路径检查和命令审批不构成操作系统沙箱。
 不自动把后端令牌、模型密钥传给工具；继续保留签名、公证和系统权限要求。
 
-本机 shell、文件、审批、检查点和 PTY 已接通 Web。MCP 正在下一阶段接入，当前接口返回
-`native_interactive_pending`。普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
+本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。MCP 目前由用户连接、
+选择工具、填写 JSON 参数并审批调用；模型主动发现和调用 MCP 尚未接入。
+普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
+MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、
 `api_key`）；不要把该 JSON 放入仓库。`init` 复制配置后，原临时文件可删除。
@@ -33,9 +35,12 @@ backend/.venv/bin/pytest backend/tests -q
 backend/.venv/bin/python backend/tools/verify_native.py
 backend/.venv/bin/python backend/tools/verify_client.py
 backend/.venv/bin/python backend/tools/verify_terminal.py
+backend/.venv/bin/python backend/tools/verify_mcp.py
 ```
 
 `verify_native.py` 使用 faux 和真实本机进程；`verify_client.py` 使用已安装 Chrome。
+`verify_mcp.py` 用 Chrome 操作本机官方 MCP Python SDK 探针服务，覆盖审批、丢回执、结构化结果和停止；
+它验证受控服务互操作，不代表任意第三方服务或模型驱动的 MCP 已通过。
 真实模型与 Chrome 用 `verify_web.py --provider-config /private/provider.json`，会产生模型费用。
 这些运行器创建自己的隔离 profile、记录报告并关闭所属进程；不会接管用户原有服务。
 报告保存在 `.artifacts/native`，两个 native `run-*` 之后先核对已有证据再运行，避免无界积累。
@@ -43,3 +48,4 @@ backend/.venv/bin/python backend/tools/verify_terminal.py
 用新隔离 profile 验收，不读取、迁移或删除用户历史库。禁止恢复 VM 链路、运行 prepare_runtime/bootstrap_resources，
 以及反复打包积累磁盘。普通开发先做源码验证，需要安装验证时仅保留一份本轮包。
 历史 VM 安装命令与报告保留在 Git 历史和 docs/python-backend-p2-handoff.md，不能用于当前本机验收。
+当前阶段的提交、证据、剩余顺序和执行约束见 [阶段交接](../docs/python-backend-native-next.md)。

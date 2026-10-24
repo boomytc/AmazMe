@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import json
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, field_validator
 
 
 class Model(BaseModel):
@@ -662,21 +663,37 @@ class TerminalSize(Model):
 class McpOpen(Model):
     server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     command: str = Field(min_length=1, max_length=16000)
+    workspace: str = ""
 
 
 class OpenMcp(HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     command: str = Field(min_length=1, max_length=16000)
+    workspace: str = ""
+
+
+class McpQuery(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class McpSession(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
 
 class McpTool(Model):
-    name: str
+    name: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,128}$")
     description: str = ""
+    input_schema: dict[str, JsonValue] = Field(default_factory=lambda: {"type": "object"})
 
 
 class McpView(Model):
     server_id: str
+    session_id: str = ""
+    workspace: str = "primary"
+    command: str = ""
+    protocol_version: str = ""
     phase: Literal["ready", "exited", "unknown"]
     exit_code: int | None = None
     tools: list[McpTool]
@@ -685,17 +702,32 @@ class McpView(Model):
 
 class McpCallRequest(Model):
     call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    name: str = Field(min_length=1, max_length=64)
-    arguments: dict[str, str] = Field(default_factory=dict)
+    name: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,128}$")
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("arguments")
+    @classmethod
+    def bounded_arguments(cls, value: dict[str, JsonValue]) -> dict[str, JsonValue]:
+        if len(json.dumps(value, ensure_ascii=False).encode()) > 16000:
+            raise ValueError("MCP arguments exceed 16000 bytes")
+        return value
 
 
 class McpCall(Model):
     call_id: str
     server_id: str
     name: str
-    phase: Literal["waiting_approval", "done", "denied", "unknown", "conflict"]
+    phase: Literal["waiting_approval", "running", "done", "denied", "unknown", "conflict"]
     result: str = ""
+    arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    result_data: dict[str, JsonValue] | None = None
+    is_error: bool = False
     digest: str
+
+
+class McpState(Model):
+    servers: list[McpView]
+    calls: list[McpCall]
 
 
 class McpDecision(Model):
@@ -1101,6 +1133,7 @@ class ExecutionResource(Model):
 
 
 class SupervisorHealth(Model):
+    mcp_servers: list[McpView] = Field(default_factory=lambda: list[McpView]())
     terminals: list[TerminalView] = Field(default_factory=lambda: list[TerminalView]())
     identity: Identity
     registry_revision: str

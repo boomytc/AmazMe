@@ -83,6 +83,9 @@ from .contracts import (
     McpDecision,
     McpDecisionEnvelope,
     McpOpen,
+    McpQuery,
+    McpSession,
+    McpState,
     McpView,
     MemoryList,
     MemoryView,
@@ -350,6 +353,8 @@ class Host:
         if health.blocked or health.session_errors or health.identity.state == "blocked":
             raise BackendError("update_health_blocked", status=503)
         if any(not terminal.clean for terminal in health.terminals):
+            raise BackendError("execution_cleanup_pending", status=503)
+        if any(not server.clean for server in health.mcp_servers):
             raise BackendError("execution_cleanup_pending", status=503)
         for epoch in health.epochs:
             cleanup = epoch.cleanup
@@ -660,7 +665,12 @@ class Host:
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
         return await self.supervisor.call("POST", "/mcp/open", McpView, OpenMcp(
-            **self._mcp_fence(session_id), server_id=value.server_id, command=value.command))  # type: ignore[arg-type]
+            **self._mcp_fence(session_id), server_id=value.server_id, command=value.command, workspace=value.workspace))  # type: ignore[arg-type]
+
+    async def mcp_state(self, session_id: str) -> McpState:
+        self._admit()
+        return await self.supervisor.call("POST", "/mcp/state", McpState, McpSession(
+            build_id=self.build, host_epoch=self.fence.host_epoch, session_id=session_id))
 
     async def request_mcp(self, session_id: str, server_id: str, value: McpCallRequest) -> McpCall:
         self._admit()
@@ -710,10 +720,10 @@ class Host:
         return await self.supervisor.call("POST", "/remotes/calls", RemoteCallView, SubmitRemote(
             **body.model_dump(), call_id=value.call_id, command=value.command))
 
-    async def cancel_mcp(self, session_id: str, value: McpOpen) -> McpView:
+    async def cancel_mcp(self, session_id: str, server_id: str) -> McpView:
         self._admit()
-        return await self.supervisor.call("POST", "/mcp/cancel", McpView, OpenMcp(
-            **self._mcp_fence(session_id), server_id=value.server_id, command=value.command))  # type: ignore[arg-type]
+        return await self.supervisor.call("POST", "/mcp/cancel", McpView, McpQuery(
+            build_id=self.build, host_epoch=self.fence.host_epoch, session_id=session_id, server_id=server_id))
 
     def model_catalog(self) -> ModelCatalog:
         self._admit()
@@ -2162,6 +2172,10 @@ def application(owner: Host) -> FastAPI:
     async def open_mcp(session_id: str, value: McpOpen) -> McpView:
         return await owner.open_mcp(session_id, value)
 
+    @app.get("/api/v1/sessions/{session_id}/mcp")
+    async def mcp_state(session_id: str) -> McpState:
+        return await owner.mcp_state(session_id)
+
     @app.post("/api/v1/sessions/{session_id}/mcp/{server_id}/calls")
     async def request_mcp(session_id: str, server_id: str, value: McpCallRequest) -> McpCall:
         return await owner.request_mcp(session_id, server_id, value)
@@ -2171,8 +2185,8 @@ def application(owner: Host) -> FastAPI:
         return await owner.decide_mcp(session_id, server_id, call_id, value)
 
     @app.post("/api/v1/sessions/{session_id}/mcp/{server_id}/cancel")
-    async def cancel_mcp(session_id: str, server_id: str, value: McpOpen) -> McpView:
-        return await owner.cancel_mcp(session_id, value)
+    async def cancel_mcp(session_id: str, server_id: str) -> McpView:
+        return await owner.cancel_mcp(session_id, server_id)
 
     @app.get("/api/v1/session-models/{session_id}")
     async def session_model(session_id: str) -> SessionModel:

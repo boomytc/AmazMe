@@ -28,14 +28,14 @@ def start(command: str, cols: int = 80, rows: int = 24) -> tuple[subprocess.Pope
     try:
         pty.permit(command, os.getuid(), os.getgid(), cols, rows)
     except BaseException:
-        process.kill()
+        client.close()
+        process.wait(timeout=5)
         raise
     return process, pty
 
 
-def stop(process: subprocess.Popen[bytes]) -> None:
-    if process.poll() is None:
-        process.kill()
+def stop(process: subprocess.Popen[bytes], pty: PtyClient) -> None:
+    pty.sock.close()
     process.wait(timeout=5)
 
 
@@ -54,7 +54,7 @@ def test_input_resize_and_waitpid_exit() -> None:
         assert "40 100" in text
         assert pty.exit_code == 0
     finally:
-        stop(process)
+        stop(process, pty)
 
 
 def test_output_stops_at_the_window_until_the_client_grants_credit() -> None:
@@ -77,7 +77,7 @@ def test_output_stops_at_the_window_until_the_client_grants_credit() -> None:
         pty.pump(1, lambda: pty.exit_code is not None)
         assert pty.exit_code == 0
     finally:
-        stop(process)
+        stop(process, pty)
 
 
 def test_input_is_accounted_as_written_or_queued() -> None:
@@ -90,7 +90,7 @@ def test_input_is_accounted_as_written_or_queued() -> None:
         assert pty.queued <= WINDOW
         assert pty.exit_code is None
     finally:
-        stop(process)
+        stop(process, pty)
 
 
 def test_socket_loss_is_not_an_exit_proof() -> None:
@@ -100,7 +100,7 @@ def test_socket_loss_is_not_an_exit_proof() -> None:
         process.wait(timeout=3)
         assert pty.exit_code is None
     finally:
-        stop(process)
+        stop(process, pty)
 
 
 def test_window_full_is_refused_before_another_frame() -> None:
@@ -110,7 +110,7 @@ def test_window_full_is_refused_before_another_frame() -> None:
         with pytest.raises(BackendError, match="pty_window_full"):
             pty.send_input(b"more")
     finally:
-        stop(process)
+        stop(process, pty)
 
 
 def test_browser_sends_terminal_input_and_resize() -> None:

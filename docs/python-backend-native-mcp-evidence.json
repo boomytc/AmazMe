@@ -1,0 +1,79 @@
+{
+  "date": "2026-10-24",
+  "stage": "C2 native MCP service and user-initiated calls",
+  "base_commit": "de851ab7e5ec4af47c147ba2455abcca941394d2",
+  "source_build_id": "10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3",
+  "status": "passed for service and manual-call scope; model-driven MCP remains pending",
+  "runtime": {
+    "report": ".artifacts/native/mcp-zrivjkax/report.json",
+    "execution": "native",
+    "browser": "155.0.8059.85",
+    "sdk": "mcp 1.26.0",
+    "checks": [
+      "official SDK initialized on local Python; schema preserved; denied call had no effect",
+      "approval survived refresh; lost decision reply queried after reconnect; same decision caused one effect; structured result preserved",
+      "in-flight stop confirmed owned process cleanup while call outcome stayed unknown; same service ID never restarted"
+    ],
+    "page_errors": [],
+    "budget": {
+      "cap_bytes": 536870912,
+      "highwater_bytes": 23556096,
+      "minimum_free_bytes": 287523348480,
+      "failure": ""
+    },
+    "cleanup": {
+      "scope": "processes classified by mode token and parentage (serve, supervisor, worker, execute, lima, hostagent, owned headless browsers, descendants); VM directories; am2- temp directories; package-* retention; free space on the artifact volume",
+      "owned_reclaimed": true,
+      "global_reclaimed": true,
+      "reclaimed": true,
+      "leaks": [],
+      "vm_dirs": [],
+      "temp_dirs": [],
+      "packages": [],
+      "disk_level": "ok"
+    }
+  },
+  "verification": {
+    "backend_suite": "456 passed in 107.86 seconds on the final product source, including parallel Grok resource-census tests",
+    "backend_suite_log": ".artifacts/python-backend-resume/mcp-phase-suite.log",
+    "ruff": "passed",
+    "pyright": "0 errors",
+    "wheel_sdist": "passed",
+    "workspace_rules": "passed",
+    "real_process_crashes": "worker death preserves MCP service and pending call; supervisor death reconciles known resources and leaves call unknown; original service and call IDs never replay",
+    "other_checks": [
+      "native cwd and scrubbed environment",
+      "paginated catalog and typed JSON parameters",
+      "slow response stays running until actual result",
+      "tool error and structured result preserved",
+      "stale Host and cross-session cancellation refused",
+      "storage failure closes already-owned process handle"
+    ],
+    "working_tree_note": "Grok resource-census changes were present for this run and remain outside this C2 commit; verify_mcp reuses the existing Runtime and finish APIs"
+  },
+  "resource_closeout": {
+    "report": ".artifacts/python-backend-resume/mcp-final-resource.json",
+    "exit_code": 0,
+    "scope": "processes classified by mode token and parentage (serve, supervisor, worker, execute, lima, hostagent, owned headless browsers, descendants); VM directories; am2- temp directories; package-* retention; free space on the artifact volume",
+    "free_gib": 267.78,
+    "artifact_bytes": 23027712,
+    "reclaimed": true,
+    "build_allowed": true,
+    "vm_created": false,
+    "frozen_packages_created": 0,
+    "historical_temp_dirs_reclaimed": 28,
+    "archive": ".artifacts/history/20261024-p2-temp-evidence.tar.gz",
+    "archive_bytes": 10834356,
+    "archive_manifest": ".artifacts/history/20261024-p2-temp-evidence.manifest.json",
+    "archive_verification": "all regular-file SHA256 values and symlinks verified before removing the exact owned, inactive source directories"
+  },
+  "limits": [
+    "The official SDK server is a controlled interoperability probe, not arbitrary third-party service acceptance",
+    "Model-driven MCP discovery, approvals and tool-result continuation are not integrated",
+    "Catalog is a connection-time snapshot; dynamic list-change refresh remains pending",
+    "No HTTP transport, OAuth or media UI acceptance; unsupported server capabilities are not advertised",
+    "Native commands run as the current user; no OS sandbox or guarantee for arbitrary detached descendants",
+    "Stopping known resources does not prove an in-flight tool had no effects; unknown calls never automatically replay",
+    "No frozen or signed native package, physical disk exhaustion, real sleep or power-loss proof in this unit"
+  ]
+}

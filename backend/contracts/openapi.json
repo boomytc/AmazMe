@@ -2097,6 +2097,43 @@
             }
           }
         }
+      },
+      "get": {
+        "summary": "Mcp State",
+        "operationId": "mcp_state_api_v1_sessions__session_id__mcp_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/v1/sessions/{session_id}/mcp/{server_id}/calls": {
@@ -2248,16 +2285,6 @@
             }
           }
         ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/McpOpen"
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -5775,6 +5802,7 @@
         ],
         "title": "ImportResult"
       },
+      "JsonValue": {},
       "Login": {
         "properties": {
           "token": {
@@ -5809,6 +5837,7 @@
             "type": "string",
             "enum": [
               "waiting_approval",
+              "running",
               "done",
               "denied",
               "unknown",
@@ -5820,6 +5849,32 @@
             "type": "string",
             "title": "Result",
             "default": ""
+          },
+          "arguments": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Arguments"
+          },
+          "result_data": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Data"
+          },
+          "is_error": {
+            "type": "boolean",
+            "title": "Is Error",
+            "default": false
           },
           "digest": {
             "type": "string",
@@ -5846,13 +5901,12 @@
           },
           "name": {
             "type": "string",
-            "maxLength": 64,
-            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.-]{1,128}$",
             "title": "Name"
           },
           "arguments": {
             "additionalProperties": {
-              "type": "string"
+              "$ref": "#/components/schemas/JsonValue"
             },
             "type": "object",
             "title": "Arguments"
@@ -5905,6 +5959,11 @@
             "maxLength": 16000,
             "minLength": 1,
             "title": "Command"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -5915,16 +5974,49 @@
         ],
         "title": "McpOpen"
       },
+      "McpState": {
+        "properties": {
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpView"
+            },
+            "type": "array",
+            "title": "Servers"
+          },
+          "calls": {
+            "items": {
+              "$ref": "#/components/schemas/McpCall"
+            },
+            "type": "array",
+            "title": "Calls"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "servers",
+          "calls"
+        ],
+        "title": "McpState"
+      },
       "McpTool": {
         "properties": {
           "name": {
             "type": "string",
+            "pattern": "^[A-Za-z0-9_.-]{1,128}$",
             "title": "Name"
           },
           "description": {
             "type": "string",
             "title": "Description",
             "default": ""
+          },
+          "input_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Input Schema"
           }
         },
         "additionalProperties": false,
@@ -5939,6 +6031,26 @@
           "server_id": {
             "type": "string",
             "title": "Server Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id",
+            "default": ""
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace",
+            "default": "primary"
+          },
+          "command": {
+            "type": "string",
+            "title": "Command",
+            "default": ""
+          },
+          "protocol_version": {
+            "type": "string",
+            "title": "Protocol Version",
+            "default": ""
           },
           "phase": {
             "type": "string",
@@ -7400,6 +7512,13 @@
       },
       "SupervisorHealth": {
         "properties": {
+          "mcp_servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpView"
+            },
+            "type": "array",
+            "title": "Mcp Servers"
+          },
           "terminals": {
             "items": {
               "$ref": "#/components/schemas/TerminalView"
