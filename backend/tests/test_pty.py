@@ -196,7 +196,11 @@ def test_browser_sends_terminal_input_and_resize() -> None:
             return response({terminals:opened?[{terminal_id:opened.body.terminal_id,workspace:'primary',cols:80,rows:24,queued:0,written:0,exit_code:null,output:'',phase:'running'}]:[]});
           }
           if(path.endsWith('/terminals') && method==='POST') return response({terminal_id:seen.at(-1).body.terminal_id,cols:80,rows:24,queued:0,written:0,exit_code:null,output:'',phase:'running'});
-          if(path.endsWith('/input')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'',phase:'running',input_status:'accepted'});
+          if(path.endsWith('/input')) {
+            const posted = seen.at(-1).body;
+            if (posted && posted.data === '\u001b[1;1R' && globalThis.allowReport === false) throw new Error('lost');
+            return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'',phase:'running',input_status:'accepted'});
+          }
           if(path.endsWith('/read')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'\x1b[2J\x1b[Hhi',output_seq:9,phase:'running'});
           if(path.endsWith('/resize')) return response({terminal_id:'t',cols:100,rows:40,queued:0,written:3,exit_code:null,output:'\x1b[2J\x1b[Hhi',output_seq:9,phase:'running'});
           if(path==='/api/v1/files') return response({path:'',entries:[],truncated:false});
@@ -273,6 +277,15 @@ def test_browser_sends_terminal_input_and_resize() -> None:
           const row = $('terminal-output').querySelector('.xterm-rows');
           throw new Error('paint ' + (row ? JSON.stringify(row.textContent) : 'missing'));
         }
+        const inputPosts = () => seen.filter(item => item.path.endsWith('/input'));
+        globalThis.allowReport = false;
+        const query = '\u001b[6n';
+        await globalThis.renderTerminal({id:live.body.terminal_id}, {cols:80, rows:24, output:query, output_seq:query.length + 8000});
+        await until(() => $('error').textContent === 'lost' && inputPosts().some(item => item.body.data === '\u001b[1;1R'));
+        const reportId = inputPosts().filter(item => item.body.data === '\u001b[1;1R').at(-1).body.input_id;
+        globalThis.allowReport = true;
+        await globalThis.renderTerminal({id:live.body.terminal_id}, {cols:80, rows:24, output:query, output_seq:query.length + 9000});
+        await until(() => $('error').textContent === '' && inputPosts().filter(item => item.body.data === '\u001b[1;1R' && item.body.input_id === reportId).length === 2);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

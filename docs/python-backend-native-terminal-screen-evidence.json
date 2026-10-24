@@ -5,7 +5,8 @@
   "status": "passed for the web terminal screen on one local shell; other clients remain open",
   "runtime": {
     "runner": "backend/tools/verify_terminal.py",
-    "report": ".artifacts/native/terminal-3i__hs0x/report.json",
+    "report": ".artifacts/native/terminal-55t23f71/report.json",
+    "previous_report_released": ".artifacts/native/terminal-3i__hs0x/report.json",
     "execution": "native",
     "vm_created": false,
     "browser": "155.0.8059.85",

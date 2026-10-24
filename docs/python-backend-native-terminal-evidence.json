@@ -2,16 +2,17 @@
   "date": "2026-10-24",
   "stage": "C1 native session terminal",
   "base_commit": "b6c2d7a26e1dd769960313ab22bd30af47836751",
-  "source_build_id": "1b2256c14524873da3939a2f5a2bd93640bcdceba733d0ccb248741b8dd9cdf4",
+  "source_build_id": "7f9af706566e0c5a7101c6356b09a6068cf8350ab27d753c675f9b378aa8eb10",
   "previous_report_released": ".artifacts/native/terminal-atacoq7o/report.json",
   "status": "passed for C1 scope",
   "runtime": {
-    "report": ".artifacts/native/terminal-ybjwwdcv/report.json",
+    "report": ".artifacts/native/terminal-55t23f71/report.json",
     "browser": "155.0.8059.85",
     "checks": [
       "explicit create starts one native terminal; opening the panel itself starts none",
       "lost input response + page reload retained input ID and terminal; one actual file effect",
       "xterm DOM painted the shell output and a red cell",
+      "xterm mouse report reached the terminal input ledger",
       "native resize observed through stty; browser close preserved terminal; explicit close confirmed known cleanup"
     ],
     "page_errors": [],

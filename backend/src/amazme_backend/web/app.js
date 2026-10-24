@@ -755,12 +755,19 @@ function startClient() {
       screen = {
         term: new Terminal({
           cols, rows, scrollback: 1000, convertEol: false, allowProposedApi: true,
-          rendererType: "dom", disableStdin: true,
+          rendererType: "dom", disableStdin: false,
           fontFamily: "ui-monospace, monospace", fontSize: 14,
           theme: {background: "#0c1118", foreground: "#e8edf5"},
         }),
         cols, rows, seq: 0, ready: false,
       };
+      const screenId = view.id;
+      screen.term.attachCustomKeyEventHandler(() => false);
+      screen.term.onData(data => {
+        const current = terminalView;
+        if (!data || !current || current.id !== screenId || !terminalOwns(current) || current.busy || current.phase !== "running") return;
+        sendTerminalData(current, data);
+      });
       terminalScreens.set(view.id, screen);
     }
     if (terminalView?.id === view.id) attachTerminal(screen);
@@ -886,6 +893,19 @@ function startClient() {
     $("terminal-input").value = "";
     $("terminal-state").textContent = "已由用户核对；原输入不会重放";
   };
+  function sendTerminalData(view, data) {
+    const key = terminalKey(view.connection, `${view.id}:keys`);
+    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (pending && pending.data !== data) { error(new Error("上次输入结果未确认；先重试同一输入，或核对终端后继续。")); return; }
+    if (!pending) { pending = {input_id:crypto.randomUUID().replaceAll("-", ""), data}; sessionStorage.setItem(key, JSON.stringify(pending)); }
+    view.busy = true;
+    api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/input`, "POST",
+      {input_id:pending.input_id, data:pending.data}, view.connection).then(result => {
+      if (result.input_status === "unknown") throw new Error("输入结果未知，未自动重发；请核对终端内容。");
+      sessionStorage.removeItem(key);
+      if (terminalOwns(view)) $("error").textContent = "";
+    }).catch(failure => { if (terminalOwns(view)) error(failure); }).finally(() => { view.busy = false; });
+  }
   $("terminal-output").addEventListener("keydown", event => {
     const view = terminalView;
     if (!terminalOwns(view) || view.busy || view.phase !== "running") return;
@@ -900,18 +920,8 @@ function startClient() {
     else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) data = event.key;
     if (data === null) return;
     event.preventDefault();
-    const key = terminalKey(view.connection, `${view.id}:keys`);
-    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
-    if (pending && pending.data !== data) { error(new Error("上次输入结果未确认；先重试同一输入，或核对终端后继续。")); return; }
-    if (!pending) { pending = {input_id:crypto.randomUUID().replaceAll("-", ""), data}; sessionStorage.setItem(key, JSON.stringify(pending)); }
-    view.busy = true;
-    api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/input`, "POST",
-      {input_id:pending.input_id, data:pending.data}, view.connection).then(result => {
-      if (result.input_status === "unknown") throw new Error("输入结果未知，未自动重发；请核对终端内容。");
-      sessionStorage.removeItem(key);
-      if (terminalOwns(view)) $("error").textContent = "";
-    }).catch(failure => { if (terminalOwns(view)) error(failure); }).finally(() => { view.busy = false; });
-  });
+    sendTerminalData(view, data);
+  }, true);
   $("terminal-close").onclick = async () => {
     const view = terminalView;
     if (!terminalOwns(view)) return;

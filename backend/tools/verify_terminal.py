@@ -81,6 +81,35 @@ def main():
                     expect(page.locator("#terminal-output")).to_contain_text("RED")
                     report["checks"].append("xterm DOM painted the shell output and a red cell")
 
+                    page.unroute("**/terminals/*/input", lost_once)
+                    page.locator("#terminal-input").fill("printf '\\033[?1000h\\033[?1006h'")
+                    page.locator("#terminal-form button").first.click()
+                    until(lambda: runtime.client.post(
+                        base + "/" + terminal_id + "/read", json={}, headers=runtime.attach(session)
+                    ).json().get("output", ""), lambda value: "1006" in value)
+                    page.wait_for_timeout(1200)
+                    mouse_reports: list[str] = []
+
+                    def capture_mouse(route) -> None:
+                        body = route.request.post_data_json or {}
+                        data = body.get("data") if isinstance(body, dict) else ""
+                        if isinstance(data, str):
+                            mouse_reports.append(data)
+                        route.continue_()
+
+                    page.route("**/terminals/*/input", capture_mouse)
+                    page.locator("#terminal-output .xterm-rows").click()
+                    until(lambda: list(mouse_reports), lambda rows: any(item.startswith("\x1b[<") for item in rows))
+                    page.unroute("**/terminals/*/input", capture_mouse)
+                    report["checks"].append("xterm mouse report reached the terminal input ledger")
+                    newline = runtime.client.post(
+                        base + "/" + terminal_id + "/input",
+                        json={"input_id": "e" * 32, "data": "\n"},
+                        headers=runtime.attach(session),
+                    )
+                    assert newline.status_code == 200, newline.text
+                    expect(page.locator("#terminal-output")).to_contain_text("command not found", timeout=15000)
+
                     page.locator("#terminal-resize").click()
                     until(lambda: runtime.client.get(base).json()["terminals"][0]["cols"], lambda v: v == 100)
                     page.locator("#terminal-input").fill("stty size")

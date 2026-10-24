@@ -59,7 +59,8 @@
 | 项目和新会话丢回执不另开一次 | `cedbf96746d01037c9bd98f77d6d94dc6d561a42` | `backend/tests/test_management.py`：同一会话编号再次创建返回原行；编号相同但标题不同则拒绝。页面结果未知时沿用同一项目和会话编号；改名称不发送。成功之后再创建是新的一次 |
 | 页面终端改用 xterm 缓冲区 | `96a337c6a555b4da6bc907e389e45ec3ffd5092d` | `backend/tests/test_pty.py`：备用屏幕退出后不留下备用内容，宽字符按列换行，颜色序列不出现在正文里。非 BMP、组合字符和增量重同步仍按 UTF-16 游标 |
 | 页面打开 xterm 画面 | `d9ad5d197d5e81acb63cb285e25ce8b97121618a` | `backend/tests/test_pty.py`：当前终端把彩色文字画成 `xterm-fg-1`。键盘输入仍走原来的编号。鼠标没有交给 PTY |
-| Electron 页面打开同一 xterm 画面 | 包含本文件的提交 | `.artifacts/native/electron-vv1fjgl1/report.json`：真实 Electron 进程里红色 `RED` 画成 `xterm-fg-1`。丢回执、resize、刷新、关闭、审批、检查点和 MCP 仍按原范围通过。鼠标没有交给 PTY |
+| Electron 页面打开同一 xterm 画面 | `c67440d67ffd815bcb2fe136c2c0f47cb14292f6` | `.artifacts/native/electron-vv1fjgl1/report.json`：真实 Electron 进程里红色 `RED` 画成 `xterm-fg-1`。丢回执、resize、刷新、关闭、审批、检查点和 MCP 仍按原范围通过 |
+| 终端应答和鼠标走同一输入编号 | 包含本文件的提交 | `backend/tests/test_pty.py`：光标位置应答丢失后再次上报沿用同一编号。`.artifacts/native/terminal-55t23f71/report.json`：Chrome 里点击画面后，SGR 鼠标上报进入终端输入 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -98,11 +99,11 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 插件门、Codemode 和桌面驱动只拿到工具环境。供应商密钥、控制令牌和 SSH agent 不传给这些子进程。这不是真实 TCC，也不是任意第三方插件。源码 build_id 为 `64a11ff6f92ffda56ce808430dcb243eaa934a41f8ffae2d7ebe79294c6ba9b1`。
 
 资源普查命令只报告，不按进程名发信号。用户主目录里的常驻服务保持 observed。macOS 用户临时目录 `/var/folders/<两级>/T` 和 `/private/var` 下的同一路径也是临时 profile，目录已经不在仍按启动参数归类；`C` 缓存目录不是泄漏。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
-下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。这次 Electron 运行又释放了 `electron-o04d4rq_`，当前 Electron 证据是 `electron-vv1fjgl1`，这次释放了 `electron-wiplc67v`。下一次 Electron 运行会先让出 `electron-uamesscf`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。这次终端运行释放了 `terminal-atacoq7o`，当前 Chrome 证据是 `terminal-ybjwwdcv`；较早的画面记录 `terminal-3i__hs0x` 仍在。下一次终端运行会先让出 `terminal-3i__hs0x`。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
+下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`mcp-xi0hnry9`、`client-160ayfgl`、`electron-l7nfl4tr`、`tui-16drl4_s`、`cli-0wllgxmx`。这次 Electron 运行又释放了 `electron-o04d4rq_`，当前 Electron 证据是 `electron-vv1fjgl1`，这次释放了 `electron-wiplc67v`。下一次 Electron 运行会先让出 `electron-uamesscf`。台账引用的较新目录仍留下。终端画面已释放 `terminal-err1kda9`。这次终端运行释放了 `terminal-atacoq7o`，当前 Chrome 证据是 `terminal-55t23f71`。这次运行释放了 `terminal-3i__hs0x`。`terminal-ybjwwdcv` 仍在，下一次终端运行会先让出它。Electron 这次已释放失败的 `electron-vntpwy9j`。`tui-m55jjevc` 是 TUI 证据，下一次 TUI 运行会先让出更早的 `tui-16drl4_s`。`cli-xc19exkk` 是 CLI 证据，下一次 CLI 运行会先让出更早的 `cli-0wllgxmx`。`rpc-ng488hhe` 是 RPC 证据。`sdk-wfo8x_to` 是 SDK 证据。`screen-27sf22xi` 是这次默认交互画面证据。
 
 ## 剩余执行顺序
 
-1. **其余客户端实验。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。输出游标按 UTF-16 码元计数，页面按同一长度截取增量。TUI 和默认交互画面在当前进程内沿用未确认的 `/pty` 输入。CLI 把未确认的输入编号写在代理目录里，失败重试沿用它；成功或 `/pty-ack` 之后，同一命令是新操作。Electron 页面在回执丢失后沿用同一输入编号。RPC 和 SDK 使用调用方传入的输入编号，没有另一套账本。监督器冻结后，新的 shell、终端、MCP 和终端输入不会开始；同一输入和已完成的调用仍返回原结果，已打开的终端仍可读取和关闭。各客户端没有重跑冻结，也没有重跑杀掉 worker 或监督器。页面打开 `@xterm/xterm` 5.5.0 的 DOM 画面，颜色由样式类绘制。键盘输入仍走原来的编号，鼠标没有交给 PTY。TUI、CLI、RPC 和 SDK 不使用这个页面终端。
+1. **其余客户端实验。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。输出游标按 UTF-16 码元计数，页面按同一长度截取增量。TUI 和默认交互画面在当前进程内沿用未确认的 `/pty` 输入。CLI 把未确认的输入编号写在代理目录里，失败重试沿用它；成功或 `/pty-ack` 之后，同一命令是新操作。Electron 页面在回执丢失后沿用同一输入编号。RPC 和 SDK 使用调用方传入的输入编号，没有另一套账本。监督器冻结后，新的 shell、终端、MCP 和终端输入不会开始；同一输入和已完成的调用仍返回原结果，已打开的终端仍可读取和关闭。各客户端没有重跑冻结，也没有重跑杀掉 worker 或监督器。页面打开 `@xterm/xterm` 5.5.0 的 DOM 画面，颜色由样式类绘制。键盘、光标应答和已打开的鼠标跟踪都走原来的输入编号。TUI、CLI、RPC 和 SDK 不使用这个页面终端。
    这些实验仍要按同一契约补证。先追踪已有实现，不另建一套业务运行时。
 2. **按真实需求补齐产品功能。** 多工作区已在本机目录上核对：会话 shell、终端和没有 grant/ 前缀的文件工具进入授予目录，文件区显示当前浏览目录，侧栏显示当前会话的本机目录，取消授予不删文件。页面新建终端和连接 MCP 不跟随文件区。没有对应会话时，这些启动不会落到主工作区。宿主库已有会话表而缺少这一行时，监督器不改用主目录；写明工作区名称也会先核对会话行。库文件不存在、会话表不存在、库损坏或工作区为空时，新的 shell、终端和 MCP 也不启动。已经打开的终端仍可读取和关闭。会话存在时，显式 grant/名称 仍指向那个目录。
    `amazme-backend client decide` 已核对显式批准和拒绝。`client submit` 仍只等待终态。
