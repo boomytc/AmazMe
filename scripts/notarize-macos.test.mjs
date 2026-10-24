@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { credentialProblem, historyFailureMessage, invalidLogDiagnostics, invalidSubmissionId, keyFileProblem, logMatchesArchive, matchingHistory, parseSubmission, submissionFailureMessage } from "./notarize-macos.mjs";
+import { publishesToGitHub } from "./release.mjs";
+import { credentialProblem, historyFailureMessage, invalidLogDiagnostics, invalidSubmissionId, keyFileProblem, logMatchesArchive, matchingHistory, notarizationAllowed, parseSubmission, productVersion, submissionFailureMessage } from "./notarize-macos.mjs";
 
 test("only an Accepted submission passes, and failures carry just the id and status", () => {
 	assert.deepEqual(parseSubmission('{"id":"12345678-1234-1234-1234-123456789abc","status":"Accepted","message":"ok"}'), { id: "12345678-1234-1234-1234-123456789abc", status: "Accepted" });
@@ -221,7 +222,35 @@ exit 97
 	}
 }
 
-const cliOptions = { skip: process.platform === "win32" };
+test("notarization uses the same 1.0.0 gate as GitHub release", () => {
+	for (const version of ["0.3.4", "0.9.9", "1.0.0", "1.2.3", "1.0.0-rc.1", "not-a-version"]) {
+		assert.equal(notarizationAllowed(version), publishesToGitHub(version));
+	}
+	assert.equal(productVersion(), JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
+});
+
+const versionAllowsNotarization = notarizationAllowed(productVersion());
+const cliOptions = { skip: process.platform === "win32" || !versionAllowsNotarization };
+const refusalOptions = { skip: process.platform === "win32" || versionAllowsNotarization };
+
+test("below 1.0.0 the direct entry refuses before credentials or notarytool", refusalOptions, () => {
+	const version = productVersion();
+	for (const options of [
+		{ historyOnly: true },
+		{ historyOnly: true, archiveInHistory: true },
+		{ keyDirectory: true },
+		{ keyText: "not-a-key" },
+		{ issuer: "not-a-uuid" },
+		{},
+	]) {
+		const result = runWithFakeTools(options);
+		assert.equal(result.status, 1);
+		assert.equal(result.stdout, "");
+		assert.equal(result.stderr.trim(), `Notarization starts at 1.0.0; ${version} is local use only`);
+		assert.deepEqual(result.trace, []);
+		assert.doesNotMatch(result.stderr, /KEYID42|BEGIN PRIVATE|fixture-private-key|notarytool/);
+	}
+});
 
 test("history-only mode can only read history and never accepts an archive", cliOptions, () => {
 	const success = runWithFakeTools({ historyOnly: true });

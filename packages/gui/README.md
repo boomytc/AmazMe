@@ -76,7 +76,7 @@ ASC_KEY_PATH=~/path/to/AuthKey_<Key ID>.p8
 签名分两种，都走同一套由内向外的签名流程：
 
 - 本地预览不带参数，用 ad-hoc 签名，不开 hardened runtime：ad-hoc 没有团队 ID，开了库校验会拒绝加载自带的 Electron 框架。其他机器首次打开会被 Gatekeeper 拦截。
-- 发布同时传 `--keychain <钥匙串> --team-id <团队 ID>`，从该钥匙串里选出这个团队唯一的 Developer ID Application 身份，带 hardened runtime 和 `packages/gui/assets/entitlements.mac.plist` 里的权限签应用和 DMG，签完核对 TeamIdentifier。随后 `scripts/notarize-macos.mjs` 提交公证、staple，并用 `codesign --verify --deep --strict` 和 `spctl` 复核后重写 `.sha256`。
+- 发布同时传 `--keychain <钥匙串> --team-id <团队 ID>`，从该钥匙串里选出这个团队唯一的 Developer ID Application 身份，带 hardened runtime 和 `packages/gui/assets/entitlements.mac.plist` 里的权限签应用和 DMG，签完核对 TeamIdentifier。版本达到 1.0.0 且明确要求发布之后，`scripts/notarize-macos.mjs` 才提交公证、staple，并用 `codesign --verify --deep --strict` 和 `spctl` 复核后重写 `.sha256`。低于 1.0.0 时该入口在读取凭据或访问公证服务之前拒绝。
 
 签名用钥匙串里已有的 Developer ID 身份，首次签名时 macOS 会询问 codesign 能否使用私钥，选“始终允许”。
 

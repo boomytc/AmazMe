@@ -14,6 +14,18 @@ import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { assertTeam, tool, writeChecksum } from "./macos-signing.mjs";
 
+/** Same major-version gate as `publishesToGitHub` in release.mjs. */
+export function notarizationAllowed(version) {
+	const match = /^(\d+)\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.exec(version);
+	return match !== null && Number(match[1]) >= 1;
+}
+
+export function productVersion(packageJson = new URL("../package.json", import.meta.url)) {
+	const version = JSON.parse(readFileSync(packageJson, "utf8")).version;
+	if (typeof version !== "string" || version.length === 0) throw new Error("package.json version is missing");
+	return version;
+}
+
 function argument(name) {
 	const index = process.argv.indexOf(name);
 	return index < 0 ? undefined : process.argv[index + 1];
@@ -194,6 +206,8 @@ async function verifyMountedApp(image, teamId) {
 }
 
 async function main() {
+	const version = productVersion();
+	if (!notarizationAllowed(version)) throw new Error(`Notarization starts at 1.0.0; ${version} is local use only`);
 	if (process.platform !== "darwin") throw new Error("Notarization runs on macOS only");
 	const historyOnly = process.argv.includes("--history-only");
 	if (historyOnly && process.argv.includes("--dmg")) throw new Error("History-only mode cannot accept an archive");
