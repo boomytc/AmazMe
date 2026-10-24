@@ -724,6 +724,17 @@ function startClient() {
     }
     return terminalEngine;
   }
+  function attachTerminal(screen) {
+    const host = $("terminal-output");
+    if (!host) return;
+    const element = screen.term.element;
+    if (element) {
+      if (element.parentElement !== host) host.replaceChildren(element);
+      return;
+    }
+    host.replaceChildren();
+    screen.term.open(host);
+  }
   function terminalText(term) {
     const buffer = term.buffer.active;
     const lines = [];
@@ -742,11 +753,17 @@ function startClient() {
     if (!screen || screen.cols !== cols || screen.rows !== rows) {
       if (screen) screen.term.dispose();
       screen = {
-        term: new Terminal({cols, rows, scrollback: 1000, convertEol: false, allowProposedApi: true}),
+        term: new Terminal({
+          cols, rows, scrollback: 1000, convertEol: false, allowProposedApi: true,
+          rendererType: "dom", disableStdin: true,
+          fontFamily: "ui-monospace, monospace", fontSize: 14,
+          theme: {background: "#0c1118", foreground: "#e8edf5"},
+        }),
         cols, rows, seq: 0, ready: false,
       };
       terminalScreens.set(view.id, screen);
     }
+    if (terminalView?.id === view.id) attachTerminal(screen);
     const text = value.output || "";
     const seq = Number(value.output_seq || text.length);
     const delta = seq - screen.seq;
@@ -776,7 +793,9 @@ function startClient() {
     try {
       const text = await renderTerminal(view, value);
       if (!terminalOwns(view)) return;
-      $("terminal-output").textContent = text;
+      const screen = terminalScreens.get(view.id);
+      const host = $("terminal-output");
+      if (!(screen?.term.element && host.contains(screen.term.element))) host.textContent = text;
     } catch (failure) {
       if (terminalOwns(view)) error(failure);
       return;

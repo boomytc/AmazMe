@@ -67,12 +67,19 @@ def main():
                     page.locator("#terminal-form button").first.click()
                     expect(page.locator("#terminal-input")).to_have_value("")
                     expect(page.locator("#terminal-output")).to_contain_text("NATIVE_TERM_OK")
+                    expect(page.locator("#terminal-output .xterm")).to_be_visible()
                     expect(page.locator("#terminal-output")).to_contain_text(str(runtime.workspace))
                     assert len(inputs) == 2 and inputs[0] == inputs[1]
                     assert (runtime.workspace / "terminal-once.txt").read_text() == "x"
                     rows = runtime.client.get(base).json()["terminals"]
                     assert len(rows) == 1 and rows[0]["terminal_id"] == terminal_id
                     report["checks"].append("lost input response + page reload retained input ID and terminal; one actual file effect")
+
+                    page.locator("#terminal-input").fill("printf '\\033[31mRED\\033[0m'")
+                    page.locator("#terminal-form button").first.click()
+                    expect(page.locator("#terminal-output .xterm-fg-1")).to_be_visible(timeout=15000)
+                    expect(page.locator("#terminal-output")).to_contain_text("RED")
+                    report["checks"].append("xterm DOM painted the shell output and a red cell")
 
                     page.locator("#terminal-resize").click()
                     until(lambda: runtime.client.get(base).json()["terminals"][0]["cols"], lambda v: v == 100)

@@ -75,7 +75,7 @@ Chrome 155 驱动真实本机官方 Python MCP SDK 1.26.0 探针服务：拒绝�
 详见 [终端画面证据](python-backend-native-terminal-screen-evidence.json)。
 源码 build_id `f64fe5ec94e95dbaff3e431011bdd9a0454c854daa90c62ba9cb13aa6f506537`。
 协议窗口仍是 32 KiB；监督器按已经读到的字节归还信用，所以长输出不会停在第一扇窗口。
-重连保存最多 256 KiB 解码文本和 `output_seq`。`output_seq` 按 UTF-16 码元计数，和页面字符串长度一致。当时的页面自己解释回车、换行、退格、制表和 CSI 光标/清屏。当前页面改为用 `@xterm/headless` 5.5.0 解释输出并显示缓冲区文本；那次 Chrome 记录仍是更换之前的画面。
+重连保存最多 256 KiB 解码文本和 `output_seq`。`output_seq` 按 UTF-16 码元计数，和页面字符串长度一致。当时的页面自己解释回车、换行、退格、制表和 CSI 光标/清屏。当前页面打开 `@xterm/xterm` 5.5.0 的 DOM 画面；那次 Chrome 记录仍是更换之前的画面。键盘输入仍走原来的编号，鼠标没有交给 PTY。
 直接按键与行表单使用不同的待确认 ID，走同一条输入账本；未知结果不重放。关页面不关闭终端。
 `verify_terminal.py` 的报告是 `.artifacts/native/terminal-3i__hs0x/report.json`。Chrome 155 看到 `NATIVE_TERM_OK`、工作区路径和 `stty size` 的 `40 100`；丢回执后同一输入只写入一次文件；关页面后阶段仍是 running，显式关闭后 clean 且 exited。页面无错误。
 这次运行释放了无人使用的 `terminal-err1kda9`。预算高水位 23,683,072 字节，空闲约 267.6 GiB，所属进程和全局普查都已收回。

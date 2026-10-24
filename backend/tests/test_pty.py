@@ -261,6 +261,18 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         const colorShown = await globalThis.renderTerminal({id:'color'}, {cols:20, rows:2, output:colored, output_seq:colored.length});
         assert.equal(colorShown.includes('red'), true);
         assert.equal(colorShown.includes('[31m'), false);
+        const live = seen.find(item => item.path.endsWith('/terminals') && item.body && item.body.terminal_id);
+        await globalThis.renderTerminal({id:live.body.terminal_id}, {cols:80, rows:24, output:colored, output_seq:colored.length + 1000});
+        let painted = false;
+        for (let n = 0; n < 50; n += 1) {
+          const row = $('terminal-output').querySelector('.xterm-rows');
+          if (row && row.textContent.includes('red') && row.querySelector('.xterm-fg-1')) { painted = true; break; }
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        if (!painted) {
+          const row = $('terminal-output').querySelector('.xterm-rows');
+          throw new Error('paint ' + (row ? JSON.stringify(row.textContent) : 'missing'));
+        }
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

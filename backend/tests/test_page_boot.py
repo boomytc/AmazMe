@@ -42,6 +42,7 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
         again = await client.get("/index.html")
         script_file = await client.get("/app.js")
         emulator = await client.get("/xterm-terminal.js")
+        sheet = await client.get("/xterm.css")
     assert response.status_code == 200
     assert response.text == again.text == boot_page(identity, host.origin)
     marker = "globalThis.__AMAZME_BOOT__="
@@ -64,6 +65,8 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     assert "javascript" in emulator.headers["content-type"]
     assert "export const Terminal" in emulator.text
     assert "xterm-terminal.js" in script_file.text
+    assert 'href="/xterm.css"' in response.text
+    assert sheet.status_code == 200 and ".xterm-screen" in sheet.text
     assert "sha256-" not in script_file.headers["content-security-policy"]
     assert "unsafe-inline" not in script_file.headers["content-security-policy"]
 
