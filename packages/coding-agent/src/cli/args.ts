@@ -4,7 +4,7 @@
 
 import type { ThinkingLevel } from "@amazme/agent";
 import chalk from "chalk";
-import { APP_COMMAND, APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
+import { APP_COMMAND, APP_NAME } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
 import { getToolSelectionError } from "../core/tool-selection.ts";
@@ -300,214 +300,36 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+	process.stdout.write(`${APP_NAME} — 本机桌面助手
 
-${chalk.bold("Usage:")}
-  ${APP_COMMAND} [options] [--] [@files...] [messages...]
+用法：
+  ${APP_COMMAND} [--print | --mode json | --mode rpc] [@文件...] [问题]
+  ${APP_COMMAND} --session <会话编号> [问题]
 
-${chalk.bold("Commands:")}
-  ${APP_COMMAND} install <source> [-l]     Install extension source and add to settings
-  ${APP_COMMAND} remove <source> [-l]      Remove extension source from settings
-  ${APP_COMMAND} uninstall <source> [-l]   Alias for remove
-  ${APP_COMMAND} update [source|self|amazme]   Update AmazMe, extensions, or model catalogs
-  ${APP_COMMAND} list                      List installed extensions from settings
-  ${APP_COMMAND} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
-  ${APP_COMMAND} auth <command>            Sign in, sign out, check readiness or print credentials
-  ${APP_COMMAND} mcp <command>             Check MCP servers, sign in to or out of OAuth servers
-  ${APP_COMMAND} import <session.jsonl>    Copy a terminal JSONL session into a new Durable session
-  ${APP_COMMAND} export <session.sqlite>   Export a Durable session to JSONL or HTML
-  ${APP_COMMAND} doctor [--json] [--zh]    Read local diagnostics without changing files or contacting providers
-  ${APP_COMMAND} server [options]         Run the durable Unix host
-  ${APP_COMMAND} web [--port <port>]       Serve the installed Web client on loopback
-  ${APP_COMMAND} client [options] [text]   Attach a terminal client to the same host
-  ${APP_COMMAND} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/mcp
+命令：
+  web | server [--port 0]           启动或连接本机 Python 服务并显示网页地址
+  models [--search 关键词]          查看 Python 模型目录
+  model --provider NAME --model ID  选择账号和模型
+  accounts                         查看已配置的账号，不显示凭据
+  auth login --provider NAME       启动 OAuth；原登录编号可查询或取消
+  auth login --provider NAME --method api-key  从隐藏输入或 stdin 保存 key
+  auth logout --provider NAME      删除对应账号凭据
+  auth status|input|cancel --login-id ID  核对、补交授权输入或取消原登录
+  export [--output 文件]            导出当前 profile 的新格式数据，不覆盖已有文件
+  import 文件                      导入新格式数据，不覆盖冲突记录
+  doctor                           查看 Python Host 健康状态
+  client <命令>                    使用 Python CLI；client --help 查看参数
 
-${chalk.bold("Options:")}
-  --provider <name>              Provider to search for --model (requires --model)
-  --model <pattern>              Model pattern or ID (supports "provider/id" and optional ":<thinking>")
-  --api-key <key>                API key (defaults to env vars)
-  --system-prompt <text>         System prompt (default: coding assistant prompt)
-  --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
-  --mode <mode>                  Output mode: text (default), json, or rpc
-  --print, -p                    Non-interactive mode: process prompt and exit
-  --continue, -c                 Resume the newest Durable session for this directory
-  --resume, -r                   Resume the newest Durable session for this directory
-  --session <id|dir>             Open one exact existing Durable session; never creates one
-  --session-dir <dir>            Directory for Durable session storage and lookup
-  --no-session                   Don't save session (ephemeral)
-  --name, -n <name>              Set session display name
-  --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
-                                 Supports globs (anthropic/*, *sonnet*) and fuzzy matching
-  --no-tools, -nt                Disable all tools by default (built-in and extension)
-  --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
-  --tools, -t <tools>            Comma-separated allowlist of tool names or patterns (*) to enable
-                                 Keeps MCP tools unless an entry starts with mcp__
-                                 A list of only +name/-name edits the default selection (exact names)
-  --exclude-tools, -xt <tools>   Comma-separated denylist of tool names or patterns (*) to disable
-                                 Applies to all tools, MCP tools included
-  --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh, max
-  --extension, -e <path>         Load a native facet file/package (repeatable)
-  --no-extensions, -ne           Disable extension discovery and built-in extensions (explicit -e paths still work)
-  --no-mcp                       Disable built-in MCP support: no servers connect and no MCP tools
-  --skill <path>                 Load a skill file or directory (can be used multiple times)
-  --no-skills, -ns               Disable skills discovery and loading
-  --prompt-template <path>       Load a prompt template file or directory (can be used multiple times)
-  --no-prompt-templates, -np     Disable prompt template discovery and loading
-  --theme <path>                 Load a theme file or directory (can be used multiple times)
-  --use-theme <name[/name]>      Set the initial interactive theme for this run
-  --no-themes                    Disable theme discovery and loading
-  --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
-  --export <file>                Export session file to HTML and exit
-  --list-models [search]         List available models (with optional fuzzy search)
-  --verbose                      Show startup resource counts (overrides quietStartup)
-  --tui-mode <mode>              TUI mode: fullscreen (default) or regular
-  --python-url <url>             Attach print, JSON, RPC, or interactive mode to this Python host
-  --python-token <token>         Web token for --python-url
-  --python-session <id>          Rejoin this session instead of creating one
-  --decision <批准|拒绝>          Explicit approval decision; never implied by the prompt
-  --request <id>                 Pending request to decide when there is no new prompt
-  --call <id>                    Pending MCP call to decide when there is no new prompt
-  --workspace <name>             Session workspace (default: primary)
-  --approve, -a                  Trust project-local files for this run
-  --no-approve, -na              Ignore project-local files for this run
-  --offline                      Disable startup network operations (same as AMAZME_OFFLINE=1)
-  --                             End option parsing; treat remaining arguments as messages/files
-  --help, -h                     Show this help
-  --version, -v                  Show version number
+连接与输入：
+  --python-url URL --python-token TOKEN  连接指定 Host
+  --python-session ID | --session ID     打开指定会话
+  --workspace NAME                       会话工作区（默认 primary）
+  --decision 批准|拒绝 --request ID       对已保存的请求明确审批
+  --decision 批准|拒绝 --call ID          对已保存的 MCP 调用明确审批
+  --provider NAME --model ID [--api-key KEY]  配置账号后提交问题
+  --list-models [关键词]                  查看模型
+  --help | --version                      帮助或版本
 
-Native plugins use slash commands.${extensionFlagsText}
-
-${chalk.bold("Examples:")}
-  # Sign in using the provider's OAuth or API-key flow
-  ${APP_COMMAND} auth login --provider openai-codex
-  ${APP_COMMAND} auth login --provider deepseek --method api-key
-
-  # Remove saved provider credentials
-  ${APP_COMMAND} auth logout --provider deepseek
-
-  # Print a provider API key for an external client
-  ${APP_COMMAND} auth print-api-key --provider openai
-
-  # Print an OAuth bearer token for an external client (refreshes if expired)
-  ${APP_COMMAND} auth print-bearer-token --provider openai-codex
-
-  # Interactive mode
-  ${APP_COMMAND}
-
-  # Interactive mode with initial prompt
-  ${APP_COMMAND} "List all .ts files in src/"
-
-  # Include files in initial message
-  ${APP_COMMAND} @prompt.md @image.png "What color is the sky?"
-
-  # Non-interactive mode (process and exit)
-  ${APP_COMMAND} -p "List all .ts files in src/"
-
-  # Prompt beginning with a dash
-  ${APP_COMMAND} -p -- "- Summarize these points"
-
-  # Multiple messages (interactive)
-  ${APP_COMMAND} "Read package.json" "What dependencies do we have?"
-
-  # Continue previous session
-  ${APP_COMMAND} --continue "What did we discuss?"
-
-  # Start a named session
-  ${APP_COMMAND} --name "Refactor auth module"
-
-  # Use different model
-  ${APP_COMMAND} --provider openai --model gpt-4o-mini "Help me refactor this code"
-
-  # Use model with provider prefix (no --provider needed)
-  ${APP_COMMAND} --model openai/gpt-4o "Help me refactor this code"
-
-  # Use model with thinking level shorthand
-  ${APP_COMMAND} --model sonnet:high "Solve this complex problem"
-
-  # Limit model cycling to specific models
-  ${APP_COMMAND} --models claude-sonnet,claude-haiku,gpt-4o
-
-  # Limit to a specific provider with glob pattern
-  ${APP_COMMAND} --models "github-copilot/*"
-
-  # Cycle models with fixed thinking levels
-  ${APP_COMMAND} --models sonnet:high,haiku:low
-
-  # Start with a specific thinking level
-  ${APP_COMMAND} --thinking high "Solve this complex problem"
-
-  # Read-only mode (no file modifications possible)
-  ${APP_COMMAND} --tools read,grep,find,ls -p "Review the code in src/"
-
-  # Codemode with only the tools of one MCP server
-  ${APP_COMMAND} --tools read,bash,codemode,'mcp__radius__*'
-
-  # Disable one tool while keeping the rest available
-  ${APP_COMMAND} --exclude-tools ask_question
-
-  # Export a session file to HTML
-  ${APP_COMMAND} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
-  ${APP_COMMAND} --export session.jsonl output.html
-
-${chalk.bold("Environment Variables:")}
-  ANTHROPIC_AUTH_TOKEN             - Anthropic bearer auth token
-  ANTHROPIC_API_KEY                - Anthropic Claude API key
-  ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
-  ANT_LING_API_KEY                 - Ant Ling API key
-  OPENAI_API_KEY                   - OpenAI GPT API key
-  AZURE_OPENAI_API_KEY             - Azure OpenAI API key
-  AZURE_OPENAI_BASE_URL            - Azure OpenAI/Cognitive Services base URL (e.g. https://{resource}.openai.azure.com)
-  AZURE_OPENAI_RESOURCE_NAME       - Azure OpenAI resource name (alternative to base URL)
-  AZURE_OPENAI_API_VERSION         - Azure OpenAI API version (default: v1)
-  AZURE_OPENAI_DEPLOYMENT_NAME_MAP - Azure OpenAI model=deployment map (comma-separated)
-  DEEPSEEK_API_KEY                 - DeepSeek API key
-  NVIDIA_API_KEY                   - NVIDIA NIM API key
-  GEMINI_API_KEY                   - Google Gemini API key
-  GROQ_API_KEY                     - Groq API key
-  CEREBRAS_API_KEY                 - Cerebras API key
-  XAI_API_KEY                      - xAI Grok API key
-  FIREWORKS_API_KEY                - Fireworks API key
-  TOGETHER_API_KEY                 - Together AI API key
-  BASETEN_API_KEY                  - Baseten API key
-  OPENROUTER_API_KEY               - OpenRouter API key
-  AI_GATEWAY_API_KEY               - Vercel AI Gateway API key
-  ZAI_API_KEY                      - ZAI Coding Plan API key (Global)
-  ZAI_CODING_CN_API_KEY            - ZAI Coding Plan API key (China)
-  MISTRAL_API_KEY                  - Mistral API key
-  MINIMAX_API_KEY                  - MiniMax API key
-  MOONSHOT_API_KEY                 - Moonshot AI API key
-  OPENCODE_API_KEY                 - OpenCode Zen/OpenCode Go API key
-  KIMI_API_KEY                     - Kimi For Coding API key
-  META_API_KEY                     - Meta Model API key
-  CLOUDFLARE_API_KEY               - Cloudflare API token (Workers AI and AI Gateway)
-  CLOUDFLARE_ACCOUNT_ID            - Cloudflare account id (required for both)
-  CLOUDFLARE_GATEWAY_ID            - Cloudflare AI Gateway slug (required for AI Gateway)
-  QWEN_TOKEN_PLAN_API_KEY          - Qwen Token Plan API key (international region)
-  QWEN_TOKEN_PLAN_CN_API_KEY       - Qwen Token Plan API key (China region)
-  XIAOMI_API_KEY                   - Xiaomi MiMo API key (api.xiaomimimo.com billing)
-  XIAOMI_TOKEN_PLAN_CN_API_KEY     - Xiaomi MiMo Token Plan API key (China region)
-  XIAOMI_TOKEN_PLAN_AMS_API_KEY    - Xiaomi MiMo Token Plan API key (Amsterdam region)
-  XIAOMI_TOKEN_PLAN_SGP_API_KEY    - Xiaomi MiMo Token Plan API key (Singapore region)
-  AWS_PROFILE                      - AWS profile for Amazon Bedrock
-  AWS_ACCESS_KEY_ID                - AWS access key for Amazon Bedrock
-  AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock
-  AWS_BEARER_TOKEN_BEDROCK         - Bedrock API key (bearer token)
-  AWS_REGION                       - AWS region for Amazon Bedrock (e.g., us-east-1)
-  ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent)
-  ${ENV_SESSION_DIR.padEnd(32)} - Session storage directory (overridden by --session-dir)
-  AMAZME_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
-  AMAZME_OFFLINE                       - Disable startup network operations when set to 1/true/yes
-  AMAZME_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
-  AMAZME_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
-
-${chalk.bold("Built-in Tool Names:")}
-  read       - Read file contents
-  bash       - Execute bash commands
-  powershell - Execute PowerShell commands on Windows
-  edit       - Edit files with find/replace
-  write      - Write files (creates/overwrites)
-  grep       - Search file contents (read-only, off by default)
-  find       - Find files by glob pattern (read-only, off by default)
-  ls         - List directory contents (read-only, off by default)
-`);
+交互客户端的终端和 MCP 命令保留原调用编号。离开客户端只释放绑定。
+OAuth、模型、项目和设置由 Python Host 保存。旧 JSONL 会话不迁移。${extensionFlagsText}\n`);
 }

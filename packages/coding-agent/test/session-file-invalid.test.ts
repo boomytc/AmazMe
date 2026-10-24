@@ -59,8 +59,7 @@ describe("explicit --session", () => {
 		const result = await runCli(["--session", sessionFile, "-p", "hi"], projectDir, agentDir);
 
 		expect(result.code).toBe(1);
-		expect(result.stderr).toContain("old_session_migration_removed");
-		expect(result.stderr).toContain("不迁移旧会话，请使用 Python 后端的新格式");
+		expect(result.stderr).toContain("invalid_session");
 		expect(result.stderr).not.toContain("SessionManager.open");
 		expect(result.stderr).not.toContain("at ");
 		expect(result.stderr).not.toContain("ExperimentalWarning");

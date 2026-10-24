@@ -35,17 +35,12 @@ describe("interactive storage selection boundary", () => {
 
 	it.each([
 		[["--fork", "source-session"], "Unknown option --fork"],
-		[["--session", "terminal.jsonl"], "old_session_migration_removed"],
+		[["--session", "terminal.jsonl"], "invalid_session"],
 		[["--session-id", "stable-session-id"], "Unknown option --session-id"],
 		[["--no-session", "--continue"], "--no-session cannot be combined"],
 		[["--no-session", "--resume"], "--no-session cannot be combined"],
 	])("rejects %j before opening durable storage", async (args, diagnostic) => {
-		const rejected = new Error("captured process.exit");
-		const exit = vi.spyOn(process, "exit").mockImplementation(() => { throw rejected; });
-		const error = vi.spyOn(console, "error").mockImplementation(() => {});
-		await expect(main(["--offline", ...args])).rejects.toBe(rejected);
-		expect(exit).toHaveBeenCalledWith(1);
-		expect(error.mock.calls.flat().join("\n")).toContain(diagnostic);
+		await expect(main(["--offline", ...args])).rejects.toThrow(diagnostic);
 		expect(existsSync(profile)).toBe(false);
 	});
 });

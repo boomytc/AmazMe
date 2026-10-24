@@ -6,7 +6,7 @@
 
 import { randomBytes } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { Component } from "@amazme/tui";
 import { getAgentDir } from "./config.ts";
@@ -387,6 +387,8 @@ function startServe(command: string, profile: string): Promise<string> {
 	} catch (error) {
 		const code = error instanceof Error && "code" in error ? String(error.code) : "";
 		fail(code === "ENOENT" ? "python_backend_missing" : "python_serve_failed");
+	} finally {
+		closeSync(err);
 	}
 	child.unref();
 	const stdout = child.stdout;
@@ -448,28 +450,33 @@ export async function connectPythonHost(options: {
 	const readyPath = join(profile, "ready.json");
 	if (!existsSync(join(profile, "config.json"))) {
 		mkdirSync(getAgentDir(), { recursive: true });
-		const providerPath = join(getAgentDir(), "provider.json");
-		writeFileSync(
-			providerPath,
-			JSON.stringify({
-				provider: "faux",
-				model: "faux",
-				base_url: "",
-				api_key: "",
-				max_tokens: 2048,
-				proxy: "",
-				headers: {},
-			}),
-			{ mode: 0o600 },
-		);
-		const init = spawnSync(
-			command,
-			["init", "--profile", profile, "--workspace", resolve(options.cwd), "--provider-config", providerPath],
-			{ encoding: "utf8" },
-		);
-		const errno = init.error as NodeJS.ErrnoException | null;
-		if (errno?.code === "ENOENT") fail("python_backend_missing");
-		if (init.status !== 0) fail("python_init_failed");
+		const staging = mkdtempSync(join(getAgentDir(), ".python-init-"));
+		const providerPath = join(staging, "provider.json");
+		try {
+			writeFileSync(
+				providerPath,
+				JSON.stringify({
+					provider: "faux",
+					model: "faux",
+					base_url: "",
+					api_key: "",
+					max_tokens: 2048,
+					proxy: "",
+					headers: {},
+				}),
+				{ mode: 0o600 },
+			);
+			const init = spawnSync(
+				command,
+				["init", "--profile", profile, "--workspace", resolve(options.cwd), "--provider-config", providerPath],
+				{ encoding: "utf8" },
+			);
+			const errno = init.error as NodeJS.ErrnoException | null;
+			if (errno?.code === "ENOENT") fail("python_backend_missing");
+			if (init.status !== 0) fail("python_init_failed");
+		} finally {
+			rmSync(staging, {recursive:true, force:true});
+		}
 	}
 	const existing = await liveUrl(readyPath, tokenPath);
 	const url = existing || (await startServe(command, profile));
@@ -477,8 +484,9 @@ export async function connectPythonHost(options: {
 }
 
 /** Start or attach to the local Python host. Leaving the screen does not stop it. */
-export async function runOwnedPythonInteractive(options: { readonly workspace: string; readonly cwd: string }): Promise<void> {
+export async function runOwnedPythonInteractive(options: { readonly workspace: string; readonly cwd: string; readonly session?: string }): Promise<void> {
 	if (!options.workspace) fail("workspace_required");
 	const host = await connectPythonHost({ cwd: options.cwd });
-	await runPythonSessionTui({ url: host.url, token: host.token, workspace: options.workspace });
+	await runPythonSessionTui({ url: host.url, token: host.token, workspace: options.workspace,
+		...(options.session === undefined ? {} : {session:options.session}) });
 }

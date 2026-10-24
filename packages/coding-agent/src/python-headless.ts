@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
+import type { ImageContent } from "@amazme/ai";
 import { getAgentDir } from "./config.ts";
 import { writeRawStdout } from "./core/output-guard.ts";
 import { connectPythonHost } from "./python-session-tui.ts";
@@ -18,6 +19,7 @@ export interface PythonHeadlessOptions {
 	readonly url?: string;
 	readonly token?: string;
 	readonly prompt: string;
+	readonly images?: readonly ImageContent[];
 	readonly session?: string;
 	readonly decision?: string;
 	readonly request?: string;
@@ -150,10 +152,11 @@ export class HostClient {
 		return { sessionId, attachmentId: attached.attachment_id };
 	}
 
-	async submit(sessionId: string, workspace: string, attachmentId: string, text: string): Promise<Polled> {
+	async submit(sessionId: string, workspace: string, attachmentId: string, text: string, images: readonly ImageContent[] = []): Promise<Polled> {
 		await this.#requireWorkspace(sessionId, workspace);
 		const requestId = randomBytes(8).toString("hex");
-		await this.#send("POST", `/api/v1/sessions/${sessionId}/submissions`, { request_id: requestId, text }, attachmentId);
+		await this.#send("POST", `/api/v1/sessions/${sessionId}/submissions`, { request_id: requestId, text,
+			images:images.map(image=>({media_type:image.mimeType, data_base64:image.data})) }, attachmentId);
 		return this.#untilDecision(sessionId, requestId);
 	}
 
@@ -566,7 +569,7 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions): Pr
 		}
 		const local = await localCommand(client, opened, options.workspace, prompt, decision, jsonMode);
 		if (local !== undefined) return local;
-		const polled = await client.submit(opened.sessionId, options.workspace, opened.attachmentId, prompt);
+		const polled = await client.submit(opened.sessionId, options.workspace, opened.attachmentId, prompt, options.images);
 		if (polled.approval && decision) {
 			const requestId = polled.receipt.request_id;
 			if (typeof requestId !== "string") fail("invalid_approval");

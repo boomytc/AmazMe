@@ -23,8 +23,11 @@ from .contracts import (
     ComputerPolicy,
     CredentialUpdate,
     ErrorBody,
+    ExportBundle,
+    Health,
     Identity,
     ImagePart,
+    ImportResult,
     McpCall,
     McpState,
     McpView,
@@ -85,6 +88,16 @@ class Client:
 
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
+
+    async def health(self) -> Health:
+        return Health.model_validate(await self._send("GET", "/api/v1/health"))
+
+    async def export_bundle(self) -> ExportBundle:
+        return ExportBundle.model_validate(await self._send("GET", "/api/v1/export"))
+
+    async def import_bundle(self, value: ExportBundle) -> ImportResult:
+        return ImportResult.model_validate(await self._send("POST", "/api/v1/import",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
 
     async def computer_policy(self, session_id: str) -> ComputerPolicy:
         return ComputerPolicy.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/computer"))

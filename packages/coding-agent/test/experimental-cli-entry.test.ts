@@ -45,7 +45,7 @@ describe("formal CLI dispatch", () => {
 	it("refuses the old server command without opening a host", () => {
 		const result = runEntry(false);
 		expect(result.status, result.stderr).toBe(1);
-		expect(result.stderr).toContain("old_web_host_removed");
+		expect(result.stderr).toContain("usage: amazme web|server");
 		expect(result.stderr).not.toContain("Invalid --server-id");
 	});
 	it("keeps version metadata available without opening a host", () => {
@@ -56,7 +56,7 @@ describe("formal CLI dispatch", () => {
 	it("refuses the old server command when other experiments are enabled", () => {
 		const result = runEntry(true);
 		expect(result.status, result.stderr).toBe(1);
-		expect(result.stderr).toContain("old_web_host_removed");
+		expect(result.stderr).toContain("usage: amazme web|server");
 		expect(result.stderr).not.toContain("Invalid --server-id");
 	});
 });

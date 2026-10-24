@@ -2,12 +2,18 @@
 
 import argparse
 import asyncio
+import getpass
 import json
+import os
 import secrets
 import sys
+from pathlib import Path
 from typing import cast
 
-from .contracts import BackendError
+from pydantic import SecretStr
+
+from .contracts import BackendError, CredentialUpdate, ExportBundle, UpdateModelSettings
+from .oauth import OAuthInput, OAuthStart
 from .sdk import Client
 
 
@@ -42,7 +48,87 @@ def _parser() -> argparse.ArgumentParser:
     decide.add_argument("--call", default="")
     decide.add_argument("--server", default="")
     decide.add_argument("--decision", default="")
+    models = sub.add_parser("models")
+    models.add_argument("--search", default="")
+    model = sub.add_parser("model")
+    model.add_argument("--provider", default="")
+    model.add_argument("--model", required=True)
+    model.add_argument("--base-url", default="")
+    model.add_argument("--api", choices=["openai-completions", "openai-responses", "openai-codex-responses",
+                                         "anthropic-messages", "google-generative-ai"])
+    exported = sub.add_parser("export")
+    exported.add_argument("--output", default="-")
+    imported = sub.add_parser("import")
+    imported.add_argument("path", type=Path)
+    sub.add_parser("accounts")
+    sub.add_parser("doctor")
+    auth = sub.add_parser("auth")
+    actions = auth.add_subparsers(dest="auth_action", required=True)
+    login = actions.add_parser("login")
+    login.add_argument("--provider", required=True)
+    login.add_argument("--method", choices=["api-key", "browser", "device_code", "copy_code"], default="browser")
+    login.add_argument("--login-id", default="")
+    login.add_argument("--no-wait", action="store_true")
+    logout = actions.add_parser("logout")
+    logout.add_argument("--provider", required=True)
+    for name in ("status", "input", "cancel"):
+        lookup = actions.add_parser(name)
+        lookup.add_argument("--login-id", required=True)
     return parser
+
+
+def _read_secret(prompt: str) -> SecretStr:
+    value = getpass.getpass(prompt) if sys.stdin.isatty() else sys.stdin.readline(8193).rstrip("\r\n")
+    if not value or len(value) > 8192:
+        raise BackendError("invalid_credential")
+    return SecretStr(value)
+
+
+async def _auth(client: Client, args: argparse.Namespace) -> int:
+    if args.auth_action == "logout":
+        current = await client.accounts()
+        print((await client.update_account(args.provider, CredentialUpdate(expected_revision=current.revision, clear=True))).model_dump_json())
+        return 0
+    if args.auth_action == "status":
+        print((await client.oauth(args.login_id)).model_dump_json())
+        return 0
+    if args.auth_action == "cancel":
+        print((await client.cancel_oauth(args.login_id)).model_dump_json())
+        return 0
+    if args.auth_action == "input":
+        value = _read_secret("授权回调 URL 或验证码：")
+        print((await client.oauth_input(args.login_id, OAuthInput(value=value))).model_dump_json())
+        return 0
+    current = await client.accounts()
+    if args.method == "api-key":
+        value = _read_secret("API key：")
+        print((await client.update_account(args.provider, CredentialUpdate(expected_revision=current.revision, api_key=value))).model_dump_json())
+        return 0
+    request = OAuthStart(login_id=args.login_id or secrets.token_hex(16), provider=args.provider,
+                         expected_revision=current.revision, method=args.method)
+    # Publish the original identity before sending. A transport failure never creates a replacement login.
+    print(json.dumps({"login_id": request.login_id, "provider": request.provider}), flush=True)
+    view = None
+    if args.login_id:
+        try:
+            view = await client.oauth(args.login_id)
+            if view.provider != request.provider:
+                raise BackendError("oauth_login_conflict")
+        except BackendError as exc:
+            if exc.status != 404:
+                raise
+    if view is None:
+        view = await client.start_oauth(request)
+    printed = ""
+    while True:
+        body = view.model_dump_json()
+        if body != printed and (view.url or view.phase != "pending"):
+            print(body, flush=True)
+            printed = body
+        if view.phase != "pending" or args.no_wait and view.url:
+            return 0 if view.phase in {"complete", "pending"} else 1
+        await asyncio.sleep(0.25)
+        view = await client.oauth(request.login_id)
 
 
 def _decision_target(args: argparse.Namespace) -> tuple[str, str, str, bool] | None:
@@ -116,6 +202,49 @@ async def _run(argv: list[str]) -> int:
             return 1
     try:
         async with Client(args.url, args.token) as client:
+            if args.command == "models":
+                catalog = await client.models()
+                catalog.models = [model for model in catalog.models if args.search.casefold() in (
+                    model.provider + "/" + model.model + " " + model.label).casefold()]
+                print(catalog.model_dump_json())
+                return 0
+            if args.command == "model":
+                catalog = await client.models()
+                provider, model = str(args.provider), str(args.model)
+                if not provider:
+                    matches = [item for item in catalog.models if item.model == model or item.provider + "/" + item.model == model]
+                    if len(matches) != 1:
+                        raise BackendError("model_selector_ambiguous")
+                    provider, model = matches[0].provider, matches[0].model
+                print((await client.update_model(UpdateModelSettings(provider=provider, model=model,
+                    base_url=args.base_url, api=args.api))).model_dump_json())
+                return 0
+            if args.command == "accounts":
+                print((await client.accounts()).model_dump_json())
+                return 0
+            if args.command == "doctor":
+                view = await client.health()
+                print(view.model_dump_json())
+                return 0 if view.state == "ready" else 1
+            if args.command == "auth":
+                return await _auth(client, args)
+            if args.command == "export":
+                body = (await client.export_bundle()).model_dump_json() + "\n"
+                if args.output == "-":
+                    print(body, end="")
+                else:
+                    fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with os.fdopen(fd, "w") as output:
+                        output.write(body)
+                        output.flush()
+                        os.fsync(output.fileno())
+                return 0
+            if args.command == "import":
+                if args.path.stat().st_size > 32 * 1024 * 1024:
+                    raise BackendError("import_capacity")
+                value = ExportBundle.model_validate_json(args.path.read_bytes())
+                print((await client.import_bundle(value)).model_dump_json())
+                return 0
             if args.command == "create":
                 session = await client.create_session(title=args.title, workspace=args.workspace)
                 print(session.model_dump_json())
@@ -150,8 +279,8 @@ async def _run(argv: list[str]) -> int:
             result = await client.rpc(args.method, **{str(key): value for key, value in params.items()})
             print(json.dumps(result, ensure_ascii=False))
             return 0
-    except BackendError as exc:
-        print(exc.code, file=sys.stderr)
+    except (BackendError, OSError, ValueError) as exc:
+        print(exc.code if isinstance(exc, BackendError) else type(exc).__name__, file=sys.stderr)
         return 1
 
 

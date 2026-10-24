@@ -261,7 +261,7 @@ describe.skipIf(process.platform === "win32")("CLI with a session database that 
 			const before = await snapshotDirectory(sessionsDir);
 			const result = await runCli(cwd, agentDir, ["--session", directory, "-p", "hello"]);
 			expect(result.code, result.stderr).toBe(1);
-			expect(result.stderr).toContain("old_session_migration_removed");
+			expect(result.stderr).toContain("invalid_session");
 			expect(result.stderr).not.toContain("Cannot open session database");
 			expect(result.stderr).not.toMatch(/^\s+at /mu);
 			expect(await snapshotDirectory(sessionsDir)).toEqual(before);

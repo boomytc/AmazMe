@@ -1,25 +1,23 @@
-# 旧 TS 业务入口
+# 旧 TS 业务消费者
 
-这份清单只记录当前 `dev` 上谁还会执行旧业务运行时。它不是删除许可。呈现包、客户端运行时和受控 JS helper 继续保留。
+当前契约见 [方案](python-backend-plan.md)，状态见 [任务表](python-backend-completion.md)。
+本表记录实际消费者；历史 VM、签名、公证和旧包数字已从当前依赖清单移除，历史证据仍保存在原报告及 Git 历史中。
 
-## Python 内核
+| 范围 | 当前调用链 | 处置 |
+| --- | --- | --- |
+| Python 内核 | Host、worker、监督器，本机 shell/PTY/stdio MCP | 不导入 TS，不启动旧 coding-agent 业务运行时 |
+| CLI 与 TUI | `cli.ts` / `main.ts` → Python Host、Python CLI；TS 保留输入、终端呈现与文件媒体处理 | 产品入口已迁移；旧 Durable 开关不选择执行后端 |
+| 账号、模型与导入导出命令 | `python-product.ts` → `amazme-backend client` → Python SDK/Host | 复用私有账号库与新格式导入导出；不读取旧 auth/settings/JSONL |
+| Electron / Web | `gui/main.ts` → 包内 Python，Python Web 页面 | 桌面闭包不包含 coding-agent；缺包内后端时明确失败 |
+| 受控 JS helper | Codemode 的 QuickJS、现有终端/媒体处理及打包辅助 | 有实际用途，保留 |
+| 旧 Host 与 session-worker | coding-agent 的包导出、构建入口、旧测试，以及旧插件侧的注册依赖 | 仍需迁移消费者并删除；不能据 CLI 迁移宣称整个 TS 内核已删除 |
+| `durable/sdk.ts` | 包根导出及 eval 类型消费者，函数目前拒绝旧会话 | 迁移 eval 后删除拒绝占位和旧导出，不保留兼容运行时 |
+| evals | 旧 harness、配置与容器工具，运行入口拒绝旧会话 | 改为本机 Python SDK 路线；不恢复 Docker 作为产品执行后端 |
+| 原生插件 | 旧 facet 注册；CUA App 配方和原生驱动仍有用途 | 按插件实际产品能力迁入 Python，保留原生配方/必要 JS helper |
+| `@amazme/web` / `@amazme/durable` 的页面值导入 | Electron 呈现依赖 | 沿实际导入清理，不能机械删除整个包 |
 
-`backend/src` 没有 TypeScript 导入，也不拉起 `node` 上的旧 coding-agent。业务调用停在 Python Host、worker 和监督器。
+CLI 单元已删除没有产品消费者的 `cli/auth-check.ts`、`credential-print.ts`、
+`provider-auth.ts`、`list-models.ts`、`setup.ts` 和对应旧认证测试。
+旧 Host、旧 SDK 和 eval 的拒绝占位仍是未完成项，不能算迁移完成。
 
-## 产品入口不再打开旧运行时
-
-`packages/coding-agent/src/main.ts` 的交互、`--print`、`--mode json` 和 `--mode rpc` 都走 Python。`AMAZME_DURABLE_TUI=1` 不会改这条路。测试在 `packages/coding-agent/test/durable-main-startup.test.ts`、`durable-default-main.test.ts`、`durable-rpc-main.test.ts`，以及构建后的 `dist/bundle/cli.js`（`python-entry-ignores-durable.test.ts`）。
-
-`packages/gui/src/main.ts` 的 `boot` 只接受 `requirePythonBackend` 返回的可执行文件。没有 `AMAZME_PYTHON_BACKEND` 或包内 `amazme-backend` 时抛出「桌面需要包内的 Python 后端」，然后退出。它不再调用 `webHostLaunch` 或 `@amazme/coding-agent`。
-
-`scripts/package-desktop.mjs` 的桌面闭包是 `@amazme/gui` 及其运行依赖（含页面用到的 `@amazme/web` 和 `@amazme/durable`），不包含 `@amazme/coding-agent`。`scripts/package-desktop.test.mjs` 锁住这份名单。
-
-## 还不能删
-
-- `packages/coding-agent/src/cli.ts` 的 `web`、`server` 和 `client` 直接拒绝，不再进入旧宿主。桌面安装包不再携带这个包。
-- `packages/coding-agent/src/main.ts` 的 `import` 和 `export` 直接拒绝。`durable/import.ts`、`durable/export.ts`、`durable/runtime.ts`、`durable/bug-report.ts` 和 `durable/extension-events.ts` 已删除。`createDurableSession` 不再打开旧会话，调用会得到 `old_session_runtime_removed`。旧宿主的 `/share` 在没有替换写入器时拒绝导出。`packages/evals` 的运行入口在选择模型之前拒绝，不再调用这个函数，也还没有改成 Python SDK。
-- `host/commands.ts`、`durable/tui.ts`、`durable/interactive.ts`、`durable/print.ts`、`modes/rpc/durable-rpc.ts` 已删除。产品 `cli.ts` 和 `main.ts` 到不了 `src/durable/`。宿主服务目录和 `host/server.ts` 不再导入 `durable/sessions`、`durable/harness-setup`、`durable/fork-management`。设置辅助在 `core/hosted-settings.ts`，分叉准入在 `core/fork-admission.ts`。旧宿主仍执行这套逻辑，没有改成 Python。`durable/harness-setup.ts` 已删除。`session-worker` 从 `core/hosted-settings.ts` 读设置，并从 `host/session-registry.ts` 组装旧工具 registry。这仍是旧宿主逻辑，没有改成 Python。它还引用 `durable/mcp.ts`、`durable/session-database.ts` 和 `durable/subagent.ts`。删除整目录仍未通过。产品 `cli.ts` 遇到内部进程角色、`web`、`server`、`client` 直接拒绝。`--session` 与 `import` / `export` 一样拒绝旧会话。
-- 旧公证 DMG 文件 `.artifacts/python-backend-sign/python-desktop/AmazMe-macos-arm64.dmg` 没有改写，挂载后仍是当时的内容。展开的 `.app` 里 `node_modules/@amazme/coding-agent` 已从磁盘删除。新的桌面打包脚本不包含这个包。`desktop-current` 不含旧宿主，但签名改写了 Mach-O，服务启动失败。`desktop-boot/AmazMe-macos-arm64.dmg` 能启动，页面没有 `__AMAZME_BOOT__`，公证提交 `73a6e978-4364-415c-a319-0d0f6ddbda17`，钉住后 SHA256 `232e851afe15c8879cc7a6c6acec5697fa6d3c9ee24c7f0b24ed5916a42c33f0`，签名后 build_id `a561427495a15b41f35449d5124d81623b8ed3312daf7f082aca6b652f30b477`。`desktop-page/AmazMe-macos-arm64.dmg` 不含 coding-agent。签名后 build_id 是 `9f0cd59f1bd188016f2b17c609e6559a89ae0a443387d73a267a643962a6f914`。已签名应用 smoke 退出码 0，`__AMAZME_BOOT__` 的名字是 AmazMe，版本是 0.1.0，`server.id` 与就绪 `profile_id` 都是 `85280ea6ede093d413d2b126380ba757`，事件地址是 `ws://127.0.0.1:62967/api/v1/events`。公证 Accepted，提交 `80ff1888-7448-4eb3-82df-fd2ebb229359`。钉住后的 SHA256 是 `1c7a75c05235072fe1f7a5b03423cc421f804b232eb2d58e0f597437ce6d2600`。`desktop-quit/AmazMe-macos-arm64.dmg` 含关闭修复。签名后 build_id 是 `4197b4241dd1de0d14b1c7517b941261cafc6e73df5627ef1eacc697580522b1`。smoke 退出后监督器记录是 `stopped`。公证提交 `7f350709-2b6a-45ec-8971-a9c7d7f46263`，钉住后 SHA256 `2844f33971317cda73428cb52e0eec127796c919d6dee8e819e9b882b8a0cab7`。
-- `@amazme/web` 的呈现、TUI 组件和受控 JS helper 不是旧业务内核。`@amazme/durable` 留在桌面包里，是因为页面壳的值导入还需要它，不是因为还要启动旧宿主。
-
-删除要等这些剩余入口没有产品调用，并且替代路径已经通过。在那之前保持未通过。
+构建身份以最终候选包的 `build.json` 及同次生成报告为准，本清单不复制“当前 build_id”。
