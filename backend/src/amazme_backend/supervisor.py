@@ -1490,12 +1490,12 @@ class Supervisor:
 
     async def run_code(self, value: OpenCode) -> CodeView:
         self.check_host(value)
-        self._admit()
         existing = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
         if existing is not None:
             if existing["session"] != value.session_id or existing["source"] != value.source:
                 raise BackendError("codemode_conflict")
             return await self._code_view_with_state(existing)
+        self._admit()
         await self._code_blocked(value.session_id)
         await self.db.call(lambda db: db.execute(
             "INSERT INTO code_runs(id,session,source,phase) VALUES(?,?,?,'unknown')",
@@ -1647,7 +1647,6 @@ class Supervisor:
 
     async def call_plugin(self, value: PluginCallEnvelope) -> PluginCallView:
         self.check_host(value)
-        self._admit()
         plugin = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
         if plugin is None:
             raise BackendError("plugin_not_found", status=404)
@@ -1656,6 +1655,7 @@ class Supervisor:
             if str(existing["plugin"]) != value.plugin_id or str(existing["session"]) != value.session_id or str(existing["text"]) != value.text:
                 raise BackendError("plugin_call_conflict")
             return self._plugin_call(existing)
+        self._admit()
         unknown = await self.db.call(lambda db: db.execute(
             "SELECT 1 FROM plugin_calls WHERE plugin=? AND phase='unknown'", (value.plugin_id,)).fetchone())
         if unknown is not None:

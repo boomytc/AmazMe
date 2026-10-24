@@ -19,6 +19,8 @@ from amazme_backend.contracts import (
     FreezeSupervisor,
     HostFence,
     Identity,
+    OpenCode,
+    PluginCallEnvelope,
     ResolveEffect,
     RetireSupervisor,
     RunTool,
@@ -223,6 +225,36 @@ async def test_freeze_blocks_a_new_shell_and_returns_the_finished_one(owner):
         await owner.run_tool(blocked)
     assert not (owner.profile.path / "frozen-shell.txt").exists()
     assert (await owner.run_tool(done)).stdout == "ok\n"
+
+
+async def test_freeze_returns_finished_code_and_plugin_calls(owner):
+    session = "a" * 32
+    run_id = "b" * 32
+    plugin_id = "c" * 32
+    call_id = "d" * 32
+    await owner.db.call(lambda db: db.execute(
+        "INSERT INTO code_runs(id,session,source,phase,value,committed) VALUES(?,?,?,'success','3',1)",
+        (run_id, session, "1+2")), write=True)
+    await owner.db.call(lambda db: db.execute(
+        "INSERT INTO plugins(id,name,capabilities,config,fingerprint) VALUES(?,?,?,?,?)",
+        (plugin_id, "stamp", "[]", "{}", "fp")), write=True)
+    await owner.db.call(lambda db: db.execute(
+        "INSERT INTO plugin_calls(id,plugin,session,text,phase,result) VALUES(?,?,?,?,'done','hi')",
+        (call_id, plugin_id, session, "hi")), write=True)
+    fence = {"build_id": owner.build, "host_epoch": owner.host_epoch}
+    await owner.freeze(FreezeSupervisor(**fence, freeze_id="hold"))
+    code = await owner.run_code(OpenCode(**fence, session_id=session, run_id=run_id, source="1+2"))
+    assert code.phase == "success" and code.value == "3"
+    plugin = await owner.call_plugin(PluginCallEnvelope(
+        **fence, session_id=session, plugin_id=plugin_id, call_id=call_id, text="hi"))
+    assert plugin.phase == "done" and plugin.result == "hi"
+    with pytest.raises(BackendError, match="supervisor_frozen"):
+        await owner.run_code(OpenCode(**fence, session_id=session, run_id="e" * 32, source="1"))
+    with pytest.raises(BackendError, match="supervisor_frozen"):
+        await owner.call_plugin(PluginCallEnvelope(
+            **fence, session_id=session, plugin_id=plugin_id, call_id="f" * 32, text="no"))
+    assert await owner.db.call(lambda db: db.execute("SELECT count(*) FROM code_runs").fetchone()[0]) == 1
+    assert await owner.db.call(lambda db: db.execute("SELECT count(*) FROM plugin_calls").fetchone()[0]) == 1
 
 
 async def test_frozen_validation_cannot_execute_tools_and_revision_is_checked(owner):
