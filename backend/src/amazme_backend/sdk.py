@@ -37,6 +37,9 @@ from .contracts import (
     McpState,
     McpView,
     ModelCatalog,
+    ModelScope,
+    ModelScopeRequest,
+    ModelSelection,
     ModelSettings,
     PluginCallRequest,
     PluginCallView,
@@ -172,6 +175,11 @@ class Client:
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
 
+    async def model_scope(self, patterns: list[str], *, provider: str = "") -> ModelScope:
+        value = ModelScopeRequest(patterns=patterns, provider=provider)
+        return ModelScope.model_validate(await self._send("POST", "/api/v1/models/scope",
+            json_body=value.model_dump(), headers=self._write()))
+
     async def session_usage(self, session_id: str) -> UsageReport:
         return UsageReport.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/usage"))
 
@@ -278,12 +286,13 @@ class Client:
                      system_prompt: str | None = None, append_system_prompt: str = "",
                      allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None,
                      resource_options: ResourceOptions | None = None, thinking: ThinkingLevel | None = None,
-                     tool_call: ToolCall | None = None) -> Receipt:
+                     tool_call: ToolCall | None = None, model_selection: ModelSelection | None = None) -> Receipt:
         await self._require_workspace(session_id, workspace)
         body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms,
                                    "system_prompt": system_prompt, "append_system_prompt": append_system_prompt, "thinking": thinking,
                                    "allowed_tools": allowed_tools, "excluded_tools": excluded_tools or [],
                                    "resource_options": (resource_options or ResourceOptions()).model_dump(),
+                                   "model_selection":model_selection.model_dump() if model_selection is not None else None,
                                    "tool_call":tool_call.model_dump() if tool_call is not None else None}
         if images:
             body["images"] = [image.model_dump() for image in images]

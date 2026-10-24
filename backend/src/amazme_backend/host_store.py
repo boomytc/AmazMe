@@ -15,9 +15,11 @@ from .contracts import (
     CreateSession,
     EffectResolution,
     Model,
+    ModelSelection,
     PreparedFileWrite,
     PrepareUpdate,
     ProcessLease,
+    ProviderConfig,
     Receipt,
     ServiceInfo,
     Session,
@@ -30,6 +32,7 @@ from .contracts import (
     WriteFile,
 )
 from .manage import contains_secret
+from .providers import selected_provider
 from .storage import Database
 
 
@@ -53,11 +56,27 @@ def _grant_present(db: sqlite3.Connection, workspace: str) -> bool:
     return row is not None
 
 
+def _delivery_provider(db: sqlite3.Connection, session: str, value: Submit, provider: ProviderConfig) -> str:
+    if value.mode == "steer":
+        return ""
+    selection = value.model_selection
+    if selection is None:
+        chosen = db.execute("SELECT provider,model FROM session_models WHERE session=?", (session,)).fetchone()
+        if chosen is not None:
+            selection = ModelSelection(provider=str(chosen[0]), model=str(chosen[1]))
+    captured = selected_provider(provider, selection)
+    db.execute("INSERT INTO session_models(session,provider,model) VALUES(?,?,?) "
+        "ON CONFLICT(session) DO UPDATE SET provider=excluded.provider,model=excluded.model",
+        (session, captured.provider, captured.model))
+    return captured.model_dump_json()
+
+
 class Delivery(Model):
     delivery_id: str
     session_id: str
     kind: Literal["submit", "cancel", "approval", "resolve"]
     payload: str
+    provider: ProviderConfig | None = None
     state: Literal["pending", "delivered", "rejected"]
     receipt: Receipt | None = None
     error_code: str = ""
@@ -164,6 +183,9 @@ class HostStore:
                 PRAGMA user_version=2;
             """)
             session_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(sessions)")}
+            delivery_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(deliveries)")}
+            if "provider" not in delivery_columns:
+                db.execute("ALTER TABLE deliveries ADD COLUMN provider TEXT NOT NULL DEFAULT ''")
             if "updated_ms" not in session_columns:
                 db.execute("ALTER TABLE sessions ADD COLUMN updated_ms INTEGER NOT NULL DEFAULT 0")
             checkpoints = {str(row[1]) for row in db.execute("PRAGMA table_info(file_checkpoints)")}
@@ -496,13 +518,14 @@ class HostStore:
         value = Delivery.model_validate({"delivery_id": row["id"], "session_id": row["session"], "kind": row["kind"],
                                        "payload": row["payload"], "state": row["state"],
                                        "receipt": Receipt.model_validate_json(row["receipt"]) if row["receipt"] else None,
-                                       "error_code": row["error_code"], "error_status": row["error_status"]})
+                                       "error_code": row["error_code"], "error_status": row["error_status"],
+                                       "provider": ProviderConfig.model_validate_json(row["provider"]) if row["provider"] else None})
         commands = {"submit": Submit, "cancel": Cancel, "approval": ApprovalDecision, "resolve": EffectResolution}
         commands[value.kind].model_validate_json(value.payload)
         return value
 
     async def enqueue(self, session: str, kind: Literal["submit", "cancel", "approval", "resolve"],
-                      key: str, value: Model) -> Delivery:
+                      key: str, value: Model, *, provider: ProviderConfig | None = None) -> Delivery:
         payload = value.model_dump_json()
         digest = hashlib.sha256(payload.encode()).hexdigest()
         identity = hashlib.sha256(json.dumps([session, kind, key]).encode()).hexdigest()
@@ -521,9 +544,25 @@ class HostStore:
                 raise BackendError("update_frozen", status=503)
             if db.execute("SELECT count(*) FROM deliveries WHERE state='pending'").fetchone()[0] >= 128:
                 raise BackendError("delivery_capacity", status=429)
-            db.execute("INSERT INTO deliveries(id,session,kind,digest,payload) VALUES(?,?,?,?,?)",
-                       (identity, session, kind, digest, payload))
+            configured = ""
+            if isinstance(value, Submit) and provider is not None:
+                configured = _delivery_provider(db, session, value, provider)
+            db.execute("INSERT INTO deliveries(id,session,kind,digest,payload,provider) VALUES(?,?,?,?,?,?)",
+                       (identity, session, kind, digest, payload, configured))
             db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (time.time_ns() // 1_000_000, session))
+            return self._delivery(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())
+        return await self.transaction(operation)
+
+    async def pin_delivery_provider(self, identity: str, provider: ProviderConfig) -> Delivery:
+        """Scheduled deliveries reserve their model before starting any worker."""
+        def operation(db: sqlite3.Connection) -> Delivery:
+            row = db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone()
+            if row is None:
+                raise BackendError("delivery_not_found")
+            if row["kind"] == "submit" and row["state"] == "pending" and not row["provider"]:
+                value = Submit.model_validate_json(row["payload"])
+                captured = _delivery_provider(db, str(row["session"]), value, provider)
+                db.execute("UPDATE deliveries SET provider=? WHERE id=? AND provider=''", (captured, identity))
             return self._delivery(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())
         return await self.transaction(operation)
 

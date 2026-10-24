@@ -551,6 +551,15 @@ function startClient() {
       connection.attachment = await api(`/api/v1/sessions/${id}/attachments`, "POST", {}, null, boot);
       if (!owns(connection)) { void detach(connection); return; }
       const attachment = connection.attachment;
+      try {
+        const choice = await api(`/api/v1/session-models/${id}`, "GET", undefined, connection, connection.identity);
+        if (!owns(connection)) return;
+        const key = `${choice.provider}\n${choice.model}`;
+        if ([...$("model-choice").options].some(option => option.value === key)) {
+          $("model-choice").value = key;
+          $("model-choice").onchange?.();
+        }
+      } catch (failure) { if (failure.code !== "session_model_missing") throw failure; }
       if (attachment.session_id !== id || attachment.build_id !== boot.build_id || attachment.host_epoch !== boot.host_epoch) throw new Error("会话绑定不匹配");
       if ($("web").open) void loadWebPolicy().catch(error);
       if ($("computer").open) void loadComputerPolicy().catch(error);
@@ -692,6 +701,8 @@ function startClient() {
         base_url: $("model-endpoint").value, max_tokens: maxTokens,
         proxy: $("model-proxy").value, headers,
       }, operation.connection, operation.identity);
+      if (operation.connection) await api(`/api/v1/session-models/${operation.connection.session}`, "PUT",
+        {session_id:operation.connection.session, provider, model}, operation.connection, operation.identity);
       if (!operation.active()) return;
       $("model-endpoint").value = saved.base_url;
       $("model-endpoint").disabled = saved.provider === "faux";
@@ -2342,6 +2353,8 @@ function startClient() {
     const connection = current, target = connection.session, key = `submit:${target}`;
     if (running.has(key)) return;
     const text = $("prompt").value, files = composerFiles, mode = $("mode").value, thinking = $("thinking").value;
+    const [provider, model] = $("model-choice").value.split("\n");
+    const modelSelection = provider && model ? {provider, model} : null;
     const run = connection.model.requests.find(row => row.kind === "root" && row.run_id && !terminal.has(row.status));
     running.add(key); $("error").textContent = ""; controls();
     let submitted = pending;
@@ -2353,7 +2366,7 @@ function startClient() {
         // Preparation has no accepted side effect. A retired connection leaves
         // its draft untouched and cannot create a pending request for a new page.
         if (!owns(connection)) return;
-        submitted = {target, request_id:crypto.randomUUID(), text, mode, ...(mode === "steer" ? {} : {thinking}),
+        submitted = {target, request_id:crypto.randomUUID(), text, mode, ...(mode === "steer" ? {} : {thinking, ...(modelSelection ? {model_selection:modelSelection} : {})}),
           target_run_id:mode === "steer" ? run.run_id : "", images};
         savePending(submitted);
       }
@@ -2361,6 +2374,7 @@ function startClient() {
       const body = {request_id:submitted.request_id, text:submitted.text, mode:submitted.mode || "queue", target_run_id:submitted.target_run_id || ""};
       if (submitted.images?.length) body.images = submitted.images;
       if (submitted.thinking !== undefined) body.thinking = submitted.thinking;
+      if (submitted.model_selection !== undefined) body.model_selection = submitted.model_selection;
       await api(`/api/v1/sessions/${target}/submissions`, "POST", body, connection, connection.identity);
       if (owns(connection)) {
         if (pending === submitted) savePending(null);

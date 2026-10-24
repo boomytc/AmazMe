@@ -63,7 +63,7 @@ from .contracts import (
 from .faults import Faults
 from .manage import contains_secret
 from .mcp_session import mcp_alias
-from .providers import Completion, stored_provider, token_cost_micro
+from .providers import Completion, selected_provider, token_cost_micro
 from .resources import session_resources
 from .session_domain import (
     Action,
@@ -659,7 +659,7 @@ class SessionStore:
         return [ImagePart.model_validate(item) for item in json.loads(str(row[0]))] if row else []
 
     def _new_request(self, db: sqlite3.Connection, c: Changes, value: Submit, *, parent_id: str = "",
-                     depth: int = 0, inherited: ProviderConfig | None = None) -> Receipt:
+                     depth: int = 0, inherited: ProviderConfig | None = None, accepted_config: ProviderConfig | None = None) -> Receipt:
         receipt = Receipt(request_id=value.request_id, run_id=value.request_id, text=value.text,
                           status="waiting_time" if value.not_before_ms > now_ms() else "queued",
                           parent_id=parent_id, kind="child" if parent_id else "root",
@@ -669,7 +669,7 @@ class SessionStore:
                    (value.request_id, digest(value.model_dump_json()), receipt.model_dump_json()))
         self._save_images(db, value.request_id, value.images)
         # Store public provider configuration only. Credentials remain in Profile.
-        config = stored_provider(inherited or self.config)
+        config = selected_provider(inherited or accepted_config or self.config, value.model_selection)
         if value.thinking is not None:
             config.thinking = value.thinking
         if value.system_prompt is not None:
@@ -730,7 +730,7 @@ class SessionStore:
     async def host_epoch(self) -> int:
         return await self.db.call(lambda db: int(self._meta(db, "host_epoch")))
 
-    async def accept(self, value: Submit, fence: HostFence) -> Receipt:
+    async def accept(self, value: Submit, fence: HostFence, *, accepted_config: ProviderConfig | None = None) -> Receipt:
         def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
             self._fence(db, fence)
             row = db.execute("SELECT digest,payload FROM requests WHERE id=?", (value.request_id,)).fetchone()
@@ -749,7 +749,7 @@ class SessionStore:
             if value.mode == "reject_busy" and pending and not tombstone:
                 raise BackendError("session_busy")
             if value.mode == "steer" and not tombstone:
-                if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools or value.resource_options != ResourceOptions() or value.thinking is not None:
+                if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools or value.resource_options != ResourceOptions() or value.thinking is not None or value.model_selection is not None:
                     raise BackendError("run_options_immutable")
                 if value.not_before_ms:
                     raise BackendError("scheduled_steer_unsupported")
@@ -768,7 +768,7 @@ class SessionStore:
                 c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
                 c.hit("accepted", receipt.request_id)
                 return receipt
-            receipt = self._new_request(db, c, value)
+            receipt = self._new_request(db, c, value, accepted_config=accepted_config)
             if tombstone:
                 receipt.cancel_requested = True
                 self._decide(db, c, receipt, Decision(status="cancelled", error="cancelled_before_acceptance"))

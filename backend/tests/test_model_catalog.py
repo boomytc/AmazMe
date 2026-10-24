@@ -413,3 +413,36 @@ async def test_native_loopback_model_endpoint(owner: Host, endpoint: str) -> Non
 async def test_http_endpoint_cannot_bypass_external_tls(owner: Host, endpoint: str) -> None:
     with pytest.raises(BackendError,match="invalid_model_endpoint"):
         await owner.update_model(UpdateModelSettings(provider="deepseek",model="local-model",base_url=endpoint))
+
+
+async def test_model_scope_http_sdk_and_rpc_share_python_resolution(owner) -> None:
+    from amazme_backend.sdk import Client
+
+    headers = {"Authorization":"Bearer web-only", "Origin":owner.origin,
+        "x-amazme-build":owner.build,"x-amazme-epoch":str(owner.fence.host_epoch)}
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)),base_url=owner.origin,headers=headers) as http:
+        patterns = ["deepseek/deepseek-flash:high","deepseek/deepseek-v4-pro"]
+        response = await http.post("/api/v1/models/scope",json={"patterns":patterns})
+        assert response.status_code == 200
+        assert [(item["model"]["provider"],item["model"]["model"],item["thinking"]) for item in response.json()["models"]] == [
+            ("deepseek","deepseek-flash","high"),("deepseek","deepseek-v4-pro",None)]
+        client = Client(owner.origin,"web-only")
+        await client._http.aclose()
+        client._http = http
+        await client.bootstrap()
+        assert (await client.model_scope(patterns)).model_dump() == response.json()
+        rpc = await http.post("/api/v1/rpc",json={"jsonrpc":"2.0","id":"scope","method":"model.scope", "params":{"model_scope":{"patterns":patterns}}})
+        assert rpc.status_code == 200 and rpc.json()["result"] == response.json()
+        assert SECRET not in response.text
+
+
+async def test_model_scope_keeps_the_configured_custom_model_and_endpoint(owner) -> None:
+    from amazme_backend.contracts import ModelScopeRequest, ModelSelection
+    from amazme_backend.providers import selected_provider
+
+    custom = owner.profile.config.provider.model_copy(update={"model":"custom-chat","base_url":"https://example.invalid/v1"})
+    owner.profile.save_provider(custom)
+    found = owner.model_scope(ModelScopeRequest(patterns=["deepseek/custom-chat"]))
+    assert len(found.models) == 1 and found.models[0].model.model == "custom-chat"
+    captured = selected_provider(custom,ModelSelection(provider="deepseek",model="custom-chat"))
+    assert captured.base_url == custom.base_url and not captured.api_key.get_secret_value()

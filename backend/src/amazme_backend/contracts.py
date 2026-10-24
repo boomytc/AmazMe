@@ -33,7 +33,13 @@ class ResourceOptions(Model):
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
+class ModelSelection(Model):
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
+    model: str = Field(min_length=1, max_length=128, pattern=r"^[\w./:@+-]+$")
+
+
 class RunOptions(Model):
+    model_selection: ModelSelection | None = None
     thinking: ThinkingLevel | None = None
     resource_options: ResourceOptions = Field(default_factory=ResourceOptions)
     system_prompt: str | None = Field(default=None, max_length=32000)
@@ -94,12 +100,25 @@ class ModelCatalog(Model):
     current: ModelSettings
 
 
-class SessionModel(Model):
+class ScopedModel(Model):
+    model: CatalogModel
+    thinking: ThinkingLevel | None = None
+
+
+class ModelScopeRequest(Model):
+    patterns: list[Annotated[str, Field(min_length=1, max_length=256)]] = Field(min_length=1, max_length=128)
+    provider: str = Field(default="", pattern=r"^(?:[a-z][a-z0-9._-]{0,63})?$")
+
+
+class ModelScope(Model):
+    models: list[ScopedModel]
+    diagnostics: list[str] = Field(default_factory=list)
+
+
+class SessionModel(ModelSelection):
     """The model last selected for one session. This does not add a provider implementation."""
 
     session_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$")
-    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
-    model: str = Field(pattern=r"^[\w.:-]{1,128}$")
 
 
 class UpdateModelSettings(Model):
@@ -1509,6 +1528,7 @@ class StreamAck(Model):
 
 class Submission(HostFence):
     value: Submit
+    provider: ProviderConfig | None = None
 
 
 class Cancel(HostFence):

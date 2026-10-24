@@ -77,3 +77,39 @@ test("explicit themes work with no-themes while ordinary user themes remain avai
 		await expect(configureTuiThemes({themes:[explicit]})).rejects.toThrow();
 	} finally { setRegisteredThemes(undefined); vi.unstubAllEnvs(); }
 });
+
+test("scoped models keep the current choice, cycle with their thinking levels, and submit immutable model defaults", async () => {
+	let current = {provider:"one",model:"a"};
+	const sent: Record<string,unknown>[] = [];
+	const choices = [
+		{model:{provider:"one",model:"a"},thinking:"low"},
+		{model:{provider:"two",model:"b"},thinking:"high"},
+	];
+	vi.stubGlobal("fetch",vi.fn(async (url:string,init?:RequestInit) => {
+		const body = init?.body ? JSON.parse(String(init.body)) as Record<string,unknown> : {};
+		if (url.endsWith("/bootstrap")) return reply({build_id:"build",host_epoch:1});
+		if (url.endsWith("/models/scope")) return reply({models:JSON.stringify(body.patterns)==='["two/b"]' ? [choices[1]] : choices,diagnostics:[]});
+		if (url.includes("/session-models/")) {
+			if (init?.method === "PUT") current = {provider:String(body.provider),model:String(body.model)};
+			return reply({...current,session_id:session});
+		}
+		if (url.endsWith("/sessions")) return reply({sessions:[{session_id:session,workspace:"primary"}]});
+		if (url.includes("/requests/")) return reply({status:"succeeded"});
+		if (url.endsWith("/submissions")) { sent.push(body); return reply({}); }
+		if (url.endsWith("/rpc")) { sent.push(body); return reply({}); }
+		throw new Error(url);
+	}));
+	const client = new HostClient("http://host", "private");
+	await client.bootstrap();
+	await client.configureModels({modelPatterns:["*"],modelRef:"two/b"},session);
+	expect(current).toEqual({provider:"two",model:"b"});
+	await client.submit(session,"primary","attachment","first",[],"first");
+	expect(sent[0]).toMatchObject({model_selection:{provider:"two",model:"b"},thinking:"high"});
+	expect(await client.cycleModel(session)).toBe("one/a");
+	await client.submit(session,"primary","attachment","second",[],"second");
+	expect(sent[1]).toMatchObject({model_selection:{provider:"one",model:"a"},thinking:"low"});
+	client.setThinking("max");
+	await client.cycleModel(session);
+	await client.rpc({method:"request.submit",params:{text:"rpc"}});
+	expect(sent[2]).toMatchObject({params:{model_selection:{provider:"two",model:"b"},thinking:"max"}});
+});

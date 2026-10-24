@@ -26,6 +26,7 @@ from .contracts import (
     ImagePart,
     Message,
     Model,
+    ModelSelection,
     ModelSettings,
     PluginOffer,
     ProviderConfig,
@@ -63,6 +64,19 @@ def redact_proxy(proxy: str) -> str:
 def stored_provider(config: ProviderConfig) -> ProviderConfig:
     """Drop credentials before a run record or event is written."""
     return config.model_copy(update={"api_key": SecretStr(""), "proxy": redact_proxy(config.proxy), "headers": {}})
+
+
+def selected_provider(config: ProviderConfig, selection: ModelSelection | None) -> ProviderConfig:
+    """Capture public model configuration; credentials are resolved only at invocation."""
+    if selection is None or (config.provider, config.model) == (selection.provider, selection.model):
+        return stored_provider(config)
+    if selection.provider == "faux" and selection.model == "faux":
+        return stored_provider(config.model_copy(update={"provider":"faux", "model":"faux", "base_url":""}))
+    model = INDEX.get((selection.provider, selection.model))
+    if model is None:
+        raise BackendError("model_not_available")
+    return stored_provider(config.model_copy(update={"provider":model.provider, "model":model.id,
+        "api":model.api, "base_url":model.base_url, "auth_type":"api_key", "proxy":"", "headers":{}}))
 
 
 def _normalize_proxy(current: str, requested: str) -> str:

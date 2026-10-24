@@ -2748,6 +2748,44 @@
         }
       }
     },
+    "/api/v1/models/scope": {
+      "post": {
+        "summary": "Model Scope",
+        "operationId": "model_scope_api_v1_models_scope_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelScopeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelScope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/accounts": {
       "get": {
         "summary": "Accounts",
@@ -8243,6 +8281,80 @@
         ],
         "title": "ModelCatalog"
       },
+      "ModelScope": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ScopedModel"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "diagnostics": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Diagnostics"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "models"
+        ],
+        "title": "ModelScope"
+      },
+      "ModelScopeRequest": {
+        "properties": {
+          "patterns": {
+            "items": {
+              "type": "string",
+              "maxLength": 256,
+              "minLength": 1
+            },
+            "type": "array",
+            "maxItems": 128,
+            "minItems": 1,
+            "title": "Patterns"
+          },
+          "provider": {
+            "type": "string",
+            "pattern": "^(?:[a-z][a-z0-9._-]{0,63})?$",
+            "title": "Provider",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "patterns"
+        ],
+        "title": "ModelScopeRequest"
+      },
+      "ModelSelection": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w./:@+-]+$",
+            "title": "Model"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "ModelSelection"
+      },
       "ModelSettings": {
         "properties": {
           "api": {
@@ -9600,6 +9712,16 @@
       },
       "RpcParams": {
         "properties": {
+          "model_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "thinking": {
             "anyOf": [
               {
@@ -9663,6 +9785,16 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "model_scope": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelScopeRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "code_run": {
             "anyOf": [
@@ -9975,6 +10107,39 @@
         "type": "object",
         "title": "RpcParams"
       },
+      "ScopedModel": {
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/CatalogModel"
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "title": "ScopedModel"
+      },
       "SearchHit": {
         "properties": {
           "request_id": {
@@ -10197,11 +10362,6 @@
       },
       "SessionModel": {
         "properties": {
-          "session_id": {
-            "type": "string",
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$",
-            "title": "Session Id"
-          },
           "provider": {
             "type": "string",
             "pattern": "^[a-z][a-z0-9._-]{0,63}$",
@@ -10209,16 +10369,23 @@
           },
           "model": {
             "type": "string",
-            "pattern": "^[\\w.:-]{1,128}$",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w./:@+-]+$",
             "title": "Model"
+          },
+          "session_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$",
+            "title": "Session Id"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
-          "session_id",
           "provider",
-          "model"
+          "model",
+          "session_id"
         ],
         "title": "SessionModel",
         "description": "The model last selected for one session. This does not add a provider implementation."
@@ -10410,6 +10577,16 @@
       },
       "Submit": {
         "properties": {
+          "model_selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "thinking": {
             "anyOf": [
               {

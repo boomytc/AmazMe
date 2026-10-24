@@ -93,25 +93,19 @@ export async function main(args: string[]): Promise<void> {
 		session !== undefined && (parsed.continue || parsed.resume || parsed.noSession))
 		throw new Error("session_selector_conflict");
 	if (parsed.provider || parsed.model || parsed.apiKey) {
-		if (!parsed.model) throw new Error("model_required");
-		if (parsed.apiKey) {
-			if (!parsed.provider) throw new Error("provider_required");
-			await runPythonProductCommand(
-				["auth", "login", "--provider", parsed.provider, "--method", "api-key", ...target],
-				cwd,
-				{ input: parsed.apiKey, quiet: true, sessionDir:parsed.sessionDir },
-			);
-			if (process.exitCode) return;
-		}
-		await runPythonProductCommand(
-			["model", "--model", parsed.model, ...(parsed.provider ? ["--provider", parsed.provider] : []), ...target],
-			cwd,
-			{ quiet: true, sessionDir:parsed.sessionDir },
-		);
-		if (process.exitCode) return;
-	}
+        if (!parsed.model && !parsed.models?.length) throw new Error("model_required");
+        if (parsed.apiKey) {
+            if (!parsed.provider) throw new Error("provider_required");
+            await runPythonProductCommand(["auth", "login", "--provider", parsed.provider, "--method", "api-key", ...target],
+                cwd, {input:parsed.apiKey, quiet:true, sessionDir:parsed.sessionDir});
+            if (process.exitCode) return;
+        }
+    }
 	const runOptions = requestOptions(parsed);
 	const sessionOptions = {
+        ...(parsed.model ? {modelRef:parsed.model} : {}),
+        ...(parsed.provider ? {provider:parsed.provider} : {}),
+        ...(parsed.models?.length ? {modelPatterns:parsed.models} : {}),
 		...(parsed.sessionDir ? {sessionDir:resolve(cwd,parsed.sessionDir)} : {}),
 		...(parsed.extensions?.length ? {extensions:parsed.extensions.map((entry) => resolve(cwd,entry))} : {}),
         ...(parsed.noSession ? {noSession:true} : {}),

@@ -107,7 +107,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       const method=options.method||'GET', body=options.body?JSON.parse(options.body):{};
       if(path==='/api/v1/bootstrap')return response(identity);
       if(path==='/api/v1/health')return response({state:'ready',identity});
-      if(path==='/api/v1/models')return response({models:[],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
+      if(path==='/api/v1/models')return response({models:[{provider:'faux',model:'faux',label:'Faux',endpoint_editable:false},{provider:'deepseek',model:'deepseek-flash',label:'DeepSeek',endpoint_editable:true}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
       if(path==='/api/v1/sessions')return response({sessions:[{session_id:a,title:'A',workspace:'primary'},{session_id:b,title:'B',workspace:'primary'}]});
       if(path==='/api/v1/plugins' && method==='POST'){plugin.plugin_id=body.plugin_id;plugin.session_id=body.session_id;return response(plugin);}
       if(path.startsWith('/api/v1/plugins?'))return response({plugins:[{...plugin,session_id:new URL(path,location.href).searchParams.get('session_id')}]});
@@ -118,6 +118,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       if(path.endsWith('/remotes'))return response({phase:'connected'});
       if(path.endsWith('/resources'))return new Promise(resolve=>held.push({path,body,resolve:v=>resolve(response(v))}));
       if(method==='POST') return new Promise(resolve=>held.push({path,body,resolve:v=>resolve(response(v))}));
+      if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
       throw Error('unexpected '+method+' '+path);
     };
     globalThis.WebSocket=class {
@@ -199,17 +200,20 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       readAsDataURL(file){readers.push({file,resolve:()=>{this.result='data:image/png;base64,'+file.data;this.onload?.();}});}
     };
     await select(a);
+    $('model-choice').value='deepseek\ndeepseek-flash';
     $('prompt').value='A attachment';
     Object.defineProperty($('images'),'files',{configurable:true,value:[{name:'a.png',type:'image/png',size:1,data:'YQ=='}]});
     $('images').onchange();
     const prepareA=$('composer').onsubmit({preventDefault(){}});
     await until(()=>readers.length===1);
     await select(b);
+    $('model-choice').value='faux\nfaux';
     $('prompt').value='B attachment';
     Object.defineProperty($('images'),'files',{configurable:true,value:[{name:'b.png',type:'image/png',size:1,data:'Yg=='}]});
     $('images').onchange();
     const prepareB=$('composer').onsubmit({preventDefault(){}});
     await until(()=>readers.length===2);
+    $('model-choice').value='deepseek\ndeepseek-flash';
     readers[0].resolve();await prepareA;
     assert.equal(sessionStorage.getItem('pending'),null);
     assert.equal($('prompt').value,'B attachment');
@@ -218,6 +222,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
     const submitted=held.shift();
     assert.equal(submitted.path,'/api/v1/sessions/'+b+'/submissions');
     assert.equal(submitted.body.text,'B attachment');
+    assert.deepEqual(submitted.body.model_selection,{provider:'faux',model:'faux'});
     assert.equal(submitted.body.images[0].data_base64,'Yg==');
     submitted.resolve({request_id:submitted.body.request_id,status:'queued'});await prepareB;
     await select(a);

@@ -85,7 +85,7 @@ WebSocket 的 attachment、ACK、有界重放、快照重同步保留。客户�
 | C 长驻与全客户端 | PTY、MCP、开发服务和各客户端状态 | resize、断线重连、MCP 审批/取消、worker 回收不误杀服务；旧控制与未知结果不重放 |
 | D 产品与交付 | 剩余能力、删除旧业务依赖、1.0.0 前的本机自用包 | 独立安装、真实供应商/TCC/SSH 场景、更新、性能和磁盘预算。签名、公证和更新发布者校验留到 1.0.0 且明确要求发布之后，不绕过系统安全 |
 
-B 全面审查、修复、验证后原子提交，再继续 C。阶段中未就绪的接口明确返回不可用，不回退到 VM。
+实施按已约定顺序持续推进，各单元只做必要即时检查并原子提交；调用方与功能收敛后集中审查、运行验证和最终修复。未接通能力继续实现，不用不可用占位宣称完成。
 C 按会话 PTY、stdio MCP、其余客户端分别形成可验收提交。PTY 输入先登记稳定 ID 再发送，
 重连查询同一终端；不确定输入不重放。协议窗口 32 KiB，重连记录最多 256 KiB。页面打开 `@xterm/xterm` 5.5.0 的 DOM 画面。原生键盘、粘贴、光标应答和已打开的鼠标跟踪共用持久输入队列和原来的监督器输入账本。队列上限 64 KiB，逐批有序发送；回执不确定时暂停，明确重试仍用原 ID，重连不自动重放。Electron、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。TUI 和默认交互画面在当前进程内沿用未确认输入。CLI 失败重试沿用代理目录里的编号。RPC 和 SDK 由调用方传入编号。Electron 页面丢回执后沿用同一输入编号。监督器冻结后不开始新的本机执行。各客户端没有重跑冻结和进程崩溃。输出游标按 UTF-16 码元计数。
 stdio MCP 在会话本机工作目录启动，复用已验证的受管服务生命周期；不继承全部环境或凭据。
@@ -172,7 +172,11 @@ Web/Electron、SDK 和 `code.tools/run/cancel` RPC 共用此路径。脚本及 N
 
 ## Python 模型配置与 SDK 消费者
 
-凭据由 `Client.update_account` 写入私有账号库，模型选择由 `Client.update_model(UpdateModelSettings(...))` 完成。
+凭据由 `Client.update_account` 写入私有账号库，profile 默认模型和端点由 `Client.update_model(UpdateModelSettings(...))` 配置。
+每次请求的 `model_selection` 指定供应商和模型；省略时使用会话已保存的选择，再回退到 profile 默认。
+Host 首次接纳投递时在原 SQLite 事务中固定不含凭据的供应商快照，同 ID 核对不重新选择；定时投递在启动 worker 前固定。
+worker、子任务与原请求沿用该快照，真正请求供应商前才从原账号库读取凭据。
+`ModelScopeRequest` 与 HTTP `/api/v1/models/scope`、`model.scope` RPC、SDK `model_scope` 共用 Python 候选解析，CLI/TUI 只负责呈现和选择。
 配置中的 `provider`、`model`、`api`、`base_url` 和 `max_tokens` 对应当前原生协议；不恢复旧 models.json/TS ProviderRuntime。
 `api` 为 `openai-completions`、`openai-responses`、`openai-codex-responses`、`anthropic-messages` 或 `google-generative-ai`。
 外部模型地址要求 HTTPS；本机 `localhost` 或 IP 回环可使用 HTTP，不接纳 URL 内凭据、query 或 fragment。

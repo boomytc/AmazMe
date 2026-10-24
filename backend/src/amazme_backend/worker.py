@@ -237,7 +237,7 @@ class Worker:
         self._business()
         self._use_current_provider()
         self.last_demand = time.monotonic()
-        receipt = await self.store.accept(value.value, value)
+        receipt = await self.store.accept(value.value, value, accepted_config=value.provider)
         self.quiescent.clear()
         self.wake.set()
         return receipt

@@ -16,9 +16,9 @@ import { getEditorTheme,
 	getSelectListTheme, initTheme, loadThemeFromPath, setRegisteredThemes,
 	setThemeJsonValidator } from "./modes/interactive/theme/theme.ts";
 import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
-import { HostClient, type ImageContent, type PythonRunOptions, type ThinkingLevel } from "./python-headless.ts";
+import { HostClient, type ImageContent, type PythonModelOptions, type PythonRunOptions, type ThinkingLevel } from "./python-headless.ts";
 
-export interface PythonSessionTarget extends PythonRunOptions {
+export interface PythonSessionTarget extends PythonRunOptions, PythonModelOptions {
 	readonly extensions?: readonly string[];
 	readonly url: string;
 	readonly token: string;
@@ -153,6 +153,11 @@ export async function handleLine(client: HostClient, sessionId: string, attachme
 		if (!levels.includes(level)) return ["推理等级：off minimal low medium high xhigh max"];
 		client.setThinking(level as ThinkingLevel);
 		return [`下一回合推理等级：${level}；按模型能力调整`];
+	}
+	if (prompt === "/model next") return [`模型：${await client.cycleModel(sessionId)}`];
+	if (prompt.startsWith("/model ")) {
+		const warnings = await client.configureModels({modelRef:prompt.slice("/model ".length).trim()},sessionId);
+		return [...warnings,"已选择下一回合模型"];
 	}
 	if (prompt === "/skills" || prompt === "/prompts" || prompt === "/context") {
 		const resources = await client.resources(sessionId);
@@ -475,6 +480,7 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		runLine(prompt);
 	};
 	try {
+		for (const warning of await client.configureModels(target,opened.sessionId)) screen.addLine(warning);
 		await client.loadExtensions(opened.sessionId, target.extensions);
 		if (selected) {
 			const snapshot = await client.snapshot(opened.sessionId);

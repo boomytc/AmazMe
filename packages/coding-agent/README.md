@@ -48,3 +48,6 @@ Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿
 
 `--session-dir DIR` 在 `DIR/python-host` 保存独立历史，使用原账号库及锁，避免复制刷新凭据；不能与临时会话或外部 Host 混用。
 `--theme PATH` 加载显式主题，`--use-theme NAME` 选择，`--no-themes` 禁用默认用户主题发现，仍保留显式主题及内置主题。
+
+`--model provider/id` 为本次会话选择模型；`--models 'provider/*:high,other/model'` 设置候选顺序。
+TUI 用 `/model provider/id` 选择、`/model next` 按候选循环；模型和推理选项随原请求固定，重试不读取另一窗口的新选择。

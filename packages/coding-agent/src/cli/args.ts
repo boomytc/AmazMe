@@ -334,6 +334,7 @@ export function printHelp(output: Pick<NodeJS.WriteStream, "write"> = process.st
   --decision 批准|拒绝 --call ID          对已保存的 MCP 调用明确审批
   --provider NAME --model ID [--api-key KEY]  配置账号后提交问题
   --list-models [关键词]                  查看模型
+  --models PATTERNS                       候选模型（逗号分隔，可带 :high 等推理等级）
   --help | --version                      帮助或版本
 
 交互客户端的终端和 MCP 命令保留原调用编号。离开客户端只释放绑定。

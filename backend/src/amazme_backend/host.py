@@ -61,6 +61,7 @@ from .contracts import (
     Cancel,
     CancelCode,
     CancelPlugin,
+    CatalogModel,
     CheckpointCreate,
     CheckpointList,
     CheckpointPreview,
@@ -127,6 +128,8 @@ from .contracts import (
     Message,
     Model,
     ModelCatalog,
+    ModelScope,
+    ModelScopeRequest,
     ModelSettings,
     OpenCode,
     OpenMcp,
@@ -1000,6 +1003,14 @@ class Host:
         self._admit()
         self.profile.reload_provider()
         return ModelCatalog(models=list(CATALOG), current=self._published_model())
+
+    def model_scope(self, value: ModelScopeRequest) -> ModelScope:
+        from .model_scope import resolve_scope
+        catalog = self.model_catalog()
+        if not any((item.provider,item.model) == (catalog.current.provider,catalog.current.model) for item in catalog.models):
+            catalog.models.append(CatalogModel(provider=catalog.current.provider, model=catalog.current.model,
+                label=catalog.current.model, api=catalog.current.api, base_url=catalog.current.base_url, endpoint_editable=True))
+        return resolve_scope(value, catalog.models)
 
     async def session_model(self, session_id: str) -> SessionModel:
         self._admit()
@@ -2255,7 +2266,8 @@ class Host:
 
     async def deliver(self, session: str, kind: Literal["submit", "cancel", "approval", "resolve"], key: str, value: Model) -> Receipt:
         self._admit()
-        delivery = await self.store.enqueue(session, kind, key, value)
+        self.profile.reload_provider()
+        delivery = await self.store.enqueue(session, kind, key, value, provider=self.profile.config.provider)
         if delivery.state == "rejected":
             raise BackendError(delivery.error_code, status=delivery.error_status)
         if delivery.receipt is not None:
@@ -2279,13 +2291,15 @@ class Host:
 
     async def _dispatch(self, delivery: Delivery) -> Delivery:
         self._admit()
+        self.profile.reload_provider()
+        delivery = await self.store.pin_delivery_provider(delivery.delivery_id, self.profile.config.provider)
         peer = await self.worker(delivery.session_id)
         expected_request = ""
         try:
             if delivery.kind == "submit":
                 value = Submit.model_validate_json(delivery.payload)
                 expected_request = value.request_id
-                receipt = await peer.call("POST", "/submissions", Receipt, Submission(**self.fence.model_dump(), value=value))
+                receipt = await peer.call("POST", "/submissions", Receipt, Submission(**self.fence.model_dump(), value=value, provider=delivery.provider))
             elif delivery.kind == "cancel":
                 value = Cancel.model_validate_json(delivery.payload)
                 expected_request = value.request_id
@@ -3000,6 +3014,10 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/models")
     async def models() -> ModelCatalog:
         return owner.model_catalog()
+
+    @app.post("/api/v1/models/scope")
+    async def model_scope(value: ModelScopeRequest) -> ModelScope:
+        return owner.model_scope(value)
 
     @app.post("/api/v1/models")
     async def update_model(value: UpdateModelSettings) -> ModelSettings:

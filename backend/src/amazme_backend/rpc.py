@@ -41,6 +41,8 @@ from .contracts import (
     McpView,
     Model,
     ModelCatalog,
+    ModelScope,
+    ModelScopeRequest,
     ModelSettings,
     PluginCallRequest,
     PluginCallView,
@@ -73,6 +75,7 @@ from .workspace_files import FileContent
 
 
 class RpcParams(RunOptions):
+    model_scope: ModelScopeRequest | None = None
     code_run: CodeRun | None = None
     run_id: str = ""
     tool_call: ToolCall | None = None
@@ -161,6 +164,8 @@ class RpcHost(Protocol):
     async def computer_cleanup(self, session: str) -> ComputerCleanup: ...
 
     def model_catalog(self) -> ModelCatalog: ...
+
+    def model_scope(self, value: ModelScopeRequest) -> ModelScope: ...
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings: ...
 
@@ -308,6 +313,10 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.computer_locate(session,params.computer_locate)
     if method == "computer.cleanup":
         return await owner.computer_cleanup(await _bound(owner, params))
+    if method == "model.scope":
+        if params.model_scope is None:
+            raise BackendError("model_scope_required")
+        return owner.model_scope(params.model_scope)
     if method == "model.list":
         return owner.model_catalog()
     if method == "model.update":
@@ -397,7 +406,7 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
             session, "submit", params.request_id,
             Submit(request_id=params.request_id, text=params.text, images=params.images, not_before_ms=params.not_before_ms,
                    system_prompt=params.system_prompt, append_system_prompt=params.append_system_prompt,
-                   resource_options=params.resource_options, thinking=params.thinking,
+                   resource_options=params.resource_options, thinking=params.thinking, model_selection=params.model_selection,
                    allowed_tools=params.allowed_tools, excluded_tools=params.excluded_tools, tool_call=params.tool_call))
     if method == "request.cancel":
         if not params.request_id:

@@ -900,3 +900,39 @@ async def test_session_recency_is_persisted_and_retries_do_not_move_it(store, tm
         assert (await reopened.create_session(first, CreateSession())).updated_ms == 300
     finally:
         await reopened.db.close()
+
+
+async def test_delivery_pins_session_model_without_credentials_and_same_id_reuses_original(store):
+    from amazme_backend.contracts import ModelSelection, ProviderConfig, SecretStr, SessionModel
+
+    session = "a" * 32
+    config = ProviderConfig(provider="faux",model="faux",api_key=SecretStr("private-key"))
+    await store.save_session_model(SessionModel(session_id=session,provider="deepseek",model="deepseek-flash"))
+    original = Submit(request_id="pinned-model",text="task")
+    delivery = await store.enqueue(session,"submit",original.request_id,original,provider=config)
+    assert delivery.provider is not None
+    assert (delivery.provider.provider,delivery.provider.model) == ("deepseek","deepseek-flash")
+    assert not delivery.provider.api_key.get_secret_value()
+    await store.save_session_model(SessionModel(session_id=session,provider="faux",model="faux"))
+    replay = await store.enqueue(session,"submit",original.request_id,original,provider=config)
+    assert replay.provider == delivery.provider
+    pinned = await store.pin_delivery_provider(delivery.delivery_id,config)
+    assert pinned.provider == delivery.provider
+    explicit = original.model_copy(update={"request_id":"explicit-model", "model_selection":ModelSelection(provider="deepseek",model="deepseek-v4-pro")})
+    captured = await store.enqueue(session,"submit",explicit.request_id,explicit,provider=config)
+    assert captured.provider is not None and captured.provider.model == "deepseek-v4-pro"
+    assert "private-key" not in captured.model_dump_json()
+
+
+async def test_scheduled_delivery_captures_model_once_before_worker_dispatch(store):
+    from amazme_backend.contracts import ProviderConfig, SessionModel
+
+    session = "a" * 32
+    value = Submit(request_id="scheduled-model",text="task")
+    delivery = await store.enqueue(session,"submit",value.request_id,value)
+    await store.save_session_model(SessionModel(session_id=session,provider="deepseek",model="deepseek-flash"))
+    captured = await store.pin_delivery_provider(delivery.delivery_id,ProviderConfig(provider="faux",model="faux"))
+    await store.save_session_model(SessionModel(session_id=session,provider="faux",model="faux"))
+    original = await store.pin_delivery_provider(delivery.delivery_id,ProviderConfig(provider="faux",model="faux"))
+    assert original.provider == captured.provider
+    assert captured.provider is not None and captured.provider.model == "deepseek-flash"

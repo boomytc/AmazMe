@@ -28,6 +28,7 @@ export interface PythonResourceOptions {
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export interface PythonRunOptions {
+    readonly model_selection?: {readonly provider:string; readonly model:string};
     readonly thinking?: ThinkingLevel;
 	readonly resource_options?: PythonResourceOptions;
 	readonly system_prompt?: string;
@@ -36,7 +37,13 @@ export interface PythonRunOptions {
 	readonly excluded_tools?: readonly string[];
 }
 
-export interface PythonHeadlessOptions extends PythonRunOptions {
+export interface PythonModelOptions {
+	readonly modelPatterns?: readonly string[];
+	readonly modelRef?: string;
+	readonly provider?: string;
+}
+
+export interface PythonHeadlessOptions extends PythonRunOptions, PythonModelOptions {
 	readonly sessionDir?: string;
 	readonly extensions?: readonly string[];
 	readonly mode: "text" | "json" | "rpc";
@@ -177,12 +184,17 @@ export class HostClient {
 	#buildId = "";
 	#hostEpoch = 0;
 	#profileId = "";
-	readonly #runOptions: Omit<PythonRunOptions, "thinking"> & {thinking?: ThinkingLevel};
+	readonly #runOptions: Omit<PythonRunOptions, "thinking" | "model_selection"> & {
+		thinking?: ThinkingLevel; model_selection?: {provider:string;model:string}};
+	#scope: Array<{provider:string;model:string;thinking?:ThinkingLevel}> = [];
+	#thinkingOverride: boolean;
 
 	constructor(url: string, token: string, options: PythonRunOptions = {}) {
 		this.#url = url.replace(/\/$/, "");
 		this.#token = token;
+		this.#thinkingOverride = options.thinking !== undefined;
 		this.#runOptions = {
+            model_selection: options.model_selection,
             thinking: options.thinking,
 	        resource_options: options.resource_options,
 			system_prompt: options.system_prompt,
@@ -234,7 +246,71 @@ export class HostClient {
 		}
 	}
 
+	async configureModels(options: PythonModelOptions, sessionId?: string): Promise<string[]> {
+        if (!options.modelRef && !options.modelPatterns?.length) return [];
+        let scope = await this.#resolveModels(options.modelPatterns ?? [options.modelRef ?? ""],options.provider ?? "");
+        const warnings = [...scope.warnings];
+        if (options.modelPatterns?.length) this.#scope = scope.choices;
+        if (options.modelRef && options.modelPatterns?.length) {
+            scope = await this.#resolveModels([options.modelRef],options.provider ?? "");
+            warnings.push(...scope.warnings);
+        }
+        if (!scope.choices.length) fail("models_no_match");
+        if (options.modelRef && scope.choices.length !== 1) fail("model_selector_ambiguous");
+        const current = await this.#currentModel(sessionId);
+        const selected = scope.choices.find(item => item.provider === current.provider && item.model === current.model) ?? scope.choices[0];
+        if (!selected) fail("models_no_match");
+        await this.#selectModel(selected,sessionId);
+        return warnings;
+    }
+
+    async #resolveModels(patterns: readonly string[], provider:string): Promise<{
+        choices:Array<{provider:string;model:string;thinking?:ThinkingLevel}>; warnings:string[];
+    }> {
+		const scope = await this.#send("POST", "/api/v1/models/scope", {
+			patterns, provider,
+		});
+		if (!Array.isArray(scope.models)) fail("invalid_models");
+		const choices = scope.models.map((entry:unknown) => {
+			if (!isRecord(entry) || !isRecord(entry.model) || typeof entry.model.provider !== "string" || typeof entry.model.model !== "string")
+				fail("invalid_models");
+			return {provider:entry.model.provider, model:entry.model.model,
+				...(typeof entry.thinking === "string" && ["off","minimal","low","medium","high","xhigh","max"].includes(entry.thinking)
+					? {thinking:entry.thinking as ThinkingLevel} : {})};
+		});
+        return {choices, warnings:Array.isArray(scope.diagnostics) ? scope.diagnostics.filter((item:unknown):item is string => typeof item === "string") : []};
+    }
+
+	async cycleModel(sessionId: string): Promise<string> {
+		if (!this.#scope.length) fail("model_cycle_requires_models_option");
+		const current = this.#runOptions.model_selection ?? await this.#currentModel(sessionId);
+		const index = this.#scope.findIndex(item => item.provider === current.provider && item.model === current.model);
+		const selected = this.#scope[(index + 1) % this.#scope.length];
+		if (!selected) fail("models_no_match");
+		await this.#selectModel(selected,sessionId);
+		return `${selected.provider}/${selected.model}`;
+	}
+
+	async #currentModel(sessionId?: string): Promise<Record<string, unknown>> {
+		if (sessionId) {
+			try { return await this.#send("GET", `/api/v1/session-models/${sessionId}`); }
+			catch (error) { if (!(error instanceof HostRequestError && error.status === 404)) throw error; }
+		}
+		const catalog = await this.#send("GET", "/api/v1/models");
+		if (!isRecord(catalog.current)) fail("invalid_models");
+		return catalog.current;
+	}
+
+	async #selectModel(selected: {provider:string;model:string;thinking?:ThinkingLevel}, sessionId?:string): Promise<void> {
+		if (sessionId) await this.#send("PUT", `/api/v1/session-models/${sessionId}`, {
+			session_id:sessionId, provider:selected.provider, model:selected.model,
+		});
+		this.#runOptions.model_selection = {provider:selected.provider, model:selected.model};
+		if (!this.#thinkingOverride) this.#runOptions.thinking = selected.thinking;
+	}
+
 	setThinking(level: ThinkingLevel): void {
+		this.#thinkingOverride = true;
 		this.#runOptions.thinking = level;
 	}
 
@@ -959,6 +1035,7 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions & {r
 		? await client.attach(selected, options.workspace)
 		: await client.open(options.workspace, options.title);
 	try {
+		for (const warning of await client.configureModels(options,opened.sessionId)) process.stderr.write(warning + "\n");
 		await client.loadExtensions(opened.sessionId, options.extensions);
 		if (!prompt && options.request && !decision) {
 			const polled = await client.inspectRequest(
@@ -1056,6 +1133,7 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 		const client = new HostClient(host.url, host.token, options);
 		await client.bootstrap();
 		if (options.mode === "rpc") {
+			for (const warning of await client.configureModels(options,options.session)) process.stderr.write(warning + "\n");
 			if (!options.extensions?.length) return await runRpc(client);
 			if (!options.session) fail("rpc_extensions_require_session");
 			const opened = await client.attach(options.session, options.workspace ?? "primary");
