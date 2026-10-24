@@ -316,7 +316,8 @@ class ComputerDriver:
             self.elements = TypeAdapter(list[dict[str, JsonValue]]).validate_python(data.get("elements", []))[:500]
             return {"op": "capture", "capture_id": self.capture_id, "image_base64": encoded,
                     "snapshot_id": self.snapshot_id, "elements": self.elements,
-                    "tree": str(data.get("tree_markdown") or "")[:20000]}
+                    "tree": str(data.get("tree_markdown") or "")[:20000],
+                    "window_bounds":data.get("window_bounds"),"degraded_reason":data.get("degraded_reason","")}
         if payload.get("op") != "act" or payload.get("capture_id") != self.capture_id or not self.driver_capture:
             return {"op": "rejected", "error": "computer_stale"}
         value = ComputerMutation.model_validate({key: payload[key] for key in ("capture_id", "action", "target", "delivery_mode")})

@@ -239,7 +239,7 @@ function startClient() {
   function settlePending(key, field, id, value = null) {
     const saved = JSON.parse(sessionStorage.getItem(key) || "null");
     if (saved?.[field] !== id) return;
-    if (value) sessionStorage.setItem(key, JSON.stringify(value));
+    if (value) sessionStorage.setItem(key, JSON.stringify(saved.reviewed && value.phase === "unknown" ? {...value,reviewed:true} : value));
     else sessionStorage.removeItem(key);
   }
   const archivedNow = () => Boolean(archived.get(selected));
@@ -514,8 +514,9 @@ function startClient() {
       computerCapture = "";
       computerTarget = null;
       $("computer-state").textContent = "";
-      $("computer-enabled").checked = false;
-      $("computer-foreground").checked = false;
+      $("computer-jev-key").value = "";
+      delete $("computer-form").dataset.policy;
+      $("computer-form").reset();
       $("computer-image").removeAttribute("src");
       $("computer-image").hidden = true;
     }
@@ -1293,12 +1294,24 @@ function startClient() {
   async function loadComputerPolicy() {
     const operation = beginOperation("computer-action");
     if (!operation || !operation.identity) return;
-    const view = await api(`/api/v1/sessions/${operation.session}/computer`, "GET", undefined, operation.connection);
+    try {
+    const [view,catalog,accounts] = await Promise.all([
+      api(`/api/v1/sessions/${operation.session}/computer`,"GET",undefined,operation.connection),
+      api("/api/v1/classifiers","GET",undefined,operation.connection),
+      api("/api/v1/accounts","GET",undefined,operation.connection),
+    ]);
     if (!operation.active()) return;
-    $("computer-enabled").checked = view.enabled;
-    $("computer-foreground").checked = view.allow_foreground;
+    $("computer-jev-model").replaceChildren(...catalog.models.map(model => {
+      const option = document.createElement("option"); option.value = `${model.provider}\n${model.id}`;
+      option.textContent = `${model.provider} · ${model.name}`;
+      option.defaultSelected = model.provider === "typesafe" && model.id === "jev-1.14.0";
+      return option;
+    }));
+    showAccounts(accounts);
+    computerPolicyFields(view);
+    } catch (failure) { if (operation.active()) error(failure); }
   }
-  $("computer").ontoggle = () => { if ($("computer").open) void loadComputerPolicy().catch(error); };
+  $("computer").ontoggle = () => { if ($("computer").open) void loadComputerPolicy(); };
   $("computer-form").onsubmit = async event => {
     event.preventDefault();
     const operation = beginOperation("computer-action");
@@ -1306,8 +1319,12 @@ function startClient() {
     const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
     try {
-      const view = await api(`/api/v1/sessions/${selected}/computer`, "POST", {enabled: $("computer-enabled").checked,
-        allow_foreground: $("computer-foreground").checked}, connection);
+      const view = await api(`/api/v1/sessions/${selected}/computer`, "POST", {...JSON.parse($("computer-form").dataset.policy || "{}"),enabled: $("computer-enabled").checked,
+        allow_foreground: $("computer-foreground").checked,
+        jev_enabled:$("computer-jev-enabled").checked,jev_provider:$("computer-jev-model").value.split("\n")[0],
+        jev_model:$("computer-jev-model").value.split("\n")[1],min_presence:Number($("computer-presence").value),
+        min_box_confidence:Number($("computer-box-confidence").value),min_choice_confidence:Number($("computer-choice-confidence").value),
+        timeout_ms:Number($("computer-timeout").value),allow_risk_categories:[...$("computer-risks").selectedOptions].map(option=>option.value)}, connection);
       if (!operation.active()) return;
       $("computer-state").textContent = view.enabled ? "已启用" : "已关闭";
       $("error").textContent = "";
@@ -1330,7 +1347,7 @@ function startClient() {
       image.hidden = !view.image_base64;
       if (view.image_base64) image.src = `data:image/png;base64,${view.image_base64}`;
       else image.removeAttribute("src");
-      const elements = (view.capture?.elements || []).filter(item=>item.element_token).slice(0,24)
+      const elements = (view.capture?.candidates || [])
         .map(item=>`${item.element_token} · ${item.role || ""} · ${item.label || ""}`).join("\n");
       $("computer-state").textContent = view.capture ? `${view.capture.width}×${view.capture.height}\n${view.capture.tree || ""}\n${elements}` :
         view.error || JSON.stringify(view.data || {accessibility:view.accessibility, screen:view.screen});
@@ -1354,16 +1371,16 @@ function startClient() {
     else if (kind === "hotkey") action = {action:kind, keys:$("computer-text").value.split(",").map(key=>key.trim())};
     else if (kind === "scroll") action = {action:kind, ...pixel, direction:$("computer-direction").value, amount:Number($("computer-amount").value)};
     else action = {action:kind, ...pixel, to_x:Number($("computer-to-x").value), to_y:Number($("computer-to-y").value)};
-    const point = {capture_id:computerCapture, target:computerTarget, delivery_mode:$("computer-delivery").value, action};
+    const point = {capture_id:computerCapture, target:computerTarget, delivery_mode:$("computer-delivery").value, action, intent:$("computer-goal").value};
     let pending = null;
     try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); }
     catch { pending = null; }
-    if (pending && pending.phase === "unknown" && (
+    if (pending && pending.phase === "unknown" && !pending.reviewed && (
       JSON.stringify(pending.operation) !== JSON.stringify(point))) {
       error(new Error("上次桌面动作结果未知，未自动重发；请用同一画面和坐标再查。"));
       return;
     }
-    if (!pending || pending.phase !== "unknown") {
+    if (!pending || pending.phase !== "unknown" || pending.reviewed) {
       pending = {action_id: crypto.randomUUID().replaceAll("-", ""), operation:point, phase:"unknown"};
       sessionStorage.setItem(key, JSON.stringify(pending));
     }
@@ -1374,18 +1391,89 @@ function startClient() {
       pending.phase = view.phase;
       settlePending(key, "action_id", pending.action_id, view.phase === "unknown" ? pending : null);
       if (!operation.active()) return;
-      $("computer-state").textContent = `${view.phase} · ${view.driver_x},${view.driver_y}`;
+      $("computer-state").textContent = view.result && Object.keys(view.result).length ? JSON.stringify(view.result,null,2) : `${view.phase} · ${view.driver_x},${view.driver_y}`;
       if (view.phase === "unknown") error(new Error("上次桌面动作结果未知，未自动重发；请用同一画面和坐标再查。"));
       else $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }
   };
+  const computerPolicyFields = view => {
+    $("computer-form").dataset.policy = JSON.stringify(view);
+    $("computer-enabled").checked = view.enabled;
+    $("computer-foreground").checked = view.allow_foreground;
+    $("computer-jev-enabled").checked = view.jev_enabled !== false;
+    $("computer-jev-model").value = `${view.jev_provider || "typesafe"}\n${view.jev_model || "jev-1.14.0"}`;
+    $("computer-presence").value = String(view.min_presence ?? .8);
+    $("computer-box-confidence").value = String(view.min_box_confidence ?? .7);
+    $("computer-choice-confidence").value = String(view.min_choice_confidence ?? .7);
+    $("computer-timeout").value = String(view.timeout_ms ?? 30000);
+    for (const option of $("computer-risks").options) option.selected = (view.allow_risk_categories || []).includes(option.value);
+  };
+  $("computer-jev-save-key").onclick = async () => {
+    const operation = beginOperation("computer-account");
+    if (!operation) return;
+    const provider = $("computer-jev-model").value.split("\n")[0];
+    const key = $("computer-jev-key").value;
+    if (!provider || !key) return;
+    try {
+      const accounts = await api(`/api/v1/accounts/${encodeURIComponent(provider)}`,"POST",{
+        expected_revision:Number($("model-form").dataset.credentialRevision || 0),api_key:key,clear:false,
+      },operation.connection,operation.identity);
+      if (!operation.active()) return;
+      $("computer-jev-key").value = "";
+      showAccounts(accounts);
+      $("computer-state").textContent = "分类器账号已保存";
+    } catch (failure) { if (operation.active()) error(failure); }
+  };
+  async function sendComputerOperation(kind, body, query = false) {
+    const operation = beginOperation("computer-action");
+    if (!operation || !operation.session || !operation.identity || health?.state !== "ready") return;
+    const {connection,session:selected,identity} = operation;
+    const key = `computer-operation:${identity.profile_id}:${selected}`;
+    let pending;
+    try { pending = JSON.parse(sessionStorage.getItem(key) || "null"); } catch { pending = null; }
+    if (query && !pending) return;
+    if (pending?.phase === "unknown" && !pending.reviewed && !query && (pending.kind !== kind || JSON.stringify(pending.body) !== JSON.stringify(body))) {
+      error(new Error("上次桌面操作结果未知，请查询原操作并核对结果。")); return;
+    }
+    if (!query && (!pending || pending.phase !== "unknown" || pending.reviewed)) {
+      pending = {action_id:crypto.randomUUID().replaceAll("-",""),kind,body,phase:"unknown"};
+      sessionStorage.setItem(key,JSON.stringify(pending));
+    }
+    try {
+      const view = await api(`/api/v1/sessions/${selected}/computer/${pending.kind}`,"POST",{...pending.body,action_id:pending.action_id},connection);
+      settlePending(key,"action_id",pending.action_id,view.phase === "unknown" ? pending : null);
+      if (!operation.active()) return;
+      $("computer-state").textContent = JSON.stringify(view.result && Object.keys(view.result).length ? view.result : {phase:view.phase,error:view.error},null,2);
+      if (view.images?.length) { $("computer-image").src = `data:${view.images[0].media_type};base64,${view.images[0].data_base64}`; $("computer-image").hidden = false; }
+      if (view.phase === "unknown") error(new Error("桌面操作结果未知，未自动重发。"));
+      else $("error").textContent = "";
+    } catch (failure) { if (operation.active()) error(failure); }
+  }
+  $("computer-locate").onclick = () => void sendComputerOperation("locate",{
+    capture_id:computerCapture,target:computerTarget,description:$("computer-goal").value,mode:$("computer-locate-mode").value,
+  });
+  $("computer-ground").onclick = () => void sendComputerOperation("ground",{
+    target:{pid:Number($("computer-pid").value),window_id:Number($("computer-window").value)},
+    goal:$("computer-goal").value,verification:$("computer-verification").value,
+    action:$("computer-ground-action").value,text:$("computer-text").value,
+  });
+  $("computer-operation-query").onclick = () => void sendComputerOperation("",{},true);
   $("computer-cleanup").onclick = async () => {
     const operation = beginOperation("computer-action");
     if (!operation) return;
     const {connection, session:selected, identity} = operation;
     if (!selected || !identity || health?.state !== "ready") return;
+    const reviewed = ["computer-action", "computer-operation"].map(prefix => {
+      const key = `${prefix}:${identity.profile_id}:${selected}`;
+      let record;
+      try { record = JSON.parse(sessionStorage.getItem(key) || "null"); } catch { record = null; }
+      return {key,record};
+    });
     try {
       const view = await api(`/api/v1/sessions/${selected}/computer/cleanup`, "POST", {}, connection);
+      if (view.cleared && view.proof) for (const {key,record} of reviewed) {
+        if (record?.phase === "unknown") settlePending(key,"action_id",record.action_id,{...record,reviewed:true});
+      }
       if (!operation.active()) return;
       $("computer-state").textContent = view.cleared ? `已清理 ${view.proof}` : "";
       $("error").textContent = "";

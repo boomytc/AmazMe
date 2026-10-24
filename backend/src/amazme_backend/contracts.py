@@ -8,7 +8,7 @@ import re
 from fnmatch import fnmatchcase
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, field_validator, model_validator
 
 
 class Model(BaseModel):
@@ -19,7 +19,7 @@ ProviderApi = Literal["openai-completions", "openai-responses", "openai-codex-re
                       "anthropic-messages", "google-generative-ai"]
 
 
-TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$"
+TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$"
 
 
 class RunOptions(Model):
@@ -593,15 +593,48 @@ class WebCallView(Model):
     result: str = ""
 
 
+RiskCategory = Literal["destructive", "send", "purchase", "close_unsaved"]
+
+
 class ComputerPolicy(Model):
     enabled: bool = False
     allow_foreground: bool = False
     max_age_ms: int = Field(default=55000, ge=1, le=55000)
+    jev_enabled: bool = True
+    jev_provider: str = Field(default="typesafe",min_length=1,max_length=200)
+    jev_model: str = Field(default="jev-1.14.0",min_length=1,max_length=200)
+    min_presence: float = Field(default=.8,ge=0,le=1)
+    min_box_confidence: float = Field(default=.7,ge=0,le=1)
+    min_choice_confidence: float = Field(default=.7,ge=0,le=1)
+    allow_risk_categories: list[RiskCategory] = Field(default_factory=lambda:list[RiskCategory](),max_length=4)
+    timeout_ms: int = Field(default=30000,ge=100,le=300000)
+
+    @field_validator("allow_risk_categories")
+    @classmethod
+    def unique_risks(cls, value: list[RiskCategory]) -> list[RiskCategory]:
+        if len(set(value)) != len(value):
+            raise ValueError("risk categories must be unique")
+        return value
 
 
 class ComputerWindow(Model):
     pid: int = Field(ge=1)
     window_id: int = Field(ge=1)
+
+
+class ComputerRect(Model):
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+    width: float = Field(allow_inf_nan=False)
+    height: float = Field(allow_inf_nan=False)
+
+
+class ComputerCandidate(Model):
+    id: str
+    role: Literal["button","toggle","checkbox","radio","popup","menu_item","link","text_input"]
+    label: str
+    element_token: str
+    value: str | None = None
 
 
 class ComputerCaptureView(Model):
@@ -617,6 +650,9 @@ class ComputerCaptureView(Model):
     snapshot_id: str = ""
     tree: str = Field(default="", max_length=20000)
     elements: list[dict[str, JsonValue]] = Field(default_factory=lambda: list[dict[str, JsonValue]](), max_length=500)
+    window_bounds: ComputerRect | None = None
+    degraded_reason: str = ""
+    candidates: list[ComputerCandidate] = Field(default_factory=lambda:list[ComputerCandidate](),max_length=24)
 
 
 class ComputerObserve(Model):
@@ -687,6 +723,36 @@ class ComputerMutation(Model):
     target: ComputerWindow | None = None
     delivery_mode: Literal["background", "foreground"] = "background"
     action: ComputerAction
+    intent: str = Field(default="",max_length=4000)
+
+
+class ComputerLocate(Model):
+    capture_id: str = Field(min_length=1,max_length=128)
+    target: ComputerWindow | None = None
+    description: str = Field(min_length=1,max_length=4000)
+    mode: Literal["look_closer","tiled"] = "look_closer"
+
+
+class ComputerGround(Model):
+    target: ComputerWindow
+    goal: str = Field(min_length=1,max_length=4000)
+    verification: str = Field(min_length=1,max_length=4000)
+    action: Literal["click","set_value","type_text"] = "click"
+    text: str | None = Field(default=None,max_length=16000)
+
+    @model_validator(mode="after")
+    def required_text(self) -> ComputerGround:
+        if self.action != "click" and self.text is None:
+            raise ValueError("text actions require explicit text")
+        return self
+
+
+class ComputerLocateRequest(ComputerLocate):
+    action_id: str = Field(min_length=1,max_length=128,pattern=r"^[\w.-]+$")
+
+
+class ComputerGroundRequest(ComputerGround):
+    action_id: str = Field(min_length=1,max_length=128,pattern=r"^[\w.-]+$")
 
 
 class ComputerInspect(Model):
@@ -706,6 +772,8 @@ class ComputerActionView(Model):
     error: str = ""
     driver_x: int | None = None
     driver_y: int | None = None
+    result: dict[str, JsonValue] = Field(default_factory=lambda:dict[str, JsonValue]())
+    images: list[ImagePart] = Field(default_factory=lambda:list[ImagePart]())
 
 
 class ComputerCleanup(Model):

@@ -33,6 +33,10 @@ SCENARIOS: dict[Path, str] = {}
 @pytest.fixture(autouse=True)
 def fixed_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     SCENARIOS.clear()
+    # These tests exercise driver transport, permissions and ownership. Semantic gates have their own tests.
+    async def permit(*args):
+        return {"status":"allowed","calls":[]}
+    monkeypatch.setattr(Host,"_computer_risk",permit)
     monkeypatch.setattr("amazme_backend.host.start_driver", lambda directory:
                         start_probe(directory, SCENARIOS[directory.parents[1]]))
 
@@ -295,7 +299,11 @@ def test_browser_clicks_the_selected_session_capture() -> None:
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:session,title:'工作区',archived:false,workspace:'primary'}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:session,build_id:'build',host_epoch:1});
           if(path===`/api/v1/sessions/${session}/computer` && method==='POST') {
-            seen.push(path+' '+JSON.stringify(Object.keys(body).sort()));
+            assert.equal(body.enabled,true);
+            assert.equal(body.jev_model,'jev-1.14.0');
+            assert.equal(body.min_presence,.8);
+            assert.equal(Object.hasOwn(body,'accessibility'),false);
+            seen.push(path);
             return response({enabled:true,max_age_ms:55000});
           }
           if(path===`/api/v1/sessions/${session}/computer/observe` && method==='POST') {
@@ -323,7 +331,7 @@ def test_browser_clicks_the_selected_session_capture() -> None:
         await import(appURL);
         await until(()=>$('sessions').textContent.includes('工作区'));
         $('computer-enabled').checked = true;
-        $('computer-form').requestSubmit();
+        $('computer-form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));
         await until(()=>$('computer-state').textContent.includes('已启用'));
         $('computer-observe').click();
         await until(()=>$('computer-state').textContent.includes('10×20'));
@@ -331,9 +339,9 @@ def test_browser_clicks_the_selected_session_capture() -> None:
         await until(()=>$('computer-state').textContent.includes('8,16'));
         $('computer-cleanup').click();
         await until(()=>$('computer-state').textContent.includes('proof'));
-        assert.equal(seen[0], `/api/v1/sessions/${session}/computer ["allow_foreground","enabled"]`);
+        assert.equal(seen[0], `/api/v1/sessions/${session}/computer`);
         assert.equal(seen[1], `/api/v1/sessions/${session}/computer/observe`);
-        assert.equal(seen[2], `/api/v1/sessions/${session}/computer/actions ["action","action_id","capture_id","delivery_mode","target"] cap 1,4`);
+        assert.equal(seen[2], `/api/v1/sessions/${session}/computer/actions ["action","action_id","capture_id","delivery_mode","intent","target"] cap 1,4`);
         assert.equal(seen[3], `/api/v1/sessions/${session}/computer/cleanup`);
         $('computer-y').value = '9';
         $('computer-act').requestSubmit();

@@ -209,3 +209,28 @@ async def test_host_computer_dispatch_requires_live_owner_and_the_exact_session_
     finally:
         await store.db.close()
         await _stop(host)
+
+
+@pytest.mark.parametrize('name,arguments,needs_approval',[
+    ('computer_ground',{'target':{'pid':12,'window_id':3},'goal':'Continue','verification':'Success'},True),
+    ('computer_locate',{'capture_id':'frame','target':{'pid':12,'window_id':3},'description':'Continue'},False),
+])
+async def test_grounding_tools_share_the_original_approval_and_generation_gate(tmp_path,name,arguments,needs_approval):
+    store = await opened(tmp_path)
+    try:
+        action = await propose(store,name,arguments)
+        if needs_approval:
+            assert isinstance(action,Park)
+            approval = (await store.snapshot()).approvals[-1]
+            assert approval.call.name == name
+            await store.approve(ApprovalDecision(decision_id='allow',approval_id=approval.approval_id,
+                expected_revision=approval.revision,proposal_digest=approval.proposal_digest,approve=True),FENCE)
+            action = await advance(store)
+        assert isinstance(action,ComputerRetrieval) and action.call.name == name
+        request = ComputerToolRequest(**FENCE.model_dump(),session_id='session',worker_id='worker',step_id=action.step_id,
+            request_id=action.request_id,generation=action.generation,call=action.call)
+        await store.check_computer_intent(request)
+        with pytest.raises(BackendError,match='computer_intent_mismatch'):
+            await store.check_computer_intent(request.model_copy(update={'generation':action.generation+1}))
+    finally:
+        await store.db.close()

@@ -24,7 +24,9 @@ from .contracts import (
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
+    ComputerGroundRequest,
     ComputerInspect,
+    ComputerLocateRequest,
     ComputerObserve,
     ComputerPolicy,
     CreateSession,
@@ -73,6 +75,8 @@ class RpcParams(RunOptions):
     computer_inspect: ComputerInspect | None = None
     computer_policy: ComputerPolicy | None = None
     computer_action: ComputerActionRequest | None = None
+    computer_ground: ComputerGroundRequest | None = None
+    computer_locate: ComputerLocateRequest | None = None
     provider: str = ""
     login_id: str = ""
     model_settings: UpdateModelSettings | None = None
@@ -140,6 +144,10 @@ class RpcHost(Protocol):
     async def computer_observe(self, session: str, value: ComputerInspect | None = None) -> ComputerObserve: ...
 
     async def computer_action(self, session: str, value: ComputerActionRequest) -> ComputerActionView: ...
+
+    async def computer_ground(self, session: str, value: ComputerGroundRequest) -> ComputerActionView: ...
+
+    async def computer_locate(self, session: str, value: ComputerLocateRequest) -> ComputerActionView: ...
 
     async def computer_cleanup(self, session: str) -> ComputerCleanup: ...
 
@@ -269,6 +277,16 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if params.computer_action is None:
             raise BackendError("computer_action_required")
         return await owner.computer_action(await _bound(owner, params), params.computer_action)
+    if method == "computer.ground":
+        session = await _bound(owner,params)
+        if params.computer_ground is None:
+            raise BackendError("computer_ground_required")
+        return await owner.computer_ground(session,params.computer_ground)
+    if method == "computer.locate":
+        session = await _bound(owner,params)
+        if params.computer_locate is None:
+            raise BackendError("computer_locate_required")
+        return await owner.computer_locate(session,params.computer_locate)
     if method == "computer.cleanup":
         return await owner.computer_cleanup(await _bound(owner, params))
     if method == "model.list":

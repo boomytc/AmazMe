@@ -2,7 +2,7 @@
 
 from typing import Literal, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, JsonValue
 
 from .common import Peer
 from .contracts import (
@@ -12,6 +12,7 @@ from .contracts import (
     ComputerCaptureView,
     ComputerPolicy,
     HostFence,
+    ImagePart,
     Message,
     Model,
     Receipt,
@@ -159,6 +160,8 @@ class BeginComputerResult(Model):
 
 
 class SettleComputerBody(Model):
+    result: dict[str, JsonValue] = Field(default_factory=lambda:dict[str, JsonValue]())
+    images: list[ImagePart] = Field(default_factory=lambda:list[ImagePart]())
     action_id: str
     phase: Literal["unknown", "done", "failed"]
     error: str
@@ -260,7 +263,7 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
     if name == "settle_computer_action":
         body = SettleComputerBody.model_validate_json(payload)
         return _model(await store.settle_computer_action(
-            body.action_id, body.phase, body.error, body.driver_x, body.driver_y))
+            body.action_id, body.phase, body.error, body.driver_x, body.driver_y, body.result, body.images))
     if name == "finish_computer_cleanup":
         return _model(TextValue(value=await store.finish_computer_cleanup(TextValue.model_validate_json(payload).value)))
     if name == "begin_compaction":
@@ -305,7 +308,8 @@ class SessionOps(Protocol):
     async def note_computer_exit(self, exit_code: int | None) -> None: ...
     async def save_computer_capture(self, value: ComputerCaptureView) -> ComputerCaptureView: ...
     async def begin_computer_action(self, action_id: str, body: str) -> tuple[ComputerActionView, bool]: ...
-    async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"], error: str, driver_x: int | None, driver_y: int | None) -> ComputerActionView: ...
+    async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"], error: str, driver_x: int | None, driver_y: int | None, result: dict[str, JsonValue] | None = None,
+                                     images: list[ImagePart] | None = None) -> ComputerActionView: ...
     async def finish_computer_cleanup(self, proof: str) -> str: ...
     async def begin_compaction(self, compaction_id: str, through_request_id: str) -> Compaction | None: ...
     async def release_compaction(self, compaction_id: str) -> None: ...
@@ -406,9 +410,10 @@ class SessionRelay:
         return result.view, result.send
 
     async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"],
-                                     error: str, driver_x: int | None, driver_y: int | None) -> ComputerActionView:
+                                     error: str, driver_x: int | None, driver_y: int | None, result: dict[str, JsonValue] | None = None,
+                                     images: list[ImagePart] | None = None) -> ComputerActionView:
         return ComputerActionView.model_validate_json(await self._call("settle_computer_action", SettleComputerBody(
-            action_id=action_id, phase=phase, error=error, driver_x=driver_x, driver_y=driver_y)))
+            action_id=action_id, phase=phase, error=error, driver_x=driver_x, driver_y=driver_y, result=result or {}, images=images or [])))
 
     async def finish_computer_cleanup(self, proof: str) -> str:
         return TextValue.model_validate_json(await self._call("finish_computer_cleanup", TextValue(value=proof))).value

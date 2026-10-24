@@ -113,6 +113,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       if(path.startsWith('/api/v1/plugins?'))return response({plugins:[{...plugin,session_id:new URL(path,location.href).searchParams.get('session_id')}]});
       if(path.endsWith('/attachments')&&method==='POST'){bindings++;return response({attachment_id:'binding-'+path.split('/')[4],session_id:path.split('/')[4],build_id:'build',host_epoch:1});}
       if(method==='DELETE')return response({detached:true});
+      if(path.endsWith('/computer/cleanup'))return response({cleared:true,proof:'owned-exit'});
       if(path.endsWith('/computer/observe'))return response({permitted:true,capture:{capture_id:path.split('/')[4],width:100,height:100}});
       if(path.endsWith('/remotes'))return response({phase:'connected'});
       if(method==='POST') return new Promise(resolve=>held.push({path,body,resolve:v=>resolve(response(v))}));
@@ -135,6 +136,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       {form:'code-run',key:s=>'code-run:host-1:'+s,out:'code-result',payload:{phase:'success',value:'old',state:'old'}},
       {form:'web-search',key:s=>'web-call:host-1:'+s,out:'web-state',payload:{phase:'done',result:'old'}},
       {form:'plugin-call',key:s=>[...Array(sessionStorage.length)].map((_,i)=>sessionStorage.key(i)).find(k=>k.startsWith('plugin-call:host-1:'+s)),out:'plugin-result',payload:{phase:'done',result:{content:[{type:'text',text:'old'}]}}},
+      {form:'computer-ground',key:s=>'computer-operation:host-1:'+s,out:'computer-state',payload:{phase:'done',result:{status:'old'}}},
       {form:'computer-act',key:s=>'computer-action:host-1:'+s,out:'computer-state',payload:{phase:'done',driver_x:99,driver_y:99}},
       {form:'remote-command',key:s=>[...Array(sessionStorage.length)].map((_,i)=>sessionStorage.key(i)).find(k=>k.startsWith('remote-call:host-1:'+s)),out:'remote-result',payload:{phase:'done',result:'old'}},
     ];
@@ -163,5 +165,18 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       await until(()=>sessionStorage.getItem(keyB)===null);
       assert.equal($(test.out).textContent,after);
     }
+    // A cleanup proof may arrive before the old HTTP waiter receives its unknown result.
+    $('computer-ground').click();await until(()=>held.length===1);
+    const old=held.shift(), nativeKey='computer-operation:host-1:'+a;
+    const original=JSON.parse(sessionStorage.getItem(nativeKey));
+    $('computer-cleanup').click();await until(()=>JSON.parse(sessionStorage.getItem(nativeKey)).reviewed===true);
+    old.resolve({phase:'unknown',result:{status:'review'}});
+    await new Promise(resolve=>setTimeout(resolve,5));
+    assert.equal(JSON.parse(sessionStorage.getItem(nativeKey)).reviewed,true);
+    assert.equal(JSON.parse(sessionStorage.getItem(nativeKey)).action_id,original.action_id);
+    $('computer-goal').value='Next explicit operation';$('computer-ground').click();await until(()=>held.length===1);
+    const next=held.shift();assert.notEqual(next.body.action_id,original.action_id);
+    next.resolve({phase:'done',result:{status:'verified'}});
+    await until(()=>sessionStorage.getItem(nativeKey)===null);
     await window.happyDOM.abort();process.exit(0);
     ''')

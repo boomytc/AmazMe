@@ -536,7 +536,8 @@ class Worker:
         request = ComputerToolRequest(build_id=self.build, host_epoch=epoch, session_id=self.session,
             worker_id=self.instance, step_id=action.step_id, request_id=action.request_id,
             generation=action.generation, call=action.call)
-        async with httpx.AsyncClient(timeout=75, trust_env=False) as client:
+        policy = await self.store.computer_policy()
+        async with httpx.AsyncClient(timeout=max(75,policy.timeout_ms / 1000 + 30), trust_env=False) as client:
             response = await client.post(ready.url + "/control/computer/tool", json=request.model_dump(),
                                          headers={"Authorization": "Bearer " + self.profile.token})
         if response.is_error:

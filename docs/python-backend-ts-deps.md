@@ -13,7 +13,7 @@
 | 旧 Host 与 session-worker | coding-agent 的包导出、构建入口、旧测试，以及旧插件侧的注册依赖 | 仍需迁移消费者并删除；不能据 CLI 迁移宣称整个 TS 内核已删除 |
 | `durable/sdk.ts` | 包根导出及 eval 类型消费者，函数目前拒绝旧会话 | 迁移 eval 后删除拒绝占位和旧导出，不保留兼容运行时 |
 | evals | 旧 harness、配置与容器工具，运行入口拒绝旧会话 | 改为本机 Python SDK 路线；不恢复 Docker 作为产品执行后端 |
-| 原生插件 | 旧 facet 注册；CUA App 配方和原生驱动仍有用途 | 按插件实际产品能力迁入 Python，保留原生配方/必要 JS helper |
+| 原生插件 | 旧 facet 注册；CUA App 配方和原生驱动仍有用途 | 驱动及分类/定位/候选业务已迁 Python；旧 TS 宿主消费者待同批删除，保留原生配方/必要 JS helper |
 | `@amazme/web` / `@amazme/durable` 的页面值导入 | Electron 呈现依赖 | 沿实际导入清理，不能机械删除整个包 |
 
 CLI 单元已删除没有产品消费者的 `cli/auth-check.ts`、`credential-print.ts`、

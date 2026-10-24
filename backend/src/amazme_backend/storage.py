@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import IO, Literal
 
-from pydantic import TypeAdapter
+from pydantic import JsonValue, TypeAdapter
 
 from .common import lock
 from .contracts import (
@@ -1099,7 +1099,8 @@ class SessionStore:
         return await self._tx(operation)
 
     async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"],
-                                     error: str, driver_x: int | None, driver_y: int | None) -> ComputerActionView:
+                                     error: str, driver_x: int | None, driver_y: int | None,
+                                     result: dict[str, JsonValue] | None = None, images: list[ImagePart] | None = None) -> ComputerActionView:
         def operation(db: sqlite3.Connection, _changes: Changes) -> ComputerActionView:
             row = db.execute("SELECT payload FROM computer_actions WHERE id=?", (action_id,)).fetchone()
             if row is None:
@@ -1111,6 +1112,8 @@ class SessionStore:
             current.error = error
             current.driver_x = driver_x
             current.driver_y = driver_y
+            current.result = result or {}
+            current.images = checked_images(images or [])
             db.execute(
                 "UPDATE computer_actions SET payload=? WHERE id=? AND json_extract(payload,'$.phase')='unknown'",
                 (current.model_dump_json(), action_id))
@@ -1229,7 +1232,7 @@ class SessionStore:
             request = self._request(db, value.request_id)
             if (step.phase != "intent" or step.request_id != value.request_id or step.generation != value.generation
                     or request.generation != value.generation or request.cancel_requested or request.decision
-                    or step.call != value.call or value.call.name not in {"computer_observe", "computer_act"}
+                    or step.call != value.call or value.call.name not in {"computer_observe", "computer_act", "computer_locate", "computer_ground"}
                     or self._meta(db, "freeze_id") or self._meta(db, "stopping") or self._meta(db, "blocked")):
                 raise BackendError("computer_intent_mismatch")
         await self.db.call(operation)
@@ -1410,7 +1413,7 @@ class SessionStore:
         assert step.call is not None
         binding = self._binding(db, request.request_id, step.call)
         required = self.approval_policy == "all" or (
-            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_act", "plugin_tool"})
+            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_act", "computer_ground", "plugin_tool"})
         if not required:
             return True
         approval: Approval | None = None
@@ -1478,7 +1481,7 @@ class SessionStore:
             self._message(db, c, request.request_id, step.step_id,
                           Message(role="tool", content=step.result, tool_call_id=step.call.id,
                                   images=self._computer_images(db, step.step_id)
-                                  if step.call.name in {"computer_observe", "plugin_tool"} else []))
+                                  if step.call.name in {"computer_observe", "computer_locate", "computer_ground", "plugin_tool"} else []))
             if self._run(db, request.request_id).direct_call is not None:
                 self._decide(db, c, request, Decision(status="succeeded", answer=step.result))
         step.phase = "applied"
@@ -1531,7 +1534,7 @@ class SessionStore:
         steps = self._steps(db, request.request_id)
         for step in steps:
             if (step.kind == "tool" and step.phase == "intent" and step.call
-                    and step.call.name in {"computer_observe", "computer_act"}):
+                    and step.call.name in {"computer_observe", "computer_act", "computer_locate", "computer_ground"}):
                 if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
                     return Park("frozen")
                 if request.cancel_requested or request.decision:
@@ -1622,7 +1625,7 @@ class SessionStore:
                 if step.call.name == "delegate_task":
                     self._delegate(db, c, request, step)
                     return Continue()
-                if step.call.name in {"computer_observe", "computer_act"}:
+                if step.call.name in {"computer_observe", "computer_act", "computer_locate", "computer_ground"}:
                     self._consume(db, c, step)
                     step.phase, step.generation = "intent", request.generation
                     self._save_step(db, step)

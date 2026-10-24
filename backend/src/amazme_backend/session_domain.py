@@ -9,7 +9,9 @@ from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 from .contracts import (
     BackendError,
     Cleanup,
+    ComputerGround,
     ComputerInspect,
+    ComputerLocate,
     ComputerMutation,
     ComputerToolResult,
     DelegateTasks,
@@ -41,7 +43,7 @@ from .web_tools import validate_fetch_url
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
@@ -67,6 +69,10 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = ComputerInspect.model_validate_json(call.arguments)
     elif call.name == "computer_act":
         value = ComputerMutation.model_validate_json(call.arguments)
+    elif call.name == "computer_locate":
+        value = ComputerLocate.model_validate_json(call.arguments)
+    elif call.name == "computer_ground":
+        value = ComputerGround.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
     if isinstance(value, ReadFile):

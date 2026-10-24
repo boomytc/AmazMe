@@ -21,7 +21,9 @@ from .contracts import (
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
+    ComputerGroundRequest,
     ComputerInspect,
+    ComputerLocateRequest,
     ComputerObserve,
     ComputerPolicy,
     CredentialUpdate,
@@ -165,6 +167,16 @@ class Client:
     async def act_computer(self, session_id: str, attachment_id: str, value: ComputerActionRequest) -> ComputerActionView:
         return ComputerActionView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/actions",
             json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
+
+    async def locate_computer(self, session_id: str, workspace: str, attachment_id: str, value: ComputerLocateRequest) -> ComputerActionView:
+        await self._require_workspace(session_id,workspace)
+        return ComputerActionView.model_validate(await self._send("POST",f"/api/v1/sessions/{session_id}/computer/locate",
+            json_body=value.model_dump(mode="json"),headers=self._write(attachment_id)))
+
+    async def ground_computer(self, session_id: str, workspace: str, attachment_id: str, value: ComputerGroundRequest) -> ComputerActionView:
+        await self._require_workspace(session_id,workspace)
+        return ComputerActionView.model_validate(await self._send("POST",f"/api/v1/sessions/{session_id}/computer/ground",
+            json_body=value.model_dump(mode="json"),headers=self._write(attachment_id)))
 
     async def cleanup_computer(self, session_id: str, attachment_id: str) -> ComputerCleanup:
         return ComputerCleanup.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/cleanup",

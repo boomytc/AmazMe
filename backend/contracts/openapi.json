@@ -834,6 +834,122 @@
         }
       }
     },
+    "/api/v1/classifiers": {
+      "get": {
+        "summary": "Classifiers",
+        "operationId": "classifiers_api_v1_classifiers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifierCatalog"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}/computer/locate": {
+      "post": {
+        "summary": "Computer Locate",
+        "operationId": "computer_locate_api_v1_sessions__session__computer_locate_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerLocateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputerActionView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}/computer/ground": {
+      "post": {
+        "summary": "Computer Ground",
+        "operationId": "computer_ground_api_v1_sessions__session__computer_ground_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComputerGroundRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComputerActionView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/computer/actions": {
       "post": {
         "summary": "Computer Action",
@@ -5246,6 +5362,87 @@
         ],
         "title": "CheckpointView"
       },
+      "ClassifierCatalog": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ClassifierModel"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "models"
+        ],
+        "title": "ClassifierCatalog"
+      },
+      "ClassifierModel": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "api": {
+            "type": "string",
+            "const": "typesafe-system-one",
+            "title": "Api"
+          },
+          "baseUrl": {
+            "type": "string",
+            "title": "Baseurl"
+          },
+          "input": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Input"
+          },
+          "compat": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Compat"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Headers"
+          },
+          "cost": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Cost"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "name",
+          "api",
+          "baseUrl",
+          "input"
+        ],
+        "title": "ClassifierModel"
+      },
       "Cleanup": {
         "properties": {
           "session_id": {
@@ -5719,6 +5916,12 @@
               }
             }
           },
+          "intent": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Intent",
+            "default": ""
+          },
           "action_id": {
             "type": "string",
             "maxLength": 128,
@@ -5781,6 +5984,20 @@
               }
             ],
             "title": "Driver Y"
+          },
+          "result": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object",
+            "title": "Result"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/ImagePart"
+            },
+            "type": "array",
+            "title": "Images"
           }
         },
         "additionalProperties": false,
@@ -5791,6 +6008,56 @@
           "phase"
         ],
         "title": "ComputerActionView"
+      },
+      "ComputerCandidate": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "button",
+              "toggle",
+              "checkbox",
+              "radio",
+              "popup",
+              "menu_item",
+              "link",
+              "text_input"
+            ],
+            "title": "Role"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "element_token": {
+            "type": "string",
+            "title": "Element Token"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "role",
+          "label",
+          "element_token"
+        ],
+        "title": "ComputerCandidate"
       },
       "ComputerCaptureView": {
         "properties": {
@@ -5857,6 +6124,29 @@
             "type": "array",
             "maxItems": 500,
             "title": "Elements"
+          },
+          "window_bounds": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerRect"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "degraded_reason": {
+            "type": "string",
+            "title": "Degraded Reason",
+            "default": ""
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ComputerCandidate"
+            },
+            "type": "array",
+            "maxItems": 24,
+            "title": "Candidates"
           }
         },
         "additionalProperties": false,
@@ -5982,6 +6272,63 @@
         ],
         "title": "ComputerElement"
       },
+      "ComputerGroundRequest": {
+        "properties": {
+          "target": {
+            "$ref": "#/components/schemas/ComputerWindow"
+          },
+          "goal": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Goal"
+          },
+          "verification": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Verification"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "click",
+              "set_value",
+              "type_text"
+            ],
+            "title": "Action",
+            "default": "click"
+          },
+          "text": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 16000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text"
+          },
+          "action_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "title": "Action Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "target",
+          "goal",
+          "verification",
+          "action_id"
+        ],
+        "title": "ComputerGroundRequest"
+      },
       "ComputerHotkey": {
         "properties": {
           "action": {
@@ -6069,6 +6416,56 @@
           "key"
         ],
         "title": "ComputerKey"
+      },
+      "ComputerLocateRequest": {
+        "properties": {
+          "capture_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Capture Id"
+          },
+          "target": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerWindow"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000,
+            "minLength": 1,
+            "title": "Description"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "look_closer",
+              "tiled"
+            ],
+            "title": "Mode",
+            "default": "look_closer"
+          },
+          "action_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w.-]+$",
+            "title": "Action Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "capture_id",
+          "description",
+          "action_id"
+        ],
+        "title": "ComputerLocateRequest"
       },
       "ComputerObserve": {
         "properties": {
@@ -6168,11 +6565,101 @@
             "minimum": 1.0,
             "title": "Max Age Ms",
             "default": 55000
+          },
+          "jev_enabled": {
+            "type": "boolean",
+            "title": "Jev Enabled",
+            "default": true
+          },
+          "jev_provider": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Jev Provider",
+            "default": "typesafe"
+          },
+          "jev_model": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Jev Model",
+            "default": "jev-1.14.0"
+          },
+          "min_presence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Presence",
+            "default": 0.8
+          },
+          "min_box_confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Box Confidence",
+            "default": 0.7
+          },
+          "min_choice_confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Min Choice Confidence",
+            "default": 0.7
+          },
+          "allow_risk_categories": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "destructive",
+                "send",
+                "purchase",
+                "close_unsaved"
+              ]
+            },
+            "type": "array",
+            "maxItems": 4,
+            "title": "Allow Risk Categories"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "maximum": 300000.0,
+            "minimum": 100.0,
+            "title": "Timeout Ms",
+            "default": 30000
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "ComputerPolicy"
+      },
+      "ComputerRect": {
+        "properties": {
+          "x": {
+            "type": "number",
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "title": "Y"
+          },
+          "width": {
+            "type": "number",
+            "title": "Width"
+          },
+          "height": {
+            "type": "number",
+            "title": "Height"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "title": "ComputerRect"
       },
       "ComputerScroll": {
         "properties": {
@@ -8992,6 +9479,26 @@
               }
             ]
           },
+          "computer_ground": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerGroundRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "computer_locate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerLocateRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "provider": {
             "type": "string",
             "title": "Provider",
@@ -10013,7 +10520,7 @@
           },
           "name": {
             "type": "string",
-            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$",
+            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$",
             "title": "Name"
           },
           "arguments": {
