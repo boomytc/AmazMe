@@ -54,10 +54,15 @@ async function pipedInput(): Promise<string | undefined> {
 
 export async function main(args: string[]): Promise<void> {
 	const cwd = process.cwd();
+    if (args.includes("--offline")) {
+        process.env.AMAZME_OFFLINE = "1";
+        process.env.AMAZME_SKIP_VERSION_CHECK = "1";
+    }
 	if (await runPythonProductCommand(args, cwd)) return;
 	const parsed = parseArgs(args);
 	const invalid = parsed.diagnostics.find((item) => item.type === "error");
 	if (invalid) throw new Error(invalid.message);
+    for (const diagnostic of parsed.diagnostics) if (diagnostic.type === "warning") process.stderr.write(diagnostic.message + "\n");
 	if (parsed.unknownFlags.size) throw new Error(`Unknown option --${parsed.unknownFlags.keys().next().value}`);
 	if (parsed.version) {
 		process.stdout.write(`${VERSION}\n`);
@@ -106,6 +111,7 @@ export async function main(args: string[]): Promise<void> {
     }
 	const runOptions = requestOptions(parsed);
 	const sessionOptions = {
+        ...(parsed.verbose ? {verbose:true} : {}),
         ...(parsed.model ? {modelRef:parsed.model} : {}),
         ...(parsed.provider ? {provider:parsed.provider} : {}),
         ...(parsed.models?.length ? {modelPatterns:parsed.models} : {}),

@@ -37,7 +37,6 @@ export interface Args {
 	noExtensions?: boolean;
 	noMcp?: boolean;
 	print?: boolean;
-	export?: string;
 	noSkills?: boolean;
 	skills?: string[];
 	promptTemplates?: string[];
@@ -59,7 +58,6 @@ export interface Args {
 	call?: string;
 	workspace?: string;
 	verbose?: boolean;
-	projectTrustOverride?: boolean;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -193,8 +191,8 @@ export function parseArgs(args: string[]): Args {
 				result.messages.push(next);
 				i++;
 			}
-		} else if (arg === "--export" && i + 1 < args.length) {
-			result.export = args[++i];
+		} else if (arg === "--export") {
+			result.diagnostics.push({type:"error",message:`旧文件导出选项已移除；使用 ${APP_COMMAND} export --output PATH 导出当前 Python 数据`});
 		} else if ((arg === "--extension" || arg === "-e") && i + 1 < args.length) {
 			result.extensions = result.extensions ?? [];
 			result.extensions.push(args[++i]);
@@ -274,10 +272,8 @@ export function parseArgs(args: string[]): Args {
 			}
 		} else if (arg === "--verbose") {
 			result.verbose = true;
-		} else if (arg === "--approve" || arg === "-a") {
-			result.projectTrustOverride = true;
-		} else if (arg === "--no-approve" || arg === "-na") {
-			result.projectTrustOverride = false;
+		} else if (["--approve","-a","--no-approve","-na"].includes(arg)) {
+			result.diagnostics.push({type:"error",message:"旧 TS 项目资源信任选项已移除；Python 插件按显式登记加载，操作审批使用原提案编号"});
 		} else if (arg === "--offline") {
 			result.offline = true;
 		} else if (arg.startsWith("@")) {
@@ -338,6 +334,8 @@ export function printHelp(output: Pick<NodeJS.WriteStream, "write"> = process.st
   --provider NAME --model ID [--api-key KEY]  配置账号后提交问题
   --list-models [关键词]                  查看模型
   --models PATTERNS                       候选模型（逗号分隔，可带 :high 等推理等级）
+  --offline                              跳过版本检查；模型目录始终来自包内快照
+  --verbose                              显示连接身份（不含令牌）
   --help | --version                      帮助或版本
 
 交互客户端的终端和 MCP 命令保留原调用编号。离开客户端只释放绑定。

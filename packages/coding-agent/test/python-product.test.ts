@@ -266,11 +266,11 @@ test("interactive CLI carries the initial text, file and image into the Python T
         if (descriptor) Object.defineProperty(stream, "isTTY", descriptor);
         else Reflect.deleteProperty(stream, "isTTY");
     }));
-    await main(["--python-url", "http://target", "--python-token", "private", `@${textPath}`, `@${imagePath}`, "-e", "./tools/helper.py", "--theme", "./colors.json", "--no-themes", "first", "second"]);
+    await main(["--python-url", "http://target", "--python-token", "private", `@${textPath}`, `@${imagePath}`, "-e", "./tools/helper.py", "--theme", "./colors.json", "--no-themes", "--verbose", "first", "second"]);
     expect(runPythonSessionTui).toHaveBeenCalledOnce();
     expect(runPythonSessionTui).toHaveBeenCalledWith(expect.objectContaining({
         url:"http://target", token:"private", workspace:"primary", prompt:expect.stringContaining("file content"),
-        extensions:[join(process.cwd(), "tools/helper.py")], themes:[join(process.cwd(), "colors.json")], noThemes:true,
+        extensions:[join(process.cwd(), "tools/helper.py")], themes:[join(process.cwd(), "colors.json")], noThemes:true, verbose:true,
         images:[expect.objectContaining({type:"image",mimeType:"image/png"})],
     }));
     expect(vi.mocked(runPythonSessionTui).mock.calls[0]?.[0].prompt).toContain("first\nsecond");
@@ -301,4 +301,17 @@ test("an unpinned request decision is rejected before connecting to a host", asy
     await expect(main(["--session", "a".repeat(32), "--decision", "批准", "--request", "original"])).rejects.toThrow("approval_id_required");
     expect(connectPythonHost).not.toHaveBeenCalled();
     expect(parseArgs(["--approval-id", "reviewed"]).approvalId).toBe("reviewed");
+});
+
+
+test("retired TS options fail before any host mutation and offline sets the original metadata flags", async () => {
+    await expect(main(["--export", "old.jsonl"])).rejects.toThrow("export --output PATH");
+    await expect(main(["--approve"])).rejects.toThrow("原提案编号");
+    expect(connectPythonHost).not.toHaveBeenCalled();
+    vi.stubEnv("AMAZME_OFFLINE", "");
+    vi.stubEnv("AMAZME_SKIP_VERSION_CHECK", "");
+    vi.spyOn(process.stdout,"write").mockReturnValue(true);
+    await main(["--offline", "--help"]);
+    expect(process.env.AMAZME_OFFLINE).toBe("1");
+    expect(process.env.AMAZME_SKIP_VERSION_CHECK).toBe("1");
 });

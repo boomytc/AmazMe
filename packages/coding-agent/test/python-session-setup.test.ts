@@ -23,6 +23,8 @@ test("the window link names the authenticated host, newly created session and se
 	}));
 	const client = new HostClient("http://host:1234", "private");
 	await client.bootstrap();
+	expect(client.connectionInfo()).toContain('"profile":"host"');
+	expect(client.connectionInfo()).not.toContain("private");
 	const url = new URL(await client.windowUrl("docs"));
 	expect(Object.fromEntries(url.searchParams)).toEqual({host:"host",session:created,workspace:"docs"});
 	expect(calls.at(-1)).toBe(`DELETE /api/v1/sessions/${created}/attachments/binding`);

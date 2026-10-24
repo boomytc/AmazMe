@@ -44,6 +44,7 @@ export interface PythonModelOptions {
 }
 
 export interface PythonHeadlessOptions extends PythonRunOptions, PythonModelOptions {
+    readonly verbose?: boolean;
 	readonly sessionDir?: string;
 	readonly extensions?: readonly string[];
 	readonly mode: "text" | "json" | "rpc";
@@ -212,6 +213,10 @@ export class HostClient {
 		this.#hostEpoch = body.host_epoch;
 		this.#profileId = typeof body.profile_id === "string" ? body.profile_id : "";
 	}
+
+	connectionInfo(): string {
+        return `Python ${JSON.stringify({profile:this.#profileId,build:this.#buildId,epoch:this.#hostEpoch})}`;
+    }
 
 	async windowUrl(workspace: string): Promise<string> {
 		if (!this.#profileId) fail("invalid_bootstrap");
@@ -1157,6 +1162,7 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 	try {
 		const client = new HostClient(host.url, host.token, options);
 		await client.bootstrap();
+        if (options.verbose) process.stderr.write(client.connectionInfo() + "\n");
 		if (options.mode === "rpc") {
 			for (const warning of await client.configureModels(options,options.session)) process.stderr.write(warning + "\n");
 			if (!options.extensions?.length) return await runRpc(client);

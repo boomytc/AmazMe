@@ -143,9 +143,9 @@ describe("parseArgs", () => {
 			}
 		});
 
-		test("parses --export", () => {
+		test("rejects the retired file export option with the Python command", () => {
 			const result = parseArgs(["--export", "session.jsonl"]);
-			expect(result.export).toBe("session.jsonl");
+			expect(result.diagnostics).toEqual([expect.objectContaining({type:"error",message:expect.stringContaining("export --output PATH")})]);
 		});
 
 		test("parses --thinking", () => {
@@ -381,27 +381,11 @@ describe("parseArgs", () => {
 		});
 	});
 
-	describe("project approval flags", () => {
-		test("parses --approve", () => {
-			const result = parseArgs(["--approve"]);
-			expect(result.projectTrustOverride).toBe(true);
-		});
-
-		test("parses -a shorthand", () => {
-			const result = parseArgs(["-a"]);
-			expect(result.projectTrustOverride).toBe(true);
-		});
-
-		test("parses --no-approve", () => {
-			const result = parseArgs(["--no-approve"]);
-			expect(result.projectTrustOverride).toBe(false);
-		});
-
-		test("parses -na shorthand", () => {
-			const result = parseArgs(["-na"]);
-			expect(result.projectTrustOverride).toBe(false);
-		});
-	});
+	describe("retired TS resource trust flags", () => {
+        test.each(["--approve","-a","--no-approve","-na"])("%s fails explicitly instead of silently changing native approvals", (flag) => {
+            expect(parseArgs([flag]).diagnostics).toEqual([expect.objectContaining({type:"error",message:expect.stringContaining("原提案编号")})]);
+        });
+    });
 
 	describe("--verbose flag", () => {
 		test("parses --verbose flag", () => {

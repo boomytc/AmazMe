@@ -19,6 +19,7 @@ import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
 import { HostClient, type ImageContent, type PythonModelOptions, type PythonRunOptions, type ThinkingLevel } from "./python-headless.ts";
 
 export interface PythonSessionTarget extends PythonRunOptions, PythonModelOptions {
+    readonly verbose?: boolean;
 	readonly extensions?: readonly string[];
 	readonly url: string;
 	readonly token: string;
@@ -397,6 +398,7 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 	const finished = new Promise<void>((resolveFinished) => {
 		finish = resolveFinished;
 	});
+	if (target.verbose) screen.addLine(client.connectionInfo());
 	const queued = new PendingPrompts();
 	let initialPending = target.prompt || target.images?.length ? {text:target.prompt ?? "", images:target.images ?? []} : null;
 	const releaseOnce = async (): Promise<void> => {

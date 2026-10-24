@@ -54,3 +54,6 @@ TUI 用 `/model provider/id` 选择、`/model next` 按候选循环；模型和�
 
 无界面审批先用 `--session ID --request ID` 查询，再用 `--decision 批准 --request ID --approval-id ID` 指向显示的原提案。
 重试保留这些编号；已结算提案只查询，不能自动批准同一请求的下一项工具。待审批退出码为 2。
+
+`--offline` 仅跳过版本检查；模型目录默认使用包内快照，供应商调用仍按配置联网。
+`--verbose` 显示 profile、构建和代际，不显示令牌。旧文件导出参数改用 `export --output PATH`；旧 TS 项目资源信任选项不再接纳，Python 插件只按显式登记加载。
