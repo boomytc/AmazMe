@@ -51,6 +51,7 @@ from .contracts import (
     Snapshot,
     TerminalList,
     TerminalView,
+    ThinkingLevel,
     ToolCall,
     UpdateModelSettings,
     UsageReport,
@@ -276,11 +277,11 @@ class Client:
                      not_before_ms: int = 0, images: list[ImagePart] | None = None,
                      system_prompt: str | None = None, append_system_prompt: str = "",
                      allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None,
-                     resource_options: ResourceOptions | None = None,
+                     resource_options: ResourceOptions | None = None, thinking: ThinkingLevel | None = None,
                      tool_call: ToolCall | None = None) -> Receipt:
         await self._require_workspace(session_id, workspace)
         body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms,
-                                   "system_prompt": system_prompt, "append_system_prompt": append_system_prompt,
+                                   "system_prompt": system_prompt, "append_system_prompt": append_system_prompt, "thinking": thinking,
                                    "allowed_tools": allowed_tools, "excluded_tools": excluded_tools or [],
                                    "resource_options": (resource_options or ResourceOptions()).model_dump(),
                                    "tool_call":tool_call.model_dump() if tool_call is not None else None}

@@ -284,6 +284,7 @@ function startClient() {
     $("send").textContent = pending?.target === selected ? "重试原请求" : "发送";
     $("prompt").readOnly = pending?.target === selected || running.has(`submit:${selected}`);
     $("images").disabled = $("prompt").readOnly;
+    $("thinking").disabled = $("prompt").readOnly || $("mode").value === "steer";
     $("mode").disabled = Boolean(pending?.target === selected) || !writable();
     $("cancel").disabled = !root || !current?.ready || health?.state === "frozen" || current?.model?.state === "frozen";
     $("archive").disabled = !current?.ready || health?.state !== "ready" || current?.model?.state === "frozen";
@@ -2340,7 +2341,7 @@ function startClient() {
     event.preventDefault(); if (!writable()) return;
     const connection = current, target = connection.session, key = `submit:${target}`;
     if (running.has(key)) return;
-    const text = $("prompt").value, files = composerFiles, mode = $("mode").value;
+    const text = $("prompt").value, files = composerFiles, mode = $("mode").value, thinking = $("thinking").value;
     const run = connection.model.requests.find(row => row.kind === "root" && row.run_id && !terminal.has(row.status));
     running.add(key); $("error").textContent = ""; controls();
     let submitted = pending;
@@ -2352,13 +2353,14 @@ function startClient() {
         // Preparation has no accepted side effect. A retired connection leaves
         // its draft untouched and cannot create a pending request for a new page.
         if (!owns(connection)) return;
-        submitted = {target, request_id:crypto.randomUUID(), text, mode,
+        submitted = {target, request_id:crypto.randomUUID(), text, mode, ...(mode === "steer" ? {} : {thinking}),
           target_run_id:mode === "steer" ? run.run_id : "", images};
         savePending(submitted);
       }
       if (submitted.target !== target) throw new Error("请切回原会话重试待确认的请求");
       const body = {request_id:submitted.request_id, text:submitted.text, mode:submitted.mode || "queue", target_run_id:submitted.target_run_id || ""};
       if (submitted.images?.length) body.images = submitted.images;
+      if (submitted.thinking !== undefined) body.thinking = submitted.thinking;
       await api(`/api/v1/sessions/${target}/submissions`, "POST", body, connection, connection.identity);
       if (owns(connection)) {
         if (pending === submitted) savePending(null);

@@ -26,7 +26,9 @@ export interface PythonResourceOptions {
 	readonly prompt_paths?: readonly string[];
 }
 
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export interface PythonRunOptions {
+    readonly thinking?: ThinkingLevel;
 	readonly resource_options?: PythonResourceOptions;
 	readonly system_prompt?: string;
 	readonly append_system_prompt?: string;
@@ -171,12 +173,13 @@ export class HostClient {
 	readonly #token: string;
 	#buildId = "";
 	#hostEpoch = 0;
-	readonly #runOptions: PythonRunOptions;
+	readonly #runOptions: Omit<PythonRunOptions, "thinking"> & {thinking?: ThinkingLevel};
 
 	constructor(url: string, token: string, options: PythonRunOptions = {}) {
 		this.#url = url.replace(/\/$/, "");
 		this.#token = token;
 		this.#runOptions = {
+            thinking: options.thinking,
 	        resource_options: options.resource_options,
 			system_prompt: options.system_prompt,
 			append_system_prompt: options.append_system_prompt,
@@ -190,6 +193,10 @@ export class HostClient {
 		if (typeof body.build_id !== "string" || typeof body.host_epoch !== "number") fail("invalid_bootstrap");
 		this.#buildId = body.build_id;
 		this.#hostEpoch = body.host_epoch;
+	}
+
+	setThinking(level: ThinkingLevel): void {
+		this.#runOptions.thinking = level;
 	}
 
 	async resources(sessionId: string): Promise<Record<string, unknown>> {

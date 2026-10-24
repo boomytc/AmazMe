@@ -34,3 +34,6 @@ npm test --workspace @amazme/coding-agent
 上下文文件、技能和提示词模板由 Python 按 Pi 的目录规则加载。
 使用 `--skill PATH` / `--prompt-template PATH` 添加资源，`--no-context-files` / `--no-skills` / `--no-prompt-templates` 禁用默认发现。
 输入 `/skill:名称 参数` 或 `/模板名称 参数`；TUI 用 `/skills`、`/prompts`、`/context` 查看资源，CLI 用 `amazme resources --session ID`。
+
+`--thinking off|minimal|low|medium|high|xhigh|max` 选择下一回合推理等级，TUI 中用 `/thinking LEVEL` 修改后续回合。
+Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿用原回合配置。

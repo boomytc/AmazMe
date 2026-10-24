@@ -670,6 +670,8 @@ class SessionStore:
         self._save_images(db, value.request_id, value.images)
         # Store public provider configuration only. Credentials remain in Profile.
         config = stored_provider(inherited or self.config)
+        if value.thinking is not None:
+            config.thinking = value.thinking
         if value.system_prompt is not None:
             config.system_prompt = value.system_prompt
         if value.append_system_prompt:
@@ -747,7 +749,7 @@ class SessionStore:
             if value.mode == "reject_busy" and pending and not tombstone:
                 raise BackendError("session_busy")
             if value.mode == "steer" and not tombstone:
-                if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools or value.resource_options != ResourceOptions():
+                if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools or value.resource_options != ResourceOptions() or value.thinking is not None:
                     raise BackendError("run_options_immutable")
                 if value.not_before_ms:
                     raise BackendError("scheduled_steer_unsupported")

@@ -270,3 +270,9 @@ test("interactive CLI carries the initial text, file and image into the Python T
     }));
     expect(vi.mocked(runPythonSessionTui).mock.calls[0]?.[0].prompt).toContain("first\nsecond");
 });
+
+
+test("thinking selection reaches the Python request options", () => {
+    expect(requestOptions(parseArgs(["--thinking", "max"]))).toEqual({thinking:"max"});
+    expect(requestOptions(parseArgs(["--thinking", "off"]))).toEqual({thinking:"off"});
+});

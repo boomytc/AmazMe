@@ -22,6 +22,7 @@ from .providers import (
     tool_image_messages,
     with_catalog_price,
 )
+from .thinking import anthropic_thinking, google_thinking, responses_thinking
 
 Record = dict[str, JsonValue]
 RECORD = TypeAdapter(Record)
@@ -120,6 +121,7 @@ def responses_body(config: ProviderConfig, messages: list[Message], offers: list
     if not body['tools']:
         for key in ('tools', 'tool_choice', 'parallel_tool_calls'):
             body.pop(key)
+    body.update(responses_thinking(config))
     if config.api == 'openai-codex-responses':
         body['text'] = {'verbosity': 'low'}
     else:
@@ -205,9 +207,7 @@ def anthropic_body(config: ProviderConfig, messages: list[Message], offers: list
             'description': tool.get('description', ''), 'input_schema': tool['parameters']} for tool in tools(offers, config, plugins)]}
     if not body['tools']:
         body.pop('tools')
-    metadata = INDEX.get((config.provider, config.model))
-    if metadata is not None and metadata.compat.get('forceAdaptiveThinking') is True:
-        body['thinking'] = {'type': 'adaptive'}
+    body.update(anthropic_thinking(config))
     headers = base_headers(config, messages)
     headers['anthropic-version'] = '2023-06-01'
     if oauth:
@@ -298,8 +298,9 @@ def google_body(config: ProviderConfig, messages: list[Message], offers: list[Mc
                     part['thoughtSignature'] = found['thoughtSignature']
                 parts.append(part)
         converted.append({'role': 'model' if message.role == 'assistant' else 'user', 'parts': parts})
+    thinking = google_thinking(config)
     body: Record = {'contents': converted, 'systemInstruction': {'parts': [{'text': text(RECORDS.validate_python(provider_messages([], config.provider, config))[0].get('content'))}]},
-        'generationConfig': {'maxOutputTokens': config.max_tokens},
+        'generationConfig': {'maxOutputTokens': config.max_tokens, **({'thinkingConfig':thinking} if thinking else {})},
         'tools': [{'functionDeclarations': [{'name': tool['name'], 'description': tool.get('description', ''),
                    'parametersJsonSchema': tool['parameters']} for tool in tools(offers, config, plugins)]}]}
     if not tools(offers, config, plugins):

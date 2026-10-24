@@ -5339,6 +5339,22 @@
           "endpoint_editable": {
             "type": "boolean",
             "title": "Endpoint Editable"
+          },
+          "thinking_levels": {
+            "items": {
+              "type": "string",
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            "type": "array",
+            "title": "Thinking Levels"
           }
         },
         "additionalProperties": false,
@@ -9584,6 +9600,26 @@
       },
       "RpcParams": {
         "properties": {
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking"
+          },
           "resource_options": {
             "$ref": "#/components/schemas/ResourceOptions"
           },
@@ -10374,6 +10410,26 @@
       },
       "Submit": {
         "properties": {
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking"
+          },
           "resource_options": {
             "$ref": "#/components/schemas/ResourceOptions"
           },

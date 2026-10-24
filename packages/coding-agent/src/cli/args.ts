@@ -5,7 +5,8 @@
 import chalk from "chalk";
 import { APP_COMMAND, APP_NAME } from "../config.ts";
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+import type { ThinkingLevel } from "../python-headless.ts";
+export type { ThinkingLevel } from "../python-headless.ts";
 export type TuiMode = "regular" | "fullscreen";
 
 export type Mode = "text" | "json" | "rpc";

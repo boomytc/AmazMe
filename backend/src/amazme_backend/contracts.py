@@ -30,7 +30,11 @@ class ResourceOptions(Model):
     prompt_paths: list[Annotated[str, Field(min_length=1, max_length=1024)]] = Field(default_factory=list, max_length=32)
 
 
+ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+
 class RunOptions(Model):
+    thinking: ThinkingLevel | None = None
     resource_options: ResourceOptions = Field(default_factory=ResourceOptions)
     system_prompt: str | None = Field(default=None, max_length=32000)
     append_system_prompt: str = Field(default="", max_length=32000)
@@ -69,6 +73,7 @@ class CatalogModel(Model):
     model: str
     label: str
     endpoint_editable: bool
+    thinking_levels: list[ThinkingLevel] = Field(default_factory=lambda: ["off"])
 
 
 class ModelSettings(Model):

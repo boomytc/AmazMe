@@ -21,6 +21,7 @@ export function requestOptions(parsed: Args): PythonRunOptions {
 		...(parsed.noMcp ? ["mcp_*"] : []),
 	];
 	return {
+        ...(parsed.thinking === undefined ? {} : {thinking:parsed.thinking}),
 		...((parsed.noContextFiles || parsed.noSkills || parsed.noPromptTemplates || parsed.skills?.length || parsed.promptTemplates?.length)
 			? {resource_options: {
 				...(parsed.noContextFiles ? {no_context_files:true} : {}),

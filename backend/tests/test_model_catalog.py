@@ -39,7 +39,7 @@ def write_profile(path: Path, *, provider: str = "deepseek", model: str = "deeps
                   base_url: str = "https://api.deepseek.com", key: str = SECRET,
                   proxy: str = "", headers: dict[str, str] | None = None) -> None:
     private_write(path / "config.json", json.dumps({
-        "format": 2, "profile_id": "catalog", "workspace": str(path), "resources": "unused",
+        "format": 2, "profile_id": "catalog", "workspace": str(path), "resources": "unused", "user_resources":str(path / "agent"),
         "provider": {"provider": provider, "model": model, "base_url": base_url, "api_key": key,
                      "max_tokens": 2048, "proxy": proxy, "headers": headers or {}},
     }))
@@ -107,6 +107,9 @@ async def test_worker_submit_uses_the_reloaded_model_without_the_key(tmp_path: P
     write_profile(tmp_path, provider="faux", model="faux", base_url="", key=SECRET)
     profile = Profile(tmp_path)
     session = "d" * 32
+    with sqlite3.connect(tmp_path / "host.sqlite") as db:
+        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+        db.execute("INSERT INTO sessions VALUES(?, 'primary')", (session,))
     (tmp_path / "sessions" / session).mkdir(parents=True)
     worker = Worker(profile, session, "worker-1")
     worker.initialized = True

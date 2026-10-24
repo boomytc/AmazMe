@@ -15,7 +15,7 @@ import { CustomEditor } from "./modes/interactive/components/custom-editor.ts";
 import { getEditorTheme,
 	getSelectListTheme, initTheme } from "./modes/interactive/theme/theme.ts";
 import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
-import { HostClient, type ImageContent, type PythonRunOptions } from "./python-headless.ts";
+import { HostClient, type ImageContent, type PythonRunOptions, type ThinkingLevel } from "./python-headless.ts";
 
 export interface PythonSessionTarget extends PythonRunOptions {
 	readonly url: string;
@@ -142,6 +142,13 @@ export async function handleLine(client: HostClient, sessionId: string, attachme
 	if (state.held && !prompt.startsWith("/request ")) {
 		if (prompt !== "批准" && prompt !== "拒绝") return ["先输入批准或拒绝"];
 		return decideHeld(client, sessionId, attachmentId, state, prompt === "批准");
+	}
+	if (prompt.startsWith("/thinking ")) {
+		const level = prompt.slice("/thinking ".length).trim();
+		const levels: readonly string[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+		if (!levels.includes(level)) return ["推理等级：off minimal low medium high xhigh max"];
+		client.setThinking(level as ThinkingLevel);
+		return [`下一回合推理等级：${level}；按模型能力调整`];
 	}
 	if (prompt === "/skills" || prompt === "/prompts" || prompt === "/context") {
 		const resources = await client.resources(sessionId);

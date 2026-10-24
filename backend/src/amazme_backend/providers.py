@@ -483,6 +483,7 @@ async def stream(config: ProviderConfig, messages: list[Message],
     signature: list[object] = []
     finished = False
     from .provider_wire import base_headers
+    from .thinking import completions_thinking
     request_headers = base_headers(config, messages)
     http = httpx2.AsyncClient(proxy=config.proxy or None, trust_env=False, timeout=60)
     try:
@@ -496,7 +497,7 @@ async def stream(config: ProviderConfig, messages: list[Message],
                 max_tokens=omit if completion_limit else config.max_tokens,
                 max_completion_tokens=config.max_tokens if completion_limit else omit,
                 stream=True, stream_options={"include_usage": True},
-                extra_body={"thinking": {"type": "disabled"}} if config.provider == "deepseek" else None)
+                extra_body=completions_thinking(config) or None)
             async with response:
                 async for chunk in response:
                     response_id = chunk.id
