@@ -221,13 +221,34 @@ function startClient() {
   const evidenceDrafts = new Map();
   let effectsSignature = "";
   const running = new Set();
-  try { pending = JSON.parse(sessionStorage.getItem("pending") || "null"); actions = JSON.parse(sessionStorage.getItem("actions") || "{}"); }
-  catch { sessionStorage.removeItem("pending"); sessionStorage.removeItem("actions"); }
-  function savePending(value) { pending = value; if (value) sessionStorage.setItem("pending", JSON.stringify(value)); else sessionStorage.removeItem("pending"); }
-  function saveActions() { sessionStorage.setItem("actions", JSON.stringify(actions)); }
+  let storageHost = "", pendingKey = "", actionsKey = "";
+  function activateStorage(host) {
+    if (!host || (storageHost && storageHost !== host)) {
+      error(new Error("宿主已更换，请重新打开对应的会话链接；原操作编号仍保留。"));
+      retire();
+      throw new Error("宿主已更换，请使用新宿主的会话链接重新打开；原操作编号仍保留。");
+    }
+    if (storageHost) return;
+    const nextPendingKey = `pending:${host}`, nextActionsKey = `actions:${host}`;
+    const nextPending = JSON.parse(sessionStorage.getItem(nextPendingKey) || "null");
+    const nextActions = JSON.parse(sessionStorage.getItem(nextActionsKey) || "{}");
+    storageHost = host; pendingKey = nextPendingKey; actionsKey = nextActionsKey;
+    pending = nextPending; actions = nextActions;
+  }
+  function savePending(value) {
+    if (value) sessionStorage.setItem(pendingKey, JSON.stringify(value)); else sessionStorage.removeItem(pendingKey);
+    pending = value;
+  }
+  function saveActions(value) { sessionStorage.setItem(actionsKey, JSON.stringify(value)); actions = value; }
+  function settleAction(key, operation) {
+    if (actions[key] !== operation) return;
+    const next = {...actions}; delete next[key]; saveActions(next);
+  }
   const archived = new Map();
   const sessionWorkspaces = new Map();
-  const owns = connection => current === connection && connection.generation === generation;
+  const owns = connection => Boolean(connection && current === connection && connection.generation === generation &&
+    connection.identity?.profile_id === identity?.profile_id && connection.identity?.build_id === identity?.build_id &&
+    connection.identity?.host_epoch === identity?.host_epoch);
   const panelOperations = new Map();
   function beginOperation(panel) {
     const connection = current;
@@ -426,6 +447,7 @@ function startClient() {
     try {
       const value = await api("/api/v1/health");
       if (!owns(connection)) return;
+      if (value.identity.profile_id !== storageHost) { activateStorage(value.identity.profile_id); return; }
       if (value.identity.build_id !== connection.identity.build_id || value.identity.host_epoch !== connection.identity.host_epoch) { reconnect(connection, true); return; }
       health = value; render();
     } catch (failure) { if (owns(connection)) { error(failure); reconnect(connection); } }
@@ -525,7 +547,7 @@ function startClient() {
     }
     computerCapture = "";
     retire(); selected = id; const binding = ++generation;
-    const connection = {generation:binding, session:id, ready:false, model:cached, ws:null, attachment:null};
+    const connection = {generation:binding, identity, session:id, ready:false, model:cached, ws:null, attachment:null};
     current = connection; connecting = true;
     $("prompt").value = pending?.target === id ? pending.text : (drafts.get(id)?.text || "");
     composerFiles = drafts.get(id)?.files || [];
@@ -541,6 +563,7 @@ function startClient() {
         $("connection").textContent = "版本已更新，请刷新页面";
         error(new Error("后端构建已更换；刷新页面以载入匹配的客户端，原请求仍保留。")); return;
       }
+      activateStorage(boot.profile_id);
       identity = boot; connection.identity = boot;
       remoteId = sessionStorage.getItem(`remote-connection:${boot.profile_id}:${id}`) || "";
       const remoteConfig = JSON.parse(sessionStorage.getItem(`remote-config:${boot.profile_id}:${id}`) || "null");
@@ -633,7 +656,8 @@ function startClient() {
     $("model-key").value = "";
   }
   async function load() {
-    identity = await api("/api/v1/bootstrap"); health = {state:identity.state}; $("login").hidden = true;
+    const boot = await api("/api/v1/bootstrap"); activateStorage(boot.profile_id);
+    identity = boot; health = {state:identity.state}; $("login").hidden = true;
     await loadModels();
     const value = await api("/api/v1/sessions");
     archived.clear();
@@ -650,14 +674,17 @@ function startClient() {
     if (!owns(connection) || !connection.ready || health?.state === "frozen" || connection.model?.state === "frozen" || running.has(key)) return;
     if ((path || actions[key]?.path) === "approvals" && !writable()) return;
     if (!actions[key] && Object.keys(actions).length >= 128) { error(new Error("待确认操作已达上限，请先重试已有操作")); return; }
-    if (!actions[key]) { actions[key] = {target:connection.session,path,body}; saveActions(); }
+    if (!actions[key]) {
+      try { saveActions({...actions, [key]:{target:connection.session,path,body}}); }
+      catch (failure) { error(failure); return; }
+    }
     const operation = actions[key]; running.add(key); render();
     try {
       await api(`/api/v1/sessions/${operation.target}/${operation.path}`, "POST", operation.body, connection, connection.identity);
-      if (actions[key] === operation) { delete actions[key]; saveActions(); }
+      settleAction(key, operation);
       if (owns(connection)) await refresh(connection);
     } catch (failure) {
-      if (definitive(failure) && actions[key] === operation) { delete actions[key]; saveActions(); }
+      if (definitive(failure)) settleAction(key, operation);
       if (owns(connection)) { error(new Error(`${failure.message}${definitive(failure) ? "" : "；请用原 ID 重试"}`)); if (bindingErrors.has(failure.code)) reconnect(connection); }
     } finally { running.delete(key); if (owns(connection)) render(); }
   }
@@ -2350,7 +2377,7 @@ function startClient() {
   };
   $("composer").onsubmit = async event => {
     event.preventDefault(); if (!writable()) return;
-    const connection = current, target = connection.session, key = `submit:${target}`;
+    const connection = current, target = connection.session, key = `submit:${target}`, storedKey = pendingKey;
     if (running.has(key)) return;
     const text = $("prompt").value, files = composerFiles, mode = $("mode").value, thinking = $("thinking").value;
     const [provider, model] = $("model-choice").value.split("\n");
@@ -2376,8 +2403,9 @@ function startClient() {
       if (submitted.thinking !== undefined) body.thinking = submitted.thinking;
       if (submitted.model_selection !== undefined) body.model_selection = submitted.model_selection;
       await api(`/api/v1/sessions/${target}/submissions`, "POST", body, connection, connection.identity);
+      settlePending(storedKey, "request_id", submitted.request_id);
+      if (pending === submitted) pending = null;
       if (owns(connection)) {
-        if (pending === submitted) savePending(null);
         if (drafts.get(target)?.text === submitted.text) drafts.delete(target);
         if ($("prompt").value === submitted.text) $("prompt").value = "";
         composerFiles = [];
@@ -2385,7 +2413,10 @@ function startClient() {
         showComposerFiles();
       }
     } catch (failure) {
-      if (owns(connection) && definitive(failure) && pending === submitted) savePending(null);
+      if (definitive(failure) && submitted) {
+        settlePending(storedKey, "request_id", submitted.request_id);
+        if (pending === submitted) pending = null;
+      }
       if (owns(connection)) {
         error(new Error(`${failure.message}${definitive(failure) || !submitted ? "" : "；再次发送会沿用原请求 ID"}`));
         if (bindingErrors.has(failure.code)) reconnect(connection);

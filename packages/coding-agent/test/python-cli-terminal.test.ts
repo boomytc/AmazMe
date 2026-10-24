@@ -1,22 +1,28 @@
 import { createTempDir } from "./temp-dir.ts";
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, expect, onTestFinished, test } from "vitest";
+import { afterEach, expect, test } from "vitest";
 import { HostClient, runPtyCommand } from "../src/python-headless.ts";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 const python = join(root, "backend/.venv/bin/python");
 const directories: string[] = [];
+const originalBackend = process.env.AMAZME_PYTHON_BACKEND;
 
-afterEach(() => {
+const closers: Array<() => Promise<void>> = [];
+afterEach(async () => {
+    for (const close of closers.splice(0)) await close();
 	delete process.env.AMAZME_CODING_AGENT_DIR;
+    if (originalBackend === undefined) delete process.env.AMAZME_PYTHON_BACKEND;
+    else process.env.AMAZME_PYTHON_BACKEND = originalBackend;
 	for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
 
 function agentDir(): string {
+    process.env.AMAZME_PYTHON_BACKEND = join(root,"backend/.venv/bin/amazme-backend");
 	const directory = createTempDir("amazme-cli-pty-");
 	directories.push(directory);
 	process.env.AMAZME_CODING_AGENT_DIR = directory;
@@ -27,6 +33,7 @@ test("a failed CLI retry keeps its input id and a later command is new", async (
 	agentDir();
 	const writes: Array<{ id?: string; data: string }> = [];
 	const client = {
+        profileId:"test-host",
 		async runningTerminal() {
 			return "term";
 		},
@@ -41,7 +48,7 @@ test("a failed CLI retry keeps its input id and a later command is new", async (
 			if (writes.length === 1) throw new Error("terminal_input_unconfirmed");
 			if (writes.length === 2) throw new Error("supervisor_unavailable");
 		},
-	} as unknown as HostClient;
+	};
 	const unknown = await runPtyCommand(client, "session", "attach", "primary", "/pty echo hi", false);
 	expect(unknown).toBe(1);
 	expect(writes.map((item) => item.id)).toEqual([writes[0]?.id]);
@@ -107,7 +114,7 @@ test("the same CLI retry does not write a real terminal twice", async () => {
 			});
 		}
 	};
-	onTestFinished(close);
+	closers.push(close);
 	const url = await new Promise<string>((resolve, reject) => {
 		let pending = "";
 		const timer = setTimeout(() => reject(new Error("python serve timeout")), 30_000);
@@ -133,7 +140,7 @@ test("the same CLI retry does not write a real terminal twice", async () => {
 	const count = once.split("CLI_MARK").length - 1;
 	expect(count).toBeGreaterThan(0);
 	writeFileSync(
-		join(directory, "terminal-inputs", `${opened.sessionId}.json`),
+		join(directory, "terminal-inputs", `${createHash("sha256").update(JSON.stringify([client.profileId, opened.sessionId])).digest("hex")}.json`),
 		JSON.stringify({
 			inputId,
 			prompt,
@@ -143,9 +150,9 @@ test("the same CLI retry does not write a real terminal twice", async () => {
 	expect(await runPtyCommand(client, opened.sessionId, opened.attachmentId, "primary", prompt, false)).toBe(0);
 	const again = String((await client.readTerminal(opened.sessionId, opened.attachmentId, terminalId)).output ?? "");
 	expect(again.split("CLI_MARK").length - 1).toBe(count);
-	expect(existsSync(join(directory, "terminal-inputs", `${opened.sessionId}.json`))).toBe(false);
+	expect(existsSync(join(directory, "terminal-inputs", `${createHash("sha256").update(JSON.stringify([client.profileId, opened.sessionId])).digest("hex")}.json`))).toBe(false);
 	writeFileSync(
-		join(directory, "terminal-inputs", `${opened.sessionId}.json`),
+		join(directory, "terminal-inputs", `${createHash("sha256").update(JSON.stringify([client.profileId, opened.sessionId])).digest("hex")}.json`),
 		JSON.stringify({
 			inputId,
 			prompt,

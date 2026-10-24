@@ -845,7 +845,8 @@ class SessionStore:
                             role: Literal["check", "correction"], text: str, child_id: str) -> WorkflowView:
         if len(self._pending_ids(db)) + 1 > PENDING_LIMIT:
             raise BackendError("queue_full", status=429)
-        self._new_request(db, c, Submit(request_id=child_id, text=text), parent_id=view.parent_id, depth=1)
+        self._new_request(db, c, Submit(request_id=child_id, text=text), parent_id=view.parent_id, depth=1,
+                          inherited=self._run(db, view.parent_id).config)
         self._message(db, c, child_id, "input", Message(role="user", content=text))
         parent = self._request(db, view.parent_id)
         parent.children = [*parent.children, child_id]
@@ -855,7 +856,8 @@ class SessionStore:
         child = WorkflowChild(request_id=child_id, role=role, text=text, status="queued")
         return view.model_copy(update={"children": [*view.children, child]})
 
-    async def open_workflow(self, workflow_id: str, check: str, correction_limit: int) -> WorkflowView:
+    async def open_workflow(self, workflow_id: str, check: str, correction_limit: int, *,
+                            accepted_config: ProviderConfig | None = None) -> WorkflowView:
         text = check.strip()
         if not text:
             raise BackendError("workflow_check_empty")
@@ -877,8 +879,10 @@ class SessionStore:
                 raise BackendError("queue_full", status=429)
             parent_id = digest(f"{self.session_id}:{workflow_id}:parent")
             child_id = digest(f"{self.session_id}:{workflow_id}:check")
-            parent = self._new_request(db, c, Submit(request_id=parent_id, text=f"工作流 {workflow_id}"))
-            self._new_request(db, c, Submit(request_id=child_id, text=text), parent_id=parent_id, depth=1)
+            parent = self._new_request(db, c, Submit(request_id=parent_id, text=f"工作流 {workflow_id}"),
+                                       accepted_config=accepted_config)
+            self._new_request(db, c, Submit(request_id=child_id, text=text), parent_id=parent_id, depth=1,
+                              inherited=self._run(db, parent_id).config)
             self._message(db, c, child_id, "input", Message(role="user", content=text))
             parent.children = [child_id]
             parent.status = "waiting_children"

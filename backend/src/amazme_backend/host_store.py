@@ -494,6 +494,8 @@ class HostStore:
             project_id = str(project[0]) if project else ""
             db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id,workspace,updated_ms) VALUES(?,?,?,?,?,?)",
                        (session_id, title, parent_id, fork_request_id, workspace, time.time_ns() // 1_000_000))
+            db.execute("INSERT INTO session_models(session,provider,model) "
+                       "SELECT ?,provider,model FROM session_models WHERE session=?", (session_id, parent_id))
             if project_id:
                 db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
             return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
@@ -507,6 +509,7 @@ class HostStore:
             if not str(row[0]) or db.execute("SELECT 1 FROM deliveries WHERE session=?", (session_id,)).fetchone():
                 raise BackendError("branch_discard_refused")
             db.execute("DELETE FROM project_sessions WHERE session=?", (session_id,))
+            db.execute("DELETE FROM session_models WHERE session=?", (session_id,))
             db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
         await self.transaction(operation)
 

@@ -15,6 +15,7 @@ from .contracts import (
     ImagePart,
     Message,
     Model,
+    ProviderConfig,
     Receipt,
     Snapshot,
     WebCallView,
@@ -104,6 +105,7 @@ class OpenWorkflowBody(Model):
     workflow_id: str
     check: str
     correction_limit: int
+    accepted_config: ProviderConfig | None = None
 
 
 class VerdictBody(Model):
@@ -212,7 +214,8 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
         return _model(await store.resume_workflow(IdBody.model_validate_json(payload).id))
     if name == "open_workflow":
         body = OpenWorkflowBody.model_validate_json(payload)
-        return _model(await store.open_workflow(body.workflow_id, body.check, body.correction_limit))
+        return _model(await store.open_workflow(body.workflow_id, body.check, body.correction_limit,
+                                                accepted_config=body.accepted_config))
     if name == "record_verdict":
         body = VerdictBody.model_validate_json(payload)
         return _model(await store.record_verdict(
@@ -285,7 +288,8 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
 
 
 class SessionOps(Protocol):
-    async def open_workflow(self, workflow_id: str, check: str, correction_limit: int) -> WorkflowView: ...
+    async def open_workflow(self, workflow_id: str, check: str, correction_limit: int, *,
+                            accepted_config: ProviderConfig | None = None) -> WorkflowView: ...
     async def workflow(self, workflow_id: str) -> WorkflowView: ...
     async def resume_workflow(self, workflow_id: str) -> WorkflowView: ...
     async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool, *,
@@ -340,9 +344,10 @@ class SessionRelay:
     async def resume_workflow(self, workflow_id: str) -> WorkflowView:
         return WorkflowView.model_validate_json(await self._call("resume_workflow", IdBody(id=workflow_id)))
 
-    async def open_workflow(self, workflow_id: str, check: str, correction_limit: int) -> WorkflowView:
+    async def open_workflow(self, workflow_id: str, check: str, correction_limit: int, *,
+                            accepted_config: ProviderConfig | None = None) -> WorkflowView:
         return WorkflowView.model_validate_json(await self._call("open_workflow", OpenWorkflowBody(
-            workflow_id=workflow_id, check=check, correction_limit=correction_limit)))
+            workflow_id=workflow_id, check=check, correction_limit=correction_limit, accepted_config=accepted_config)))
 
     async def record_verdict(self, workflow_id: str, verdict_id: str, passed: bool, *,
                              allow_new_child: bool = True) -> WorkflowView:

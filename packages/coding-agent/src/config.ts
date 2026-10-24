@@ -7,15 +7,13 @@ import { normalizePath } from "./utils/paths.ts";
 import { stripBom } from "./utils/text.ts";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-export const isBunBinary = import.meta.url.includes("$bunfs") || import.meta.url.includes("~BUN");
 
 export function findNodePackageDir(startDir: string): string {
 	let dir = startDir;
 	while (dir !== dirname(dir)) {
 		if (existsSync(join(dir, "package.json"))) {
 			const parent = dirname(dir);
-			// build:binary places Bun's metadata inside dist/. Node still needs the
-			// package root so its dist-relative asset paths do not become dist/dist/.
+			// Bundled metadata must not turn package-relative asset paths into dist/dist/.
 			if (basename(dir) === "dist" && existsSync(join(parent, "package.json"))) {
 				return parent;
 			}
@@ -33,23 +31,15 @@ export function getPackageDir(): string {
 		return normalizePath(envDir);
 	}
 
-	if (isBunBinary) {
-		// Bun binary: process.execPath points to the compiled executable
-		return dirname(process.execPath);
-	}
 	return findNodePackageDir(__dirname);
 }
 
 /**
  * Get path to built-in themes directory (shipped with package)
- * - For Bun binary: theme/ next to executable
  * - For Node.js (dist/): dist/modes/interactive/theme/
  * - For source (src/): src/modes/interactive/theme/
  */
 export function getThemesDir(): string {
-	if (isBunBinary) {
-		return join(getPackageDir(), "theme");
-	}
 	// Theme is in modes/interactive/theme/ relative to src/ or dist/
 	const packageDir = getPackageDir();
 	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";

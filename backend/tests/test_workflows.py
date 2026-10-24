@@ -412,11 +412,9 @@ async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
     worker.storage_ready = True
     fence = HostFence(host_epoch=0, build_id=worker.store.build)
     try:
-        await worker.store.accept(Submit(request_id="typed", text=f"我说 {KEY}"), fence)
-        typed = await _run_until_park(worker)
-        assert typed.reason == "idle"
-        sent = "\n".join(message.content for call in captured for message in call)
-        assert f"我说 {KEY}" in sent
+        with pytest.raises(BackendError, match="resource_secret"):
+            await worker.store.accept(Submit(request_id="typed", text=f"我说 {KEY}"), fence)
+        assert not captured
         before = len(captured)
         opened = await worker.store.open_workflow("c" * 32, f"检查 {KEY}", 1)
         assert opened.check == f"检查 {KEY}"
@@ -627,3 +625,24 @@ def test_browser_runs_the_selected_session_workflow() -> None:
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
                             cwd=Path(__file__).parents[1])
     assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+async def test_workflow_children_keep_the_accepted_provider(tmp_path: Path) -> None:
+    store = SessionStore(tmp_path / "session.sqlite", SESSION, build="test", approval_policy="auto")
+    await store.initialize()
+    chosen = ProviderConfig(provider="deepseek", model="deepseek-flash", max_tokens=1234)
+    try:
+        view = await store.open_workflow("a" * 32, "检查", 2, accepted_config=chosen)
+        async def captured() -> list[ProviderConfig]:
+            return await store.db.call(lambda db: [store._run(db, request_id).config
+                for request_id in [view.parent_id, *(child.request_id for child in view.children)]])
+        assert await captured() == [chosen, chosen]
+        # A correction opened after the profile default changes inherits the original run.
+        view = await store.record_verdict(view.workflow_id, "fail", False)
+        assert await captured() == [chosen, chosen, chosen]
+        replay = await store.open_workflow(view.workflow_id, "检查", 2,
+                                          accepted_config=ProviderConfig(provider="faux"))
+        assert replay.workflow_id == view.workflow_id
+        assert await captured() == [chosen, chosen, chosen]
+    finally:
+        await store.db.close()

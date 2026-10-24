@@ -4,7 +4,7 @@
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 
@@ -113,44 +113,29 @@ interface PtyRetry {
 	terminalId: string;
 }
 
-function ptyRetryPath(sessionId: string): string {
-	if (!/^[A-Za-z0-9_-]{1,80}$/.test(sessionId)) fail("invalid_session");
-	return join(getAgentDir(), "terminal-inputs", `${sessionId}.json`);
+function terminalOutbox(profile: string, session: string, operation: "read" | "reserve" | "ack", pending?: PtyRetry, expectedId?:string): PtyRetry | boolean | null {
+    const result = spawnSync(process.env.AMAZME_PYTHON_BACKEND || "amazme-backend", ["client-outbox"], {
+        input:JSON.stringify({directory:join(getAgentDir(),"terminal-inputs"),profile,session,operation,pending:pending ?? null,expected_id:expectedId ?? ""}),
+        encoding:"utf8", timeout:5000, maxBuffer:1024 * 1024,
+    });
+    if (result.error) throw result.error;
+    const body:unknown = JSON.parse(result.stdout || "null");
+    if (result.status !== 0) fail(isRecord(body) && typeof body.error === "string" ? body.error : "terminal_outbox_failed");
+    if (body === null || typeof body === "boolean") return body;
+    if (!isRecord(body) || typeof body.inputId !== "string" || typeof body.prompt !== "string" || typeof body.terminalId !== "string") fail("invalid_terminal_input");
+    return {inputId:body.inputId,prompt:body.prompt,terminalId:body.terminalId};
 }
 
-function readPtyRetry(sessionId: string): PtyRetry | null {
-	const path = ptyRetryPath(sessionId);
-	if (!existsSync(path)) return null;
-	const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-	if (
-		!isRecord(parsed) ||
-		typeof parsed.inputId !== "string" ||
-		typeof parsed.prompt !== "string" ||
-		typeof parsed.terminalId !== "string"
-	) {
-		fail("invalid_terminal_input");
-	}
-	return { inputId: parsed.inputId, prompt: parsed.prompt, terminalId: parsed.terminalId };
+function readPtyRetry(profile:string,session:string): PtyRetry | null {
+    const value = terminalOutbox(profile,session,"read");
+    if (typeof value === "boolean") fail("invalid_terminal_input");
+    return value;
 }
 
-function storePtyRetry(sessionId: string, pending: PtyRetry): PtyRetry {
-	mkdirSync(join(getAgentDir(), "terminal-inputs"), { recursive: true, mode: 0o700 });
-	try {
-		writeFileSync(ptyRetryPath(sessionId), JSON.stringify(pending), { flag: "wx", mode: 0o600 });
-		return pending;
-	} catch (error) {
-		if (!isRecord(error) || error.code !== "EEXIST") throw error;
-		const current = readPtyRetry(sessionId);
-		if (!current) fail("invalid_terminal_input");
-		return current;
-	}
-}
-
-export function clearPtyRetry(sessionId: string): boolean {
-	const path = ptyRetryPath(sessionId);
-	if (!existsSync(path)) return false;
-	unlinkSync(path);
-	return true;
+function storePtyRetry(profile:string,session:string,pending:PtyRetry): PtyRetry {
+    const value = terminalOutbox(profile,session,"reserve",pending);
+    if (!value || typeof value === "boolean") fail("invalid_terminal_input");
+    return value;
 }
 
 function approvalSummary(approval: Record<string, unknown>): string {
@@ -213,6 +198,11 @@ export class HostClient {
 		this.#hostEpoch = body.host_epoch;
 		this.#profileId = typeof body.profile_id === "string" ? body.profile_id : "";
 	}
+
+	get profileId(): string {
+        if (!this.#profileId) fail("invalid_bootstrap");
+        return this.#profileId;
+    }
 
 	connectionInfo(): string {
         return `Python ${JSON.stringify({profile:this.#profileId,build:this.#buildId,epoch:this.#hostEpoch})}`;
@@ -774,7 +764,7 @@ async function emitRecord(
 }
 
 async function watchTerminal(
-	client: HostClient,
+	client: Pick<HostClient,"readTerminal">,
 	sessionId: string,
 	attachmentId: string,
 	terminalId: string,
@@ -797,15 +787,17 @@ async function watchTerminal(
 }
 
 export async function runPtyCommand(
-	client: HostClient,
+	client: Pick<HostClient,"profileId" | "runningTerminal" | "openTerminal" | "readTerminal" | "writeTerminal">,
 	sessionId: string,
 	attachmentId: string,
 	workspace: string,
 	prompt: string,
 	jsonMode: boolean,
 ): Promise<number> {
+	const profile = client.profileId;
 	if (prompt === "/pty-ack") {
-		const removed = clearPtyRetry(sessionId);
+        const pending = readPtyRetry(profile,sessionId);
+		const removed = pending ? terminalOutbox(profile,sessionId,"ack",undefined,pending.inputId) === true : false;
 		const text = removed ? "已由用户核对；原输入不会重放\n" : "没有未确认的输入\n";
 		return emitRecord(
 			{ workspace, session_id: sessionId, status: removed ? "acked" : "absent" },
@@ -814,7 +806,7 @@ export async function runPtyCommand(
 			removed ? 0 : 1,
 		);
 	}
-	const pending = readPtyRetry(sessionId);
+	const pending = readPtyRetry(profile,sessionId);
 	if (pending && pending.prompt !== prompt) {
 		return emitRecord(
 			{
@@ -833,7 +825,7 @@ export async function runPtyCommand(
 		terminalId = await client.runningTerminal(sessionId);
 		if (!terminalId) terminalId = await client.openTerminal(sessionId, attachmentId, workspace);
 	}
-	const claimed = pending ?? storePtyRetry(sessionId, { inputId: hexId(), prompt, terminalId });
+	const claimed = pending ?? storePtyRetry(profile,sessionId, { inputId: hexId(), prompt, terminalId });
 	if (claimed.prompt !== prompt) {
 		return emitRecord(
 			{
@@ -871,7 +863,7 @@ export async function runPtyCommand(
 			1,
 		);
 	}
-	clearPtyRetry(sessionId);
+	terminalOutbox(profile,sessionId,"ack",undefined,claimed.inputId);
 	const output = await watchTerminal(client, sessionId, attachmentId, claimed.terminalId);
 	const text = `输入已接收\n${visibleLines(output).join("\n")}\n`;
 	return emitRecord(

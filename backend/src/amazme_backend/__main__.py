@@ -15,6 +15,9 @@ from .processes import retain_inherited
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1] == "client-outbox":
+        from .client_outbox import main as outbox_main
+        raise SystemExit(outbox_main())
     if len(sys.argv) > 1 and sys.argv[1] == "transient":
         from .transient import main as transient_main
         raise SystemExit(transient_main(sys.argv[2:]))

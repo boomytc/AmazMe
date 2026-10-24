@@ -658,6 +658,7 @@ def test_browser_branches_from_the_selected_turn() -> None:
         globalThis.fetch = async (path, options={})=>{
           calls.push({path, body:options.body, build:options.headers?.['x-amazme-build']});
           if(path==='/api/v1/bootstrap') return response(identity);
+          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/sessions') return response({sessions:branched
@@ -725,6 +726,7 @@ def test_browser_archive_keeps_the_visible_turn() -> None:
         const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
         globalThis.fetch = async (path, options={})=>{
           if(path==='/api/v1/bootstrap') return response(identity);
+          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A',parent_id:'',fork_request_id:'',archived}]});
@@ -787,6 +789,7 @@ def test_browser_compaction_keeps_the_original_turn() -> None:
         const compactionIds=[];
         globalThis.fetch = async (path, options={})=>{
           if(path==='/api/v1/bootstrap') return response(identity);
+          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A',archived:false}]});
@@ -895,6 +898,7 @@ def test_browser_searches_the_selected_session() -> None:
         globalThis.fetch = async (path, options={})=>{
           const method = options.method || 'GET';
           if(path==='/api/v1/bootstrap') return response(identity);
+          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
           if(path==='/api/v1/health') return response({state:'ready',identity});
           if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'工作区',archived:false}]});
@@ -927,3 +931,16 @@ def test_browser_searches_the_selected_session() -> None:
     result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
                             cwd=Path(__file__).parents[1])
     assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
+
+
+async def test_branch_copies_model_without_sharing_later_changes(owner: Host) -> None:
+    from amazme_backend.contracts import SessionModel
+    await owner.store.save_session_model(SessionModel(session_id=PARENT, provider="deepseek", model="deepseek-flash"))
+    child = "b" * 32
+    await owner.store.create_branch(child, PARENT, "settled", "分支")
+    copied = await owner.store.session_model(child)
+    assert copied is not None and copied.model == "deepseek-flash"
+    await owner.store.save_session_model(SessionModel(session_id=PARENT, provider="faux", model="faux"))
+    assert await owner.store.session_model(child) == copied
+    await owner.store.discard_unopened_branch(child)
+    assert await owner.store.session_model(child) is None

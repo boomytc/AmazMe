@@ -122,7 +122,8 @@ def main() -> int:
     seen: dict[str, tuple[str, dict[str, JsonValue]]] = {}
     tools: list[McpTool] = []
     cursors: set[str] = set()
-    phase, version = "initialize", ""
+    phase: str = str("initialize")
+    version = ""
     pending_refresh = False
     deadline = time.monotonic() + 10
     refresh_deadline = 0.0

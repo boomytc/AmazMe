@@ -573,6 +573,7 @@ def test_browser_connection_ownership_and_safe_retry_without_browser():
         globalThis.fetch = async (path, options={})=>{
             const method=options.method||'GET'; calls.push({path,options});
             if(path==='/api/v1/bootstrap') return response(identity);
+          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
             if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
             if(path==='/api/v1/health') return response({state:healthState,identity});
             if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A'},{session_id:'b',title:'B'}]});
@@ -593,7 +594,7 @@ def test_browser_connection_ownership_and_safe_retry_without_browser():
                 return response({},202);
             }
             if(parts[5]==='submissions') {
-                if(holdSubmission) return new Promise(resolve=>heldReply=()=>resolve(response({},202)));
+                if(holdSubmission) return new Promise((resolve,reject)=>heldReply=()=>reject(new TypeError('reply lost')));
                 if(failSubmission) return response({code:'stale_client_binding',message:'Reconnect before writing'},409);
                 return response({},202);
             }
@@ -622,7 +623,7 @@ def test_browser_connection_ownership_and_safe_retry_without_browser():
         $('prompt').value='ambiguous task';
         const first=$('composer').onsubmit({preventDefault(){}});
         await until(()=>heldReply!==null);
-        const originalID=JSON.parse(sessionStorage.getItem('pending')).request_id;
+        const originalID=JSON.parse(sessionStorage.getItem('pending:host-1')).request_id;
         const old=sockets.at(-1);
         select(1); await until(()=>$('connection').textContent==='已连接');
         $('prompt').value='B draft';
@@ -631,19 +632,19 @@ def test_browser_connection_ownership_and_safe_retry_without_browser():
         select(0); await until(()=>$('connection').textContent==='已连接');
         heldReply(); await first;
         assert.equal($('prompt').value,'ambiguous task');
-        assert.equal(JSON.parse(sessionStorage.getItem('pending')).request_id,originalID);
+        assert.equal(JSON.parse(sessionStorage.getItem('pending:host-1')).request_id,originalID);
         assert.equal($('send').textContent,'重试原请求');
         holdSubmission=false;
         await $('composer').onsubmit({preventDefault(){}});
         const submissions=calls.filter(call=>call.path.endsWith('/submissions'));
         assert.equal(JSON.parse(submissions[0].options.body).request_id,JSON.parse(submissions[1].options.body).request_id);
-        assert.equal(sessionStorage.getItem('pending'),null);
+        assert.equal(sessionStorage.getItem('pending:host-1'),null);
         assert.equal($('prompt').value,'');
         select(1); await until(()=>$('connection').textContent==='已连接');
         assert.equal($('prompt').value,'B draft');
         failSubmission=true;
         await $('composer').onsubmit({preventDefault(){}});
-        assert.equal(JSON.parse(sessionStorage.getItem('pending')).text,'B draft');
+        assert.equal(JSON.parse(sessionStorage.getItem('pending:host-1')).text,'B draft');
         assert.equal($('send').disabled,true);
         assert.match($('error').textContent,/原请求 ID/);
 

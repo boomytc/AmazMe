@@ -127,6 +127,10 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
       close(){}
     };
     const until=async check=>{for(let n=0;n<1000;n++){if(check())return;await new Promise(r=>setTimeout(r,1));}throw Error('timeout '+$('error').textContent);};
+    const foreign = JSON.stringify({target:a,request_id:'foreign',text:'another host',mode:'queue'});
+    sessionStorage.setItem('pending:host-2',foreign);
+    sessionStorage.setItem('pending',foreign);
+    sessionStorage.setItem('actions:host-2','{}');
     await import(appURL);
     await until(()=>$('connection').textContent==='已连接');
     async function select(id){const before=bindings;document.querySelectorAll('#sessions button')[id===a?0:1].click();await until(()=>bindings>before&&new URL(location.href).searchParams.get('session')===id&&$('connection').textContent==='已连接'); await new Promise(resolve=>setTimeout(resolve,5));}
@@ -215,7 +219,7 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
     await until(()=>readers.length===2);
     $('model-choice').value='deepseek\ndeepseek-flash';
     readers[0].resolve();await prepareA;
-    assert.equal(sessionStorage.getItem('pending'),null);
+    assert.equal(sessionStorage.getItem('pending:host-1'),null);
     assert.equal($('prompt').value,'B attachment');
     assert.equal($('image-note').textContent,'b.png');
     readers[1].resolve();await until(()=>held.length===1);
@@ -228,5 +232,8 @@ def test_late_script_and_tool_replies_only_settle_the_original_operation() -> No
     await select(a);
     assert.equal($('prompt').value,'A attachment');
     assert.equal($('image-note').textContent,'a.png');
+    assert.equal(sessionStorage.getItem('pending:host-2'),foreign);
+    assert.equal(sessionStorage.getItem('pending'),foreign);
+    assert.equal(sessionStorage.getItem('actions:host-2'),'{}');
     await window.happyDOM.abort();process.exit(0);
     ''')

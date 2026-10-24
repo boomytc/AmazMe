@@ -214,7 +214,7 @@ from .oauth import BROWSER, DEVICE, OAuthInput, OAuthStart, OAuthView
 from .oauth import Login as OAuthLogin
 from .page_boot import boot_document
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
-from .providers import CATALOG, choose_model, public_settings, summarize
+from .providers import CATALOG, choose_model, public_settings, selected_provider, summarize
 from .remote_session import daemon_identity
 from .resources import ResourceCatalog, session_resources
 from .rpc import RpcCall, handle_rpc
@@ -1405,8 +1405,11 @@ class Host:
             raise BackendError("workflow_secret")
         if not existing and not await self._grant_allows_new_work(session):
             raise BackendError("workspace_not_found", status=404)
+        choice = await self.store.session_model(session)
+        captured = selected_provider(self.profile.config.provider, choice) if not existing else None
         return await self._with_session(
-            session, lambda store: store.open_workflow(value.workflow_id, value.check, value.correction_limit))
+            session, lambda store: store.open_workflow(value.workflow_id, value.check, value.correction_limit,
+                                                       accepted_config=captured))
 
     async def workflow(self, session: str, workflow_id: str) -> WorkflowView:
         return await self._with_session(
