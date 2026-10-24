@@ -49,6 +49,8 @@ async def context(tmp_path):
           ProcessReservation(profile, "supervisor", "supervisor") as sl,
           ProcessReservation(profile, "worker", "worker") as wl):
         epoch = await host.store.initialize(host.instance, host.build, hl.lease)
+        await host.store.transaction(lambda db: db.execute(
+            "INSERT INTO sessions(id,title,workspace) VALUES('s','checkpoint','primary')"))
         host.fence = HostFence(build_id=host.build, host_epoch=epoch)
         host.origin = "http://127.0.0.1:12345"
         await host.store.save_service(ServiceRecord(instance_id="supervisor", build_id=host.build,
@@ -111,7 +113,9 @@ async def test_prepare_and_worker_bind_a_relative_path_to_the_session_workspace(
         (grant / "note.txt").write_text("granted\n")
         await host.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
         await host.store.transaction(lambda db: db.execute(
-            "INSERT INTO sessions(id,title,workspace) VALUES('s','host','docs'),(?, 'worker','docs')", (session,)))
+            "UPDATE sessions SET title='host', workspace='docs' WHERE id='s'"))
+        await host.store.transaction(lambda db: db.execute(
+            "INSERT INTO sessions(id,title,workspace) VALUES(?, 'worker','docs')", (session,)))
         prepared = await host.prepare_tool_write(request)
         assert prepared.path == "grant/docs/note.txt"
         assert prepared.expected_digest == hashlib.sha256(b"granted\n").hexdigest()

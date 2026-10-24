@@ -1,6 +1,7 @@
 """Granted workspaces are real local directories. grant/name is only a logical path."""
 
 import asyncio
+import hashlib
 import json
 import os
 import shutil
@@ -169,6 +170,52 @@ async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_
     finally:
         await host.supervisor.close()
         await host.store.db.close()
+
+
+async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    private_write(tmp_path / "config.json", json.dumps({
+        "format": 2, "profile_id": "missing-row", "workspace": str(primary), "resources": "unused",
+        "provider": {"provider": "faux"}}))
+    private_write(tmp_path / "control.token", "test-token")
+    session = "e" * 32
+    terminal = "f" * 32
+    owner = Supervisor(Profile(tmp_path), "missing-row")
+    await owner.initialize()
+    database = sqlite3.connect(tmp_path / "host.sqlite")
+    try:
+        database.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL DEFAULT 'primary')")
+        database.commit()
+    finally:
+        database.close()
+    reservation: ProcessReservation | None = None
+    try:
+        with pytest.raises(BackendError, match="session_not_found"):
+            await owner.open_terminal(OpenTerminal(
+                build_id=owner.build, host_epoch=owner.host_epoch, session_id=session,
+                terminal_id=terminal, command="printf z > leaked.txt"))
+        instance = hashlib.sha256(("terminal:" + terminal).encode()).hexdigest()[:32]
+        assert not (tmp_path / "executions" / instance).exists()
+        worker_id = os.urandom(16).hex()
+        reservation = ProcessReservation(owner.profile.path, "worker", worker_id)
+        info = WorkerInfo(
+            session_id=session, worker_id=worker_id, pid=123, socket=str(owner.profile.worker_socket(session)),
+            build_id=owner.build, process_lease=reservation.lease, state="ready", purpose="business",
+            host_epoch=owner.host_epoch, fingerprint=owner.build)
+        await owner.db.call(lambda db: db.execute(
+            "INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
+            (worker_id, session, info.model_dump_json())), write=True)
+        epoch = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=worker_id, build_id=owner.build))
+        with pytest.raises(BackendError, match="session_not_found"):
+            await owner.run_tool(RunTool(
+                **epoch.model_dump(), call_id="missing-shell", request_id="request",
+                command="printf z > leaked.txt", effect="write"))
+        assert not (primary / "leaked.txt").exists()
+    finally:
+        if reservation is not None:
+            reservation.close()
+        await owner.close()
 
 
 def _seed_host(profile: Path, session: str, grant: Path) -> None:

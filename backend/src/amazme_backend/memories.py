@@ -73,7 +73,9 @@ def session_workspace(profile: Path, session_id: str) -> str:
             return "primary"
     finally:
         connection.close()
-    if row is None or not row[0]:
+    if row is None:
+        raise BackendError("session_not_found", status=404)
+    if not row[0]:
         return "primary"
     return str(row[0])
 
