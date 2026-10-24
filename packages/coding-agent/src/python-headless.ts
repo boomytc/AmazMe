@@ -45,6 +45,7 @@ export interface PythonHeadlessOptions extends PythonRunOptions {
 	readonly prompt: string;
 	readonly images?: readonly ImageContent[];
 	readonly session?: string;
+	readonly noSession?: boolean;
 	readonly selection?: "continue" | "resume";
 	readonly title?: string;
 	readonly decision?: string;
@@ -1010,17 +1011,18 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 		process.stderr.write("decision_target_conflict\n");
 		return 1;
 	}
+	const host = await connectPythonHost({cwd:options.cwd, url:options.url, token:options.token,
+		...(options.noSession ? {noSession:true,workspace:options.workspace} : {})});
 	try {
-		const host = await connectPythonHost({ cwd: options.cwd, url: options.url, token: options.token });
 		const client = new HostClient(host.url, host.token, options);
 		await client.bootstrap();
 		if (options.mode === "rpc") return await runRpc(client);
-		const workspace = options.url
+		const workspace = options.noSession ? "primary" : options.url
 			? options.workspace ?? "primary"
 			: await client.selectWorkspace(options.cwd, options.workspace);
 		return await runPrompt(client, {...options, workspace});
 	} catch (error) {
 		process.stderr.write(`${error instanceof Error ? error.message : "python_headless_failed"}\n`);
 		return 1;
-	}
+	} finally { await host.close?.(); }
 }

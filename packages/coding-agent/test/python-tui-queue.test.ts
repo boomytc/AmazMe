@@ -44,9 +44,6 @@ test("initial attachments and consecutive prompts wait for a fresh approval, the
 		vi.unstubAllEnvs();
 		rmSync(directory, { recursive: true, force: true });
 	});
-	vi.spyOn(process, "exit").mockImplementation(() => {
-		throw new Error("test-tui-exit");
-	});
 	const session = "a".repeat(32);
 	const submissions: Array<Record<string, unknown>> = [];
 	let resolveFirst: ((value: Response) => void) | undefined;
@@ -122,6 +119,6 @@ test("initial attachments and consecutive prompts wait for a fresh approval, the
 	expect(submissions[1]?.images).toEqual([]);
 	screen.editor?.onBeforeInput?.("\x03");
 	await run;
-	expect(ended).toBeInstanceOf(Error);
+	expect(ended).toBeUndefined();
 	expect(deleted).toBe(true);
 });

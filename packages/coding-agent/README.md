@@ -37,3 +37,6 @@ npm test --workspace @amazme/coding-agent
 
 `--thinking off|minimal|low|medium|high|xhigh|max` 选择下一回合推理等级，TUI 中用 `/thinking LEVEL` 修改后续回合。
 Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿用原回合配置。
+
+本机 `--no-session` 使用临时会话，退出时关闭其拥有的后端并清除已结算历史。
+若副作用或退出仍未确认，会保留恢复记录并输出路径；原账号库和工作区不会被删除。

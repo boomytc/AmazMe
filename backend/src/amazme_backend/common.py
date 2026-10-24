@@ -141,10 +141,15 @@ class Profile:
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise BackendError("unsafe_ipc_directory")
 
+    @property
+    def account_path(self) -> Path:
+        # A no-session profile uses the original locked vault; refresh ownership stays there.
+        return Path(self.config.account_profile).resolve(strict=True) if self.config.account_profile else self.path
+
     def reload_provider(self) -> None:
         fresh = ProfileConfig.model_validate_json((self.path / "config.json").read_bytes())
         if (fresh.profile_id != self.config.profile_id or fresh.workspace != self.config.workspace
-                or fresh.format != self.config.format):
+                or fresh.format != self.config.format or fresh.account_profile != self.config.account_profile):
             raise BackendError("profile_identity_mismatch")
         self.config = fresh
 

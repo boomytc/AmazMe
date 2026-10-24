@@ -67,6 +67,7 @@ export async function main(args: string[]): Promise<void> {
 	}
 	if ((parsed.pythonUrl === undefined) !== (parsed.pythonToken === undefined))
 		throw new Error("python_target_required");
+	if (parsed.noSession && parsed.pythonUrl) throw new Error("no_session_requires_local_host");
 	const target = [
 		...(parsed.pythonUrl === undefined ? [] : ["--python-url", parsed.pythonUrl]),
 		...(parsed.pythonToken === undefined ? [] : ["--python-token", parsed.pythonToken]),
@@ -107,6 +108,7 @@ export async function main(args: string[]): Promise<void> {
 	}
 	const runOptions = requestOptions(parsed);
 	const sessionOptions = {
+        ...(parsed.noSession ? {noSession:true} : {}),
 		...(parsed.continue
 			? { selection: "continue" as const }
 			: parsed.resume

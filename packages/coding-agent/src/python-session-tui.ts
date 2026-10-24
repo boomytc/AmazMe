@@ -499,7 +499,6 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		process.off("SIGINT", onSignal);
 		await releaseOnce();
 	}
-	process.exit(process.exitCode ?? 0);
 }
 
 function backendCommand(): string {
@@ -582,18 +581,9 @@ function startServe(command: string, profile: string): Promise<string> {
 	});
 }
 
-/** Attach to an explicit host, or start the local one without deleting an existing profile. */
-export async function connectPythonHost(options: {
-	readonly cwd: string;
-	readonly url?: string;
-	readonly token?: string;
-}): Promise<{ url: string; token: string }> {
-	if ((options.url === undefined) !== (options.token === undefined)) fail("python_target_required");
-	if (options.url && options.token) return { url: options.url, token: options.token };
+function ensurePythonProfile(cwd: string): string {
 	const command = backendCommand();
 	const profile = join(getAgentDir(), "python-host");
-	const tokenPath = join(profile, "web.token");
-	const readyPath = join(profile, "ready.json");
 	if (!existsSync(join(profile, "config.json"))) {
 		mkdirSync(getAgentDir(), { recursive: true });
 		const staging = mkdtempSync(join(getAgentDir(), ".python-init-"));
@@ -614,7 +604,7 @@ export async function connectPythonHost(options: {
 			);
 			const init = spawnSync(
 				command,
-				["init", "--profile", profile, "--workspace", resolve(options.cwd), "--provider-config", providerPath],
+				["init", "--profile", profile, "--workspace", resolve(cwd), "--provider-config", providerPath],
 				{ encoding: "utf8" },
 			);
 			const errno = init.error as NodeJS.ErrnoException | null;
@@ -624,6 +614,82 @@ export async function connectPythonHost(options: {
 			rmSync(staging, {recursive:true, force:true});
 		}
 	}
+	return profile;
+}
+
+export interface PythonHostConnection {
+	readonly url:string;
+	readonly token:string;
+	readonly close?: () => Promise<void>;
+}
+
+async function transientHost(cwd:string, workspace?:string): Promise<PythonHostConnection> {
+	const source = ensurePythonProfile(cwd);
+	const child = spawn(backendCommand(), ["transient", "--source-profile", source, "--workspace", resolve(cwd),
+		...(workspace ? ["--workspace-name",workspace] : [])], {stdio:["pipe","pipe","inherit"],detached:true});
+	const ending = new Promise<number>((resolveExit, rejectExit) => {
+		child.once("error", rejectExit);
+		child.once("exit", code => resolveExit(code ?? 1));
+	});
+	// Attach a rejection handler immediately, including during the readiness handshake.
+	void ending.catch(() => {});
+	const close = async (): Promise<void> => {
+		child.stdin.end();
+		if (await ending) throw new Error("transient_recovery_retained");
+	};
+	try {
+		const ready = await new Promise<{url:string;token:string}>((resolveReady,rejectReady) => {
+			let pending = "", settled = false;
+			const finish = (error?:Error, value?:{url:string;token:string}): void => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer);
+				child.stdout.off("data", onData);
+				if (error) rejectReady(error);
+				else if (value) resolveReady(value);
+			};
+			const onData = (chunk:Buffer): void => {
+				pending += chunk.toString("utf8");
+				if (pending.length > 65536) return finish(new Error("invalid_transient_host"));
+				const newline = pending.indexOf("\n");
+				if (newline < 0) return;
+				try {
+					const value:unknown = JSON.parse(pending.slice(0,newline));
+					if (!isRecord(value) || typeof value.url !== "string" || typeof value.token !== "string")
+						throw new Error("invalid_transient_host");
+					finish(undefined,{url:value.url,token:value.token});
+				} catch { finish(new Error("invalid_transient_host")); }
+			};
+			const timer = setTimeout(() => finish(new Error("transient_host_timeout")), 45000);
+			child.stdout.on("data",onData);
+			void ending.then(() => finish(new Error("transient_host_exited")), error => finish(error instanceof Error ? error : new Error("python_backend_missing")));
+		});
+		return {...ready, close};
+	} catch(error) {
+		await close().catch(() => {});
+		throw error;
+	}
+}
+
+/** Attach to an explicit host, or start the local one without deleting an existing profile. */
+export async function connectPythonHost(options: {
+	readonly cwd: string;
+	readonly url?: string;
+	readonly token?: string;
+	readonly noSession?: boolean;
+	readonly workspace?: string;
+}): Promise<PythonHostConnection> {
+	if ((options.url === undefined) !== (options.token === undefined)) fail("python_target_required");
+	if (options.noSession) {
+		if (options.url || options.token) fail("no_session_requires_local_host");
+		return transientHost(options.cwd, options.workspace);
+	}
+	if (options.url && options.token) return { url: options.url, token: options.token };
+	const command = backendCommand();
+	const profile = join(getAgentDir(), "python-host");
+	const tokenPath = join(profile, "web.token");
+	const readyPath = join(profile, "ready.json");
+	ensurePythonProfile(options.cwd);
 	const existing = await liveUrl(readyPath, tokenPath);
 	const url = existing || (await startServe(command, profile));
 	return { url, token: readFileSync(tokenPath, "utf8").trim() };
@@ -631,13 +697,15 @@ export async function connectPythonHost(options: {
 
 /** Start or attach to the local Python host. Leaving the screen does not stop it. */
 export async function runOwnedPythonInteractive(options: Omit<PythonSessionTarget, "url" | "token" | "workspace"> & {
-	readonly cwd: string;
-	readonly workspace?: string;
+	readonly cwd:string;
+	readonly workspace?:string;
+	readonly noSession?:boolean;
 }): Promise<void> {
-	const host = await connectPythonHost({ cwd: options.cwd });
-	const client = new HostClient(host.url, host.token);
-	await client.bootstrap();
-	const workspace = await client.selectWorkspace(options.cwd, options.workspace);
-	await runPythonSessionTui({ ...options, url: host.url, token: host.token, workspace,
-		...(options.session === undefined ? {} : {session:options.session}) });
+	const host = await connectPythonHost({cwd:options.cwd, ...(options.noSession ? {noSession:true,workspace:options.workspace} : {})});
+	try {
+		const client = new HostClient(host.url, host.token);
+		await client.bootstrap();
+		const workspace = options.noSession ? "primary" : await client.selectWorkspace(options.cwd, options.workspace);
+		await runPythonSessionTui({...options, url:host.url, token:host.token, workspace});
+	} finally { await host.close?.(); }
 }

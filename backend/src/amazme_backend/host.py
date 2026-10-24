@@ -283,7 +283,7 @@ class Host:
         self.service_lock = asyncio.Lock()
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
-        self.accounts = AccountStore(profile.path)
+        self.accounts = AccountStore(profile.account_path)
         self.oauth_logins: dict[str, OAuthLogin] = {}
         self.attached = ""
         self.stop = asyncio.Event()

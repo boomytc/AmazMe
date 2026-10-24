@@ -691,7 +691,7 @@ class SessionStore:
             config.append_system_prompt = "\n\n".join(filter(None, [config.append_system_prompt, resources.system_context()]))
             if len(config.append_system_prompt) > 32000:
                 raise BackendError("system_prompt_limit")
-            known_secrets = (*AccountStore(self.profile.path).secrets(), self.profile.token,
+            known_secrets = (*AccountStore(self.profile.account_path).secrets(), self.profile.token,
                        self.profile.config.provider.api_key.get_secret_value())
             if contains_secret(config.append_system_prompt + "\n" + expanded_text, known_secrets):
                 raise BackendError("resource_secret")

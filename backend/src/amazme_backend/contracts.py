@@ -126,6 +126,7 @@ class ProfileConfig(Model):
     workspace: str
     resources: str
     user_resources: str = ""
+    account_profile: str = ""
     provider: ProviderConfig
     approval_policy: Literal["auto", "mutations", "all"] = "mutations"
     testing: bool = False

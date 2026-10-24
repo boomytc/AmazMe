@@ -54,6 +54,12 @@ Codemode 单元：产品不再暴露固定 echo/mark/block；复用现有 `@amaz
 所有模型协议使用同一工具范围，未开放的模型工具整批在提议和执行前拒绝。
 定向存储、协议、SDK/RPC 与客户端检查通过；不产生真实模型或系统权限验收声明。
 
+临时会话单元：`--no-session` 使用同一 Python Host/监督器和私有临时 SQLite，stdin 生命周期结束后按原关闭路径收回。
+临时 profile 的账号操作使用原账号库及原锁，不复制 refresh token；账号根在 profile 运行期不可更改，凭据不进入临时配置。
+常规退出经所有已登记进程 lease 退出证明后删除自己创建的 profile；待投递、未知调用/副作用或未证明退出时保留恢复记录并报告路径。
+未启动默认常驻 Host，不在默认会话库保存历史；TUI 正常返回使外层清理能完成。显式外部 Host 不能与本机临时 profile 选项混用。
+本地确定性 CLI 与真实 Python 服务进程、stdin EOF、原凭据库写入及身份/未知记录保护均有定向证据；未请求真实供应商。
+
 推理等级单元：`--thinking`、TUI `/thinking`、Web/Electron 与 SDK/RPC 使用原请求选项，等级随回合固定并由子任务继承。
 模型快照保留 Pi 的 reasoning/thinkingLevelMap；不支持的等级使用原顺序调整。
 Chat Completions、Responses/Codex、Anthropic、Gemini 按原协议字段转换，保留回答预算与供应商推理签名。
