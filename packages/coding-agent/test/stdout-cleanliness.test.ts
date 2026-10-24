@@ -96,7 +96,7 @@ describe("stdout cleanliness in non-interactive modes", () => {
 	});
 
 	it("keeps stdout empty for --mode json --help without executing obsolete startup package installers", async () => {
-		const result = await runCli(["--mode", "json", "--help", "--approve"]);
+		const result = await runCli(["--mode", "json", "--help"]);
 
 		expect(result.code).toBe(0);
 		expect(result.stdout).toBe("");

@@ -323,3 +323,8 @@ export function pythonResumeUpdateRequest(ready: PythonReady, controlToken: stri
 		body: "",
 	};
 }
+
+/** Python supplies model defaults; only an explicit smoke run selects its fixture. */
+export function initialPythonProvider(smoke: boolean): {provider:"deepseek" | "faux"; model?:string; base_url?:string} {
+    return smoke ? {provider:"faux", model:"faux", base_url:""} : {provider:"deepseek"};
+}

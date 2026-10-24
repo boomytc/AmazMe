@@ -6,6 +6,7 @@ import { createReadinessParser } from "../src/readiness.ts";
 import { fakeHost } from "./fake-host.ts";
 import {
 	desktopPythonBootPlan,
+	initialPythonProvider,
 	pairingCookie,
 	parsePythonReadyLine,
 	parsePythonUpdateRecord,
@@ -186,4 +187,9 @@ describe("packaged python backend", () => {
 		expect(requirePythonBackend(resolvePythonBackend({}, join(dir, "resources")))).toBe(join(dir, "resources", "amazme-backend", "amazme-backend"));
 		expect(() => requirePythonBackend(resolvePythonBackend({}, undefined))).toThrow("桌面需要包内的 Python 后端");
 	});
+});
+
+test("normal desktop startup uses Python provider defaults and fixtures require explicit smoke mode", () => {
+    expect(initialPythonProvider(false)).toEqual({provider:"deepseek"});
+    expect(initialPythonProvider(true)).toEqual({provider:"faux",model:"faux",base_url:""});
 });

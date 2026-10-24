@@ -1,10 +1,6 @@
-"""Real Electron process against the current source backend.
+"""Exercise the Electron source launcher or one specified frozen app with owned cleanup."""
 
-The desktop launcher still expects one executable. This run points it at a
-wrapper that execs the checkout's Python module, so the proof is not a frozen
-package and not a Chrome stand-in.
-"""
-
+import argparse
 import json
 import os
 import re
@@ -53,7 +49,8 @@ def child_env(updates: dict[str, str]) -> dict[str, str]:
 
 
 class ElectronRun:
-    def __init__(self, root: Path, workspace: Path, wrapper: Path):
+    def __init__(self, root: Path, workspace: Path, wrapper: Path, app: Path | None = None):
+        self.launcher = [str(app / "Contents/MacOS/AmazMe")] if app else [NODE, "dist/start.js"]
         self.root = root
         self.workspace = workspace
         self.wrapper = wrapper
@@ -86,7 +83,7 @@ class ElectronRun:
         if not NODE:
             raise RuntimeError("node is required to launch Electron")
         self.process = subprocess.Popen(
-            [NODE, "dist/start.js", f"--remote-debugging-port={port}",
+            [*self.launcher, f"--remote-debugging-port={port}",
              "--remote-debugging-address=127.0.0.1", "--remote-allow-origins=*"],
             cwd=GUI, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
             start_new_session=True,
@@ -111,7 +108,7 @@ class ElectronRun:
     def open_second_window(self) -> None:
         assert self.process is not None
         self.opener = subprocess.Popen(
-            [NODE, "dist/start.js", "--amazme-new-window"],
+            [*self.launcher, "--amazme-new-window"],
             cwd=GUI, env=child_env({
                 "AMAZME_GUI_SMOKE": "1",
                 "AMAZME_GUI_SMOKE_HOLD": "1",
@@ -159,7 +156,7 @@ class ElectronRun:
             self.process.wait(timeout=10)
             raise
         if self.host_pid and alive(self.host_pid):
-            raise RuntimeError("source backend stayed up after Electron quit")
+            raise RuntimeError("owned backend stayed up after Electron quit")
 
     def close(self) -> None:
         import resource_census
@@ -213,6 +210,12 @@ def session_of(page) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--app", type=Path, help="One local candidate app; uses its embedded backend")
+    args = parser.parse_args()
+    app = args.app.resolve() if args.app else None
+    if app is not None and not (app / "Contents/MacOS/AmazMe").is_file():
+        raise SystemExit("candidate app is missing its executable")
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
     release_named_slot(parent, "electron-", 2)
@@ -224,7 +227,10 @@ def main() -> None:
     wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(str(PYTHON))} -m amazme_backend \"$@\"\n")
     wrapper.chmod(0o755)
     report: dict[str, object] = {"status": "running", "execution": "electron-source", "vm_created": False, "checks": []}
-    runtime: ElectronRun | None = ElectronRun(root, workspace, wrapper)
+    if app is not None:
+        wrapper = app / "Contents/Resources/amazme-backend/amazme-backend"
+        report.update(execution="electron-frozen", app=str(app))
+    runtime: ElectronRun | None = ElectronRun(root, workspace, wrapper, app)
     decoy = subprocess.Popen(["/bin/sleep", "600"])
     budget = ResourceBudget([ROOT / ".artifacts"], limit_bytes=512 * 1024**2, deadline_seconds=240)
     try:
@@ -356,14 +362,14 @@ def main() -> None:
                     assert after["status"] == "waiting_time" and after["cancel_requested"] is False
                     assert alive(runtime.host_pid)
                     assert client.get("/").status_code == 200
-                    report["checks"].append("closing either Electron window kept the source backend, the other session, the parked request, and the MCP service")
+                    report["checks"].append("closing either Electron window kept the owned backend, the other session, the parked request, and the MCP service")
                     assert not errors, errors
                     report["page_errors"] = errors
                     report["user_agent"] = "Electron"
             runtime.quit()
             assert not alive(runtime.host_pid)
             assert alive(decoy.pid or -1)
-            report["checks"].append("explicit Electron quit stopped the source backend it started and left an unrelated process")
+            report["checks"].append("explicit Electron quit stopped the owned backend it started and left an unrelated process")
             report["status"] = "passed"
     except BaseException as error:
         report.update(status="failed", error=f"{type(error).__name__}: {error}")

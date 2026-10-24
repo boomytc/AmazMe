@@ -35,6 +35,7 @@ import { mayStartInstalledApp } from "./update-launch.ts";
 import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
 import {
 	desktopPythonBootPlan,
+	initialPythonProvider,
 	pairingCookie,
 	parsePythonUpdateRecord,
 	pythonCompleteUpdateRequest,
@@ -690,11 +691,9 @@ async function boot(): Promise<void> {
 	const cwd = hostWorkingDirectory(process.env, process.cwd());
 	usingPythonBackend = true;
 	pythonProfile = join(app.getPath("userData"), "python-profile");
-	const provider = join(app.getPath("userData"), "faux-provider.json");
+	const provider = join(app.getPath("userData"), "initial-provider.json");
 	if (!existsSync(provider)) {
-		writeFileSync(provider, JSON.stringify({
-			provider: "faux", model: "faux", base_url: "", api_key: "", max_tokens: 2048, proxy: "", headers: {},
-		}));
+		writeFileSync(provider, JSON.stringify(initialPythonProvider(SMOKE)));
 	}
 	const plan = desktopPythonBootPlan({
 		executable: pythonExecutable,
