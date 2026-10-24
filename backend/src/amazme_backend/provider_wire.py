@@ -48,8 +48,8 @@ def text(value: JsonValue) -> str:
     return value if isinstance(value, str) else ''
 
 
-def tools(offers: list[McpOffer] | None) -> list[Record]:
-    return [record(item['function']) for item in RECORDS.validate_python(tool_definitions(offers))]
+def tools(offers: list[McpOffer] | None, config: ProviderConfig) -> list[Record]:
+    return [record(item['function']) for item in RECORDS.validate_python(tool_definitions(offers, config))]
 
 
 def replay(message: Message) -> list[Record]:
@@ -114,9 +114,12 @@ def responses_body(config: ProviderConfig, messages: list[Message], offers: list
             converted.extend([{'type': 'function_call', 'call_id': call.id, 'name': call.name, 'arguments': call.arguments}
                           for call in message.tool_calls])
     body: Record = {'model': config.model, 'stream': True, 'store': False, 'input': converted,
-        'instructions': text(RECORDS.validate_python(provider_messages([]))[0].get('content')),
-        'tools': [{'type': 'function', **tool} for tool in tools(offers)],
+        'instructions': text(RECORDS.validate_python(provider_messages([], config.provider, config))[0].get('content')),
+        'tools': [{'type': 'function', **tool} for tool in tools(offers, config)],
         'include': ['reasoning.encrypted_content'], 'tool_choice': 'auto', 'parallel_tool_calls': True}
+    if not body['tools']:
+        for key in ('tools', 'tool_choice', 'parallel_tool_calls'):
+            body.pop(key)
     if config.api == 'openai-codex-responses':
         body['text'] = {'verbosity': 'low'}
     else:
@@ -194,12 +197,14 @@ def anthropic_body(config: ProviderConfig, messages: list[Message], offers: list
             parts.extend([{'type': 'tool_use', 'id': call.id, 'name': names.get(call.name, call.name),
                        'input': RECORD.validate_json(call.arguments)} for call in message.tool_calls])
             converted.append({'role': 'assistant', 'content': parts})
-    system = text(RECORDS.validate_python(provider_messages([]))[0].get('content'))
+    system = text(RECORDS.validate_python(provider_messages([], config.provider, config))[0].get('content'))
     body: Record = {'model': config.model, 'max_tokens': config.max_tokens, 'stream': True,
         'system': ([{'type': 'text', 'text': "You are Claude Code, Anthropic's official CLI for Claude."},
                     {'type': 'text', 'text': system}] if oauth else system),
         'messages': converted, 'tools': [{'name': names.get(text(tool['name']), tool['name']),
-            'description': tool.get('description', ''), 'input_schema': tool['parameters']} for tool in tools(offers)]}
+            'description': tool.get('description', ''), 'input_schema': tool['parameters']} for tool in tools(offers, config)]}
+    if not body['tools']:
+        body.pop('tools')
     metadata = INDEX.get((config.provider, config.model))
     if metadata is not None and metadata.compat.get('forceAdaptiveThinking') is True:
         body['thinking'] = {'type': 'adaptive'}
@@ -293,10 +298,13 @@ def google_body(config: ProviderConfig, messages: list[Message], offers: list[Mc
                     part['thoughtSignature'] = found['thoughtSignature']
                 parts.append(part)
         converted.append({'role': 'model' if message.role == 'assistant' else 'user', 'parts': parts})
-    return {'contents': converted, 'systemInstruction': {'parts': [{'text': text(RECORDS.validate_python(provider_messages([]))[0].get('content'))}]},
+    body: Record = {'contents': converted, 'systemInstruction': {'parts': [{'text': text(RECORDS.validate_python(provider_messages([], config.provider, config))[0].get('content'))}]},
         'generationConfig': {'maxOutputTokens': config.max_tokens},
         'tools': [{'functionDeclarations': [{'name': tool['name'], 'description': tool.get('description', ''),
-                   'parametersJsonSchema': tool['parameters']} for tool in tools(offers)]}]}
+                   'parametersJsonSchema': tool['parameters']} for tool in tools(offers, config)]}]}
+    if not tools(offers, config):
+        body.pop('tools')
+    return body
 
 
 async def google(config: ProviderConfig, messages: list[Message], offers: list[McpOffer] | None,

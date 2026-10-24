@@ -8227,6 +8227,47 @@
       },
       "RpcParams": {
         "properties": {
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "append_system_prompt": {
+            "type": "string",
+            "maxLength": 32000,
+            "title": "Append System Prompt",
+            "default": ""
+          },
+          "allowed_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Tools"
+          },
+          "excluded_tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 128,
+            "title": "Excluded Tools"
+          },
           "computer_inspect": {
             "anyOf": [
               {
@@ -8879,6 +8920,47 @@
       },
       "Submit": {
         "properties": {
+          "system_prompt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "System Prompt"
+          },
+          "append_system_prompt": {
+            "type": "string",
+            "maxLength": 32000,
+            "title": "Append System Prompt",
+            "default": ""
+          },
+          "allowed_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 128
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Allowed Tools"
+          },
+          "excluded_tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 128,
+            "title": "Excluded Tools"
+          },
           "request_id": {
             "type": "string",
             "maxLength": 128,

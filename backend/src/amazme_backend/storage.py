@@ -645,7 +645,7 @@ class SessionStore:
         return [ImagePart.model_validate(item) for item in json.loads(str(row[0]))] if row else []
 
     def _new_request(self, db: sqlite3.Connection, c: Changes, value: Submit, *, parent_id: str = "",
-                     depth: int = 0) -> Receipt:
+                     depth: int = 0, inherited: ProviderConfig | None = None) -> Receipt:
         receipt = Receipt(request_id=value.request_id, run_id=value.request_id, text=value.text,
                           status="waiting_time" if value.not_before_ms > now_ms() else "queued",
                           parent_id=parent_id, kind="child" if parent_id else "root",
@@ -655,7 +655,16 @@ class SessionStore:
                    (value.request_id, digest(value.model_dump_json()), receipt.model_dump_json()))
         self._save_images(db, value.request_id, value.images)
         # Store public provider configuration only. Credentials remain in Profile.
-        config = stored_provider(self.config)
+        config = stored_provider(inherited or self.config)
+        if value.system_prompt is not None:
+            config.system_prompt = value.system_prompt
+        if value.append_system_prompt:
+            config.append_system_prompt = "\n\n".join(filter(None, [config.append_system_prompt, value.append_system_prompt]))
+        if len(config.append_system_prompt) > 32000:
+            raise BackendError("system_prompt_limit")
+        if value.allowed_tools is not None:
+            config.allowed_tools = value.allowed_tools
+        config.excluded_tools = list(dict.fromkeys([*config.excluded_tools, *value.excluded_tools]))
         self._save_run(db, Run(request_id=value.request_id, config=config, depth=depth))
         c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
         c.hit("accepted", receipt.request_id)
@@ -696,6 +705,8 @@ class SessionStore:
             if value.mode == "reject_busy" and pending and not tombstone:
                 raise BackendError("session_busy")
             if value.mode == "steer" and not tombstone:
+                if value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools:
+                    raise BackendError("run_options_immutable")
                 if value.not_before_ms:
                     raise BackendError("scheduled_steer_unsupported")
                 target = self._request(db, value.target_run_id)
@@ -1389,6 +1400,9 @@ class SessionStore:
             completion = Completion.model_validate_json(step.result)
             message = completion.message
             message.provider_response_id = completion.response_id
+            options = self._run(db, request.request_id).config
+            if any(not options.tool_allowed(call.name) for call in message.tool_calls):
+                raise BackendError("tool_not_allowed")
             self._message(db, c, request.request_id, step.step_id, message)
             previous = db.execute("SELECT payload FROM previews WHERE request_id=?", (request.request_id,)).fetchone()
             if previous:
@@ -1426,7 +1440,7 @@ class SessionStore:
         for i, text in enumerate(tasks.tasks):
             child_id = digest(f"{step.step_id}:child:{i}")
             child = self._new_request(db, c, Submit(request_id=child_id, text=text),
-                                      parent_id=request.request_id, depth=run.depth + 1)
+                                      parent_id=request.request_id, depth=run.depth + 1, inherited=run.config)
             step.children.append(child.request_id)
             request.children.append(child.request_id)
         self._consume(db, c, step)

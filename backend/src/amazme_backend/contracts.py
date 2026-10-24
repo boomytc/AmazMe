@@ -3,6 +3,8 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import re
+from fnmatch import fnmatchcase
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, field_validator
@@ -16,7 +18,29 @@ ProviderApi = Literal["openai-completions", "openai-responses", "openai-codex-re
                       "anthropic-messages", "google-generative-ai"]
 
 
-class ProviderConfig(Model):
+TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20})$"
+
+
+class RunOptions(Model):
+    system_prompt: str | None = Field(default=None, max_length=32000)
+    append_system_prompt: str = Field(default="", max_length=32000)
+    allowed_tools: list[str] | None = Field(default=None, max_length=128)
+
+    excluded_tools: list[str] = Field(default_factory=list, max_length=128)
+
+    def tool_allowed(self, name: str) -> bool:
+        return ((self.allowed_tools is None or any(fnmatchcase(name, pattern) for pattern in self.allowed_tools))
+                and not any(fnmatchcase(name, pattern) for pattern in self.excluded_tools))
+
+    @field_validator("allowed_tools", "excluded_tools")
+    @classmethod
+    def tool_names(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None and (len(set(value)) != len(value) or any(not re.fullmatch(r"[A-Za-z_*?][A-Za-z0-9_*?]{0,127}", name) for name in value)):
+            raise ValueError("tool selection must contain unique names or patterns")
+        return value
+
+
+class ProviderConfig(RunOptions):
     provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     base_url: str = "https://api.deepseek.com"
     model: str = "deepseek-flash"
@@ -137,7 +161,7 @@ def checked_images(images: list[ImagePart]) -> list[ImagePart]:
     return images
 
 
-class Submit(Model):
+class Submit(RunOptions):
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     text: str = Field(min_length=1, max_length=16000)
     mode: Literal["queue", "steer", "reject_busy"] = "queue"
@@ -179,7 +203,7 @@ class Receipt(Model):
 class ToolCall(Model):
     id: str
     # mcp_tool is the session's canonical call. mcp_<20 hex> is only the name offered to a provider.
-    name: str = Field(pattern=r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|mcp_tool|mcp_[a-f0-9]{20})$")
+    name: str = Field(pattern=TOOL_NAME_PATTERN)
     arguments: str
 
 

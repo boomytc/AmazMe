@@ -12,7 +12,14 @@ import { getAgentDir } from "./config.ts";
 import { writeRawStdout } from "./core/output-guard.ts";
 import { connectPythonHost } from "./python-session-tui.ts";
 
-export interface PythonHeadlessOptions {
+export interface PythonRunOptions {
+	readonly system_prompt?: string;
+	readonly append_system_prompt?: string;
+	readonly allowed_tools?: readonly string[];
+	readonly excluded_tools?: readonly string[];
+}
+
+export interface PythonHeadlessOptions extends PythonRunOptions {
 	readonly mode: "text" | "json" | "rpc";
 	readonly workspace: string;
 	readonly cwd: string;
@@ -120,10 +127,13 @@ export class HostClient {
 	readonly #token: string;
 	#buildId = "";
 	#hostEpoch = 0;
+	readonly #runOptions: PythonRunOptions;
 
-	constructor(url: string, token: string) {
+	constructor(url: string, token: string, options: PythonRunOptions = {}) {
 		this.#url = url.replace(/\/$/, "");
 		this.#token = token;
+		this.#runOptions = {system_prompt:options.system_prompt, append_system_prompt:options.append_system_prompt,
+			allowed_tools:options.allowed_tools, excluded_tools:options.excluded_tools};
 	}
 
 	async bootstrap(): Promise<void> {
@@ -155,7 +165,7 @@ export class HostClient {
 	async submit(sessionId: string, workspace: string, attachmentId: string, text: string, images: readonly ImageContent[] = []): Promise<Polled> {
 		await this.#requireWorkspace(sessionId, workspace);
 		const requestId = randomBytes(8).toString("hex");
-		await this.#send("POST", `/api/v1/sessions/${sessionId}/submissions`, { request_id: requestId, text,
+		await this.#send("POST", `/api/v1/sessions/${sessionId}/submissions`, { ...this.#runOptions, request_id: requestId, text,
 			images:images.map(image=>({media_type:image.mimeType, data_base64:image.data})) }, attachmentId);
 		return this.#untilDecision(sessionId, requestId);
 	}
@@ -344,6 +354,8 @@ export class HostClient {
 	}
 
 	async rpc(call: unknown): Promise<unknown> {
+		if (isRecord(call) && call.method === "request.submit" && isRecord(call.params))
+			call = {...call, params:{...this.#runOptions, ...call.params}};
 		return this.#sendRaw("POST", "/api/v1/rpc", call);
 	}
 
@@ -614,7 +626,7 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 	}
 	try {
 		const host = await connectPythonHost({ cwd: options.cwd, url: options.url, token: options.token });
-		const client = new HostClient(host.url, host.token);
+		const client = new HostClient(host.url, host.token, options);
 		await client.bootstrap();
 		if (options.mode === "rpc") return await runRpc(client);
 		return await runPrompt(client, options);

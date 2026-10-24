@@ -36,6 +36,7 @@ from .contracts import (
     ModelCatalog,
     ModelSettings,
     Receipt,
+    RunOptions,
     Session,
     SessionList,
     Snapshot,
@@ -51,7 +52,7 @@ from .oauth import OAuthInput, OAuthStart, OAuthView
 from .workspace_files import FileContent
 
 
-class RpcParams(Model):
+class RpcParams(RunOptions):
     computer_inspect: ComputerInspect | None = None
     computer_policy: ComputerPolicy | None = None
     computer_action: ComputerActionRequest | None = None
@@ -271,7 +272,9 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
             raise BackendError("missing_user_context")
         return await owner.deliver(
             session, "submit", params.request_id,
-            Submit(request_id=params.request_id, text=params.text, not_before_ms=params.not_before_ms))
+            Submit(request_id=params.request_id, text=params.text, not_before_ms=params.not_before_ms,
+                   system_prompt=params.system_prompt, append_system_prompt=params.append_system_prompt,
+                   allowed_tools=params.allowed_tools, excluded_tools=params.excluded_tools))
     if method == "request.cancel":
         if not params.request_id:
             raise BackendError("binding_required")

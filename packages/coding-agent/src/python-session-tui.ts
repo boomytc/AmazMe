@@ -14,9 +14,9 @@ import { KeybindingsManager } from "./core/keybindings.ts";
 import { CustomEditor } from "./modes/interactive/components/custom-editor.ts";
 import { getEditorTheme, initTheme } from "./modes/interactive/theme/theme.ts";
 import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
-import { HostClient } from "./python-headless.ts";
+import { HostClient, type PythonRunOptions } from "./python-headless.ts";
 
-export interface PythonSessionTarget {
+export interface PythonSessionTarget extends PythonRunOptions {
 	readonly url: string;
 	readonly token: string;
 	readonly workspace: string;
@@ -259,7 +259,7 @@ class PythonSessionScreen implements Component {
 
 export async function runPythonSessionTui(target: PythonSessionTarget): Promise<void> {
 	if (!target.url || !target.token || !target.workspace) fail("python_target_required");
-	const client = new HostClient(target.url, target.token);
+	const client = new HostClient(target.url, target.token, target);
 	await client.bootstrap();
 	const opened = target.session ? await client.attach(target.session, target.workspace) : await client.open(target.workspace);
 	initTheme();
@@ -484,9 +484,9 @@ export async function connectPythonHost(options: {
 }
 
 /** Start or attach to the local Python host. Leaving the screen does not stop it. */
-export async function runOwnedPythonInteractive(options: { readonly workspace: string; readonly cwd: string; readonly session?: string }): Promise<void> {
+export async function runOwnedPythonInteractive(options: PythonRunOptions & { readonly workspace: string; readonly cwd: string; readonly session?: string }): Promise<void> {
 	if (!options.workspace) fail("workspace_required");
 	const host = await connectPythonHost({ cwd: options.cwd });
-	await runPythonSessionTui({ url: host.url, token: host.token, workspace: options.workspace,
+	await runPythonSessionTui({ ...options, url: host.url, token: host.token, workspace: options.workspace,
 		...(options.session === undefined ? {} : {session:options.session}) });
 }

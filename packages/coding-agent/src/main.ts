@@ -1,9 +1,43 @@
 /** Product presentation and input parsing; business operations belong to Python. */
-import { parseArgs, printHelp } from "./cli/args.ts";
+import { type Args, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
+import type { PythonRunOptions } from "./python-headless.ts";
 import { VERSION } from "./config.ts";
 import { runPythonProductCommand } from "./python-product.ts";
+
+export function requestOptions(parsed: Args): PythonRunOptions {
+	const tools = parsed.tools ?? [];
+	const modifiers = tools.some((name) => /^[+-]/.test(name));
+	const allowed = modifiers
+		? [
+				...(parsed.noTools ? [] : parsed.noBuiltinTools ? ["mcp_*"] : ["*"]),
+				...tools
+					.filter((name) => name.startsWith("+"))
+					.map((name) => name.slice(1)),
+			]
+		: (parsed.tools ??
+			(parsed.noTools ? [] : parsed.noBuiltinTools ? ["mcp_*"] : undefined));
+	const excluded = [
+		...(parsed.excludeTools ?? []),
+		...(modifiers
+			? tools
+					.filter((name) => name.startsWith("-"))
+					.map((name) => name.slice(1))
+			: []),
+		...(parsed.noMcp ? ["mcp_*"] : []),
+	];
+	return {
+		...(parsed.systemPrompt === undefined
+			? {}
+			: { system_prompt: parsed.systemPrompt }),
+		...(parsed.appendSystemPrompt === undefined
+			? {}
+			: { append_system_prompt: parsed.appendSystemPrompt.join("\n\n") }),
+		...(allowed === undefined ? {} : { allowed_tools: [...new Set(allowed)] }),
+		...(excluded.length ? { excluded_tools: [...new Set(excluded)] } : {}),
+	};
+}
 
 async function pipedInput(): Promise<string | undefined> {
 	if (process.stdin.isTTY) return undefined;
@@ -101,6 +135,7 @@ export async function main(args: string[]): Promise<void> {
 		);
 		if (process.exitCode) return;
 	}
+	const runOptions = requestOptions(parsed);
 	const interactive =
 		!parsed.print &&
 		parsed.mode === undefined &&
@@ -112,6 +147,7 @@ export async function main(args: string[]): Promise<void> {
 		);
 		if (parsed.pythonUrl && parsed.pythonToken)
 			await runPythonSessionTui({
+				...runOptions,
 				url: parsed.pythonUrl,
 				token: parsed.pythonToken,
 				workspace: parsed.workspace || "primary",
@@ -119,6 +155,7 @@ export async function main(args: string[]): Promise<void> {
 			});
 		else
 			await runOwnedPythonInteractive({
+				...runOptions,
 				cwd,
 				workspace: parsed.workspace || "primary",
 				...(session === undefined ? {} : { session }),
@@ -140,6 +177,7 @@ export async function main(args: string[]): Promise<void> {
 	});
 	const { runPythonHeadless } = await import("./python-headless.ts");
 	process.exitCode = await runPythonHeadless({
+		...runOptions,
 		mode:
 			parsed.mode === "rpc" ? "rpc" : parsed.mode === "json" ? "json" : "text",
 		cwd,

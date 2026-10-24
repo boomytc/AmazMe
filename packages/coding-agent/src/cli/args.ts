@@ -6,8 +6,7 @@ import type { ThinkingLevel } from "@amazme/agent";
 import chalk from "chalk";
 import { APP_COMMAND, APP_NAME } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
-import { getToolListError, type TuiMode } from "../core/settings-manager.ts";
-import { getToolSelectionError } from "../core/tool-selection.ts";
+import type { TuiMode } from "../core/settings-manager.ts";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -158,7 +157,8 @@ export function parseArgs(args: string[]): Args {
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
-			const error = getToolListError(tools);
+			const error = tools.some(name => !/^(?:[A-Za-z_*?][A-Za-z0-9_*?]{0,127}|[+-][A-Za-z_][A-Za-z0-9_]{0,127})$/.test(name))
+				|| (tools.some(name=>/^[+-]/.test(name)) && tools.some(name=>!(/^[+-]/.test(name)))) ? "use native tool names, patterns, or only +name/-name modifiers" : undefined;
 			if (error) result.diagnostics.push({ type: "error", message: `Invalid tools option: ${error}` });
 			else result.tools = tools;
 		} else if ((arg === "--exclude-tools" || arg === "-xt") && i + 1 < args.length) {
@@ -166,7 +166,7 @@ export function parseArgs(args: string[]): Args {
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
-			const error = getToolSelectionError({ excludeTools });
+			const error = excludeTools.some(name=>!/^[A-Za-z_*?][A-Za-z0-9_*?]{0,127}$/.test(name)) ? "excludeTools accepts only plain names or patterns" : undefined;
 			if (error) result.diagnostics.push({ type: "error", message: `Invalid tools option: ${error}` });
 			else result.excludeTools = excludeTools;
 		} else if (arg === "--thinking" && i + 1 < args.length) {

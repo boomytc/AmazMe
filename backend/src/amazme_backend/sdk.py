@@ -178,9 +178,13 @@ class Client:
             raise BackendError("workspace_mismatch")
 
     async def submit(self, *, session_id: str, workspace: str, attachment_id: str, request_id: str, text: str,
-                     not_before_ms: int = 0, images: list[ImagePart] | None = None) -> Receipt:
+                     not_before_ms: int = 0, images: list[ImagePart] | None = None,
+                     system_prompt: str | None = None, append_system_prompt: str = "",
+                     allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None) -> Receipt:
         await self._require_workspace(session_id, workspace)
-        body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms}
+        body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms,
+                                   "system_prompt": system_prompt, "append_system_prompt": append_system_prompt,
+                                   "allowed_tools": allowed_tools, "excluded_tools": excluded_tools or []}
         if images:
             body["images"] = [image.model_dump() for image in images]
         payload = await self._send(

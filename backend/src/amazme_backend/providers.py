@@ -26,6 +26,7 @@ from .contracts import (
     ModelSettings,
     ProviderConfig,
     ReadFile,
+    RunOptions,
     Shell,
     ToolCall,
     UpdateModelSettings,
@@ -263,7 +264,7 @@ def _object_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
     return schema
 
 
-def tool_definitions(offers: list[McpOffer] | None = None) -> list[ChatCompletionToolParam]:
+def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions | None = None) -> list[ChatCompletionToolParam]:
     tools: list[ChatCompletionToolParam] = [
         {"type": "function", "function": {"name": "shell", "description": "Execute a command with the local user shell in the selected project directory. This has the current user permissions, including network access. Commands may have side effects; never retry an unknown result.", "parameters": Shell.model_json_schema()}},
         {"type": "function", "function": {"name": "read_file", "description": "Read a relative UTF-8 workspace file.", "parameters": ReadFile.model_json_schema()}},
@@ -283,7 +284,7 @@ def tool_definitions(offers: list[McpOffer] | None = None) -> list[ChatCompletio
             "name": offer.alias, "description": description[:1000],
             "parameters": cast(dict[str, object], _object_schema(offer.input_schema)),
         }})
-    return tools
+    return tools if options is None else [tool for tool in tools if options.tool_allowed(tool["function"]["name"])]
 
 
 def reasoning_signature(details: list[object]) -> str:
@@ -329,7 +330,7 @@ def tool_image_messages(messages: list[Message]) -> list[Message]:
     return expanded
 
 
-def provider_messages(messages: list[Message], provider: str = "") -> list[ChatCompletionMessageParam]:
+def provider_messages(messages: list[Message], provider: str = "", config: ProviderConfig | None = None) -> list[ChatCompletionMessageParam]:
     result: list[ChatCompletionMessageParam] = [{"role": "system", "content": (
         "You are AmazMe. Use the provided tools when asked to inspect or modify the workspace. "
         "Commands execute on the user local machine in the selected project, using local tools and user permissions. "
@@ -341,6 +342,14 @@ def provider_messages(messages: list[Message], provider: str = "") -> list[ChatC
         "Report actual tool results. "
         "Never claim a command ran unless a tool result confirms it. Keep answers concise."
     )}]
+    if config is not None:
+        if config.system_prompt is not None:
+            result[0] = {"role": "system", "content": config.system_prompt}
+        if config.append_system_prompt:
+            existing = result[0].get("content")
+            if not isinstance(existing, str):
+                raise BackendError("invalid_system_prompt")
+            result[0] = {"role": "system", "content": existing + "\n\n" + config.append_system_prompt}
     for message in tool_image_messages(messages):
         if message.role == "user":
             if message.images:
@@ -466,7 +475,7 @@ async def stream(config: ProviderConfig, messages: list[Message],
             metadata = INDEX.get((config.provider, config.model))
             completion_limit = metadata is not None and metadata.compat.get("maxTokensField") == "max_completion_tokens"
             response = await client.chat.completions.create(
-                model=config.model, messages=provider_messages(messages, config.provider), tools=tool_definitions(offers),
+                model=config.model, messages=provider_messages(messages, config.provider, config), tools=tool_definitions(offers, config) or omit,
                 max_tokens=omit if completion_limit else config.max_tokens,
                 max_completion_tokens=config.max_tokens if completion_limit else omit,
                 stream=True, stream_options={"include_usage": True},

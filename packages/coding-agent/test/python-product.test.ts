@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, expect, test, vi } from "vitest";
-import { main } from "../src/main.ts";
+import { main, requestOptions } from "../src/main.ts";
 import { HostClient } from "../src/python-headless.ts";
 import { runPythonProductCommand } from "../src/python-product.ts";
 import { connectPythonHost } from "../src/python-session-tui.ts";
@@ -148,5 +148,86 @@ test("headless image input reaches the Python submission with its original bytes
 	expect(JSON.parse(sent[0] ?? "{}")).toMatchObject({
 		text: "看看图片🙂",
 		images: [{ media_type: "image/png", data_base64: "original-base64" }],
+	});
+});
+
+test("CLI tool selectors and prompts use native per-run options", async () => {
+	const { parseArgs } = await import("../src/cli/args.ts");
+	expect(
+		requestOptions(
+			parseArgs([
+				"--system-prompt",
+				"custom",
+				"--append-system-prompt",
+				"one",
+				"--append-system-prompt",
+				"two",
+				"--tools",
+				"read_file,shell",
+				"--exclude-tools",
+				"shell",
+			]),
+		),
+	).toEqual({
+		system_prompt: "custom",
+		append_system_prompt: "one\n\ntwo",
+		allowed_tools: ["read_file", "shell"],
+		excluded_tools: ["shell"],
+	});
+	expect(requestOptions(parseArgs(["--no-tools"]))).toEqual({
+		allowed_tools: [],
+	});
+	expect(requestOptions(parseArgs(["--no-builtin-tools"]))).toEqual({
+		allowed_tools: ["mcp_*"],
+	});
+	expect(
+		requestOptions(parseArgs(["--no-mcp", "--tools", "+shell,-write_file"])),
+	).toEqual({
+		allowed_tools: ["*", "shell"],
+		excluded_tools: ["write_file", "mcp_*"],
+	});
+	expect(parseArgs(["--tools", "read_file,+shell"]).diagnostics).toHaveLength(
+		1,
+	);
+});
+
+test("HTTP and RPC submissions carry the same immutable run defaults", async () => {
+	const sent: Record<string, unknown>[] = [];
+	vi.stubGlobal(
+		"fetch",
+		vi.fn(async (url: string, init?: RequestInit) => {
+			if (url.endsWith("/bootstrap"))
+				return new Response(
+					JSON.stringify({ build_id: "build", host_epoch: 1 }),
+				);
+			if (url.endsWith("/sessions"))
+				return new Response(
+					JSON.stringify({
+						sessions: [{ session_id: "s", workspace: "primary" }],
+					}),
+				);
+			if (url.includes("/requests/"))
+				return new Response(JSON.stringify({ status: "succeeded" }));
+			sent.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+			return new Response("{}");
+		}),
+	);
+	const client = new HostClient("http://target", "token", {
+		system_prompt: "bound",
+		allowed_tools: [],
+	});
+	await client.bootstrap();
+	await client.submit("s", "primary", "a", "hello");
+	await client.rpc({
+		method: "request.submit",
+		params: { text: "rpc", system_prompt: "explicit" },
+	});
+	expect(sent[0]).toMatchObject({
+		system_prompt: "bound",
+		allowed_tools: [],
+		text: "hello",
+	});
+	expect(sent[1]).toMatchObject({
+		params: { system_prompt: "explicit", allowed_tools: [], text: "rpc" },
 	});
 });
