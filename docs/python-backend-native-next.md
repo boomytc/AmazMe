@@ -18,7 +18,8 @@
 | CLI print/JSON | `b346797bac2c9c97af06e2cf8b8561f8403fc8bb` | [证据](python-backend-native-cli-evidence.json)：包入口 print/JSON 进程；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
 | RPC | `ad7c433e95b9c0c07af314cbca8e6ac8eee1566a` | [证据](python-backend-native-rpc-evidence.json)：`--mode rpc` 进程；显式审批、终端、文件、检查点、MCP、松开绑定不关闭、显式关闭 |
 | Python SDK | `8bdf019c7e34e13d91bb8f5d55a516b194acb25a` | [证据](python-backend-native-sdk-evidence.json)：独立进程里的 `sdk.Client`；显式审批、终端、文件、检查点、MCP、进程退出不关闭、显式关闭 |
-| 默认交互画面 | 包含本文件的提交 | [证据](python-backend-native-screen-evidence.json)：包入口交互进程；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
+| 默认交互画面 | `8ca7fd1814b1e34fa7475f49fd2485526e03a430` | [证据](python-backend-native-screen-evidence.json)：包入口交互进程；显式审批、终端、文件、检查点、MCP、离开不关闭、再次进入后显式关闭 |
+| 多工作区本机目录 | 包含本文件的提交 | `backend/tests/test_workspaces.py`：会话 shell 和终端进入授予的本机目录；取消授予后不再执行，原文件仍在；页面显示绝对路径 |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
@@ -43,9 +44,9 @@ SDK 没有改 `backend/src`，源码 build_id 仍是上一行。证据是独立 
 
 1. **其余客户端实验。** Web 终端画面、Electron 源码进程、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。这些客户端都还没有覆盖输入丢回执、更新冻结，以及 worker 或监督器被杀掉的实验。TUI、CLI、RPC、SDK 和默认交互画面不是完整终端模拟。
    这些实验仍要按同一契约补证。先追踪已有实现，不另建一套业务运行时。
-2. **按真实需求补齐产品功能。** 对照台账逐项复核供应商/账号、OAuth、SSH、多工作区、插件、Codemode、computer-use、
-   记忆、工作流、定时任务、网页工具、导入导出及分享。区分已有实现和仅有 faux/协议测试；需要 TCC、真实 SSH 或
-   真实供应商的功能取得对应证据。MCP 动态目录刷新、HTTP/OAuth、媒体与更多服务兼容性独立验收，不提前泛化。
+2. **按真实需求补齐产品功能。** 多工作区已在本机目录上核对：会话 shell 和终端进入授予目录，页面显示绝对路径，取消授予不删文件。
+   供应商/账号、OAuth、SSH、插件、Codemode、computer-use、记忆、工作流、定时任务、网页工具、导入导出及分享仍要逐项区分。
+   需要 TCC、真实 SSH 或真实供应商的功能取得对应证据，不能用模拟结果代替。MCP 动态目录刷新、HTTP/OAuth、媒体与更多服务兼容性独立验收。
 3. **本机安装与交付。** 只构建一份当前包；更新实验最多明确 A/B 两份。验证独立安装、含空格路径、受控 PATH、
    离线首次启动、构建混用拒绝、升级冻结/核对。Developer ID、hardened runtime、公证、staple、Gatekeeper 都保留。
    旧签名 VM 包不能充当当前证据。真实睡眠/唤醒、物理空间耗尽、断电未验收；需要用户机器状态配合的实验单独安排。

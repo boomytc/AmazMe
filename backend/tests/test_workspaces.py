@@ -1,7 +1,10 @@
-"""Extra workspace grants share one host and guest path. HOME is not mounted."""
+"""Granted workspaces are real local directories. grant/name is only a logical path."""
 
+import asyncio
 import json
+import os
 import shutil
+import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -9,8 +12,20 @@ import httpx
 import pytest
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import HostFence, ProcessLease
+from amazme_backend.contracts import (
+    BackendError,
+    HostFence,
+    OpenTerminal,
+    ProcessLease,
+    RunTool,
+    TerminalInput,
+    TerminalQuery,
+    WorkerInfo,
+    WorkerRequest,
+)
 from amazme_backend.host import Host, application
+from amazme_backend.processes import ProcessReservation
+from amazme_backend.supervisor import Supervisor
 
 SESSION = "b" * 32
 
@@ -97,6 +112,89 @@ async def test_grant_rejects_home_symlink_profile_and_socket(tmp_path: Path) -> 
         await host.store.db.close()
 
 
+def _seed_host(profile: Path, session: str, grant: Path) -> None:
+    database = sqlite3.connect(profile / "host.sqlite")
+    try:
+        database.executescript("""
+            CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL DEFAULT 'primary');
+            CREATE TABLE workspace_grants(name TEXT PRIMARY KEY, host_path TEXT NOT NULL);
+        """)
+        database.execute("INSERT INTO sessions(id, workspace) VALUES(?, 'docs')", (session,))
+        database.execute("INSERT INTO workspace_grants(name, host_path) VALUES('docs', ?)", (str(grant),))
+        database.commit()
+    finally:
+        database.close()
+
+
+async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path: Path) -> None:
+    primary = tmp_path / "primary"
+    grant = tmp_path / "docs-dir"
+    primary.mkdir()
+    grant.mkdir()
+    private_write(tmp_path / "config.json", json.dumps({
+        "format": 2, "profile_id": "granted", "workspace": str(primary), "resources": "unused",
+        "provider": {"provider": "faux"}}))
+    private_write(tmp_path / "control.token", "test-token")
+    session = "c" * 32
+    _seed_host(tmp_path, session, grant)
+    owner = Supervisor(Profile(tmp_path), "grant-supervisor")
+    await owner.initialize()
+    reservation: ProcessReservation | None = None
+    try:
+        instance = os.urandom(16).hex()
+        reservation = ProcessReservation(owner.profile.path, "worker", instance)
+        info = WorkerInfo(
+            session_id=session, worker_id=instance, pid=123, socket=str(owner.profile.worker_socket(session)),
+            build_id=owner.build, process_lease=reservation.lease, state="ready", purpose="business",
+            host_epoch=owner.host_epoch, fingerprint=owner.build)
+        await owner.db.call(lambda db: db.execute(
+            "INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
+            (instance, session, info.model_dump_json())), write=True)
+        epoch = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=instance, build_id=owner.build))
+        result = await owner.run_tool(RunTool(
+            **epoch.model_dump(), call_id="grant-shell", request_id="request",
+            command="pwd; printf y > granted.txt", effect="write"))
+        assert result.exit_code == 0 and str(grant) in result.stdout
+        assert (grant / "granted.txt").read_text() == "y"
+        assert not (primary / "granted.txt").exists()
+
+        terminal = "d" * 32
+        opened = await owner.open_terminal(OpenTerminal(
+            build_id=owner.build, host_epoch=owner.host_epoch, session_id=session, terminal_id=terminal, command="sh"))
+        assert opened.workspace == "docs" and opened.phase == "running"
+        query = TerminalQuery(build_id=owner.build, host_epoch=owner.host_epoch, session_id=session, terminal_id=terminal)
+        await owner.write_terminal(TerminalInput(**query.model_dump(), input_id="pwd", data="pwd; printf t > from-terminal.txt\n"))
+        view = opened
+        for _ in range(40):
+            view = await owner.read_terminal(query)
+            if str(grant) in view.output and (grant / "from-terminal.txt").exists():
+                break
+            await asyncio.sleep(0.05)
+        assert str(grant) in view.output
+        assert (grant / "from-terminal.txt").read_text() == "t"
+        assert not (primary / "from-terminal.txt").exists()
+        closed = await owner.close_terminal(query)
+        assert closed.phase == "exited" and closed.clean
+
+        database = sqlite3.connect(tmp_path / "host.sqlite")
+        try:
+            database.execute("DELETE FROM workspace_grants WHERE name='docs'")
+            database.commit()
+        finally:
+            database.close()
+        fresh = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=instance, build_id=owner.build))
+        with pytest.raises(BackendError, match="workspace_not_found"):
+            await owner.run_tool(RunTool(
+                **fresh.model_dump(), call_id="after-revoke", request_id="request",
+                command="printf z > after.txt", effect="write"))
+        assert (grant / "granted.txt").read_text() == "y"
+        assert not (grant / "after.txt").exists()
+    finally:
+        if reservation is not None:
+            reservation.close()
+        await owner.close()
+
+
 def test_terminal_gate_uses_native_cwd_and_rejects_relative_path() -> None:
     from amazme_backend.pty_gate import _allowed_cwd
     assert _allowed_cwd("/tmp") == "/tmp"
@@ -135,12 +233,12 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
           if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(SESSION) + r''',title:'工作区',archived:false}]});
           if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(SESSION) + r''',build_id:'build',host_epoch:1});
           if(path==='/api/v1/workspaces' && method==='GET') return response({workspaces:[
-            {name:'primary',host_path:'/work',host_path:'/workspace',primary:true},
-            {name:'docs',host_path:'/other',host_path:'/grant/docs',primary:false}]});
+            {name:'primary',host_path:'/var/primary-work',primary:true},
+            {name:'docs',host_path:'/var/docs-work',primary:false}]});
           if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) {
             seen.push(path);
-            if(path.includes('grant%2Fdocs') || path.includes('grant/docs')) return response({path:'grant/docs',absolute_path:'/grant/docs',entries:[{name:'note.txt',kind:'file',size:4}],truncated:false});
-            return response({path:'',absolute_path:'/workspace',entries:[{name:'keep.txt',kind:'file',size:4}],truncated:false});
+            if(path.includes('grant%2Fdocs') || path.includes('grant/docs')) return response({path:'grant/docs',absolute_path:'/var/docs-work',entries:[{name:'note.txt',kind:'file',size:4}],truncated:false});
+            return response({path:'',absolute_path:'/var/primary-work',entries:[{name:'keep.txt',kind:'file',size:4}],truncated:false});
           }
           throw Error('unexpected '+method+' '+path);
         };
@@ -152,9 +250,10 @@ def test_browser_switches_to_the_granted_absolute_path() -> None:
         await import(appURL);
         $('files').open = true;
         $('files').dispatchEvent(new window.Event('toggle'));
-        await until(()=>$('workspace-location').textContent==='/workspace' && [...$('file-list').children].some(node=>node.textContent==='keep.txt'));
+        await until(()=>$('workspace-location').textContent==='/var/primary-work' && [...$('file-list').children].some(node=>node.textContent==='keep.txt'));
         [...$('workspace-list').children].find(node=>node.textContent==='docs').click();
-        await until(()=>$('workspace-location').textContent==='/grant/docs' && [...$('file-list').children].some(node=>node.textContent==='note.txt'));
+        await until(()=>$('workspace-location').textContent==='/var/docs-work' && [...$('file-list').children].some(node=>node.textContent==='note.txt'));
+        assert.equal($('workspace-location').textContent.includes('grant/'), false);
         assert.ok(seen.some(path=>path.includes('grant')));
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
