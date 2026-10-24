@@ -667,13 +667,153 @@ function startClient() {
       await listing;
     } catch (failure) { if (appliedNavigation === fileNavigation && (view === fileView || !fileView)) error(failure); }
   };
+  function TerminalScreen(cols, rows) {
+    this.cols = Math.max(1, cols || 80);
+    this.rows = Math.max(1, rows || 24);
+    this.scroll = [];
+    this.pending = "";
+    this.seq = 0;
+    this.ready = false;
+    this.resetGrid();
+  }
+  TerminalScreen.prototype.resetGrid = function () {
+    this.grid = Array.from({length: this.rows}, () => Array(this.cols).fill(" "));
+    this.x = 0;
+    this.y = 0;
+  };
+  TerminalScreen.prototype.blank = function () { return Array(this.cols).fill(" "); };
+  TerminalScreen.prototype.scrollUp = function () {
+    this.scroll.push(this.grid[0].join("").replace(/\s+$/, ""));
+    if (this.scroll.length > 1000) this.scroll.shift();
+    this.grid.shift();
+    this.grid.push(this.blank());
+    this.y = this.rows - 1;
+  };
+  TerminalScreen.prototype.put = function (ch) {
+    if (this.x >= this.cols) this.newline();
+    if (this.y >= this.rows) this.scrollUp();
+    this.grid[this.y][this.x] = ch;
+    this.x += 1;
+  };
+  TerminalScreen.prototype.newline = function () {
+    this.x = 0;
+    this.y += 1;
+    if (this.y >= this.rows) this.scrollUp();
+  };
+  TerminalScreen.prototype.erase = function (row, from, to) {
+    const line = this.grid[row];
+    if (!line) return;
+    for (let x = Math.max(0, from); x < Math.min(this.cols, to); x += 1) line[x] = " ";
+  };
+  TerminalScreen.prototype.clamp = function () {
+    this.x = Math.max(0, Math.min(this.cols - 1, this.x));
+    this.y = Math.max(0, Math.min(this.rows - 1, this.y));
+  };
+  TerminalScreen.prototype.write = function (text) {
+    const data = this.pending + text;
+    this.pending = "";
+    let i = 0;
+    while (i < data.length) {
+      const ch = data[i];
+      if (ch === "\u001b") {
+        const next = this.consumeEscape(data, i);
+        if (next < 0) { this.pending = data.slice(i).slice(0, 64); return; }
+        i = next;
+        continue;
+      }
+      if (ch === "\r") { this.x = 0; i += 1; continue; }
+      if (ch === "\n") { this.newline(); i += 1; continue; }
+      if (ch === "\b" || ch === "\u007f") { this.x = Math.max(0, this.x - 1); i += 1; continue; }
+      if (ch === "\t") {
+        this.x = Math.min(this.cols, (Math.floor(this.x / 8) + 1) * 8);
+        if (this.x >= this.cols) this.newline();
+        i += 1;
+        continue;
+      }
+      if (ch < " ") { i += 1; continue; }
+      this.put(ch);
+      i += 1;
+    }
+  };
+  TerminalScreen.prototype.consumeEscape = function (data, i) {
+    if (i + 1 >= data.length) return -1;
+    const kind = data[i + 1];
+    if (kind === "[") return this.consumeCsi(data, i + 2);
+    if (kind === "]") return this.consumeOsc(data, i + 2);
+    return i + 2;
+  };
+  TerminalScreen.prototype.consumeOsc = function (data, i) {
+    for (let n = i; n < data.length; n += 1) {
+      if (data[n] === "\u0007") return n + 1;
+      if (data[n] === "\u001b" && data[n + 1] === "\\") return n + 2;
+    }
+    return data.length - i > 64 ? data.length : -1;
+  };
+  TerminalScreen.prototype.consumeCsi = function (data, i) {
+    let n = i;
+    while (n < data.length && (data[n] < "@" || data[n] > "~")) n += 1;
+    if (n >= data.length) return data.length - i > 64 ? data.length : -1;
+    this.applyCsi(data.slice(i, n), data[n]);
+    return n + 1;
+  };
+  TerminalScreen.prototype.applyCsi = function (body, final) {
+    let source = body;
+    if (source.startsWith("?") || source.startsWith(">")) source = source.slice(1);
+    const nums = source.length ? source.split(";").map(part => {
+      const value = Number.parseInt(part, 10);
+      return Number.isFinite(value) ? value : 0;
+    }) : [];
+    const n1 = nums[0] || 1;
+    if (final === "A") this.y -= n1;
+    else if (final === "B") this.y += n1;
+    else if (final === "C") this.x += n1;
+    else if (final === "D") this.x -= n1;
+    else if (final === "G") this.x = n1 - 1;
+    else if (final === "H" || final === "f") { this.y = (nums[0] || 1) - 1; this.x = (nums[1] || 1) - 1; }
+    else if (final === "J") {
+      const mode = nums[0] || 0;
+      if (mode === 2) this.resetGrid();
+      else if (mode === 1) { for (let y = 0; y < this.y; y += 1) this.erase(y, 0, this.cols); this.erase(this.y, 0, this.x + 1); }
+      else { this.erase(this.y, this.x, this.cols); for (let y = this.y + 1; y < this.rows; y += 1) this.erase(y, 0, this.cols); }
+    } else if (final === "K") {
+      const mode = nums[0] || 0;
+      if (mode === 2) this.erase(this.y, 0, this.cols);
+      else if (mode === 1) this.erase(this.y, 0, this.x + 1);
+      else this.erase(this.y, this.x, this.cols);
+    }
+    this.clamp();
+  };
+  TerminalScreen.prototype.visible = function () {
+    const rows = this.grid.map(line => line.join("").replace(/\s+$/, ""));
+    return [...this.scroll, ...rows].join("\n");
+  };
+  const terminalScreens = new Map();
+  function renderTerminal(view, value) {
+    const cols = value.cols || 80, rows = value.rows || 24;
+    let screen = terminalScreens.get(view.id);
+    if (!screen || screen.cols !== cols || screen.rows !== rows) {
+      screen = new TerminalScreen(cols, rows);
+      terminalScreens.set(view.id, screen);
+    }
+    const text = value.output || "";
+    const seq = Number(value.output_seq || text.length);
+    if (!screen.ready || seq < screen.seq || seq - screen.seq > text.length) {
+      screen.resetGrid();
+      screen.scroll = [];
+      screen.pending = "";
+      screen.write(text);
+    } else if (seq > screen.seq) screen.write(text.slice(text.length - (seq - screen.seq)));
+    screen.seq = seq;
+    screen.ready = true;
+    return screen.visible();
+  }
   let terminalView = null, terminalPoll = null, terminalNavigation = 0;
   const terminalKey = (connection, suffix) => `terminal:${identity.profile_id}:${connection.session}:${suffix}`;
   const terminalOwns = view => view && terminalView === view && owns(view.connection);
   function showTerminal(value, view = terminalView) {
     if (!terminalOwns(view)) return;
     view.phase = value.phase;
-    $("terminal-output").textContent = value.output || "";
+    $("terminal-output").textContent = renderTerminal(view, value);
     $("terminal-state").textContent = value.phase === "unknown" ? "通道失联；命令未自动重启" : value.phase === "exited" ? "已退出" : "运行中";
     if (value.exit_code !== null && value.exit_code !== undefined) $("terminal-state").textContent += ` · 退出码 ${value.exit_code}`;
     if (value.clean === false && value.phase !== "running") $("terminal-state").textContent += " · 停止尚未确认";
@@ -751,9 +891,36 @@ function startClient() {
     const view = terminalView;
     if (!terminalOwns(view) || view.busy) return;
     sessionStorage.removeItem(terminalKey(view.connection, view.id));
+    sessionStorage.removeItem(terminalKey(view.connection, `${view.id}:keys`));
     $("terminal-input").value = "";
     $("terminal-state").textContent = "已由用户核对；原输入不会重放";
   };
+  $("terminal-output").addEventListener("keydown", event => {
+    const view = terminalView;
+    if (!terminalOwns(view) || view.busy || view.phase !== "running") return;
+    let data = null;
+    if (event.key === "Enter") data = "\r";
+    else if (event.key === "Backspace") data = "\b";
+    else if (event.key === "Tab") data = "\t";
+    else if (event.key === "ArrowUp") data = "\u001b[A";
+    else if (event.key === "ArrowDown") data = "\u001b[B";
+    else if (event.key === "ArrowRight") data = "\u001b[C";
+    else if (event.key === "ArrowLeft") data = "\u001b[D";
+    else if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) data = event.key;
+    if (data === null) return;
+    event.preventDefault();
+    const key = terminalKey(view.connection, `${view.id}:keys`);
+    let pending = JSON.parse(sessionStorage.getItem(key) || "null");
+    if (pending && pending.data !== data) { error(new Error("上次输入结果未确认；先重试同一输入，或核对终端后继续。")); return; }
+    if (!pending) { pending = {input_id:crypto.randomUUID().replaceAll("-", ""), data}; sessionStorage.setItem(key, JSON.stringify(pending)); }
+    view.busy = true;
+    api(`/api/v1/sessions/${view.connection.session}/terminals/${view.id}/input`, "POST",
+      {input_id:pending.input_id, data:pending.data}, view.connection).then(result => {
+      if (result.input_status === "unknown") throw new Error("输入结果未知，未自动重发；请核对终端内容。");
+      sessionStorage.removeItem(key);
+      if (terminalOwns(view)) $("error").textContent = "";
+    }).catch(failure => { if (terminalOwns(view)) error(failure); }).finally(() => { view.busy = false; });
+  });
   $("terminal-close").onclick = async () => {
     const view = terminalView;
     if (!terminalOwns(view)) return;

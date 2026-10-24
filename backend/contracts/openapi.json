@@ -7768,6 +7768,11 @@
             "type": "string",
             "title": "Output"
           },
+          "output_seq": {
+            "type": "integer",
+            "title": "Output Seq",
+            "default": 0
+          },
           "phase": {
             "type": "string",
             "enum": [

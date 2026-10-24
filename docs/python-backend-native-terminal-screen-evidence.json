@@ -1,0 +1,56 @@
+{
+  "date": "2026-10-24",
+  "stage": "native terminal scrollback and page interpretation",
+  "source_build_id": "f64fe5ec94e95dbaff3e431011bdd9a0454c854daa90c62ba9cb13aa6f506537",
+  "status": "passed for the web terminal screen on one local shell; other clients remain open",
+  "runtime": {
+    "runner": "backend/tools/verify_terminal.py",
+    "report": ".artifacts/native/terminal-3i__hs0x/report.json",
+    "execution": "native",
+    "vm_created": false,
+    "browser": "155.0.8059.85",
+    "checks": [
+      "explicit create starts one native terminal; opening the panel itself starts none",
+      "lost input response + page reload retained input ID and terminal; one actual file effect",
+      "native resize observed through stty; browser close preserved terminal; explicit close confirmed known cleanup"
+    ],
+    "page_errors": [],
+    "budget": {
+      "cap_bytes": 536870912,
+      "highwater_bytes": 23683072,
+      "minimum_free_bytes": 287333113856,
+      "elapsed_seconds": 5.364705166080967,
+      "failure": ""
+    },
+    "cleanup": {
+      "owned_reclaimed": true,
+      "global_reclaimed": true,
+      "reclaimed": true,
+      "leaks": [],
+      "disk_level": "ok",
+      "free_bytes": 287336083456,
+      "deletion": "not_performed"
+    }
+  },
+  "verification": {
+    "backend_suite": "477 passed in 107.10 seconds on this source, including the existing worker and supervisor terminal crash tests",
+    "ruff": "passed",
+    "pyright": "0 errors",
+    "chrome": "verify_terminal.py passed; the page showed NATIVE_TERM_OK, the workspace path, and stty size 40 100"
+  },
+  "behavior": {
+    "protocol_window_bytes": 32768,
+    "scrollback_chars": 262144,
+    "output_seq": "decoded code-point count persisted before the client renders",
+    "page": "interprets CR, LF, backspace, tab, CSI cursor and erase; ignores SGR, private modes, and OSC",
+    "input": "the line form and direct keys use separate pending ids on the same durable input ledger; unknown is not replayed"
+  },
+  "limits": [
+    "This is not a complete VT/xterm implementation: no alternate screen, scroll regions, mouse, wide-character width, or color",
+    "output_seq counts Python code points. The page slices the new tail by that delta; a non-BMP character is two UTF-16 units in JS and can be split. When the retained tail is shorter than the delta, the page replays the tail",
+    "Accepted terminal input means the bytes were queued or written, not that the command succeeded",
+    "Electron, TUI, CLI, RPC, and SDK were not re-accepted against this screen",
+    "No frozen package was built and no VM was created or started",
+    "The Chrome run does not repeat the earlier worker and supervisor kill experiments; those remain covered by the backend suite"
+  ]
+}

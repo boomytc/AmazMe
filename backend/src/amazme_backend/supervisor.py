@@ -87,7 +87,6 @@ from .native_execution import LocalPermit, LocalProcess, reconcile
 from .native_services import ServiceProcess
 from .plugin_run import plugin_fingerprint, run_plugin_gate, set_fingerprint, stored_config, validate_config
 from .processes import ProcessReservation, exited, wait_exited
-from .pty_gate import WINDOW
 from .pty_session import PtyClient
 from .remote_session import RemoteClient
 from .transport import app_factory
@@ -317,7 +316,8 @@ class Supervisor:
             if columns and "workspace" not in columns:
                 db.execute("ALTER TABLE terminals ADD COLUMN workspace TEXT NOT NULL DEFAULT ''")
             for column, definition in {"lease": "TEXT NOT NULL DEFAULT ''", "directory": "TEXT NOT NULL DEFAULT ''",
-                                       "permitted": "INTEGER NOT NULL DEFAULT 0", "clean": "INTEGER NOT NULL DEFAULT 0"}.items():
+                                       "permitted": "INTEGER NOT NULL DEFAULT 0", "clean": "INTEGER NOT NULL DEFAULT 0",
+                                       "output_seq": "INTEGER NOT NULL DEFAULT 0"}.items():
                 if column not in columns:
                     db.execute(f"ALTER TABLE terminals ADD COLUMN {column} {definition}")
             for table, additions in {
@@ -1862,16 +1862,20 @@ class Supervisor:
         return TerminalView(terminal_id=str(row["id"]), session_id=str(row["session"]), cols=int(row["cols"]), rows=int(row["rows"]),
                             queued=int(row["queued"]), written=int(row["written"]),
                             exit_code=None if row["exit_code"] is None else int(row["exit_code"]),
-                            output=str(row["output"]), phase=phase, clean=bool(row["clean"]),
+                            output=str(row["output"]), output_seq=int(row["output_seq"] or 0),
+                            phase=phase, clean=bool(row["clean"]),
                             workspace=str(row["workspace"]))
 
-    async def _store_terminal(self, client: PtyClient, terminal_id: str, *, cols: int, rows: int, phase: str) -> None:
-        output = client.output.decode(errors="replace")[-WINDOW:]
+    async def _store_terminal(self, client: PtyClient, terminal_id: str, *, cols: int, rows: int, phase: str,
+                              drain: bool = True) -> None:
+        if drain:
+            await asyncio.to_thread(client.drain)
+        output, seq = client.text, client.text_seq
 
         def save(db: sqlite3.Connection) -> None:
-            db.execute("UPDATE terminals SET queued=?,written=?,output=?,cols=?,rows=?,phase=?,"
+            db.execute("UPDATE terminals SET queued=?,written=?,output=?,output_seq=?,cols=?,rows=?,phase=?,"
                        "exit_code=CASE WHEN ? IS NULL THEN exit_code ELSE ? END WHERE id=?",
-                       (client.queued, client.written, output, cols, rows, phase, client.exit_code,
+                       (client.queued, client.written, output, seq, cols, rows, phase, client.exit_code,
                         client.exit_code, terminal_id))
 
         await self.db.call(save, write=True)
@@ -1934,13 +1938,14 @@ class Supervisor:
         client = self.terminals.get(identity)
         if client:
             with contextlib.suppress(OSError, BackendError):
-                await asyncio.to_thread(client.pump, 0)
+                await asyncio.to_thread(client.drain)
         if process:
             await process.close()
         self.terminal_processes.pop(identity, None)
         self.terminals.pop(identity, None)
         if client:
-            await self._store_terminal(client, identity, cols=int(row["cols"]), rows=int(row["rows"]), phase="unknown")
+            await self._store_terminal(client, identity, cols=int(row["cols"]), rows=int(row["rows"]), phase="unknown",
+                                       drain=False)
         clean = bool(row["clean"])
         if not clean and row["lease"]:
             clean = await reconcile(Path(row["directory"]), ProcessLease.model_validate_json(row["lease"]), permitted=bool(row["permitted"]))
@@ -2033,9 +2038,7 @@ class Supervisor:
             if client is None:
                 return self._view(row)
             try:
-                if client.exit_code is None:
-                    await asyncio.to_thread(client.grant, WINDOW)
-                await asyncio.to_thread(client.pump, 0.3)
+                await asyncio.to_thread(client.drain)
             except (OSError, BackendError):
                 await self._mark_terminal_unknown(terminal_id)
                 current = await self._terminal_row(terminal_id)

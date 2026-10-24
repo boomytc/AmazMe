@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from amazme_backend.contracts import BackendError
-from amazme_backend.pty_gate import WINDOW
-from amazme_backend.pty_session import PtyClient
+from amazme_backend.pty_gate import EXIT, OUTPUT, WINDOW
+from amazme_backend.pty_session import SCROLLBACK, PtyClient
 
 GATE = Path(__file__).parents[1] / "src/amazme_backend/pty_gate.py"
 SOURCE = GATE.read_text()
@@ -78,6 +78,44 @@ def test_output_stops_at_the_window_until_the_client_grants_credit() -> None:
         assert pty.exit_code == 0
     finally:
         stop(process, pty)
+
+
+def test_replenish_keeps_scrollback_past_the_protocol_window() -> None:
+    command = "python3 -c 'import sys; sys.stdout.write(\"ab\"*100000); sys.stdout.flush()'"
+    process, pty = start(command)
+    try:
+        for _ in range(40):
+            pty.replenish()
+            pty.pump(0.2)
+            if pty.received >= 200000:
+                break
+        assert pty.received == 200000
+        assert len(pty.output) <= WINDOW
+        assert pty.text_seq == 200000
+        assert "ab" * 10 in pty.text
+        assert len(pty.text) <= SCROLLBACK
+        pty.pump(1, lambda: pty.exit_code is not None)
+        assert pty.exit_code == 0
+    finally:
+        stop(process, pty)
+
+
+def test_split_utf8_and_output_after_exit_stay_in_scrollback() -> None:
+    left, right = socket.socketpair()
+    pty = PtyClient(left)
+    try:
+        encoded = "你".encode()
+        pty._apply(OUTPUT, encoded[:2])
+        pty._apply(OUTPUT, encoded[2:])
+        pty._apply(EXIT, (0).to_bytes(4, "big", signed=True) + b"\x01")
+        pty._apply(OUTPUT, b"OK")
+        assert pty.text == "你OK"
+        assert pty.text_seq == 3
+        assert pty.exit_code == 0
+        assert pty.pending_output is True
+    finally:
+        left.close()
+        right.close()
 
 
 def test_input_is_accounted_as_written_or_queued() -> None:
@@ -149,8 +187,8 @@ def test_browser_sends_terminal_input_and_resize() -> None:
           }
           if(path.endsWith('/terminals') && method==='POST') return response({terminal_id:seen.at(-1).body.terminal_id,cols:80,rows:24,queued:0,written:0,exit_code:null,output:'',phase:'running'});
           if(path.endsWith('/input')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'',phase:'running',input_status:'accepted'});
-          if(path.endsWith('/read')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'hi',phase:'running'});
-          if(path.endsWith('/resize')) return response({terminal_id:'t',cols:100,rows:40,queued:0,written:3,exit_code:null,output:'hi',phase:'running'});
+          if(path.endsWith('/read')) return response({terminal_id:'t',cols:80,rows:24,queued:0,written:3,exit_code:null,output:'\x1b[2J\x1b[Hhi',output_seq:9,phase:'running'});
+          if(path.endsWith('/resize')) return response({terminal_id:'t',cols:100,rows:40,queued:0,written:3,exit_code:null,output:'\x1b[2J\x1b[Hhi',output_seq:9,phase:'running'});
           if(path==='/api/v1/files') return response({path:'',entries:[],truncated:false});
           throw Error('unexpected '+method+' '+path);
         };
@@ -168,12 +206,19 @@ def test_browser_sends_terminal_input_and_resize() -> None:
         await until(()=>seen.some(item=>item.path.endsWith('/terminals')) && !$('terminal-new').disabled);
         $('terminal-input').value = 'hi';
         $('terminal-form').requestSubmit();
-        await until(()=>$('terminal-output').textContent.includes('hi'));
+        await until(()=>$('terminal-output').textContent.includes('hi') && $('terminal-input').value === '');
+        assert.equal($('terminal-output').textContent.includes('[2J'), false);
+        await new Promise(resolve => setTimeout(resolve, 5));
+        $('terminal-output').dispatchEvent(new window.KeyboardEvent('keydown', {key:'Enter', bubbles:true}));
+        await until(()=>seen.filter(item=>item.path.endsWith('/input')).length === 2);
         $('terminal-resize').click();
         await until(()=>seen.some(item=>item.path.endsWith('/resize') && item.body.cols===100 && item.body.rows===40));
-        const typed = seen.find(item=>item.path.endsWith('/input'));
-        assert.equal(typed.body.data, 'hi\n');
-        assert.equal(typed.body.input_id.length, 32);
+        const typed = seen.filter(item=>item.path.endsWith('/input'));
+        assert.equal(typed[0].body.data, 'hi\n');
+        assert.equal(typed[0].body.input_id.length, 32);
+        assert.equal(typed[1].body.data, '\r');
+        assert.equal(typed[1].body.input_id.length, 32);
+        assert.notEqual(typed[0].body.input_id, typed[1].body.input_id);
         window.happyDOM && await window.happyDOM.abort();
         process.exit(0);
     '''

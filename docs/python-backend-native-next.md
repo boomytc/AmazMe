@@ -1,6 +1,6 @@
 # 本机优先阶段交接
 
-2026-10-24，分支 `dev`。模型驱动 MCP 已按会话审批闭环验收。完整终端、其余客户端、产品能力和安装仍未完成，整个 Python 重构尚未完成。
+2026-10-24，分支 `dev`。模型驱动 MCP 和 Web 终端画面已按各自范围验收。Electron、TUI、CLI、RPC、SDK、产品能力和安装仍未完成，整个 Python 重构尚未完成。
 现行设计只有 [本机优先方案](python-backend-plan.md)；旧 P0/P1/P2 的 VM 方案与验收数字仅保留历史意义。
 
 ## 已形成的提交单元
@@ -11,23 +11,26 @@
 | C1 会话 PTY | `de851ab7e5ec4af47c147ba2455abcca941394d2` | [证据](python-backend-native-terminal-evidence.json)：Chrome、resize、重连、输入去重、真实进程崩溃 |
 | C2 本机 MCP 服务与手动调用 | 包含本文件的 `feat(backend): 让本机 MCP 服务保留审批与不确定调用事实` 提交 | [证据](python-backend-native-mcp-evidence.json)：官方 SDK 服务、Chrome、审批丢回执、结构化结果、取消和崩溃 |
 | 资源普查 | `b26d1d47c3154ad768173f6026effa9b0618b344` | 隔离 Host 的 serve/supervisor 被标为临时泄漏，关闭后所属进程退出；该次 build_id 未变 |
-| C2 模型驱动 MCP | 包含本文件的提交 | [证据](python-backend-native-mcp-model-evidence.json)：DeepSeek 选择本机探针，拒绝无副作用，结果回到模型 |
+| C2 模型驱动 MCP | `05db362d5fde93b204564edcd4b2418d3bdd407a` | [证据](python-backend-native-mcp-model-evidence.json)：DeepSeek 选择本机探针，拒绝无副作用，结果回到模型 |
+| Web 终端画面 | 包含本文件的提交 | [证据](python-backend-native-terminal-screen-evidence.json)：归还 32 KiB 窗口、256 KiB 滚动记录、页面解释转义；Chrome 看到命令输出和 resize |
 
 没有推送、合入 main、打标签或发布。手动 MCP 源码 build_id 为
 `10bfc410a56b2b5026aa151310afd5a06eeece762131a38398bf33cd1d7692a3`。
 当时全套 456 项通过；Ruff、Pyright、wheel/sdist、工作区检查通过。那次 MCP 运行未调用付费模型。
 这 456 项包含当时尚未提交的资源检查测试，不能把它们说成已经进入手动 MCP 提交。
 模型驱动 MCP 的源码 build_id 为 `a84da7c3b4b8ea555cc12a4a096a2fd306fe76ae46797e70606e16d1fd1e364b`。
-最终源码上后端测试 475 项通过；Ruff、Pyright 和工作区规则通过。真实模型证据只覆盖隔离探针上的选择、拒绝和结果回传。
+该单元最终源码上后端测试 475 项通过；Ruff、Pyright 和工作区规则通过。真实模型证据只覆盖隔离探针上的选择、拒绝和结果回传。
+终端画面的源码 build_id 为 `f64fe5ec94e95dbaff3e431011bdd9a0454c854daa90c62ba9cb13aa6f506537`。
+该单元最终源码上后端测试 477 项通过；Ruff 和 Pyright 通过。Chrome 证据只覆盖 Web 上的一条本机 shell，不覆盖其他客户端。
 
 资源普查命令只报告。用户主目录里的常驻服务保持 observed。打包和运行器只删除自己目录中没有进程引用的超限产物；VM 目录和 `am2-*` 临时目录未确认前不删，也不为此安装或启动虚拟机。
-下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-err1kda9`、`mcp-xi0hnry9`、`client-160ayfgl`。台账引用的较新目录仍留下。
+下次再跑已有两份记录的运行器时，会让出该前缀最旧且无人使用的一份：`run-y5ei8l8q`、`terminal-atacoq7o`、`mcp-xi0hnry9`、`client-160ayfgl`。台账引用的较新目录仍留下。终端画面这次已释放 `terminal-err1kda9`。
 
 ## 剩余执行顺序
 
-1. **完整终端与客户端。** Web 当前只有 32 KiB 文本尾部，补完整终端模拟；逐个复核 Electron、TUI、CLI、RPC、SDK。
-   验收实际本机 shell/文件/审批/检查点/PTY/MCP，覆盖多窗口、多会话、断线、旧绑定、关闭归属和更新期间停止。
-   旧客户端已有实现先追踪源码，缺什么补什么，不另建一套业务运行时。
+1. **其余客户端。** Web 已归还 32 KiB 输出窗口，保留最多 256 KiB 滚动记录，并在页面解释光标、换行和清屏。这不是完整 VT，也没有验收 Electron、TUI、CLI、RPC、SDK。
+   逐个复核这些客户端上的本机 shell、文件、审批、检查点、PTY 和 MCP，覆盖多窗口、多会话、断线、旧绑定、关闭归属和更新期间停止。
+   先追踪已有实现，缺什么补什么，不另建一套业务运行时。
 2. **按真实需求补齐产品功能。** 对照台账逐项复核供应商/账号、OAuth、SSH、多工作区、插件、Codemode、computer-use、
    记忆、工作流、定时任务、网页工具、导入导出及分享。区分已有实现和仅有 faux/协议测试；需要 TCC、真实 SSH 或
    真实供应商的功能取得对应证据。MCP 动态目录刷新、HTTP/OAuth、媒体与更多服务兼容性独立验收，不提前泛化。

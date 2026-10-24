@@ -863,6 +863,7 @@ class TerminalView(Model):
     written: int
     exit_code: int | None = None
     output: str
+    output_seq: int = 0
     phase: Literal["running", "exited", "unknown"]
     clean: bool = False
     workspace: str = "primary"
