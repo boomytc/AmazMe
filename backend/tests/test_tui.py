@@ -1,4 +1,4 @@
-"""The terminal client names the host and leaves accepted work running when it exits."""
+"""The terminal client names the host, waits for an explicit decision, and leaves accepted work running."""
 
 import fcntl
 import json
@@ -275,4 +275,60 @@ async def test_two_terminals_keep_their_own_sessions(tmp_path: Path) -> None:
             _close_tui(second, master_b)
         elif master_b >= 0:
             os.close(master_b)
+        _stop(proc, profile)
+
+
+async def test_tui_shell_waits_for_an_explicit_decision(tmp_path: Path) -> None:
+    proc, url, profile = _serve(tmp_path)
+    token = (profile / TOKEN_FILE).read_text().strip()
+    target = tmp_path / "workspace" / "tui-shell.txt"
+    tui: subprocess.Popen[bytes] | None = None
+    master = -1
+    try:
+        tui, master = _open_tui(url, token)
+        screen = _collect(master, tui, "", "绑定:", time.monotonic() + 20)
+        assert MARKER.search(screen) is not None, screen[-1500:]
+        os.write(master, b"/shell printf y > tui-shell.txt\r")
+        screen = _collect(master, tui, screen, "等待审批 shell printf y > tui-shell.txt", time.monotonic() + 20)
+        assert "等待审批 shell printf y > tui-shell.txt" in screen, screen[-1500:]
+        assert not target.exists()
+        os.write(master, "不要\r".encode())
+        screen = _collect(master, tui, screen, "先输入批准或拒绝", time.monotonic() + 10)
+        assert "先输入批准或拒绝" in screen, screen[-1500:]
+        assert "已收到：不要" not in screen
+        assert not target.exists()
+        os.write(master, "拒绝\r".encode())
+        screen = _collect(master, tui, screen, "approval_denied", time.monotonic() + 20)
+        assert "approval_denied" in screen, screen[-1500:]
+        assert not target.exists()
+        os.write(master, b"/shell printf y > tui-shell.txt\r")
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline and screen.split("\x1b[2J")[-1].count("等待审批 shell") < 2:
+            readable, _, _ = select.select([master], [], [], 0.05)
+            if readable:
+                screen += os.read(master, 4096).decode("utf-8", "replace")
+            elif tui.poll() is not None:
+                break
+        assert screen.split("\x1b[2J")[-1].count("等待审批 shell") >= 2, screen[-1500:]
+        assert not target.exists()
+        os.write(master, "批准\r".encode())
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and not target.exists():
+            readable, _, _ = select.select([master], [], [], 0.05)
+            if readable:
+                screen += os.read(master, 4096).decode("utf-8", "replace")
+        assert target.read_text() == "y", screen[-1500:]
+        assert token not in screen
+        os.write(master, b"\x03")
+        screen = _collect(master, tui, screen, "已松开绑定", time.monotonic() + 10)
+        assert "已松开绑定" in screen
+        assert tui.wait(timeout=10) == 0
+        os.close(master)
+        master = -1
+        tui = None
+    finally:
+        if tui is not None and master >= 0:
+            _close_tui(tui, master)
+        elif master >= 0:
+            os.close(master)
         _stop(proc, profile)

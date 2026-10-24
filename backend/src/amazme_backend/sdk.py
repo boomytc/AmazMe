@@ -3,11 +3,31 @@
 import asyncio
 import base64
 from typing import cast
+from urllib.parse import quote
 
 import httpx
+from pydantic import JsonValue
 
 from .artifacts import ArtifactBody, ArtifactView
-from .contracts import Attachment, BackendError, ErrorBody, Identity, ImagePart, Receipt, Session, SessionList
+from .contracts import (
+    Approval,
+    Attachment,
+    BackendError,
+    CheckpointView,
+    ErrorBody,
+    Identity,
+    ImagePart,
+    McpCall,
+    McpState,
+    McpView,
+    Receipt,
+    Session,
+    SessionList,
+    Snapshot,
+    TerminalList,
+    TerminalView,
+)
+from .workspace_files import FileContent
 
 
 class Client:
@@ -123,11 +143,135 @@ class Client:
         payload = await self._send("GET", f"/api/v1/sessions/{session_id}/requests/{request_id}")
         return Receipt.model_validate(payload)
 
-    async def wait(self, *, session_id: str, request_id: str) -> Receipt:
-        for _ in range(200):
+    async def wait(self, *, session_id: str, request_id: str, attempts: int = 200) -> Receipt:
+        for _ in range(attempts):
             receipt = await self.request(session_id=session_id, request_id=request_id)
             if receipt.status in {"succeeded", "cancelled", "interrupted", "failed", "unknown"}:
                 return receipt
+            await asyncio.sleep(0.05)
+        raise BackendError("request_pending", status=503)
+
+    async def snapshot(self, session_id: str) -> Snapshot:
+        payload = await self._send("GET", f"/api/v1/sessions/{session_id}/snapshot")
+        return Snapshot.model_validate(payload)
+
+    async def await_user_decision(self, *, session_id: str, request_id: str, attempts: int = 200) -> tuple[Receipt, Approval | None]:
+        """Return a pending approval, or the terminal receipt. Waiting is not a grant."""
+        for _ in range(attempts):
+            receipt = await self.request(session_id=session_id, request_id=request_id)
+            if receipt.status in {"succeeded", "cancelled", "interrupted", "failed", "unknown"}:
+                return receipt, None
+            if receipt.status == "waiting_approval":
+                pending = next((
+                    item for item in (await self.snapshot(session_id)).approvals
+                    if item.request_id == request_id and item.state == "pending"), None)
+                if pending is not None:
+                    return receipt, pending
+            await asyncio.sleep(0.05)
+        raise BackendError("request_pending", status=503)
+
+    async def decide(self, *, session_id: str, attachment_id: str, decision_id: str, approval_id: str,
+                     expected_revision: str, proposal_digest: str, approve: bool) -> Receipt:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/approvals",
+            json_body={
+                "decision_id": decision_id, "approval_id": approval_id,
+                "expected_revision": expected_revision, "proposal_digest": proposal_digest, "approve": approve,
+            },
+            headers=self._write(attachment_id))
+        return Receipt.model_validate(payload)
+
+    async def read_file(self, path: str) -> FileContent:
+        payload = await self._send("GET", "/api/v1/files/content?path=" + quote(path, safe=""))
+        return FileContent.model_validate(payload)
+
+    async def save_checkpoint(self, *, checkpoint_id: str, workspace: str, path: str) -> CheckpointView:
+        payload = await self._send(
+            "POST", "/api/v1/checkpoints",
+            json_body={"checkpoint_id": checkpoint_id, "workspace": workspace, "path": path},
+            headers=self._write())
+        return CheckpointView.model_validate(payload)
+
+    async def list_terminals(self, session_id: str) -> TerminalList:
+        payload = await self._send("GET", f"/api/v1/sessions/{session_id}/terminals")
+        return TerminalList.model_validate(payload)
+
+    async def open_terminal(self, *, session_id: str, attachment_id: str, terminal_id: str, command: str,
+                            cols: int, rows: int, workspace: str) -> TerminalView:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/terminals",
+            json_body={"terminal_id": terminal_id, "command": command, "cols": cols, "rows": rows, "workspace": workspace},
+            headers=self._write(attachment_id))
+        return TerminalView.model_validate(payload)
+
+    async def write_terminal(self, *, session_id: str, attachment_id: str, terminal_id: str,
+                             input_id: str, data: str) -> TerminalView:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/terminals/{terminal_id}/input",
+            json_body={"input_id": input_id, "data": data},
+            headers=self._write(attachment_id))
+        return TerminalView.model_validate(payload)
+
+    async def read_terminal(self, *, session_id: str, attachment_id: str, terminal_id: str) -> TerminalView:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/terminals/{terminal_id}/read",
+            headers=self._write(attachment_id))
+        return TerminalView.model_validate(payload)
+
+    async def resize_terminal(self, *, session_id: str, attachment_id: str, terminal_id: str,
+                              cols: int, rows: int) -> TerminalView:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/terminals/{terminal_id}/resize",
+            json_body={"cols": cols, "rows": rows},
+            headers=self._write(attachment_id))
+        return TerminalView.model_validate(payload)
+
+    async def close_terminal(self, *, session_id: str, attachment_id: str, terminal_id: str) -> TerminalView:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/terminals/{terminal_id}/close",
+            headers=self._write(attachment_id))
+        return TerminalView.model_validate(payload)
+
+    async def mcp_state(self, session_id: str) -> McpState:
+        payload = await self._send("GET", f"/api/v1/sessions/{session_id}/mcp")
+        return McpState.model_validate(payload)
+
+    async def open_mcp(self, *, session_id: str, attachment_id: str, server_id: str, command: str, workspace: str) -> McpView:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/mcp",
+            json_body={"server_id": server_id, "command": command, "workspace": workspace},
+            headers=self._write(attachment_id))
+        return McpView.model_validate(payload)
+
+    async def request_mcp(self, *, session_id: str, attachment_id: str, server_id: str, call_id: str,
+                          name: str, arguments: dict[str, JsonValue]) -> McpCall:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/mcp/{server_id}/calls",
+            json_body={"call_id": call_id, "name": name, "arguments": arguments, "origin": "manual"},
+            headers=self._write(attachment_id))
+        return McpCall.model_validate(payload)
+
+    async def decide_mcp(self, *, session_id: str, attachment_id: str, server_id: str, call_id: str,
+                         decision_id: str, digest: str, approve: bool) -> McpCall:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/mcp/{server_id}/calls/{call_id}/decision",
+            json_body={"decision_id": decision_id, "approve": approve, "digest": digest},
+            headers=self._write(attachment_id))
+        return McpCall.model_validate(payload)
+
+    async def close_mcp(self, *, session_id: str, attachment_id: str, server_id: str) -> McpView:
+        payload = await self._send(
+            "POST", f"/api/v1/sessions/{session_id}/mcp/{server_id}/cancel",
+            headers=self._write(attachment_id))
+        return McpView.model_validate(payload)
+
+    async def await_mcp(self, session_id: str, call_id: str, attempts: int = 200) -> McpCall:
+        for _ in range(attempts):
+            found = next((item for item in (await self.mcp_state(session_id)).calls if item.call_id == call_id), None)
+            if found is None:
+                raise BackendError("mcp_call_not_found", status=404)
+            if found.phase in {"done", "denied", "unknown", "conflict"}:
+                return found
             await asyncio.sleep(0.05)
         raise BackendError("request_pending", status=503)
 
