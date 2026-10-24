@@ -929,6 +929,11 @@ class Host:
             current = known_feedback.get(item.feedback_id)
             if current is not None and current != (item.session_id, item.text):
                 raise BackendError("import_conflict")
+        incoming_projects = {project.project_id for project in bundle.projects}
+        for item in bundle.sessions:
+            await self._require_workspace(item.workspace)
+            if item.project_id and item.project_id not in known_projects and item.project_id not in incoming_projects:
+                raise BackendError("import_conflict")
         created = 0
         for item in bundle.sessions:
             incoming = [(message.request_id, message.role, message.content) for message in item.messages]

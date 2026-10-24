@@ -10,7 +10,15 @@ import httpx
 import pytest
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import ExportBundle, HostFence, ProcessLease, Submit
+from amazme_backend.contracts import (
+    ExportBundle,
+    ExportMessage,
+    ExportSession,
+    HostFence,
+    ProcessLease,
+    ProjectView,
+    Submit,
+)
 from amazme_backend.host import Host, application
 from amazme_backend.manage import bundle_digest
 from amazme_backend.providers import Completion, stream
@@ -138,6 +146,64 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             blocked = await client.post(f"/api/v1/sessions/{session}/shares", json={"share_id": SHARE})
             assert blocked.status_code == 409 and blocked.json()["code"] == "share_conflict"
     finally:
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+def _sealed(bundle: ExportBundle) -> dict[str, object]:
+    return bundle.model_copy(update={"digest": bundle_digest(bundle)}).model_dump()
+
+
+async def test_import_checks_every_workspace_before_writing(tmp_path: Path) -> None:
+    host = _host(tmp_path)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    grant = tmp_path.parent / f"import-{tmp_path.name}"
+    grant.mkdir()
+    project_id = "f" * 32
+    first, second, orphan = "1" * 32, "2" * 32, "3" * 32
+    try:
+        async with _client(host) as client:
+            missing_project = _sealed(ExportBundle(
+                format="amazme-export/1",
+                sessions=[ExportSession(
+                    session_id=orphan, title="孤立", workspace="primary", project_id="9" * 32,
+                    messages=[ExportMessage(request_id="m", role="user", content="不该写入")])],
+            ))
+            refused_project = await client.post("/api/v1/import", json=missing_project)
+            assert refused_project.status_code == 409 and refused_project.json()["code"] == "import_conflict"
+            assert (await client.get("/api/v1/sessions")).json()["sessions"] == []
+            pending = _sealed(ExportBundle(
+                format="amazme-export/1",
+                projects=[ProjectView(project_id=project_id, name="待导入")],
+                sessions=[
+                    ExportSession(session_id=first, title="先到", workspace="primary", project_id=project_id,
+                                  messages=[ExportMessage(request_id="m1", role="user", content="甲")]),
+                    ExportSession(session_id=second, title="后到", workspace="docs", project_id=project_id,
+                                  messages=[ExportMessage(request_id="m2", role="user", content="乙")]),
+                ],
+            ))
+            refused = await client.post("/api/v1/import", json=pending)
+            assert refused.status_code == 404 and refused.json()["code"] == "workspace_not_found"
+            assert (await client.get("/api/v1/sessions")).json()["sessions"] == []
+            assert (await client.get("/api/v1/projects")).json()["projects"] == []
+            granted = await client.post("/api/v1/workspaces", json={"name": "docs", "host_path": str(grant)})
+            assert granted.status_code == 200, granted.text
+            imported = await client.post("/api/v1/import", json=pending)
+            assert imported.status_code == 200, imported.text
+            assert imported.json()["created"] == 2
+            listed = {item["session_id"]: item["workspace"] for item in (await client.get("/api/v1/sessions")).json()["sessions"]}
+            assert listed == {first: "primary", second: "docs"}
+            assert (await client.get("/api/v1/projects")).json()["projects"] == [
+                {"project_id": project_id, "name": "待导入"}]
+            primary_hits = await client.get(f"/api/v1/sessions/{first}/search", params={"q": "甲"})
+            docs_hits = await client.get(f"/api/v1/sessions/{second}/search", params={"q": "乙"})
+            assert primary_hits.status_code == 200 and primary_hits.json()["hits"]
+            assert docs_hits.status_code == 200 and docs_hits.json()["hits"]
+            assert not (await client.get(f"/api/v1/sessions/{first}/search", params={"q": "乙"})).json()["hits"]
+    finally:
+        shutil.rmtree(grant, ignore_errors=True)
         await host.supervisor.close()
         await host.store.db.close()
 
