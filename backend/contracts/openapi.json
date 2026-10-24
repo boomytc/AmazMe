@@ -5344,6 +5344,12 @@
                 "type": "null"
               }
             ]
+          },
+          "image_base64": {
+            "type": "string",
+            "maxLength": 50331648,
+            "title": "Image Base64",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -7707,6 +7713,26 @@
       },
       "RpcParams": {
         "properties": {
+          "computer_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "computer_action": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ComputerActionRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "provider": {
             "type": "string",
             "title": "Provider",

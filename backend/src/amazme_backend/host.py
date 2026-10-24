@@ -263,7 +263,6 @@ class Host:
         self.attachment_seen: dict[str, float] = {}
         self.faults = Faults(profile.path, "host", self.instance, enabled=profile.config.testing)
         self.web_client: httpx.AsyncClient | None = None
-        self.computer_scenario: Literal["unconfigured", "denied", "granted", "plain", "hold", "drop"] = "unconfigured"
         self.computer_drivers: dict[str, ComputerDriver] = {}
         self.computer_held: set[str] = set()
         self.computer_mu = asyncio.Lock()
@@ -1393,6 +1392,17 @@ class Host:
         return value
 
     async def save_computer_policy(self, session: str, value: ComputerPolicy) -> ComputerPolicy:
+        if not value.enabled and session in self.computer_drivers:
+            if not await self._computer_enter(session):
+                raise BackendError("computer_busy")
+            try:
+                driver = self.computer_drivers[session]
+                code = await self._park_driver(session, driver)
+                if code is None:
+                    await self._with_session(session, lambda store: store.note_computer_exit(code))
+                    raise BackendError("computer_exit_unproven")
+            finally:
+                await self._computer_leave(session)
         return await self._with_session(session, lambda store: store.save_computer_policy(value))
 
     async def computer_policy(self, session: str) -> ComputerPolicy:
@@ -1400,10 +1410,35 @@ class Host:
             session, lambda store: store.computer_policy(), require_active=False, write=False)
 
     async def _park_driver(self, session: str, driver: ComputerDriver) -> int | None:
-        self.computer_drivers.pop(session, None)
-        return await asyncio.to_thread(driver.stop)
+        code = await asyncio.to_thread(driver.stop)
+        if code is not None:
+            self.computer_drivers.pop(session, None)
+        return code
+
+    async def _computer_request(self, driver: ComputerDriver, payload: dict[str, object]) -> dict[str, object]:
+        pending = asyncio.create_task(asyncio.to_thread(driver.request, payload))
+        try:
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            # Cancelling an HTTP waiter does not stop the driver or release its session lock early.
+            with contextlib.suppress(Exception):
+                await pending
+            raise
+
+    async def _computer_start(self, directory: Path) -> ComputerDriver:
+        pending = asyncio.create_task(asyncio.to_thread(start_driver, directory))
+        try:
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                driver = await pending
+                await asyncio.to_thread(driver.stop)
+            raise
 
     async def computer_observe(self, session: str) -> ComputerObserve:
+        self._admit()
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
         policy = await self.computer_policy(session)
         if not policy.enabled:
             raise BackendError("computer_disabled")
@@ -1413,13 +1448,13 @@ class Host:
             raise BackendError("computer_busy")
         try:
             driver = self.computer_drivers.get(session)
-            if driver is None or driver.process.poll() is not None:
+            if driver is None or not driver.alive:
                 if driver is not None:
                     code = await self._park_driver(session, driver)
                     await self._with_session(session, lambda store: store.note_computer_exit(code))
                     raise BackendError("computer_blocked")
                 directory = session_database(self.profile.path, session).parent
-                driver = await asyncio.to_thread(start_driver, directory, self.computer_scenario)
+                driver = await self._computer_start(directory)
                 self.computer_drivers[session] = driver
             hello = driver.hello
             accessibility = hello.get("accessibility") is True
@@ -1429,20 +1464,21 @@ class Host:
                 await self._park_driver(session, driver)
                 return ComputerObserve(permitted=False, accessibility=accessibility, screen=screen,
                                        identity=identity, error="permission_required")
+            capture_id = hashlib.sha256(f"{session}:{identity}:{time.time_ns()}".encode()).hexdigest()[:32]
+            reply = await self._computer_request(driver, {"op": "observe", "capture_id": capture_id})
+            if reply.get("capture_id") != capture_id:
+                raise BackendError("computer_driver_lost")
             raw_width = self._driver_int(hello, "raw_width")
             raw_height = self._driver_int(hello, "raw_height")
             orientation = self._driver_int(hello, "orientation")
             scale = self._driver_int(hello, "scale")
             width, height = upright_size(raw_width, raw_height, orientation)
-            capture_id = hashlib.sha256(f"{session}:{identity}:{time.time_ns()}".encode()).hexdigest()[:32]
-            reply = await asyncio.to_thread(driver.request, {"op": "observe", "capture_id": capture_id})
-            if reply.get("capture_id") != capture_id:
-                raise BackendError("computer_driver_lost")
             capture = ComputerCaptureView(
                 capture_id=capture_id, width=width, height=height, raw_width=raw_width, raw_height=raw_height,
                 orientation=orientation, scale=scale, observed_ms=time.time_ns() // 1_000_000)
             await self._with_session(session, lambda store: store.save_computer_capture(capture))
-            return ComputerObserve(permitted=True, accessibility=True, screen=True, identity=identity, capture=capture)
+            return ComputerObserve(permitted=True, accessibility=True, screen=True, identity=identity, capture=capture,
+                                   image_base64=str(reply.get("image_base64", "")))
         finally:
             await self._computer_leave(session)
 
@@ -1472,13 +1508,13 @@ class Host:
             if not send:
                 return view
             driver = self.computer_drivers.get(session)
-            if driver is None or driver.process.poll() is not None:
+            if driver is None or not driver.alive:
                 code = await self._park_driver(session, driver) if driver is not None else None
                 await self._with_session(session, lambda store: store.note_computer_exit(code))
                 return await self._with_session(session, lambda store: store.settle_computer_action(
                     value.action_id, "unknown", "computer_driver_lost", None, None))
             try:
-                reply = await asyncio.to_thread(driver.request, {
+                reply = await self._computer_request(driver, {
                     "op": "act", "capture_id": value.capture_id, "x": point[0], "y": point[1]})
             except BackendError:
                 code = await self._park_driver(session, driver)
@@ -1494,9 +1530,15 @@ class Host:
             await self._computer_leave(session)
 
     async def computer_cleanup(self, session: str) -> ComputerCleanup:
+        if not await self._computer_enter(session):
+            raise BackendError("computer_busy")
+        try:
+            return await self._computer_cleanup_owned(session)
+        finally:
+            await self._computer_leave(session)
+
+    async def _computer_cleanup_owned(self, session: str) -> ComputerCleanup:
         driver = self.computer_drivers.get(session)
-        if driver is not None and driver.process.poll() is None:
-            raise BackendError("computer_exit_unproven")
         if driver is not None:
             code = await self._park_driver(session, driver)
             await self._with_session(session, lambda store: store.note_computer_exit(code))
@@ -2243,7 +2285,12 @@ class Host:
             with contextlib.suppress(asyncio.CancelledError):
                 await self.background
         try:
+            closed = await asyncio.gather(*(self._park_driver(session, driver)
+                                           for session, driver in list(self.computer_drivers.items())),
+                                          return_exceptions=True)
             await self.stop_owned_supervisor()
+            if any(code is None or isinstance(code, BaseException) for code in closed):
+                raise BackendError("computer_exit_unproven")
         finally:
             for _, peer in self.worker_peers.values():
                 await peer.close()

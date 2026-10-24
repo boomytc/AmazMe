@@ -18,6 +18,11 @@ from .contracts import (
     Cancel,
     CheckpointCreate,
     CheckpointView,
+    ComputerActionRequest,
+    ComputerActionView,
+    ComputerCleanup,
+    ComputerObserve,
+    ComputerPolicy,
     CreateSession,
     CredentialUpdate,
     McpCall,
@@ -46,6 +51,8 @@ from .workspace_files import FileContent
 
 
 class RpcParams(Model):
+    computer_policy: ComputerPolicy | None = None
+    computer_action: ComputerActionRequest | None = None
     provider: str = ""
     login_id: str = ""
     model_settings: UpdateModelSettings | None = None
@@ -100,6 +107,16 @@ def rpc_error(identity: str, code: str) -> dict[str, object]:
 
 
 class RpcHost(Protocol):
+    async def computer_policy(self, session: str) -> ComputerPolicy: ...
+
+    async def save_computer_policy(self, session: str, value: ComputerPolicy) -> ComputerPolicy: ...
+
+    async def computer_observe(self, session: str) -> ComputerObserve: ...
+
+    async def computer_action(self, session: str, value: ComputerActionRequest) -> ComputerActionView: ...
+
+    async def computer_cleanup(self, session: str) -> ComputerCleanup: ...
+
     def model_catalog(self) -> ModelCatalog: ...
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings: ...
@@ -190,6 +207,20 @@ def _decision(params: RpcParams) -> bool:
 
 
 async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
+    if method == "computer.policy":
+        return await owner.computer_policy(await _bound(owner, params))
+    if method == "computer.configure":
+        if params.computer_policy is None:
+            raise BackendError("computer_policy_required")
+        return await owner.save_computer_policy(await _bound(owner, params), params.computer_policy)
+    if method == "computer.observe":
+        return await owner.computer_observe(await _bound(owner, params))
+    if method == "computer.act":
+        if params.computer_action is None:
+            raise BackendError("computer_action_required")
+        return await owner.computer_action(await _bound(owner, params), params.computer_action)
+    if method == "computer.cleanup":
+        return await owner.computer_cleanup(await _bound(owner, params))
     if method == "model.list":
         return owner.model_catalog()
     if method == "model.update":

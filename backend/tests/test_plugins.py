@@ -63,11 +63,11 @@ def test_controlled_helpers_drop_secret_environment(tmp_path: Path, monkeypatch:
         return real(*args, **kwargs)
 
     monkeypatch.setattr("amazme_backend.plugin_run.subprocess.Popen", spy)
-    monkeypatch.setattr("amazme_backend.computer_run.subprocess.Popen", spy)
     monkeypatch.setattr("amazme_backend.codemode_run.subprocess.Popen", spy)
     monkeypatch.setattr("amazme_backend.codemode_run.bundled_node", lambda: Path(sys.executable))
+    from helpers.computer_probe import start_driver
+
     from amazme_backend.codemode_run import run_codemode
-    from amazme_backend.computer_run import start_driver
     from amazme_backend.native_execution import tool_environment
     from amazme_backend.plugin_run import run_plugin_gate
 

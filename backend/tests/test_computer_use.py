@@ -5,19 +5,35 @@ import base64
 import json
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Literal
 
 import httpx
 import pytest
+from helpers.computer_probe import start_driver as start_probe
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import CreateSession, HostFence, ProcessLease
+from amazme_backend.contracts import (
+    ComputerActionRequest,
+    ComputerPolicy,
+    CreateSession,
+    HostFence,
+    ProcessLease,
+)
 from amazme_backend.host import Host, application
 from amazme_backend.storage import session_database
 
 SESSION = "a" * 32
 OTHER = "b" * 32
+SCENARIOS: dict[Path, str] = {}
+
+
+@pytest.fixture(autouse=True)
+def fixed_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    SCENARIOS.clear()
+    monkeypatch.setattr("amazme_backend.host.start_driver", lambda directory:
+                        start_probe(directory, SCENARIOS[directory.parents[1]]))
 
 
 def _host(tmp_path: Path, scenario: Literal["unconfigured", "denied", "granted", "plain", "hold", "drop"]) -> Host:
@@ -30,7 +46,7 @@ def _host(tmp_path: Path, scenario: Literal["unconfigured", "denied", "granted",
     host = Host(Profile(tmp_path))
     host.fence = HostFence(host_epoch=1, build_id=host.build)
     host.origin = "http://127.0.0.1:12345"
-    host.computer_scenario = scenario
+    SCENARIOS[tmp_path] = scenario
     return host
 
 
@@ -85,7 +101,7 @@ async def test_missing_permission_sends_no_click_and_pixels_follow_the_driver(tm
                 "action_id": "nope", "capture_id": "missing", "x": 1, "y": 4,
                 "accessibility": True})
             assert stale.status_code == 422 and _actions(host, SESSION) == []
-            host.computer_scenario = "granted"  # type: ignore[assignment]
+            SCENARIOS[tmp_path] = "granted"
             seen = await client.post(f"/api/v1/sessions/{SESSION}/computer/observe")
             assert seen.status_code == 200 and seen.json()["permitted"] is True
             capture = seen.json()["capture"]["capture_id"]
@@ -170,7 +186,7 @@ async def test_a_second_action_does_not_start_while_the_first_is_unanswered(tmp_
             assert done.status_code == 200 and done.json()["driver_x"] == 8
             assert len(_actions(host, SESSION)) == 1
             await host.store.create_session(OTHER, CreateSession(title="过期"))
-            host.computer_scenario = "plain"
+            SCENARIOS[tmp_path] = "plain"
             attached = await client.post(f"/api/v1/sessions/{OTHER}/attachments")
             client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
             await client.post(f"/api/v1/sessions/{OTHER}/computer", json={"enabled": True, "max_age_ms": 1})
@@ -189,6 +205,56 @@ async def test_a_second_action_does_not_start_while_the_first_is_unanswered(tmp_
             assert _actions(host, OTHER) == [{
                 "op": "act", "capture_id": fresh.json()["capture"]["capture_id"], "x": 6, "y": 8}]
     finally:
+        await _stop(host)
+
+
+async def test_cancelled_start_waits_and_reclaims_the_returned_driver(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    host = _host(tmp_path, 'granted')
+    drivers = []
+
+    def delayed(directory):
+        time.sleep(0.05)
+        driver = start_probe(directory, 'granted')
+        drivers.append(driver)
+        return driver
+
+    monkeypatch.setattr('amazme_backend.host.start_driver', delayed)
+    pending = asyncio.create_task(host._computer_start(tmp_path / 'desk'))
+    await asyncio.sleep(0.01)
+    pending.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await pending
+        assert len(drivers) == 1 and drivers[0].process.poll() is not None
+    finally:
+        await _stop(host)
+
+
+async def test_sdk_and_rpc_use_the_same_bound_computer_action_ledger(tmp_path: Path) -> None:
+    from amazme_backend.rpc import RpcCall, RpcParams, handle_rpc
+    from amazme_backend.sdk import Client
+    host = _host(tmp_path, 'granted')
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+        instance_id='host', role='host', profile_path=str(tmp_path), path=str(tmp_path / 'lease'), device=1, inode=1))
+    client = Client(host.origin, 'web-only')
+    await client._http.aclose()
+    client._http = httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin)
+    try:
+        await client.bootstrap()
+        await host.store.create_session(SESSION, CreateSession(title='desktop'))
+        binding = await host.attach_session(SESSION)
+        await client.configure_computer(SESSION, binding.attachment_id, ComputerPolicy(enabled=True))
+        view = await client.observe_computer(SESSION, binding.attachment_id)
+        assert view.capture is not None
+        action = ComputerActionRequest(action_id='shared', capture_id=view.capture.capture_id, x=1, y=4)
+        assert (await client.act_computer(SESSION, binding.attachment_id, action)).phase == 'done'
+        rpc = await handle_rpc(host, RpcCall(id='retry', method='computer.act', params=RpcParams(
+            session_id=SESSION, workspace='primary', attachment_id=binding.attachment_id, computer_action=action)))
+        assert rpc['result']['phase'] == 'done' and len(_actions(host, SESSION)) == 1
+        await client.configure_computer(SESSION, binding.attachment_id, ComputerPolicy(enabled=False))
+        assert SESSION not in host.computer_drivers
+    finally:
+        await client._http.aclose()
         await _stop(host)
 
 

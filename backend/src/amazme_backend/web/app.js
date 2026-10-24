@@ -514,6 +514,8 @@ function startClient() {
       computerCapture = "";
       $("computer-state").textContent = "";
       $("computer-enabled").checked = false;
+      $("computer-image").removeAttribute("src");
+      $("computer-image").hidden = true;
     }
     computerCapture = "";
     retire(); selected = id; const binding = ++generation;
@@ -1306,6 +1308,10 @@ function startClient() {
       const view = await api(`/api/v1/sessions/${selected}/computer/observe`, "POST", {}, connection);
       if (!operation.active()) return;
       computerCapture = view.capture ? view.capture.capture_id : "";
+      const image = $("computer-image");
+      image.hidden = !view.image_base64;
+      if (view.image_base64) image.src = `data:image/png;base64,${view.image_base64}`;
+      else image.removeAttribute("src");
       $("computer-state").textContent = view.permitted ? `${view.capture.width}×${view.capture.height}` : view.error;
       $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }

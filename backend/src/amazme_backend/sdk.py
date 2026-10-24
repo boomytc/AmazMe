@@ -15,6 +15,11 @@ from .contracts import (
     Attachment,
     BackendError,
     CheckpointView,
+    ComputerActionRequest,
+    ComputerActionView,
+    ComputerCleanup,
+    ComputerObserve,
+    ComputerPolicy,
     CredentialUpdate,
     ErrorBody,
     Identity,
@@ -79,6 +84,25 @@ class Client:
 
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
+
+    async def computer_policy(self, session_id: str) -> ComputerPolicy:
+        return ComputerPolicy.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/computer"))
+
+    async def configure_computer(self, session_id: str, attachment_id: str, value: ComputerPolicy) -> ComputerPolicy:
+        return ComputerPolicy.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer",
+            json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
+
+    async def observe_computer(self, session_id: str, attachment_id: str) -> ComputerObserve:
+        return ComputerObserve.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/observe",
+            json_body={}, headers=self._write(attachment_id)))
+
+    async def act_computer(self, session_id: str, attachment_id: str, value: ComputerActionRequest) -> ComputerActionView:
+        return ComputerActionView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/actions",
+            json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
+
+    async def cleanup_computer(self, session_id: str, attachment_id: str) -> ComputerCleanup:
+        return ComputerCleanup.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/cleanup",
+            json_body={}, headers=self._write(attachment_id)))
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
         return ModelSettings.model_validate(await self._send("POST", "/api/v1/models",

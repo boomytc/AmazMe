@@ -590,6 +590,7 @@ class ComputerObserve(Model):
     identity: str = ""
     error: str = ""
     capture: ComputerCaptureView | None = None
+    image_base64: str = Field(default="", max_length=48 * 1024 * 1024)
 
 
 class ComputerActionRequest(Model):
