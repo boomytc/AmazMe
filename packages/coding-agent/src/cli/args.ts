@@ -26,7 +26,7 @@ export interface Args {
 	name?: string;
 	noSession?: boolean;
 	sessionDir?: string;
-	/** Open one exact existing Durable session by ID or session directory. */
+	/** Open one exact Python session by ID. */
 	session?: string;
 	models?: string[];
 	tools?: string[];
@@ -143,7 +143,7 @@ export function parseArgs(args: string[]): Args {
 			result.sessionDir = args[++i];
 		} else if (arg === "--session") {
 			if (i + 1 < args.length && !args[i + 1]!.startsWith("-")) result.session = args[++i];
-			else result.diagnostics.push({ type: "error", message: "--session requires an ID or session directory" });
+			else result.diagnostics.push({ type: "error", message: "--session requires an ID" });
 		} else if (arg === "--models" && i + 1 < args.length) {
 			result.models = args[++i]
 				.split(",")
@@ -327,7 +327,9 @@ export function printHelp(output: Pick<NodeJS.WriteStream, "write"> = process.st
 连接与输入：
   --python-url URL --python-token TOKEN  连接指定 Host
   --python-session ID | --session ID     打开指定会话
-  --workspace NAME                       会话工作区（默认 primary）
+  --workspace NAME                       已登记工作区（本机默认按启动目录选择）
+  -e | --extension PATH                  加载 Python setup(api) 插件；RPC 同时指定 --session
+  --no-extensions                        禁用未显式选择的插件工具
   --decision 批准|拒绝 --request ID       对已保存的请求明确审批
   --decision 批准|拒绝 --call ID          对已保存的 MCP 调用明确审批
   --provider NAME --model ID [--api-key KEY]  配置账号后提交问题

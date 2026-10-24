@@ -3,9 +3,9 @@
  * Finishing releases the binding and does not cancel accepted work.
  */
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 
 import { getAgentDir } from "./config.ts";
@@ -37,6 +37,7 @@ export interface PythonRunOptions {
 }
 
 export interface PythonHeadlessOptions extends PythonRunOptions {
+	readonly extensions?: readonly string[];
 	readonly mode: "text" | "json" | "rpc";
 	readonly workspace?: string;
 	readonly cwd: string;
@@ -174,6 +175,7 @@ export class HostClient {
 	readonly #token: string;
 	#buildId = "";
 	#hostEpoch = 0;
+	#profileId = "";
 	readonly #runOptions: Omit<PythonRunOptions, "thinking"> & {thinking?: ThinkingLevel};
 
 	constructor(url: string, token: string, options: PythonRunOptions = {}) {
@@ -194,6 +196,41 @@ export class HostClient {
 		if (typeof body.build_id !== "string" || typeof body.host_epoch !== "number") fail("invalid_bootstrap");
 		this.#buildId = body.build_id;
 		this.#hostEpoch = body.host_epoch;
+		this.#profileId = typeof body.profile_id === "string" ? body.profile_id : "";
+	}
+
+	async windowUrl(workspace: string): Promise<string> {
+		if (!this.#profileId) fail("invalid_bootstrap");
+		const opened = await this.open(workspace, "窗口任务");
+		await this.release(opened.sessionId, opened.attachmentId);
+		const url = new URL(this.#url + "/");
+		url.search = new URLSearchParams({host:this.#profileId, session:opened.sessionId, workspace}).toString();
+		return url.href;
+	}
+
+	async loadExtensions(sessionId: string, entries: readonly string[] = []): Promise<void> {
+		if (!entries.length) return;
+		const listed = await this.#send("GET", `/api/v1/plugins?session_id=${sessionId}`);
+		if (!Array.isArray(listed.plugins)) fail("invalid_plugins");
+		for (const entry of new Set(entries)) {
+			const pluginId = createHash("sha256").update(`${sessionId}\n${entry}`).digest("hex").slice(0,32);
+			const existing = listed.plugins.find((item) => isRecord(item) && item.plugin_id === pluginId);
+			let view: Record<string, unknown>;
+			if (isRecord(existing)) view = existing;
+			else {
+				try {
+					view = await this.#send("POST", "/api/v1/plugins", {
+						session_id:sessionId, plugin_id:pluginId,
+						name:basename(entry).replace(/[^A-Za-z0-9_-]/g,"_").slice(0,64) || "plugin", entry,
+					});
+				} catch (error) {
+					if (error instanceof HostRequestError && error.status < 500) throw error;
+					throw new Error(`plugin_load_unconfirmed session=${sessionId} plugin=${pluginId}: ${error instanceof Error ? error.message : "unknown"}`);
+				}
+			}
+			if (view.phase !== "ready")
+				fail(`plugin_load_${String(view.phase)} session=${sessionId} plugin=${pluginId}`);
+		}
 	}
 
 	setThinking(level: ThinkingLevel): void {
@@ -921,6 +958,7 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions & {r
 		? await client.attach(selected, options.workspace)
 		: await client.open(options.workspace, options.title);
 	try {
+		await client.loadExtensions(opened.sessionId, options.extensions);
 		if (!prompt && options.request && !decision) {
 			const polled = await client.inspectRequest(
 				opened.sessionId,
@@ -1016,7 +1054,15 @@ export async function runPythonHeadless(options: PythonHeadlessOptions): Promise
 	try {
 		const client = new HostClient(host.url, host.token, options);
 		await client.bootstrap();
-		if (options.mode === "rpc") return await runRpc(client);
+		if (options.mode === "rpc") {
+			if (!options.extensions?.length) return await runRpc(client);
+			if (!options.session) fail("rpc_extensions_require_session");
+			const opened = await client.attach(options.session, options.workspace ?? "primary");
+			try {
+				await client.loadExtensions(opened.sessionId, options.extensions);
+				return await runRpc(client);
+			} finally { await client.release(opened.sessionId, opened.attachmentId); }
+		}
 		const workspace = options.noSession ? "primary" : options.url
 			? options.workspace ?? "primary"
 			: await client.selectWorkspace(options.cwd, options.workspace);

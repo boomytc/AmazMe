@@ -1,6 +1,7 @@
 /** Product commands use the same Python host as interactive and headless clients. */
 import { spawn } from "node:child_process";
 import { connectPythonHost } from "./python-session-tui.ts";
+import { HostClient } from "./python-headless.ts";
 
 const COMMANDS = new Set([
 	"web",
@@ -53,7 +54,12 @@ export async function runPythonProductCommand(
 			cwd,
 			...(url === undefined ? {} : { url, token }),
 		});
-		process.stdout.write(`${host.url}/\n`);
+		if (command === "web") {
+			const client = new HostClient(host.url, host.token);
+			await client.bootstrap();
+			const workspace = url ? "primary" : await client.selectWorkspace(cwd);
+			process.stdout.write(`${await client.windowUrl(workspace)}\n`);
+		} else process.stdout.write(`${host.url}/\n`);
 		return true;
 	}
 	const host = await connectPythonHost({

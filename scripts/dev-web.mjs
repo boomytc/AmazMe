@@ -1,6 +1,18 @@
 #!/usr/bin/env node
 
-// The product page is served by the Python backend. This launcher no longer starts the old web host.
-console.error("old_web_host_removed");
-console.error("网页由 Python 后端提供，不再启动旧宿主");
-process.exitCode = 1;
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+const child = spawn(process.execPath, ["--import", "./packages/coding-agent/src/source-resolver.ts",
+	"./packages/coding-agent/src/cli.ts", "web", ...process.argv.slice(2)], {cwd:root, stdio:"inherit"});
+const interrupt = () => child.kill("SIGINT");
+const terminate = () => child.kill("SIGTERM");
+process.on("SIGINT", interrupt);
+process.on("SIGTERM", terminate);
+child.once("error", error => { console.error(error.message); process.exitCode = 1; });
+child.once("exit", (code, signal) => {
+	process.off("SIGINT", interrupt);
+	process.off("SIGTERM", terminate);
+	process.exitCode = code ?? (signal === "SIGINT" ? 130 : 1);
+});

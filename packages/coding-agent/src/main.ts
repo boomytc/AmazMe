@@ -1,4 +1,5 @@
 /** Product presentation and input parsing; business operations belong to Python. */
+import { resolve } from "node:path";
 import { type Args, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
@@ -19,6 +20,7 @@ export function requestOptions(parsed: Args): PythonRunOptions {
 		...(parsed.excludeTools ?? []),
 		...(modifiers ? tools.filter((name) => name.startsWith("-")).map((name) => name.slice(1)) : []),
 		...(parsed.noMcp ? ["mcp_*"] : []),
+		...(parsed.noExtensions && !parsed.extensions?.length ? ["plugin_*"] : []),
 	];
 	return {
         ...(parsed.thinking === undefined ? {} : {thinking:parsed.thinking}),
@@ -108,6 +110,7 @@ export async function main(args: string[]): Promise<void> {
 	}
 	const runOptions = requestOptions(parsed);
 	const sessionOptions = {
+		...(parsed.extensions?.length ? {extensions:parsed.extensions.map((entry) => resolve(cwd,entry))} : {}),
         ...(parsed.noSession ? {noSession:true} : {}),
 		...(parsed.continue
 			? { selection: "continue" as const }

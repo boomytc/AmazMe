@@ -18,6 +18,7 @@ import { createInteractiveTui } from "./modes/interactive/tui-renderer.ts";
 import { HostClient, type ImageContent, type PythonRunOptions, type ThinkingLevel } from "./python-headless.ts";
 
 export interface PythonSessionTarget extends PythonRunOptions {
+	readonly extensions?: readonly string[];
 	readonly url: string;
 	readonly token: string;
 	readonly workspace: string;
@@ -462,6 +463,7 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 		runLine(prompt);
 	};
 	try {
+		await client.loadExtensions(opened.sessionId, target.extensions);
 		if (selected) {
 			const snapshot = await client.snapshot(opened.sessionId);
 			if (Array.isArray(snapshot.requests))

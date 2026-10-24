@@ -74,13 +74,17 @@ test.each(["models", "accounts", "auth", "import", "export", "doctor"])(
 	},
 );
 
-test("web and server print the Python listener without printing its token", async () => {
+test("web prints a bound session URL and server prints the listener without the token", async () => {
+	vi.spyOn(HostClient.prototype, "bootstrap").mockResolvedValue();
+	vi.spyOn(HostClient.prototype, "selectWorkspace").mockResolvedValue("project");
+	const windowUrl = vi.spyOn(HostClient.prototype, "windowUrl").mockResolvedValue("http://127.0.0.1:1234/?host=profile&session=one&workspace=project");
 	const write = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 	await runPythonProductCommand(["web", "--port", "0"], "/project");
 	await runPythonProductCommand(["server"], "/project");
 	expect(write.mock.calls.flat().join("")).toBe(
-		"http://127.0.0.1:1234/\nhttp://127.0.0.1:1234/\n",
+		"http://127.0.0.1:1234/?host=profile&session=one&workspace=project\nhttp://127.0.0.1:1234/\n",
 	);
+	expect(windowUrl).toHaveBeenCalledWith("project");
 	expect(spawn).not.toHaveBeenCalled();
 });
 
@@ -262,10 +266,11 @@ test("interactive CLI carries the initial text, file and image into the Python T
         if (descriptor) Object.defineProperty(stream, "isTTY", descriptor);
         else Reflect.deleteProperty(stream, "isTTY");
     }));
-    await main(["--python-url", "http://target", "--python-token", "private", `@${textPath}`, `@${imagePath}`, "first", "second"]);
+    await main(["--python-url", "http://target", "--python-token", "private", `@${textPath}`, `@${imagePath}`, "-e", "./tools/helper.py", "first", "second"]);
     expect(runPythonSessionTui).toHaveBeenCalledOnce();
     expect(runPythonSessionTui).toHaveBeenCalledWith(expect.objectContaining({
         url:"http://target", token:"private", workspace:"primary", prompt:expect.stringContaining("file content"),
+        extensions:[join(process.cwd(), "tools/helper.py")],
         images:[expect.objectContaining({type:"image",mimeType:"image/png"})],
     }));
     expect(vi.mocked(runPythonSessionTui).mock.calls[0]?.[0].prompt).toContain("first\nsecond");
@@ -275,4 +280,10 @@ test("interactive CLI carries the initial text, file and image into the Python T
 test("thinking selection reaches the Python request options", () => {
     expect(requestOptions(parseArgs(["--thinking", "max"]))).toEqual({thinking:"max"});
     expect(requestOptions(parseArgs(["--thinking", "off"]))).toEqual({thinking:"off"});
+});
+
+
+test("explicit Python extensions bind their launch directory and no-extensions disables unselected plugin tools", () => {
+    expect(requestOptions(parseArgs(["--no-extensions"]))).toEqual({excluded_tools:["plugin_*"]});
+    expect(requestOptions(parseArgs(["--no-extensions", "-e", "./tool.py"]))).toEqual({});
 });
