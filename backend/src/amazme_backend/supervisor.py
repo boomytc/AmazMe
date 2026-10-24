@@ -1258,6 +1258,17 @@ class Supervisor:
             await self.db.call(lambda db: db.execute("UPDATE mcp_calls SET phase='conflict' WHERE id=? AND server=? AND phase='running'",
                                                     (call_id, server_id)), write=True)
             client.conflicts.discard(call_id)
+        for call_id in list(client.busy):
+            await self.db.call(lambda db: db.execute(
+                "UPDATE mcp_calls SET phase='waiting_approval',decision_id='',decision='' "
+                "WHERE id=? AND server=? AND phase='running'",
+                (call_id, server_id)), write=True)
+            client.busy.discard(call_id)
+        if client.ready and not client.catalog_failed:
+            catalog = json.dumps([tool.model_dump() for tool in client.tools], ensure_ascii=False)
+            await self.db.call(lambda db: db.execute(
+                "UPDATE mcp_servers SET catalog=? WHERE id=? AND phase='ready' AND catalog!=?",
+                (catalog, server_id, catalog)), write=True)
 
     async def mcp_state(self, value: McpSession) -> McpState:
         async with self.control:
@@ -1319,6 +1330,12 @@ class Supervisor:
                     existing = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
                     assert existing is not None
                 return self._mcp_call(existing)
+            await self._sync_mcp(server_id)
+            server = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
+            assert server is not None
+            client = self.mcp_clients.get(server_id)
+            if client is not None and client.catalog_failed:
+                raise BackendError("mcp_catalog_stale", status=503)
             if server["phase"] != "ready":
                 raise BackendError("mcp_not_ready")
             if value.name not in {item["name"] for item in json.loads(server["catalog"])}:
@@ -1348,6 +1365,10 @@ class Supervisor:
                 raise BackendError("mcp_call_not_found", status=404)
             if row["digest"] != value.digest:
                 raise BackendError("mcp_call_conflict")
+            await self._sync_mcp(server_id)
+            server = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
+            assert server is not None
+            client = self.mcp_clients.get(server_id)
             decision = json.dumps({"approve": value.approve, "digest": value.digest})
             if row["decision_id"]:
                 if row["decision_id"] != value.decision_id or (row["phase"] != "conflict" and row["decision"] != decision):
@@ -1355,6 +1376,8 @@ class Supervisor:
                 return self._mcp_call(row)
             if row["phase"] != "waiting_approval":
                 raise BackendError("mcp_call_conflict")
+            if value.approve and client is not None and client.catalog_failed:
+                raise BackendError("mcp_catalog_stale", status=503)
             pinned = str(row["schema_digest"] or "")
             if value.approve and pinned and catalog_schema_digest(str(server["catalog"]), str(row["name"])) != pinned:
                 refusal = json.dumps({"approve": False, "digest": value.digest, "reason": "schema"})
@@ -1385,6 +1408,8 @@ class Supervisor:
                     await self._close_mcp(server, interrupted=True)
             current = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (call_id,)).fetchone())
             assert current is not None
+            if value.approve and current["phase"] == "waiting_approval" and not current["decision_id"]:
+                raise BackendError("mcp_catalog_stale", status=503)
             return self._mcp_call(current)
 
     async def _close_mcp(self, row: sqlite3.Row, *, interrupted: bool = False) -> McpView:

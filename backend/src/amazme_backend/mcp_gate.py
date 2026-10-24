@@ -123,7 +123,9 @@ def main() -> int:
     tools: list[McpTool] = []
     cursors: set[str] = set()
     phase, version = "initialize", ""
+    pending_refresh = False
     deadline = time.monotonic() + 10
+    refresh_deadline = 0.0
 
     def request(method: str, params: dict[str, JsonValue]) -> int:
         nonlocal number
@@ -132,12 +134,42 @@ def main() -> int:
         _send(writer, {"jsonrpc": "2.0", "id": current, "method": method, "params": params})
         return current
 
+    def begin_list(next_phase: str) -> None:
+        nonlocal phase, tools, cursors, expected, refresh_deadline
+        tools = []
+        cursors = set()
+        phase = next_phase
+        if next_phase == "refresh":
+            refresh_deadline = time.monotonic() + 10
+        expected = request("tools/list", {})
+
+    def finish_list() -> None:
+        nonlocal phase, pending_refresh
+        _send(1, {"op": "catalog", "tools": cast(list[JsonValue], [t.model_dump() for t in tools]), "protocol_version": version})
+        phase = "ready"
+        if pending_refresh:
+            pending_refresh = False
+            begin_list("refresh")
+
+    def fail_refresh() -> None:
+        """A changed list that cannot be read leaves the last published catalog in place."""
+        nonlocal phase, pending_refresh
+        _send(1, {"op": "catalog_failed"})
+        phase = "ready"
+        if pending_refresh:
+            pending_refresh = False
+            begin_list("refresh")
+
     try:
-        expected = request("initialize", {"protocolVersion": "2025-11-25", "capabilities": {},
+        expected = request("initialize", {"protocolVersion": "2025-11-25",
+                                          "capabilities": {"tools": {"listChanged": True}},
                                           "clientInfo": {"name": "amazme", "version": "0.1.0"}})
         while True:
             readable, _, _ = select.select([0, reader], [], [], .05)
-            if phase != "ready" and time.monotonic() > deadline:
+            if phase == "refresh" and time.monotonic() > refresh_deadline:
+                fail_refresh()
+                continue
+            if phase in {"initialize", "catalog"} and time.monotonic() > deadline:
                 raise TimeoutError("MCP initialization timed out")
             if 0 in readable:
                 data = os.read(0, 4096)
@@ -161,6 +193,11 @@ def main() -> int:
                             _send(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled",
                                            "params": {"requestId": waiting[1], "reason": "User cancelled call"}})
                         _send(1, {"op": "cancel_ack", "call_id": target})
+                        continue
+                    if op == "call" and phase != "ready":
+                        refused = message.get("call_id")
+                        if isinstance(refused, str):
+                            _send(1, {"op": "busy", "call_id": refused})
                         continue
                     if op != "call" or phase != "ready":
                         raise ValueError("MCP call before ready")
@@ -190,10 +227,17 @@ def main() -> int:
                     if message.get("jsonrpc") != "2.0":
                         raise ValueError("Invalid JSON-RPC version")
                     if "method" in message:
-                        if "id" in message:
-                            reply: dict[str, JsonValue] = {"jsonrpc": "2.0", "id": message["id"]}
-                            reply["result" if message["method"] == "ping" else "error"] = {} if message["method"] == "ping" else {"code": -32601, "message": "Method not supported"}
-                            _send(writer, reply)
+                        if "id" not in message:
+                            if (message.get("method") == "notifications/tools/list_changed"
+                                    and phase in {"catalog", "refresh", "ready"}):
+                                if phase == "ready" and waiting is None:
+                                    begin_list("refresh")
+                                else:
+                                    pending_refresh = True
+                            continue
+                        reply: dict[str, JsonValue] = {"jsonrpc": "2.0", "id": message["id"]}
+                        reply["result" if message["method"] == "ping" else "error"] = {} if message["method"] == "ping" else {"code": -32601, "message": "Method not supported"}
+                        _send(writer, reply)
                         continue
                     if phase == "initialize":
                         if message.get("id") != expected or "result" not in message:
@@ -204,23 +248,31 @@ def main() -> int:
                             raise ValueError("MCP version unsupported")
                         version = raw_version
                         _send(writer, {"jsonrpc": "2.0", "method": "notifications/initialized"})
-                        expected, phase = request("tools/list", {}), "catalog"
-                    elif phase == "catalog":
+                        begin_list("catalog")
+                    elif phase in {"catalog", "refresh"}:
                         if message.get("id") != expected or "result" not in message:
+                            if phase == "refresh":
+                                fail_refresh()
+                                continue
                             raise ValueError("MCP catalog failed")
                         result = _mapping(message["result"])
                         tools.extend(_catalog(result))
                         if len(tools) > 64 or len({t.name for t in tools}) != len(tools):
+                            if phase == "refresh":
+                                fail_refresh()
+                                continue
                             raise ValueError("MCP catalog capacity or duplicate name")
                         cursor = result.get("nextCursor")
                         if cursor is not None:
                             if not isinstance(cursor, str) or cursor in cursors or len(cursors) >= 64:
+                                if phase == "refresh":
+                                    fail_refresh()
+                                    continue
                                 raise ValueError("MCP pagination invalid")
                             cursors.add(cursor)
                             expected = request("tools/list", {"cursor": cursor})
                         else:
-                            _send(1, {"op": "catalog", "tools": cast(list[JsonValue], [t.model_dump() for t in tools]), "protocol_version": version})
-                            phase = "ready"
+                            finish_list()
                     elif waiting is not None:
                         call_id, expected, canonical = waiting
                         if message.get("id") != expected:
@@ -235,6 +287,9 @@ def main() -> int:
                         _send(1, reply)
                         seen[call_id] = canonical, reply
                         waiting = None
+                        if pending_refresh:
+                            pending_refresh = False
+                            begin_list("refresh")
     finally:
         with contextlib.suppress(OSError, TimeoutError):
             _stop_server(server)

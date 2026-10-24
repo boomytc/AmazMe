@@ -38,7 +38,8 @@ class McpClient:
         self.conflicts: set[str] = set()
         self.cancel_acks: set[str] = set()
         self.exit_code: int | None = None
-        self.closed = self.ready = False
+        self.closed = self.ready = self.catalog_failed = False
+        self.busy: set[str] = set()
         self.protocol_version = ""
 
     def permit(self, command: str, uid: int, gid: int, cwd: str) -> None:
@@ -107,6 +108,11 @@ class McpClient:
             if op == "catalog":
                 catalog = McpCatalog.model_validate_json(line)
                 self.tools, self.protocol_version, self.ready = catalog.tools, catalog.protocol_version, True
+                self.catalog_failed = False
+            elif op == "catalog_failed":
+                self.catalog_failed = True
+            elif op == "busy" and isinstance(body.get("call_id"), str):
+                self.busy.add(str(body["call_id"]))
             elif op == "result":
                 result = McpResult.model_validate_json(line)
                 self.results[result.call_id] = result

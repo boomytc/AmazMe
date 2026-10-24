@@ -14,6 +14,7 @@ from amazme_backend.contracts import (
     McpSession,
     OpenMcp,
 )
+from amazme_backend.mcp_session import schema_digest
 
 terminal_owner = fixtures.terminal_owner
 
@@ -147,3 +148,115 @@ async def test_mcp_denial_and_storage_failure_do_not_leak_service(terminal_owner
         await owner.health()
     await owner.close()
     assert process.process.returncode is not None
+
+
+REFRESH = '''
+import json,sys,threading,time
+marker,mode=sys.argv[1],sys.argv[2]
+listed=0
+def send(identity,result):
+    print(json.dumps({"jsonrpc":"2.0","id":identity,"result":result}),flush=True)
+def changed():
+    print(json.dumps({"jsonrpc":"2.0","method":"notifications/tools/list_changed"}),flush=True)
+for line in sys.stdin:
+    message=json.loads(line); method=message.get("method"); identity=message.get("id")
+    if method=="initialize":
+        send(identity,{"protocolVersion":message["params"]["protocolVersion"],"capabilities":{"tools":{"listChanged":True}},"serverInfo":{"name":"refresh","version":"1"}})
+    elif method=="tools/list":
+        listed+=1
+        if listed==1:
+            name="demo.slow" if mode=="after-call" else "demo.echo"
+            send(identity,{"tools":[{"name":name,"inputSchema":{"type":"object"}}]})
+            if mode!="after-call":
+                threading.Thread(target=lambda: (time.sleep(0.6), changed()), daemon=True).start()
+        elif mode=="fail":
+            open(marker+".note","w").write("refresh-failed\\n")
+            print(json.dumps({"jsonrpc":"2.0","id":identity,"error":{"code":-32000,"message":"list failed"}}),flush=True)
+        elif mode=="after-call":
+            send(identity,{"tools":[{"name":"demo.slow","inputSchema":{"type":"object"}},{"name":"demo.added","inputSchema":{"type":"object"}}]})
+        else:
+            send(identity,{"tools":[{"name":"demo.echo","inputSchema":{"type":"object","additionalProperties":False}},{"name":"demo.added","inputSchema":{"type":"object"}}]})
+    elif method=="tools/call":
+        open(marker,"a").write("x")
+        if mode=="after-call": time.sleep(0.4)
+        send(identity,{"content":[{"type":"text","text":"ok"}]})
+        if mode=="after-call": changed()
+'''
+
+
+async def open_refresh(owner, mode):
+    script = owner.profile.path / "refresh.py"
+    script.write_text(REFRESH)
+    marker = owner.profile.path / "calls.txt"
+    command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {shlex.quote(str(marker))} {mode}"
+    value = OpenMcp(**query(owner).model_dump(), command=command, workspace="primary")
+    return marker, await owner.open_mcp(value)
+
+
+async def test_mcp_list_changed_replaces_catalog_without_replaying(terminal_owner):
+    owner = terminal_owner
+    marker, server = await open_refresh(owner, "refresh")
+    assert [tool.name for tool in server.tools] == ["demo.echo"]
+    call = await owner.request_mcp_call("a" * 32, "d" * 32, McpCallRequest(
+        call_id="e" * 32, name="demo.echo", schema_digest=schema_digest({"type": "object"})), fence(owner))
+    current = server
+    for _ in range(50):
+        current = (await state(owner)).servers[0]
+        if any(tool.name == "demo.added" for tool in current.tools):
+            break
+        await asyncio.sleep(0.05)
+    echo = next(tool for tool in current.tools if tool.name == "demo.echo")
+    assert echo.input_schema["additionalProperties"] is False
+    assert (await approve(owner, call)).phase == "conflict"
+    assert not marker.exists()
+    added = await proposal(owner, identity="f" * 32, name="demo.added")
+    await approve(owner, added)
+    assert (await completed(owner, added.call_id)).result == "ok"
+    assert marker.read_text() == "x"
+    assert (await proposal(owner, identity="f" * 32, name="demo.added")).phase == "done"
+    assert marker.read_text() == "x"
+
+
+async def test_mcp_failed_refresh_keeps_the_last_catalog(terminal_owner):
+    owner = terminal_owner
+    marker, server = await open_refresh(owner, "fail")
+    assert [tool.name for tool in server.tools] == ["demo.echo"]
+    call = await owner.request_mcp_call("a" * 32, "d" * 32, McpCallRequest(
+        call_id="e" * 32, name="demo.echo", schema_digest=schema_digest({"type": "object"})), fence(owner))
+    note = owner.profile.path / "calls.txt.note"
+    for _ in range(50):
+        if note.exists():
+            break
+        await asyncio.sleep(0.05)
+    assert note.read_text() == "refresh-failed\n"
+    for _ in range(10):
+        await state(owner)
+        await asyncio.sleep(0.05)
+    with pytest.raises(BackendError, match="mcp_catalog_stale"):
+        await proposal(owner, identity="1" * 32, name="demo.added")
+    with pytest.raises(BackendError, match="mcp_catalog_stale"):
+        await approve(owner, call)
+    assert next(item for item in (await state(owner)).calls if item.call_id == call.call_id).phase == "waiting_approval"
+    assert (await approve(owner, call, approve=False)).phase == "denied"
+    assert not marker.exists()
+    listed = (await state(owner)).servers[0]
+    assert listed.phase == "ready" and [tool.name for tool in listed.tools] == ["demo.echo"]
+    assert owner.mcp_processes["d" * 32].process.returncode is None
+
+
+async def test_mcp_refresh_after_a_call_does_not_replay_it(terminal_owner):
+    owner = terminal_owner
+    marker, server = await open_refresh(owner, "after-call")
+    assert [tool.name for tool in server.tools] == ["demo.slow"]
+    call = await proposal(owner, name="demo.slow")
+    await approve(owner, call)
+    for _ in range(50):
+        view = await state(owner)
+        names = [tool.name for tool in view.servers[0].tools]
+        phase = next(item.phase for item in view.calls if item.call_id == call.call_id)
+        if "demo.added" in names and phase == "done":
+            break
+        await asyncio.sleep(0.05)
+    assert marker.read_text() == "x"
+    assert (await proposal(owner, name="demo.slow")).phase == "done"
+    assert marker.read_text() == "x"
