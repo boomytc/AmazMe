@@ -5,6 +5,7 @@ dist-release/
 *.log
 .DS_Store
 *.tsbuildinfo
+.playwright-cli/
 # packages/*/node_modules/
 packages/*/dist/
 packages/*/dist-chrome/
