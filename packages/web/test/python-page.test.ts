@@ -452,6 +452,48 @@ test("provider configuration works before a session exists and a lost reply keep
  expect(modelWrites).toBe(0);
 });
 
+test("a confirmed provider catalog refreshes before API key and OAuth completion", async () => {
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ for (const method of ["api_key", "oauth"]) {
+  let configured = false;
+  const { page } = await startPage((path, options) => {
+   if (path === "/api/v1/models") {
+    const model = configured ? "new-model" : "old-model";
+    return response({ models: [
+     { provider: "openai", model, label: model, endpoint_editable: true, api: "openai-completions", base_url: "https://gateway.example/v1" },
+     { provider: "faux", model: "faux", label: "Faux", endpoint_editable: false },
+    ], current: { provider: "faux", model: "faux", base_url: "http://model", max_tokens: 10, key_configured: true },
+    providers: [{ provider: "openai", name: "OpenAI", base_url: "https://gateway.example/v1", api: "openai-completions", model_ids: [model] }], configuration_revision: configured ? 3 : 2 });
+   }
+   if (path === "/api/v1/accounts") return response({ revision: 4, accounts: [{ provider: "openai", type: "api_key" }] });
+   if (path === "/api/v1/providers/openai") {
+    const body = parseContract("ConfigureProvider", JSON.parse(String(options.body)));
+    expect(body.model_ids).toEqual(["new-model"]); configured = true;
+    return response({ operation_id: body.operation_id, revision: 3, credential_revision: 4, provider: body.provider });
+   }
+   if (method === "api_key" && path === "/api/v1/accounts/openai") return response({ code: "receipt_lost" }, 503);
+   if (method === "oauth" && path === "/api/v1/accounts/oauth") {
+    const body = parseContract("OAuthStart", JSON.parse(String(options.body)));
+    return response({ login_id: body.login_id, provider: body.provider, phase: "pending", url: "https://login.example/authorize" });
+   }
+   return undefined;
+  });
+  page.renderer.onPanelAction({ kind: "command", id: PROVIDER_EDIT_ACTION, data: "openai" });
+  await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(PROVIDER_EDIT_MODAL));
+  page.renderer.onPanelAction({ kind: "modal-submit", id: PROVIDER_EDIT_MODAL, data: "openai", fields: {
+   name: "OpenAI", baseUrl: "https://gateway.example/v1", api: "openai-completions", models: "new-model", [`method:openai`]: method,
+   ...(method === "api_key" ? { "key:openai": "original-private-key" } : {}),
+  } });
+  if (method === "api_key") await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.notice?.text).toContain("receipt_lost"));
+  else await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(A.PROVIDER_AUTH_MODAL));
+  const choices = page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId) ?? [];
+  expect(choices).toContain("new-model");
+  expect(choices).not.toContain("old-model");
+  expect(page.renderer.view?.modelConnections?.models.map(model => model.modelId)).toEqual(["new-model"]);
+  page.dispose();
+ }
+});
+
 test("an unconfirmed credential keeps its original content and revision when its modal shows an error", async () => {
  const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
  const writes: Array<import("../src/python-contracts.ts").CredentialUpdate> = [];

@@ -1286,6 +1286,7 @@ export class DesktopPage {
 					owner.credentialRevision = result.credential_revision;
 					const stored = sessionStorage.getItem(storageKey);
 					if (stored && parseContract("ConfigureProvider", JSON.parse(stored)).operation_id === owner.configuration.operation_id) sessionStorage.removeItem(storageKey);
+					if (this.hostActive(identity)) await this.loadGlobal();
 				}
 				const revision = owner.credentialRevision ?? owner.revision;
 				if (fields[`method:${provider}`] === "oauth") {
