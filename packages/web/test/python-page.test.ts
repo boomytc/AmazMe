@@ -203,6 +203,48 @@ test("late OAuth controls cannot cancel or submit to a newer login, and confirme
  expect(JSON.parse(sessionStorage.getItem("amazme:oauth:host:openai") ?? "null").login_id).toBe(first.login_id);
 });
 
+test("original file navigation keeps paths relative, retains page on refresh, switches project roots and does not steal a later dock tab", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ const requests: Array<{ path: string; offset: number }> = [];
+ let reading = false;
+ let finish: (response: Response) => void = () => { throw new Error("file read not started"); };
+ const { page } = await startPage((path, options, query) => {
+  if (path === "/api/v1/sessions") return response({ sessions: [{ session_id: "a", title: "A", workspace: "primary", project_id: "project" }] });
+  if (path === "/api/v1/projects") return response({ projects: [{ project_id: "project", name: "Multi", workspaces: ["primary", "docs"] }] });
+  if (path === "/api/v1/workspaces") return response({ workspaces: [{ name: "primary", host_path: "/work", primary: true }, { name: "docs", host_path: "/docs", primary: false }] });
+  if (path === "/api/v1/files/content") return new Promise<Response>(resolve => { expect(query.get("path")).toBe("grant/docs/slow.txt"); reading = true; finish = resolve; });
+  if (path === "/api/v1/files") {
+   const target = query.get("path") ?? "", offset = Number(query.get("offset") ?? 0); requests.push({ path: target, offset });
+   return response({ path: target, absolute_path: target === "grant/docs" ? "/docs" : target === "dir" ? "/work/dir" : "/work", entries: [{ name: "dir", kind: "dir", size: 0 }], offset, limit: 200, total: 401 });
+  }
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "command", id: A.DOCK_TAB_ACTION, data: "files" });
+ await vi.waitFor(() => expect(page.renderer.view?.dock?.panel.groups.flatMap(group => group.rows ?? []).find(row => row.title === "dir")?.actions?.[0].data).toBe("/work/dir"));
+ page.renderer.onPanelAction({ kind: "command", id: A.WORKSPACE_OPEN_ACTION, data: "/work/dir" });
+ await vi.waitFor(() => expect(page.renderer.view?.dock?.panel.files?.path).toBe("dir"));
+ expect(page.renderer.view?.dock?.panel.files?.breadcrumbs.map(item => item.path)).toEqual(["/work", "/work/dir"]);
+ const next = page.renderer.view?.dock?.panel.groups.flatMap(group => group.actions ?? []).find(action => action.id === A.WORKSPACE_PAGE_ACTION);
+ if (!next) throw new Error("next page missing");
+ page.renderer.onPanelAction({ kind: "command", id: next.id, data: next.data });
+ await vi.waitFor(() => expect(requests.at(-1)).toEqual({ path: "dir", offset: 200 }));
+ page.renderer.onPanelAction({ kind: "command", id: A.WORKSPACE_RELOAD_ACTION, data: JSON.stringify({ kind: "open", path: "/work/dir" }) });
+ await vi.waitFor(() => expect(requests.filter(item => item.path === "dir" && item.offset === 200)).toHaveLength(2));
+ page.renderer.onPanelAction({ kind: "control", id: A.WORKSPACE_OPEN_ACTION, data: undefined, value: "/docs" });
+ await vi.waitFor(() => expect(page.renderer.view?.dock?.panel.files?.cwd).toBe("/docs"));
+ expect(requests.at(-1)).toEqual({ path: "grant/docs", offset: 0 });
+ page.renderer.onPanelAction({ kind: "command", id: A.WORKSPACE_READ_ACTION, data: "/docs/slow.txt" });
+ await vi.waitFor(() => expect(reading).toBe(true));
+ page.renderer.onPanelAction({ kind: "command", id: A.DOCK_TAB_ACTION, data: "conversations" });
+ await vi.waitFor(() => expect(page.renderer.view?.dock?.panel.id).toBe("conversations"));
+ finish(response({ path: "grant/docs/slow.txt", digest: "abc", content: "kept file", truncated: false }));
+ await new Promise(resolve => setTimeout(resolve, 0));
+ expect(page.renderer.view?.dock?.panel.id).toBe("conversations");
+ page.renderer.onPanelAction({ kind: "command", id: A.DOCK_TAB_ACTION, data: "files" });
+ await vi.waitFor(() => expect(page.renderer.view?.dock?.panel.files?.path).toBe("slow.txt"));
+ expect(requests.at(-1)).toEqual({ path: "grant/docs", offset: 0 });
+});
+
 test("schedule creation retains its original session, ID and input after a lost receipt, and cannot close a newer dialog", async () => {
  const session = "a".repeat(32), saved: Array<import("../src/python-contracts.ts").ScheduleInput> = [];
  let finish: (response: Response) => void = () => { throw new Error("retry not started"); };

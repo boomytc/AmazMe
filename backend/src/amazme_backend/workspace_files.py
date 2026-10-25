@@ -29,6 +29,9 @@ class FileList(Model):
     absolute_path: str = ""
     entries: list[FileEntry]
     truncated: bool = False
+    offset: int = Field(default=0, ge=0)
+    limit: int = _LIST_LIMIT
+    total: int = Field(default=0, ge=0)
 
 
 class FileContent(Model):
@@ -65,10 +68,15 @@ def _walk(root: Path, parts: list[str], symlink_code: str) -> Path:
     current = root.resolve()
     for part in parts:
         current = current / part
-        if current.is_symlink():
-            raise BackendError(symlink_code)
-        if not current.exists() or not current.is_dir() or not current.resolve().is_relative_to(root.resolve()):
-            raise BackendError("workspace_not_directory")
+        try:
+            if current.is_symlink():
+                raise BackendError(symlink_code)
+            if not current.exists():
+                raise BackendError("workspace_missing", status=404)
+            if not current.is_dir() or not current.resolve().is_relative_to(root.resolve()):
+                raise BackendError("workspace_not_directory")
+        except OSError as exc:
+            raise _os_error(exc) from exc
     return current
 
 
@@ -82,7 +90,9 @@ def _kind(path: Path) -> str:
     return "other"
 
 
-def list_files(root: Path, relative: str = "") -> FileList:
+def list_files(root: Path, relative: str = "", offset: int = 0) -> FileList:
+    if offset < 0:
+        raise BackendError("invalid_workspace_page")
     directory = root.resolve() if relative in {"", "."} else _walk(root, _parts(relative), "workspace_not_directory")
     if directory.is_symlink() or not directory.is_dir():
         raise BackendError("workspace_not_directory")
@@ -90,12 +100,17 @@ def list_files(root: Path, relative: str = "") -> FileList:
         children = sorted(directory.iterdir(), key=lambda item: item.name)
     except OSError as exc:
         raise _os_error(exc) from exc
-    entries = [
-        FileEntry(name=child.name, kind=_kind(child), size=child.lstat().st_size)
-        for child in children[:_LIST_LIMIT]
-    ]
+    entries: list[FileEntry] = []
+    for child in children[offset:offset + _LIST_LIMIT]:
+        try:
+            entries.append(FileEntry(name=child.name, kind=_kind(child), size=child.lstat().st_size))
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise _os_error(exc) from exc
     shown = "" if relative in {"", "."} else relative.strip("/")
-    return FileList(path=shown, entries=entries, truncated=len(children) > _LIST_LIMIT)
+    return FileList(path=shown, entries=entries, truncated=len(children) > offset + _LIST_LIMIT,
+                    offset=offset, total=len(children))
 
 
 def _text_prefix(data: bytes) -> str:
@@ -167,6 +182,8 @@ def read_file(root: Path, relative: str) -> FileContent:
     if len(parts) > 1:
         _walk(root, parts[:-1], "workspace_not_directory")
     requested = root.resolve() / Path(*parts)
+    if not requested.exists() and not requested.is_symlink():
+        raise BackendError("workspace_missing", status=404)
     if requested.is_symlink():
         target = requested.resolve()
         if not target.is_relative_to(root.resolve()):

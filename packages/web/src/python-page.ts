@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 import * as A from "./actions.ts";
 import { commandPalette, parseCommandLine, type CommandLike } from "./commands.ts";
-import { dockView, type WorkspaceStateLike } from "./dock.ts";
+import { dockView, parseWorkspaceAction, type WorkspaceStateLike } from "./dock.ts";
 import { documentLanguage, resolveLocale, type Locale } from "./locale.ts";
 import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, providerConfigurationModal, providerLogoutModal, type ModelConnectionsLike } from "./model-connections.ts";
 import { modelScopeModal } from "./model-scope.ts";
@@ -443,9 +443,10 @@ export class DesktopPage {
 		if (id === A.WELCOME_SESSION_ACTION) { await this.createSession(); return; }
 		if (id === A.WELCOME_SETTINGS_ACTION || id === A.MODEL_CONNECTIONS_ACTION) { this.currentPanel = P.SETTINGS_VIEW; this.modal = undefined; this.render(); return; }
 		if (id === A.WELCOME_DISMISS_ACTION) { await this.setPreference("showWelcome", "false"); return; }
-		if (id === A.DOCK_TOGGLE_ACTION) { this.dockOpen = !this.dockOpen; this.render(); return; }
-		if (id === A.DOCK_TAB_ACTION) { this.dockTab = value; this.dockOpen = true; if (value === "files") await this.openWorkspace(); if (value === "terminal") await this.loadTerminal(this.requireConnection(), true); this.render(); return; }
+		if (id === A.DOCK_TOGGLE_ACTION) { this.dockOpen = !this.dockOpen; if (this.dockOpen && this.dockTab === "files" && !this.workspace) await this.openWorkspace(); this.render(); return; }
+		if (id === A.DOCK_TAB_ACTION) { this.dockTab = value; this.dockOpen = true; if (value === "files" && !this.workspace) await this.openWorkspace(); if (value === "terminal") await this.loadTerminal(this.requireConnection(), true); this.render(); return; }
 		if (id === A.WORKSPACE_OPEN_ACTION || id === A.WORKSPACE_READ_ACTION) { await this.openWorkspace(value, id === A.WORKSPACE_READ_ACTION); return; }
+		if (id === A.WORKSPACE_RELOAD_ACTION || id === A.WORKSPACE_PAGE_ACTION) { const target = parseWorkspaceAction(data); await this.openWorkspace(target.path, target.kind === "read", target.offset); return; }
 		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
 		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.render(); return; }
 		if (id === A.QUEUE_CANCEL_ACTION) { await this.cancel(data); return; }
@@ -943,16 +944,44 @@ export class DesktopPage {
 			}
 		} finally { terminal.resizing = false; }
 	}
-	private async openWorkspace(path?: string, file = false): Promise<void> {
-		const connection = this.requireConnection();
-		const generation = ++this.workspaceGeneration;
+	private async openWorkspace(path?: string, file = false, offset?: number): Promise<void> {
+		const connection = this.requireConnection(), generation = ++this.workspaceGeneration;
 		const session = this.sessions.find(item => item.session_id === connection.sessionId);
-		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
-		const name = session?.workspace ?? "primary", prefix = name === "primary" ? "" : `grant/${name}/`;
-		const relative = path ? path.startsWith(cwd + "/") ? prefix + path.slice(cwd.length + 1) : path === cwd ? prefix : path : prefix;
-		if (file) { const result = await this.client.call("GET /api/v1/files/content", { query: { path: relative } }); if (!connection.active() || generation !== this.workspaceGeneration) return; this.workspace = { cwd, view: { kind: "text", path: result.absolute_path ?? result.path, text: result.content, truncated: result.truncated ?? false } }; }
-		else { const result = await this.client.call("GET /api/v1/files", { query: { path: relative } }); if (!connection.active() || generation !== this.workspaceGeneration) return; this.workspace = { cwd, view: { kind: "listing", path: result.absolute_path ?? cwd, parent: (result.absolute_path ?? cwd) === cwd ? null : (result.absolute_path ?? cwd).split("/").slice(0, -1).join("/"), entries: result.entries.map(item => ({ ...item, kind: item.kind === "dir" ? "dir" : "file" })) } }; }
+		const project = this.projects.find(item => item.project_id === session?.project_id);
+		const names = project?.workspaces ?? [session?.workspace ?? "primary"];
+		const roots = this.workspaces.filter(item => names.includes(item.name));
+		let root = roots.find(item => item.host_path === this.workspace?.cwd) ?? roots.find(item => item.name === session?.workspace) ?? roots[0];
+		if (!root) throw new Error("工作区目录不可用");
 		this.dockOpen = true; this.dockTab = "files"; this.render();
+		if (path?.startsWith("/")) {
+			const matched = [...roots].sort((a, b) => b.host_path.length - a.host_path.length).find(item => path === item.host_path || path.startsWith(item.host_path + "/"));
+			if (!matched) { this.workspace = { cwd: root.host_path, workspaces: roots.map(item => item.host_path), view: { kind: "denied", path, reason: "目录不属于当前项目" } }; this.render(); return; }
+			root = matched;
+		}
+		const relative = path?.startsWith("/") ? path.slice(root.host_path.length).replace(/^\/+/, "") || "." : path || ".";
+		const previous = this.workspace?.cwd === root.host_path && this.workspace.view.kind === "listing" && this.workspace.view.path === relative ? this.workspace.view.page : undefined;
+		const pageOffset = offset ?? previous?.offset ?? 0;
+		const prefix = root.name === "primary" ? "" : `grant/${root.name}`;
+		const target = relative === "." ? prefix : prefix ? `${prefix}/${relative}` : relative;
+		let view: WorkspaceStateLike["view"];
+		try {
+			if (file) {
+				const result = await this.client.call("GET /api/v1/files/content", { query: { path: target } });
+				view = { kind: "text", path: relative, text: result.content, truncated: result.truncated ?? false };
+			} else {
+				const result = await this.client.call("GET /api/v1/files", { query: { path: target, offset: pageOffset } });
+				view = { kind: "listing", path: relative, parent: relative === "." ? null : relative.includes("/") ? relative.split("/").slice(0, -1).join("/") : ".",
+					entries: result.entries.map(item => ({ ...item, kind: item.kind === "dir" ? "dir" : "file" })), page: { offset: result.offset ?? pageOffset, limit: result.limit ?? 200, total: result.total ?? result.entries.length } };
+			}
+		} catch (error) {
+			if (!(error instanceof ApiError)) throw error;
+			if (error.code === "file_not_text") view = { kind: "binary", path: relative };
+			else if (error.code === "workspace_missing") view = { kind: "missing", path: relative };
+			else if (["workspace_permission", "workspace_path_escape", "workspace_not_file", "workspace_not_directory", "workspace_not_found", "invalid_workspace_path"].includes(error.code)) view = { kind: "denied", path: relative, reason: error.message };
+			else throw error;
+		}
+		if (!connection.active() || generation !== this.workspaceGeneration) return;
+		this.workspace = { cwd: root.host_path, workspaces: roots.map(item => item.host_path), view }; this.render();
 	}
 	private hostActive(identity: Identity): boolean {
 		const current = this.client.identity;

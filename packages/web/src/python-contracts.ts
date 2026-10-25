@@ -530,6 +530,9 @@ export type FileList = {
   "absolute_path"?: string;
   "entries": Array<FileEntry>;
   "truncated"?: boolean;
+  "offset"?: number;
+  "limit"?: number;
+  "total"?: number;
 };
 
 export type FileWrite = {
@@ -1118,6 +1121,7 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "offset"?: number;
   "provider_configuration"?: ConfigureProvider | null;
   "mcp_config"?: McpConfigWrite | null;
   "mcp_patch"?: McpConfigPatch | null;
@@ -1936,6 +1940,7 @@ export interface HttpOperations {
 }; query: Record<string, unknown>; body: undefined };
   "GET /api/v1/files": { response: FileList; path: Record<string, unknown>; query: {
   "path"?: string;
+  "offset"?: number;
 }; body: undefined };
   "GET /api/v1/files/content": { response: FileContent; path: Record<string, unknown>; query: {
   "path": string;

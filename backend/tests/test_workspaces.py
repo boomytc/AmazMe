@@ -668,6 +668,14 @@ async def test_workspace_selection_is_shared_by_sdk_rpc_and_stable_session_creat
         assert duplicate["result"] == session.model_dump()
         assert (await client.workspaces()).workspaces[-1] == chosen
         assert len((await client.sessions()).sessions) == 1
+        for index in range(205):
+            (launch / f"a{index:03}.txt").touch()
+        page = await client.list_files(f"grant/{chosen.name}", offset=200)
+        assert page.offset == 200 and page.total == 205 and len(page.entries) == 5
+        binding = await client.attach(SESSION)
+        rpc_page = await handle_rpc(host, RpcCall(id="files", method="file.list", params=RpcParams(
+            session_id=SESSION, workspace=chosen.name, attachment_id=binding.attachment_id, path=f"grant/{chosen.name}", offset=200)))
+        assert rpc_page["result"] == page.model_dump()
         instructions = launch / "AGENTS.md"
         instructions.write_text("project instructions")
         host.profile.config.user_resources = str(tmp_path / "agent")

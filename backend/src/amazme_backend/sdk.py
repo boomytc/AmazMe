@@ -79,7 +79,7 @@ from .contracts import (
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
 from .resources import ResourceCatalog
-from .workspace_files import FileContent
+from .workspace_files import FileContent, FileList
 
 
 class Client:
@@ -420,6 +420,9 @@ class Client:
     async def read_file(self, path: str) -> FileContent:
         payload = await self._send("GET", "/api/v1/files/content?path=" + quote(path, safe=""))
         return FileContent.model_validate(payload)
+
+    async def list_files(self, path: str = "", *, offset: int = 0) -> FileList:
+        return FileList.model_validate(await self._send("GET", "/api/v1/files?path=" + quote(path, safe="") + "&offset=" + str(offset)))
 
     async def save_checkpoint(self, *, checkpoint_id: str, workspace: str, path: str) -> CheckpointView:
         payload = await self._send(

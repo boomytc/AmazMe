@@ -85,10 +85,11 @@ from .contracts import (
 )
 from .oauth import OAuthInput, OAuthStart, OAuthView
 from .resources import ResourceCatalog
-from .workspace_files import FileContent
+from .workspace_files import FileContent, FileList
 
 
 class RpcParams(RunOptions):
+    offset: int = Field(default=0, ge=0, le=9007199254740991)
     provider_configuration: ConfigureProvider | None = None
     mcp_config: McpConfigWrite | None = None
     mcp_patch: McpConfigPatch | None = None
@@ -263,6 +264,8 @@ class RpcHost(Protocol):
     async def request_receipt(self, session: str, request_id: str) -> Receipt: ...
 
     async def read_workspace(self, relative: str) -> FileContent: ...
+
+    async def list_workspace(self, relative: str = "", offset: int = 0) -> FileList: ...
 
     async def create_checkpoint(self, value: CheckpointCreate) -> CheckpointView: ...
 
@@ -508,6 +511,9 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.deliver(session, "approval", params.decision_id, ApprovalDecision(
             decision_id=params.decision_id, approval_id=params.approval_id,
             expected_revision=params.expected_revision, proposal_digest=params.proposal_digest, approve=approve))
+    if method == "file.list":
+        await _bound(owner, params)
+        return await owner.list_workspace(params.path, params.offset)
     if method == "file.read":
         if not params.path:
             raise BackendError("binding_required")

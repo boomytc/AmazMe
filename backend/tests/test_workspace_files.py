@@ -50,6 +50,18 @@ def test_browse_read_and_checked_write(tmp_path: Path) -> None:
         (root / f"n{index:03d}.txt").write_text("x")
     page = list_files(root)
     assert page.truncated and len(page.entries) == 200
+    following = list_files(root, offset=200)
+    assert following.offset == 200 and following.limit == 200 and not following.truncated
+    assert page.total == following.total == len(list(root.iterdir()))
+    names = [entry.name for entry in [*page.entries, *following.entries]]
+    assert len(names) == len(set(names)) == page.total and set(names) == {item.name for item in root.iterdir()}
+    assert list_files(root, offset=following.total).entries == []
+    with pytest.raises(BackendError, match="invalid_workspace_page"):
+        list_files(root, offset=-1)
+    with pytest.raises(BackendError, match="workspace_missing"):
+        list_files(root, "gone")
+    with pytest.raises(BackendError, match="workspace_missing"):
+        read_file(root, "gone.txt")
 
 
 def test_hardlink_and_stale_digest_do_not_write(tmp_path: Path) -> None:
@@ -119,6 +131,13 @@ async def test_file_route_reads_and_writes_the_granted_workspace(owner: Host) ->
         listed = await client.get("/api/v1/files")
         assert listed.status_code == 200
         assert any(item["name"] == "note.txt" for item in listed.json()["entries"])
+        for index in range(205):
+            (Path(owner.profile.config.workspace) / f"z{index:03}.txt").touch()
+        second = await client.get("/api/v1/files", params={"offset": 200})
+        assert second.status_code == 200
+        assert second.json()["offset"] == second.json()["limit"] == 200 and second.json()["total"] == 206
+        assert [row["name"] for row in second.json()["entries"]] == [f"z{index:03}.txt" for index in range(199, 205)]
+        assert (await client.get("/api/v1/files", params={"offset": -1})).status_code == 422
         content = await client.get("/api/v1/files/content", params={"path": "note.txt"})
         assert content.json()["content"] == "alpha\n"
         client.headers.update({"x-amazme-build": owner.build, "x-amazme-epoch": str(owner.fence.host_epoch)})

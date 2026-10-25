@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import httpx
 import uvicorn
-from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, SecretStr, TypeAdapter
@@ -651,16 +651,19 @@ class Host:
             raise BackendError("workspace_not_found", status=404)
         return name, inner, Path(host)
 
-    async def list_workspace(self, relative: str = "") -> FileList:
+    async def list_workspace(self, relative: str = "", offset: int = 0) -> FileList:
         self._admit()
         name, inner = split_client_path(relative)
         if name == "grant":
             grants = await self.store.workspace_grants()
-            return FileList(path="grant", entries=[
+            page = FileList(path="grant", offset=offset, total=len(grants), entries=[])
+            page.entries = [
                 FileEntry(name=item, kind="dir", size=0) for item, _host in grants
-            ])
+            ][offset:offset + page.limit]
+            page.truncated = offset + page.limit < page.total
+            return page
         root_name, inner, root = await self._mapped_root(relative)
-        listing = list_files(root, inner)
+        listing = list_files(root, inner, offset)
         listing.path = client_path(root_name, inner)
         listing.absolute_path = str(root / inner)
         return listing
@@ -3390,8 +3393,8 @@ def application(owner: Host) -> FastAPI:
         return {"removed": True}
 
     @app.get("/api/v1/files")
-    async def files(path: str = "") -> FileList:
-        return await owner.list_workspace(path)
+    async def files(path: str = "", offset: int = Query(default=0, ge=0, le=9007199254740991)) -> FileList:
+        return await owner.list_workspace(path, offset)
 
     @app.get("/api/v1/files/content")
     async def file_content(path: str) -> FileContent:
