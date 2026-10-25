@@ -45,6 +45,9 @@ from .contracts import (
     PluginCallView,
     PluginDraft,
     PluginList,
+    PluginPackageAdd,
+    PluginPackageRemove,
+    PluginPackages,
     PluginReload,
     PluginView,
     Receipt,
@@ -151,6 +154,22 @@ class Client:
         await self._require_workspace(session_id, workspace)
         return CodeView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/code/{run_id}/cancel",
             json_body={}, headers=self._write(attachment_id)))
+
+    async def plugin_packages(self) -> PluginPackages:
+        return PluginPackages.model_validate(await self._send("GET", "/api/v1/plugin-packages"))
+
+    async def add_plugin_package(self, value: PluginPackageAdd) -> PluginPackages:
+        return PluginPackages.model_validate(await self._send("POST", "/api/v1/plugin-packages",
+            json_body=value.model_dump(), headers=self._write()))
+
+    async def remove_plugin_package(self, package_id: str, value: PluginPackageRemove) -> PluginPackages:
+        return PluginPackages.model_validate(await self._send("POST", f"/api/v1/plugin-packages/{quote(package_id, safe='')}/remove",
+            json_body=value.model_dump(), headers=self._write()))
+
+    async def load_plugin_packages(self, session_id: str, workspace: str, attachment_id: str) -> PluginList:
+        await self._require_workspace(session_id, workspace)
+        return PluginList.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/plugin-packages/load",
+            headers=self._write(attachment_id)))
 
     async def register_plugin(self, value: PluginDraft) -> PluginView:
         return PluginView.model_validate(await self._send("POST", "/api/v1/plugins",

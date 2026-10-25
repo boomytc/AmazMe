@@ -3892,6 +3892,100 @@
       ],
       "title": "PluginList"
     },
+    "PluginPackage": {
+      "properties": {
+        "package_id": {
+          "type": "string",
+          "title": "Package Id"
+        },
+        "entry": {
+          "type": "string",
+          "title": "Entry"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "installed",
+            "removing",
+            "removed"
+          ],
+          "title": "Phase",
+          "default": "installed"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "package_id",
+        "entry"
+      ],
+      "title": "PluginPackage"
+    },
+    "PluginPackageAdd": {
+      "properties": {
+        "package_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Package Id"
+        },
+        "entry": {
+          "type": "string",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Entry"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "package_id",
+        "entry",
+        "expected_revision"
+      ],
+      "title": "PluginPackageAdd"
+    },
+    "PluginPackageRemove": {
+      "properties": {
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "expected_revision"
+      ],
+      "title": "PluginPackageRemove"
+    },
+    "PluginPackages": {
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "title": "Revision"
+        },
+        "packages": {
+          "items": {
+            "$ref": "#/components/schemas/PluginPackage"
+          },
+          "type": "array",
+          "title": "Packages"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "revision",
+        "packages"
+      ],
+      "title": "PluginPackages"
+    },
     "PluginReload": {
       "properties": {
         "session_id": {
@@ -3999,6 +4093,11 @@
     },
     "PluginView": {
       "properties": {
+        "package_id": {
+          "type": "string",
+          "title": "Package Id",
+          "default": ""
+        },
         "session_id": {
           "type": "string",
           "title": "Session Id"
@@ -4047,7 +4146,8 @@
             "ready",
             "disconnected",
             "failed",
-            "unknown"
+            "unknown",
+            "removed"
           ],
           "title": "Phase",
           "default": "disconnected"
@@ -5120,6 +5220,31 @@
           "type": "array",
           "maxItems": 128,
           "title": "Excluded Tools"
+        },
+        "package_id": {
+          "type": "string",
+          "title": "Package Id",
+          "default": ""
+        },
+        "plugin_package": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/PluginPackageAdd"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plugin_package_remove": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/PluginPackageRemove"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "schedule_id": {
           "type": "string",
@@ -8531,6 +8656,28 @@
         "$ref": "#/components/schemas/RpcCall"
       }
     },
+    "GET /api/v1/plugin-packages": {
+      "response": {
+        "$ref": "#/components/schemas/PluginPackages"
+      },
+      "body": null
+    },
+    "POST /api/v1/plugin-packages": {
+      "response": {
+        "$ref": "#/components/schemas/PluginPackages"
+      },
+      "body": {
+        "$ref": "#/components/schemas/PluginPackageAdd"
+      }
+    },
+    "POST /api/v1/plugin-packages/{package_id}/remove": {
+      "response": {
+        "$ref": "#/components/schemas/PluginPackages"
+      },
+      "body": {
+        "$ref": "#/components/schemas/PluginPackageRemove"
+      }
+    },
     "GET /api/v1/plugins": {
       "response": {
         "$ref": "#/components/schemas/PluginList"
@@ -8544,6 +8691,12 @@
       "body": {
         "$ref": "#/components/schemas/PluginDraft"
       }
+    },
+    "POST /api/v1/sessions/{session_id}/plugin-packages/load": {
+      "response": {
+        "$ref": "#/components/schemas/PluginList"
+      },
+      "body": null
     },
     "POST /api/v1/plugins/{plugin_id}/reload": {
       "response": {

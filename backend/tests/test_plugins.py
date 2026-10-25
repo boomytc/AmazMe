@@ -95,6 +95,28 @@ async def test_parameters_are_validated_before_the_user_function(owner):
     assert (await owner.call_plugin(bad)) == result
 
 
+async def test_remove_preserves_receipts_and_load_identity_without_resurrecting(owner):
+    registered = register(owner)
+    await owner.register_plugin(registered)
+    original = call(owner)
+    result = await owner.call_plugin(original)
+    before = await owner.plugin_set_fingerprint(SESSION)
+    removal = ClosePlugin(host_epoch=owner.host_epoch, build_id=owner.build, session_id=SESSION, plugin_id=PLUGIN)
+    removed = await owner.remove_plugin(removal)
+    assert removed.phase == 'removed' and not (await owner.list_plugins(SESSION)).plugins
+    assert await owner.plugin_set_fingerprint(SESSION) != before
+    assert PLUGIN not in owner.plugin_clients
+    assert await owner.remove_plugin(removal) == removed
+    assert (await owner.register_plugin(registered)).phase == 'removed'
+    assert await owner.call_plugin(original) == result
+    with pytest.raises(BackendError, match='plugin_removed'):
+        await owner.call_plugin(call(owner, call_id='f'*32))
+    with pytest.raises(BackendError, match='plugin_removed'):
+        await owner.reload_plugin(reload(owner))
+    assert (owner.profile.path / 'effects.txt').read_text().count(CALL) == 1
+    assert (owner.profile.path / 'extension.py').exists()
+
+
 async def test_registration_retry_does_not_load_changed_source_or_reset_state(owner):
     original = register(owner)
     view = await owner.register_plugin(original)

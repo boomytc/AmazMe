@@ -123,6 +123,41 @@ test("schedule creation retains its original session, ID and input after a lost 
  expect(page.renderer.view?.panel.modal?.id).toBe("skills:create");
 });
 
+test("a package add retries its original profile operation and a late response cannot close a newer dialog", async () => {
+ const saved: Array<import("../src/python-contracts.ts").PluginPackageAdd> = [];
+ let finish: (response: Response) => void = () => { throw new Error("retry not started"); };
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ let packages: unknown[] = [];
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/plugin-packages") {
+   if (options.method !== "POST") return response({ revision: packages.length, packages });
+   saved.push(parseContract("PluginPackageAdd", JSON.parse(String(options.body))));
+   if (saved.length === 1) return response({ code: "receipt_lost" }, 503);
+   return new Promise<Response>(resolve => { finish = resolve; });
+  }
+  if (path === "/api/v1/plugins" || path.endsWith("/plugin-packages/load")) return response({ plugins: [] });
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "open", panel: "plugins" });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.panel?.groups[0].id).toBe("plugins:packages"));
+ page.renderer.onPanelAction({ kind: "command", id: P.PLUGIN_PACKAGE_ADD_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(P.PLUGIN_PACKAGE_MODAL));
+ page.renderer.onPanelAction({ kind: "modal-submit", id: P.PLUGIN_PACKAGE_MODAL, data: undefined, fields: { path: "/original/extension.py" } });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.notice?.text).toContain("receipt_lost"));
+ page.renderer.onPanelAction({ kind: "modal-close" });
+ page.renderer.onPanelAction({ kind: "command", id: P.PLUGIN_PACKAGE_ADD_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.fields[0].value).toBe("/original/extension.py"));
+ page.renderer.onPanelAction({ kind: "modal-submit", id: P.PLUGIN_PACKAGE_MODAL, data: undefined, fields: { path: "/different.py" } });
+ await vi.waitFor(() => expect(saved).toHaveLength(2));
+ expect(saved[1]).toEqual(saved[0]);
+ page.renderer.onPanelAction({ kind: "command", id: "skills:new", data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe("skills:create"));
+ packages = [{ package_id: saved[0].package_id, entry: saved[0].entry, phase: "installed" }];
+ finish(response({ revision: 1, packages }));
+ await vi.waitFor(() => expect(sessionStorage.getItem("amazme:plugin-package:host")).toBeNull());
+ expect(page.renderer.view?.panel.modal?.id).toBe("skills:create");
+});
+
 
 test("a late skill read cannot replace a subsequently opened creation dialog", async () => {
  let finish: (response: Response) => void = () => { throw new Error("read has not started"); };

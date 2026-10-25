@@ -9,9 +9,9 @@ import * as P from "./panels.ts";
 import * as Projects from "./projects.ts";
 import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
 import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
-import { ApiError, isRecord, parseContract } from "./python-api.ts";
+import { ApiError, definitive, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { seq, settled } from "./python-stream.ts";
@@ -34,6 +34,21 @@ function scheduleRecord(row: ScheduleView): P.ScheduleRecordLike {
 		enabled: row.enabled ?? true, createdAt: row.created_at, nextRunAt: row.next_run_at,
 		pending: row.pending ? { deadlineAt: row.pending.deadline_at, cancelReason: row.pending.cancel_reason ?? null, problem: row.pending.problem ?? null } : null,
 		history: row.history?.map(item => ({ startedAt: item.started_at, finishedAt: item.finished_at, scheduledFor: item.scheduled_for ?? null, status: item.status, detail: item.detail ?? null })) ?? [],
+	};
+}
+
+function pluginPanelState(packages: PluginPackages | undefined, plugins: readonly PluginView[], canLoad: boolean): P.PluginsStateLike | undefined {
+	if (!packages) return undefined;
+	return {
+		packages: packages.packages.map(item => item.entry),
+		packageDetails: Object.fromEntries(packages.packages.map(item => {
+			const runtime = plugins.find(plugin => plugin.package_id === item.package_id);
+			const detail = item.phase === "removing" ? "移除等待资源退出，请重试移除"
+				: runtime ? `${runtime.phase} · ${runtime.tools?.length ?? 0} 工具${runtime.error ? ` · ${runtime.error}` : ""}`
+				: "已配置，将在会话执行时加载";
+			return [item.entry, { detail, canLoad: canLoad && item.phase === "installed" }];
+		})),
+		mcp: { servers: [], errors: [], globalPath: "AmazMe" },
 	};
 }
 
@@ -65,6 +80,9 @@ export class DesktopPage {
 	private historyStarted = false;
 	private schedules?: SchedulesView;
 	private schedulesGeneration = 0;
+	private pluginPackages?: PluginPackages;
+	private pluginRuntime: PluginView[] = [];
+	private pluginsGeneration = 0;
 	private currentPanel = P.CHAT_VIEW;
 	private modal?: P.PanelModal;
 	private notice?: P.PanelNotice;
@@ -245,6 +263,7 @@ export class DesktopPage {
 			if (health.identity.host_epoch !== connection.identity.host_epoch || health.identity.build_id !== connection.identity.build_id) { await this.client.connect(connection.sessionId); return; }
 			this.ready = health.state === "ready";
 			if (this.currentPanel === P.AUTOMATION_VIEW) await this.loadSchedules();
+			if (this.currentPanel === "plugins") await this.loadPlugins();
 			this.render();
 		} catch (error) { if (connection.active()) this.error(error); }
 		finally { if (connection.active()) this.healthTimer = setTimeout(() => { void this.poll(connection); }, 3000); }
@@ -261,6 +280,7 @@ export class DesktopPage {
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
 		this.draft = this.drafts.get(id) ?? { text: "", images: [] };
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined;
+		this.pluginRuntime = []; this.pluginsGeneration++;
 		this.history = undefined; this.historyLatestRevision = 0n; this.historyStarted = false; this.historyGeneration++; this.historyLoading = false;
 		this.terminal = undefined; this.terminalLoadGeneration++; clearTimeout(this.terminalTimer);
 		this.modal = undefined; this.notice = undefined; this.currentPanel = P.CHAT_VIEW;
@@ -374,7 +394,7 @@ export class DesktopPage {
 			this.modalGeneration++;
 			clearTimeout(this.oauthTimer);
 		}
-		if (action.kind === "open") { this.currentPanel = action.panel; this.modal = undefined; this.render(); if (action.panel === P.AUTOMATION_VIEW) { await this.loadSchedules(); this.render(); } return; }
+		if (action.kind === "open") { this.currentPanel = action.panel; this.modal = undefined; this.render(); if (action.panel === P.AUTOMATION_VIEW) await this.loadSchedules(); if (action.panel === "plugins") await this.loadPlugins(); this.render(); return; }
 		if (action.kind === "modal-close") { this.modal = undefined; this.render(); return; }
 		const id = action.id, data = action.data;
 		const fields = action.kind === "modal-submit" ? action.fields : {};
@@ -382,6 +402,7 @@ export class DesktopPage {
 		if (await this.managementAction(id, data, fields)) return;
 		if (await this.skillAction(action)) return;
 		if (await this.scheduleAction(action)) return;
+		if (await this.pluginAction(action)) return;
 		if (id === A.HISTORY_MORE_ACTION || id === A.TRANSCRIPT_SEARCH_ACTION) {
 			await this.loadHistory(this.requireConnection(), true, id === A.TRANSCRIPT_SEARCH_ACTION);
 			if (id === A.TRANSCRIPT_SEARCH_ACTION) this.renderer.refreshTranscriptSearch();
@@ -577,6 +598,65 @@ export class DesktopPage {
 			if (current() && generation === this.resourceGeneration) { this.resources = resources; this.modal = undefined; }
 		} finally { if (this.pendingModal === modal) this.pendingModal = undefined; if (navigation === this.navigationGeneration) this.render(); }
 		return true;
+	}
+	private async loadPlugins(): Promise<void> {
+		const connection = this.client.connection, identity = this.client.identity, generation = ++this.pluginsGeneration;
+		const [packages, runtime] = await Promise.all([
+			this.client.call("GET /api/v1/plugin-packages", { identity }),
+			connection ? this.client.call("GET /api/v1/plugins", { query: { session_id: connection.sessionId } }) : undefined,
+		]);
+		if (identity !== this.client.identity || generation !== this.pluginsGeneration || connection !== this.client.connection) return;
+		this.pluginPackages = packages; this.pluginRuntime = runtime?.plugins ?? [];
+	}
+	private async pluginAction(action: P.PanelAction): Promise<boolean> {
+		if (action.kind === "open" || action.kind === "modal-close") return false;
+		const { id, data } = action, fields = action.kind === "modal-submit" ? action.fields : {};
+		if (![P.PLUGIN_PACKAGE_ADD_ACTION, P.PLUGIN_PACKAGE_MODAL, P.PLUGIN_PACKAGE_REMOVE_ACTION, "plugins:package-remove-confirm", "plugins:package-reload"].includes(id)) return false;
+		const identity = this.client.identity, connection = this.client.connection, modal = this.modal;
+		if (!identity) throw new Error("请先连接后端");
+		const key = `amazme:plugin-package:${identity.profile_id}`, raw = sessionStorage.getItem(key);
+		if (id === P.PLUGIN_PACKAGE_ADD_ACTION) {
+			this.modal = P.addPackageModal(this.locale);
+			this.modal = { ...this.modal, description: "选择 Python 插件入口文件，或含 extension.py 的目录。", fields: this.modal.fields.map(field => field.id === "path" ? { ...field, value: raw ? parseContract("PluginPackageAdd", JSON.parse(raw)).entry : "", placeholder: "/path/to/extension.py" } : field),
+				...(raw ? { notice: { tone: "info", text: "上次添加尚待确认；提交将沿用原路径与编号。" } } : {}) };
+			this.render(); return true;
+		}
+		const target = this.pluginPackages?.packages.find(item => item.entry === data);
+		if (id === P.PLUGIN_PACKAGE_REMOVE_ACTION) {
+			if (!target || !this.pluginPackages) throw new Error("插件配置不存在");
+			this.modal = { id: "plugins:package-remove-confirm", title: "移除插件", description: `停止此配置在各会话中的插件进程并移除配置：${target.entry}`, fields: [], submit: "移除", danger: true, data: JSON.stringify({ id: target.package_id, revision: this.pluginPackages.revision }) };
+			this.render(); return true;
+		}
+		if (id === P.PLUGIN_PACKAGE_MODAL) {
+			if (modal?.id !== id) return true;
+			const request = raw ?? JSON.stringify({ package_id: newId(), entry: fields.path ?? "", expected_revision: this.pluginPackages?.revision ?? 0 });
+			const body = parseContract("PluginPackageAdd", JSON.parse(request));
+			sessionStorage.setItem(key, request);
+			try {
+				await this.client.call("POST /api/v1/plugin-packages", { body, identity });
+				if (sessionStorage.getItem(key) === request) { sessionStorage.removeItem(key); sessionStorage.removeItem(key + ":uncertain"); }
+			} catch (error) {
+				if (sessionStorage.getItem(key) === request) {
+					if (!definitive(error)) sessionStorage.setItem(key + ":uncertain", body.package_id);
+					else if (sessionStorage.getItem(key + ":uncertain") !== body.package_id) sessionStorage.removeItem(key);
+				}
+				throw error;
+			}
+			if (connection?.active()) await this.client.call("POST /api/v1/sessions/{session_id}/plugin-packages/load", { path: { session_id: connection.sessionId }, connection });
+		} else if (id === "plugins:package-remove-confirm") {
+			if (modal?.id !== id || modal.data !== data) return true;
+			const target: unknown = JSON.parse(data ?? "null");
+			if (!isRecord(target) || typeof target.id !== "string" || typeof target.revision !== "number") throw new Error("插件配置归属损坏");
+			await this.client.call("POST /api/v1/plugin-packages/{package_id}/remove", { path: { package_id: target.id }, body: { expected_revision: target.revision }, identity });
+		} else if (id === "plugins:package-reload") {
+			if (!target) throw new Error("插件配置不存在");
+			const selected = this.requireConnection(), runtime = this.pluginRuntime.find(item => item.package_id === target.package_id);
+			if (runtime) {
+				const ledger = this.ledger(selected), key = `plugin:reload:${runtime.plugin_id}`;
+				await ledger.send(key, ledger.prepare(key, "POST /api/v1/plugins/{plugin_id}/reload", reloadId => ({ path: { plugin_id: runtime.plugin_id }, body: { session_id: selected.sessionId, reload_id: reloadId } })), this.client, selected);
+			} else await this.client.call("POST /api/v1/sessions/{session_id}/plugin-packages/load", { path: { session_id: selected.sessionId }, connection: selected });
+		}
+		await this.loadPlugins(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
 	}
 	private async loadSchedules(): Promise<void> {
 		const generation = ++this.schedulesGeneration, identity = this.client.identity;
@@ -833,6 +913,7 @@ export class DesktopPage {
 		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, projects: this.projects, selectedProject: this.selectedProject, expandedProjects: this.expandedProjects, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
+				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true) },
 				automation: { state: this.schedules ? { path: this.schedules.path, tickMs: this.schedules.tick_ms ?? 5000, schedules: this.schedules.schedules.map(scheduleRecord) } : undefined, sessionId: connection?.sessionId },
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },

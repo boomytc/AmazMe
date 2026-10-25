@@ -359,6 +359,7 @@ export interface McpServerLike {
 
 export interface PluginsStateLike {
 	readonly packages: readonly string[];
+	readonly packageDetails?: Readonly<Record<string, { readonly detail: string; readonly canLoad: boolean }>>;
 	readonly mcp: {
 		readonly servers: readonly McpServerLike[];
 		readonly errors: readonly string[];
@@ -867,10 +868,12 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 					id: `package:${path}`,
 					title: path.replace(/[\\/]+$/, "").split(/[\\/]/).at(-1) || path,
 					value: path,
+					...(state.packageDetails?.[path] ? { description: state.packageDetails[path].detail } : {}),
 					menu: {
 						label: translate(locale, "panel.plugins.remove"),
 						data: path,
 						actions: [
+							...(state.packageDetails?.[path]?.canLoad ? [{ id: "plugins:package-reload", label: translate(locale, "panel.settings.reload"), data: path, weight: "text" as const, glyph: "folder" as const }] : []),
 							{
 								id: PLUGIN_PACKAGE_REMOVE_ACTION,
 								label: translate(locale, "panel.plugins.remove"),

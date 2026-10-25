@@ -14,6 +14,7 @@
 | 会话 SDK | `amazme_backend.sdk.Client`；Python 示例与 eval | 旧 Durable SDK、包根/子路径导出、拒绝占位及失效示例已删除 |
 | evals | Vitest → `run_eval.py` → 现有 Python SDK/Host | 真实 Python 插件与供应商配置；删除 Docker、旧模型/扩展宿主消费者及三个内部 JS 依赖 |
 | 原生插件 | Python factory；CUA 构建/安装/清理脚本使用原清单 helper | 旧 TS 动作/分类/facet 已删除；保留固定原生配方、安装完整性校验与权限 App helper |
+| 插件管理 | 原 Web 包路径入口 → Python 配置 SQLite → 每会话监督器实例 | 保存 `.py` 或含 `extension.py` 的目录；不再依赖旧 npm 插件宿主；移除只收回配置所属实例，原调用账本和入口文件保留 |
 | `@amazme/web` | Web/Electron 的原客户端呈现、Python HTTP/WS 连接和状态投影 | 恢复误删的导航、聊天、模型连接、管理面板与停靠栏；Python 服务提供本包编译页面，保留原 ID 和连接隔离，不恢复旧 TS 内核 |
 
 CLI 单元已删除没有产品消费者的 `cli/auth-check.ts`、`credential-print.ts`、

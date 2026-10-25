@@ -764,6 +764,27 @@ export type PluginList = {
   "plugins": Array<PluginView>;
 };
 
+export type PluginPackage = {
+  "package_id": string;
+  "entry": string;
+  "phase"?: "installed" | "removing" | "removed";
+};
+
+export type PluginPackageAdd = {
+  "package_id": string;
+  "entry": string;
+  "expected_revision": number;
+};
+
+export type PluginPackageRemove = {
+  "expected_revision": number;
+};
+
+export type PluginPackages = {
+  "revision": number;
+  "packages": Array<PluginPackage>;
+};
+
 export type PluginReload = {
   "session_id": string;
   "reload_id": string;
@@ -786,6 +807,7 @@ export type PluginTool = {
 };
 
 export type PluginView = {
+  "package_id"?: string;
   "session_id": string;
   "plugin_id": string;
   "name": string;
@@ -794,7 +816,7 @@ export type PluginView = {
   "fingerprint": string;
   "entry": string;
   "tools"?: Array<PluginTool>;
-  "phase"?: "loading" | "ready" | "disconnected" | "failed" | "unknown";
+  "phase"?: "loading" | "ready" | "disconnected" | "failed" | "unknown" | "removed";
   "load_id"?: string;
   "error"?: string;
 };
@@ -1002,6 +1024,9 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "package_id"?: string;
+  "plugin_package"?: PluginPackageAdd | null;
+  "plugin_package_remove"?: PluginPackageRemove | null;
   "schedule_id"?: string;
   "schedule"?: ScheduleInput | null;
   "schedule_now"?: ScheduleNow | null;
@@ -1580,6 +1605,10 @@ export interface ApiModels {
   PluginCallView: PluginCallView;
   PluginDraft: PluginDraft;
   PluginList: PluginList;
+  PluginPackage: PluginPackage;
+  PluginPackageAdd: PluginPackageAdd;
+  PluginPackageRemove: PluginPackageRemove;
+  PluginPackages: PluginPackages;
   PluginReload: PluginReload;
   PluginResult: PluginResult;
   PluginTool: PluginTool;
@@ -1938,10 +1967,18 @@ export interface HttpOperations {
   "identity": string;
 }; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/rpc": { response: Record<string, unknown>; path: Record<string, unknown>; query: Record<string, unknown>; body: RpcCall };
+  "GET /api/v1/plugin-packages": { response: PluginPackages; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/plugin-packages": { response: PluginPackages; path: Record<string, unknown>; query: Record<string, unknown>; body: PluginPackageAdd };
+  "POST /api/v1/plugin-packages/{package_id}/remove": { response: PluginPackages; path: {
+  "package_id": string;
+}; query: Record<string, unknown>; body: PluginPackageRemove };
   "GET /api/v1/plugins": { response: PluginList; path: Record<string, unknown>; query: {
   "session_id"?: string;
 }; body: undefined };
   "POST /api/v1/plugins": { response: PluginView; path: Record<string, unknown>; query: Record<string, unknown>; body: PluginDraft };
+  "POST /api/v1/sessions/{session_id}/plugin-packages/load": { response: PluginList; path: {
+  "session_id": string;
+}; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/plugins/{plugin_id}/reload": { response: PluginView; path: {
   "plugin_id": string;
 }; query: Record<string, unknown>; body: PluginReload };

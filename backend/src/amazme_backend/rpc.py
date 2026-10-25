@@ -48,6 +48,9 @@ from .contracts import (
     PluginCallView,
     PluginDraft,
     PluginList,
+    PluginPackageAdd,
+    PluginPackageRemove,
+    PluginPackages,
     PluginReload,
     PluginView,
     Receipt,
@@ -80,6 +83,9 @@ from .workspace_files import FileContent
 
 
 class RpcParams(RunOptions):
+    package_id: str = ""
+    plugin_package: PluginPackageAdd | None = None
+    plugin_package_remove: PluginPackageRemove | None = None
     schedule_id: str = ""
     schedule: ScheduleInput | None = None
     schedule_now: ScheduleNow | None = None
@@ -201,6 +207,14 @@ class RpcHost(Protocol):
     async def remove_workspace(self, name: str) -> None: ...
 
     async def sessions(self) -> SessionList: ...
+
+    async def plugin_packages(self) -> PluginPackages: ...
+
+    async def add_plugin_package(self, value: PluginPackageAdd) -> PluginPackages: ...
+
+    async def remove_plugin_package(self, package_id: str, value: PluginPackageRemove) -> PluginPackages: ...
+
+    async def load_plugin_packages(self, session: str) -> PluginList: ...
 
     async def list_schedules(self) -> SchedulesView: ...
 
@@ -404,6 +418,18 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if not params.request_id:
             raise BackendError("binding_required")
         return await owner.request_receipt(await _bound(owner, params), params.request_id)
+    if method == "plugin.package.list":
+        return await owner.plugin_packages()
+    if method == "plugin.package.add":
+        if params.plugin_package is None:
+            raise BackendError("plugin_package_required")
+        return await owner.add_plugin_package(params.plugin_package)
+    if method == "plugin.package.remove":
+        if not params.package_id or params.plugin_package_remove is None:
+            raise BackendError("plugin_package_required")
+        return await owner.remove_plugin_package(params.package_id, params.plugin_package_remove)
+    if method == "plugin.package.load":
+        return await owner.load_plugin_packages(await _bound(owner, params))
     if method == "plugin.list":
         return await owner.plugins(params.session_id)
     if method == "plugin.register":

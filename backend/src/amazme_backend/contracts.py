@@ -1380,6 +1380,27 @@ class PluginTool(Model):
         return hashlib.sha256(payload.encode()).hexdigest()
 
 
+class PluginPackage(Model):
+    package_id: str
+    entry: str
+    phase: Literal["installed", "removing", "removed"] = "installed"
+
+
+class PluginPackages(Model):
+    revision: int
+    packages: list[PluginPackage]
+
+
+class PluginPackageAdd(Model):
+    package_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    entry: str = Field(min_length=1, max_length=4096)
+    expected_revision: int = Field(ge=0)
+
+
+class PluginPackageRemove(Model):
+    expected_revision: int = Field(ge=0)
+
+
 class PluginDraft(Model):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -1396,6 +1417,7 @@ class PluginReload(Model):
 
 
 class PluginView(Model):
+    package_id: str = ""
     session_id: str
     plugin_id: str
     name: str
@@ -1404,7 +1426,7 @@ class PluginView(Model):
     fingerprint: str
     entry: str
     tools: list[PluginTool] = Field(default_factory=lambda: list[PluginTool]())
-    phase: Literal["loading", "ready", "disconnected", "failed", "unknown"] = "disconnected"
+    phase: Literal["loading", "ready", "disconnected", "failed", "unknown", "removed"] = "disconnected"
     load_id: str = ""
     error: str = ""
 

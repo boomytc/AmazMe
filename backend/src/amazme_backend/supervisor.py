@@ -1923,7 +1923,7 @@ class Supervisor:
                 raise BackendError("codemode_cleanup_pending",status=503) from None
 
     async def plugin_set_fingerprint(self, session_id: str = "") -> str:
-        rows = await self.db.call(lambda db: db.execute("SELECT fingerprint FROM plugins WHERE session=?", (session_id,)).fetchall())
+        rows = await self.db.call(lambda db: db.execute("SELECT fingerprint FROM plugins WHERE session=? AND phase!='removed'", (session_id,)).fetchall())
         return set_fingerprint([str(row[0]) for row in rows])
 
     def _plugin_view(self, row: sqlite3.Row) -> PluginView:
@@ -1940,7 +1940,7 @@ class Supervisor:
             "entry":str(row["entry"]), "phase":phase, "load_id":str(row["load_id"]), "error":str(row["error"])})
 
     async def list_plugins(self, session_id: str = "") -> PluginList:
-        rows = await self.db.call(lambda db: db.execute("SELECT * FROM plugins" + (" WHERE session=?" if session_id else "") + " ORDER BY name",
+        rows = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE phase!='removed'" + (" AND session=?" if session_id else "") + " ORDER BY name",
             (session_id,) if session_id else ()).fetchall())
         return PluginList(plugins=[self._plugin_view(row) for row in rows])
 
@@ -1962,6 +1962,15 @@ class Supervisor:
         for worker in await self._workers(session_id):
             if worker.plugin_fingerprint == upcoming or worker.state == "stopped" or (worker.process_lease is not None and exited(worker.process_lease)):
                 continue
+            if worker.state == "starting" and worker.process_lease is not None:
+                try:
+                    identity = await self._peer_identity(worker)
+                except (BackendError, httpx.TransportError, TimeoutError) as error:
+                    raise BackendError("plugin_reload_blocked", status=409) from error
+                if identity.state != "ready" or identity.host_epoch != self.host_epoch:
+                    raise BackendError("plugin_reload_blocked", status=409)
+                worker.state, worker.fingerprint, worker.host_epoch = "ready", identity.fingerprint, identity.host_epoch
+                await self._save_worker(worker)
             if worker.state != "ready" or worker.process_lease is None:
                 raise BackendError("plugin_reload_blocked", status=409)
             # Idle admission and stopping share the worker's SQLite transaction. A racing submission
@@ -1982,6 +1991,8 @@ class Supervisor:
             raise BackendError("plugin_fingerprint_mismatch", status=409)
 
     async def _close_plugin(self, row: sqlite3.Row) -> bool:
+        if str(row["phase"]) == "removed":
+            return True
         plugin_id = str(row["id"])
         client = self.plugin_clients.get(plugin_id)
         if client is not None:
@@ -2058,7 +2069,7 @@ class Supervisor:
             entry, source_digest = entry_digest(value.entry)
             fingerprint = plugin_fingerprint(value.plugin_id, value.name, config, entry=entry, source_digest=source_digest, load_id=load_id)
             session_workspace(self.profile.path, value.session_id)
-            current = [str(row[0]) for row in await self.db.call(lambda db: db.execute("SELECT fingerprint FROM plugins WHERE session=?", (value.session_id,)).fetchall())]
+            current = [str(row[0]) for row in await self.db.call(lambda db: db.execute("SELECT fingerprint FROM plugins WHERE session=? AND phase!='removed'", (value.session_id,)).fetchall())]
             await self._plugin_change_blocked(set_fingerprint([*current, fingerprint]), value.session_id)
             def accepted(db: sqlite3.Connection) -> None:
                 db.execute("INSERT INTO plugins(id,name,session,capabilities,config,fingerprint,entry,source_digest,load_id,phase) VALUES(?,?,?,'[]',?,?,?,?,?,'loading')",
@@ -2084,12 +2095,14 @@ class Supervisor:
                 if str(previous["digest"]) != identity or str(previous["plugin"]) != value.plugin_id:
                     raise BackendError("plugin_reload_conflict")
                 return PluginView.model_validate_json(str(previous["result"])) if str(previous["result"]) else self._plugin_view(current)
+            if str(current["phase"]) == "removed":
+                raise BackendError("plugin_removed")
             self._admit(value.session_id)
             config = validate_config(value.config)
             entry, source_digest = entry_digest(value.entry or str(current["entry"]))
             fingerprint = plugin_fingerprint(value.plugin_id, str(current["name"]), config, entry=entry, source_digest=source_digest, load_id=load_id)
             others = [str(row[0]) for row in await self.db.call(lambda db: db.execute(
-                "SELECT fingerprint FROM plugins WHERE id!=? AND session=?", (value.plugin_id, value.session_id)).fetchall())]
+                "SELECT fingerprint FROM plugins WHERE id!=? AND session=? AND phase!='removed'", (value.plugin_id, value.session_id)).fetchall())]
             await self._plugin_change_blocked(set_fingerprint([*others, fingerprint]), value.session_id)
             if not await self._close_plugin(current):
                 raise BackendError("execution_cleanup_pending", status=503)
@@ -2146,6 +2159,8 @@ class Supervisor:
                     existing = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_calls WHERE id=?", (value.call_id,)).fetchone())
                     assert existing is not None
                 return self._plugin_call(existing)
+            if str(plugin["phase"]) == "removed":
+                raise BackendError("plugin_removed")
             cancelled = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_cancels WHERE id=?", (value.call_id,)).fetchone())
             if cancelled is not None:
                 if (str(cancelled["plugin"]), str(cancelled["session"])) != (value.plugin_id, value.session_id):
@@ -2208,6 +2223,24 @@ class Supervisor:
             if row is None or str(row["session"]) != value.session_id:
                 raise BackendError("plugin_session_mismatch")
             await self._close_plugin(row)
+            current = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
+            assert current is not None
+            return self._plugin_view(current)
+
+    async def remove_plugin(self, value: ClosePlugin) -> PluginView:
+        async with self.control:
+            self.check_host(value)
+            row = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
+            if row is None or str(row["session"]) != value.session_id:
+                raise BackendError("plugin_session_mismatch")
+            if str(row["phase"]) != "removed":
+                others = [str(item[0]) for item in await self.db.call(lambda db: db.execute(
+                    "SELECT fingerprint FROM plugins WHERE session=? AND id!=? AND phase!='removed'",
+                    (value.session_id, value.plugin_id)).fetchall())]
+                await self._plugin_change_blocked(set_fingerprint(others), value.session_id)
+                if not await self._close_plugin(row):
+                    raise BackendError("execution_cleanup_pending", status=503)
+                await self.db.call(lambda db: db.execute("UPDATE plugins SET phase='removed' WHERE id=?", (value.plugin_id,)), write=True)
             current = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
             assert current is not None
             return self._plugin_view(current)
@@ -2745,6 +2778,7 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/plugins/call")(owner.call_plugin)
     app.post("/plugins/cancel")(owner.cancel_plugin)
     app.post("/plugins/close")(owner.close_plugin)
+    app.post("/plugins/remove")(owner.remove_plugin)
     app.post("/remotes/open")(owner.open_remote)
     app.post("/remotes/reconnect")(owner.reconnect_remote)
     app.post("/remotes/disconnect")(owner.disconnect_remote)

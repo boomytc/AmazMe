@@ -4342,6 +4342,109 @@
         }
       }
     },
+    "/api/v1/plugin-packages": {
+      "get": {
+        "summary": "Plugin Packages",
+        "operationId": "plugin_packages_api_v1_plugin_packages_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackages"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Add Plugin Package",
+        "operationId": "add_plugin_package_api_v1_plugin_packages_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginPackageAdd"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackages"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/plugin-packages/{package_id}/remove": {
+      "post": {
+        "summary": "Remove Plugin Package",
+        "operationId": "remove_plugin_package_api_v1_plugin_packages__package_id__remove_post",
+        "parameters": [
+          {
+            "name": "package_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Package Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PluginPackageRemove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginPackages"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/plugins": {
       "get": {
         "summary": "Plugins",
@@ -4401,6 +4504,45 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PluginView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/plugin-packages/load": {
+      "post": {
+        "summary": "Load Plugin Packages",
+        "operationId": "load_plugin_packages_api_v1_sessions__session_id__plugin_packages_load_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginList"
                 }
               }
             }
@@ -9491,6 +9633,100 @@
         ],
         "title": "PluginList"
       },
+      "PluginPackage": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "title": "Package Id"
+          },
+          "entry": {
+            "type": "string",
+            "title": "Entry"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "installed",
+              "removing",
+              "removed"
+            ],
+            "title": "Phase",
+            "default": "installed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "entry"
+        ],
+        "title": "PluginPackage"
+      },
+      "PluginPackageAdd": {
+        "properties": {
+          "package_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Package Id"
+          },
+          "entry": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Entry"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "package_id",
+          "entry",
+          "expected_revision"
+        ],
+        "title": "PluginPackageAdd"
+      },
+      "PluginPackageRemove": {
+        "properties": {
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "expected_revision"
+        ],
+        "title": "PluginPackageRemove"
+      },
+      "PluginPackages": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "packages": {
+            "items": {
+              "$ref": "#/components/schemas/PluginPackage"
+            },
+            "type": "array",
+            "title": "Packages"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "packages"
+        ],
+        "title": "PluginPackages"
+      },
       "PluginReload": {
         "properties": {
           "session_id": {
@@ -9598,6 +9834,11 @@
       },
       "PluginView": {
         "properties": {
+          "package_id": {
+            "type": "string",
+            "title": "Package Id",
+            "default": ""
+          },
           "session_id": {
             "type": "string",
             "title": "Session Id"
@@ -9646,7 +9887,8 @@
               "ready",
               "disconnected",
               "failed",
-              "unknown"
+              "unknown",
+              "removed"
             ],
             "title": "Phase",
             "default": "disconnected"
@@ -10718,6 +10960,31 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "package_id": {
+            "type": "string",
+            "title": "Package Id",
+            "default": ""
+          },
+          "plugin_package": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginPackageAdd"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plugin_package_remove": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginPackageRemove"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "schedule_id": {
             "type": "string",

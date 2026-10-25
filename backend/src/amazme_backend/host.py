@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, SecretStr, TypeAdapter
 
-from . import schedules
+from . import plugin_packages, schedules
 from .accounts import AccountStore, AccountsView, ApiKeyCredential
 from .artifacts import (
     ArtifactBody,
@@ -140,6 +140,9 @@ from .contracts import (
     PluginCallView,
     PluginDraft,
     PluginList,
+    PluginPackageAdd,
+    PluginPackageRemove,
+    PluginPackages,
     PluginReload,
     PluginView,
     PreferencesUpdate,
@@ -221,6 +224,7 @@ from .memories import match_memories, remember, session_workspace
 from .oauth import BROWSER, DEVICE, OAuthInput, OAuthStart, OAuthView
 from .oauth import Login as OAuthLogin
 from .page_boot import boot_document, frontend_directory
+from .plugin_run import entry_digest
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, selected_provider, summarize
 from .remote_session import daemon_identity
@@ -306,6 +310,7 @@ class Host:
         self.service_lock = asyncio.Lock()
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
+        self.package_lock = asyncio.Lock()
         self.schedule_lock = asyncio.Lock()
         self.schedule_tick_ms = 0
         self.accounts = AccountStore(profile.account_path)
@@ -2217,10 +2222,70 @@ class Host:
                 return True
         return False
 
+    async def plugin_packages(self) -> PluginPackages:
+        return await self.store.transaction(plugin_packages.listing)
+
+    async def add_plugin_package(self, value: PluginPackageAdd) -> PluginPackages:
+        self._admit()
+        async with self.package_lock:
+            previous = await self.store.transaction(lambda db: plugin_packages.existing(db, value))
+            if previous is not None:
+                return previous
+            path = Path(value.entry).expanduser()
+            if path.is_dir():
+                path /= "extension.py"
+            if contains_secret(value.entry, self._provider_secret()):
+                raise BackendError("plugin_secret")
+            entry, _digest = await asyncio.to_thread(entry_digest, str(path))
+            return await self.store.transaction(lambda db: plugin_packages.add(db, value, entry))
+
+    async def remove_plugin_package(self, package_id: str, value: PluginPackageRemove) -> PluginPackages:
+        self._admit()
+        async with self.package_lock:
+            package = await self.store.transaction(lambda db: plugin_packages.begin_remove(db, package_id, value.expected_revision))
+            if package.phase == "removed":
+                return await self.plugin_packages()
+            await self.ensure_supervisor()
+            for plugin in (await self.plugins()).plugins:
+                if plugin.plugin_id == plugin_packages.plugin_identity(package_id, plugin.session_id):
+                    await self.supervisor.call("POST", "/plugins/remove", PluginView, ClosePlugin(
+                        **self.fence.model_dump(), session_id=plugin.session_id, plugin_id=plugin.plugin_id))
+            return await self.store.transaction(lambda db: plugin_packages.finish_remove(db, package_id))
+
+    async def _sync_plugin_packages(self, session: str) -> None:
+        async with self.package_lock:
+            state = await self.plugin_packages()
+            if not state.packages:
+                return
+            running = {item.plugin_id for item in (await self.plugins(session)).plugins}
+            for package in state.packages:
+                plugin_id = plugin_packages.plugin_identity(package.package_id, session)
+                if package.phase == "installed" and plugin_id not in running:
+                    await self.supervisor.call("POST", "/plugins/register", PluginView, OpenPlugin(
+                        **self.fence.model_dump(), session_id=session, plugin_id=plugin_id,
+                        name="package-" + package.package_id[:12], entry=package.entry))
+                elif package.phase == "removing" and plugin_id in running:
+                    await self.supervisor.call("POST", "/plugins/remove", PluginView, ClosePlugin(
+                        **self.fence.model_dump(), session_id=session, plugin_id=plugin_id))
+
     async def plugins(self, session_id: str = "") -> PluginList:
         if session_id:
             await self._require_session(session_id)
-        return await self.supervisor.call("GET", "/plugins" + ("?session_id=" + session_id if session_id else ""), PluginList)
+        result = await self.supervisor.call("GET", "/plugins" + ("?session_id=" + session_id if session_id else ""), PluginList)
+        packages = (await self.plugin_packages()).packages
+        for plugin in result.plugins:
+            plugin.package_id = next((package.package_id for package in packages
+                if plugin.plugin_id == plugin_packages.plugin_identity(package.package_id, plugin.session_id)), "")
+        return result
+
+    async def load_plugin_packages(self, session: str) -> PluginList:
+        self._admit()
+        await self._require_session(session)
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        await self.ensure_supervisor()
+        await self._sync_plugin_packages(session)
+        return await self.plugins(session)
 
     async def register_plugin(self, value: PluginDraft) -> PluginView:
         self._admit()
@@ -2455,6 +2520,8 @@ class Host:
             if active and (not maintenance or update_id != active.update_id):
                 raise BackendError("update_frozen", status=503)
             purpose = "validation" if active else "business"
+            if not active and not validation_probe:
+                await self._sync_plugin_packages(session)
             info = await self.supervisor.call("POST", "/workers/ensure", WorkerInfo, WorkerSpec(
                 **self.fence.model_dump(), session_id=session, frozen=active is not None, purpose=purpose))
             if (info.session_id != session or info.build_id != self.build or info.purpose != purpose
@@ -3440,9 +3507,25 @@ def application(owner: Host) -> FastAPI:
     async def rpc(value: RpcCall) -> dict[str, object]:
         return await handle_rpc(owner, value)
 
+    @app.get("/api/v1/plugin-packages")
+    async def plugin_packages() -> PluginPackages:
+        return await owner.plugin_packages()
+
+    @app.post("/api/v1/plugin-packages")
+    async def add_plugin_package(value: PluginPackageAdd) -> PluginPackages:
+        return await owner.add_plugin_package(value)
+
+    @app.post("/api/v1/plugin-packages/{package_id}/remove")
+    async def remove_plugin_package(package_id: str, value: PluginPackageRemove) -> PluginPackages:
+        return await owner.remove_plugin_package(package_id, value)
+
     @app.get("/api/v1/plugins")
     async def plugins(session_id: str = "") -> PluginList:
         return await owner.plugins(session_id)
+
+    @app.post("/api/v1/sessions/{session_id}/plugin-packages/load")
+    async def load_plugin_packages(session_id: str) -> PluginList:
+        return await owner.load_plugin_packages(session_id)
 
     @app.post("/api/v1/plugins")
     async def register_plugin(value: PluginDraft) -> PluginView:

@@ -174,6 +174,9 @@ class HostStore:
                   digest TEXT NOT NULL,payload TEXT NOT NULL,deleted INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS schedule_runs(schedule TEXT NOT NULL,request TEXT NOT NULL,
                   outcome TEXT NOT NULL DEFAULT '',PRIMARY KEY(schedule,request));
+                CREATE TABLE IF NOT EXISTS plugin_packages(id TEXT PRIMARY KEY,entry TEXT NOT NULL,intent TEXT NOT NULL,phase TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS plugin_package_revision(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
+                INSERT OR IGNORE INTO plugin_package_revision(id,revision) VALUES(1,0);
                 CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, name TEXT NOT NULL, digest TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS project_sessions(session TEXT PRIMARY KEY, project TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS product_settings(id INTEGER PRIMARY KEY, display_name TEXT NOT NULL,
