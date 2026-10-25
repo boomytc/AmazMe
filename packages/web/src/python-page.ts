@@ -11,10 +11,10 @@ import { collectPageElements, createRenderer, type PageRenderer } from "./render
 import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
-import { settled } from "./python-stream.ts";
+import { seq, settled } from "./python-stream.ts";
 import { TerminalInputQueue } from "./python-terminal.ts";
 import { followSystemTheme, applyTheme, resolveThemePreference } from "./theme.ts";
 import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, FONT_SIZE_LIMITS, resolveTypography, type Typography } from "./typography.ts";
@@ -47,6 +47,12 @@ export class DesktopPage {
 	private selection?: SessionModel;
 	private resources?: ResourceCatalog;
 	private usage?: UsageReport;
+	private history?: HistoryPage;
+	private historyLoading = false;
+	private historyGeneration = 0;
+	private historyConnection?: ClientConnection;
+	private historyLatestRevision = 0n;
+	private historyStarted = false;
 	private currentPanel = P.CHAT_VIEW;
 	private modal?: P.PanelModal;
 	private notice?: P.PanelNotice;
@@ -107,8 +113,8 @@ export class DesktopPage {
 		};
 		const run = (work: () => Promise<void>) => {
 			const connection = this.client.connection;
-			const navigation = this.navigationGeneration, generation = ++this.interactionGeneration;
-			void work().catch(error => { if (generation === this.interactionGeneration && navigation === this.navigationGeneration && (!connection || connection.active())) this.error(error); });
+			const generation = ++this.interactionGeneration;
+			void work().catch(error => { if (generation === this.interactionGeneration && (!connection || connection.active())) this.error(error); });
 		};
 		this.renderer.onCreateSession = () => run(() => this.createSession());
 		this.renderer.onSelect = id => run(() => this.selectSession(id));
@@ -213,6 +219,7 @@ export class DesktopPage {
 		if (selectionGeneration === this.selectionGeneration) this.selection = selection;
 		if (resourceGeneration === this.resourceGeneration) this.resources = resources;
 		this.usage = usage;
+		await this.loadHistory(connection, false);
 		if (this.dockOpen && this.dockTab === "terminal") await this.loadTerminal(connection);
 		this.render();
 		clearTimeout(this.healthTimer);
@@ -241,6 +248,7 @@ export class DesktopPage {
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
 		this.draft = this.drafts.get(id) ?? { text: "", images: [] };
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined;
+		this.history = undefined; this.historyLatestRevision = 0n; this.historyStarted = false; this.historyGeneration++; this.historyLoading = false;
 		this.terminal = undefined; this.terminalLoadGeneration++; clearTimeout(this.terminalTimer);
 		this.modal = undefined; this.notice = undefined; this.currentPanel = P.CHAT_VIEW;
 		clearTimeout(this.oauthTimer); this.oauth = undefined;
@@ -360,6 +368,11 @@ export class DesktopPage {
 		const value = action.kind === "control" ? action.value : data ?? "";
 		if (await this.managementAction(id, data, fields)) return;
 		if (await this.skillAction(action)) return;
+		if (id === A.HISTORY_MORE_ACTION || id === A.TRANSCRIPT_SEARCH_ACTION) {
+			await this.loadHistory(this.requireConnection(), true, id === A.TRANSCRIPT_SEARCH_ACTION);
+			if (id === A.TRANSCRIPT_SEARCH_ACTION) this.renderer.refreshTranscriptSearch();
+			return;
+		}
 		if (id === "auth:pair") {
 			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: fields.token }) });
 			if (!response.ok) throw new ApiError(response.status, await response.json()); this.modal = undefined; await this.start(); return;
@@ -551,6 +564,49 @@ export class DesktopPage {
 		} finally { if (this.pendingModal === modal) this.pendingModal = undefined; if (navigation === this.navigationGeneration) this.render(); }
 		return true;
 	}
+	private latestTranscriptRevision(connection: ClientConnection): bigint {
+		return (connection.snapshot?.requests ?? []).filter(row => row.kind === "root").reduce((latest, row) => {
+			const revision = seq(row.accepted_revision ?? "0"); return revision > latest ? revision : latest;
+		}, 0n);
+	}
+	private async loadHistory(connection: ClientConnection, older: boolean, all = false): Promise<void> {
+		if (!older && this.history && this.historyConnection === connection) return;
+		if (this.historyConnection !== connection) { this.historyConnection = connection; this.historyGeneration++; this.historyLoading = false; }
+		if (this.historyLoading) return;
+		const generation = ++this.historyGeneration;
+		this.historyLoading = true; this.render();
+		const current = () => connection.active() && generation === this.historyGeneration;
+		const merge = (page: HistoryPage, prepend: boolean) => {
+			if (page.session_id !== connection.sessionId) throw new Error("历史记录的会话归属不匹配");
+			const previous = this.history;
+			const ordered = prepend ? [...page.requests, ...(previous?.requests ?? [])] : [...(previous?.requests ?? []), ...page.requests];
+			const rows = new Map<string, HistoryPage["requests"][number]>();
+			for (const row of ordered) { const previous = rows.get(row.request_id); if (!previous || seq(row.revision ?? "0") >= seq(previous.revision ?? "0")) rows.set(row.request_id, row); }
+			const events = new Map([...(previous?.events ?? []), ...page.events].map(event => [`${event.request_id}:${event.kind}:${event.text}`, event]));
+			this.history = { ...page, requests: [...rows.values()], events: [...events.values()], truncated: page.truncated || previous?.truncated,
+				...(!prepend && this.historyStarted && previous ? { cursor: previous.cursor, more: previous.more } : {}),
+			};
+		};
+		try {
+			if (!older || !this.historyStarted || this.latestTranscriptRevision(connection) > this.historyLatestRevision) {
+				const page = await this.client.call("GET /api/v1/sessions/{session}/history", { path: { session: connection.sessionId } });
+				if (!current()) return;
+				merge(page, false);
+				this.historyLatestRevision = page.requests.reduce((latest, row) => { const revision = seq(row.accepted_revision ?? "0"); return revision > latest ? revision : latest; }, 0n);
+			}
+			if (!older) return;
+			this.historyStarted = true;
+			do {
+				if (!this.history?.more || !this.history.cursor) break;
+				const before = this.history.cursor;
+				const page = await this.client.call("GET /api/v1/sessions/{session}/history", { path: { session: connection.sessionId }, query: { before } });
+				if (!current()) return;
+				if (page.more && (!page.cursor || page.cursor === before)) throw new Error("历史游标未前进");
+				merge(page, true);
+				this.render();
+			} while (all && current());
+		} finally { if (current()) { this.historyLoading = false; this.render(); } }
+	}
 	private observeTerminal(terminal: ActiveTerminal, view: TerminalView): void {
 		if (view.terminal_id !== terminal.id || (view.session_id && view.session_id !== terminal.connection.sessionId)) throw new Error("终端归属不匹配");
 		if ((view.output_seq ?? 0) < (terminal.view.output_seq ?? 0) || (terminal.view.phase === "exited" && view.phase === "running")) return;
@@ -708,7 +764,9 @@ export class DesktopPage {
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
-			}), connections: this.connections(), mode: this.mode, usage: this.usage, welcomeDismissed: this.settings?.preferences?.showWelcome === false, newSessionPending: this.newSessionPending, ready: this.ready });
+			}), connections: this.connections(), mode: this.mode, usage: this.usage, history: this.history, historyLoading: this.historyLoading,
+			historyMore: this.history?.more === true || Boolean(connection && (connection.snapshot?.requests.filter(row => row.kind === "root" && settled.has(row.status)).length ?? 0) >= 20 && this.latestTranscriptRevision(connection) > this.historyLatestRevision),
+			welcomeDismissed: this.settings?.preferences?.showWelcome === false, newSessionPending: this.newSessionPending, ready: this.ready });
 		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
 		let pendingError: string | undefined;
 		const pending = (() => {

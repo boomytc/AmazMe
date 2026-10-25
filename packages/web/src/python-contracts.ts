@@ -561,6 +561,15 @@ export type Health = {
   "supervisors"?: Array<ServiceInfo>;
 };
 
+export type HistoryPage = {
+  "session_id": string;
+  "requests": Array<Receipt>;
+  "events": Array<Event>;
+  "cursor"?: string;
+  "more"?: boolean;
+  "truncated"?: boolean;
+};
+
 export type HostFence = {
   "host_epoch": number;
   "build_id": string;
@@ -1480,6 +1489,7 @@ export interface ApiModels {
   FileWrite: FileWrite;
   HTTPValidationError: HTTPValidationError;
   Health: Health;
+  HistoryPage: HistoryPage;
   HostFence: HostFence;
   Identity: Identity;
   ImagePart: ImagePart;
@@ -1872,6 +1882,16 @@ export interface HttpOperations {
 }; query: {
   "q": string;
 }; body: undefined };
+  "GET /api/v1/sessions/{session}/history": { response: HistoryPage; path: {
+  "session": string;
+}; query: {
+  "before"?: string;
+}; body: undefined };
+  "GET /api/v1/sessions/{session}/requests/{request_id}/images/{index}": { response: unknown; path: {
+  "session": string;
+  "request_id": string;
+  "index": number;
+}; query: Record<string, unknown>; body: undefined };
   "GET /api/v1/sessions/{session_id}/usage": { response: UsageReport; path: {
   "session_id": string;
 }; query: Record<string, unknown>; body: undefined };

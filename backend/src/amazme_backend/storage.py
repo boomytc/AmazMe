@@ -33,6 +33,7 @@ from .contracts import (
     EffectHold,
     EffectResolution,
     Event,
+    HistoryPage,
     HostFence,
     ImagePart,
     McpToolCall,
@@ -2197,6 +2198,59 @@ class SessionStore:
     async def messages(self, request_id: str) -> list[Message]:
         return await self.db.call(lambda db: self._messages(db, request_id))
 
+    async def input_image(self, request_id: str, index: int) -> ImagePart:
+        def operation(db: sqlite3.Connection) -> ImagePart:
+            images = self._load_images(db, request_id)
+            if index < 0 or index >= len(images):
+                raise BackendError("image_not_found", status=404)
+            return images[index]
+        return await self.db.call(operation)
+
+    async def history(self, before: str = "") -> HistoryPage:
+        def operation(db: sqlite3.Connection) -> HistoryPage:
+            cursor = 2**63 - 1
+            if before:
+                row = db.execute("SELECT ordinal FROM requests WHERE id=? AND kind='root'", (before,)).fetchone()
+                if row is None:
+                    raise BackendError("history_cursor_missing", status=404)
+                cursor = int(row[0])
+            rows = db.execute("SELECT id,payload FROM requests WHERE kind='root' AND ordinal<? ORDER BY ordinal DESC LIMIT 21", (cursor,)).fetchall()
+            requests: list[Receipt] = []
+            events: list[Event] = []
+            used, event_bytes, truncated = 0, 0, False
+            seq = self._meta(db, "revision")
+            for row in rows[:20]:
+                payload = str(row["payload"])
+                request = Receipt.model_validate_json(payload)
+                if not request.answer:
+                    imported = [Message.model_validate_json(str(item[0])).content for item in db.execute(
+                        "SELECT payload FROM messages WHERE request_id=? AND message_key LIKE 'import:%' "
+                        "AND json_extract(payload,'$.role')='assistant' ORDER BY ordinal", (request.request_id,))]
+                    if imported:
+                        request = request.model_copy(update={"answer": "\n\n".join(imported)})
+                size = len(request.model_dump_json().encode())
+                if used + size > SNAPSHOT_MAX_BYTES - SNAPSHOT_VIEW_BYTES - 65536:
+                    if not requests:
+                        raise BackendError("history_entry_limit", status=503)
+                    break
+                used += size
+                requests.append(request)
+                for step_row in db.execute("SELECT payload FROM steps WHERE request_id=? ORDER BY ordinal", (request.request_id,)):
+                    text = str(step_row[0])
+                    if Step.model_validate_json(text).kind != "tool":
+                        continue
+                    event = Event(seq=seq, kind="tool", request_id=request.request_id, text=text)
+                    event_size = len(event.model_dump_json().encode())
+                    if event_bytes + event_size > SNAPSHOT_VIEW_BYTES:
+                        truncated = True
+                        continue
+                    event_bytes += event_size
+                    events.append(event)
+            return HistoryPage(session_id=self.session_id, requests=list(reversed(requests)), events=events,
+                               cursor=requests[-1].request_id if requests else before,
+                               more=len(rows) > len(requests), truncated=truncated)
+        return await self.db.call(operation)
+
     async def message_payloads(self, request_id: str) -> list[str]:
         return await self.db.call(lambda db: self._payloads(db, request_id))
 
@@ -2360,13 +2414,17 @@ class SessionStore:
                 if count == 1 and existing is not None and str(existing[0]) == copied_digest:
                     return self._request(db, request_id)
                 raise BackendError("branch_target_not_empty")
+            local = receipt.model_copy(update={"accepted_revision": str(c.seq), "revision": str(c.seq)})
             db.execute("INSERT INTO requests(id,digest,payload) VALUES(?,?,?)",
-                       (request_id, copied_digest, receipt.model_dump_json()))
+                       (request_id, copied_digest, local.model_dump_json()))
             db.execute("INSERT INTO runs(request_id,payload) VALUES(?,?)", (request_id, run_payload))
             for key, payload in messages:
-                self._message(db, c, request_id, key, Message.model_validate_json(payload))
-            c.emit("status", request_id, "branched", receipt=receipt.model_copy(deep=True))
-            return receipt
+                message = Message.model_validate_json(payload)
+                self._message(db, c, request_id, key, message)
+                if key == "input" and message.images:
+                    self._save_images(db, request_id, message.images)
+            c.emit("status", request_id, "branched", receipt=local.model_copy(deep=True))
+            return local
 
         return await self._tx(operation)
 

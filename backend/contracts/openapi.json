@@ -4466,6 +4466,110 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/history": {
+      "get": {
+        "summary": "Session History",
+        "operationId": "session_history_api_v1_sessions__session__history_get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Before"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}/requests/{request_id}/images/{index}": {
+      "get": {
+        "summary": "Input Image",
+        "operationId": "input_image_api_v1_sessions__session__requests__request_id__images__index__get",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          },
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          },
+          {
+            "name": "index",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Index"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/usage": {
       "get": {
         "summary": "Session Usage",
@@ -8163,6 +8267,51 @@
           "state"
         ],
         "title": "Health"
+      },
+      "HistoryPage": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "requests": {
+            "items": {
+              "$ref": "#/components/schemas/Receipt"
+            },
+            "type": "array",
+            "title": "Requests"
+          },
+          "events": {
+            "items": {
+              "$ref": "#/components/schemas/Event"
+            },
+            "type": "array",
+            "title": "Events"
+          },
+          "cursor": {
+            "type": "string",
+            "title": "Cursor",
+            "default": ""
+          },
+          "more": {
+            "type": "boolean",
+            "title": "More",
+            "default": false
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "session_id",
+          "requests",
+          "events"
+        ],
+        "title": "HistoryPage"
       },
       "HostFence": {
         "properties": {

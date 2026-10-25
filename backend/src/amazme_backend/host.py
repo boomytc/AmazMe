@@ -108,6 +108,7 @@ from .contracts import (
     FreezeSupervisor,
     FreezeWorker,
     Health,
+    HistoryPage,
     HostFence,
     Identity,
     ImagePart,
@@ -2088,6 +2089,22 @@ class Host:
         hits = await self._read_session(session, lambda store: store.search(query))
         return SearchResults(query=query.strip(), hits=hits)
 
+    async def session_history(self, session: str, before: str = "") -> HistoryPage:
+        self._admit()
+        await self._require_session(session)
+        if len(before) > 128:
+            raise BackendError("invalid_history_cursor")
+        if not session_database(self.profile.path, session).is_file():
+            return HistoryPage(session_id=session, requests=[], events=[])
+        return await self._read_session(session, lambda store: store.history(before))
+
+    async def input_image(self, session: str, request_id: str, index: int) -> ImagePart:
+        self._admit()
+        await self._require_session(session)
+        if not session_database(self.profile.path, session).is_file():
+            raise BackendError("image_not_found", status=404)
+        return await self._read_session(session, lambda store: store.input_image(request_id, index))
+
     async def session_usage(self, session: str) -> UsageReport:
         self._admit()
         if not await self.store.exists(session):
@@ -3348,6 +3365,16 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/sessions/{session_id}/search")
     async def search_session(session_id: str, q: str) -> SearchResults:
         return await owner.search_session(session_id, q)
+
+    @app.get("/api/v1/sessions/{session}/history")
+    async def session_history(session: str, before: str = "") -> HistoryPage:
+        return await owner.session_history(session, before)
+
+    @app.get("/api/v1/sessions/{session}/requests/{request_id}/images/{index}")
+    async def input_image(session: str, request_id: str, index: int) -> Response:
+        value = await owner.input_image(session, request_id, index)
+        return Response(base64.b64decode(value.data_base64, validate=True), media_type=value.media_type,
+                        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
 
     @app.get("/api/v1/sessions/{session_id}/usage")
     async def session_usage(session_id: str) -> UsageReport:

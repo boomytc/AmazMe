@@ -10,7 +10,7 @@ import { parseContract } from "../src/python-api.ts";
 let page: DesktopPage | undefined;
 afterEach(() => { page?.dispose(); page = undefined; sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-async function startPage(extra?: (path: string, options: RequestInit) => Response | undefined | Promise<Response | undefined>): Promise<{ page: DesktopPage; submitted: Submit[] }> {
+async function startPage(extra?: (path: string, options: RequestInit, query: URLSearchParams) => Response | undefined | Promise<Response | undefined>): Promise<{ page: DesktopPage; submitted: Submit[] }> {
  const html = readFileSync(resolve("src/page/index.html"), "utf8");
  document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.lastIndexOf("</body>")).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
  const submitted: Submit[] = [];
@@ -19,7 +19,7 @@ async function startPage(extra?: (path: string, options: RequestInit) => Respons
  vi.stubGlobal("WebSocket", Socket);
  vi.stubGlobal("fetch", vi.fn(async (input: URL, options: RequestInit = {}) => {
   const path = new URL(input).pathname, method = options.method ?? "GET";
-  const custom = await extra?.(path, options);
+  const custom = await extra?.(path, options, new URL(input).searchParams);
   if (custom) return custom;
   const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
   if (path.endsWith("/bootstrap")) return response({ build_id: "build", profile_id: "host", instance_id: "instance", pid: 1, host_epoch: 1, role: "host", protocol: "amazme-http/1" });
@@ -37,6 +37,7 @@ async function startPage(extra?: (path: string, options: RequestInit) => Respons
   }
   if (path.endsWith("/resources")) return response({ context_files: [], skills: [], prompts: [], diagnostics: [] });
   if (path.endsWith("/usage")) return response({ session_id: "a" });
+  if (path.endsWith("/history")) return response({ session_id: "a", requests: [], events: [] });
   if (path.endsWith("/submissions")) {
    const body = parseContract("Submit", JSON.parse(String(options.body)));
    submitted.push(body);
@@ -86,4 +87,29 @@ test("a late skill read cannot replace a subsequently opened creation dialog", a
  await new Promise(resolve => setTimeout(resolve, 20));
  expect(page.renderer.view?.panel.modal?.id).toBe("skills:create");
  expect(page.renderer.view?.panel.modal?.fields.find(field => field.id === "name")?.value).toBe("");
+});
+
+
+test("older transcript pages preserve newer live receipts and image-only user entries", async () => {
+ const requested: string[] = [];
+ const make = (id: string, revision: string, answer: string) => ({ request_id: id, text: id, answer, status: "succeeded", kind: "root", revision, accepted_revision: id === "recent" ? "20" : id === "two" ? "2" : "1" });
+ const recent = make("recent", "20", "recent answer");
+ const { page } = await startPage((path, _options, query) => {
+  if (!path.endsWith("/history")) return undefined;
+  const before = query.get("before") ?? "";
+  requested.push(before);
+  return new Response(JSON.stringify({ session_id: "a", requests: before ? [make("one", "1", "older answer"), make("two", "2", "stale answer")] : [recent], events: [], cursor: before ? "one" : "recent", more: !before }));
+ });
+ const connection = page.client.connection;
+ if (!connection?.snapshot) throw new Error("Session was not attached");
+ connection.snapshot = { ...connection.snapshot, seq: "99", requests: [{ ...make("two", "99", "fresh answer"), kind: "root", status: "succeeded" }, { ...recent, text: "", image_count: 1, kind: "root", status: "succeeded" }] };
+ page.client.onChange();
+ await vi.waitFor(() => expect(page.renderer.view?.history.more).toBe(true));
+ page.renderer.onPanelAction({ kind: "command", id: "history:more", data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.blocks.some(block => block.text === "older answer")).toBe(true));
+ expect(page.renderer.view?.blocks.filter(block => block.kind === "assistant").map(block => block.text)).toEqual(["older answer", "fresh answer", "recent answer"]);
+ expect(page.renderer.view?.blocks.find(block => block.id === "recent:user")?.images?.[0].dataUrl).toBe("/api/v1/sessions/a/requests/recent/images/0");
+ expect(connection.snapshot.seq).toBe("99");
+ expect(connection.snapshot.requests).toHaveLength(2);
+ expect(requested.filter(before => before === "recent")).toHaveLength(1);
 });

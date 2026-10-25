@@ -422,6 +422,15 @@ class EventList(Model):
     events: list[Event]
 
 
+class HistoryPage(Model):
+    session_id: str
+    requests: list[Receipt]
+    events: list[Event]
+    cursor: str = ""
+    more: bool = False
+    truncated: bool = False
+
+
 class CreateSession(Model):
     title: str = Field(default="新会话", min_length=1, max_length=100)
     workspace: str = "primary"

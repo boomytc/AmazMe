@@ -176,6 +176,11 @@ async def test_branch_keeps_parent_history_and_drops_later_turns(owner: Host) ->
         await child.fence(fence_for(owner.build))
         try:
             assert [item.request_id for item in (await child.snapshot()).requests] == ["r1"]
+            copied = (await child.snapshot()).requests[0]
+            assert int(copied.revision) <= int((await child.snapshot()).seq)
+            replay = await child.events(0)
+            assert all(event.receipt is None or event.receipt.revision == batch.revision
+                       for batch in replay.batches for event in batch.events)
             assert "beta" not in "".join(message.content for message in await child.messages("r1"))
             assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM effects").fetchone()[0]) == 0
             assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM approvals").fetchone()[0]) == 0

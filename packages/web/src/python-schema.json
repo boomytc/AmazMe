@@ -2881,6 +2881,51 @@
       ],
       "title": "Health"
     },
+    "HistoryPage": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "requests": {
+          "items": {
+            "$ref": "#/components/schemas/Receipt"
+          },
+          "type": "array",
+          "title": "Requests"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/components/schemas/Event"
+          },
+          "type": "array",
+          "title": "Events"
+        },
+        "cursor": {
+          "type": "string",
+          "title": "Cursor",
+          "default": ""
+        },
+        "more": {
+          "type": "boolean",
+          "title": "More",
+          "default": false
+        },
+        "truncated": {
+          "type": "boolean",
+          "title": "Truncated",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "requests",
+        "events"
+      ],
+      "title": "HistoryPage"
+    },
     "HostFence": {
       "properties": {
         "host_epoch": {
@@ -8086,6 +8131,16 @@
       "response": {
         "$ref": "#/components/schemas/SearchResults"
       },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session}/history": {
+      "response": {
+        "$ref": "#/components/schemas/HistoryPage"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session}/requests/{request_id}/images/{index}": {
+      "response": {},
       "body": null
     },
     "GET /api/v1/sessions/{session_id}/usage": {

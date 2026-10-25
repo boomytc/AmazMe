@@ -7,8 +7,8 @@ import type { PanelView } from "./panels.ts";
 import { projectGroups } from "./projects.ts";
 import { isRecord } from "./python-api.ts";
 import type { ClientConnection } from "./python-client.ts";
-import type { ModelCatalog, ProjectView, Session, SessionModel, Snapshot, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
-import { requestStatus, settled } from "./python-stream.ts";
+import type { HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import { requestStatus, seq, settled } from "./python-stream.ts";
 import { shortcuts } from "./shortcuts.ts";
 import { translate } from "./strings.ts";
 import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
@@ -21,7 +21,8 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined)
 	if (!snapshot) return [];
 	const blocks: TranscriptBlock[] = [];
 	for (const receipt of snapshot.requests) {
-		if (receipt.text) blocks.push({ id: `${receipt.request_id}:user`, kind: "user", title: locale === "zh" ? "你" : "You", text: receipt.text, tone: "plain", running: false });
+		if (receipt.text || receipt.image_count) blocks.push({ id: `${receipt.request_id}:user`, kind: "user", title: locale === "zh" ? "你" : "You", text: receipt.text, tone: "plain", running: false,
+			images: Array.from({ length: receipt.image_count ?? 0 }, (_, index) => ({ dataUrl: `/api/v1/sessions/${encodeURIComponent(snapshot.session_id)}/requests/${encodeURIComponent(receipt.request_id)}/images/${index}`, alt: `${locale === "zh" ? "图片" : "Image"} ${index + 1}` })) });
 		const tools = new Map<string, TranscriptBlock>();
 		for (const event of snapshot.events.filter(event => event.request_id === receipt.request_id && event.kind === "tool")) {
 			let value: unknown;
@@ -76,6 +77,9 @@ export interface PresentationInput {
 	readonly dock?: DockView;
 	readonly mode: SubmitMode;
 	readonly usage?: UsageReport;
+	readonly history?: HistoryPage;
+	readonly historyMore?: boolean;
+	readonly historyLoading?: boolean;
 	readonly welcomeDismissed: boolean;
 	readonly newSessionPending: boolean;
 	readonly ready: boolean;
@@ -102,7 +106,7 @@ export function pythonView(input: PresentationInput): WebView {
 		archivedAttached: session?.archived ? rosterItems(locale, directory, connection?.sessionId, Date.now(), "", true).find(item => item.id === connection?.sessionId) : undefined,
 		rosterFilter: input.rosterFilter, transcriptScope: connection ? `${connection.identity.profile_id}:${connection.sessionId}` : undefined,
 		attachedId: connection?.ready ? connection.sessionId : undefined, sessionLabel: session?.title, readOnly: session?.archived || !connection?.ready || !input.ready || snapshot?.state !== "ready",
-		blocks: transcriptBlocks(locale, snapshot), status: snapshot?.state === "ready" ? pending.length ? requestStatus[pending[0].status] : "" : snapshot?.state ?? "",
+		blocks: [...(input.history?.truncated ? [{ id: "history:truncated", kind: "notice" as const, title: locale === "zh" ? "历史记录" : "History", text: locale === "zh" ? "部分工具输出超过展示上限；原始记录仍保存在本机。" : "Some tool output exceeds the display limit. Original records remain stored locally.", tone: "muted" as const, running: false }] : []), ...transcriptBlocks(locale, withHistory(snapshot, input.history))], history: { blocks: [], more: input.historyMore ?? false, loading: input.historyLoading ?? false }, status: snapshot?.state === "ready" ? pending.length ? requestStatus[pending[0].status] : "" : snapshot?.state ?? "",
 		queue: pending.filter(item => item.status === "queued" || item.status === "waiting_time").map(item => ({ id: item.request_id, text: item.text,
 			cancel: { id: actions.QUEUE_CANCEL_ACTION, data: item.request_id, label: "取消排队", weight: "text" } })),
 		attachments: input.attachments, approvals, approvalIndicator: approvalIndicator(locale, approvalState), busy: pending.some(item => item.status !== "queued"),
@@ -114,6 +118,17 @@ export function pythonView(input: PresentationInput): WebView {
 		dock: input.dock ?? dockView(locale, { open: false, tab: "files", cwd, workspace: undefined, terminal: undefined, conversations: undefined }),
 		meter: { context: "?", tokens: input.usage ? `${input.usage.input_tokens ?? 0} / ${input.usage.output_tokens ?? 0}` : "? / ?", cost: input.usage?.priced && input.usage.cost_micro_usd !== null && input.usage.cost_micro_usd !== undefined ? `$${(input.usage.cost_micro_usd / 1_000_000).toFixed(3)}` : "?", tone: "neutral" },
 	};
+}
+
+/** A display cache never changes the live snapshot used for admissions, cancellation or ACK. */
+function withHistory(snapshot: Snapshot | undefined, history: HistoryPage | undefined): Snapshot | undefined {
+	if (!snapshot || !history || snapshot.session_id !== history.session_id) return snapshot;
+	const rows = new Map(history.requests.map(row => [row.request_id, row]));
+	for (const row of snapshot.requests) {
+		const older = rows.get(row.request_id);
+		if (!older || seq(row.revision ?? "0") >= seq(older.revision ?? "0")) rows.set(row.request_id, row);
+	}
+	return { ...snapshot, requests: [...rows.values()].sort((a, b) => seq(a.accepted_revision ?? "0") < seq(b.accepted_revision ?? "0") ? -1 : seq(a.accepted_revision ?? "0") > seq(b.accepted_revision ?? "0") ? 1 : 0), events: [...history.events, ...snapshot.events].sort((a, b) => seq(a.seq) < seq(b.seq) ? -1 : seq(a.seq) > seq(b.seq) ? 1 : 0) };
 }
 
 export function pythonDirectory(sessions: readonly Session[], projects: readonly ProjectView[], workspaces: readonly WorkspaceGrantView[]): SessionDirectoryLike {
