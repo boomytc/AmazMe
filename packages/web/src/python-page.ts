@@ -87,6 +87,7 @@ export class DesktopPage {
 	private catalog?: ModelCatalog;
 	private accounts: AccountsView = { revision: 0, accounts: [] };
 	private settings?: ProductSettings;
+	private globalModelIds: string[] | null = null;
 	private selection?: SessionModel;
 	private resources?: ResourceCatalog;
 	private usage?: UsageReport;
@@ -274,11 +275,14 @@ export class DesktopPage {
 			this.client.call("GET /api/v1/projects"),
 			this.client.call("GET /api/v1/skills", { query: { session_id: connection?.sessionId ?? "" } }),
 		]);
+		const globalModelIds = identity ? await this.resolveModelIds(settings.preferences?.enabledModels ?? null, identity, catalog) : null;
 		if (generation === this.globalLoadGeneration && identity && this.hostActive(identity)) {
-			this.sessions = sessions.sessions; this.workspaces = workspaces.workspaces; this.catalog = catalog; this.accounts = accounts; this.settings = settings;
+			this.sessions = sessions.sessions; this.workspaces = workspaces.workspaces; this.catalog = catalog; this.accounts = accounts;
 			this.projects = projects.projects ?? [];
 			if (this.client.connection === connection && resourcesGeneration === this.resourceGeneration) this.resources = resources;
-			this.applyPreferences(settings.preferences ?? {});
+			if ((settings.revision ?? 0) >= (this.settings?.revision ?? 0)) {
+				this.settings = settings; this.globalModelIds = globalModelIds; this.applyPreferences(settings.preferences ?? {});
+			}
 		}
 	}
 	private async loadSession(connection: ClientConnection): Promise<void> {
@@ -337,7 +341,7 @@ export class DesktopPage {
 		this.draft = this.drafts.get(id) ?? { text: "", images: [], revision: 0 };
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined; this.feedback = undefined;
 		const scopeKey = `${this.client.identity?.profile_id}:${id}`;
-		this.enabledModels = (this.modelScopes.has(scopeKey) ? this.modelScopes.get(scopeKey) : this.settings?.preferences?.enabledModels) ?? null;
+		this.enabledModels = (this.modelScopes.has(scopeKey) ? this.modelScopes.get(scopeKey) : this.globalModelIds) ?? null;
 		this.thinking = this.catalog?.current.thinking ?? "off";
 		this.pluginRuntime = []; this.pluginsGeneration++;
 		this.mcpConfiguration = undefined; this.mcpRuntime = undefined;
@@ -634,7 +638,12 @@ export class DesktopPage {
 		if (id === A.MODEL_SELECT_ACTION) { const selected = modelReference(value); await this.selectModel(selected.provider, selected.model); return; }
 		if (id === A.MODEL_THINKING_ACTION) { this.thinking = value; this.render(); return; }
 		if (id === A.REFRESH_MODELS_ACTION || id === P.SETTINGS_RELOAD_ACTION || id === A.SESSION_RELOAD_ACTION) { await this.loadGlobal(); const connection = this.client.connection; if (connection?.ready) await this.loadSession(connection); this.render(); return; }
-		if (id === A.MODEL_SCOPE_ACTION) { this.modal = modelScopeModal(this.locale, { allModels: this.connections().enabledModels.map(item => ({ provider: item.provider, id: item.modelId, name: item.name })), enabledModelIds: this.enabledModels }); this.render(); return; }
+		if (id === A.MODEL_SCOPE_ACTION) {
+			const available = this.connections().enabledModels;
+			if (available.length === 0) { this.currentPanel = P.SETTINGS_VIEW; this.modal = undefined; }
+			else this.modal = modelScopeModal(this.locale, { allModels: available.map(item => ({ provider: item.provider, id: item.modelId, name: item.name })), enabledModelIds: this.enabledModels });
+			this.render(); return;
+		}
 		if (id === A.MODEL_SCOPE_MODAL) {
 			const connection = this.requireConnection(), modal = this.modal;
 			const ids = parseContract("InterfacePreferences", { enabledModels: JSON.parse(fields.models || "null") }).enabledModels ?? null;
@@ -698,7 +707,12 @@ export class DesktopPage {
 		if (id === MODEL_ENABLED_ACTION) {
 			const reference = modelReference(data ?? ""), key = `${reference.provider}/${reference.model}`;
 			const all = this.catalog?.models.map(item => `${item.provider}/${item.model}`) ?? [];
-			await this.updatePreferences(current => { const selected = new Set(current.enabledModels ?? all); if (value === "true") selected.add(key); else selected.delete(key); return { ...current, enabledModels: [...selected] }; });
+			await this.updateSettings(async (current, identity) => {
+				const selected = new Set(await this.resolveModelIds(current.preferences?.enabledModels ?? null, identity) ?? all);
+				if (value === "true") selected.add(key); else selected.delete(key);
+				const preferences = parseContract("InterfacePreferences", { ...current.preferences, enabledModels: [...selected] });
+				return this.client.call("PUT /api/v1/settings/preferences", { body: { preferences, expected_revision: current.revision ?? 0 }, identity });
+			});
 			return;
 		}
 		if (id === PROVIDER_TEST_ACTION) {
@@ -1210,8 +1224,9 @@ export class DesktopPage {
 			!this.accounts.accounts.some(account => account.provider === provider.id && account.login_required)).map(provider => provider.id));
 		const models = this.catalog?.models.map(item => ({ provider: item.provider, modelId: item.model, name: item.label,
 			available: availableProviders.has(item.provider) })) ?? [];
-		const selected = this.selectedProvider ?? authentication.providers.find(provider => provider.configured)?.id;
-		const enabled = this.settings?.preferences?.enabledModels ?? null;
+		const selected = authentication.providers.some(provider => provider.id === this.selectedProvider && provider.configured)
+			? this.selectedProvider : authentication.providers.find(provider => provider.configured)?.id;
+		const enabled = this.globalModelIds;
 		return { state: { providers: authentication.providers.map(provider => {
 			const model = this.catalog?.models.find(item => item.provider === provider.id), definition = this.catalog?.providers?.find(item => item.provider === provider.id);
 			return { id: provider.id, name: provider.name, configured: provider.configured, available: availableProviders.has(provider.id), baseUrl: definition?.base_url ?? (current?.provider === provider.id ? current.base_url : model?.base_url ?? ""),
@@ -1313,12 +1328,19 @@ export class DesktopPage {
 		const key = `amazme:oauth:${identity.profile_id}:${login.provider}`, stored = sessionStorage.getItem(key);
 		if (stored && parseContract("OAuthStart", JSON.parse(stored)).login_id === login.login_id) sessionStorage.removeItem(key);
 	}
+	private async resolveModelIds(patterns: readonly string[] | null, identity: Identity, catalog: ModelCatalog | undefined = this.catalog): Promise<string[] | null> {
+		if (patterns === null) return null;
+		const known = new Set(catalog?.models.map(model => `${model.provider}/${model.model}`));
+		if (patterns.every(pattern => known.has(pattern))) return [...patterns];
+		const scope = await this.client.call("POST /api/v1/models/scope", { body: { patterns: [...patterns] }, identity });
+		return scope.models.map(item => `${item.model.provider}/${item.model.model}`);
+	}
 	private applyPreferences(preferences: InterfacePreferences): void {
 		this.locale = resolveLocale(preferences.locale ?? "auto", navigator.languages);
 		this.typography = resolveTypography(preferences);
 		applyTheme(resolveThemePreference(preferences.appearance));
 		const session = this.client.connection?.sessionId, key = `${this.client.identity?.profile_id}:${session}`;
-		this.enabledModels = (session && this.modelScopes.has(key) ? this.modelScopes.get(key) : preferences.enabledModels) ?? null;
+		this.enabledModels = (session && this.modelScopes.has(key) ? this.modelScopes.get(key) : this.globalModelIds) ?? null;
 	}
 	private updateSettings(update: (current: ProductSettings, identity: Identity) => Promise<ProductSettings>): Promise<void> {
 		const identity = this.client.identity;
@@ -1326,8 +1348,10 @@ export class DesktopPage {
 		const task = this.settingsQueue.catch(() => {}).then(async () => {
 			const current = await this.client.call("GET /api/v1/settings");
 			const settings = await update(current, identity);
-			if (this.client.identity?.instance_id !== identity.instance_id) return;
-			this.settings = settings; this.applyPreferences(settings.preferences ?? {}); this.render();
+			if (!this.hostActive(identity) || (settings.revision ?? 0) < (this.settings?.revision ?? 0)) return;
+			const globalModelIds = await this.resolveModelIds(settings.preferences?.enabledModels ?? null, identity);
+			if (!this.hostActive(identity) || (settings.revision ?? 0) < (this.settings?.revision ?? 0)) return;
+			this.settings = settings; this.globalModelIds = globalModelIds; this.applyPreferences(settings.preferences ?? {}); this.render();
 		}).catch(error => {
 			if (this.hostActive(identity)) {
 				this.notice = { tone: "error", text: error instanceof Error ? error.message : String(error) };

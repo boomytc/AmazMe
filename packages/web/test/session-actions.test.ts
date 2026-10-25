@@ -417,6 +417,7 @@ describe("session actions", () => {
 		expect(connections.element.querySelector("h2.connection-provider-name")?.textContent).toBe("Anthropic");
 		expect(connections.element.querySelector("h3.connection-models-title")?.textContent).toBe("启用模型");
 		expect(connections.element.querySelector(".connection-models-count")?.textContent).toBe("1 / 2");
+		expect(connections.element.querySelector<HTMLInputElement>(".connection-model.is-unavailable input")?.disabled).toBe(true);
 		expect(connections.element.querySelector(".connection-notices .panel-notice")?.textContent).toBe("已保存默认配置");
 
 		// An unconfigured provider keeps Configure as the only filled action. Test waits until a credential exists.
@@ -471,6 +472,10 @@ describe("session actions", () => {
 		const defaultSelect = defaultControls.querySelector<HTMLSelectElement>(".connection-default-select")!;
 		expect([...defaultSelect.querySelectorAll("optgroup")].map(group => group.label)).toEqual(["Anthropic", "OpenAI"]);
 		expect(defaultSelect.value).toBe(JSON.stringify(["anthropic", "claude-sonnet-4"]));
+		defaultSelect.focus();
+		connections.update("zh", baseView);
+		expect(connections.element.querySelector(".connection-default-select")).toBe(defaultSelect);
+		expect(document.activeElement).toBe(defaultSelect);
 		defaultSelect.value = JSON.stringify(["openai", "gpt-5"]);
 		defaultSelect.dispatchEvent(new Event("change"));
 		expect(report).toHaveBeenLastCalledWith({ kind: "command", id: MODEL_DEFAULTS_ACTION, data: JSON.stringify(["openai", "gpt-5"]) });

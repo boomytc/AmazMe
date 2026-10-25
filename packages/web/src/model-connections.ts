@@ -2,6 +2,7 @@ import type { Locale } from "./locale.ts";
 import type { PanelAction, PanelModal, PanelNotice } from "./panels.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
 import { MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION } from "./actions.ts";
+import { sameViewValue } from "./dom-cache.ts";
 import { errorMessageCopy } from "./errors.ts";
 import { translate } from "./strings.ts";
 
@@ -157,6 +158,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 	root.append(notices, overview, workspace);
 
 	let current: ModelConnectionsLike | undefined;
+	let currentNotices: readonly (PanelNotice & { readonly key?: string })[] = [];
 	let locale: Locale = "en";
 	const copy = (key: Parameters<typeof translate>[1], values?: Record<string, string>) => translate(locale, key, values);
 	const node = (tag: string, text: string, className?: string) => {
@@ -201,7 +203,8 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 	};
 	search.addEventListener("input", renderList);
 	return { element: root, update(nextLocale: Locale, view: ModelConnectionsLike, extraNotices: readonly (PanelNotice & { readonly key?: string })[] = []) {
-		locale = nextLocale; current = view;
+		if (locale === nextLocale && sameViewValue(current, view) && sameViewValue(currentNotices, extraNotices)) return;
+		locale = nextLocale; current = view; currentNotices = extraNotices;
 		const canAdd = view.state.providers.some(provider => !provider.configured && (view.state.authentication.providers.find(item => item.id === provider.id)?.methods.length ?? 0) > 0);
 		add.textContent = copy("connections.add"); add.disabled = view.disabled || !canAdd;
 		search.placeholder = copy("connections.search"); search.setAttribute("aria-label", search.placeholder);
@@ -328,7 +331,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			const label = document.createElement("label"); label.className = "connection-model-label";
 			const enabled = document.createElement("input"); enabled.type = "checkbox";
 			enabled.checked = isEnabled(model);
-			enabled.disabled = view.disabled;
+			enabled.disabled = view.disabled || !model.available;
 			enabled.addEventListener("change", () => report({ kind: "control", id: MODEL_ENABLED_ACTION, data: modelRef, value: String(enabled.checked) }));
 			label.append(enabled, node("span", model.name, "connection-model-name"));
 			main.append(label, node("small", model.modelId, "connection-model-id"));

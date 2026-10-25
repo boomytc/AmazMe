@@ -291,6 +291,79 @@ test("global model toggles constrain a session scope and survive a fresh page", 
  first.page.dispose();
  const reopened = await startPage(api);
  expect(reopened.page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]);
+ reopened.page.renderer.onPanelAction({ kind: "control", id: MODEL_ENABLED_ACTION, data: JSON.stringify(["faux", "different"]), value: "false" });
+ await vi.waitFor(() => expect(settings.preferences?.enabledModels).toEqual([]));
+ const recover = document.querySelector<HTMLButtonElement>(`#transcript-empty [data-action="${A.MODEL_SCOPE_ACTION}"]`);
+ expect(recover).not.toBeNull();
+ recover?.click();
+ await vi.waitFor(() => expect(reopened.page.renderer.view?.panel.current).toBe(P.SETTINGS_VIEW));
+ expect(reopened.page.renderer.view?.panel.modal).toBeUndefined();
+});
+
+test("host-resolved model patterns provide concrete choices and toggles save the resolved list", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ const models = [
+  { provider: "gateway", model: "shown", label: "Shown", endpoint_editable: true },
+  { provider: "gateway", model: "different", label: "Different", endpoint_editable: true },
+ ];
+ let settings = parseContract("ProductSettings", { revision: 0, preferences: { enabledModels: ["gateway/*"] } });
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/models/scope") {
+   const body = parseContract("ModelScopeRequest", JSON.parse(String(options.body)));
+   expect(body.patterns).toEqual(["gateway/*"]);
+   return response({ models: models.map(model => ({ model })), diagnostics: [] });
+  }
+  if (path === "/api/v1/models") return response({ models, current: { provider: "gateway", model: "shown", base_url: "http://model", max_tokens: 10, key_configured: true } });
+  if (path === "/api/v1/settings" || path === "/api/v1/settings/preferences") {
+   if (options.method === "PUT") {
+    const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+    settings = { revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+   }
+   return response(settings);
+  }
+  return undefined;
+ });
+ const choices = () => page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId);
+ expect(choices()).toEqual(["shown", "different"]);
+ expect(page.renderer.view?.modelConnections?.enabledModels.map(model => model.modelId)).toEqual(["shown", "different"]);
+ expect(page.renderer.view?.modelConnections?.state.enabledModelIds).toEqual(["gateway/shown", "gateway/different"]);
+ page.renderer.onPanelAction({ kind: "control", id: MODEL_ENABLED_ACTION, data: JSON.stringify(["gateway", "shown"]), value: "false" });
+ await vi.waitFor(() => expect(settings.preferences?.enabledModels).toEqual(["gateway/different"]));
+ await vi.waitFor(() => expect(choices()).toEqual(["different"]));
+});
+
+test("an older global load cannot restore model choices superseded by a settings write", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });
+ let holdRefresh = false, refreshStarted = false, usages = 0;
+ let finishRefresh = () => {};
+ const { page } = await startPage((path, options) => {
+  if (path.endsWith("/usage")) usages++;
+  if (path === "/api/v1/settings" && holdRefresh) {
+   holdRefresh = false; refreshStarted = true;
+   return new Promise<Response>(resolve => { finishRefresh = () => resolve(response({ revision: 0, preferences: {} })); });
+  }
+  if (path === "/api/v1/settings" || path === "/api/v1/settings/preferences") {
+   if (options.method === "PUT") {
+    const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+    settings = { revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+   }
+   return response(settings);
+  }
+  return undefined;
+ });
+ await vi.waitFor(() => expect(usages).toBe(1));
+ const initialUsages = usages;
+ holdRefresh = true;
+ page.renderer.onPanelAction({ kind: "command", id: A.REFRESH_MODELS_ACTION, data: undefined });
+ await vi.waitFor(() => expect(refreshStarted).toBe(true));
+ page.renderer.onPanelAction({ kind: "control", id: MODEL_ENABLED_ACTION, data: JSON.stringify(["faux", "shown"]), value: "false" });
+ await vi.waitFor(() => expect(settings.revision).toBe(1));
+ expect(page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]);
+ finishRefresh();
+ await vi.waitFor(() => expect(usages).toBeGreaterThan(initialUsages));
+ expect(page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]);
+ expect(page.renderer.view?.modelConnections?.state.enabledModelIds).toEqual(["faux/different"]);
 });
 
 test("model choices follow configured connections and refresh an open picker without losing the draft", async () => {
@@ -322,6 +395,9 @@ test("model choices follow configured connections and refresh an open picker wit
  expect(page.renderer.view?.modelConnections?.state.providers.find(provider => provider.id === "oauth")?.configured).toBe(true);
  document.querySelector<HTMLButtonElement>(".model-picker-manage")?.click();
  await vi.waitFor(() => expect(document.querySelector('.connection-row[data-action-data="oauth"] .connection-row-state')?.textContent).toBe("Sign in again"));
+ document.querySelector<HTMLButtonElement>('.connection-row[data-action-data="oauth"]')?.click();
+ await vi.waitFor(() => expect(document.querySelector(".connection-provider-name")?.textContent).toBe("oauth"));
+ expect(document.querySelector<HTMLInputElement>(".connection-model.is-unavailable input")?.disabled).toBe(true);
  document.querySelector<HTMLButtonElement>('#nav [data-view="chat"]')?.click();
  await vi.waitFor(() => expect(page.renderer.view?.panel.panel).toBeUndefined());
  document.querySelector<HTMLButtonElement>(".composer-model-picker")?.click();
@@ -335,6 +411,8 @@ test("model choices follow configured connections and refresh an open picker wit
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("keep this draft");
  document.querySelector<HTMLButtonElement>(".model-picker-manage")?.click();
  await vi.waitFor(() => expect(document.querySelector(".connection-default-select")).not.toBeNull());
+ expect(document.querySelector(".connection-choose")?.textContent).toContain("Choose a provider");
+ expect(document.querySelector(".connection-provider-name")).toBeNull();
  const defaults = document.querySelector<HTMLSelectElement>(".connection-default-select");
  expect(defaults?.disabled).toBe(true);
  expect(defaults?.selectedOptions[0]?.disabled).toBe(true);
