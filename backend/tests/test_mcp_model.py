@@ -1,6 +1,7 @@
 """Model-proposed MCP calls stay on the session approval path and the existing call ledger."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -275,6 +276,9 @@ async def supervisor(tmp_path: Path) -> Supervisor:
         "format": 2, "profile_id": "mcp-model", "workspace": str(tmp_path), "resources": "unused",
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
+    with sqlite3.connect(tmp_path / "host.sqlite") as db:
+        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0)")
+        db.executemany("INSERT INTO sessions(id,workspace) VALUES(?,'primary')", [(SESSION,), (OTHER,)])
     owner = Supervisor(Profile(tmp_path), "mcp-supervisor")
     await owner.initialize()
     if owner.monitor_task:

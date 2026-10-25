@@ -328,7 +328,8 @@ async def test_supervisor_owns_script_after_waiter_cancels_and_close_stops_it(tm
         assert retired.phase == 'unknown' and retired.clean and retired.cancel_requested
         assert (await owner.run_code(value)).phase == 'unknown'
         early = CancelCode(host_epoch=owner.host_epoch,build_id=owner.build,session_id='a'*32,run_id='2'*32)
-        assert (await owner.cancel_code(early)).phase == 'unknown'
+        cancelled_before_start = await owner.cancel_code(early)
+        assert cancelled_before_start.phase == 'cancelled' and cancelled_before_start.clean and cancelled_before_start.cancel_requested
         with pytest.raises(BackendError,match='codemode_conflict'):
             await owner.run_code(value.model_copy(update={'session_id':'b'*32,'run_id':early.run_id}))
         stopped = await owner.run_code(value.model_copy(update={'run_id':early.run_id,'source':'store("ran",true);'}))

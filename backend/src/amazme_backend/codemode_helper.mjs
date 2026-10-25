@@ -11,7 +11,7 @@ const pending = new Map();
 const cancelled = new AbortController();
 let nextId = 0;
 const send = value => process.stdout.write(JSON.stringify(value) + "\n");
-const tool = item => ({name:item.name, description:item.description, execute(args, context) {
+const tool = item => ({name:item.name, description:[item.description || "", "Parameters: " + JSON.stringify(item.parameters || {type:"object"})].join("\n"), execute(args, context) {
   if (pending.size >= 2) throw Error("too many tool calls");
   const id = String(++nextId);
   return new Promise((resolve, reject) => {

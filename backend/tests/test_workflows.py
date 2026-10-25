@@ -397,8 +397,8 @@ async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
         captured.append(messages)
         yield Completion(message=Message(role="assistant", content="ok"), response_id="faux")
 
-    async def empty_offers(self: Worker) -> list[object]:
-        del self
+    async def empty_offers(self: Worker, request_id: str = "") -> list[object]:
+        del self, request_id
         return []
 
     monkeypatch.setattr("amazme_backend.worker.stream", fake_stream)

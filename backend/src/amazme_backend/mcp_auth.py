@@ -13,31 +13,42 @@ import sqlite3
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from pathlib import Path
 from dataclasses import dataclass, field
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
 import httpx
 from mcp.client.auth import OAuthClientProvider
-from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthMetadata, OAuthToken, ProtectedResourceMetadata
-from pydantic import AnyUrl
+from mcp.shared.auth import (
+    OAuthClientInformationFull,
+    OAuthClientMetadata,
+    OAuthMetadata,
+    OAuthToken,
+    ProtectedResourceMetadata,
+)
+from pydantic import AnyUrl, TypeAdapter
 
+from . import mcp_management
 from .accounts import AccountStore, ApiKeyCredential
 from .common import Profile, private_write
-from .contracts import BackendError, McpHttpSettings, McpLaunch, McpOAuthSettings, mcp_secure_url
+from .contracts import (
+    BackendError,
+    McpHttpSettings,
+    McpLaunch,
+    McpLoginRequest,
+    McpOAuthSettings,
+    mcp_secure_url,
+)
+from .host_store import HostStore
 from .mcp_management import expand_reference
-from . import mcp_management
 from .oauth import OAuthView
-from .storage import Database
-from .contracts import McpLoginRequest
 
 
-def resolve_values(values: dict[str, str], cwd: str) -> dict[str, str]:
-    from .mcp_gate import _environment
+def resolve_values(values: dict[str, str], cwd: str, expand: bool = True) -> dict[str, str]:
+    from .mcp_gate import launch_environment
 
-    plain = {key: expand_reference(value) for key, value in values.items() if not value.startswith("!")}
+    plain = {key: expand_reference(value) if expand else value for key, value in values.items() if not value.startswith("!")}
     commands = {key: value[1:] for key, value in values.items() if value.startswith("!")}
-    resolved = _environment(McpLaunch(command=":", environment=plain, environment_commands=commands), "/bin/sh", cwd)
+    resolved = launch_environment(McpLaunch(command=":", environment=plain, environment_commands=commands), "/bin/sh", cwd)
     return {key: resolved[key] for key in values}
 
 
@@ -55,10 +66,7 @@ class TokenStore:
     def read(self) -> dict[str, object]:
         if not self.path.exists():
             return {}
-        value: object = json.loads(self.path.read_bytes())
-        if not isinstance(value, dict):
-            raise BackendError("mcp_credential_invalid")
-        return {str(key): content for key, content in value.items()}
+        return TypeAdapter(dict[str, object]).validate_json(self.path.read_bytes())
 
     def save(self, **changes: object) -> None:
         private_write(self.path, json.dumps({**self.read(), **changes}))
@@ -122,6 +130,8 @@ class McpAuth(OAuthClientProvider):
         super().__init__(settings.url, metadata, store, redirect_handler=redirect, callback_handler=callback,
                          timeout=15, client_metadata_url="https://pi.dev/oauth/client.json" if options.registration == "cimd" else None)
         self.store, self.interactive = store, redirect is not None
+        self.issuer_required = False
+        self.expected_issuer = ""
 
     async def _perform_authorization_code_grant(self) -> tuple[str, str]:
         if not self.interactive:
@@ -130,24 +140,28 @@ class McpAuth(OAuthClientProvider):
         if self.store.settings.scope:
             self.context.client_metadata.scope = self.store.settings.scope
         if self.store.settings.registration == "cimd":
-            extra = metadata.model_extra or {} if metadata else {}
-            if not metadata or not extra.get("client_id_metadata_document_supported") or "none" not in (metadata.token_endpoint_auth_methods_supported or []):
+            if not metadata or not metadata.client_id_metadata_document_supported or "none" not in (metadata.token_endpoint_auth_methods_supported or []):
                 raise BackendError("mcp_cimd_not_supported")
             redirect = self.store.redirect
             client_id = "https://pi.dev/oauth/client.json"
-            if not extra.get("authorization_response_iss_parameter_supported"):
+            if not self.issuer_required:
                 callback_id = callback_id_for(self.context.server_url)
                 parts = urlsplit(redirect)
                 redirect = urlunsplit((parts.scheme, parts.netloc, "/callback/" + callback_id, "", ""))
                 client_id = f"https://pi.dev/oauth/{callback_id}/client.json"
             self.context.client_metadata.redirect_uris = [AnyUrl(redirect)]
             self.context.client_info = OAuthClientInformationFull(client_id=client_id, redirect_uris=[AnyUrl(redirect)], token_endpoint_auth_method="none")
+            await self.store.set_client_info(self.context.client_info)
         return await super()._perform_authorization_code_grant()
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         async with self.store.locked():
             document = self.store.read()
-            if not self.interactive and (document.get("uncertain") or not document.get("tokens")):
+            self.issuer_required = document.get("issuer_required") is True
+            self.expected_issuer = str(document.get("issuer", ""))
+            if not self.interactive and document.get("uncertain"):
+                raise BackendError("mcp_oauth_authorization_required", status=401)
+            if not self.interactive and not document.get("tokens"):
                 response = yield request
                 if response.status_code in {401, 403}:
                     raise BackendError("mcp_oauth_authorization_required", status=401)
@@ -162,28 +176,37 @@ class McpAuth(OAuthClientProvider):
                 outgoing = await anext(flow)
                 while True:
                     if outgoing is not request:
+                        refreshing = outgoing.method == "POST" and b"grant_type=refresh_token" in outgoing.content
+                        if not self.interactive and not refreshing:
+                            raise BackendError("mcp_oauth_authorization_required", status=401)
                         mcp_secure_url(str(outgoing.url))
                         if self.store.settings.metadata_url and outgoing.method == "GET" and "/.well-known/" in outgoing.url.path and "oauth-protected-resource" not in outgoing.url.path:
                             outgoing = httpx.Request("GET", self.store.settings.metadata_url, headers=outgoing.headers)
                         outgoing.extensions["timeout"] = {"connect": 15, "read": 15, "write": 15, "pool": 15}
                         if self.store.settings.registration == "cimd" and self.context.oauth_metadata and str(outgoing.url) == str(self.context.oauth_metadata.registration_endpoint):
                             raise BackendError("mcp_cimd_not_supported")
-                        if outgoing.method == "POST" and b"grant_type=refresh_token" in outgoing.content:
+                        if refreshing:
                             self.store.save(uncertain=True)
                     response = yield outgoing
                     if outgoing is not request:
                         await response.aread()
+                        if response.is_success and outgoing.method == "GET":
+                            metadata = TypeAdapter(dict[str, object]).validate_json(response.content)
+                            if "authorization_endpoint" in metadata and isinstance(metadata.get("issuer"), str):
+                                self.issuer_required = metadata.get("authorization_response_iss_parameter_supported") is True
+                                self.expected_issuer = str(metadata["issuer"])
                     outgoing = await flow.asend(response)
             except StopAsyncIteration:
                 pass
             finally:
                 await flow.aclose()
                 self.store.save(metadata=self.context.oauth_metadata.model_dump(mode="json") if self.context.oauth_metadata else None,
-                                resource=self.context.protected_resource_metadata.model_dump(mode="json") if self.context.protected_resource_metadata else None)
+                                resource=self.context.protected_resource_metadata.model_dump(mode="json") if self.context.protected_resource_metadata else None,
+                                issuer_required=self.issuer_required, issuer=self.expected_issuer)
 
 
-async def http_settings(settings: McpHttpSettings, profile: Profile, name: str, cwd: str) -> tuple[dict[str, str], McpAuth | None]:
-    values = await asyncio.to_thread(resolve_values, {f"v{index}": content for index, content in enumerate(settings.headers.values())}, cwd)
+async def http_settings(settings: McpHttpSettings, profile: Profile, name: str, cwd: str, *, expand: bool = False) -> tuple[dict[str, str], McpAuth | None]:
+    values = await asyncio.to_thread(resolve_values, {f"v{index}": content for index, content in enumerate(settings.headers.values())}, cwd, expand)
     headers = {key: values[f"v{index}"] for index, key in enumerate(settings.headers)}
     if any("\n" in value or "\r" in value for value in headers.values()):
         raise BackendError("mcp_header_invalid")
@@ -195,7 +218,7 @@ async def http_settings(settings: McpHttpSettings, profile: Profile, name: str, 
             raise BackendError("provider_not_configured")
         headers["Authorization"] = "Bearer " + (credential.key if isinstance(credential, ApiKeyCredential) else credential.access).get_secret_value()
     if settings.oauth:
-        secret = await asyncio.to_thread(resolve_values, {"secret": settings.oauth.client_secret}, cwd) if settings.oauth.client_secret else {}
+        secret = await asyncio.to_thread(resolve_values, {"secret": settings.oauth.client_secret}, cwd, expand) if settings.oauth.client_secret else {}
         settings = settings.model_copy(update={"oauth": settings.oauth.model_copy(update={"client_secret": secret.get("secret", "")})})
         return headers, McpAuth(settings, TokenStore(profile, name, settings))
     return headers, None
@@ -227,7 +250,7 @@ async def sign_in(settings: McpHttpSettings, profile: Profile, name: str,
         if auth and auth.context.oauth_metadata:
             issuer = query.get("iss", [""])[0]
             metadata = auth.context.oauth_metadata
-            if issuer and issuer != str(metadata.issuer) or (metadata.model_extra or {}).get("authorization_response_iss_parameter_supported") and not issuer:
+            if issuer and issuer != (auth.expected_issuer or str(metadata.issuer)) or auth.issuer_required and not issuer:
                 raise BackendError("mcp_oauth_issuer_mismatch")
         if query.get("error"):
             raise BackendError("mcp_oauth_denied")
@@ -275,7 +298,7 @@ async def sign_in(settings: McpHttpSettings, profile: Profile, name: str,
         return future.result()
 
     try:
-        headers, resolved = await http_settings(settings, profile, name, profile.config.workspace)
+        headers, resolved = await http_settings(settings, profile, name, profile.config.workspace, expand=True)
         if resolved:
             store.settings = resolved.store.settings
         store.guard, store.authorizing = guard, True
@@ -309,15 +332,15 @@ class McpLogin:
 
 
 class McpLogins:
-    def __init__(self, profile: Profile, db: Database, admit: Callable[[], Awaitable[None]]):
-        self.profile, self.db, self.admit = profile, db, admit
+    def __init__(self, profile: Profile, store: HostStore, admit: Callable[[], Awaitable[None]]):
+        self.profile, self.store, self.admit = profile, store, admit
         self.active: dict[str, McpLogin] = {}
         self.lock = asyncio.Lock()
 
     async def view(self, login_id: str) -> OAuthView:
         if login_id in self.active:
             return self.active[login_id].view
-        row = await self.db.call(lambda db: db.execute("SELECT view FROM mcp_logins WHERE id=?", (login_id,)).fetchone())
+        row = await self.store.db.call(lambda db: db.execute("SELECT view FROM mcp_logins WHERE id=?", (login_id,)).fetchone())
         if row is None:
             raise BackendError("mcp_login_not_found", status=404)
         view = OAuthView.model_validate_json(str(row[0]))
@@ -347,7 +370,7 @@ class McpLogins:
                 view = OAuthView(login_id=value.login_id, provider=value.name, phase="pending", expires_ms=int(time.time() * 1000) + 300000)
                 db.execute("INSERT INTO mcp_logins VALUES(?,?,?)", (value.login_id, value.model_dump_json(), view.model_dump_json()))
                 return item.settings, item.launch_id, view
-            settings, launch, view = await self.db.call(reserve, write=True)
+            settings, launch, view = await self.store.transaction(reserve)
             if settings is None:
                 return await self.view(value.login_id)
             login = McpLogin(view)
@@ -355,7 +378,7 @@ class McpLogins:
 
             async def guard() -> None:
                 await self.admit()
-                valid = await self.db.call(lambda db: any(item.name == value.name and item.launch_id == launch for item in mcp_management.effective(db, "")))
+                valid = await self.store.db.call(lambda db: any(item.name == value.name and item.launch_id == launch for item in mcp_management.effective(db, "")))
                 if not valid:
                     raise BackendError("mcp_config_changed")
 
@@ -383,7 +406,7 @@ class McpLogins:
             return view
 
     async def save(self, login: McpLogin) -> None:
-        await self.db.call(lambda db: db.execute("UPDATE mcp_logins SET view=? WHERE id=?", (login.view.model_dump_json(), login.view.login_id)), write=True)
+        await self.store.transaction(lambda db: db.execute("UPDATE mcp_logins SET view=? WHERE id=?", (login.view.model_dump_json(), login.view.login_id)))
 
     async def input(self, login_id: str, text: str) -> OAuthView:
         await self.admit()
@@ -405,7 +428,7 @@ class McpLogins:
         view = await self.view(login_id)
         if login is None and view.phase == "unknown":
             view = view.model_copy(update={"phase": "cancelled", "url": ""})
-            await self.db.call(lambda db: db.execute("UPDATE mcp_logins SET view=? WHERE id=?", (view.model_dump_json(), login_id)), write=True)
+            await self.store.transaction(lambda db: db.execute("UPDATE mcp_logins SET view=? WHERE id=?", (view.model_dump_json(), login_id)))
         return view
 
     async def close(self) -> None:

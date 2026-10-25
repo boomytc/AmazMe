@@ -20,8 +20,8 @@ from .contracts import (
     McpConfiguredServer,
     McpConfigWrite,
     McpExposure,
-    McpLaunch,
     McpHttpSettings,
+    McpLaunch,
     McpServerSettings,
 )
 
@@ -117,7 +117,10 @@ def server_id(item: Configured, session: str, reconnect: str = "") -> str:
 
 def launch(item: Configured, workspace: str) -> McpLaunch:
     if isinstance(item.settings, McpHttpSettings):
-        return McpLaunch(command=item.settings.url, workspace=workspace, http=item.settings, timeout_seconds=item.settings.timeout,
+        settings = item.settings.model_copy(update={"headers": {key: value if value.startswith("!") else expand_reference(value) for key, value in item.settings.headers.items()}})
+        if settings.oauth and settings.oauth.client_secret and not settings.oauth.client_secret.startswith("!"):
+            settings = settings.model_copy(update={"oauth": settings.oauth.model_copy(update={"client_secret": expand_reference(settings.oauth.client_secret)})})
+        return McpLaunch(command=settings.url, workspace=workspace, http=settings, timeout_seconds=item.settings.timeout,
                          managed_id=item.config_id, name=item.name)
     environment = {key: expand_reference(value) for key, value in item.settings.env.items() if not value.startswith("!")}
     commands = {key: value[1:] for key, value in item.settings.env.items() if value.startswith("!")}

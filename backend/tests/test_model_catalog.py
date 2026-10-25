@@ -165,7 +165,9 @@ async def test_worker_submit_uses_the_reloaded_model_without_the_key(tmp_path: P
         payload = await worker.store.db.call(lambda db: db.execute(
             "SELECT payload FROM runs WHERE request_id='turn'").fetchone()[0])
         assert "deepseek-chat" in payload and "https://gateway.example/v1" in payload
-        assert SECRET not in payload and "pw" not in payload and "demo" not in payload
+        stored = json.loads(payload)["config"]
+        assert SECRET not in payload
+        assert stored["api_key"] == "" and stored["proxy"] == "http://127.0.0.1:9" and stored["headers"] == {}
     finally:
         await worker.store.db.close()
         await worker.supervisor.close()

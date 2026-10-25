@@ -9,7 +9,7 @@ import time
 import httpx
 import uvicorn
 from fastapi import FastAPI
-from pydantic import JsonValue, TypeAdapter
+from pydantic import JsonValue
 
 from .accounts import AccountStore, ApiKeyCredential
 from .common import Peer, Profile, build_id, lock, unix_listener
@@ -17,8 +17,8 @@ from .contracts import (
     ApprovalEnvelope,
     BackendError,
     Cancel,
-    CancelPlugin,
     CancelCode,
+    CancelPlugin,
     Cleanup,
     CodeStatus,
     CodeView,
@@ -84,6 +84,9 @@ from .providers import Completion, stream
 from .session_domain import (
     Action,
     CloseEpoch,
+    CodemodeInput,
+    CodeRetrieval,
+    CodeReturned,
     ComputerRetrieval,
     ComputerReturned,
     Continue,
@@ -97,9 +100,6 @@ from .session_domain import (
     ModelReturned,
     Observation,
     OpenEpoch,
-    CodeRetrieval,
-    CodeReturned,
-    CodemodeInput,
     Park,
     PluginRetrieval,
     PluginReturned,
@@ -411,7 +411,7 @@ class Worker:
             data = dict(call.result_data or {})
             content = data.get("content")
             images: list[ImagePart] = []
-            parts: list[object] = []
+            parts: list[JsonValue] = []
             for part in content if isinstance(content, list) else []:
                 resource = part.get("resource") if isinstance(part, dict) else None
                 image = {"media_type": part.get("mimeType"), "data_base64": part.get("data")} if isinstance(part, dict) and part.get("type") == "image" else (
@@ -429,7 +429,7 @@ class Worker:
                 images = []
                 parts.append({"type": "text", "text": "MCP completed; invalid media omitted. Do not repeat the call."})
             if isinstance(content, list):
-                data["content"] = TypeAdapter(list[JsonValue]).validate_python(parts)
+                data["content"] = parts
             summary = "\n".join(str(part["text"]) for part in parts if isinstance(part, dict) and isinstance(part.get("text"), str)) if isinstance(content, list) else call.result
             payload = json.dumps({"text": summary or "MCP result", "is_error": call.is_error, "data": data},
                                  ensure_ascii=False)

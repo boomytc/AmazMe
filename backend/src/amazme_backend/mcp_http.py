@@ -18,7 +18,16 @@ from pydantic import JsonValue
 from .common import Profile
 from .contracts import BackendError, McpHttpSettings, McpTool
 from .mcp_auth import http_settings
-from .mcp_gate import CALL_IDENTITY_LIMIT, LIMIT, MESSAGE, VERSIONS, _catalog, _lines, _mapping, _send
+from .mcp_gate import (
+    CALL_IDENTITY_LIMIT,
+    LIMIT,
+    MESSAGE,
+    VERSIONS,
+    mcp_object,
+    parse_catalog,
+    read_messages,
+    write_message,
+)
 
 
 class HttpGate:
@@ -69,7 +78,7 @@ class HttpGate:
                 elif method == "notifications/tools/list_changed":
                     self.changed.set()
                 elif method == "notifications/progress":
-                    params = _mapping(message.get("params"))
+                    params = mcp_object(message.get("params"))
                     token = params.get("progressToken")
                     if isinstance(token, str) and token in self.progress:
                         self.progress[token] = time.monotonic()
@@ -86,13 +95,13 @@ class HttpGate:
         while True:
             self.sequence += 1
             reply = await self.rpc("tools/list", params, f"catalog:{self.sequence}", 10)
-            result = _mapping(reply.get("result"))
-            tools.extend(_catalog(result))
+            result = mcp_object(reply.get("result"))
+            tools.extend(parse_catalog(result))
             if len(tools) > 64 or len({tool.name for tool in tools}) != len(tools):
                 raise BackendError("mcp_catalog_capacity")
             cursor = result.get("nextCursor")
             if cursor is None:
-                _send(1, MESSAGE.validate_python({"op": "catalog", "tools": [tool.model_dump(mode="json") for tool in tools], "protocol_version": self.version}))
+                write_message(1, MESSAGE.validate_python({"op": "catalog", "tools": [tool.model_dump(mode="json") for tool in tools], "protocol_version": self.version}))
                 return
             if not isinstance(cursor, str) or cursor in cursors or len(cursors) >= 64:
                 raise BackendError("mcp_catalog_cursor")
@@ -108,18 +117,18 @@ class HttpGate:
             try:
                 await self.catalog()
             except (BackendError, ValueError, TimeoutError):
-                _send(1, {"op": "catalog_failed"})
+                write_message(1, {"op": "catalog_failed"})
 
     async def call(self, identity: str, name: str, arguments: dict[str, JsonValue], canonical: str) -> None:
         reply = await self.rpc("tools/call", {"name": name, "arguments": arguments, "_meta": {"progressToken": identity}}, identity, self.settings.timeout)
         error = "error" in reply
-        result = _mapping(reply.get("error") if error else reply.get("result"))
+        result = mcp_object(reply.get("error") if error else reply.get("result"))
         content = result.get("content")
         parts = [part.get("text") for part in content if isinstance(part, dict)] if isinstance(content, list) else []
         text = "\n".join(part for part in parts if isinstance(part, str)) or json.dumps(result, ensure_ascii=False)
         response: dict[str, JsonValue] = {"op": "result", "call_id": identity, "text": text[:8000], "data": result, "is_error": error or result.get("isError") is True}
         self.seen[identity] = canonical, response
-        _send(1, response)
+        write_message(1, response)
 
     async def cancel(self, identity: str) -> None:
         await self.send({"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": identity, "reason": "User cancelled call"}})
@@ -134,7 +143,7 @@ class HttpGate:
                 if not raw:
                     return
                 buffer.extend(raw)
-                for message in _lines(buffer):
+                for message in read_messages(buffer):
                     op, identity = message.get("op"), message.get("call_id")
                     if op == "cancel":
                         if self.active:
@@ -143,7 +152,7 @@ class HttpGate:
                     if op == "cancel_call" and isinstance(identity, str):
                         if self.active and self.active[0] == identity:
                             await self.cancel(identity)
-                        _send(1, {"op": "cancel_ack", "call_id": identity})
+                        write_message(1, {"op": "cancel_ack", "call_id": identity})
                         continue
                     name, arguments = message.get("name"), message.get("arguments")
                     if op != "call" or not isinstance(identity, str) or not isinstance(name, str) or not isinstance(arguments, dict):
@@ -152,15 +161,15 @@ class HttpGate:
                     prior = self.seen.get(identity)
                     if prior:
                         if prior[0] != canonical:
-                            _send(1, {"op": "conflict", "call_id": identity})
+                            write_message(1, {"op": "conflict", "call_id": identity})
                         elif prior[1] is not None:
-                            _send(1, prior[1])
+                            write_message(1, prior[1])
                         continue
                     if self.active and not self.active[1].done():
-                        _send(1, {"op": "busy", "call_id": identity})
+                        write_message(1, {"op": "busy", "call_id": identity})
                         continue
                     if len(self.seen) >= CALL_IDENTITY_LIMIT:
-                        _send(1, {"op": "conflict", "call_id": identity})
+                        write_message(1, {"op": "conflict", "call_id": identity})
                         continue
                     self.seen[identity] = canonical, None
                     task = asyncio.create_task(self.call(identity, name, arguments, canonical))
@@ -178,7 +187,7 @@ class HttpGate:
         tasks[0].add_done_callback(self.completed)
         try:
             initialized = await self.rpc("initialize", {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "pi", "version": "0.1.0"}}, "initialize", 10)
-            result = _mapping(initialized.get("result"))
+            result = mcp_object(initialized.get("result"))
             version = result.get("protocolVersion")
             if not isinstance(version, str) or version not in VERSIONS or not isinstance(result.get("serverInfo"), dict):
                 raise BackendError("mcp_initialize_failed")
@@ -215,5 +224,5 @@ async def run_http_gate(permit: dict[str, JsonValue]) -> int:
     async with httpx.AsyncClient(headers=headers, auth=auth, timeout=httpx.Timeout(15, read=None), trust_env=False, follow_redirects=False) as client:
         async with streamable_http_client(settings.url, http_client=client) as (incoming, outgoing, _session):
             await HttpGate(incoming, outgoing, settings).run()
-    _send(1, {"op": "exit", "code": 0})
+    write_message(1, {"op": "exit", "code": 0})
     return 0

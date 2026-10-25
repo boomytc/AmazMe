@@ -314,7 +314,7 @@ def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions |
         from .tool_search import ToolSearchInput
         tools.append({"type": "function", "function": {"name": "tool_search", "description": "Search deferred tool metadata with BM25 and load matching tools for the next model call. For MCP tool discovery, use tool_search.", "parameters": ToolSearchInput.model_json_schema()}})
     if codemode and (any(offer.exposure == "codemode" for offer in offers or []) or options is not None and options.allowed_tools is not None and options.tool_allowed("codemode")):
-        tools.append({"type": "function", "function": {"name": "codemode", "description": "Run JavaScript that calls other tools through tools.name(arguments). Use text(), image(), store() and load(). Nested calls use the session's approvals and cancellation. An unknown result must not be replayed.", "parameters": {"type": "object", "properties": {"code": {"type": "string", "minLength": 1, "maxLength": 8000}}, "required": ["code"], "additionalProperties": False}}})
+        tools.append({"type": "function", "function": {"name": "codemode", "description": "Run JavaScript that calls other tools through tools.name(arguments). Discover names and descriptions in ALL_TOOLS; each description includes the JSON parameter schema. Use text(), image(), store() and load(). Nested calls use the session's approvals and cancellation. An unknown result must not be replayed.", "parameters": {"type": "object", "properties": {"code": {"type": "string", "minLength": 1, "maxLength": 8000}}, "required": ["code"], "additionalProperties": False}}})
     return tools if options is None else [tool for tool in tools if options.tool_allowed(tool["function"]["name"])]
 
 

@@ -21,13 +21,13 @@ VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
 MESSAGE = TypeAdapter(dict[str, JsonValue])
 
 
-def _mapping(value: JsonValue) -> dict[str, JsonValue]:
+def mcp_object(value: JsonValue) -> dict[str, JsonValue]:
     if not isinstance(value, dict):
         raise ValueError("MCP object required")
     return value
 
 
-def _send(fd: int, value: dict[str, JsonValue]) -> None:
+def write_message(fd: int, value: dict[str, JsonValue]) -> None:
     packet = (json.dumps(value, ensure_ascii=False) + "\n").encode()
     if len(packet) > LIMIT:
         raise ValueError("MCP message exceeds limit")
@@ -45,7 +45,7 @@ def _send(fd: int, value: dict[str, JsonValue]) -> None:
         offset += count
 
 
-def _lines(buffer: bytearray) -> list[dict[str, JsonValue]]:
+def read_messages(buffer: bytearray) -> list[dict[str, JsonValue]]:
     result: list[dict[str, JsonValue]] = []
     while b"\n" in buffer:
         line, _, rest = bytes(buffer).partition(b"\n")
@@ -59,14 +59,14 @@ def _lines(buffer: bytearray) -> list[dict[str, JsonValue]]:
     return result
 
 
-def _catalog(value: dict[str, JsonValue]) -> list[McpTool]:
+def parse_catalog(value: dict[str, JsonValue]) -> list[McpTool]:
     entries = value.get("tools")
     if not isinstance(entries, list):
         raise ValueError("MCP tools list missing")
     tools: list[McpTool] = []
     for entry in entries:
-        tool = _mapping(entry)
-        schema = _mapping(tool.get("inputSchema"))
+        tool = mcp_object(entry)
+        schema = mcp_object(tool.get("inputSchema"))
         name = tool.get("name")
         if schema.get("type") != "object" or not isinstance(name, str):
             raise ValueError("MCP inputSchema or name invalid")
@@ -89,7 +89,7 @@ def _stop_server(server: subprocess.Popen[bytes]) -> int:
     raise TimeoutError("MCP process exit unconfirmed")
 
 
-def _environment(launch: McpLaunch, shell: str, cwd: str) -> dict[str, str]:
+def launch_environment(launch: McpLaunch, shell: str, cwd: str) -> dict[str, str]:
     environment = {**tool_environment(), **launch.environment}
     deadline = time.monotonic() + 10
     cached: dict[str, str] = {}
@@ -135,7 +135,7 @@ def main() -> int:
         control.extend(data)
         if len(control) > LIMIT:
             return 125
-    messages = _lines(control)
+    messages = read_messages(control)
     if len(messages) != 1:
         return 125
     permit = messages[0]
@@ -156,7 +156,7 @@ def main() -> int:
     except ValueError:
         return 125
     shell = pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
-    server = subprocess.Popen([shell, "-c", command], cwd=cwd, env=_environment(launch, shell, cwd),
+    server = subprocess.Popen([shell, "-c", command], cwd=cwd, env=launch_environment(launch, shell, cwd),
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               start_new_session=True)
     assert server.stdin is not None and server.stdout is not None
@@ -180,7 +180,7 @@ def main() -> int:
         nonlocal number
         current = number
         number += 1
-        _send(writer, {"jsonrpc": "2.0", "id": current, "method": method, "params": params})
+        write_message(writer, {"jsonrpc": "2.0", "id": current, "method": method, "params": params})
         return current
 
     def begin_list(next_phase: str) -> None:
@@ -194,7 +194,7 @@ def main() -> int:
 
     def finish_list() -> None:
         nonlocal phase, pending_refresh
-        _send(1, {"op": "catalog", "tools": cast(list[JsonValue], [t.model_dump() for t in tools]), "protocol_version": version})
+        write_message(1, {"op": "catalog", "tools": cast(list[JsonValue], [t.model_dump() for t in tools]), "protocol_version": version})
         phase = "ready"
         if pending_refresh:
             pending_refresh = False
@@ -203,7 +203,7 @@ def main() -> int:
     def fail_refresh() -> None:
         """A changed list that cannot be read leaves the last published catalog in place."""
         nonlocal phase, pending_refresh
-        _send(1, {"op": "catalog_failed"})
+        write_message(1, {"op": "catalog_failed"})
         phase = "ready"
         if pending_refresh:
             pending_refresh = False
@@ -216,7 +216,7 @@ def main() -> int:
         while True:
             readable, _, _ = select.select([0, reader], [], [], .05)
             if waiting is not None and time.monotonic() >= call_deadline:
-                _send(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": waiting[1], "reason": "Request timed out"}})
+                write_message(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": waiting[1], "reason": "Request timed out"}})
                 return 125
             if phase == "refresh" and time.monotonic() > refresh_deadline:
                 fail_refresh()
@@ -228,28 +228,28 @@ def main() -> int:
                 if not data:
                     return 125
                 control.extend(data)
-                for message in _lines(control):
+                for message in read_messages(control):
                     op = message.get("op")
                     if op == "cancel":
                         if waiting is not None:
-                            _send(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled",
+                            write_message(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled",
                                            "params": {"requestId": waiting[1], "reason": "User stopped service"}})
                         code = _stop_server(server)
-                        _send(1, {"op": "exit", "code": code})
+                        write_message(1, {"op": "exit", "code": code})
                         return code
                     if op == "cancel_call":
                         target = message.get("call_id")
                         if not isinstance(target, str):
                             raise ValueError("MCP cancel shape invalid")
                         if waiting is not None and waiting[0] == target:
-                            _send(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled",
+                            write_message(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled",
                                            "params": {"requestId": waiting[1], "reason": "User cancelled call"}})
-                        _send(1, {"op": "cancel_ack", "call_id": target})
+                        write_message(1, {"op": "cancel_ack", "call_id": target})
                         continue
                     if op == "call" and phase != "ready":
                         refused = message.get("call_id")
                         if isinstance(refused, str):
-                            _send(1, {"op": "busy", "call_id": refused})
+                            write_message(1, {"op": "busy", "call_id": refused})
                         continue
                     if op != "call" or phase != "ready":
                         raise ValueError("MCP call before ready")
@@ -259,13 +259,13 @@ def main() -> int:
                     canonical = json.dumps({"name": name, "arguments": arguments}, sort_keys=True, ensure_ascii=False)
                     previous = seen.get(call_id)
                     if previous is not None:
-                        _send(1, previous[1] if previous[0] == canonical else {"op": "conflict", "call_id": call_id})
+                        write_message(1, previous[1] if previous[0] == canonical else {"op": "conflict", "call_id": call_id})
                         continue
                     if waiting is not None:
                         raise ValueError("MCP call capacity")
                     if len(seen) >= CALL_IDENTITY_LIMIT:
                         # Keep every sent identity. A full history refuses the new id and does not stop the service.
-                        _send(1, {"op": "conflict", "call_id": call_id})
+                        write_message(1, {"op": "conflict", "call_id": call_id})
                         continue
                     waiting = (call_id, request("tools/call", {"name": name, "arguments": arguments, "_meta": {"progressToken": number}}), canonical)
                     call_deadline = time.monotonic() + launch.timeout_seconds
@@ -273,10 +273,10 @@ def main() -> int:
                 data = os.read(reader, 4096)
                 if not data:
                     code = server.wait(timeout=2)
-                    _send(1, {"op": "exit", "code": code})
+                    write_message(1, {"op": "exit", "code": code})
                     return code
                 inbox.extend(data)
-                for message in _lines(inbox):
+                for message in read_messages(inbox):
                     if message.get("jsonrpc") != "2.0":
                         raise ValueError("Invalid JSON-RPC version")
                     if "method" in message:
@@ -294,17 +294,17 @@ def main() -> int:
                             continue
                         reply: dict[str, JsonValue] = {"jsonrpc": "2.0", "id": message["id"]}
                         reply["result" if message["method"] == "ping" else "error"] = {} if message["method"] == "ping" else {"code": -32601, "message": "Method not supported"}
-                        _send(writer, reply)
+                        write_message(writer, reply)
                         continue
                     if phase == "initialize":
                         if message.get("id") != expected or "result" not in message:
                             raise ValueError("MCP initialize failed")
-                        result = _mapping(message["result"])
+                        result = mcp_object(message["result"])
                         raw_version = result.get("protocolVersion")
                         if not isinstance(raw_version, str) or raw_version not in VERSIONS or not isinstance(result.get("serverInfo"), dict):
                             raise ValueError("MCP version unsupported")
                         version = raw_version
-                        _send(writer, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+                        write_message(writer, {"jsonrpc": "2.0", "method": "notifications/initialized"})
                         begin_list("catalog")
                     elif phase in {"catalog", "refresh"}:
                         if message.get("id") != expected or "result" not in message:
@@ -312,8 +312,8 @@ def main() -> int:
                                 fail_refresh()
                                 continue
                             raise ValueError("MCP catalog failed")
-                        result = _mapping(message["result"])
-                        tools.extend(_catalog(result))
+                        result = mcp_object(message["result"])
+                        tools.extend(parse_catalog(result))
                         if len(tools) > 64 or len({t.name for t in tools}) != len(tools):
                             if phase == "refresh":
                                 fail_refresh()
@@ -335,13 +335,13 @@ def main() -> int:
                         if message.get("id") != expected:
                             continue
                         is_error = "error" in message
-                        result = _mapping(message["error"] if is_error else message.get("result"))
+                        result = mcp_object(message["error"] if is_error else message.get("result"))
                         is_error |= result.get("isError") is True
                         content = result.get("content", [])
                         parts = [v.get("text") for v in content if isinstance(v, dict)] if isinstance(content, list) else []
                         text = "\n".join(v for v in parts if isinstance(v, str)) or json.dumps(result, ensure_ascii=False)
                         reply = {"op": "result", "call_id": call_id, "text": text[:8000], "data": result, "is_error": is_error}
-                        _send(1, reply)
+                        write_message(1, reply)
                         seen[call_id] = canonical, reply
                         waiting = None
                         if pending_refresh:

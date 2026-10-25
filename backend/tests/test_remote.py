@@ -1,6 +1,7 @@
 """Remote daemon identity and disconnect. EOF is not a stop proof."""
 
 import json
+import sqlite3
 import subprocess
 import sys
 import time
@@ -40,6 +41,9 @@ async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Supervi
         "format": 2, "profile_id": "remote", "workspace": str(tmp_path), "resources": "unused",
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
+    with sqlite3.connect(tmp_path / "host.sqlite") as db:
+        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0)")
+        db.execute("INSERT INTO sessions(id,workspace) VALUES(?,'primary')", ("a" * 32,))
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
     from helpers.remote_probe_client import RemoteClient as ProbeClient
     monkeypatch.setattr("amazme_backend.supervisor.RemoteClient.connect", lambda target, *args: ProbeClient.connect(target.host))

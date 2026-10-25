@@ -71,9 +71,9 @@ from .resources import session_resources
 from .session_domain import (
     Action,
     CloseEpoch,
+    CodemodeInput,
     CodeRetrieval,
     CodeReturned,
-    CodemodeInput,
     ComputerRetrieval,
     ComputerReturned,
     Continue,

@@ -69,8 +69,8 @@ from .contracts import (
     CheckpointView,
     Cleanup,
     ClosePlugin,
-    CodeRun,
     CodeChild,
+    CodeRun,
     CodeToolBinding,
     CodeToolDispatch,
     CodeToolReceipt,
@@ -124,10 +124,10 @@ from .contracts import (
     McpConfigWrite,
     McpDecision,
     McpDecisionEnvelope,
+    McpLoginRequest,
     McpOpen,
     McpQuery,
     McpReconnect,
-    McpLoginRequest,
     McpSession,
     McpState,
     McpView,
@@ -139,6 +139,7 @@ from .contracts import (
     ModelCatalog,
     ModelScope,
     ModelScopeRequest,
+    ModelSelection,
     ModelSettings,
     OpenCode,
     OpenMcp,
@@ -165,9 +166,9 @@ from .contracts import (
     ProjectUpdate,
     ProjectView,
     ProjectWrite,
-    ProviderConfigured,
     ProviderCheck,
     ProviderCheckRequest,
+    ProviderConfigured,
     Receipt,
     Recovery,
     ReloadPlugin,
@@ -233,14 +234,22 @@ from .faults import Faults
 from .host_store import Delivery, HostStore, ServiceRecord, checkpoint_id
 from .manage import bundle_digest, bundle_text, contains_secret, transcript_digest
 from .manage import digest as content_digest
+from .mcp_auth import McpLogins
 from .memories import match_memories, remember, session_workspace
 from .oauth import BROWSER, DEVICE, OAuthInput, OAuthStart, OAuthView
 from .oauth import Login as OAuthLogin
 from .page_boot import boot_document, frontend_directory
-from .mcp_auth import McpLogins
 from .plugin_run import entry_digest
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
-from .providers import CATALOG, Completion, checked_model_endpoint, choose_model, public_settings, stream, summarize
+from .providers import (
+    CATALOG,
+    Completion,
+    checked_model_endpoint,
+    choose_model,
+    public_settings,
+    stream,
+    summarize,
+)
 from .remote_session import daemon_identity
 from .resources import ResourceCatalog, session_resources
 from .rpc import RpcCall, handle_rpc
@@ -331,7 +340,7 @@ class Host:
         self.schedule_tick_ms = 0
         self.accounts = AccountStore(profile.account_path)
         self.oauth_logins: dict[str, OAuthLogin] = {}
-        self.mcp_signins = McpLogins(profile, self.store.db, self._account_write_guard)
+        self.mcp_signins = McpLogins(profile, self.store, self._account_write_guard)
         self.attached = ""
         self.stop = asyncio.Event()
         self.closing = False
@@ -2753,6 +2762,15 @@ class Host:
                 raise BackendError("update_frozen", status=503)
             purpose = "validation" if active else "business"
             if not active and not validation_probe:
+                health = await self.supervisor.call("GET", "/health", SupervisorHealth)
+                service = await self.store.service()
+                if service is None:
+                    raise BackendError("supervisor_unavailable", status=503)
+                self._check_supervisor(health.identity, service, fenced=True)
+                if "worker_restart_budget_exhausted" in health.session_errors.get(session, []):
+                    raise BackendError("worker_restart_budget_exhausted", status=503)
+                if health.freeze_id or health.blocked or health.session_errors.get(session) or health.identity.state != "ready":
+                    raise BackendError("execution_blocked", status=503)
                 await self._sync_plugin_packages(session)
                 await self._sync_mcp_configuration(session)
             info = await self.supervisor.call("POST", "/workers/ensure", WorkerInfo, WorkerSpec(
