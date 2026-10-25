@@ -18,6 +18,7 @@ import { processGroups, type ProcessGroup } from "./process-groups.ts";
 import { createMultiselect } from "./multiselect.ts";
 import { createFileBrowser } from "./file-browser.ts";
 import { createReadingControls } from "./reading-controls.ts";
+import { createPtySurface } from "./pty-surface.ts";
 import { FALLBACK_LOCALE, type Locale } from "./locale.ts";
 import { formatMarkdown, tokenizeCode, type InlineNode, type MarkdownNode, type TableAlignment, type TableNode } from "./markdown.ts";
 import { insertDraftText, quotedDraft } from "./quote.ts";
@@ -141,6 +142,8 @@ type ConnectionText = string | ((locale: Locale) => string);
 type ConnectionState = "connecting" | "connected" | "disconnected";
 
 export interface PageRenderer {
+	onTerminalInput?: (id: string, data: string) => void;
+	onTerminalResize?: (id: string, cols: number, rows: number) => void;
 	render(view: WebView): void;
 	/** Show an action diagnostic without changing the rail's connectivity indicator. */
 	setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void;
@@ -2771,16 +2774,24 @@ export function createRenderer(
 		const row = element("p", "queue-item");
 		row.dataset.submissionId = item.id;
 		row.append(userText(item.text, "queue-text"));
+		if (item.retry) row.append(panelButton(item.retry, report));
 		const cancel = panelButton(item.cancel, report);
 		cancel.className = "queue-cancel";
-		cancel.title = copy("queue.cancelAria");
-		cancel.setAttribute("aria-label", copy("queue.cancelAria"));
+		cancel.title = item.retry ? item.cancel.label : copy("queue.cancelAria");
+		cancel.setAttribute("aria-label", cancel.title);
 		row.append(cancel);
 		return row;
 	};
 
 	/** Which opened file diff the dock has already scrolled to. A later repaint must not yank the list. */
 	let dockReviewKey = "";
+	const ptyChrome = element("div", "pty-chrome");
+	const ptySurface = createPtySurface({
+		data: (id, data) => renderer.onTerminalInput?.(id, data),
+		resize: (id, cols, rows) => renderer.onTerminalResize?.(id, cols, rows),
+		error: error => renderer.setConnection(error instanceof Error ? error.message : String(error), "error"),
+	});
+	window.addEventListener("pagehide", () => ptySurface.dispose(), { once: true });
 
 	/** The dock: the tabs, the open tab's panel, and the class that gives it a column. */
 	const renderDock = (view: WebView): void => {
@@ -2832,11 +2843,17 @@ export function createRenderer(
 		// A group titled the same as the panel repeats that word. Its actions sit beside the panel
 		// title, and the extra heading goes, even when a later group (such as return points) remains.
 		const repeated = panel.groups.find(group => group.title.length > 0 && group.title === panel.title);
-		replacePanel(elements.dockBody, repeated === undefined ? panel : {
+		const panelContainer = view.dock.pty ? ptyChrome : elements.dockBody;
+		if (view.dock.pty && ptyChrome.parentElement !== elements.dockBody) elements.dockBody.replaceChildren(ptyChrome, ptySurface.element);
+		if (!view.dock.pty || changed("dock-terminal-chrome", [panel, view.locale, view.dock.pty.id])) replacePanel(panelContainer, repeated === undefined ? panel : {
 			...panel,
 			actions: repeated.actions ?? panel.actions,
 			groups: panel.groups.map(group => group === repeated ? { ...group, title: "", actions: undefined } : group),
 		});
+		if (view.dock.pty) {
+			if (ptySurface.element.parentElement !== elements.dockBody) elements.dockBody.append(ptySurface.element);
+			ptySurface.update(view.dock.pty);
+		}
 		const review = elements.dockBody.querySelector<HTMLElement>("[data-review-open]");
 		const reviewKey = review?.dataset.reviewOpen ?? "";
 		if (reviewKey !== dockReviewKey) {
@@ -3967,6 +3984,7 @@ export function createRenderer(
 	};
 	document.addEventListener("keydown", (event) => {
 		if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || elements.modalRoot.open) return;
+		if (event.target instanceof Element && event.target.closest(".pty-surface")) return;
 		const fontAction = fontSizeShortcut(event, navigator.platform, window.amazmeDesktop !== undefined);
 		if (fontAction !== undefined) {
 			event.preventDefault();
@@ -4025,6 +4043,7 @@ export function createRenderer(
 	});
 	document.addEventListener("keydown", (event) => {
 		if (event.key !== "Escape" || event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
+		if (event.target instanceof Element && event.target.closest(".pty-surface")) return;
 		if (sessionMenu !== undefined) {
 			event.preventDefault();
 			closeSessionMenu(true);

@@ -111,6 +111,19 @@ test("unknown results and stale binding errors keep the original record", async 
  expect(ledger.read("submit", record.operation)?.id).toBe(record.id);
 });
 
+test("a damaged persisted payload and a reply for a different request preserve the original record", async () => {
+ const ledger = new PendingWrites(sessionStorage, "host", "a"), operation = "POST /api/v1/sessions/{session}/submissions";
+ const record = ledger.prepare("submit", operation, id => ({ path: { session: "a" }, body: { request_id: id, text: "你好" } }));
+ const key = ledger.prefix + "submit";
+ sessionStorage.setItem(key, JSON.stringify({ ...record, body: null }));
+ expect(() => ledger.read("submit", operation)).toThrow("契约");
+ expect(sessionStorage.getItem(key)).toContain('"body":null');
+ sessionStorage.setItem(key, JSON.stringify(record));
+ vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(receipt("different")), { status: 202 })));
+ await expect(ledger.send("submit", record, new PythonClient("http://127.0.0.1:4310"), connection("a"))).rejects.toThrow("编号不匹配");
+ expect(ledger.read("submit", operation)?.id).toBe(record.id);
+});
+
 test("a failed reconnect can recover, and selecting B cancels A's scheduled retry", async () => {
  vi.useFakeTimers();
  const sockets: string[] = [];

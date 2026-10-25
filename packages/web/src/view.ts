@@ -328,6 +328,8 @@ export function attachments(
 
 /** One queued input the session accepted but has not started. */
 export interface QueueItem {
+	/** An unconfirmed submission can retry its original ID as well as cancel it. */
+	readonly retry?: PanelButton;
 	/** The inbox submission id, the subject of a withdraw. */
 	readonly id: string;
 	readonly text: string;

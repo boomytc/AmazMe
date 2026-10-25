@@ -3,12 +3,18 @@
 import base64
 import hashlib
 import json
+import re
+import secrets
 import sys
 from pathlib import Path
 
 from .contracts import BackendError, Identity
 
-PAGE = Path(__file__).with_name("web") / "index.html"
+
+def frontend_directory() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(__file__).with_name("web") / "client"
+    return Path(__file__).resolve().parents[3] / "packages/web/dist/page"
 
 
 def transport_url(origin: str) -> str:
@@ -44,21 +50,36 @@ def boot_script(manifest: dict[str, object]) -> str:
     return "<script>" + boot_script_source(manifest) + "</script>"
 
 
-def page_content_security_policy(source: str) -> str:
+def page_content_security_policy(source: str, html: str = "", style_nonce: str = "") -> str:
     digest = base64.b64encode(hashlib.sha256(source.encode()).digest()).decode()
+    scripts = [f"'sha256-{digest}'"]
+    styles = []
+    if style_nonce:
+        styles.append(f"'nonce-{style_nonce}'")
+    for tag, content in re.findall(r"<(script|style)(?:\s[^>]*)?>(.*?)</\1>", html, re.DOTALL):
+        if not content.strip():
+            continue
+        digest = base64.b64encode(hashlib.sha256(content.encode()).digest()).decode()
+        (scripts if tag == "script" else styles).append(f"'sha256-{digest}'")
     return (
         "default-src 'self'; "
-        f"script-src 'self' 'sha256-{digest}'; "
-        "frame-ancestors 'none'; connect-src 'self'; style-src 'self'"
+        f"script-src 'self' {' '.join(scripts)}; "
+        "frame-ancestors 'none'; connect-src 'self'; img-src 'self' data: blob:; "
+        f"style-src 'self' {' '.join(styles)}"
     )
 
 
 def boot_document(identity: Identity, origin: str) -> tuple[str, str]:
     source = boot_script_source(boot_manifest(identity, origin))
-    html = PAGE.read_text()
+    html = (frontend_directory() / "index.html").read_text()
     if "</head>" not in html:
         raise BackendError("boot_document_invalid")
-    return html.replace("</head>", "<script>" + source + "</script></head>", 1), page_content_security_policy(source)
+    nonce = secrets.token_urlsafe(24)
+    marker = '<meta name="amazme-style-nonce" content="' + nonce + '">'
+    injection = marker + "<script>" + source + "</script>"
+    document = (html.replace("<!--amazme-boot-->", injection, 1) if "<!--amazme-boot-->" in html
+                else html.replace("</head>", injection + "</head>", 1))
+    return document, page_content_security_policy(source, html, nonce)
 
 
 def boot_page(identity: Identity, origin: str) -> str:

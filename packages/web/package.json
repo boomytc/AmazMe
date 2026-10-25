@@ -34,7 +34,7 @@
 	},
 	"scripts": {
 		"clean": "shx rm -rf dist",
-		"build": "npm run clean && tsc -p tsconfig.build.json && shx cp -r src/page dist/page",
+		"build": "npm run clean && tsc -p tsconfig.build.json && shx cp -r src/page dist/page && node build-page.mjs",
 		"test": "vitest --run",
 		"typecheck": "tsc -p tsconfig.test.json"
 	},

@@ -44,3 +44,27 @@ test("persistent rail navigation keeps keyboard focus while a destination repain
 	expect((document.activeElement as HTMLElement).dataset.view).toBe("plugins");
 	expect(elements.dock.hidden).toBe(true);
 });
+
+test("terminal keyboard focus survives control and pending-input updates", () => {
+	const { renderer, elements } = setup();
+	const base = renderer.view;
+	if (!base) throw new Error("Missing view");
+	const terminal = { ...base.dock, open: true, panel: { id: "terminal", title: "Terminal", notices: [], groups: [], actions: [{ id: "retry", label: "Retry", weight: "line" as const, disabled: true }] },
+		pty: { id: "terminal", cols: 80, rows: 24, output: "", outputSeq: 0, inputEnabled: true } };
+	renderer.render({ ...base, dock: terminal });
+	const surface = elements.dockBody.querySelector<HTMLElement>(".pty-surface");
+	if (!surface) throw new Error("Missing terminal surface");
+	const input = document.createElement("textarea");
+	surface.append(input);
+	input.focus();
+	renderer.render({ ...base, dock: { ...terminal, panel: { ...terminal.panel, actions: terminal.panel.actions.map(action => ({ ...action, disabled: false })) } } });
+	expect(document.activeElement).toBe(input);
+	expect(surface.parentElement).toBe(elements.dockBody);
+	const abort = vi.fn();
+	renderer.onAbort = abort;
+	renderer.render({ ...base, busy: true, dock: terminal });
+	input.dispatchEvent(new KeyboardEvent("keydown", { key: "c", code: "KeyC", ctrlKey: true, bubbles: true, cancelable: true }));
+	input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+	expect(abort).not.toHaveBeenCalled();
+	expect(document.activeElement).toBe(input);
+});

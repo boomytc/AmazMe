@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 import type { HttpOperations } from "./python-contracts.ts";
-import { definitive, isRecord } from "./python-api.ts";
+import { definitive, isRecord, validateRequest } from "./python-api.ts";
 import type { ClientConnection, PythonClient } from "./python-client.ts";
 
 export const newId = (): string => crypto.randomUUID().replaceAll("-", "");
@@ -27,7 +27,7 @@ export class PendingWrites {
 		if (!raw) return undefined;
 		const value: unknown = JSON.parse(raw);
 		if (!isRecord(value) || typeof value.id !== "string" || value.operation !== operation || !isRecord(value.path)) throw new Error("待确认操作记录损坏；原记录已保留。");
-		// The generated request schema is checked again by PythonClient before sending.
+		validateRequest(operation, value.body);
 		return value as unknown as PendingWrite<K>;
 	}
 	prepare<K extends Operation>(key: string, operation: K, create: (id: string) => Pick<PendingWrite<K>, "path" | "body">): PendingWrite<K> {
@@ -58,6 +58,10 @@ export class PendingWrites {
 		try {
 			const result = await client.call(record.operation, { path: record.path, body: record.body, connection });
 			const value: unknown = result;
+			const body: unknown = record.body;
+			if (isRecord(value) && isRecord(body)) for (const field of ["request_id", "terminal_id", "call_id", "compaction_id", "workflow_id", "plugin_id", "automation_id"]) {
+				if (typeof body[field] === "string" && typeof value[field] === "string" && body[field] !== value[field]) throw new Error("回执操作编号不匹配；原记录已保留。");
+			}
 			if (!isRecord(value) || (value.phase !== "unknown" && value.input_status !== "unknown" && value.status !== "unknown")) this.forget(key, record);
 			return result;
 		} catch (error) {

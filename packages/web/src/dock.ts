@@ -26,6 +26,7 @@ import type { Locale } from "./locale.ts";
 import type { PanelGroup, PanelNotice, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
 import { taskBlockedCopy, taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
+import type { PtyPresentation } from "./pty-surface.ts";
 
 /** The dock's tabs, in the order it shows them. */
 export type DockTabId = "files" | "terminal" | "conversations" | "tasks" | "changes";
@@ -46,6 +47,7 @@ export interface DockTab {
 }
 
 export interface DockView {
+	readonly pty?: PtyPresentation;
 	readonly open: boolean;
 	readonly tabs: readonly DockTab[];
 	/** The open tab's panel. */

@@ -33,6 +33,8 @@ def source_identity_files() -> list[Path]:
     sandbox = root.parents[2] / "packages/codemode"
     files.extend(path for path in sorted((sandbox / "dist").rglob("*")) if path.is_file() and path.suffix == ".js")
     files.append(sandbox / "package.json")
+    client = root.parents[2] / "packages/web/dist/page"
+    files.extend(path for path in sorted(client.rglob("*")) if path.is_file() and path.suffix != ".map")
     return files
 
 

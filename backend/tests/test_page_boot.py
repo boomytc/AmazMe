@@ -40,11 +40,16 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
         response = await client.get("/")
         again = await client.get("/index.html")
-        script_file = await client.get("/app.js")
-        emulator = await client.get("/xterm-terminal.js")
-        sheet = await client.get("/xterm.css")
+        script_file = await client.get("/page.js")
+        sheet = await client.get("/page.css")
     assert response.status_code == 200
-    assert response.text == again.text == boot_page(identity, host.origin)
+    def without_nonce(document: str) -> str:
+        return re.sub(r'(<meta name="amazme-style-nonce" content=")[^"]+', r'\1NONCE', document)
+    assert without_nonce(response.text) == without_nonce(again.text) == without_nonce(boot_page(identity, host.origin))
+    nonce = re.search(r'<meta name="amazme-style-nonce" content="([^"]+)"', response.text)
+    assert nonce is not None
+    assert f"'nonce-{nonce.group(1)}'" in response.headers["content-security-policy"]
+    assert nonce.group(1) not in again.text
     marker = "globalThis.__AMAZME_BOOT__="
     payload = response.text.split(marker, 1)[1].split(";", 1)[0]
     boot = json.loads(payload)
@@ -61,12 +66,14 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     assert f"script-src 'self' 'sha256-{digest}'" in policy
     assert "unsafe-inline" not in policy
     assert script_file.status_code == 200
-    assert emulator.status_code == 200
-    assert "javascript" in emulator.headers["content-type"]
-    assert "export const Terminal" in emulator.text
-    assert "xterm-terminal.js" in script_file.text
-    assert 'href="/xterm.css"' in response.text
-    assert sheet.status_code == 200 and ".xterm-screen" in sheet.text
+    assert 'id="composer"' in response.text
+    assert 'id="modal-root"' in response.text
+    assert 'id="model-form"' not in response.text
+    assert 'id="amazme-page-entry" type="module" src="/page.js"' in response.text
+    assert 'panel.id = "startup-error"' in response.text
+    assert response.text.index("globalThis.__AMAZME_BOOT__=") < response.text.index('var preferences =')
+    assert "{{" not in response.text
+    assert sheet.status_code == 200 and ".app-rail" in sheet.text
     assert "sha256-" not in script_file.headers["content-security-policy"]
     assert "unsafe-inline" not in script_file.headers["content-security-policy"]
 

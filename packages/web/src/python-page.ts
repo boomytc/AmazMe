@@ -1,0 +1,532 @@
+/// <reference lib="dom" />
+import * as A from "./actions.ts";
+import { commandPalette, parseCommandLine, type CommandLike } from "./commands.ts";
+import { dockView, type WorkspaceStateLike } from "./dock.ts";
+import { documentLanguage, resolveLocale, type Locale } from "./locale.ts";
+import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, providerConfigurationModal, providerLogoutModal, type ModelConnectionsLike } from "./model-connections.ts";
+import { modelScopeModal } from "./model-scope.ts";
+import * as P from "./panels.ts";
+import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
+import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
+import { ApiError, isRecord } from "./python-api.ts";
+import { PythonClient, type ClientConnection } from "./python-client.ts";
+import type { AccountsView, ImagePart, ModelCatalog, OAuthView, ProductSettings, ResourceCatalog, Session, SessionModel, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import { pythonView } from "./python-view.ts";
+import { PendingWrites, newId } from "./python-writes.ts";
+import { settled } from "./python-stream.ts";
+import { TerminalInputQueue } from "./python-terminal.ts";
+import { followSystemTheme, applyTheme, resolveThemePreference } from "./theme.ts";
+import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, type Typography } from "./typography.ts";
+import { attachmentRejection, attachments, type SubmitMode } from "./view.ts";
+
+const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
+	anthropic: "browser", openai: "browser", "openai-codex": "browser", openrouter: "browser", "github-copilot": "device_code", "kimi-coding": "device_code", xai: "device_code", meta: "device_code",
+};
+interface ImageDraft { readonly id: string; readonly name: string; readonly dataUrl: string; readonly bytes: number; readonly image: ImagePart }
+interface Draft { text: string; images: ImageDraft[] }
+interface ActiveTerminal { readonly connection: ClientConnection; readonly id: string; readonly queue: TerminalInputQueue; view: TerminalView; desiredSize?: { cols: number; rows: number }; resizing: boolean }
+
+/** The original DOM surface, driven by the Python HTTP and event boundary. */
+export class DesktopPage {
+	readonly client: PythonClient;
+	readonly renderer: PageRenderer;
+	private locale: Locale = resolveLocale(localStorage.getItem("amazme:locale") ?? "auto", navigator.languages);
+	private typography: Typography = { ...DEFAULT_TYPOGRAPHY };
+	private sessions: Session[] = [];
+	private workspaces: WorkspaceGrantView[] = [];
+	private catalog?: ModelCatalog;
+	private accounts: AccountsView = { revision: 0, accounts: [] };
+	private settings?: ProductSettings;
+	private selection?: SessionModel;
+	private resources?: ResourceCatalog;
+	private usage?: UsageReport;
+	private currentPanel = P.CHAT_VIEW;
+	private modal?: P.PanelModal;
+	private notice?: P.PanelNotice;
+	private modalPending = false;
+	private rosterFilter = "";
+	private draft: Draft = { text: "", images: [] };
+	private readonly drafts = new Map<string, Draft>();
+	private readonly writes = new Map<string, PendingWrites>();
+	private mode: SubmitMode = "followUp";
+	private thinking = "off";
+	private selectedProvider?: string;
+	private enabledModels: string[] | null = null;
+	private paletteSelection = 0;
+	private newSessionPending = false;
+	private ready = false;
+	private dockOpen = false;
+	private dockTab = "files";
+	private workspace?: WorkspaceStateLike;
+	private oauth?: OAuthView;
+	private oauthTimer?: ReturnType<typeof setTimeout>;
+	private healthTimer?: ReturnType<typeof setTimeout>;
+	private metadataConnection?: ClientConnection;
+	private navigationGeneration = 0;
+	private modalGeneration = 0;
+	private globalLoadGeneration = 0;
+	private terminal?: ActiveTerminal;
+	private terminalTimer?: ReturnType<typeof setTimeout>;
+	private readonly terminalQueues = new Map<string, TerminalInputQueue>();
+	private terminalLoadGeneration = 0;
+	private readonly commands: CommandLike[] = [
+		{ name: "new", description: "新建会话" }, { name: "model", description: "模型与连接" }, { name: "settings", description: "设置" },
+		{ name: "compact", description: "压缩上下文" }, { name: "fork", description: "创建分支" }, { name: "export", description: "导出会话" },
+	];
+	constructor(origin = location.origin) {
+		this.client = new PythonClient(origin);
+		const boot: unknown = Reflect.get(globalThis, "__AMAZME_BOOT__");
+		const app = isRecord(boot) && isRecord(boot.app) && typeof boot.app.name === "string" && typeof boot.app.version === "string" ? { name: boot.app.name, version: boot.app.version } : { name: "AmazMe", version: "" };
+		this.renderer = createRenderer(collectPageElements(), undefined, app);
+		this.client.onStatus = status => {
+			this.renderer.setConnectionState({ connecting: "正在连接", connected: "已连接", reconnecting: "正在重连", disconnected: "连接已断开" }[status], status === "connected" ? "connected" : status === "disconnected" ? "disconnected" : "connecting");
+		};
+		this.client.onError = error => this.error(error);
+		this.client.onChange = () => {
+			const connection = this.client.connection;
+			this.render();
+			if (connection?.ready && this.metadataConnection !== connection) {
+				this.metadataConnection = connection;
+				void this.loadSession(connection).catch(error => { if (connection.active()) this.error(error); });
+			}
+		};
+		const run = (work: () => Promise<void>) => {
+			const connection = this.client.connection;
+			void work().catch(error => { if (!connection || connection.active()) this.error(error); });
+		};
+		this.renderer.onCreateSession = () => run(() => this.createSession());
+		this.renderer.onSelect = id => run(() => this.selectSession(id));
+		this.renderer.onSubmit = text => run(() => this.submit(text));
+		this.renderer.onAbort = () => run(() => this.cancel());
+		this.renderer.onSelectModel = (provider, model) => run(() => this.selectModel(provider, model));
+		this.renderer.onSelectThinking = level => { this.thinking = level; this.render(); };
+		this.renderer.onDraftChange = text => { this.draft.text = text; this.paletteSelection = 0; this.render(); };
+		this.renderer.onPaletteSelection = index => { this.paletteSelection = index; this.render(); };
+		this.renderer.onCommandPick = value => { this.draft.text = `/${value} `; this.renderer.setDraft(this.draft.text, true); this.render(); };
+		this.renderer.onFilterRoster = text => { this.rosterFilter = text; this.render(); };
+		this.renderer.onAttachFiles = files => run(() => this.attachFiles(files));
+		this.renderer.onPanelAction = action => run(() => this.action(action));
+		this.renderer.onTerminalInput = (id, data) => { const terminal = this.terminal; if (terminal && terminal.id === id && terminal.connection.active()) { try { terminal.queue.enqueue(data); } catch (error) { this.error(error); } } };
+		this.renderer.onTerminalResize = (id, cols, rows) => { const terminal = this.terminal; if (terminal && terminal.id === id && terminal.connection.active()) { terminal.desiredSize = { cols, rows }; run(() => this.resizeTerminal(terminal)); } };
+		this.renderer.onShortcut = id => {
+			if (id === "session.new") run(() => this.createSession());
+			else if (id === "run.stop") run(() => this.cancel());
+			else if (id.startsWith("font.")) { this.typography = { ...this.typography, ...adjustedFontSizes(this.typography, id === "font.increase" ? "increase" : id === "font.decrease" ? "decrease" : "reset") }; this.render(); }
+			else if (id === "view.cycle") { this.dockOpen = !this.dockOpen; this.render(); }
+		};
+		const bridge: unknown = Reflect.get(globalThis, "amazmeDesktop");
+		if (isRecord(bridge) && typeof bridge.pickDirectories === "function") {
+		const pick = bridge.pickDirectories.bind(bridge);
+		this.renderer.onPickDirectories = async () => {
+			const value: unknown = await pick();
+			if (!Array.isArray(value) || !value.every(item => typeof item === "string")) return undefined;
+			return value;
+		};
+		}
+		followSystemTheme();
+		applyTheme(resolveThemePreference(localStorage.getItem("amazme:appearance") ?? undefined));
+		this.render();
+	}
+	private error(error: unknown): void {
+		const message = error instanceof Error ? error.message : String(error);
+		this.notice = { tone: "error", text: message };
+		if (this.modal) this.modal = { ...this.modal, notice: this.notice };
+		this.renderer.setConnection(message, "error");
+		this.render();
+	}
+	private requireConnection(): ClientConnection {
+		const connection = this.client.connection;
+		if (!connection?.ready || !connection.active()) throw new Error("请等待会话连接完成");
+		return connection;
+	}
+	private ledger(connection: ClientConnection): PendingWrites {
+		const key = `${connection.identity.profile_id}:${connection.sessionId}`;
+		let ledger = this.writes.get(key);
+		if (!ledger) { ledger = new PendingWrites(sessionStorage, connection.identity.profile_id, connection.sessionId); this.writes.set(key, ledger); }
+		return ledger;
+	}
+	async start(): Promise<void> {
+		const token = new URLSearchParams(location.hash.slice(1)).get("token");
+		if (token) {
+			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
+			if (!response.ok) throw new ApiError(response.status, await response.json());
+			history.replaceState(null, "", location.pathname + location.search);
+		}
+		try { await this.client.bootstrap(); }
+		catch (error) {
+			if (!(error instanceof ApiError) || error.status !== 401) throw error;
+			this.modal = { id: "auth:pair", title: "连接 AmazMe", description: "输入本机启动器提供的配对令牌。", fields: [{ id: "token", label: "配对令牌", kind: "text", inputType: "password", value: "" }], submit: "连接" };
+			this.render(); return;
+		}
+		await this.loadGlobal();
+		this.ready = true;
+		const target = new URLSearchParams(location.search);
+		if (target.get("host") && target.get("host") !== this.client.identity?.profile_id) throw new Error("链接属于其他宿主，请从原启动器打开。");
+		const sessionId = target.get("session");
+		if (sessionId) {
+			const session = this.sessions.find(item => item.session_id === sessionId);
+			if (!session || (target.get("workspace") && target.get("workspace") !== session.workspace)) throw new Error("链接的会话与工作区不匹配。");
+			await this.selectSession(sessionId);
+		} else if (target.get("new") === "1") await this.createSession();
+		else { const last = this.sessions.find(item => !item.archived); if (last) await this.selectSession(last.session_id); }
+		this.render();
+	}
+	private async loadGlobal(): Promise<void> {
+		const generation = ++this.globalLoadGeneration;
+		const [sessions, workspaces, catalog, accounts, settings] = await Promise.all([
+			this.client.call("GET /api/v1/sessions"), this.client.call("GET /api/v1/workspaces"), this.client.call("GET /api/v1/models"), this.client.call("GET /api/v1/accounts"), this.client.call("GET /api/v1/settings"),
+		]);
+		if (generation === this.globalLoadGeneration) {
+			this.sessions = sessions.sessions; this.workspaces = workspaces.workspaces; this.catalog = catalog; this.accounts = accounts; this.settings = settings;
+		}
+	}
+	private async loadSession(connection: ClientConnection): Promise<void> {
+		const [selection, resources, usage] = await Promise.all([
+			this.client.call("GET /api/v1/session-models/{session_id}", { path: { session_id: connection.sessionId } }).catch(error => { if (error instanceof ApiError && error.code === "session_model_missing") return undefined; throw error; }),
+			this.client.call("GET /api/v1/sessions/{session}/resources", { path: { session: connection.sessionId } }),
+			this.client.call("GET /api/v1/sessions/{session_id}/usage", { path: { session_id: connection.sessionId } }),
+		]);
+		if (!connection.active()) return;
+		this.selection = selection; this.resources = resources; this.usage = usage;
+		if (this.dockOpen && this.dockTab === "terminal") await this.loadTerminal(connection);
+		this.render();
+		clearTimeout(this.healthTimer);
+		this.healthTimer = setTimeout(() => { void this.poll(connection); }, 3000);
+	}
+	private async poll(connection: ClientConnection): Promise<void> {
+		try {
+			const health = await this.client.call("GET /api/v1/health");
+			if (!connection.active()) return;
+			if (health.identity.profile_id !== connection.identity.profile_id) throw new Error("宿主身份已更换");
+			if (health.identity.host_epoch !== connection.identity.host_epoch || health.identity.build_id !== connection.identity.build_id) { await this.client.connect(connection.sessionId); return; }
+			this.ready = health.state === "ready";
+			this.render();
+		} catch (error) { if (connection.active()) this.error(error); }
+		finally { if (connection.active()) this.healthTimer = setTimeout(() => { void this.poll(connection); }, 3000); }
+	}
+	private async selectSession(id: string): Promise<void> {
+		this.navigationGeneration++;
+		this.modalGeneration++;
+		const session = this.sessions.find(item => item.session_id === id);
+		if (!session) throw new Error("会话不存在");
+		const previous = this.client.connection;
+		if (previous) this.drafts.set(previous.sessionId, this.draft);
+		this.draft = this.drafts.get(id) ?? { text: "", images: [] };
+		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined;
+		this.terminal = undefined; this.terminalLoadGeneration++; clearTimeout(this.terminalTimer);
+		this.modal = undefined; this.notice = undefined; this.currentPanel = P.CHAT_VIEW;
+		clearTimeout(this.oauthTimer); this.oauth = undefined;
+		const url = new URL(location.href);
+		url.searchParams.set("host", this.client.identity?.profile_id ?? ""); url.searchParams.set("workspace", session.workspace ?? "primary"); url.searchParams.set("session", id); url.searchParams.delete("new");
+		history.replaceState(null, "", url);
+		this.renderer.setDraft(this.draft.text);
+		await this.client.connect(id);
+	}
+	private async createSession(): Promise<void> {
+		if (this.newSessionPending) return;
+		const identity = this.client.identity;
+		if (!identity) throw new Error("请先连接后端");
+		const navigation = ++this.navigationGeneration;
+		const workspace = this.sessions.find(item => item.session_id === this.client.connection?.sessionId)?.workspace ?? new URLSearchParams(location.search).get("workspace") ?? "primary";
+		const key = `amazme:create:${identity.profile_id}:${workspace}`;
+		const id = sessionStorage.getItem(key) ?? newId(); sessionStorage.setItem(key, id);
+		this.newSessionPending = true; this.render();
+		try {
+			const session = await this.client.call("POST /api/v1/sessions", { body: { session_id: id, title: "新会话", workspace }, identity });
+			if (sessionStorage.getItem(key) === id) sessionStorage.removeItem(key);
+			await this.loadGlobal();
+			if (navigation === this.navigationGeneration) await this.selectSession(session.session_id);
+		} finally { this.newSessionPending = false; this.render(); }
+	}
+	private async submit(text: string): Promise<void> {
+		const command = parseCommandLine(text);
+		if (command && this.commands.some(item => item.name === command.name)) {
+			await this.command(command.name, command.args); this.draft.text = ""; this.renderer.setDraft(""); this.render(); return;
+		}
+		const connection = this.requireConnection(), ledger = this.ledger(connection), draft = this.draft;
+		const root = connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status));
+		const thinking = this.catalog?.models.find(item => item.provider === this.selection?.provider && item.model === this.selection.model)?.thinking_levels?.find(level => level === this.thinking);
+		const record = ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
+			request_id: id, text, images: draft.images.map(item => item.image), mode: this.mode === "steer" ? "steer" : "queue", ...(this.mode === "steer" ? { target_run_id: root?.run_id } : {}), ...(thinking ? { thinking } : {}),
+		} }));
+		this.render();
+		try {
+			await ledger.send("submission", record, this.client, connection);
+			if (connection.active() && this.draft === draft && draft.text.trim() === record.body.text.trim() && JSON.stringify(draft.images.map(item => item.image)) === JSON.stringify(record.body.images ?? [])) {
+				this.draft = { text: "", images: [] }; this.renderer.setDraft("");
+			}
+		} finally { if (connection.active()) this.render(); }
+	}
+	private async cancel(id?: string): Promise<void> {
+		const connection = this.requireConnection();
+		const request = id ?? connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status))?.request_id;
+		if (!request) return;
+		await this.client.call("POST /api/v1/sessions/{session}/requests/{request_id}/cancel", { path: { session: connection.sessionId, request_id: request }, connection });
+	}
+	private async selectModel(provider: string, model: string): Promise<void> {
+		const connection = this.requireConnection();
+		const selection = await this.client.call("PUT /api/v1/session-models/{session_id}", { path: { session_id: connection.sessionId }, body: { session_id: connection.sessionId, provider, model }, connection });
+		if (!connection.active()) return;
+		this.selection = selection; this.thinking = "off"; this.render();
+	}
+	private async attachFiles(files: readonly File[]): Promise<void> {
+		const connection = this.requireConnection(), draft = this.draft;
+		for (const file of files) {
+			const rejection = attachmentRejection({ mediaType: file.type, bytes: file.size });
+			if (rejection) throw new Error(rejection === "composer.attachmentTooLarge" ? "图片不能超过 8 MiB" : "不支持的图片格式");
+			const mediaType = file.type;
+			if (mediaType !== "image/png" && mediaType !== "image/jpeg" && mediaType !== "image/webp" && mediaType !== "image/gif") continue;
+			const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("图片读取失败")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
+			draft.images.push({ id: newId(), name: file.name, dataUrl, bytes: file.size, image: { media_type: mediaType, data_base64: dataUrl.slice(dataUrl.indexOf(",") + 1) } });
+		}
+		if (connection.active() && this.draft === draft) this.render();
+	}
+	private async command(name: string, args: string): Promise<void> {
+		switch (name) {
+			case "new": await this.createSession(); break;
+			case "model": this.currentPanel = P.SETTINGS_VIEW; this.render(); break;
+			case "settings": this.currentPanel = P.SETTINGS_VIEW; this.render(); break;
+			case "compact": await this.action({ kind: "command", id: A.COMPACT_ACTION, data: undefined }); break;
+			case "fork": await this.fork(); break;
+			case "export": {
+				const data = await this.client.call("GET /api/v1/export");
+				this.download(JSON.stringify(data, null, 2), "amazme-export.json", "application/json"); break;
+			}
+			default: throw new Error(`未识别的命令：/${name} ${args}`);
+		}
+	}
+	private download(data: string, name: string, type: string): void {
+		const url = URL.createObjectURL(new Blob([data], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+	}
+	private async fork(): Promise<void> {
+		const connection = this.requireConnection();
+		const request = connection.snapshot?.requests.findLast(item => item.kind === "root" && settled.has(item.status));
+		if (!request) throw new Error("请先完成一个回合");
+		const session = await this.client.call("POST /api/v1/sessions/{session}/branches", { path: { session: connection.sessionId }, body: { request_id: request.request_id }, connection });
+		if (!connection.active()) return;
+		await this.loadGlobal(); await this.selectSession(session.session_id);
+	}
+	private async action(action: P.PanelAction): Promise<void> {
+		this.notice = undefined;
+		if (action.kind === "open" || action.kind === "modal-close" || (action.kind === "command" && ![A.PROVIDER_AUTH_OPEN_ACTION, A.PROVIDER_AUTH_CANCEL_ACTION].includes(action.id))) {
+			this.modalGeneration++;
+			clearTimeout(this.oauthTimer);
+		}
+		if (action.kind === "open") { this.currentPanel = action.panel; this.modal = undefined; this.render(); return; }
+		if (action.kind === "modal-close") { this.modal = undefined; this.render(); return; }
+		const id = action.id, data = action.data;
+		const fields = action.kind === "modal-submit" ? action.fields : {};
+		const value = action.kind === "control" ? action.value : data ?? "";
+		if (id === "auth:pair") {
+			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: fields.token }) });
+			if (!response.ok) throw new ApiError(response.status, await response.json()); this.modal = undefined; await this.start(); return;
+		}
+		if (id === A.WELCOME_SESSION_ACTION) { await this.createSession(); return; }
+		if (id === A.WELCOME_SETTINGS_ACTION || id === A.MODEL_CONNECTIONS_ACTION) { this.currentPanel = P.SETTINGS_VIEW; this.modal = undefined; this.render(); return; }
+		if (id === A.WELCOME_DISMISS_ACTION) { localStorage.setItem("amazme:welcome-dismissed", "true"); this.render(); return; }
+		if (id === A.DOCK_TOGGLE_ACTION) { this.dockOpen = !this.dockOpen; this.render(); return; }
+		if (id === A.DOCK_TAB_ACTION) { this.dockTab = value; this.dockOpen = true; if (value === "files") await this.openWorkspace(); if (value === "terminal") await this.loadTerminal(this.requireConnection(), true); this.render(); return; }
+		if (id === A.WORKSPACE_OPEN_ACTION || id === A.WORKSPACE_READ_ACTION) { await this.openWorkspace(value, id === A.WORKSPACE_READ_ACTION); return; }
+		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
+		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.render(); return; }
+		if (id === A.QUEUE_CANCEL_ACTION) { await this.cancel(data); return; }
+		if (id === A.TERMINAL_RUN_ACTION) {
+			const connection = this.requireConnection();
+			if (!this.terminal || this.terminal.connection !== connection || this.terminal.view.phase !== "running") await this.loadTerminal(connection, true);
+			if (value.trim() && this.terminal?.connection === connection) this.terminal.queue.enqueue(value + "\r");
+			return;
+		}
+		if (id === A.TERMINAL_STOP_ACTION && this.terminal) {
+			const terminal = this.terminal;
+			const view = await this.client.call("POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/close", { path: { session_id: terminal.connection.sessionId, terminal_id: terminal.id }, connection: terminal.connection });
+			if (terminal.connection.active() && this.terminal === terminal) { this.observeTerminal(terminal, view); this.render(); } return;
+		}
+		if (id === "terminal:retry") { this.terminal?.queue.retry(); return; }
+		if (id === "terminal:confirm") { this.modal = { id: "terminal:confirm-submit", title: "核对终端输入", description: "确认已经核对终端内容后，清除这些未确认输入；不会重新发送它们。", fields: [], submit: "已核对，继续", data: this.terminal?.id }; this.render(); return; }
+		if (id === "terminal:confirm-submit" && this.terminal && data === this.terminal.id) { this.terminal.queue.confirm(); this.modal = undefined; this.render(); return; }
+		if (id === "write:retry-submit") { await this.submit(this.draft.text); return; }
+		if (id === "write:cancel-submit") {
+			const connection = this.requireConnection(), ledger = this.ledger(connection);
+			const record = ledger.read("submission", "POST /api/v1/sessions/{session}/submissions");
+			if (record) { await this.cancel(record.body.request_id); ledger.forget("submission", record); if (connection.active()) this.render(); }
+			return;
+		}
+		if (id === A.CONVERSATION_FORK_ACTION) { await this.fork(); return; }
+		if (id === A.COMPACT_ACTION) { this.modal = P.compactModal(this.locale); this.render(); return; }
+		if (id === A.COMPACT_MODAL) {
+			const connection = this.requireConnection(), ledger = this.ledger(connection);
+			const through = connection.snapshot?.requests.findLast(item => item.kind === "root" && settled.has(item.status));
+			if (!through) throw new Error("没有可压缩的已完成回合");
+			const record = ledger.prepare("compaction", "POST /api/v1/sessions/{session}/compactions", id => ({ path: { session: connection.sessionId }, body: { compaction_id: id, through_request_id: through.request_id } }));
+			await ledger.send("compaction", record, this.client, connection); if (connection.active()) { this.modal = undefined; this.render(); } return;
+		}
+		if (id === A.APPROVAL_APPROVE_ACTION || id === A.APPROVAL_DENY_ACTION) {
+			const connection = this.requireConnection(), ledger = this.ledger(connection);
+			const proposal = connection.snapshot?.approvals?.find(item => item.approval_id === data && item.state === "pending");
+			if (!proposal) throw new Error("审批提案已变化，请核对当前记录");
+			const key = `approval:${proposal.approval_id}`;
+			const record = ledger.prepare(key, "POST /api/v1/sessions/{session}/approvals", id => ({ path: { session: connection.sessionId }, body: { decision_id: id, approval_id: proposal.approval_id, expected_revision: proposal.revision, proposal_digest: proposal.proposal_digest, approve: action.id === A.APPROVAL_APPROVE_ACTION } }));
+			if (record.body.approve !== (id === A.APPROVAL_APPROVE_ACTION)) throw new Error("原审批决定尚未确认；请先重试原决定。");
+			await ledger.send(key, record, this.client, connection); return;
+		}
+		if (id === A.MODEL_SELECT_ACTION) { const selected: unknown = JSON.parse(value); if (!Array.isArray(selected) || selected.length !== 2 || !selected.every(item => typeof item === "string")) throw new Error("模型选择无效"); await this.selectModel(selected[0], selected[1]); return; }
+		if (id === A.MODEL_THINKING_ACTION) { this.thinking = value; this.render(); return; }
+		if (id === A.REFRESH_MODELS_ACTION || id === P.SETTINGS_RELOAD_ACTION || id === A.SESSION_RELOAD_ACTION) { await this.loadGlobal(); const connection = this.client.connection; if (connection?.ready) await this.loadSession(connection); this.render(); return; }
+		if (id === A.MODEL_SCOPE_ACTION) { this.modal = modelScopeModal(this.locale, { allModels: this.catalog?.models.map(item => ({ provider: item.provider, id: item.model, name: item.label })) ?? [], enabledModelIds: this.enabledModels }); this.render(); return; }
+		if (id === A.MODEL_SCOPE_MODAL) { const ids: unknown = JSON.parse(fields.models || "null"); if (ids !== null && (!Array.isArray(ids) || !ids.every(item => typeof item === "string"))) throw new Error("模型范围无效"); this.enabledModels = ids; this.modal = undefined; this.render(); return; }
+		if (id === PROVIDER_SELECT_ACTION) { this.selectedProvider = data; this.render(); return; }
+		if (id === PROVIDER_EDIT_ACTION) {
+			const connections = this.connections(), provider = connections.state.providers.find(item => item.id === data);
+			this.modal = providerConfigurationModal(this.locale, provider, connections.models, connections.state.authentication.providers, provider ? connections.state.authentication.providers.find(item => item.id === provider.id)?.methods ?? [] : []);
+			this.render(); return;
+		}
+		if (id === PROVIDER_LOGOUT_ACTION) { this.modal = providerLogoutModal(this.locale, data ?? "", data ?? ""); this.render(); return; }
+		if (id === PROVIDER_EDIT_MODAL || id === PROVIDER_LOGOUT_MODAL) { await this.saveProvider(data, fields, id === PROVIDER_LOGOUT_MODAL); return; }
+		if (id === A.PROVIDER_AUTH_OPEN_ACTION) { if (!data || !/^https?:\/\//.test(data)) throw new Error("授权链接无效"); window.open(data, "_blank", "noopener,noreferrer"); return; }
+		if (id === A.PROVIDER_AUTH_CANCEL_ACTION && this.oauth) { const login = this.oauth, connection = this.requireConnection(); await this.client.call("DELETE /api/v1/accounts/oauth/{login_id}", { path: { login_id: login.login_id }, connection }); if (connection.active() && this.oauth === login) { this.oauth = undefined; this.modal = undefined; clearTimeout(this.oauthTimer); this.render(); } return; }
+		if (id === A.PROVIDER_AUTH_MODAL && this.oauth) { const login = this.oauth, connection = this.requireConnection(); await this.client.call("POST /api/v1/accounts/oauth/{login_id}/input", { path: { login_id: login.login_id }, body: { value: fields.value ?? "" }, connection }); return; }
+		if (id === MODEL_ENABLED_ACTION) { const all = this.catalog?.models.map(item => `${item.provider}/${item.model}`) ?? []; const selected = new Set(this.enabledModels ?? all); if (value === "true") selected.add(data ?? ""); else selected.delete(data ?? ""); this.enabledModels = [...selected]; this.render(); return; }
+		if (id === P.SETTINGS_FIELD_ACTION) { await this.setPreference(data ?? "", value); return; }
+		if (id === P.DIAGNOSTICS_ACTION) { const connection = this.requireConnection(); const report = await this.client.call("GET /api/v1/sessions/{session_id}/diagnostics", { path: { session_id: connection.sessionId } }); if (connection.active()) { this.modal = { id: "diagnostics:close", title: "诊断", fields: [{ id: "report", label: "会话诊断", kind: "textarea", readOnly: true, value: JSON.stringify(report, null, 2) }] }; this.render(); } return; }
+		throw new Error(`入口尚未接通：${id}`);
+	}
+	private observeTerminal(terminal: ActiveTerminal, view: TerminalView): void {
+		if (view.terminal_id !== terminal.id || (view.session_id && view.session_id !== terminal.connection.sessionId)) throw new Error("终端归属不匹配");
+		if ((view.output_seq ?? 0) < (terminal.view.output_seq ?? 0) || (terminal.view.phase === "exited" && view.phase === "running")) return;
+		terminal.view = view;
+	}
+	private async loadTerminal(connection: ClientConnection, open = false): Promise<void> {
+		const generation = ++this.terminalLoadGeneration;
+		const list = await this.client.call("GET /api/v1/sessions/{session_id}/terminals", { path: { session_id: connection.sessionId } });
+		if (!connection.active() || generation !== this.terminalLoadGeneration || this.dockTab !== "terminal") return;
+		let view = list.terminals.findLast(item => item.phase === "running") ?? list.terminals.at(-1);
+		if ((!view || view.phase === "exited") && open) {
+			const ledger = this.ledger(connection), key = "terminal:open";
+			const record = ledger.prepare(key, "POST /api/v1/sessions/{session_id}/terminals", id => ({ path: { session_id: connection.sessionId }, body: { terminal_id: id, command: "/bin/zsh -il", cols: 80, rows: 24 } }));
+			view = await ledger.send(key, record, this.client, connection);
+		}
+		if (!view || !connection.active() || generation !== this.terminalLoadGeneration || this.dockTab !== "terminal") return;
+		const key = `amazme:terminal:${connection.identity.profile_id}:${connection.sessionId}:${view.terminal_id}`;
+		let queue = this.terminalQueues.get(key);
+		if (!queue) { queue = new TerminalInputQueue(sessionStorage, key); this.terminalQueues.set(key, queue); }
+		const terminal: ActiveTerminal = { connection, id: view.terminal_id, view, queue, resizing: false };
+		this.terminal = terminal;
+		queue.bind({ active: () => connection.active() && this.terminal === terminal,
+			send: async input => {
+				const result = await this.client.call("POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/input", { path: { session_id: connection.sessionId, terminal_id: terminal.id }, body: input, connection });
+				if (connection.active() && this.terminal === terminal) { this.observeTerminal(terminal, result); this.render(); }
+				return result;
+			}, error: error => this.error(error), changed: () => { if (connection.active() && this.terminal === terminal) this.render(); },
+		});
+		this.render(); clearTimeout(this.terminalTimer); void this.pollTerminal(terminal);
+	}
+	private async pollTerminal(terminal: ActiveTerminal): Promise<void> {
+		try {
+			const view = await this.client.call("POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/read", { path: { session_id: terminal.connection.sessionId, terminal_id: terminal.id }, connection: terminal.connection });
+			if (!terminal.connection.active() || this.terminal !== terminal) return;
+			this.observeTerminal(terminal, view); this.render();
+		} catch (error) { if (terminal.connection.active() && this.terminal === terminal) this.error(error); }
+		finally { if (terminal.connection.active() && this.terminal === terminal && terminal.view.phase === "running" && this.dockOpen && this.dockTab === "terminal") this.terminalTimer = setTimeout(() => { void this.pollTerminal(terminal); }, 250); }
+	}
+	private async resizeTerminal(terminal: ActiveTerminal): Promise<void> {
+		if (terminal.resizing) return;
+		terminal.resizing = true;
+		try {
+			while (terminal.desiredSize && terminal.connection.active() && this.terminal === terminal) {
+				const size = terminal.desiredSize; terminal.desiredSize = undefined;
+				const view = await this.client.call("POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/resize", { path: { session_id: terminal.connection.sessionId, terminal_id: terminal.id }, body: size, connection: terminal.connection });
+				if (terminal.connection.active() && this.terminal === terminal) { this.observeTerminal(terminal, view); this.render(); }
+			}
+		} finally { terminal.resizing = false; }
+	}
+	private async openWorkspace(path?: string, file = false): Promise<void> {
+		const connection = this.requireConnection();
+		const session = this.sessions.find(item => item.session_id === connection.sessionId);
+		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
+		const relative = path ? path.startsWith(cwd + "/") ? `${session?.workspace ?? "primary"}/${path.slice(cwd.length + 1)}` : path === cwd ? `${session?.workspace ?? "primary"}/` : path : `${session?.workspace ?? "primary"}/`;
+		if (file) { const result = await this.client.call("GET /api/v1/files/content", { query: { path: relative } }); if (!connection.active()) return; this.workspace = { cwd, view: { kind: "text", path: result.absolute_path ?? result.path, text: result.content, truncated: result.truncated ?? false } }; }
+		else { const result = await this.client.call("GET /api/v1/files", { query: { path: relative } }); if (!connection.active()) return; this.workspace = { cwd, view: { kind: "listing", path: result.absolute_path ?? cwd, parent: (result.absolute_path ?? cwd) === cwd ? null : (result.absolute_path ?? cwd).split("/").slice(0, -1).join("/"), entries: result.entries.map(item => ({ ...item, kind: item.kind === "dir" ? "dir" : "file" })) } }; }
+		this.dockOpen = true; this.dockTab = "files"; this.render();
+	}
+	private authentication(): ProviderAuthLike {
+		const ids = [...new Set([...(this.catalog?.models.map(item => item.provider) ?? []), ...Object.keys(OAUTH_METHODS)])];
+		const providers: ProviderAuthLike["providers"] = ids.map(id => ({ id, name: id, configured: this.accounts.accounts.some(item => item.provider === id), methods: [{ type: "api_key", label: "API Key" }, ...(OAUTH_METHODS[id] ? [{ type: "oauth" as const, label: "登录" }] : [])] }));
+		const login = this.oauth;
+		return { providers, login: login ? { id: login.login_id, provider: login.provider, status: login.phase === "pending" ? "awaiting" : login.phase === "complete" ? "done" : login.phase === "cancelled" ? "cancelled" : "error", authorization: login.url ? login.user_code ? { type: "device_code", userCode: login.user_code, verificationUri: login.url } : { type: "auth_url", url: login.url } : null, message: null, links: [], prompt: login.phase === "pending" && !login.user_code ? { id: login.login_id, type: "secret", message: "回调地址或授权码" } : null, error: login.error ?? null } : null };
+	}
+	private connections(): ModelConnectionsLike {
+		const authentication = this.authentication();
+		const current = this.catalog?.current;
+		const models = this.catalog?.models.map(item => ({ provider: item.provider, modelId: item.model, name: item.label, available: this.accounts.accounts.some(account => account.provider === item.provider) || (current?.provider === item.provider && current.key_configured) })) ?? [];
+		return { state: { providers: authentication.providers.map(provider => { const model = this.catalog?.models.find(item => item.provider === provider.id); return { id: provider.id, name: provider.name, configured: provider.configured, baseUrl: current?.provider === provider.id ? current.base_url : model?.base_url ?? "", api: current?.provider === provider.id ? current.api ?? "openai-completions" : model?.api ?? "openai-completions", modelCount: models.filter(item => item.provider === provider.id).length, custom: false, verification: { status: "idle" } }; }), authentication, enabledModelIds: this.enabledModels, defaults: current ? { model: { provider: current.provider, modelId: current.model }, thinkingLevel: "off" } : null, error: null, refresh: { status: "idle" } }, selected: this.selectedProvider, models, enabledModels: models.filter(item => this.enabledModels === null || this.enabledModels.includes(`${item.provider}/${item.modelId}`)), loading: false, disabled: !this.ready };
+	}
+	private async saveProvider(data: string | undefined, fields: Readonly<Record<string, string>>, clear: boolean): Promise<void> {
+		const connection = this.requireConnection(), provider = data ?? fields.id;
+		if (!provider) throw new Error("请选择供应商");
+		const modal = this.modal;
+		const generation = this.modalGeneration;
+		this.modalPending = true; this.render();
+		try {
+			const latest = await this.client.call("GET /api/v1/accounts");
+			if (!connection.active()) return;
+			if (clear) await this.client.call("POST /api/v1/accounts/{provider}", { path: { provider }, body: { expected_revision: latest.revision, clear: true }, connection });
+			else if (fields[`method:${provider}`] === "oauth" || (!fields[`key:${provider}`] && OAUTH_METHODS[provider] && !latest.accounts.some(item => item.provider === provider))) {
+				const key = `amazme:oauth:${connection.identity.profile_id}:${provider}`;
+				const id = sessionStorage.getItem(key) ?? newId(); sessionStorage.setItem(key, id);
+				const login = await this.client.call("POST /api/v1/accounts/oauth", { body: { login_id: id, provider, expected_revision: latest.revision, method: OAUTH_METHODS[provider] ?? "browser" }, connection });
+				if (connection.active() && this.modal === modal) { this.oauth = login; this.showOAuth(connection, login, generation); } return;
+			} else {
+				const key = fields[`key:${provider}`] ?? "";
+				if (key) await this.client.call("POST /api/v1/accounts/{provider}", { path: { provider }, body: { expected_revision: latest.revision, api_key: key }, connection });
+				const model = this.catalog?.models.find(item => item.provider === provider);
+				if (model && fields.baseUrl) await this.client.call("POST /api/v1/models", { body: { provider, model: model.model, base_url: fields.baseUrl }, connection });
+			}
+			const accounts = await this.client.call("GET /api/v1/accounts");
+			if (connection.active() && this.modal === modal) { this.accounts = accounts; this.modal = undefined; this.render(); }
+		} finally { if (connection.active() && generation === this.modalGeneration) { this.modalPending = false; this.render(); } }
+	}
+	private showOAuth(connection: ClientConnection, login: OAuthView, generation: number): void {
+		if (!connection.active() || generation !== this.modalGeneration || this.oauth?.login_id !== login.login_id) return;
+		this.oauth = login;
+		const auth = this.authentication(); this.modal = providerLoginModal(this.locale, auth, auth.login); this.render();
+		clearTimeout(this.oauthTimer);
+		if (login.phase === "pending") this.oauthTimer = setTimeout(() => { void this.client.call("GET /api/v1/accounts/oauth/{login_id}", { path: { login_id: login.login_id } }).then(value => this.showOAuth(connection, value, generation)).catch(error => { if (connection.active() && generation === this.modalGeneration) this.error(error); }); }, 750);
+		else { const key = `amazme:oauth:${connection.identity.profile_id}:${login.provider}`; if (sessionStorage.getItem(key) === login.login_id && login.phase !== "unknown") sessionStorage.removeItem(key); void this.client.call("GET /api/v1/accounts").then(accounts => { if (connection.active()) { this.accounts = accounts; this.render(); } }); }
+	}
+	private async setPreference(id: string, value: string): Promise<void> {
+		if (id === "locale") { localStorage.setItem("amazme:locale", value); this.locale = resolveLocale(value, navigator.languages); }
+		else if (id === "appearance") { localStorage.setItem("amazme:appearance", value); applyTheme(resolveThemePreference(value)); }
+		else if (id === "display_name" && this.settings) { this.settings = await this.client.call("POST /api/v1/settings", { body: { display_name: value, expected_revision: this.settings.revision ?? 0 } }); }
+		this.render();
+	}
+	private render(): void {
+		document.documentElement.lang = documentLanguage(this.locale);
+		const connection = this.client.connection, session = this.sessions.find(item => item.session_id === connection?.sessionId);
+		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
+			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
+			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
+				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: [
+					{ id: "appearance", field: "appearance", group: "appearance", kind: "enum", options: ["system", "light", "dark"], explicit: true, value: localStorage.getItem("amazme:appearance") ?? "system" },
+					{ id: "locale", field: "locale", group: "appearance", kind: "enum", options: ["auto", "zh", "en"], explicit: true, value: localStorage.getItem("amazme:locale") ?? "auto" },
+					{ id: "display_name", field: "display_name", group: "profile", kind: "string", explicit: true, value: this.settings?.display_name ?? "" },
+				] } },
+				skills: { state: { directory: "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: true })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
+			}), connections: this.connections(), mode: this.mode, usage: this.usage, welcomeDismissed: localStorage.getItem("amazme:welcome-dismissed") === "true", newSessionPending: this.newSessionPending, ready: this.ready });
+		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
+		let pendingError: string | undefined;
+		const pending = (() => {
+			try { return connection ? this.ledger(connection).read("submission", "POST /api/v1/sessions/{session}/submissions") : undefined; }
+			catch (error) { pendingError = error instanceof Error ? error.message : String(error); return undefined; }
+		})();
+		const terminal = this.terminal?.connection === connection ? this.terminal : undefined;
+		const dock = dockView(this.locale, { open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.parent_id === connection?.sessionId).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, children: 0, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
+		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: pending ? [...picker.queue, { id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", label: "重试原请求", weight: "line" }, cancel: { id: "write:cancel-submit", label: "取消原请求", weight: "text" } }] : picker.queue,
+			dock: terminal && this.dockTab === "terminal" ? { ...dock, panel: { ...dock.panel, texts: [], notices: terminal.queue.paused ? [{ tone: "warning", text: "终端输入尚未确认；请重试原输入或核对后继续。" }] : dock.panel.notices, actions: [
+				{ id: "terminal:retry", label: "重试原输入", weight: "line", disabled: terminal.queue.busy || !terminal.queue.items.length },
+				{ id: "terminal:confirm", label: "核对后继续", weight: "text", disabled: terminal.queue.busy || !terminal.queue.items.length },
+			] }, pty: { id: terminal.id, cols: terminal.view.cols, rows: terminal.view.rows, output: terminal.view.output, outputSeq: terminal.view.output_seq ?? terminal.view.output.length, inputEnabled: connection?.ready === true && terminal.view.phase === "running" && !terminal.queue.paused } } : dock });
+		if (pendingError) this.renderer.setConnection(pendingError, "error");
+	}
+	dispose(): void { clearTimeout(this.healthTimer); clearTimeout(this.oauthTimer); clearTimeout(this.terminalTimer); this.client.retire(); }
+}
+

@@ -112,6 +112,9 @@ def main() -> None:
 
 
 def build_once(parent: Path) -> None:
+    client = ROOT.parent / "packages/web/dist/page"
+    if not (client / "page.js").is_file():
+        raise SystemExit("build @amazme/web before freezing the desktop backend")
     output = Path(tempfile.mkdtemp(prefix="package-", dir=parent))
     entry = output / "entrypoint.py"
     entry.write_text("from amazme_backend.__main__ import main\nmain()\n")
@@ -121,6 +124,7 @@ def build_once(parent: Path) -> None:
             "--distpath", str(output / "dist"), "--workpath", str(output / "build"), "--specpath", str(output),
             "--paths", str(ROOT / "src"),
             "--add-data", str(ROOT / "src/amazme_backend/web") + ":amazme_backend/web",
+            "--add-data", str(client) + ":amazme_backend/web/client",
             *[
                 item
                 for name in (

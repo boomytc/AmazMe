@@ -17,6 +17,6 @@ test("the development web launcher reaches Python through the product CLI", asyn
 		assert.ok(result.error);
 		assert.match(result.stderr, /python_backend_missing/);
 		assert.doesNotMatch(result.stderr, /old_web_host_removed/);
-		assert.equal(result.stdout, "");
+		assert.match(result.stdout, /@amazme\/web/);
 	} finally { await rm(directory, {recursive:true, force:true}); }
 });

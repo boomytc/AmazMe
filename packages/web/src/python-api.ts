@@ -84,7 +84,7 @@ export function definitive(error: unknown): boolean {
 	return error instanceof ApiError && error.status >= 400 && error.status < 500 && ![401, 408, 429].includes(error.status) && !bindingErrors.has(error.code);
 }
 
-export function validateRequest<K extends keyof HttpOperations>(operation: K, body: HttpOperations[K]["body"] | undefined): void {
+export function validateRequest<K extends keyof HttpOperations>(operation: K, body: unknown): void {
  const spec = operations[operation];
  if (spec.body && !matches(body, spec.body)) throw new Error(`请求不符合后端契约：${operation}`);
 }

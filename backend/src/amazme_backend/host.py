@@ -212,7 +212,7 @@ from .manage import digest as content_digest
 from .memories import match_memories, remember, session_workspace
 from .oauth import BROWSER, DEVICE, OAuthInput, OAuthStart, OAuthView
 from .oauth import Login as OAuthLogin
-from .page_boot import boot_document
+from .page_boot import boot_document, frontend_directory
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, choose_model, public_settings, selected_provider, summarize
 from .remote_session import daemon_identity
@@ -3261,7 +3261,10 @@ def application(owner: Host) -> FastAPI:
         response.headers["Content-Security-Policy"] = policy
         return document
 
-    app.mount("/", StaticFiles(directory=Path(__file__).with_name("web"), html=True), name="web")
+    # The package's original renderer is the only product page. Protocol helper assets
+    # (including xterm) stay at their existing URLs during the client cutover.
+    app.mount("/client-assets", StaticFiles(directory=Path(__file__).with_name("web")), name="client-assets")
+    app.mount("/", StaticFiles(directory=frontend_directory(), html=True, check_dir=False), name="web")
     return app
 
 
