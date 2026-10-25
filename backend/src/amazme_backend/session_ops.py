@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, JsonValue
 from .common import Peer
 from .contracts import (
     BackendError,
+    CodeChild,
     Compaction,
     ComputerActionView,
     ComputerCaptureView,
@@ -26,6 +27,7 @@ from .contracts import (
 from .storage import SessionStore
 
 SessionOpName = Literal[
+    "accept_code_tool",
     "open_workflow",
     "workflow",
     "resume_workflow",
@@ -201,6 +203,8 @@ def _model(value: BaseModel) -> str:
 
 
 async def run_session_op(store: SessionStore, name: SessionOpName, payload: str) -> str:
+    if name == "accept_code_tool":
+        return _model(await store.accept_code_tool(CodeChild.model_validate_json(payload)))
     """Run one session-library operation on the store that already holds the lock."""
     if name == "host_epoch":
         return _model(EpochValue(value=await store.host_epoch()))
@@ -287,6 +291,7 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
 
 
 class SessionOps(Protocol):
+    async def accept_code_tool(self, value: CodeChild) -> Receipt: ...
     async def open_workflow(self, workflow_id: str, check: str, correction_limit: int, *,
                             accepted_config: ProviderConfig | None = None) -> WorkflowView: ...
     async def workflow(self, workflow_id: str) -> WorkflowView: ...
@@ -426,6 +431,9 @@ class SessionRelay:
         claim = CompactionClaim.model_validate_json(await self._call("begin_compaction", BeginCompactionBody(
             compaction_id=compaction_id, through_request_id=through_request_id, instructions=instructions)))
         return claim.compaction
+
+    async def accept_code_tool(self, value: CodeChild) -> Receipt:
+        return Receipt.model_validate_json(await self._call("accept_code_tool", value))
 
     async def release_compaction(self, compaction_id: str) -> None:
         await self._call("release_compaction", BeginCompactionBody(

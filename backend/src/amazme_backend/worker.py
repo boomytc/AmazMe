@@ -17,7 +17,10 @@ from .contracts import (
     BackendError,
     Cancel,
     CancelPlugin,
+    CancelCode,
     Cleanup,
+    CodeStatus,
+    CodeView,
     Command,
     ComputerToolRequest,
     ComputerToolResult,
@@ -39,6 +42,7 @@ from .contracts import (
     McpState,
     McpToolCall,
     Message,
+    OpenCode,
     PluginCallEnvelope,
     PluginCallView,
     PluginList,
@@ -92,6 +96,9 @@ from .session_domain import (
     ModelReturned,
     Observation,
     OpenEpoch,
+    CodeRetrieval,
+    CodeReturned,
+    CodemodeInput,
     Park,
     PluginRetrieval,
     PluginReturned,
@@ -551,6 +558,27 @@ class Worker:
     async def perform(self, action: Action) -> Observation:
         if self.validation:
             raise BackendError("validation_worker")
+        if isinstance(action, CodeRetrieval):
+            fence = await self._mcp_fence()
+            reference = CancelCode(**fence.model_dump(), session_id=self.session, run_id=action.step_id[:32])
+            if action.stop:
+                view = await self.supervisor.call("POST", "/code/cancel", CodeView, reference)
+                try:
+                    status = await self.supervisor.call("POST", "/code/status", CodeStatus, reference)
+                except BackendError as error:
+                    if error.code != "codemode_not_found":
+                        raise
+                    status = CodeStatus(view=view, running=False)
+            elif action.start:
+                source = CodemodeInput.model_validate_json(action.call.arguments)
+                status = await self.supervisor.call("POST", "/code/start", CodeStatus, OpenCode(
+                    **fence.model_dump(), session_id=self.session, run_id=action.step_id[:32], source=source.code,
+                    worker_id=self.instance, parent_request_id=action.request_id, parent_step_id=action.step_id,
+                    allowed_tools=action.config.allowed_tools, excluded_tools=action.config.excluded_tools,
+                    state_scope=action.state_scope, initial_state=action.initial_state))
+            else:
+                status = await self.supervisor.call("POST", "/code/status", CodeStatus, reference)
+            return CodeReturned(action, status)
         if isinstance(action, ModelInvocation):
             answer = ""
             completion: Completion | None = None
@@ -726,7 +754,9 @@ def application(owner: Worker) -> FastAPI:
 
     @app.post("/session-ops")
     async def session_ops(value: SessionOp) -> SessionOpResult:
-        return SessionOpResult(payload=await run_session_op(owner.store, value.name, value.payload))
+        result = await run_session_op(owner.store, value.name, value.payload)
+        owner.wake.set()
+        return SessionOpResult(payload=result)
 
     @app.get("/events")
     async def events(after: int = 0, stream_id: str = "") -> Replay:

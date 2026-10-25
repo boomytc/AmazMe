@@ -70,6 +70,7 @@ from .contracts import (
     Cleanup,
     ClosePlugin,
     CodeRun,
+    CodeChild,
     CodeToolBinding,
     CodeToolDispatch,
     CodeToolReceipt,
@@ -979,6 +980,10 @@ class Host:
         if cancel:
             receipt = await self.deliver(value.session_id,"cancel",binding.request_id,
                 Cancel(**self.fence.model_dump(),request_id=binding.request_id))
+        elif binding.parent_request_id:
+            receipt = await self._with_session(value.session_id, lambda store: store.accept_code_tool(CodeChild(
+                parent_request_id=binding.parent_request_id, parent_step_id=binding.parent_step_id,
+                request_id=binding.request_id, call=binding.call)))
         else:
             receipt = await self.deliver(value.session_id,"submit",binding.request_id,
                 Submit(request_id=binding.request_id,text=f"Script {value.run_id} tool {value.name}",tool_call=binding.call))

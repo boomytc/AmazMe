@@ -1337,6 +1337,13 @@ class OpenCode(HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     run_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     source: str = Field(min_length=1, max_length=8000)
+    worker_id: str = ""
+    parent_request_id: str = ""
+    parent_step_id: str = ""
+    allowed_tools: list[str] | None = None
+    excluded_tools: list[str] = Field(default_factory=lambda: list[str]())
+    state_scope: str = ""
+    initial_state: str | None = Field(default=None, max_length=1_000_000)
 
 
 class CancelCode(HostFence):
@@ -1354,6 +1361,15 @@ class CodeToolDispatch(HostFence):
 
 
 class CodeToolBinding(Model):
+    request_id: str
+    call: ToolCall
+    parent_request_id: str = ""
+    parent_step_id: str = ""
+
+
+class CodeChild(Model):
+    parent_request_id: str
+    parent_step_id: str
     request_id: str
     call: ToolCall
 
@@ -1396,6 +1412,11 @@ class CodeView(Model):
     # The script service has exited; child tools retain their own independent effect holds.
     clean: bool = False
     cancel_requested: bool = False
+
+
+class CodeStatus(Model):
+    view: CodeView
+    running: bool
 
 
 class SshTarget(Model):

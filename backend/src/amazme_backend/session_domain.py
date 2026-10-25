@@ -9,6 +9,7 @@ from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 from .contracts import (
     BackendError,
     Cleanup,
+    CodeStatus,
     ComputerGround,
     ComputerInspect,
     ComputerLocate,
@@ -42,6 +43,10 @@ from .tool_search import ToolSearchInput
 from .web_tools import validate_fetch_url
 
 
+class CodemodeInput(Model):
+    code: str = Field(min_length=1, max_length=8000)
+
+
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
         value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
@@ -52,6 +57,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
         if not search.query.strip():
             raise BackendError("tool_search_query")
         return call.model_copy(update={"arguments": search.model_copy(update={"query": search.query.strip()}).model_dump_json()})
+    elif call.name == "codemode":
+        return call.model_copy(update={"arguments": CodemodeInput.model_validate_json(call.arguments).model_dump_json()})
     elif call.name == "write_file":
         value = WriteFile.model_validate_json(call.arguments)
     elif call.name == "delegate_task":
@@ -128,6 +135,7 @@ def resolve_model_call(catalog_json: str, call: ToolCall, call_id: str, plugin_c
 
 class Run(Model):
     loaded_mcp_tools: list[str] = Field(default_factory=lambda: list[str]())
+    codemode_state: str = "{}"
     input_text: str | None = None
     direct_call: ToolCall | None = None
     request_id: str
@@ -144,13 +152,16 @@ class Step(Model):
     request_id: str
     ordinal: int
     kind: Literal["model", "tool"]
-    phase: Literal["proposed", "intent", "result", "applied", "unknown", "children"]
+    phase: Literal["proposed", "intent", "result", "applied", "unknown", "children", "code"]
     generation: int
     call: ToolCall | None = None
     result: str = ""
     mcp_catalog: str = ""
     plugin_catalog: str = ""
     search_catalog: str = ""
+    code_poll_ms: int = 0
+    code_input_state: str = ""
+    code_state: str = ""
     approval_id: str = ""
     proposal_digest: str = ""
     children: list[str] = Field(default_factory=list)
@@ -189,6 +200,25 @@ class ToolInvocation:
     generation: int
     lease: Lease
     call: ToolCall
+
+
+@dataclass(frozen=True)
+class CodeRetrieval:
+    step_id: str
+    request_id: str
+    generation: int
+    call: ToolCall
+    config: ProviderConfig
+    state_scope: str = ""
+    initial_state: str | None = None
+    start: bool = False
+    stop: bool = False
+
+
+@dataclass(frozen=True)
+class CodeReturned:
+    invocation: CodeRetrieval
+    status: CodeStatus
 
 
 @dataclass(frozen=True)
@@ -250,7 +280,7 @@ class PluginRetrieval:
 
 type Action = (
     Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect
-    | WebRetrieval | McpRetrieval | ComputerRetrieval | PluginRetrieval
+    | WebRetrieval | McpRetrieval | ComputerRetrieval | PluginRetrieval | CodeRetrieval
 )
 
 
@@ -335,5 +365,5 @@ class PluginReturned:
 
 type Observation = (
     ModelReturned | ToolReturned | ToolObserved | EpochOpened | EpochClosed | EffectResolved | Failed | Previewed
-    | WebReturned | McpReturned | ComputerReturned | PluginReturned
+    | WebReturned | McpReturned | ComputerReturned | PluginReturned | CodeReturned
 )

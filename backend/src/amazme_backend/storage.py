@@ -22,6 +22,7 @@ from .contracts import (
     ApprovalDecision,
     BackendError,
     Cleanup,
+    CodeChild,
     CommitBatch,
     Compaction,
     ComputerActionView,
@@ -70,6 +71,9 @@ from .resources import session_resources
 from .session_domain import (
     Action,
     CloseEpoch,
+    CodeRetrieval,
+    CodeReturned,
+    CodemodeInput,
     ComputerRetrieval,
     ComputerReturned,
     Continue,
@@ -117,7 +121,7 @@ def compaction_basis(payloads: list[str]) -> str:
     return hashlib.sha256("\n".join(payloads).encode()).hexdigest()
 
 
-def loaded_mcp_keys(db: sqlite3.Connection, request_id: str) -> list[str]:
+def _context_requests(db: sqlite3.Connection, request_id: str) -> tuple[int, list[str]]:
     row = db.execute("SELECT payload FROM requests WHERE id=?", (request_id,)).fetchone()
     if row is None:
         raise BackendError("request_not_found", status=404)
@@ -130,6 +134,11 @@ def loaded_mcp_keys(db: sqlite3.Connection, request_id: str) -> list[str]:
         current = Receipt.model_validate_json(row[0])
         ancestors.append(current.request_id)
     ordinal = db.execute("SELECT ordinal FROM requests WHERE id=?", (current.request_id,)).fetchone()[0]
+    return int(ordinal), ancestors
+
+
+def loaded_mcp_keys(db: sqlite3.Connection, request_id: str) -> list[str]:
+    ordinal, ancestors = _context_requests(db, request_id)
     seed = db.execute("SELECT value FROM metadata WHERE key='loaded_mcp_tools'").fetchone()
     loaded = set(TypeAdapter(list[str]).validate_json(seed[0]) if seed else [])
     placeholders = ",".join("?" for _ in ancestors)
@@ -144,6 +153,18 @@ def loaded_mcp_keys(db: sqlite3.Connection, request_id: str) -> list[str]:
         offers = TypeAdapter(list[McpOffer]).validate_json(step.search_catalog or "[]")
         loaded.update(offer.activation_key() for offer in offers if offer.alias in result.details.loaded)
     return sorted(loaded)
+
+
+def codemode_state_at(db: sqlite3.Connection, request_id: str) -> str:
+    ordinal, ancestors = _context_requests(db, request_id)
+    seed = db.execute("SELECT value FROM metadata WHERE key='codemode_state'").fetchone()
+    state = str(seed[0]) if seed else "{}"
+    placeholders = ",".join("?" for _ in ancestors)
+    for row in db.execute("SELECT s.payload FROM steps s JOIN requests r ON r.id=s.request_id WHERE "
+                          f"((r.kind='root' AND r.ordinal<=?) OR r.id IN ({placeholders})) "
+                          "AND coalesce(json_extract(s.payload,'$.code_state'),'')!='' ORDER BY r.ordinal,s.ordinal", (ordinal, *ancestors)):
+        state = Step.model_validate_json(row[0]).code_state
+    return state
 
 
 def session_database(profile: Path, session: str) -> Path:
@@ -199,6 +220,7 @@ def read_settled_root(path: Path, request_id: str) -> tuple[str, Receipt, list[t
             raise BackendError("branch_point_unsettled")
         assert run is not None
         run.loaded_mcp_tools = loaded_mcp_keys(connection, request_id)
+        run.codemode_state = codemode_state_at(connection, request_id)
         return str(row[0]), receipt, messages, run.model_dump_json()
     finally:
         connection.close()
@@ -253,7 +275,7 @@ def event_step_text(step: Step) -> str:
         result = Completion.model_validate_json(step.result)
         result.message = result.message.model_copy(update={"images": [], "reasoning_signature": ""})
         step = step.model_copy(update={"result": result.model_dump_json()})
-    return step.model_dump_json(exclude={"mcp_catalog", "plugin_catalog", "search_catalog"})
+    return step.model_dump_json(exclude={"mcp_catalog", "plugin_catalog", "search_catalog", "code_poll_ms", "code_input_state", "code_state"})
 
 
 def digest(value: str) -> str:
@@ -1288,6 +1310,35 @@ class SessionStore:
     async def active_mcp_tools(self, request_id: str) -> list[str]:
         return await self.db.call(lambda db: loaded_mcp_keys(db, request_id))
 
+    async def accept_code_tool(self, value: CodeChild) -> Receipt:
+        submitted = Submit(request_id=value.request_id, text=f"Script {value.parent_step_id[:32]} tool {value.call.name}", tool_call=value.call)
+
+        def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
+            existing = db.execute("SELECT digest,payload FROM requests WHERE id=?", (value.request_id,)).fetchone()
+            if existing is not None:
+                receipt = Receipt.model_validate_json(existing[1])
+                if str(existing[0]) != digest(submitted.model_dump_json()) or receipt.parent_id != value.parent_request_id:
+                    raise BackendError("codemode_tool_conflict")
+                return receipt
+            if self._meta(db, "freeze_id") or self._meta(db, "stopping") or self._meta(db, "blocked"):
+                raise BackendError("worker_frozen", status=503)
+            parent = self._request(db, value.parent_request_id)
+            step = self._step(db, value.parent_step_id)
+            run = self._run(db, parent.request_id)
+            if (parent.cancel_requested or parent.decision or step.request_id != parent.request_id or step.call is None
+                    or step.call.name != "codemode" or step.phase not in {"intent", "code"} or value.call.name == "codemode"):
+                raise BackendError("codemode_run_inactive")
+            if run.depth >= 4 or len(self._pending_ids(db)) >= PENDING_LIMIT:
+                raise BackendError("child_capacity")
+            child = self._new_request(db, c, submitted, parent_id=parent.request_id, depth=run.depth + 1, inherited=run.config)
+            step.children.append(child.request_id)
+            parent.children.append(child.request_id)
+            self._save_step(db, step)
+            parent.status = "waiting_children"
+            self._save_request(db, c, parent, "children")
+            return child
+        return await self._tx(operation)
+
     async def bind_model_tools(self, step_id: str, generation: int, catalog_json: str, plugin_catalog_json: str = "[]", search_catalog: str = "[]") -> None:
         """Persist the tool list before the provider stream. A later catalog cannot replace it."""
         plugins = TypeAdapter(list[PluginOffer]).validate_json(plugin_catalog_json)
@@ -1570,7 +1621,7 @@ class SessionStore:
             self._message(db, c, request.request_id, step.step_id,
                           Message(role="tool", content=step.result, tool_call_id=step.call.id,
                                   images=self._computer_images(db, step.step_id)
-                                  if step.call.name in {"computer_observe", "computer_locate", "computer_ground", "plugin_tool"} else []))
+                                  if step.call.name in {"computer_observe", "computer_locate", "computer_ground", "plugin_tool", "codemode"} else []))
             if self._run(db, request.request_id).direct_call is not None:
                 self._decide(db, c, request, Decision(status="succeeded", answer=step.result))
         step.phase = "applied"
@@ -1622,6 +1673,16 @@ class SessionStore:
         run = self._run(db, request.request_id)
         steps = self._steps(db, request.request_id)
         for step in steps:
+            if step.kind == "tool" and step.phase in {"intent", "code"} and step.call and step.call.name == "codemode":
+                stopping = bool(request.cancel_requested or request.decision or self._meta(db, "freeze_id") or self._meta(db, "stopping"))
+                if step.code_poll_ms > now_ms():
+                    return Park("children", step.code_poll_ms)
+                if not step.code_input_state:
+                    step.code_input_state = codemode_state_at(db, request.request_id)
+                    self._save_step(db, step)
+                return CodeRetrieval(step.step_id, request.request_id, request.generation, step.call, run.config,
+                                     state_scope=request.request_id if request.kind == "child" else "", initial_state=step.code_input_state,
+                                     start=step.phase == "intent", stop=stopping)
             if (step.kind == "tool" and step.phase == "intent" and step.call
                     and step.call.name in {"computer_observe", "computer_act", "computer_locate", "computer_ground"}):
                 if self._meta(db, "freeze_id") or self._meta(db, "stopping"):
@@ -1712,6 +1773,15 @@ class SessionStore:
                     self._save_step(db, step)
                     c.emit("tool", request.request_id, event_step_text(step))
                     return Continue()
+                if step.call is not None and step.call.name == "codemode":
+                    CodemodeInput.model_validate_json(step.call.arguments)
+                    if run.lease:
+                        return CloseEpoch(request.request_id, run.lease)
+                    step.phase, step.generation = "intent", request.generation
+                    step.code_input_state = codemode_state_at(db, request.request_id)
+                    self._save_step(db, step)
+                    c.emit("tool", request.request_id, event_step_text(step))
+                    return CodeRetrieval(step.step_id, request.request_id, request.generation, step.call, run.config, state_scope=request.request_id if request.kind == "child" else "", initial_state=step.code_input_state, start=True)
                 if not self._grant(db, c, request, step):
                     if request.decision:
                         return Continue()
@@ -1904,6 +1974,62 @@ class SessionStore:
                 self._materialize(db, c, request, step)
                 self._decide(db, c, request, Decision(status="cancelled"))
             return
+        if isinstance(observation, CodeReturned):
+            action, status = observation.invocation, observation.status
+            request = self._request(db, action.request_id)
+            step = self._step(db, action.step_id)
+            if (request.generation != action.generation or step.request_id != request.request_id or step.phase not in {"intent", "code"}
+                    or step.call != action.call or status.view.run_id != action.step_id[:32]):
+                raise BackendError("stale_generation")
+            view = status.view
+            if status.running or view.phase != "unknown" and not view.clean:
+                step.phase = "code"
+                step.code_poll_ms = now_ms() + 1000
+                self._save_step(db, step)
+                if request.status != "waiting_children" and not request.decision:
+                    request.status = "waiting_children"
+                    self._save_request(db, c, request)
+                return
+            if view.phase == "unknown":
+                step.phase = "unknown"
+                self._save_step(db, step)
+                hold = EffectHold(call_id=step.step_id, session_id=self.session_id, request_id=request.request_id,
+                                  reason="codemode_outcome_unknown", resource_clean=view.clean)
+                db.execute("INSERT INTO effects VALUES(?,?) ON CONFLICT(id) DO NOTHING", (hold.call_id, hold.model_dump_json()))
+                c.emit("effect", request.request_id, hold.model_dump_json())
+                self._decide(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown", error="codemode_outcome_unknown"))
+                return
+            text = ["Script completed" if view.phase == "success" else "Script " + view.phase]
+            images: list[ImagePart] = []
+            for part in view.output:
+                if part.type == "text":
+                    text.append(part.text)
+                else:
+                    images.append(ImagePart(media_type=part.mimeType, data_base64=part.data))
+            if view.value and view.value != "null":
+                text.append(view.value)
+            if view.error:
+                text.append("Script error: " + view.error)
+            try:
+                checked_images(images)
+            except BackendError as error:
+                images = []
+                text.append("Script media omitted: " + error.code)
+            if images:
+                db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
+                           (step.step_id, json.dumps([image.model_dump() for image in images])))
+            step.result, step.phase = "\n".join(text)[:64000], "result"
+            if view.phase == "success":
+                step.code_state = view.state
+            self._save_step(db, step)
+            c.emit("tool", request.request_id, event_step_text(step))
+            if request.cancel_requested:
+                self._materialize(db, c, request, step)
+                self._decide(db, c, request, Decision(status="cancelled"))
+            elif not request.decision:
+                request.status = "running"
+                self._save_request(db, c, request)
+            return
         if isinstance(observation, PluginReturned):
             action, view = observation.invocation, observation.view
             request = self._request(db, action.request_id)
@@ -1973,6 +2099,11 @@ class SessionStore:
             if isinstance(action, (CloseEpoch, OpenEpoch, QueryTool, ReconcileEffect)):
                 self._set_meta(db, "blocked", observation.error)
                 c.emit("cleanup", action.request_id, observation.error)
+                return
+            if isinstance(action, CodeRetrieval):
+                step = self._step(db, action.step_id)
+                step.code_poll_ms = now_ms() + 1000
+                self._save_step(db, step)
                 return
             if isinstance(action, (McpRetrieval, PluginRetrieval)):
                 # The call may already exist. Leave the intent so the next advance queries it.
@@ -2517,6 +2648,7 @@ class SessionStore:
             db.execute("INSERT INTO runs(request_id,payload) VALUES(?,?)", (request_id, run_payload))
             loaded = Run.model_validate_json(run_payload).loaded_mcp_tools
             self._set_meta(db, "loaded_mcp_tools", json.dumps(loaded))
+            self._set_meta(db, "codemode_state", Run.model_validate_json(run_payload).codemode_state)
             for key, payload in messages:
                 message = Message.model_validate_json(payload)
                 self._message(db, c, request_id, key, message)

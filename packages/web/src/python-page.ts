@@ -528,6 +528,15 @@ export class DesktopPage {
 		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
 		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.draft.revision++; this.render(); return; }
 		if (id === A.QUEUE_CANCEL_ACTION) { await this.cancel(data); return; }
+		if (id === "effect:cleanup") {
+			const connection = this.requireConnection(), target: unknown = JSON.parse(data ?? "null");
+			if (!Array.isArray(target) || target[0] !== connection.sessionId || typeof target[1] !== "string" || !/^[a-f0-9]{64}$/.test(target[1])) throw new Error("脚本不属于当前会话");
+			const hold = connection.snapshot?.effects?.find(item => item.call_id === target[1] && item.reason === "codemode_outcome_unknown" && !item.reconciled);
+			if (!hold) throw new Error("原脚本状态已变化，请核对当前记录");
+			await this.client.call("POST /api/v1/sessions/{session_id}/code/{run_id}/cancel", { path: { session_id: connection.sessionId, run_id: hold.call_id.slice(0, 32) }, connection });
+			await this.client.call("GET /api/v1/sessions/{session}/snapshot", { path: { session: connection.sessionId } });
+			if (connection.active()) this.render(); return;
+		}
 		if (id === "effect:review" || id === "effect:resolve") {
 			const connection = this.requireConnection(), target: unknown = JSON.parse(data ?? "null");
 			if (!Array.isArray(target) || target.length !== 2 || target[0] !== connection.sessionId || typeof target[1] !== "string") throw new Error("核对操作不属于当前会话");

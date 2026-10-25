@@ -33,6 +33,7 @@ from .contracts import (
     CancelPlugin,
     Cleanup,
     ClosePlugin,
+    CodeStatus,
     CodeToolBinding,
     CodeToolDispatch,
     CodeToolReceipt,
@@ -124,24 +125,30 @@ MCP_TERMINAL_WINDOW = 100
 
 RESOLUTION_SCHEMA = """CREATE TABLE IF NOT EXISTS resolutions(
     id TEXT PRIMARY KEY,call TEXT NOT NULL UNIQUE,session TEXT NOT NULL,payload TEXT NOT NULL,
-    native_call TEXT,plugin_call TEXT,
-    CHECK((native_call IS NOT NULL AND plugin_call IS NULL AND call=native_call)
-          OR (native_call IS NULL AND plugin_call IS NOT NULL)),
+    native_call TEXT,plugin_call TEXT,code_call TEXT,
+    CHECK((native_call IS NOT NULL AND plugin_call IS NULL AND code_call IS NULL AND call=native_call)
+          OR (native_call IS NULL AND plugin_call IS NOT NULL AND code_call IS NULL)
+          OR (native_call IS NULL AND plugin_call IS NULL AND code_call IS NOT NULL)),
     FOREIGN KEY(native_call) REFERENCES scopes(id),
-    FOREIGN KEY(plugin_call,call) REFERENCES plugin_calls(id,step_id));"""
+    FOREIGN KEY(plugin_call,call) REFERENCES plugin_calls(id,step_id),
+    FOREIGN KEY(code_call,call) REFERENCES code_runs(id,parent_step));"""
 
 
 def ensure_resolution_schema(db: sqlite3.Connection) -> None:
     db.execute("CREATE UNIQUE INDEX IF NOT EXISTS plugin_call_step ON plugin_calls(id,step_id)")
+    db.execute("CREATE UNIQUE INDEX IF NOT EXISTS code_parent_step ON code_runs(id,parent_step)")
     resolution_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(resolutions)")}
-    if "native_call" not in resolution_columns:
-        # Preserve the current journal while making the two real receipt owners explicit.
+    if "code_call" not in resolution_columns:
         db.execute("BEGIN IMMEDIATE")
         try:
             db.execute("ALTER TABLE resolutions RENAME TO previous_resolutions")
             db.execute(RESOLUTION_SCHEMA)
-            db.execute("INSERT INTO resolutions(id,call,session,payload,native_call) "
-                       "SELECT id,call,session,payload,call FROM previous_resolutions")
+            if "native_call" in resolution_columns:
+                db.execute("INSERT INTO resolutions(id,call,session,payload,native_call,plugin_call) "
+                           "SELECT id,call,session,payload,native_call,plugin_call FROM previous_resolutions")
+            else:
+                db.execute("INSERT INTO resolutions(id,call,session,payload,native_call) "
+                           "SELECT id,call,session,payload,call FROM previous_resolutions")
             db.execute("DROP TABLE previous_resolutions")
             db.execute("COMMIT")
         except BaseException:
@@ -358,7 +365,8 @@ class Supervisor:
                 phase TEXT NOT NULL,result TEXT NOT NULL DEFAULT '');
               CREATE TABLE IF NOT EXISTS code_runs(id TEXT PRIMARY KEY,session TEXT NOT NULL,source TEXT NOT NULL,
                 phase TEXT NOT NULL,value TEXT NOT NULL DEFAULT '',committed INTEGER NOT NULL DEFAULT 0);
-              CREATE TABLE IF NOT EXISTS code_state(session TEXT PRIMARY KEY,document TEXT NOT NULL);
+              CREATE TABLE IF NOT EXISTS code_state(session TEXT NOT NULL,scope TEXT NOT NULL,document TEXT NOT NULL,
+                PRIMARY KEY(session,scope));
               CREATE TABLE IF NOT EXISTS code_results(id TEXT PRIMARY KEY,document TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS code_cancellations(id TEXT PRIMARY KEY,session TEXT NOT NULL);
               CREATE TABLE IF NOT EXISTS code_tools(id TEXT PRIMARY KEY,tools TEXT NOT NULL,mcp TEXT NOT NULL,plugins TEXT NOT NULL);
@@ -379,6 +387,7 @@ class Supervisor:
                 "plugin_calls":{"step_id":"TEXT NOT NULL DEFAULT ''", "request_id":"TEXT NOT NULL DEFAULT ''",
                                 "origin":"TEXT NOT NULL DEFAULT 'manual'", "error":"TEXT NOT NULL DEFAULT ''", "fingerprint":"TEXT NOT NULL DEFAULT ''",
                                 "cancel_requested":"INTEGER NOT NULL DEFAULT 0", "clean":"INTEGER NOT NULL DEFAULT 0"},
+                "code_runs":{"parent_request":"TEXT NOT NULL DEFAULT ''", "parent_step":"TEXT NOT NULL DEFAULT ''", "intent":"TEXT NOT NULL DEFAULT ''"},
             }.items():
                 present = {str(row[1]) for row in db.execute("PRAGMA table_info(" + table + ")")}
                 for column, definition in additions.items():
@@ -386,6 +395,14 @@ class Supervisor:
                         db.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)
             db.execute("CREATE TABLE IF NOT EXISTS plugin_cancels(id TEXT PRIMARY KEY,plugin TEXT NOT NULL,session TEXT NOT NULL)")
             db.execute("CREATE TABLE IF NOT EXISTS plugin_loads(id TEXT PRIMARY KEY,plugin TEXT NOT NULL,digest TEXT NOT NULL,result TEXT NOT NULL DEFAULT '')")
+            if "scope" not in {str(row[1]) for row in db.execute("PRAGMA table_info(code_state)")}:
+                db.executescript("""BEGIN IMMEDIATE;
+                    ALTER TABLE code_state RENAME TO code_state_unscoped;
+                    CREATE TABLE code_state(session TEXT NOT NULL,scope TEXT NOT NULL,document TEXT NOT NULL,
+                        PRIMARY KEY(session,scope));
+                    INSERT INTO code_state SELECT session,'',document FROM code_state_unscoped;
+                    DROP TABLE code_state_unscoped;
+                    COMMIT;""")
             ensure_resolution_schema(db)
             remote_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(remotes)")}
             if "transport" not in remote_columns:
@@ -706,6 +723,7 @@ class Supervisor:
 
     async def _holds(self) -> list[EffectHold]:
         active_plugins = {key for key, task in self.plugin_jobs.items() if not task.done()}
+        active_codes = set(self.code_jobs)
         def read(db: sqlite3.Connection) -> list[EffectHold]:
             native = [EffectHold(call_id=str(row["id"]), session_id=str(row["session"]), request_id=str(row["request"]),
                 reason="tool_outcome_unknown", resource_clean=bool(row["clean"]), reconciled=bool(row["resolved"]))
@@ -715,16 +733,27 @@ class Supervisor:
                 reason="plugin_outcome_unknown", resource_clean=bool(row["clean"]), reconciled=bool(row["resolved"]))
                 for row in db.execute("SELECT p.*,EXISTS(SELECT 1 FROM resolutions r WHERE r.call=p.step_id) resolved "
                     "FROM plugin_calls p WHERE origin='model' AND phase='unknown' AND step_id!='' ORDER BY rowid") if str(row["id"]) not in active_plugins]
-            return [*native, *plugins]
+            codes: list[EffectHold] = []
+            for row in db.execute("SELECT c.*,r.document,EXISTS(SELECT 1 FROM resolutions x WHERE x.call=c.parent_step) resolved "
+                                  "FROM code_runs c LEFT JOIN code_results r ON r.id=c.id WHERE c.phase='unknown' AND c.parent_step!=''"):
+                if str(row["id"]) in active_codes:
+                    continue
+                view = CodeView.model_validate_json(row["document"]) if row["document"] else CodeView(run_id=str(row["id"]), phase="unknown")
+                codes.append(EffectHold(call_id=str(row["parent_step"]), session_id=str(row["session"]), request_id=str(row["parent_request"]),
+                                        reason="codemode_outcome_unknown", resource_clean=view.clean, reconciled=bool(row["resolved"])))
+            return [*native, *plugins, *codes]
         return await self.db.call(read)
 
     async def _write_conflict(self, session: str) -> bool:
+        active_codes = set(self.code_jobs)
         def read(db: sqlite3.Connection) -> bool:
             native = db.execute("SELECT 1 FROM scopes s WHERE session=? AND effect='write' AND ((outcome='unknown' AND NOT EXISTS "
                 "(SELECT 1 FROM resolutions r WHERE r.call=s.id)) OR (outcome='completed' AND clean=0)) LIMIT 1", (session,)).fetchone()
             plugin = db.execute("SELECT 1 FROM plugin_calls p WHERE session=? AND origin='model' AND phase='unknown' AND step_id!='' "
                 "AND (clean=0 OR NOT EXISTS (SELECT 1 FROM resolutions r WHERE r.call=p.step_id)) LIMIT 1", (session,)).fetchone()
-            return native is not None or plugin is not None
+            codes = db.execute("SELECT c.id FROM code_runs c LEFT JOIN code_results r ON r.id=c.id WHERE c.session=? AND c.parent_step!='' AND c.phase='unknown' "
+                               "AND (coalesce(json_extract(r.document,'$.clean'),0)=0 OR NOT EXISTS (SELECT 1 FROM resolutions x WHERE x.call=c.parent_step))", (session,))
+            return native is not None or plugin is not None or any(str(row[0]) not in active_codes for row in codes)
         return await self.db.call(read)
 
     async def execute(self, value: RunTool) -> ToolResult:
@@ -861,12 +890,17 @@ class Supervisor:
             scope = await self._scope(resolution.call_id)
             plugin = await self.db.call(lambda db: db.execute("SELECT * FROM plugin_calls WHERE step_id=? AND origin='model'",
                 (resolution.call_id,)).fetchone()) if scope is None else None
+            code = await self.db.call(lambda db: db.execute("SELECT c.*,r.document FROM code_runs c LEFT JOIN code_results r ON r.id=c.id WHERE c.parent_step=?",
+                (resolution.call_id,)).fetchone()) if scope is None and plugin is None else None
             if plugin is not None:
                 if str(plugin["session"]) != value.session_id or str(plugin["phase"]) != "unknown":
                     raise BackendError("effect_scope_mismatch")
                 clean, request_id, reason = bool(plugin["clean"]), str(plugin["request_id"]), "plugin_outcome_unknown"
             elif scope is not None and scope["session"] == value.session_id and scope["effect"] == "write" and scope["outcome"] == "unknown":
                 clean, request_id, reason = bool(scope["clean"]), str(scope["request"]), "tool_outcome_unknown"
+            elif code is not None and str(code["session"]) == value.session_id and str(code["phase"]) == "unknown" and str(code["id"]) not in self.code_jobs:
+                view = CodeView.model_validate_json(code["document"]) if code["document"] else CodeView(run_id=str(code["id"]), phase="unknown")
+                clean, request_id, reason = view.clean, str(code["parent_request"]), "codemode_outcome_unknown"
             else:
                 raise BackendError("effect_scope_mismatch")
             if not clean:
@@ -878,9 +912,11 @@ class Supervisor:
                     if old["payload"] != resolution.model_dump_json() or old["session"] != value.session_id:
                         raise BackendError("effect_resolution_conflict")
                 else:
-                    db.execute("INSERT INTO resolutions(id,call,session,payload,native_call,plugin_call) VALUES(?,?,?,?,?,?)",
+                    db.execute("INSERT INTO resolutions(id,call,session,payload,native_call,plugin_call,code_call) VALUES(?,?,?,?,?,?,?)",
                                (resolution.resolution_id, resolution.call_id, value.session_id, resolution.model_dump_json(),
-                                None if plugin is not None else resolution.call_id, str(plugin["id"]) if plugin is not None else None))
+                                resolution.call_id if scope is not None else None, str(plugin["id"]) if plugin is not None else None, str(code["id"]) if code is not None else None))
+                    if code is not None:
+                        db.execute("INSERT OR IGNORE INTO code_cancellations(id,session) VALUES(?,?)", (str(code["id"]), value.session_id))
             await self.db.call(resolve, write=True)
             return EffectHold(call_id=resolution.call_id, session_id=value.session_id, request_id=request_id,
                               reason=reason, resource_clean=True, reconciled=True)
@@ -1712,7 +1748,7 @@ class Supervisor:
         servers = (await self.mcp_state(McpSession(host_epoch=self.host_epoch,build_id=self.build,session_id=session_id))).servers
         offers = offers_from_views(servers, surface="code")
         plugins = [offer for view in (await self.list_plugins(session_id)).plugins for offer in PluginOffer.from_view(view,workspace)]
-        return CodeTools.model_validate({"tools":[tool["function"] for tool in tool_definitions(offers,self.profile.config.provider,plugins)]})
+        return CodeTools.model_validate({"tools":[tool["function"] for tool in tool_definitions(offers,self.profile.config.provider,plugins,codemode=False)]})
 
     async def bind_code_tool(self, value: CodeToolDispatch) -> CodeToolBinding:
         self.check_host(value)
@@ -1735,19 +1771,35 @@ class Supervisor:
             step_id = hashlib.sha256(f"direct:{value.session_id}:{request_id}".encode()).hexdigest()
             call = resolve_model_call(str(catalog["mcp"]),ToolCall(id=str(value.sequence),name=value.name,arguments=json.dumps(value.arguments)),
                 step_id[:32],str(catalog["plugins"]))
-            result = CodeToolBinding(request_id=request_id,call=call)
+            result = CodeToolBinding(request_id=request_id, call=call, parent_request_id=str(run["parent_request"]), parent_step_id=str(run["parent_step"]))
             db.execute("INSERT INTO code_tool_calls VALUES(?,?,?,?,?)", (request_id,value.run_id,value.sequence,payload,result.model_dump_json()))
             return result
         return await self.db.call(bind,write=True)
 
-    async def run_code(self, value: OpenCode) -> CodeView:
+    async def _start_code(self, value: OpenCode) -> tuple[CodeView, asyncio.Task[CodeView] | None]:
         async with self.control:
             self.check_host(value)
+            if value.parent_request_id or value.parent_step_id:
+                await self.validate_worker(WorkerRequest(session_id=value.session_id, worker_id=value.worker_id, build_id=value.build_id))
+                if not value.parent_request_id or len(value.parent_step_id) != 64 or value.run_id != value.parent_step_id[:32]:
+                    raise BackendError("codemode_parent_identity")
+            if value.state_scope and (not value.parent_request_id or value.state_scope != value.parent_request_id):
+                raise BackendError("codemode_state_scope")
+            if value.initial_state is not None:
+                try:
+                    initial: object = json.loads(value.initial_state)
+                except ValueError as error:
+                    raise BackendError("codemode_state_invalid") from error
+                if not isinstance(initial, dict):
+                    raise BackendError("codemode_state_invalid")
+            intent = value.model_dump_json(exclude={"host_epoch", "build_id", "worker_id"})
             existing = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
             if existing is not None:
-                if existing["session"] != value.session_id or existing["source"] != value.source:
+                if (existing["session"] != value.session_id or existing["source"] != value.source
+                        or str(existing["parent_request"]) != value.parent_request_id or str(existing["parent_step"]) != value.parent_step_id
+                        or existing["intent"] and str(existing["intent"]) != intent):
                     raise BackendError("codemode_conflict")
-                return await self._code_view_with_state(existing)
+                return await self._code_view_with_state(existing), None
             self._admit(value.session_id)
             if len(self.code_jobs) >= 8:
                 raise BackendError("codemode_capacity")
@@ -1756,13 +1808,15 @@ class Supervisor:
             servers = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE session=?", (value.session_id,)).fetchall())
             offers = offers_from_views([self._mcp_view(row) for row in servers], surface="code")
             plugins = [offer for view in (await self.list_plugins(value.session_id)).plugins for offer in PluginOffer.from_view(view,workspace)]
-            definitions = [dict(tool["function"]) for tool in tool_definitions(offers,self.profile.config.provider,plugins)]
+            options = self.profile.config.provider.model_copy(update={"allowed_tools": value.allowed_tools, "excluded_tools": value.excluded_tools}) if value.parent_request_id else self.profile.config.provider
+            definitions = [dict(tool["function"]) for tool in tool_definitions(offers,options,plugins,codemode=False)]
             cancelled = await self.db.call(lambda db: db.execute(
                 "SELECT session FROM code_cancellations WHERE id=?", (value.run_id,)).fetchone())
             if cancelled is not None and cancelled["session"] != value.session_id:
                 raise BackendError("codemode_conflict")
             def reserve(db: sqlite3.Connection) -> None:
-                db.execute("INSERT INTO code_runs(id,session,source,phase) VALUES(?,?,?,'unknown')", (value.run_id,value.session_id,value.source))
+                db.execute("INSERT INTO code_runs(id,session,source,phase,parent_request,parent_step,intent) VALUES(?,?,?,'unknown',?,?,?)",
+                           (value.run_id, value.session_id, value.source, value.parent_request_id, value.parent_step_id, intent))
                 db.execute("INSERT INTO code_tools VALUES(?,?,?,?)",(value.run_id,json.dumps(definitions),catalog_payload(offers),
                     json.dumps([offer.model_dump() for offer in plugins],sort_keys=True)))
             await self.db.call(reserve,write=True)
@@ -1778,12 +1832,28 @@ class Supervisor:
                 if not result.cancelled():
                     result.exception()
             task.add_done_callback(finished)
-        return await asyncio.shield(task)
+        return CodeView(run_id=value.run_id, phase="unknown"), task
+
+    async def run_code(self, value: OpenCode) -> CodeView:
+        view, task = await self._start_code(value)
+        return await asyncio.shield(task) if task is not None else view
+
+    async def start_code(self, value: OpenCode) -> CodeStatus:
+        view, _task = await self._start_code(value)
+        return CodeStatus(view=view, running=value.run_id in self.code_jobs)
+
+    async def code_status(self, value: CancelCode) -> CodeStatus:
+        self.check_host(value)
+        row = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id, value.session_id)).fetchone())
+        if row is None:
+            raise BackendError("codemode_not_found", status=404)
+        running = value.run_id in self.code_jobs
+        return CodeStatus(view=await self._code_view_with_state(row) if running else await self._retire_code(row), running=running)
 
     async def _run_code(self, value: OpenCode, definitions: list[dict[str, object]], event: threading.Event) -> CodeView:
         saved = await self.db.call(lambda db: db.execute(
-            "SELECT document FROM code_state WHERE session=?", (value.session_id,)).fetchone())
-        loaded: object = json.loads(str(saved["document"])) if saved else {}
+            "SELECT document FROM code_state WHERE session=? AND scope=?", (value.session_id, value.state_scope)).fetchone())
+        loaded: object = json.loads(str(saved["document"])) if saved else json.loads(value.initial_state or "{}")
         state = json_object(loaded)
         loop = asyncio.get_running_loop()
         dispatched: list[CodeToolDispatch] = []
@@ -1886,8 +1956,8 @@ class Supervisor:
             db.execute("UPDATE code_runs SET phase=?,value=?,committed=? WHERE id=?",
                 (view.phase,view.value,int(view.phase == "success"),value.run_id))
             if view.phase == "success":
-                db.execute("INSERT INTO code_state(session,document) VALUES(?,?) ON CONFLICT(session) DO UPDATE SET document=excluded.document",
-                    (value.session_id,view.state))
+                db.execute("INSERT INTO code_state(session,scope,document) VALUES(?,?,?) ON CONFLICT(session,scope) DO UPDATE SET document=excluded.document",
+                    (value.session_id,value.state_scope,view.state))
             db.execute("INSERT INTO code_results VALUES(?,?)", (value.run_id,view.model_dump_json()))
         await self.db.call(commit,write=True)
         return view
@@ -1948,7 +2018,7 @@ class Supervisor:
                 pass
         row = await self.db.call(lambda db: db.execute(
             "SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id, value.session_id)).fetchone())
-        return CodeView(run_id=value.run_id,phase="unknown",cancel_requested=True) if row is None else await self._retire_code(row)
+        return CodeView(run_id=value.run_id,phase="cancelled",clean=True,cancel_requested=True) if row is None else await self._retire_code(row)
 
     async def _stop_codes(self, session: str = "") -> None:
         ids = None if not session else {str(row[0]) for row in await self.db.call(lambda db: db.execute(
@@ -2814,6 +2884,8 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/mcp/state")(owner.mcp_state)
     app.post("/mcp/query")(owner.query_mcp)
     app.post("/code/run")(owner.run_code)
+    app.post("/code/start")(owner.start_code)
+    app.post("/code/status")(owner.code_status)
     app.get("/code/tools")(owner.code_tools)
     app.post("/code/tools/bind")(owner.bind_code_tool)
     app.post("/code/cancel")(owner.cancel_code)

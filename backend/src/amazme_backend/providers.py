@@ -282,7 +282,7 @@ def _object_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
 
 
 def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions | None = None,
-                     plugins: list[PluginOffer] | None = None) -> list[ChatCompletionToolParam]:
+                     plugins: list[PluginOffer] | None = None, *, codemode: bool = True) -> list[ChatCompletionToolParam]:
     tools: list[ChatCompletionToolParam] = [
         {"type": "function", "function": {"name": "shell", "description": "Execute a command with the local user shell in the selected project directory. This has the current user permissions, including network access. Commands may have side effects; never retry an unknown result.", "parameters": Shell.model_json_schema()}},
         {"type": "function", "function": {"name": "read_file", "description": "Read a relative UTF-8 workspace file.", "parameters": ReadFile.model_json_schema()}},
@@ -313,6 +313,8 @@ def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions |
     if any(offer.exposure in {"codemode", "deferred"} and not offer.active for offer in offers or []):
         from .tool_search import ToolSearchInput
         tools.append({"type": "function", "function": {"name": "tool_search", "description": "Search deferred tool metadata with BM25 and load matching tools for the next model call. For MCP tool discovery, use tool_search.", "parameters": ToolSearchInput.model_json_schema()}})
+    if codemode and (any(offer.exposure == "codemode" for offer in offers or []) or options is not None and options.allowed_tools is not None and options.tool_allowed("codemode")):
+        tools.append({"type": "function", "function": {"name": "codemode", "description": "Run JavaScript that calls other tools through tools.name(arguments). Use text(), image(), store() and load(). Nested calls use the session's approvals and cancellation. An unknown result must not be replayed.", "parameters": {"type": "object", "properties": {"code": {"type": "string", "minLength": 1, "maxLength": 8000}}, "required": ["code"], "additionalProperties": False}}})
     return tools if options is None else [tool for tool in tools if options.tool_allowed(tool["function"]["name"])]
 
 
