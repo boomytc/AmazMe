@@ -284,6 +284,43 @@ export function pythonUpdateAction(runningBuild: string, record: {
 	return "verify";
 }
 
+/** The Host owns update admission, including replacements made outside the installer. */
+export async function settlePythonBackendUpdate(ready: PythonReady, controlToken: string, webToken: string): Promise<PythonUpdateRecord | undefined> {
+	distinctTokens(controlToken, webToken);
+	async function call(path: string, method: "GET" | "POST", body?: string): Promise<unknown> {
+		const response = await fetch(`${ready.origin}${path}`, {
+			method, redirect: "error", signal: AbortSignal.timeout(120_000),
+			headers: { Authorization: `Bearer ${path.startsWith("/control/") ? controlToken : webToken}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+			...(body === undefined ? {} : { body }),
+		});
+		if (!response.ok) throw new Error(`后端更新核对失败（${response.status}），已保留冻结状态。`);
+		return response.json();
+	}
+	const health = await call("/api/v1/health", "GET");
+	if (typeof health !== "object" || health === null || !("identity" in health)) throw new Error("后端更新状态无效");
+	const identity = health.identity;
+	if (typeof identity !== "object" || identity === null || !("profile_id" in identity) || identity.profile_id !== ready.profileId
+		|| !("build_id" in identity) || identity.build_id !== ready.buildId || !("host_epoch" in identity) || identity.host_epoch !== ready.hostEpoch) throw new Error("后端更新身份不匹配");
+	if (!("update" in health)) throw new Error("后端更新记录缺失");
+	if (health.update === null) return undefined;
+	let record = parsePythonUpdateRecord(health.update);
+	if (!record) throw new Error("后端更新记录无效");
+	const action = pythonUpdateAction(ready.buildId, { source_build: record.sourceBuild, target_build: record.targetBuild, activated: record.activated, phase: record.phase });
+	if (action === "hold") throw new Error("后端已冻结，请启动该更新的目标构建。");
+	if (action === "verify") {
+		const request = pythonResumeUpdateRequest(ready, controlToken, webToken, record.updateId);
+		const resumed = parsePythonUpdateRecord(await call(new URL(request.url).pathname, "POST"));
+		if (!resumed || resumed.updateId !== record.updateId || resumed.targetBuild !== ready.buildId) throw new Error("后端更新核对回执不匹配");
+		record = resumed;
+	}
+	if (record.activated) return record;
+	if (record.phase !== "validating" && record.phase !== "completed") throw new Error("后端更新核对尚未完成，已保留冻结状态。");
+	const request = pythonCompleteUpdateRequest(ready, controlToken, webToken, record.updateId, record.revision);
+	const activated = parsePythonUpdateRecord(await call(new URL(request.url).pathname, "POST", request.body));
+	if (!activated?.activated || activated.updateId !== record.updateId || activated.targetBuild !== ready.buildId) throw new Error("后端更新尚未激活，已保留原更新记录。");
+	return activated;
+}
+
 export function pythonUpdateStatePath(userData: string): string {
 	return join(userData, "updates", "python-update.json");
 }

@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { createHostSupervisor } from "../src/host.ts";
 import { createReadinessParser } from "../src/readiness.ts";
 import { fakeHost } from "./fake-host.ts";
@@ -20,6 +20,7 @@ import {
 	readControlToken,
 	requirePythonBackend,
 	resolvePythonBackend,
+	settlePythonBackendUpdate,
 	shouldStopSharedBackend,
 	windowCloseAction,
 	type PythonReady,
@@ -29,6 +30,7 @@ import { createTempDir } from "./temp-dir.ts";
 const BUILD = "ab".repeat(32);
 const CONTROL = "cd".repeat(32);
 const WEB = "ef".repeat(24);
+afterEach(() => vi.unstubAllGlobals());
 
 function readyLine(): string {
 	return JSON.stringify({
@@ -166,6 +168,42 @@ describe("packaged python backend", () => {
 		writeFileSync(join(dir, "amazme-backend", "build.json"), JSON.stringify({ build_id: BUILD }));
 		expect(readPythonBuildId(dir)).toBe(BUILD);
 		expect(pythonUpdateStatePath(dir)).toBe(join(dir, "updates", "python-update.json"));
+	});
+
+	test("settles a Host replacement without an installer sidecar, using the original update ID", async () => {
+		const record = { update_id: "replace-local", source_build: "1".repeat(64), target_build: BUILD, phase: "freezing", revision: "2", activated: false };
+		const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ identity: { profile_id: "profile", build_id: BUILD, host_epoch: 3 }, update: record }))
+			.mockResolvedValueOnce(Response.json({ ...record, phase: "validating", revision: "7" }))
+			.mockResolvedValueOnce(Response.json({ ...record, phase: "completed", revision: "9", activated: true }));
+		vi.stubGlobal("fetch", fetcher);
+		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).resolves.toMatchObject({ updateId: "replace-local", activated: true });
+		expect(fetcher.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(["/api/v1/health", "/control/updates/replace-local/resume", "/control/updates/complete"]);
+		expect(fetcher.mock.calls[0][1].headers.Authorization).toBe(`Bearer ${WEB}`);
+		expect(fetcher.mock.calls[1][1].headers.Authorization).toBe(`Bearer ${CONTROL}`);
+		expect(JSON.parse(fetcher.mock.calls[2][1].body)).toEqual({ update_id: "replace-local", expected_revision: "7" });
+	});
+
+	test("ready startup does not submit an update and a failed verification never activates", async () => {
+		const identity = { profile_id: "profile", build_id: BUILD, host_epoch: 3 };
+		const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ identity, update: null }));
+		vi.stubGlobal("fetch", fetcher);
+		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).resolves.toBeUndefined();
+		expect(fetcher).toHaveBeenCalledTimes(1);
+		fetcher.mockReset().mockResolvedValueOnce(Response.json({ identity, update: { update_id: "replace-local", source_build: "1".repeat(64), target_build: BUILD, phase: "freezing", revision: "2", activated: false } }))
+			.mockResolvedValueOnce(Response.json({ code: "execution_cleanup_pending" }, { status: 503 }));
+		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("503");
+		expect(fetcher).toHaveBeenCalledTimes(2);
+	});
+
+	test("another Host generation or a source build cannot thaw the update", async () => {
+		const identity = { profile_id: "profile", build_id: BUILD, host_epoch: 3 };
+		const record = { update_id: "replace-local", source_build: BUILD, target_build: "1".repeat(64), phase: "prepared", revision: "2", activated: false };
+		const fetcher = vi.fn().mockResolvedValueOnce(Response.json({ identity: { ...identity, host_epoch: 4 }, update: record }))
+			.mockResolvedValueOnce(Response.json({ identity, update: record }));
+		vi.stubGlobal("fetch", fetcher);
+		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("身份不匹配");
+		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("目标构建");
+		expect(fetcher.mock.calls.every(([, options]) => options.method === "GET")).toBe(true);
 	});
 
 	test("pairs with a cookie and does not put the token in the URL", () => {

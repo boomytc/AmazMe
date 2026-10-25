@@ -61,7 +61,7 @@ CUA companion 已安装在 `~/Library/Application Support/AmazMe/ComputerUse/0.3
 | Ruff、完整后端 Pyright、契约生成检查 | 通过；Pyright 0 errors |
 | 后端完整检查及定向修复 | 首轮 612 项：601 通过、11 失败。修复真实准入缺陷与失效夹具后，相关 136 项中 135 通过、1 项凭据断言需修正；该断言与 HTTP MCP 5 项、OAuth 6 项、媒体边界及关联 34 项随后均通过。重叠集合不累计为全量数字；未重复完整套件 |
 | Web | 首轮 206 项：203 通过、3 失败。修复小请求发送时序并补齐真实目录夹具后，受影响两文件 30 项全部通过，其余已通过结果保留；构建和类型检查通过 |
-| GUI | 构建、类型检查通过，125 项全部通过 |
+| GUI | 构建、类型检查通过，128 项全部通过，包含后端自动替换记录无需安装器文件也能核对并激活的回归 |
 | 其他客户端 | CLI/TUI 与 eval 的已有包检查保留；本次当前冻结后端重新验证 CLI、RPC、Python SDK 及两次真实 PTY TUI 连接、中文输入、退出和绑定释放 |
 | 工程与仓库检查 | 工程 96 通过、7 跳过；`check:workspace` 通过。未运行根目录完整 test/build |
 | 当前包内本机执行 | faux 驱动真实 shell/文件：审批前无副作用、旧审批拒绝、同 ID 不重复执行、检查点冲突及恢复、取消与真实退出证明通过 |
@@ -74,6 +74,11 @@ CUA companion 已安装在 `~/Library/Application Support/AmazMe/ComputerUse/0.3
 
 纠错落在第 1 层：Host 的唯一产品静态入口使用原客户端，错误验证页及独立控制器已经删除。
 第 2 层使用实际客户端 reducer 与原界面运行器约束跨端行为；界面交互与异步归属仍需可观察回归，无法仅靠静态入口排除。
+
+已有 profile 的实际启动补验发现：直接替换 App 后，Host 自动建立更新冻结，而桌面仅根据安装器的 `python-update.json` 继续更新，导致缺少该文件时永久显示启动中。
+桌面现直接读取原 Host 的健康与更新记录，核对 profile、build 和 epoch，再使用原更新 ID 验证和激活；失败交由明确启动错误处理，不吞错后继续装载空页面。
+仅重装桌面壳，复用同一 Python 冻结后端；原用户 profile 已实际完成冻结核对，健康为 ready、active update 为空，页面已连接且输入框可用。
+[启动截图](../.artifacts/native/startup-existing-profile.png) 与 [启动记录](../.artifacts/native/startup-existing-profile.json) 属于真实已有 profile 证据，未请求模型、删除会话或修改凭据；此前新建隔离 profile 的矩阵未覆盖这一入口。
 
 ## 原子变更单元
 

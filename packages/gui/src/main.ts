@@ -38,15 +38,13 @@ import {
 	initialPythonProvider,
 	pairingCookie,
 	parsePythonUpdateRecord,
-	pythonCompleteUpdateRequest,
 	pythonPrepareUpdateRequest,
-	pythonResumeUpdateRequest,
 	pythonShutdownRequest,
-	pythonUpdateAction,
 	pythonUpdateStatePath,
 	readControlToken,
 	requirePythonBackend,
 	resolvePythonBackend,
+	settlePythonBackendUpdate,
 	shouldStopSharedBackend,
 	windowCloseAction,
 } from "./python-backend.ts";
@@ -98,7 +96,6 @@ const desktopUpdateToken = randomBytes(32).toString("hex");
 let usingPythonBackend = false;
 let pythonProfile = "";
 let pythonWebToken = "";
-let pythonUpdateId = "";
 
 async function stopPythonBackend(): Promise<void> {
 	const ready = host?.pythonReady();
@@ -173,35 +170,8 @@ async function controlCall(path: string, method: string, body?: string): Promise
 async function settlePythonUpdate(): Promise<void> {
 	const ready = host?.pythonReady();
 	if (!usingPythonBackend || ready === undefined) return;
-	const pending = readPendingPythonUpdate();
-	if (pending?.updateId === undefined) return;
-	pythonUpdateId = pending.updateId;
-	const current = await controlCall(`/control/updates/${pending.updateId}`, "GET");
-	if (current.status === 404) { clearPendingPythonUpdate(); return; }
-	const record = parsePythonUpdateRecord(current.value);
-	if (!current.ok || record === undefined) return;
-	if (record.activated) { clearPendingPythonUpdate(); return; }
-	const action = pythonUpdateAction(ready.buildId, {
-		source_build: record.sourceBuild, target_build: record.targetBuild, activated: record.activated, phase: record.phase,
-	});
-	if (action === "hold") return;
-	let revision = record.revision;
-	let phase = record.phase;
-	if (action === "verify") {
-		const request = pythonResumeUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, record.updateId);
-		const resumed = await controlCall(new URL(request.url).pathname, "POST");
-		const verified = parsePythonUpdateRecord(resumed.value);
-		if (!resumed.ok || verified === undefined || verified.activated) {
-			if (verified?.activated) clearPendingPythonUpdate();
-			return;
-		}
-		revision = verified.revision;
-		phase = verified.phase;
-	}
-	if (phase !== "validating" && phase !== "completed") return;
-	const complete = pythonCompleteUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, record.updateId, revision);
-	const activated = parsePythonUpdateRecord((await controlCall(new URL(complete.url).pathname, "POST", complete.body)).value);
-	if (activated?.activated) clearPendingPythonUpdate();
+	await settlePythonBackendUpdate(ready, readControlToken(pythonProfile), pythonWebToken);
+	if (readPendingPythonUpdate()?.updateId !== undefined) clearPendingPythonUpdate();
 }
 
 async function updateHostAdmission(action: "prepare" | "resume"): Promise<boolean> {
@@ -216,7 +186,6 @@ async function updateHostAdmission(action: "prepare" | "resume"): Promise<boolea
 				const response = await controlCall(new URL(request.url).pathname, "POST", request.body);
 				const prepared = parsePythonUpdateRecord(response.value);
 				if (!response.ok || prepared === undefined || prepared.activated || prepared.phase !== "prepared") return false;
-				pythonUpdateId = prepared.updateId;
 				writePendingPythonUpdate({ updateId: prepared.updateId, targetBuild: prepared.targetBuild });
 				return true;
 			}
@@ -733,11 +702,7 @@ async function boot(): Promise<void> {
 		},
 	});
 	const pageUrl = await host.start();
-	if (usingPythonBackend) {
-		try { await settlePythonUpdate(); } catch (error: unknown) {
-			console.error(`desktop python update settle failed: ${error instanceof Error ? error.message : "request failed"}`);
-		}
-	}
+	if (usingPythonBackend) await settlePythonUpdate();
 	const namedSession = deepLinkSession?.trim();
 	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: "primary" } : { workspace: "primary", fresh: true }));
 	if (!SMOKE && !notices.quitting) {
