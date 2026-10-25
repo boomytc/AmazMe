@@ -61,6 +61,8 @@ from .contracts import (
     PluginReload,
     PluginView,
     ProviderConfigured,
+    ProviderCheck,
+    ProviderCheckRequest,
     Receipt,
     ResourceOptions,
     ScheduleControl,
@@ -141,6 +143,10 @@ class Client:
 
     async def answer_feedback(self, session_id: str) -> AnswerFeedbackList:
         return AnswerFeedbackList.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/feedback"))
+
+    async def check_provider(self, value: ProviderCheckRequest) -> ProviderCheck:
+        return ProviderCheck.model_validate(await self._send("POST", f"/api/v1/providers/{quote(value.provider, safe='')}/check",
+            json_body=value.model_dump(), headers=self._write()))
 
     async def save_answer_feedback(self, session_id: str, workspace: str, attachment_id: str, value: AnswerFeedbackWrite) -> AnswerFeedback:
         await self._require_workspace(session_id, workspace)
@@ -493,14 +499,18 @@ class Client:
         payload = await self._send("GET", f"/api/v1/sessions/{session_id}/mcp")
         return McpState.model_validate(payload)
 
-    async def mcp_configuration(self, session_id: str) -> McpConfiguration:
-        return McpConfiguration.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/mcp-configuration"))
+    async def mcp_configuration(self, session_id: str = "") -> McpConfiguration:
+        path = f"/api/v1/sessions/{session_id}/mcp-configuration" if session_id else "/api/v1/mcp-configuration"
+        return McpConfiguration.model_validate(await self._send("GET", path))
 
     async def change_mcp_configuration(self, session_id: str, workspace: str, attachment_id: str,
                                        value: McpConfigWrite | McpConfigPatch) -> McpConfiguration:
-        await self._require_workspace(session_id, workspace)
+        if session_id:
+            await self._require_workspace(session_id, workspace)
+        elif workspace or attachment_id:
+            raise BackendError("binding_required")
         return McpConfiguration.model_validate(await self._send("POST" if isinstance(value, McpConfigWrite) else "PATCH",
-            f"/api/v1/sessions/{session_id}/mcp-configuration", json_body=value.model_dump(mode="json", by_alias=True),
+            f"/api/v1/sessions/{session_id}/mcp-configuration" if session_id else "/api/v1/mcp-configuration", json_body=value.model_dump(mode="json", by_alias=True),
             headers=self._write(attachment_id)))
 
     async def reload_mcp_configuration(self, session_id: str, workspace: str, attachment_id: str) -> McpState:

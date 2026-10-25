@@ -38,7 +38,7 @@ def effective(db: sqlite3.Connection, workspace: str) -> list[Configured]:
     result: list[Configured] = []
     for row in db.execute("SELECT id,name,launch,payload FROM mcp_configuration WHERE workspace='' ORDER BY name"):
         settings = McpStdioSettings.model_validate_json(str(row[3]))
-        patch = db.execute("SELECT payload,launch FROM mcp_configuration WHERE name=? AND workspace=?", (str(row[1]), workspace)).fetchone()
+        patch = db.execute("SELECT payload,launch FROM mcp_configuration WHERE name=? AND workspace=?", (str(row[1]), workspace)).fetchone() if workspace else None
         if patch is not None:
             settings = McpStdioSettings.model_validate({**settings.model_dump(by_alias=True), **json.loads(str(patch[0]))})
         launch_id = str(row[2])
@@ -57,6 +57,8 @@ def listing(db: sqlite3.Connection, workspace: str, path: Path) -> McpConfigurat
 
 
 def change(db: sqlite3.Connection, value: McpConfigWrite | McpConfigPatch, workspace: str, path: Path) -> McpConfiguration:
+    if isinstance(value, McpConfigPatch) and value.scope == "project" and not workspace:
+        raise BackendError("mcp_project_session_required")
     body = value.model_dump_json(by_alias=True)
     digest = hashlib.sha256(json.dumps([workspace, body]).encode()).hexdigest()
     previous = db.execute("SELECT digest,result FROM mcp_config_changes WHERE id=?", (value.operation_id,)).fetchone()

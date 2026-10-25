@@ -2230,6 +2230,9 @@ class Supervisor:
                 if (value.expected_fingerprint != str(plugin["fingerprint"]) or value.expected_load_id != str(plugin["load_id"])
                         or value.expected_schema_digest != tool.schema_digest()):
                     raise BackendError("plugin_catalog_conflict")
+            elif ((value.expected_fingerprint or value.expected_load_id)
+                  and (value.expected_fingerprint != str(plugin["fingerprint"]) or value.expected_load_id != str(plugin["load_id"]))):
+                raise BackendError("plugin_catalog_conflict")
             await self.db.call(lambda db: db.execute(
                 "INSERT INTO plugin_calls(id,plugin,session,text,phase,fingerprint,step_id,request_id,origin) VALUES(?,?,?,?,'unknown',?,?,?,?)",
                 (value.call_id, value.plugin_id, value.session_id, payload, str(plugin["fingerprint"]),

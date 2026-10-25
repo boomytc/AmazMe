@@ -27,6 +27,8 @@ from .contracts import (
     ProjectUpdate,
     ProjectView,
     ProviderConfig,
+    ProviderCheck,
+    ProviderCheckRequest,
     Receipt,
     ServiceInfo,
     Session,
@@ -199,6 +201,7 @@ class HostStore:
                   text TEXT NOT NULL, digest TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS answer_feedback(id TEXT PRIMARY KEY,session TEXT NOT NULL,request TEXT NOT NULL,
                   revision INTEGER NOT NULL,digest TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(session,request,revision));
+                CREATE TABLE IF NOT EXISTS provider_checks(id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS shares(id TEXT PRIMARY KEY, session TEXT NOT NULL,
                   digest TEXT NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS session_models(
@@ -993,6 +996,29 @@ class HostStore:
                            (value.operation_id, value.session_id, value.request_id, value.revision,
                             answer_feedback_key(value.session_id, original), value.model_dump_json()))
         await self.transaction(operation)
+
+    async def begin_provider_check(self, value: ProviderCheckRequest, configuration_revision: int, credential_revision: int) -> tuple[ProviderCheck, bool]:
+        key = hashlib.sha256(value.model_dump_json().encode()).hexdigest()
+
+        def operation(db: sqlite3.Connection) -> tuple[ProviderCheck, bool]:
+            stored = db.execute("SELECT digest,payload FROM provider_checks WHERE id=?", (value.operation_id,)).fetchone()
+            if stored is not None:
+                if str(stored[0]) != key:
+                    raise BackendError("provider_check_conflict")
+                return ProviderCheck.model_validate_json(stored[1]), False
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            result = ProviderCheck(operation_id=value.operation_id, provider=value.provider, phase="unknown",
+                                   configuration_revision=configuration_revision, credential_revision=credential_revision)
+            db.execute("INSERT INTO provider_checks(id,digest,payload) VALUES(?,?,?)", (value.operation_id, key, result.model_dump_json()))
+            return result, True
+        return await self.transaction(operation)
+
+    async def finish_provider_check(self, result: ProviderCheck) -> ProviderCheck:
+        def operation(db: sqlite3.Connection) -> ProviderCheck:
+            db.execute("UPDATE provider_checks SET payload=? WHERE id=?", (result.model_dump_json(), result.operation_id))
+            return result
+        return await self.transaction(operation)
 
     async def save_share(self, share_id: str, session_id: str, key: str, payload: str) -> str:
         def operation(db: sqlite3.Connection) -> str:

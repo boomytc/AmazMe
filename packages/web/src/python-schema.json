@@ -4423,6 +4423,16 @@
           },
           "type": "object",
           "title": "Arguments"
+        },
+        "expected_fingerprint": {
+          "type": "string",
+          "title": "Expected Fingerprint",
+          "default": ""
+        },
+        "expected_load_id": {
+          "type": "string",
+          "title": "Expected Load Id",
+          "default": ""
         }
       },
       "additionalProperties": false,
@@ -5168,6 +5178,89 @@
         "name"
       ],
       "title": "ProjectWrite"
+    },
+    "ProviderCheck": {
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "title": "Operation Id"
+        },
+        "provider": {
+          "type": "string",
+          "title": "Provider"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "done",
+            "unknown"
+          ],
+          "title": "Phase"
+        },
+        "configuration_revision": {
+          "type": "integer",
+          "title": "Configuration Revision"
+        },
+        "credential_revision": {
+          "type": "integer",
+          "title": "Credential Revision"
+        },
+        "checked_at": {
+          "type": "integer",
+          "title": "Checked At",
+          "default": 0
+        },
+        "failed": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Failed"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "operation_id",
+        "provider",
+        "phase",
+        "configuration_revision",
+        "credential_revision"
+      ],
+      "title": "ProviderCheck"
+    },
+    "ProviderCheckRequest": {
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Operation Id"
+        },
+        "provider": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Provider"
+        },
+        "model_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 4096,
+          "minItems": 1,
+          "title": "Model Ids"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "operation_id",
+        "provider",
+        "model_ids"
+      ],
+      "title": "ProviderCheckRequest"
     },
     "ProviderConfigured": {
       "properties": {
@@ -5953,6 +6046,16 @@
           "type": "array",
           "maxItems": 128,
           "title": "Excluded Tools"
+        },
+        "provider_check": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ProviderCheckRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "feedback": {
           "anyOf": [
@@ -9240,6 +9343,28 @@
         "$ref": "#/components/schemas/RemoteRun"
       }
     },
+    "GET /api/v1/mcp-configuration": {
+      "response": {
+        "$ref": "#/components/schemas/McpConfiguration"
+      },
+      "body": null
+    },
+    "POST /api/v1/mcp-configuration": {
+      "response": {
+        "$ref": "#/components/schemas/McpConfiguration"
+      },
+      "body": {
+        "$ref": "#/components/schemas/McpConfigWrite"
+      }
+    },
+    "PATCH /api/v1/mcp-configuration": {
+      "response": {
+        "$ref": "#/components/schemas/McpConfiguration"
+      },
+      "body": {
+        "$ref": "#/components/schemas/McpConfigPatch"
+      }
+    },
     "GET /api/v1/sessions/{session_id}/mcp-configuration": {
       "response": {
         "$ref": "#/components/schemas/McpConfiguration"
@@ -9346,6 +9471,14 @@
       },
       "body": {
         "$ref": "#/components/schemas/ConfigureProvider"
+      }
+    },
+    "POST /api/v1/providers/{provider}/check": {
+      "response": {
+        "$ref": "#/components/schemas/ProviderCheck"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ProviderCheckRequest"
       }
     },
     "POST /api/v1/models/scope": {

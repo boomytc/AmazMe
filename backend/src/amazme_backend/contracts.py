@@ -592,6 +592,22 @@ class AnswerFeedbackList(Model):
     records: list[AnswerFeedback] = Field(default_factory=lambda: list[AnswerFeedback]())
 
 
+class ProviderCheckRequest(Model):
+    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    provider: str = Field(min_length=1, max_length=100)
+    model_ids: list[str] = Field(min_length=1, max_length=4096)
+
+
+class ProviderCheck(Model):
+    operation_id: str
+    provider: str
+    phase: Literal["pending", "done", "unknown"]
+    configuration_revision: int
+    credential_revision: int
+    checked_at: int = 0
+    failed: list[str] = Field(default_factory=lambda: list[str]())
+
+
 class ShareWrite(Model):
     share_id: str = Field(pattern=r"^[a-f0-9]{32}$")
 
@@ -1634,6 +1650,8 @@ class PluginCallRequest(Model):
     call_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     name: str = Field(pattern=r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
     arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    expected_fingerprint: str = ""
+    expected_load_id: str = ""
 
 
 class OpenPlugin(PluginDraft, HostFence):
@@ -1649,8 +1667,6 @@ class PluginCallEnvelope(PluginCallRequest, HostFence):
     worker_id: str = ""
     step_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{64})?$")
     request_id: str = ""
-    expected_fingerprint: str = ""
-    expected_load_id: str = ""
     expected_schema_digest: str = ""
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     plugin_id: str = Field(pattern=r"^[a-f0-9]{32}$")

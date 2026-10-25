@@ -2821,6 +2821,96 @@
         }
       }
     },
+    "/api/v1/mcp-configuration": {
+      "get": {
+        "summary": "Global Mcp Configuration",
+        "operationId": "global_mcp_configuration_api_v1_mcp_configuration_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpConfiguration"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save Global Mcp Configuration",
+        "operationId": "save_global_mcp_configuration_api_v1_mcp_configuration_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpConfigWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpConfiguration"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Patch Global Mcp Configuration",
+        "operationId": "patch_global_mcp_configuration_api_v1_mcp_configuration_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpConfigPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpConfiguration"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/mcp-configuration": {
       "get": {
         "summary": "Mcp Configuration",
@@ -3473,6 +3563,55 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ProviderConfigured"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider}/check": {
+      "post": {
+        "summary": "Check Provider",
+        "operationId": "check_provider_api_v1_providers__provider__check_post",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderCheckRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCheck"
                 }
               }
             }
@@ -10531,6 +10670,16 @@
             },
             "type": "object",
             "title": "Arguments"
+          },
+          "expected_fingerprint": {
+            "type": "string",
+            "title": "Expected Fingerprint",
+            "default": ""
+          },
+          "expected_load_id": {
+            "type": "string",
+            "title": "Expected Load Id",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -11276,6 +11425,89 @@
           "name"
         ],
         "title": "ProjectWrite"
+      },
+      "ProviderCheck": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "phase": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "done",
+              "unknown"
+            ],
+            "title": "Phase"
+          },
+          "configuration_revision": {
+            "type": "integer",
+            "title": "Configuration Revision"
+          },
+          "credential_revision": {
+            "type": "integer",
+            "title": "Credential Revision"
+          },
+          "checked_at": {
+            "type": "integer",
+            "title": "Checked At",
+            "default": 0
+          },
+          "failed": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Failed"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "provider",
+          "phase",
+          "configuration_revision",
+          "credential_revision"
+        ],
+        "title": "ProviderCheck"
+      },
+      "ProviderCheckRequest": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Operation Id"
+          },
+          "provider": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Provider"
+          },
+          "model_ids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 4096,
+            "minItems": 1,
+            "title": "Model Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "provider",
+          "model_ids"
+        ],
+        "title": "ProviderCheckRequest"
       },
       "ProviderConfigured": {
         "properties": {
@@ -12060,6 +12292,16 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "provider_check": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProviderCheckRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "feedback": {
             "anyOf": [

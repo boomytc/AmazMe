@@ -846,6 +846,8 @@ export type PluginCallRequest = {
   "call_id": string;
   "name": string;
   "arguments"?: Record<string, JsonValue>;
+  "expected_fingerprint"?: string;
+  "expected_load_id"?: string;
 };
 
 export type PluginCallView = {
@@ -1003,6 +1005,22 @@ export type ProjectWrite = {
   "workspaces"?: Array<string>;
 };
 
+export type ProviderCheck = {
+  "operation_id": string;
+  "provider": string;
+  "phase": "pending" | "done" | "unknown";
+  "configuration_revision": number;
+  "credential_revision": number;
+  "checked_at"?: number;
+  "failed"?: Array<string>;
+};
+
+export type ProviderCheckRequest = {
+  "operation_id": string;
+  "provider": string;
+  "model_ids": Array<string>;
+};
+
 export type ProviderConfigured = {
   "operation_id": string;
   "revision": number;
@@ -1144,6 +1162,7 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "provider_check"?: ProviderCheckRequest | null;
   "feedback"?: AnswerFeedbackWrite | null;
   "compaction"?: CompactSession | null;
   "offset"?: number;
@@ -1772,6 +1791,8 @@ export interface ApiModels {
   ProjectUpdate: ProjectUpdate;
   ProjectView: ProjectView;
   ProjectWrite: ProjectWrite;
+  ProviderCheck: ProviderCheck;
+  ProviderCheckRequest: ProviderCheckRequest;
   ProviderConfigured: ProviderConfigured;
   ProviderDefinition: ProviderDefinition;
   Receipt: Receipt;
@@ -2032,6 +2053,9 @@ export interface HttpOperations {
   "session_id": string;
   "remote_id": string;
 }; query: Record<string, unknown>; body: RemoteRun };
+  "GET /api/v1/mcp-configuration": { response: McpConfiguration; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/mcp-configuration": { response: McpConfiguration; path: Record<string, unknown>; query: Record<string, unknown>; body: McpConfigWrite };
+  "PATCH /api/v1/mcp-configuration": { response: McpConfiguration; path: Record<string, unknown>; query: Record<string, unknown>; body: McpConfigPatch };
   "GET /api/v1/sessions/{session_id}/mcp-configuration": { response: McpConfiguration; path: {
   "session_id": string;
 }; query: Record<string, unknown>; body: undefined };
@@ -2077,6 +2101,9 @@ export interface HttpOperations {
   "PUT /api/v1/providers/{provider}": { response: ProviderConfigured; path: {
   "provider": string;
 }; query: Record<string, unknown>; body: ConfigureProvider };
+  "POST /api/v1/providers/{provider}/check": { response: ProviderCheck; path: {
+  "provider": string;
+}; query: Record<string, unknown>; body: ProviderCheckRequest };
   "POST /api/v1/models/scope": { response: ModelScope; path: Record<string, unknown>; query: Record<string, unknown>; body: ModelScopeRequest };
   "GET /api/v1/accounts": { response: AccountsView; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/accounts/oauth": { response: OAuthView; path: Record<string, unknown>; query: Record<string, unknown>; body: OAuthStart };

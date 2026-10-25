@@ -387,6 +387,7 @@ export interface SkillsPanelInput {
 
 export interface McpRuntimeLike {
 	readonly disabled: boolean;
+	readonly canConnect?: boolean;
 	readonly canOverrideProject: boolean;
 	readonly errors: readonly string[];
 	readonly servers: readonly {
@@ -953,7 +954,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 										? [{ id: PLUGIN_MCP_PROJECT_ACTION, label: translate(locale, "panel.plugins.projectSettings"), data: server.name, weight: "text" as const, glyph: "folder" as const }]
 										: []),
 									...(live?.enabled
-										? [{ id: PLUGIN_MCP_RECONNECT_ACTION, label: translate(locale, "panel.plugins.reconnect"), data: server.name, weight: "text" as const, glyph: "folder" as const }]
+										? [{ id: PLUGIN_MCP_RECONNECT_ACTION, label: translate(locale, "panel.plugins.reconnect"), data: server.name, weight: "text" as const, glyph: "folder" as const, disabled: runtime?.canConnect === false }]
 										: []),
 									...(live?.canLogin
 										? [{ id: PLUGIN_MCP_LOGIN_ACTION, label: translate(locale, "panel.plugins.login"), data: server.name, weight: "text" as const, glyph: "folder" as const }]

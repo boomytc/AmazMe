@@ -3,7 +3,7 @@ import * as A from "./actions.ts";
 import { commandPalette, parseCommandLine, type CommandLike } from "./commands.ts";
 import { dockView, parseWorkspaceAction, type WorkspaceStateLike } from "./dock.ts";
 import { documentLanguage, resolveLocale, type Locale } from "./locale.ts";
-import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, providerConfigurationModal, providerLogoutModal, type ModelConnectionsLike } from "./model-connections.ts";
+import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, PROVIDER_TEST_ACTION, PROVIDER_TEST_ALL_ACTION, PROVIDER_TEST_MODAL, providerConfigurationModal, providerLogoutModal, providerTestModal, verificationStatusText, type ModelConnectionsLike } from "./model-connections.ts";
 import { modelScopeModal } from "./model-scope.ts";
 import * as P from "./panels.ts";
 import * as Projects from "./projects.ts";
@@ -11,14 +11,15 @@ import { collectPageElements, createRenderer, type PageRenderer } from "./render
 import { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, definitive, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginCallView, PluginPackages, PluginView, ProductSettings, ProjectView, ProviderCheck, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { seq, settled } from "./python-stream.ts";
 import { TerminalInputQueue } from "./python-terminal.ts";
 import { followSystemTheme, applyTheme, resolveThemePreference } from "./theme.ts";
 import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, FONT_SIZE_LIMITS, resolveTypography, type Typography } from "./typography.ts";
-import { attachmentRejection, attachments, type SubmitMode } from "./view.ts";
+import { attachmentRejection, attachments, type SubmitMode, type TranscriptBlock } from "./view.ts";
+import { toolResultView } from "./tool-results.ts";
 
 const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 	anthropic: "browser", openai: "browser", "openai-codex": "browser", openrouter: "browser", "github-copilot": "device_code", "kimi-coding": "device_code", xai: "device_code", meta: "device_code",
@@ -58,9 +59,9 @@ function pluginPanelState(packages: PluginPackages | undefined, plugins: readonl
 	};
 }
 
-function mcpPanelRuntime(config: McpConfiguration | undefined, state: McpState | undefined, ready: boolean): P.McpRuntimeLike | undefined {
+function mcpPanelRuntime(config: McpConfiguration | undefined, state: McpState | undefined, ready: boolean, canConnect: boolean): P.McpRuntimeLike | undefined {
 	if (!config) return undefined;
-	return { disabled: !ready, canOverrideProject: true, errors: [], login: null,
+	return { disabled: !ready, canConnect, canOverrideProject: Boolean(config.workspace), errors: [], login: null,
 		servers: config.servers.map(item => {
 			const live = state?.servers.find(server => server.managed_id === item.config_id && server.enabled);
 			return { name: item.name, detail: item.detail, state: !item.enabled ? "disabled" : live?.phase === "ready" ? "connected" : live?.phase ?? "disconnected", tools: live?.tools.length ?? 0,
@@ -114,6 +115,9 @@ export class DesktopPage {
 	private mode: SubmitMode = "followUp";
 	private thinking = "off";
 	private feedback?: AnswerFeedbackList;
+	private readonly providerVerification = new Map<string, ProviderCheck>();
+	private readonly checkingProviders = new Set<string>();
+	private readonly commandResults = new Map<string, Map<string, { name: string; result: PluginCallView }>>();
 	private selectedProvider?: string;
 	private enabledModels: string[] | null = null;
 	private readonly modelScopes = new Map<string, string[] | null>();
@@ -146,6 +150,7 @@ export class DesktopPage {
 			{ name: "compact", description: "压缩上下文", source: "builtin" }, { name: "fork", description: "创建分支", source: "builtin" }, { name: "export", description: "导出会话", source: "builtin" },
 		];
 		const commands = new Map(builtins.map(item => [item.name, item]));
+		for (const plugin of this.pluginRuntime) if (plugin.phase === "ready") for (const item of plugin.tools ?? []) if (item.kind === "command" && !commands.has(item.name)) commands.set(item.name, { name: item.name, description: item.description, source: "plugin" });
 		for (const item of this.resources?.prompts ?? []) if (!commands.has(item.name)) commands.set(item.name, { name: item.name, description: item.description ?? "", source: "template" });
 		for (const item of this.resources?.skills ?? []) commands.set(`skill:${item.name}`, { name: `skill:${item.name}`, description: item.description ?? "", source: "skill" });
 		return [...commands.values()];
@@ -224,6 +229,12 @@ export class DesktopPage {
 		if (!ledger) { ledger = new PendingWrites(sessionStorage, connection.identity.profile_id, connection.sessionId); this.writes.set(key, ledger); }
 		return ledger;
 	}
+	private hostLedger(identity: Identity): PendingWrites {
+		const key = `${identity.profile_id}:`;
+		let ledger = this.writes.get(key);
+		if (!ledger) { ledger = new PendingWrites(sessionStorage, identity.profile_id, ""); this.writes.set(key, ledger); }
+		return ledger;
+	}
 	async start(): Promise<void> {
 		const token = new URLSearchParams(location.hash.slice(1)).get("token");
 		if (token) {
@@ -280,6 +291,13 @@ export class DesktopPage {
 		if (resourceGeneration === this.resourceGeneration) this.resources = resources;
 		this.usage = usage;
 		this.mergeFeedback(feedback);
+		await this.loadPlugins();
+		if (!connection.active()) return;
+		if (this.pluginPackages?.packages.some(item => item.phase === "installed")) {
+			const loaded = await this.client.call("POST /api/v1/sessions/{session_id}/plugin-packages/load", { path: { session_id: connection.sessionId }, connection });
+			if (!connection.active()) return;
+			this.pluginRuntime = loaded.plugins;
+		}
 		await this.loadHistory(connection, false);
 		if (this.dockOpen && this.dockTab === "terminal") await this.loadTerminal(connection);
 		this.render();
@@ -361,9 +379,11 @@ export class DesktopPage {
 				const descriptor = this.commands.find(item => item.name === command.name);
 				if (!descriptor) throw new Error(`未识别的命令：/${command.name}`);
 				if (descriptor.source === "builtin") { await this.command(command.name, command.args); this.clearDraft(draft, revision); this.render(); return; }
+				if (descriptor.source === "plugin") { await this.runPluginCommand(command.name, command.args); return; }
 			}
 		}
 		const connection = this.requireConnection(), ledger = this.ledger(connection);
+		if (ledger.read("command", "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls")) throw new Error("原插件命令尚未确认，请先重试原命令或核对结果");
 		const displayedModel = this.selection ?? this.catalog?.current;
 		const root = connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status));
 		const thinking = this.catalog?.models.find(item => item.provider === displayedModel?.provider && item.model === displayedModel.model)?.thinking_levels?.find(level => level === this.thinking);
@@ -388,6 +408,30 @@ export class DesktopPage {
 		const request = id ?? connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status))?.request_id;
 		if (!request) return;
 		await this.client.call("POST /api/v1/sessions/{session}/requests/{request_id}/cancel", { path: { session: connection.sessionId, request_id: request }, connection });
+	}
+	private async runPluginCommand(name: string, args: string, expectedCall?: string): Promise<void> {
+		const connection = this.requireConnection(), ledger = this.ledger(connection), draft = this.draft;
+		let record = ledger.read("command", "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls");
+		if (expectedCall && record?.id !== expectedCall) throw new Error("原命令已变化，请核对当前记录");
+		if (!record) {
+			const plugin = this.pluginRuntime.find(plugin => plugin.phase === "ready" && plugin.tools?.some(tool => tool.kind === "command" && tool.name === name));
+			if (!plugin) throw new Error("插件命令尚未加载，请检查插件配置");
+			record = ledger.prepare("command", "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls", id => ({ path: { session_id: connection.sessionId, plugin_id: plugin.plugin_id }, body: { kind: "command", call_id: id, name, arguments: { arguments: args }, expected_fingerprint: plugin.fingerprint, expected_load_id: plugin.load_id ?? "" } }));
+			draft.submission = { id: record.id, revision: draft.revision };
+		}
+		const owner = draft.submission?.id === record.id ? draft.submission : undefined;
+		this.render();
+		const result = await ledger.send("command", record, this.client, connection);
+		this.rememberCommand(connection, record.body.name, result);
+		if (result.phase === "done" && owner) this.clearDraft(draft, owner.revision);
+		if (result.phase !== "unknown" && draft.submission === owner) draft.submission = undefined;
+		if (connection.active()) this.render();
+	}
+	private rememberCommand(connection: ClientConnection, name: string, result: PluginCallView): void {
+		const scope = `${connection.identity.profile_id}:${connection.sessionId}`, outputs = this.commandResults.get(scope) ?? new Map<string, { name: string; result: PluginCallView }>();
+		outputs.set(result.call_id, { name, result });
+		while (outputs.size > 20) { const first = outputs.keys().next().value; if (!first) break; outputs.delete(first); }
+		this.commandResults.set(scope, outputs);
 	}
 	private mergeFeedback(value: AnswerFeedbackList): void {
 		if (value.session_id !== this.client.connection?.sessionId) return;
@@ -484,6 +528,25 @@ export class DesktopPage {
 		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
 		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.draft.revision++; this.render(); return; }
 		if (id === A.QUEUE_CANCEL_ACTION) { await this.cancel(data); return; }
+		if (id === "effect:review" || id === "effect:resolve") {
+			const connection = this.requireConnection(), target: unknown = JSON.parse(data ?? "null");
+			if (!Array.isArray(target) || target.length !== 2 || target[0] !== connection.sessionId || typeof target[1] !== "string") throw new Error("核对操作不属于当前会话");
+			const hold = connection.snapshot?.effects?.find(item => item.call_id === target[1] && !item.reconciled);
+			if (!hold || !hold.resource_clean) throw new Error("请先等待原资源退出并核对当前状态");
+			if (id === "effect:review") {
+				this.modal = { id: "effect:resolve", data, title: "核对执行效果", description: "根据本机文件或外部系统的实际状态填写证据。核对不会重新执行原调用。", submit: "提交核对", fields: [
+					{ id: "outcome", label: "实际效果", kind: "select", value: "", options: [{ value: "", label: "请选择核对结果" }, { value: "applied", label: "效果已发生" }, { value: "not_applied", label: "确认效果未发生" }] },
+					{ id: "evidence", label: "核对证据", kind: "textarea", value: "" },
+				] }; this.render(); return;
+			}
+			const modal = this.modal;
+			if (action.kind !== "modal-submit" || modal?.id !== id || modal.data !== data) return;
+			const ledger = this.ledger(connection), key = `resolution:${hold.call_id}`;
+			const record = ledger.prepare(key, "POST /api/v1/sessions/{session}/effects/resolve", resolution => ({ path: { session: connection.sessionId }, body: parseContract("EffectResolution", { resolution_id: resolution, call_id: hold.call_id, outcome: fields.outcome, evidence: fields.evidence?.trim() ?? "" }) }));
+			await ledger.send(key, record, this.client, connection);
+			if (connection.active() && this.modal === modal) { this.modal = undefined; this.render(); }
+			return;
+		}
 		if (id === A.FEEDBACK_UP_ACTION || id === A.FEEDBACK_DOWN_ACTION || id === "write:retry-feedback") {
 			const connection = this.requireConnection(), target: unknown = JSON.parse(data ?? "null");
 			if (!Array.isArray(target) || target[0] !== connection.sessionId || typeof target[1] !== "string") throw new Error("反馈不属于当前答案，请刷新后重试");
@@ -516,6 +579,15 @@ export class DesktopPage {
 		if (id === "terminal:confirm") { this.modal = { id: "terminal:confirm-submit", title: "核对终端输入", description: "确认已经核对终端内容后，清除这些未确认输入；不会重新发送它们。", fields: [], submit: "已核对，继续", data: this.terminal?.id }; this.render(); return; }
 		if (id === "terminal:confirm-submit" && this.terminal && data === this.terminal.id) { this.terminal.queue.confirm(); this.modal = undefined; this.render(); return; }
 		if (id === "write:retry-submit") { if (!data) throw new Error("缺少原请求编号"); await this.submit(this.draft.text, data); return; }
+		if (id === "write:retry-command") { if (!data) throw new Error("缺少原命令编号"); await this.runPluginCommand("", "", data); return; }
+		if (id === "write:cancel-command") {
+			const connection = this.requireConnection(), ledger = this.ledger(connection), record = ledger.read("command", "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls");
+			if (!record || record.id !== data || typeof record.path.plugin_id !== "string") throw new Error("原命令已变化，请核对当前记录");
+			const result = await this.client.call("POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls/{call_id}/cancel", { path: { session_id: connection.sessionId, plugin_id: record.path.plugin_id, call_id: record.id }, connection });
+			this.rememberCommand(connection, record.body.name, result);
+			if (result.phase !== "unknown" && result.clean) ledger.forget("command", record);
+			if (connection.active()) this.render(); return;
+		}
 		if (id === "write:cancel-submit") {
 			const connection = this.requireConnection(), ledger = this.ledger(connection);
 			const record = ledger.read("submission", "POST /api/v1/sessions/{session}/submissions");
@@ -616,6 +688,14 @@ export class DesktopPage {
 			await this.updatePreferences(current => { const selected = new Set(current.enabledModels ?? all); if (value === "true") selected.add(key); else selected.delete(key); return { ...current, enabledModels: [...selected] }; });
 			return;
 		}
+		if (id === PROVIDER_TEST_ACTION) {
+			const state = this.connections(), provider = state.state.providers.find(item => item.id === data);
+			if (!provider?.configured) throw new Error("请先配置供应商账号");
+			const models = (this.catalog?.models ?? []).filter(item => item.provider === provider.id).map(item => ({ provider: item.provider, modelId: item.model, name: item.label }));
+			const modal = providerTestModal(this.locale, models, true);
+			this.modal = { ...modal, data: provider.id, actions: modal.actions?.map(action => ({ ...action, data: provider.id })) }; this.render(); return;
+		}
+		if (id === PROVIDER_TEST_MODAL || id === PROVIDER_TEST_ALL_ACTION) { await this.checkProvider(data, id === PROVIDER_TEST_ALL_ACTION ? undefined : fields.model); return; }
 		if (id === P.SETTINGS_FIELD_ACTION) { await this.setPreference(data ?? "", value); return; }
 		if (id === P.DIAGNOSTICS_ACTION) { const connection = this.requireConnection(); const report = await this.client.call("GET /api/v1/sessions/{session_id}/diagnostics", { path: { session_id: connection.sessionId } }); if (connection.active()) { this.modal = { id: "diagnostics:close", title: "诊断", fields: [{ id: "report", label: "会话诊断", kind: "textarea", readOnly: true, value: JSON.stringify(report, null, 2) }] }; this.render(); } return; }
 		throw new Error(`入口尚未接通：${id}`);
@@ -743,7 +823,7 @@ export class DesktopPage {
 		const [packages, runtime, config, mcp] = await Promise.all([
 			this.client.call("GET /api/v1/plugin-packages", { identity }),
 			connection ? this.client.call("GET /api/v1/plugins", { query: { session_id: connection.sessionId } }) : undefined,
-			connection ? this.client.call("GET /api/v1/sessions/{session_id}/mcp-configuration", { path: { session_id: connection.sessionId } }) : undefined,
+			connection ? this.client.call("GET /api/v1/sessions/{session_id}/mcp-configuration", { path: { session_id: connection.sessionId } }) : this.client.call("GET /api/v1/mcp-configuration"),
 			connection ? this.client.call("GET /api/v1/sessions/{session_id}/mcp", { path: { session_id: connection.sessionId } }) : undefined,
 		]);
 		if (identity !== this.client.identity || generation !== this.pluginsGeneration || connection !== this.client.connection) return;
@@ -754,17 +834,22 @@ export class DesktopPage {
 		if (action.kind === "open" || action.kind === "modal-close") return false;
 		const { id, data } = action, fields = action.kind === "modal-submit" ? action.fields : {};
 		if (![P.PLUGIN_MCP_ADD_ACTION, P.PLUGIN_MCP_MODAL, P.PLUGIN_MCP_ENABLED_ACTION, P.PLUGIN_MCP_EXPOSURE_ACTION, P.PLUGIN_MCP_REMOVE_ACTION, P.PLUGIN_MCP_RELOAD_ACTION, P.PLUGIN_MCP_RECONNECT_ACTION, P.PLUGIN_MCP_PROJECT_ACTION, P.PLUGIN_MCP_PROJECT_MODAL, "plugins:mcp-remove-confirm"].includes(id)) return false;
-		const connection = this.requireConnection(), modal = this.modal, ledger = this.ledger(connection);
-		const path = { session_id: connection.sessionId }, config = this.mcpConfiguration;
+		const connection = this.client.connection, identity = this.client.identity, modal = this.modal;
+		if (!identity) throw new Error("请先连接后端");
+		if (connection && !connection.ready) throw new Error("请等待原会话重新连接");
+		const ledger = connection ? this.ledger(connection) : this.hostLedger(identity), binding = connection ?? identity;
+		const path = connection ? { session_id: connection.sessionId } : {}, config = this.mcpConfiguration;
+		const globalLedger = this.hostLedger(identity);
 		if (!config) throw new Error("请等待 MCP 配置加载完成");
 		const target = config.servers.find(item => item.name === data);
 		if (id === P.PLUGIN_MCP_ADD_ACTION) {
-			const previous = ledger.read("mcp:save", "POST /api/v1/sessions/{session_id}/mcp-configuration");
+			const previous = globalLedger.read("mcp:save", "POST /api/v1/mcp-configuration");
 			this.modal = P.addMcpServerModal(this.locale);
 			if (previous) this.modal = { ...this.modal, notice: { tone: "info", text: "上次配置尚待确认；提交将沿用原编号和内容。" }, fields: this.modal.fields.map(field => ({ ...field, value: field.id === "name" ? previous.body.name : JSON.stringify(previous.body.entry, null, 2), readOnly: true })) };
 			this.render(); return true;
 		}
 		if (id === P.PLUGIN_MCP_PROJECT_ACTION) {
+			if (!connection) throw new Error("请先选择项目会话");
 			if (!target) throw new Error("MCP 配置不存在");
 			this.modal = P.mcpProjectModal(this.locale, target);
 			this.modal = { ...this.modal, data: JSON.stringify({ name: target.name, revision: config.revision }) };
@@ -777,13 +862,14 @@ export class DesktopPage {
 		}
 		if (id === P.PLUGIN_MCP_MODAL) {
 			if (modal?.id !== id) return true;
-			const record = ledger.prepare("mcp:save", "POST /api/v1/sessions/{session_id}/mcp-configuration", operationId => ({ path, body: parseContract("McpConfigWrite", { operation_id: operationId, expected_revision: config.revision, name: fields.name ?? "", entry: JSON.parse(fields.entry ?? "null") }) }));
-			await ledger.send("mcp:save", record, this.client, connection);
-		} else if (id === P.PLUGIN_MCP_RELOAD_ACTION) await this.client.call("POST /api/v1/sessions/{session_id}/mcp-configuration/reload", { path, connection });
+			const record = globalLedger.prepare("mcp:save", "POST /api/v1/mcp-configuration", operationId => ({ path: {}, body: parseContract("McpConfigWrite", { operation_id: operationId, expected_revision: config.revision, name: fields.name ?? "", entry: JSON.parse(fields.entry ?? "null") }) }));
+			await globalLedger.send("mcp:save", record, this.client, identity);
+		} else if (id === P.PLUGIN_MCP_RELOAD_ACTION) { if (connection) await this.client.call("POST /api/v1/sessions/{session_id}/mcp-configuration/reload", { path: { session_id: connection.sessionId }, connection }); }
 		else if (id === P.PLUGIN_MCP_RECONNECT_ACTION) {
+			if (!connection) throw new Error("请先选择会话，再连接 MCP 服务");
 			if (!target) throw new Error("MCP 配置不存在");
 			const key = `mcp:reconnect:${target.name}`;
-			await ledger.send(key, ledger.prepare(key, "POST /api/v1/sessions/{session_id}/mcp-configuration/reconnect", operationId => ({ path, body: { operation_id: operationId, name: target.name } })), this.client, connection);
+			await ledger.send(key, ledger.prepare(key, "POST /api/v1/sessions/{session_id}/mcp-configuration/reconnect", operationId => ({ path: { session_id: connection.sessionId }, body: { operation_id: operationId, name: target.name } })), this.client, connection);
 		} else {
 			let name = target?.name, revision = config.revision, scope: "global" | "project" = "global";
 			if (id === P.PLUGIN_MCP_PROJECT_MODAL || id === "plugins:mcp-remove-confirm") {
@@ -793,12 +879,15 @@ export class DesktopPage {
 				name = original.name; revision = original.revision; scope = id === P.PLUGIN_MCP_PROJECT_MODAL ? "project" : "global";
 			}
 			if (!name) throw new Error("MCP 配置不存在");
+			if (scope === "project" && !connection) throw new Error("请先选择项目会话");
 			const enabled = id === P.PLUGIN_MCP_ENABLED_ACTION ? action.kind === "control" && action.value === "true" : id === P.PLUGIN_MCP_PROJECT_MODAL ? fields.enabled === "true" : undefined;
 			const exposure = id === P.PLUGIN_MCP_EXPOSURE_ACTION ? action.kind === "control" ? action.value : undefined : id === P.PLUGIN_MCP_PROJECT_MODAL ? fields.exposure : undefined;
 			const key = `mcp:patch:${scope}:${name}:${id}`;
-			const record = ledger.prepare(key, "PATCH /api/v1/sessions/{session_id}/mcp-configuration", operationId => ({ path, body: parseContract("McpConfigPatch", { operation_id: operationId, expected_revision: revision, name, scope,
+			const patchLedger = scope === "project" ? ledger : globalLedger;
+			const patchOperation = scope === "project" ? "PATCH /api/v1/sessions/{session_id}/mcp-configuration" : "PATCH /api/v1/mcp-configuration";
+			const record = patchLedger.prepare(key, patchOperation, operationId => ({ path: scope === "project" ? path : {}, body: parseContract("McpConfigPatch", { operation_id: operationId, expected_revision: revision, name, scope,
 				...(enabled === undefined ? {} : { enabled }), ...(exposure === undefined ? {} : { exposure }), remove: id === "plugins:mcp-remove-confirm" }) }));
-			await ledger.send(key, record, this.client, connection);
+			await patchLedger.send(key, record, this.client, scope === "project" ? binding : identity);
 		}
 		await this.loadPlugins(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
 	}
@@ -1063,9 +1152,35 @@ export class DesktopPage {
 			const model = this.catalog?.models.find(item => item.provider === provider.id), definition = this.catalog?.providers?.find(item => item.provider === provider.id);
 			return { id: provider.id, name: provider.name, configured: provider.configured, baseUrl: definition?.base_url ?? (current?.provider === provider.id ? current.base_url : model?.base_url ?? ""),
 				api: definition?.api ?? (current?.provider === provider.id ? current.api ?? "openai-completions" : model?.api ?? "openai-completions"),
-				modelCount: models.filter(item => item.provider === provider.id).length, custom: definition?.model_ids != null, modelIds: definition?.model_ids ?? undefined, verification: { status: "idle" } };
+				modelCount: models.filter(item => item.provider === provider.id).length, custom: definition?.model_ids != null, modelIds: definition?.model_ids ?? undefined, verification: this.verification(provider.id) };
 		}), authentication, enabledModelIds: enabled, defaults: current ? { model: { provider: current.provider, modelId: current.model }, thinkingLevel: current.thinking ?? "off" } : null, error: null, refresh: { status: "idle" } },
 		selected, models: models.filter(item => item.provider === selected), enabledModels: models.filter(item => enabled === null || enabled.includes(`${item.provider}/${item.modelId}`)), loading: false, disabled: !this.ready };
+	}
+	private verification(provider: string): ModelConnectionsLike["state"]["providers"][number]["verification"] {
+		if (this.checkingProviders.has(provider)) return { status: "checking" };
+		const result = this.providerVerification.get(provider);
+		if (!result || result.configuration_revision !== (this.catalog?.configuration_revision ?? 0) || result.credential_revision !== this.accounts.revision) return { status: "idle" };
+		return { status: result.phase === "done" && !result.failed?.length ? "success" : "error", checkedAt: result.checked_at || undefined };
+	}
+	private async checkProvider(provider: string | undefined, model: string | undefined): Promise<void> {
+		const identity = this.client.identity, modal = this.modal;
+		if (!identity || !provider || modal?.id !== PROVIDER_TEST_MODAL || modal.data !== provider || this.modalPending || this.checkingProviders.has(provider)) return;
+		const key = `amazme:provider-check:${identity.profile_id}:${provider}`, stored = sessionStorage.getItem(key);
+		const body = parseContract("ProviderCheckRequest", stored ? JSON.parse(stored) : { operation_id: newId(), provider, model_ids: model === undefined ? this.catalog?.models.filter(item => item.provider === provider).map(item => item.model) ?? [] : [model] });
+		if (body.provider !== provider) throw new Error("原检查不属于此供应商");
+		const serialized = JSON.stringify(body); sessionStorage.setItem(key, serialized);
+		this.checkingProviders.add(provider); this.pendingModal = modal; this.render();
+		try {
+			const result = await this.client.call("POST /api/v1/providers/{provider}/check", { path: { provider }, body, identity });
+			if (result.operation_id !== body.operation_id || result.provider !== provider) throw new Error("检查回执编号不匹配；原编号已保留");
+			if (result.phase === "done" && sessionStorage.getItem(key) === serialized) sessionStorage.removeItem(key);
+			if (!this.hostActive(identity)) return;
+			this.providerVerification.set(provider, result);
+			if (this.modal === modal) {
+				const current = result.configuration_revision === (this.catalog?.configuration_revision ?? 0) && result.credential_revision === this.accounts.revision;
+				this.modal = { ...modal, notice: { tone: result.phase === "done" && !result.failed?.length && current ? "info" : "error", text: !current ? "供应商配置已变化；这是原配置的检查结果。" : result.phase !== "done" ? "原检查尚未确认；再次提交仅核对原编号，不会重新请求模型。" : verificationStatusText(this.locale, { status: result.failed?.length ? "error" : "success", checkedAt: result.checked_at || undefined }, result.failed?.join(", ")) } };
+			}
+		} finally { this.checkingProviders.delete(provider); if (this.pendingModal === modal) this.pendingModal = undefined; if (this.hostActive(identity)) this.render(); }
 	}
 	private async saveProvider(data: string | undefined, fields: Readonly<Record<string, string>>, clear: boolean): Promise<void> {
 		if (this.modalPending) return;
@@ -1185,7 +1300,7 @@ export class DesktopPage {
 		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, projects: this.projects, selectedProject: this.selectedProject, expandedProjects: this.expandedProjects, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
-				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true, this.mcpConfiguration?.path ?? "AmazMe"), runtime: mcpPanelRuntime(this.mcpConfiguration, this.mcpRuntime, connection?.ready === true) },
+				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true, this.mcpConfiguration?.path ?? "AmazMe"), runtime: mcpPanelRuntime(this.mcpConfiguration, this.mcpRuntime, this.ready && (!connection || connection.ready), connection?.ready === true) },
 				automation: { state: this.schedules ? { path: this.schedules.path, tickMs: this.schedules.tick_ms ?? 5000, schedules: this.schedules.schedules.map(scheduleRecord) } : undefined, sessionId: connection?.sessionId },
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
@@ -1199,8 +1314,13 @@ export class DesktopPage {
 			catch (error) { pendingError = error instanceof Error ? error.message : String(error); return undefined; }
 		})();
 		let branchPending: string | undefined;
+		const commandPending: Array<{ id: string; text: string; retry: P.PanelButton; cancel: P.PanelButton }> = [];
 		try { branchPending = connection ? this.ledger(connection).read("branch", "POST /api/v1/sessions/{session}/branches")?.id : undefined; }
 		catch (error) { pendingError = error instanceof Error ? error.message : String(error); }
+		try {
+			const command = connection ? this.ledger(connection).read("command", "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls") : undefined;
+			if (command) commandPending.push({ id: command.id, text: `插件命令尚未确认：/${command.body.name}`, retry: { id: "write:retry-command", data: command.id, label: "重试原命令", weight: "line" }, cancel: { id: "write:cancel-command", data: command.id, label: "取消原命令", weight: "text" } });
+		} catch (error) { pendingError = error instanceof Error ? error.message : String(error); }
 		const feedbackPending: Array<{ id: string; text: string; retry: P.PanelButton }> = [];
 		try {
 			if (connection) for (const request of new Set([...(connection.snapshot?.requests ?? []), ...(this.history?.requests ?? [])].map(item => item.request_id))) {
@@ -1209,8 +1329,16 @@ export class DesktopPage {
 			}
 		} catch (error) { pendingError = error instanceof Error ? error.message : String(error); }
 		const terminal = this.terminal?.connection === connection ? this.terminal : undefined;
+		const commandBlocks: TranscriptBlock[] = [...(this.commandResults.get(`${connection?.identity.profile_id}:${connection?.sessionId}`)?.values() ?? [])].map(({ name, result }) => {
+			const content = result.result?.content ?? [], text = content.filter(item => item.type === "text" && typeof item.text === "string").map(item => item.text).join("\n") || result.error || result.phase;
+			const error = result.phase === "failed" || result.phase === "conflict" || result.result?.is_error === true;
+			return { id: `command:${result.call_id}`, kind: "tool", title: `/${name}`, toolName: name, text, running: false, tone: error ? "error" : "plain",
+				images: content.flatMap(item => item.type === "image" && typeof item.mimeType === "string" && ["image/png", "image/jpeg", "image/webp", "image/gif"].includes(item.mimeType) && typeof item.data === "string" ? [{ dataUrl: `data:${item.mimeType};base64,${item.data}`, alt: name }] : []),
+				result: toolResultView(this.locale, name, {}, { content: [{ type: "text", text }], isError: error, details: result.result?.details }),
+			};
+		});
 		const dock = dockView(this.locale, { open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.session_id === session?.parent_id || item.parent_id === connection?.sessionId || Boolean(session?.parent_id && item.parent_id === session.parent_id)).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, role: item.parent_id ? "fork" as const : "main" as const, parentConversationId: item.parent_id || undefined, children: this.sessions.filter(child => child.parent_id === item.session_id).length, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
-		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...feedbackPending, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", data: branchPending, label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", data: pending.id, label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", data: pending.id, label: "取消原请求", weight: "text" as const } }] : [])],
+		this.renderer.render({ ...picker, blocks: [...picker.blocks, ...commandBlocks], readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...commandPending, ...feedbackPending, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", data: branchPending, label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", data: pending.id, label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", data: pending.id, label: "取消原请求", weight: "text" as const } }] : [])],
 			dock: terminal && this.dockTab === "terminal" ? { ...dock, panel: { ...dock.panel, texts: [], notices: terminal.queue.paused ? [{ tone: "warning", text: "终端输入尚未确认；请重试原输入或核对后继续。" }] : dock.panel.notices, actions: [
 				{ id: "terminal:retry", label: "重试原输入", weight: "line", disabled: terminal.queue.busy || !terminal.queue.items.length },
 				{ id: "terminal:confirm", label: "核对后继续", weight: "text", disabled: terminal.queue.busy || !terminal.queue.items.length },

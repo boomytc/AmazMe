@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-import type { HttpOperations } from "./python-contracts.ts";
+import type { HttpOperations, Identity } from "./python-contracts.ts";
 import { definitive, isRecord, validateRequest } from "./python-api.ts";
 import type { ClientConnection, PythonClient } from "./python-client.ts";
 
@@ -55,26 +55,29 @@ export class PendingWrites {
 		if (isRecord(current) && current.id === record.id) this.storage.setItem(this.prefix + key + ":uncertain", record.id);
 	}
 	isRunning(key: string): boolean { return this.running.has(key); }
-	async send<K extends Operation>(key: string, record: PendingWrite<K>, client: PythonClient, connection: ClientConnection): Promise<HttpOperations[K]["response"]> {
-		if (this.prefix !== `amazme:write:${connection.identity.profile_id}:${connection.sessionId}:`) throw new Error("操作属于其他会话；原记录已保留。");
+	async send<K extends Operation>(key: string, record: PendingWrite<K>, client: PythonClient, binding: ClientConnection | Identity): Promise<HttpOperations[K]["response"]> {
+		const connection = "sessionId" in binding ? binding : undefined;
+		const identity = connection?.identity ?? ("profile_id" in binding ? binding : undefined);
+		if (!identity || this.prefix !== `amazme:write:${identity.profile_id}:${connection?.sessionId ?? ""}:`) throw new Error("操作属于其他会话或宿主；原记录已保留。");
 		for (const field of ["session", "session_id"]) {
 			const target: unknown = Reflect.get(record.path, field);
-			if (target !== undefined && target !== connection.sessionId) throw new Error("操作目标与原会话不一致；原记录已保留。");
+			if (target !== undefined && target !== connection?.sessionId) throw new Error("操作目标与原会话不一致；原记录已保留。");
 		}
 		const boundBody: unknown = record.body;
-		if (isRecord(boundBody) && typeof boundBody.session_id === "string" && boundBody.session_id !== connection.sessionId) throw new Error("操作内容属于其他会话；原记录已保留。");
-		if (!connection.active() || !connection.ready) throw new Error("请等待原会话重新连接；操作编号仍保留。");
+		if (isRecord(boundBody) && typeof boundBody.session_id === "string" && boundBody.session_id !== connection?.sessionId) throw new Error("操作内容属于其他会话；原记录已保留。");
+		if (connection ? !connection.active() || !connection.ready : client.identity !== identity) throw new Error("请等待原会话或宿主重新连接；操作编号仍保留。");
 		if (this.running.has(key)) throw new Error("原操作仍在发送");
 		this.running.add(key);
 		try {
-			const result = await client.call(record.operation, { path: record.path, body: record.body, connection });
+			const result = await client.call(record.operation, { path: record.path, body: record.body, ...(connection ? { connection } : { identity }) });
 			const value: unknown = result;
 			const body: unknown = record.body;
 			if (isRecord(value) && isRecord(body) && typeof body.branch_id === "string" && value.session_id !== body.branch_id) throw new Error("分支回执编号不匹配；原记录已保留。");
 			if (isRecord(value) && isRecord(body)) for (const field of ["operation_id", "request_id", "terminal_id", "call_id", "compaction_id", "workflow_id", "plugin_id", "schedule_id"]) {
 				if (typeof body[field] === "string" && typeof value[field] === "string" && body[field] !== value[field]) throw new Error("回执操作编号不匹配；原记录已保留。");
 			}
-			if (!isRecord(value) || (value.phase !== "unknown" && value.input_status !== "unknown" && value.status !== "unknown")) this.forget(key, record);
+			const acceptedDecision = record.operation === "POST /api/v1/sessions/{session}/approvals" || record.operation === "POST /api/v1/sessions/{session}/effects/resolve";
+			if (acceptedDecision || !isRecord(value) || (value.phase !== "unknown" && value.input_status !== "unknown" && value.status !== "unknown")) this.forget(key, record);
 			else this.uncertain(key, record);
 			return result;
 		} catch (error) {

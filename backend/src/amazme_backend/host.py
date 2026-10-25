@@ -164,6 +164,8 @@ from .contracts import (
     ProjectView,
     ProjectWrite,
     ProviderConfigured,
+    ProviderCheck,
+    ProviderCheckRequest,
     Receipt,
     Recovery,
     ReloadPlugin,
@@ -235,7 +237,7 @@ from .oauth import Login as OAuthLogin
 from .page_boot import boot_document, frontend_directory
 from .plugin_run import entry_digest
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
-from .providers import CATALOG, checked_model_endpoint, choose_model, public_settings, summarize
+from .providers import CATALOG, Completion, checked_model_endpoint, choose_model, public_settings, stream, summarize
 from .remote_session import daemon_identity
 from .resources import ResourceCatalog, session_resources
 from .rpc import RpcCall, handle_rpc
@@ -319,6 +321,7 @@ class Host:
         self.service_lock = asyncio.Lock()
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
+        self.provider_checks: set[str] = set()
         self.package_lock = asyncio.Lock()
         self.mcp_lock = asyncio.Lock()
         self.schedule_lock = asyncio.Lock()
@@ -823,26 +826,34 @@ class Host:
         return {"host_epoch": self.fence.host_epoch, "build_id": self.build, "session_id": session_id}
 
     async def mcp_configuration(self, session: str) -> McpConfiguration:
-        await self._require_session(session)
-        value = await self.store.session(session)
-        assert value is not None
-        return await self.store.transaction(lambda db: mcp_management.listing(db, value.workspace, self.profile.path / "host.sqlite"))
+        self._admit()
+        workspace = ""
+        if session:
+            await self._require_session(session)
+            value = await self.store.session(session)
+            assert value is not None
+            workspace = value.workspace
+        return await self.store.transaction(lambda db: mcp_management.listing(db, workspace, self.profile.path / "host.sqlite"))
 
     async def change_mcp_configuration(self, session: str, value: McpConfigWrite | McpConfigPatch) -> McpConfiguration:
         self._admit()
-        await self._require_session(session)
-        target = await self.store.session(session)
-        assert target is not None
-        await self._require_workspace(target.workspace)
+        workspace = ""
+        if session:
+            await self._require_session(session)
+            target = await self.store.session(session)
+            assert target is not None
+            workspace = target.workspace
+            await self._require_workspace(workspace)
         async with self.mcp_lock:
-            result = await self.store.transaction(lambda db: mcp_management.change(db, value, target.workspace, self.profile.path / "host.sqlite"))
+            result = await self.store.transaction(lambda db: mcp_management.change(db, value, workspace, self.profile.path / "host.sqlite"))
+        sessions = [selected for selected in (await self.sessions()).sessions if not selected.archived]
+        if not sessions:
+            return result
         await self.ensure_supervisor()
         # Global changes reach only already-open session bindings; other sessions load on demand.
         try:
-            for selected in (await self.sessions()).sessions:
-                if selected.archived:
-                    continue
-                if selected.workspace == target.workspace or not isinstance(value, McpConfigPatch) or value.scope == "global":
+            for selected in sessions:
+                if selected.workspace == workspace or not isinstance(value, McpConfigPatch) or value.scope == "global":
                     await self._sync_mcp_configuration(selected.session_id, connect=selected.session_id == session)
         except BackendError as error:
             raise BackendError("mcp_config_apply_pending", error.code, status=503) from error
@@ -1193,6 +1204,39 @@ class Host:
                 if value.provider == self.profile.config.provider.provider and value.model_ids is not None and self.profile.config.provider.model not in value.model_ids:
                     raise BackendError("default_model_not_available")
             return await self.accounts.configure_provider(value, self._account_write_guard)
+
+    async def check_provider(self, value: ProviderCheckRequest) -> ProviderCheck:
+        self._admit()
+        document = self.accounts.read()
+        result, send = await self.store.begin_provider_check(value, document.configuration_revision, document.revision)
+        if not send:
+            return result.model_copy(update={"phase": "pending"}) if value.operation_id in self.provider_checks else result
+        self.provider_checks.add(value.operation_id)
+        failed: list[str] = []
+        try:
+            self.profile.reload_provider()
+            base = self.profile.config.provider
+            for model in dict.fromkeys(value.model_ids):
+                try:
+                    await self._account_write_guard()
+                    selected = select_model(base, ModelSelection(provider=value.provider, model=model), document.transports)
+                    configured = await self.accounts.configured(selected.model_copy(update={"max_tokens": 16, "thinking": "off"}))
+                    current = self.accounts.read()
+                    if current.revision != document.revision or current.configuration_revision != document.configuration_revision:
+                        raise BackendError("provider_configuration_changed")
+                    completed = False
+                    async with asyncio.timeout(30):
+                        async for item in stream(configured, [Message(role="user", content="Reply OK.")]):
+                            if isinstance(item, Completion):
+                                completed = True
+                    if not completed:
+                        failed.append(model)
+                except (BackendError, TimeoutError, httpx.HTTPError):
+                    failed.append(model)
+            result = result.model_copy(update={"phase": "done", "checked_at": int(time.time() * 1000), "failed": failed})
+            return await self.store.finish_provider_check(result)
+        finally:
+            self.provider_checks.discard(value.operation_id)
 
     def model_scope(self, value: ModelScopeRequest) -> ModelScope:
         from .model_scope import resolve_scope
@@ -2486,7 +2530,8 @@ class Host:
         try:
             return await self.supervisor.call("POST", "/plugins/call", PluginCallView, PluginCallEnvelope(
                 host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id,
-                plugin_id=plugin_id, call_id=value.call_id, name=value.name, arguments=value.arguments, workspace=session.workspace))
+                plugin_id=plugin_id, call_id=value.call_id, name=value.name, arguments=value.arguments, kind=value.kind,
+                expected_fingerprint=value.expected_fingerprint, expected_load_id=value.expected_load_id, workspace=session.workspace))
         except BackendError as error:
             self._stored_during_update(frozen, error)
 
@@ -3511,6 +3556,18 @@ def application(owner: Host) -> FastAPI:
             raise BackendError("remote_conflict")
         return await owner.submit_remote(session_id, value)
 
+    @app.get("/api/v1/mcp-configuration")
+    async def global_mcp_configuration() -> McpConfiguration:
+        return await owner.mcp_configuration("")
+
+    @app.post("/api/v1/mcp-configuration")
+    async def save_global_mcp_configuration(value: McpConfigWrite) -> McpConfiguration:
+        return await owner.change_mcp_configuration("", value)
+
+    @app.patch("/api/v1/mcp-configuration")
+    async def patch_global_mcp_configuration(value: McpConfigPatch) -> McpConfiguration:
+        return await owner.change_mcp_configuration("", value)
+
     @app.get("/api/v1/sessions/{session_id}/mcp-configuration")
     async def mcp_configuration(session_id: str) -> McpConfiguration:
         return await owner.mcp_configuration(session_id)
@@ -3570,6 +3627,12 @@ def application(owner: Host) -> FastAPI:
         if provider != value.provider:
             raise BackendError("provider_mismatch")
         return await owner.configure_provider(value)
+
+    @app.post("/api/v1/providers/{provider}/check")
+    async def check_provider(provider: str, value: ProviderCheckRequest) -> ProviderCheck:
+        if provider != value.provider:
+            raise BackendError("provider_mismatch")
+        return await owner.check_provider(value)
 
     @app.post("/api/v1/models/scope")
     async def model_scope(value: ModelScopeRequest) -> ModelScope:

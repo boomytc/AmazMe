@@ -64,6 +64,8 @@ from .contracts import (
     PluginReload,
     PluginView,
     ProviderConfigured,
+    ProviderCheck,
+    ProviderCheckRequest,
     Receipt,
     ResourceOptions,
     RunOptions,
@@ -94,6 +96,7 @@ from .workspace_files import FileContent, FileList
 
 
 class RpcParams(RunOptions):
+    provider_check: ProviderCheckRequest | None = None
     feedback: AnswerFeedbackWrite | None = None
     compaction: CompactSession | None = None
     offset: int = Field(default=0, ge=0, le=9007199254740991)
@@ -178,6 +181,8 @@ def rpc_error(identity: str, code: str) -> dict[str, object]:
 
 
 class RpcHost(Protocol):
+    async def check_provider(self, value: ProviderCheckRequest) -> ProviderCheck: ...
+
     async def answer_feedback(self, session: str) -> AnswerFeedbackList: ...
 
     async def save_answer_feedback(self, session: str, value: AnswerFeedbackWrite) -> AnswerFeedback: ...
@@ -497,6 +502,10 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if not params.plugin_id or params.plugin_call is None:
             raise BackendError("plugin_binding_required")
         return await owner.call_plugin(session, params.plugin_id, params.plugin_call)
+    if method == "provider.check":
+        if params.provider_check is None:
+            raise BackendError("provider_check_required")
+        return await owner.check_provider(params.provider_check)
     if method == "feedback.state":
         return await owner.answer_feedback(await _bound(owner, params))
     if method == "feedback.rate":
@@ -569,12 +578,12 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
     if method == "mcp.state":
         return await owner.mcp_state(await _bound(owner, params))
     if method == "mcp.config":
-        return await owner.mcp_configuration(await _bound(owner, params))
+        return await owner.mcp_configuration(await _bound(owner, params) if params.session_id else "")
     if method == "mcp.config.save" or method == "mcp.config.patch":
         value = params.mcp_config if method == "mcp.config.save" else params.mcp_patch
         if value is None:
             raise BackendError("mcp_config_required")
-        return await owner.change_mcp_configuration(await _bound(owner, params), value)
+        return await owner.change_mcp_configuration(await _bound(owner, params) if params.session_id else "", value)
     if method == "mcp.reload":
         return await owner.reload_mcp_configuration(await _bound(owner, params))
     if method == "mcp.reconnect":
