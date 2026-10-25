@@ -11,7 +11,7 @@ import { collectPageElements, createRenderer, type PageRenderer } from "./render
 import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, Session, SessionModel, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { settled } from "./python-stream.ts";
@@ -40,6 +40,7 @@ export class DesktopPage {
 	private expandedProjects: readonly string[] = [];
 	private sessionEdit?: Session;
 	private projectEdit?: ProjectView;
+	private skillEdit?: { readonly document: SkillDocument; readonly sessionId: string; readonly modal: P.PanelModal };
 	private catalog?: ModelCatalog;
 	private accounts: AccountsView = { revision: 0, accounts: [] };
 	private settings?: ProductSettings;
@@ -49,7 +50,8 @@ export class DesktopPage {
 	private currentPanel = P.CHAT_VIEW;
 	private modal?: P.PanelModal;
 	private notice?: P.PanelNotice;
-	private modalPending = false;
+	private pendingModal?: P.PanelModal;
+	private get modalPending(): boolean { return this.modal !== undefined && this.pendingModal === this.modal; }
 	private rosterFilter = "";
 	private draft: Draft = { text: "", images: [] };
 	private readonly drafts = new Map<string, Draft>();
@@ -71,6 +73,8 @@ export class DesktopPage {
 	private navigationGeneration = 0;
 	private modalGeneration = 0;
 	private globalLoadGeneration = 0;
+	private resourceGeneration = 0;
+	private interactionGeneration = 0;
 	private selectionGeneration = 0;
 	private terminal?: ActiveTerminal;
 	private terminalTimer?: ReturnType<typeof setTimeout>;
@@ -103,7 +107,8 @@ export class DesktopPage {
 		};
 		const run = (work: () => Promise<void>) => {
 			const connection = this.client.connection;
-			void work().catch(error => { if (!connection || connection.active()) this.error(error); });
+			const navigation = this.navigationGeneration, generation = ++this.interactionGeneration;
+			void work().catch(error => { if (generation === this.interactionGeneration && navigation === this.navigationGeneration && (!connection || connection.active())) this.error(error); });
 		};
 		this.renderer.onCreateSession = () => run(() => this.createSession());
 		this.renderer.onSelect = id => run(() => this.selectSession(id));
@@ -183,18 +188,22 @@ export class DesktopPage {
 	}
 	private async loadGlobal(): Promise<void> {
 		const generation = ++this.globalLoadGeneration;
-		const [sessions, workspaces, catalog, accounts, settings, projects] = await Promise.all([
+		const connection = this.client.connection, resourcesGeneration = ++this.resourceGeneration;
+		const [sessions, workspaces, catalog, accounts, settings, projects, resources] = await Promise.all([
 			this.client.call("GET /api/v1/sessions"), this.client.call("GET /api/v1/workspaces"), this.client.call("GET /api/v1/models"), this.client.call("GET /api/v1/accounts"), this.client.call("GET /api/v1/settings"),
 			this.client.call("GET /api/v1/projects"),
+			this.client.call("GET /api/v1/skills", { query: { session_id: connection?.sessionId ?? "" } }),
 		]);
 		if (generation === this.globalLoadGeneration) {
 			this.sessions = sessions.sessions; this.workspaces = workspaces.workspaces; this.catalog = catalog; this.accounts = accounts; this.settings = settings;
 			this.projects = projects.projects ?? [];
+			if (this.client.connection === connection && resourcesGeneration === this.resourceGeneration) this.resources = resources;
 			this.applyPreferences(settings.preferences ?? {});
 		}
 	}
 	private async loadSession(connection: ClientConnection): Promise<void> {
 		const selectionGeneration = ++this.selectionGeneration;
+		const resourceGeneration = ++this.resourceGeneration;
 		const [selection, resources, usage] = await Promise.all([
 			this.client.call("GET /api/v1/session-models/{session_id}", { path: { session_id: connection.sessionId } }).catch(error => { if (error instanceof ApiError && error.code === "session_model_missing") return undefined; throw error; }),
 			this.client.call("GET /api/v1/sessions/{session}/resources", { path: { session: connection.sessionId } }),
@@ -202,7 +211,8 @@ export class DesktopPage {
 		]);
 		if (!connection.active()) return;
 		if (selectionGeneration === this.selectionGeneration) this.selection = selection;
-		this.resources = resources; this.usage = usage;
+		if (resourceGeneration === this.resourceGeneration) this.resources = resources;
+		this.usage = usage;
 		if (this.dockOpen && this.dockTab === "terminal") await this.loadTerminal(connection);
 		this.render();
 		clearTimeout(this.healthTimer);
@@ -341,6 +351,7 @@ export class DesktopPage {
 		const fields = action.kind === "modal-submit" ? action.fields : {};
 		const value = action.kind === "control" ? action.value : data ?? "";
 		if (await this.managementAction(id, data, fields)) return;
+		if (await this.skillAction(action)) return;
 		if (id === "auth:pair") {
 			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: fields.token }) });
 			if (!response.ok) throw new ApiError(response.status, await response.json()); this.modal = undefined; await this.start(); return;
@@ -496,6 +507,42 @@ export class DesktopPage {
 		}
 		return false;
 	}
+	private async skillAction(action: P.PanelAction): Promise<boolean> {
+		if (action.kind === "open" || action.kind === "modal-close") return false;
+		const { id, data } = action, fields = action.kind === "modal-submit" ? action.fields : {};
+		const connection = this.client.connection, identity = this.client.identity, navigation = this.navigationGeneration;
+		const query = { session_id: connection?.sessionId ?? "" }, modal = this.modal;
+		const current = () => this.client.identity === identity && navigation === this.navigationGeneration && this.modal === modal;
+		if (id === P.SKILL_NEW_ACTION) { this.skillEdit = undefined; this.modal = P.newSkillModal(this.locale); this.render(); return true; }
+		if (id === P.SKILL_IMPORT_ACTION) { this.skillEdit = undefined; this.modal = P.importSkillModal(this.locale); this.render(); return true; }
+		if ((id === P.SKILL_EDIT_ACTION || id === P.SKILL_REMOVE_ACTION) && action.kind === "command") {
+			const document = await this.client.call("GET /api/v1/skills/{name}", { path: { name: data ?? "" }, query });
+			if (!current()) return true;
+			this.modal = id === P.SKILL_REMOVE_ACTION ? P.removeSkillModal(this.locale, document.name) : P.skillModal(this.locale, document.name, document.content, document.editable);
+			this.skillEdit = { document, sessionId: query.session_id, modal: this.modal }; this.render(); return true;
+		}
+		if (id === P.SKILL_VIEW_MODAL) { this.modal = undefined; this.render(); return true; }
+		if (action.kind !== "modal-submit" || ![P.SKILL_CREATE_MODAL, P.SKILL_EDIT_MODAL, P.SKILL_REMOVE_MODAL, P.SKILL_IMPORT_MODAL].includes(id)) return false;
+		if (!identity || !modal || this.modalPending) return true;
+		const original = this.skillEdit;
+		if ((id === P.SKILL_EDIT_MODAL || id === P.SKILL_REMOVE_MODAL) && (!original || original.modal !== modal || original.document.name !== data)) return true;
+		this.pendingModal = modal; this.render();
+		try {
+			if (id === P.SKILL_CREATE_MODAL) {
+				const name = (fields.name ?? "").trim();
+				await this.client.call("POST /api/v1/skills", { body: { name, content: P.composeSkill(name, fields.description ?? "", fields.body ?? "") }, query, identity });
+			} else if (id === P.SKILL_IMPORT_MODAL) await this.client.call("POST /api/v1/skills/import", { body: { path: fields.path ?? "" }, query, identity });
+			else if (original) {
+				const scope = { session_id: original.sessionId };
+				if (id === P.SKILL_EDIT_MODAL) await this.client.call("POST /api/v1/skills", { body: { name: original.document.name, content: fields.content ?? "", expected_digest: original.document.digest }, query: scope, identity });
+				else await this.client.call("DELETE /api/v1/skills/{name}", { path: { name: original.document.name }, body: { expected_digest: original.document.digest }, query: scope, identity });
+			}
+			const generation = ++this.resourceGeneration;
+			const resources = await this.client.call("GET /api/v1/skills", { query });
+			if (current() && generation === this.resourceGeneration) { this.resources = resources; this.modal = undefined; }
+		} finally { if (this.pendingModal === modal) this.pendingModal = undefined; if (navigation === this.navigationGeneration) this.render(); }
+		return true;
+	}
 	private observeTerminal(terminal: ActiveTerminal, view: TerminalView): void {
 		if (view.terminal_id !== terminal.id || (view.session_id && view.session_id !== terminal.connection.sessionId)) throw new Error("终端归属不匹配");
 		if ((view.output_seq ?? 0) < (terminal.view.output_seq ?? 0) || (terminal.view.phase === "exited" && view.phase === "running")) return;
@@ -569,11 +616,12 @@ export class DesktopPage {
 		return { state: { providers: authentication.providers.map(provider => { const model = this.catalog?.models.find(item => item.provider === provider.id); return { id: provider.id, name: provider.name, configured: provider.configured, baseUrl: current?.provider === provider.id ? current.base_url : model?.base_url ?? "", api: current?.provider === provider.id ? current.api ?? "openai-completions" : model?.api ?? "openai-completions", modelCount: models.filter(item => item.provider === provider.id).length, custom: false, verification: { status: "idle" } }; }), authentication, enabledModelIds: this.enabledModels, defaults: current ? { model: { provider: current.provider, modelId: current.model }, thinkingLevel: "off" } : null, error: null, refresh: { status: "idle" } }, selected: this.selectedProvider, models, enabledModels: models.filter(item => this.enabledModels === null || this.enabledModels.includes(`${item.provider}/${item.modelId}`)), loading: false, disabled: !this.ready };
 	}
 	private async saveProvider(data: string | undefined, fields: Readonly<Record<string, string>>, clear: boolean): Promise<void> {
+		if (this.modalPending) return;
 		const connection = this.requireConnection(), provider = data ?? fields.id;
 		if (!provider) throw new Error("请选择供应商");
 		const modal = this.modal;
 		const generation = this.modalGeneration;
-		this.modalPending = true; this.render();
+		this.pendingModal = modal; this.render();
 		try {
 			const latest = await this.client.call("GET /api/v1/accounts");
 			if (!connection.active()) return;
@@ -591,7 +639,7 @@ export class DesktopPage {
 			}
 			const accounts = await this.client.call("GET /api/v1/accounts");
 			if (connection.active() && this.modal === modal) { this.accounts = accounts; this.modal = undefined; this.render(); }
-		} finally { if (connection.active() && generation === this.modalGeneration) { this.modalPending = false; this.render(); } }
+		} finally { if (this.pendingModal === modal) this.pendingModal = undefined; if (connection.active() && generation === this.modalGeneration) this.render(); }
 	}
 	private showOAuth(connection: ClientConnection, login: OAuthView, generation: number): void {
 		if (!connection.active() || generation !== this.modalGeneration || this.oauth?.login_id !== login.login_id) return;
@@ -651,7 +699,7 @@ export class DesktopPage {
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
-				skills: { state: { directory: "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: true })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
+				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
 			}), connections: this.connections(), mode: this.mode, usage: this.usage, welcomeDismissed: this.settings?.preferences?.showWelcome === false, newSessionPending: this.newSessionPending, ready: this.ready });
 		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
 		let pendingError: string | undefined;

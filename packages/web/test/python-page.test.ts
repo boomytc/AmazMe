@@ -10,7 +10,7 @@ import { parseContract } from "../src/python-api.ts";
 let page: DesktopPage | undefined;
 afterEach(() => { page?.dispose(); page = undefined; sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
-test("a submission captures the displayed model, retries the same request, and preserves a newer draft", async () => {
+async function startPage(extra?: (path: string, options: RequestInit) => Response | undefined | Promise<Response | undefined>): Promise<{ page: DesktopPage; submitted: Submit[] }> {
  const html = readFileSync(resolve("src/page/index.html"), "utf8");
  document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.lastIndexOf("</body>")).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
  const submitted: Submit[] = [];
@@ -19,6 +19,8 @@ test("a submission captures the displayed model, retries the same request, and p
  vi.stubGlobal("WebSocket", Socket);
  vi.stubGlobal("fetch", vi.fn(async (input: URL, options: RequestInit = {}) => {
   const path = new URL(input).pathname, method = options.method ?? "GET";
+  const custom = await extra?.(path, options);
+  if (custom) return custom;
   const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
   if (path.endsWith("/bootstrap")) return response({ build_id: "build", profile_id: "host", instance_id: "instance", pid: 1, host_epoch: 1, role: "host", protocol: "amazme-http/1" });
   if (path === "/api/v1/sessions") return response({ sessions: [{ session_id: "a", title: "A", workspace: "primary" }] });
@@ -27,6 +29,7 @@ test("a submission captures the displayed model, retries the same request, and p
   if (path === "/api/v1/accounts") return response({ revision: 0, accounts: [] });
   if (path === "/api/v1/settings") return response({ revision: 0 });
   if (path === "/api/v1/projects") return response({ projects: [] });
+  if (path === "/api/v1/skills") return response({ context_files: [], skills: [], prompts: [], diagnostics: [] });
   if (path.endsWith("/attachments")) return response({ attachment_id: "attachment", session_id: "a", host_epoch: 1, build_id: "build" });
   if (path === "/api/v1/session-models/a") {
    if (method === "PUT") selected = "different";
@@ -50,6 +53,11 @@ test("a submission captures the displayed model, retries the same request, and p
  connection.ready = true;
  connection.snapshot = { session_id: "a", stream_id: "stream", seq: "0", state: "ready", requests: [], events: [] };
  page.client.onChange();
+ return { page, submitted };
+}
+
+test("a submission captures the displayed model, retries the same request, and preserves a newer draft", async () => {
+ const { page, submitted } = await startPage();
  page.renderer.onDraftChange("original");
  page.renderer.setDraft("original");
  page.renderer.onSubmit("original");
@@ -62,4 +70,20 @@ test("a submission captures the displayed model, retries the same request, and p
  await vi.waitFor(() => expect(submitted).toHaveLength(2));
  expect(submitted[1]).toEqual(submitted[0]);
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
+});
+
+
+test("a late skill read cannot replace a subsequently opened creation dialog", async () => {
+ let finish: (response: Response) => void = () => { throw new Error("read has not started"); };
+ let signal: () => void = () => {};
+ const entered = new Promise<void>(resolve => { signal = resolve; });
+ const { page } = await startPage(path => path === "/api/v1/skills/one" ? new Promise<Response>(resolve => { finish = resolve; signal(); }) : undefined);
+ page.renderer.onPanelAction({ kind: "command", id: "skills:edit", data: "one" });
+ await entered;
+ page.renderer.onPanelAction({ kind: "command", id: "skills:new", data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe("skills:create"));
+ finish(new Response(JSON.stringify({ name: "one", path: "/agent/skills/one/SKILL.md", content: "old content", digest: "a".repeat(64), editable: true })));
+ await new Promise(resolve => setTimeout(resolve, 20));
+ expect(page.renderer.view?.panel.modal?.id).toBe("skills:create");
+ expect(page.renderer.view?.panel.modal?.fields.find(field => field.id === "name")?.value).toBe("");
 });

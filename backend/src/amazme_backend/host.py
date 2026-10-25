@@ -223,6 +223,17 @@ from .remote_session import daemon_identity
 from .resources import ResourceCatalog, session_resources
 from .rpc import RpcCall, handle_rpc
 from .session_ops import SessionOps, SessionRelay
+from .skill_management import (
+    SkillDocument,
+    SkillImport,
+    SkillRemove,
+    SkillWrite,
+    import_skill,
+    read_skill,
+    remove_skill,
+    skill_catalog,
+    write_skill,
+)
 from .ssh import scan_host_key
 from .storage import (
     TERMINAL,
@@ -524,6 +535,37 @@ class Host:
         self._admit()
         await self._require_session(session)
         return await asyncio.to_thread(lambda: session_resources(self.profile, session, options or ResourceOptions()).catalog)
+
+    async def skill_catalog(self, session: str = "") -> ResourceCatalog:
+        self._admit()
+        if session:
+            await self._require_session(session)
+        return await asyncio.to_thread(skill_catalog, self.profile, session)
+
+    async def skill_document(self, session: str, name: str) -> SkillDocument:
+        self._admit()
+        if session:
+            await self._require_session(session)
+        try:
+            return await asyncio.to_thread(read_skill, self.profile, session, name)
+        except (OSError, UnicodeError) as error:
+            raise BackendError("skill_read_failed") from error
+
+    async def mutate_skills[T](self, session: str, operation: Callable[[], T]) -> T:
+        async with self.update_lock:
+            self._admit()
+            if session:
+                await self._require_session(session)
+            if await self.store.active_update():
+                raise BackendError("update_frozen", status=503)
+            task = asyncio.create_task(asyncio.to_thread(operation))
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                await task
+                raise
+            except (OSError, UnicodeError) as error:
+                raise BackendError("skill_io_failed") from error
 
     async def workspaces(self) -> WorkspaceList:
         self._admit()
@@ -2982,6 +3024,27 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/workspaces")
     async def workspaces() -> WorkspaceList:
         return await owner.workspaces()
+
+    @app.get("/api/v1/skills")
+    async def skills(session_id: str = "") -> ResourceCatalog:
+        return await owner.skill_catalog(session_id)
+
+    @app.get("/api/v1/skills/{name}")
+    async def skill_document(name: str, session_id: str = "") -> SkillDocument:
+        return await owner.skill_document(session_id, name)
+
+    @app.post("/api/v1/skills")
+    async def save_skill(value: SkillWrite, session_id: str = "") -> SkillDocument:
+        return await owner.mutate_skills(session_id, lambda: write_skill(owner.profile, session_id, value))
+
+    @app.post("/api/v1/skills/import")
+    async def copy_skill(value: SkillImport, session_id: str = "") -> SkillDocument:
+        return await owner.mutate_skills(session_id, lambda: import_skill(owner.profile, session_id, value))
+
+    @app.delete("/api/v1/skills/{name}")
+    async def delete_skill(name: str, value: SkillRemove, session_id: str = "") -> dict[str, bool]:
+        await owner.mutate_skills(session_id, lambda: remove_skill(owner.profile, session_id, name, value.expected_digest))
+        return {"removed": True}
 
     @app.post("/api/v1/workspaces/select")
     async def select_workspace(value: WorkspaceSelect) -> WorkspaceGrantView:

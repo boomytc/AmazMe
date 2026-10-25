@@ -31,6 +31,8 @@ class ResourceItem(Model):
     path: str
     description: str = ""
     disable_model_invocation: bool = False
+    scope: str = "user"
+    editable: bool = False
 
 
 class ResourceCatalog(Model):
@@ -38,6 +40,7 @@ class ResourceCatalog(Model):
     skills: list[ResourceItem]
     prompts: list[ResourceItem]
     diagnostics: list[str]
+    skill_directory: str = ""
 
 
 @dataclass
@@ -300,7 +303,9 @@ def load_resources(cwd: Path, agent_dir: Path, options: ResourceOptions) -> Load
                     discovery.warning(candidate, "skill_name_collision")
                     continue
                 skills[name] = ResourceItem(name=name, path=str(actual), description=description,
-                    disable_model_invocation=metadata.get("disable-model-invocation") is True)
+                    disable_model_invocation=metadata.get("disable-model-invocation") is True,
+                    scope="user" if actual.is_relative_to(agent_dir) else "project",
+                    editable=actual == agent_dir / "skills" / name / "SKILL.md")
         except (OSError, UnicodeError, ValueError, yaml.YAMLError) as error:
             discovery.warning(path, error)
     templates: dict[str, str] = {}
@@ -331,11 +336,16 @@ def load_resources(cwd: Path, agent_dir: Path, options: ResourceOptions) -> Load
     if len(skills) > 128 or len(prompts) > 128:
         raise BackendError("resource_capacity")
     return LoadedResources(ResourceCatalog(context_files=[path for path, _ in context],
-        skills=list(skills.values()), prompts=prompts, diagnostics=discovery.diagnostics), context, templates)
+        skills=list(skills.values()), prompts=prompts, diagnostics=discovery.diagnostics,
+        skill_directory=str(agent_dir / "skills")), context, templates)
 
 
 def _resolve_path(path: str, cwd: Path) -> Path:
     return cwd / Path(path.strip()).expanduser()
+
+
+def agent_directory(profile: Profile) -> Path:
+    return Path(profile.config.user_resources or os.environ.get("AMAZME_CODING_AGENT_DIR") or str(Path.home() / ".amazme/agent")).expanduser().resolve()
 
 
 def session_resources(profile: Profile, session: str, options: ResourceOptions) -> LoadedResources:
@@ -343,5 +353,4 @@ def session_resources(profile: Profile, session: str, options: ResourceOptions) 
     location = profile.config.workspace if workspace == PRIMARY else dict(load_grants(profile.path)).get(workspace)
     if location is None:
         raise BackendError("workspace_not_found")
-    agent_dir = profile.config.user_resources or os.environ.get("AMAZME_CODING_AGENT_DIR") or str(Path.home() / ".amazme/agent")
-    return load_resources(Path(location), Path(agent_dir), options)
+    return load_resources(Path(location), agent_directory(profile), options)

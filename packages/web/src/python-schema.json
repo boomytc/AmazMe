@@ -4924,6 +4924,11 @@
           },
           "type": "array",
           "title": "Diagnostics"
+        },
+        "skill_directory": {
+          "type": "string",
+          "title": "Skill Directory",
+          "default": ""
         }
       },
       "additionalProperties": false,
@@ -4954,6 +4959,16 @@
         "disable_model_invocation": {
           "type": "boolean",
           "title": "Disable Model Invocation",
+          "default": false
+        },
+        "scope": {
+          "type": "string",
+          "title": "Scope",
+          "default": "user"
+        },
+        "editable": {
+          "type": "boolean",
+          "title": "Editable",
           "default": false
         }
       },
@@ -5809,6 +5824,99 @@
         "share_id"
       ],
       "title": "ShareWrite"
+    },
+    "SkillDocument": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "content": {
+          "type": "string",
+          "title": "Content"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        },
+        "editable": {
+          "type": "boolean",
+          "title": "Editable"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "path",
+        "content",
+        "digest",
+        "editable"
+      ],
+      "title": "SkillDocument"
+    },
+    "SkillImport": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Path"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "title": "SkillImport"
+    },
+    "SkillRemove": {
+      "properties": {
+        "expected_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Expected Digest"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "expected_digest"
+      ],
+      "title": "SkillRemove"
+    },
+    "SkillWrite": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
+          "title": "Name"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 65536,
+          "title": "Content"
+        },
+        "expected_digest": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{64})?$",
+          "title": "Expected Digest",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "content"
+      ],
+      "title": "SkillWrite"
     },
     "Snapshot": {
       "additionalProperties": false,
@@ -7427,6 +7535,46 @@
       },
       "body": {
         "$ref": "#/components/schemas/WorkspaceGrantRequest"
+      }
+    },
+    "GET /api/v1/skills": {
+      "response": {
+        "$ref": "#/components/schemas/ResourceCatalog"
+      },
+      "body": null
+    },
+    "POST /api/v1/skills": {
+      "response": {
+        "$ref": "#/components/schemas/SkillDocument"
+      },
+      "body": {
+        "$ref": "#/components/schemas/SkillWrite"
+      }
+    },
+    "GET /api/v1/skills/{name}": {
+      "response": {
+        "$ref": "#/components/schemas/SkillDocument"
+      },
+      "body": null
+    },
+    "DELETE /api/v1/skills/{name}": {
+      "response": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "boolean"
+        },
+        "title": "Response Delete Skill Api V1 Skills  Name  Delete"
+      },
+      "body": {
+        "$ref": "#/components/schemas/SkillRemove"
+      }
+    },
+    "POST /api/v1/skills/import": {
+      "response": {
+        "$ref": "#/components/schemas/SkillDocument"
+      },
+      "body": {
+        "$ref": "#/components/schemas/SkillImport"
       }
     },
     "POST /api/v1/workspaces/select": {

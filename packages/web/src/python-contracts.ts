@@ -966,6 +966,7 @@ export type ResourceCatalog = {
   "skills": Array<ResourceItem>;
   "prompts": Array<ResourceItem>;
   "diagnostics": Array<string>;
+  "skill_directory"?: string;
 };
 
 export type ResourceItem = {
@@ -973,6 +974,8 @@ export type ResourceItem = {
   "path": string;
   "description"?: string;
   "disable_model_invocation"?: boolean;
+  "scope"?: string;
+  "editable"?: boolean;
 };
 
 export type ResourceOptions = {
@@ -1122,6 +1125,28 @@ export type ShareView = {
 
 export type ShareWrite = {
   "share_id": string;
+};
+
+export type SkillDocument = {
+  "name": string;
+  "path": string;
+  "content": string;
+  "digest": string;
+  "editable": boolean;
+};
+
+export type SkillImport = {
+  "path": string;
+};
+
+export type SkillRemove = {
+  "expected_digest": string;
+};
+
+export type SkillWrite = {
+  "name": string;
+  "content": string;
+  "expected_digest"?: string;
 };
 
 export type Snapshot = {
@@ -1524,6 +1549,10 @@ export interface ApiModels {
   ShareMessage: ShareMessage;
   ShareView: ShareView;
   ShareWrite: ShareWrite;
+  SkillDocument: SkillDocument;
+  SkillImport: SkillImport;
+  SkillRemove: SkillRemove;
+  SkillWrite: SkillWrite;
   Snapshot: Snapshot;
   Submit: Submit;
   SupervisorHealth: SupervisorHealth;
@@ -1641,6 +1670,25 @@ export interface HttpOperations {
 }; query: Record<string, unknown>; body: ResourceOptions };
   "GET /api/v1/workspaces": { response: WorkspaceList; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/workspaces": { response: WorkspaceGrantView; path: Record<string, unknown>; query: Record<string, unknown>; body: WorkspaceGrantRequest };
+  "GET /api/v1/skills": { response: ResourceCatalog; path: Record<string, unknown>; query: {
+  "session_id"?: string;
+}; body: undefined };
+  "POST /api/v1/skills": { response: SkillDocument; path: Record<string, unknown>; query: {
+  "session_id"?: string;
+}; body: SkillWrite };
+  "GET /api/v1/skills/{name}": { response: SkillDocument; path: {
+  "name": string;
+}; query: {
+  "session_id"?: string;
+}; body: undefined };
+  "DELETE /api/v1/skills/{name}": { response: Record<string, boolean>; path: {
+  "name": string;
+}; query: {
+  "session_id"?: string;
+}; body: SkillRemove };
+  "POST /api/v1/skills/import": { response: SkillDocument; path: Record<string, unknown>; query: {
+  "session_id"?: string;
+}; body: SkillImport };
   "POST /api/v1/workspaces/select": { response: WorkspaceGrantView; path: Record<string, unknown>; query: Record<string, unknown>; body: WorkspaceSelect };
   "DELETE /api/v1/workspaces/{name}": { response: Record<string, boolean>; path: {
   "name": string;
