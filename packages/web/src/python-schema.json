@@ -1,0 +1,7781 @@
+{
+  "$defs": {
+    "AccountInfo": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "title": "Provider"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "api_key",
+            "oauth"
+          ],
+          "title": "Type"
+        },
+        "expires_ms": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Expires Ms"
+        },
+        "login_required": {
+          "type": "boolean",
+          "title": "Login Required",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "type"
+      ],
+      "title": "AccountInfo"
+    },
+    "AccountsView": {
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "title": "Revision"
+        },
+        "accounts": {
+          "items": {
+            "$ref": "#/components/schemas/AccountInfo"
+          },
+          "type": "array",
+          "title": "Accounts"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "revision",
+        "accounts"
+      ],
+      "title": "AccountsView"
+    },
+    "Approval": {
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "title": "Approval Id",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "call": {
+          "$ref": "#/$defs/ToolCall"
+        },
+        "build_id": {
+          "title": "Build Id",
+          "type": "string"
+        },
+        "proposal_digest": {
+          "title": "Proposal Digest",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "pending",
+            "approved",
+            "denied",
+            "consumed",
+            "expired"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "approval_id",
+        "request_id",
+        "run_id",
+        "call_id",
+        "call",
+        "build_id",
+        "proposal_digest",
+        "revision",
+        "state"
+      ],
+      "title": "Approval",
+      "type": "object"
+    },
+    "ApprovalDecision": {
+      "properties": {
+        "decision_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Decision Id"
+        },
+        "approval_id": {
+          "type": "string",
+          "title": "Approval Id"
+        },
+        "expected_revision": {
+          "type": "string",
+          "title": "Expected Revision"
+        },
+        "proposal_digest": {
+          "type": "string",
+          "title": "Proposal Digest"
+        },
+        "approve": {
+          "type": "boolean",
+          "title": "Approve"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "decision_id",
+        "approval_id",
+        "expected_revision",
+        "proposal_digest",
+        "approve"
+      ],
+      "title": "ApprovalDecision"
+    },
+    "ArchiveSession": {
+      "properties": {
+        "archived": {
+          "type": "boolean",
+          "title": "Archived"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "archived"
+      ],
+      "title": "ArchiveSession"
+    },
+    "ArtifactBody": {
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "title": "Artifact Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "media_type": {
+          "type": "string",
+          "title": "Media Type"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Size"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        },
+        "data_base64": {
+          "type": "string",
+          "title": "Data Base64"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "name",
+        "media_type",
+        "size",
+        "digest",
+        "data_base64"
+      ],
+      "title": "ArtifactBody"
+    },
+    "ArtifactList": {
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/components/schemas/ArtifactView"
+          },
+          "type": "array",
+          "title": "Artifacts"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "artifacts"
+      ],
+      "title": "ArtifactList"
+    },
+    "ArtifactView": {
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "title": "Artifact Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "media_type": {
+          "type": "string",
+          "title": "Media Type"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Size"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "name",
+        "media_type",
+        "size",
+        "digest"
+      ],
+      "title": "ArtifactView"
+    },
+    "ArtifactWrite": {
+      "properties": {
+        "artifact_id": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{0,63}$",
+          "title": "Artifact Id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Name"
+        },
+        "media_type": {
+          "type": "string",
+          "maxLength": 82,
+          "title": "Media Type",
+          "default": "application/octet-stream"
+        },
+        "data_base64": {
+          "type": "string",
+          "maxLength": 1398104,
+          "minLength": 1,
+          "title": "Data Base64"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "artifact_id",
+        "name",
+        "data_base64"
+      ],
+      "title": "ArtifactWrite"
+    },
+    "Attachment": {
+      "properties": {
+        "attachment_id": {
+          "type": "string",
+          "title": "Attachment Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "attachment_id",
+        "session_id",
+        "host_epoch",
+        "build_id"
+      ],
+      "title": "Attachment"
+    },
+    "AutomationCreate": {
+      "properties": {
+        "automation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Automation Id"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text"
+        },
+        "zone": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Zone"
+        },
+        "local": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$",
+          "title": "Local"
+        },
+        "fold": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Fold"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "automation_id",
+        "session_id",
+        "text",
+        "zone",
+        "local"
+      ],
+      "title": "AutomationCreate"
+    },
+    "AutomationTick": {
+      "properties": {
+        "fired": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/AutomationView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "AutomationTick"
+    },
+    "AutomationView": {
+      "properties": {
+        "automation_id": {
+          "type": "string",
+          "title": "Automation Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        },
+        "zone": {
+          "type": "string",
+          "title": "Zone"
+        },
+        "local": {
+          "type": "string",
+          "title": "Local"
+        },
+        "fold": {
+          "type": "integer",
+          "title": "Fold"
+        },
+        "due_ms": {
+          "type": "integer",
+          "title": "Due Ms"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "scheduled",
+            "done",
+            "unknown"
+          ],
+          "title": "Phase"
+        },
+        "delivery_id": {
+          "type": "string",
+          "title": "Delivery Id",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "automation_id",
+        "session_id",
+        "workspace",
+        "text",
+        "zone",
+        "local",
+        "fold",
+        "due_ms",
+        "phase"
+      ],
+      "title": "AutomationView"
+    },
+    "BranchSession": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Request Id"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 100,
+          "title": "Title",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id"
+      ],
+      "title": "BranchSession"
+    },
+    "CatalogModel": {
+      "properties": {
+        "api": {
+          "type": "string",
+          "enum": [
+            "openai-completions",
+            "openai-responses",
+            "openai-codex-responses",
+            "anthropic-messages",
+            "google-generative-ai"
+          ],
+          "title": "Api",
+          "default": "openai-completions"
+        },
+        "base_url": {
+          "type": "string",
+          "title": "Base Url",
+          "default": ""
+        },
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+          "title": "Provider"
+        },
+        "model": {
+          "type": "string",
+          "title": "Model"
+        },
+        "label": {
+          "type": "string",
+          "title": "Label"
+        },
+        "endpoint_editable": {
+          "type": "boolean",
+          "title": "Endpoint Editable"
+        },
+        "thinking_levels": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
+          },
+          "type": "array",
+          "title": "Thinking Levels"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "model",
+        "label",
+        "endpoint_editable"
+      ],
+      "title": "CatalogModel"
+    },
+    "CheckpointCreate": {
+      "properties": {
+        "checkpoint_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Checkpoint Id"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "path": {
+          "type": "string",
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Path"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "checkpoint_id",
+        "path"
+      ],
+      "title": "CheckpointCreate"
+    },
+    "CheckpointList": {
+      "properties": {
+        "checkpoints": {
+          "items": {
+            "$ref": "#/components/schemas/CheckpointView"
+          },
+          "type": "array",
+          "title": "Checkpoints"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "checkpoints"
+      ],
+      "title": "CheckpointList"
+    },
+    "CheckpointPreview": {
+      "properties": {
+        "checkpoint_id": {
+          "type": "string",
+          "title": "Checkpoint Id"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "absolute_path": {
+          "type": "string",
+          "title": "Absolute Path"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        },
+        "content": {
+          "type": "string",
+          "title": "Content"
+        },
+        "current_digest": {
+          "type": "string",
+          "title": "Current Digest"
+        },
+        "diff": {
+          "type": "string",
+          "title": "Diff"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "checkpoint_id",
+        "workspace",
+        "path",
+        "absolute_path",
+        "digest",
+        "content",
+        "current_digest",
+        "diff"
+      ],
+      "title": "CheckpointPreview"
+    },
+    "CheckpointRestore": {
+      "properties": {
+        "expected_digest": {
+          "type": "string",
+          "maxLength": 64,
+          "title": "Expected Digest",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "CheckpointRestore"
+    },
+    "CheckpointView": {
+      "properties": {
+        "checkpoint_id": {
+          "type": "string",
+          "title": "Checkpoint Id"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "checkpoint_id",
+        "workspace",
+        "path",
+        "digest"
+      ],
+      "title": "CheckpointView"
+    },
+    "ClassifierCatalog": {
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/components/schemas/ClassifierModel"
+          },
+          "type": "array",
+          "title": "Models"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "models"
+      ],
+      "title": "ClassifierCatalog"
+    },
+    "ClassifierModel": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "provider": {
+          "type": "string",
+          "title": "Provider"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "api": {
+          "type": "string",
+          "const": "typesafe-system-one",
+          "title": "Api"
+        },
+        "baseUrl": {
+          "type": "string",
+          "title": "Baseurl"
+        },
+        "input": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Input"
+        },
+        "compat": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Compat"
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Headers"
+        },
+        "cost": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Cost"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "provider",
+        "name",
+        "api",
+        "baseUrl",
+        "input"
+      ],
+      "title": "ClassifierModel"
+    },
+    "Cleanup": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "execution_epoch": {
+          "type": "integer",
+          "title": "Execution Epoch"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "clean",
+            "blocked"
+          ],
+          "title": "State"
+        },
+        "resources": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Resources"
+        },
+        "reason": {
+          "type": "string",
+          "title": "Reason",
+          "default": ""
+        },
+        "proof_id": {
+          "type": "string",
+          "title": "Proof Id",
+          "default": ""
+        },
+        "observation": {
+          "type": "string",
+          "const": "registered_processes",
+          "title": "Observation",
+          "default": "registered_processes"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "execution_epoch",
+        "state",
+        "resources"
+      ],
+      "title": "Cleanup"
+    },
+    "CodeCall": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "ok",
+            "error",
+            "cancelled"
+          ],
+          "title": "Status"
+        },
+        "durationMs": {
+          "type": "number",
+          "minimum": 0.0,
+          "title": "Durationms"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "status",
+        "durationMs"
+      ],
+      "title": "CodeCall"
+    },
+    "CodeImage": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "image",
+          "title": "Type",
+          "default": "image"
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 8388608,
+          "pattern": "^[A-Za-z0-9+/]*={0,2}$",
+          "title": "Data"
+        },
+        "mimeType": {
+          "type": "string",
+          "enum": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ],
+          "title": "Mimetype"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "data",
+        "mimeType"
+      ],
+      "title": "CodeImage"
+    },
+    "CodeRun": {
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Run Id"
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Source"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "run_id",
+        "source"
+      ],
+      "title": "CodeRun"
+    },
+    "CodeText": {
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "text",
+          "title": "Type",
+          "default": "text"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        },
+        "console": {
+          "type": "boolean",
+          "title": "Console",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "text"
+      ],
+      "title": "CodeText"
+    },
+    "CodeToolDispatch": {
+      "properties": {
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "run_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Run Id"
+        },
+        "sequence": {
+          "type": "integer",
+          "maximum": 128.0,
+          "minimum": 1.0,
+          "title": "Sequence"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Name"
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Arguments"
+        },
+        "cancel": {
+          "type": "boolean",
+          "title": "Cancel",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host_epoch",
+        "build_id",
+        "session_id",
+        "run_id",
+        "sequence",
+        "name"
+      ],
+      "title": "CodeToolDispatch"
+    },
+    "CodeToolReceipt": {
+      "properties": {
+        "receipt": {
+          "$ref": "#/components/schemas/Receipt"
+        },
+        "images": {
+          "items": {
+            "$ref": "#/components/schemas/ImagePart"
+          },
+          "type": "array",
+          "title": "Images"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "receipt"
+      ],
+      "title": "CodeToolReceipt"
+    },
+    "CodeTools": {
+      "properties": {
+        "tools": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object"
+          },
+          "type": "array",
+          "title": "Tools"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "CodeTools"
+    },
+    "CodeView": {
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "title": "Run Id"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "success",
+            "failed",
+            "cancelled",
+            "unknown",
+            "conflict"
+          ],
+          "title": "Phase"
+        },
+        "value": {
+          "type": "string",
+          "title": "Value",
+          "default": ""
+        },
+        "state": {
+          "type": "string",
+          "title": "State",
+          "default": ""
+        },
+        "output": {
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CodeText"
+              },
+              {
+                "$ref": "#/components/schemas/CodeImage"
+              }
+            ]
+          },
+          "type": "array",
+          "title": "Output"
+        },
+        "calls": {
+          "items": {
+            "$ref": "#/components/schemas/CodeCall"
+          },
+          "type": "array",
+          "title": "Calls"
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        },
+        "clean": {
+          "type": "boolean",
+          "title": "Clean",
+          "default": false
+        },
+        "cancel_requested": {
+          "type": "boolean",
+          "title": "Cancel Requested",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "run_id",
+        "phase"
+      ],
+      "title": "CodeView"
+    },
+    "CompactSession": {
+      "properties": {
+        "compaction_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Compaction Id"
+        },
+        "through_request_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Through Request Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "compaction_id",
+        "through_request_id"
+      ],
+      "title": "CompactSession"
+    },
+    "Compaction": {
+      "properties": {
+        "compaction_id": {
+          "type": "string",
+          "title": "Compaction Id"
+        },
+        "through_request_id": {
+          "type": "string",
+          "title": "Through Request Id"
+        },
+        "basis": {
+          "type": "string",
+          "title": "Basis"
+        },
+        "message_count": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Message Count"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Summary"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "compaction_id",
+        "through_request_id",
+        "basis",
+        "message_count",
+        "summary"
+      ],
+      "title": "Compaction"
+    },
+    "CompleteUpdate": {
+      "properties": {
+        "update_id": {
+          "type": "string",
+          "title": "Update Id"
+        },
+        "expected_revision": {
+          "type": "string",
+          "title": "Expected Revision"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "update_id",
+        "expected_revision"
+      ],
+      "title": "CompleteUpdate"
+    },
+    "ComputerActionRequest": {
+      "properties": {
+        "capture_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Capture Id"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "delivery_mode": {
+          "type": "string",
+          "enum": [
+            "background",
+            "foreground"
+          ],
+          "title": "Delivery Mode",
+          "default": "background"
+        },
+        "action": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/ComputerClick"
+            },
+            {
+              "$ref": "#/components/schemas/ComputerText"
+            },
+            {
+              "$ref": "#/components/schemas/ComputerKey"
+            },
+            {
+              "$ref": "#/components/schemas/ComputerHotkey"
+            },
+            {
+              "$ref": "#/components/schemas/ComputerScroll"
+            },
+            {
+              "$ref": "#/components/schemas/ComputerDrag"
+            }
+          ],
+          "title": "Action",
+          "discriminator": {
+            "propertyName": "action",
+            "mapping": {
+              "click": "#/components/schemas/ComputerClick",
+              "double_click": "#/components/schemas/ComputerClick",
+              "drag": "#/components/schemas/ComputerDrag",
+              "hotkey": "#/components/schemas/ComputerHotkey",
+              "press_key": "#/components/schemas/ComputerKey",
+              "right_click": "#/components/schemas/ComputerClick",
+              "scroll": "#/components/schemas/ComputerScroll",
+              "set_value": "#/components/schemas/ComputerText",
+              "type_text": "#/components/schemas/ComputerText"
+            }
+          }
+        },
+        "intent": {
+          "type": "string",
+          "maxLength": 4000,
+          "title": "Intent",
+          "default": ""
+        },
+        "action_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Action Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "capture_id",
+        "action",
+        "action_id"
+      ],
+      "title": "ComputerActionRequest"
+    },
+    "ComputerActionView": {
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "title": "Action Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "done",
+            "failed"
+          ],
+          "title": "Phase"
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        },
+        "driver_x": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Driver X"
+        },
+        "driver_y": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Driver Y"
+        },
+        "result": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Result"
+        },
+        "images": {
+          "items": {
+            "$ref": "#/components/schemas/ImagePart"
+          },
+          "type": "array",
+          "title": "Images"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "action_id",
+        "session_id",
+        "phase"
+      ],
+      "title": "ComputerActionView"
+    },
+    "ComputerCandidate": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "title": "Id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "button",
+            "toggle",
+            "checkbox",
+            "radio",
+            "popup",
+            "menu_item",
+            "link",
+            "text_input"
+          ],
+          "title": "Role"
+        },
+        "label": {
+          "type": "string",
+          "title": "Label"
+        },
+        "element_token": {
+          "type": "string",
+          "title": "Element Token"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id",
+        "role",
+        "label",
+        "element_token"
+      ],
+      "title": "ComputerCandidate"
+    },
+    "ComputerCaptureView": {
+      "properties": {
+        "capture_id": {
+          "type": "string",
+          "title": "Capture Id"
+        },
+        "width": {
+          "type": "integer",
+          "title": "Width"
+        },
+        "height": {
+          "type": "integer",
+          "title": "Height"
+        },
+        "raw_width": {
+          "type": "integer",
+          "title": "Raw Width"
+        },
+        "raw_height": {
+          "type": "integer",
+          "title": "Raw Height"
+        },
+        "orientation": {
+          "type": "integer",
+          "title": "Orientation"
+        },
+        "scale": {
+          "type": "integer",
+          "title": "Scale"
+        },
+        "observed_ms": {
+          "type": "integer",
+          "title": "Observed Ms"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "snapshot_id": {
+          "type": "string",
+          "title": "Snapshot Id",
+          "default": ""
+        },
+        "tree": {
+          "type": "string",
+          "maxLength": 20000,
+          "title": "Tree",
+          "default": ""
+        },
+        "elements": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object"
+          },
+          "type": "array",
+          "maxItems": 500,
+          "title": "Elements"
+        },
+        "window_bounds": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerRect"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "degraded_reason": {
+          "type": "string",
+          "title": "Degraded Reason",
+          "default": ""
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/components/schemas/ComputerCandidate"
+          },
+          "type": "array",
+          "maxItems": 24,
+          "title": "Candidates"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "capture_id",
+        "width",
+        "height",
+        "raw_width",
+        "raw_height",
+        "orientation",
+        "scale",
+        "observed_ms"
+      ],
+      "title": "ComputerCaptureView"
+    },
+    "ComputerCleanup": {
+      "properties": {
+        "cleared": {
+          "type": "boolean",
+          "title": "Cleared"
+        },
+        "proof": {
+          "type": "string",
+          "title": "Proof",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cleared"
+      ],
+      "title": "ComputerCleanup"
+    },
+    "ComputerClick": {
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "click",
+            "double_click",
+            "right_click"
+          ],
+          "title": "Action"
+        },
+        "point": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerPixel"
+            },
+            {
+              "$ref": "#/components/schemas/ComputerElement"
+            }
+          ],
+          "title": "Point"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "action",
+        "point"
+      ],
+      "title": "ComputerClick"
+    },
+    "ComputerDrag": {
+      "properties": {
+        "x": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "X"
+        },
+        "y": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "Y"
+        },
+        "action": {
+          "type": "string",
+          "const": "drag",
+          "title": "Action"
+        },
+        "to_x": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "To X"
+        },
+        "to_y": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "To Y"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "action",
+        "to_x",
+        "to_y"
+      ],
+      "title": "ComputerDrag"
+    },
+    "ComputerElement": {
+      "properties": {
+        "element_token": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Element Token"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "element_token"
+      ],
+      "title": "ComputerElement"
+    },
+    "ComputerGroundRequest": {
+      "properties": {
+        "target": {
+          "$ref": "#/components/schemas/ComputerWindow"
+        },
+        "goal": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Goal"
+        },
+        "verification": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Verification"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "click",
+            "set_value",
+            "type_text"
+          ],
+          "title": "Action",
+          "default": "click"
+        },
+        "text": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 16000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Text"
+        },
+        "action_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Action Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "target",
+        "goal",
+        "verification",
+        "action_id"
+      ],
+      "title": "ComputerGroundRequest"
+    },
+    "ComputerHotkey": {
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "hotkey",
+          "title": "Action"
+        },
+        "keys": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 8,
+          "minItems": 2,
+          "title": "Keys"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "action",
+        "keys"
+      ],
+      "title": "ComputerHotkey"
+    },
+    "ComputerInspect": {
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "desktop",
+            "window",
+            "apps",
+            "windows",
+            "permissions"
+          ],
+          "title": "Action",
+          "default": "desktop"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pid": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Pid"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "ComputerInspect"
+    },
+    "ComputerKey": {
+      "properties": {
+        "action": {
+          "type": "string",
+          "const": "press_key",
+          "title": "Action"
+        },
+        "key": {
+          "type": "string",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Key"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "action",
+        "key"
+      ],
+      "title": "ComputerKey"
+    },
+    "ComputerLocateRequest": {
+      "properties": {
+        "capture_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Capture Id"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerWindow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Description"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "look_closer",
+            "tiled"
+          ],
+          "title": "Mode",
+          "default": "look_closer"
+        },
+        "action_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Action Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "capture_id",
+        "description",
+        "action_id"
+      ],
+      "title": "ComputerLocateRequest"
+    },
+    "ComputerObserve": {
+      "properties": {
+        "permitted": {
+          "type": "boolean",
+          "title": "Permitted"
+        },
+        "accessibility": {
+          "type": "boolean",
+          "title": "Accessibility",
+          "default": false
+        },
+        "screen": {
+          "type": "boolean",
+          "title": "Screen",
+          "default": false
+        },
+        "identity": {
+          "type": "string",
+          "title": "Identity",
+          "default": ""
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        },
+        "capture": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerCaptureView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "image_base64": {
+          "type": "string",
+          "maxLength": 50331648,
+          "title": "Image Base64",
+          "default": ""
+        },
+        "data": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "permitted"
+      ],
+      "title": "ComputerObserve"
+    },
+    "ComputerPixel": {
+      "properties": {
+        "x": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "X"
+        },
+        "y": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "Y"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "ComputerPixel"
+    },
+    "ComputerPolicy": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "default": false
+        },
+        "allow_foreground": {
+          "type": "boolean",
+          "title": "Allow Foreground",
+          "default": false
+        },
+        "max_age_ms": {
+          "type": "integer",
+          "maximum": 55000.0,
+          "minimum": 1.0,
+          "title": "Max Age Ms",
+          "default": 55000
+        },
+        "jev_enabled": {
+          "type": "boolean",
+          "title": "Jev Enabled",
+          "default": true
+        },
+        "jev_provider": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Jev Provider",
+          "default": "typesafe"
+        },
+        "jev_model": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Jev Model",
+          "default": "jev-1.14.0"
+        },
+        "min_presence": {
+          "type": "number",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Presence",
+          "default": 0.8
+        },
+        "min_box_confidence": {
+          "type": "number",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Box Confidence",
+          "default": 0.7
+        },
+        "min_choice_confidence": {
+          "type": "number",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Min Choice Confidence",
+          "default": 0.7
+        },
+        "allow_risk_categories": {
+          "items": {
+            "type": "string",
+            "enum": [
+              "destructive",
+              "send",
+              "purchase",
+              "close_unsaved"
+            ]
+          },
+          "type": "array",
+          "maxItems": 4,
+          "title": "Allow Risk Categories"
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "maximum": 300000.0,
+          "minimum": 100.0,
+          "title": "Timeout Ms",
+          "default": 30000
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "ComputerPolicy"
+    },
+    "ComputerRect": {
+      "properties": {
+        "x": {
+          "type": "number",
+          "title": "X"
+        },
+        "y": {
+          "type": "number",
+          "title": "Y"
+        },
+        "width": {
+          "type": "number",
+          "title": "Width"
+        },
+        "height": {
+          "type": "number",
+          "title": "Height"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "title": "ComputerRect"
+    },
+    "ComputerScroll": {
+      "properties": {
+        "x": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "X"
+        },
+        "y": {
+          "type": "integer",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "title": "Y"
+        },
+        "action": {
+          "type": "string",
+          "const": "scroll",
+          "title": "Action"
+        },
+        "direction": {
+          "type": "string",
+          "enum": [
+            "up",
+            "down",
+            "left",
+            "right"
+          ],
+          "title": "Direction"
+        },
+        "amount": {
+          "type": "integer",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "title": "Amount",
+          "default": 3
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "action",
+        "direction"
+      ],
+      "title": "ComputerScroll"
+    },
+    "ComputerText": {
+      "properties": {
+        "element_token": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Element Token"
+        },
+        "action": {
+          "type": "string",
+          "enum": [
+            "type_text",
+            "set_value"
+          ],
+          "title": "Action"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 16000,
+          "title": "Text"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "element_token",
+        "action",
+        "text"
+      ],
+      "title": "ComputerText"
+    },
+    "ComputerToolRequest": {
+      "properties": {
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "worker_id": {
+          "type": "string",
+          "title": "Worker Id"
+        },
+        "step_id": {
+          "type": "string",
+          "title": "Step Id"
+        },
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "generation": {
+          "type": "integer",
+          "title": "Generation"
+        },
+        "call": {
+          "$ref": "#/components/schemas/ToolCall"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host_epoch",
+        "build_id",
+        "session_id",
+        "worker_id",
+        "step_id",
+        "request_id",
+        "generation",
+        "call"
+      ],
+      "title": "ComputerToolRequest"
+    },
+    "ComputerToolResult": {
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "done",
+            "failed"
+          ],
+          "title": "Phase"
+        },
+        "result": {
+          "type": "string",
+          "title": "Result",
+          "default": ""
+        },
+        "images": {
+          "items": {
+            "$ref": "#/components/schemas/ImagePart"
+          },
+          "type": "array",
+          "title": "Images"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "phase"
+      ],
+      "title": "ComputerToolResult"
+    },
+    "ComputerWindow": {
+      "properties": {
+        "pid": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Pid"
+        },
+        "window_id": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Window Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "pid",
+        "window_id"
+      ],
+      "title": "ComputerWindow"
+    },
+    "CreateSession": {
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Title",
+          "default": "新会话"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id",
+          "default": ""
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "CreateSession"
+    },
+    "CredentialUpdate": {
+      "properties": {
+        "expected_revision": {
+          "type": "integer",
+          "maximum": 1000000000.0,
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        },
+        "clear": {
+          "type": "boolean",
+          "title": "Clear",
+          "default": false
+        },
+        "api_key": {
+          "type": "string",
+          "format": "password",
+          "title": "Api Key",
+          "default": "",
+          "writeOnly": true
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "expected_revision"
+      ],
+      "title": "CredentialUpdate"
+    },
+    "Decision": {
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "enum": [
+            "succeeded",
+            "cancelled",
+            "interrupted",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "answer": {
+          "default": "",
+          "title": "Answer",
+          "type": "string"
+        },
+        "error": {
+          "default": "",
+          "title": "Error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "title": "Decision",
+      "type": "object"
+    },
+    "EffectHold": {
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "request_id": {
+          "default": "",
+          "title": "Request Id",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "resource_clean": {
+          "title": "Resource Clean",
+          "type": "boolean"
+        },
+        "reconciled": {
+          "default": false,
+          "title": "Reconciled",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "call_id",
+        "session_id",
+        "reason",
+        "resource_clean"
+      ],
+      "title": "EffectHold",
+      "type": "object"
+    },
+    "EffectResolution": {
+      "properties": {
+        "resolution_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Resolution Id"
+        },
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "applied",
+            "not_applied"
+          ],
+          "title": "Outcome"
+        },
+        "evidence": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Evidence"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "resolution_id",
+        "call_id",
+        "outcome",
+        "evidence"
+      ],
+      "title": "EffectResolution"
+    },
+    "EpochHealth": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "worker_id": {
+          "type": "string",
+          "title": "Worker Id"
+        },
+        "execution_epoch": {
+          "type": "integer",
+          "title": "Execution Epoch"
+        },
+        "state": {
+          "type": "string",
+          "title": "State"
+        },
+        "cleanup": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/Cleanup"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "worker_id",
+        "execution_epoch",
+        "state"
+      ],
+      "title": "EpochHealth"
+    },
+    "Event": {
+      "additionalProperties": false,
+      "properties": {
+        "seq": {
+          "title": "Seq",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "accepted",
+            "status",
+            "preview",
+            "message",
+            "tool",
+            "cleanup",
+            "approval",
+            "children",
+            "effect",
+            "freeze",
+            "compaction"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "receipt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Receipt"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "approval": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Approval"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "preview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "seq",
+        "kind",
+        "request_id",
+        "text"
+      ],
+      "title": "Event",
+      "type": "object"
+    },
+    "ExecutionResource": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "registered",
+            "running",
+            "stopping",
+            "exited",
+            "stop_unconfirmed"
+          ],
+          "title": "State"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "completed",
+            "unknown"
+          ],
+          "title": "Outcome"
+        },
+        "observation": {
+          "type": "string",
+          "const": "registered_processes",
+          "title": "Observation",
+          "default": "registered_processes"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "session_id",
+        "request_id",
+        "state",
+        "outcome"
+      ],
+      "title": "ExecutionResource"
+    },
+    "ExportBundle": {
+      "properties": {
+        "format": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Format"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest",
+          "default": ""
+        },
+        "projects": {
+          "items": {
+            "$ref": "#/components/schemas/ProjectView"
+          },
+          "type": "array",
+          "title": "Projects"
+        },
+        "sessions": {
+          "items": {
+            "$ref": "#/components/schemas/ExportSession"
+          },
+          "type": "array",
+          "title": "Sessions"
+        },
+        "feedback": {
+          "items": {
+            "$ref": "#/components/schemas/FeedbackView"
+          },
+          "type": "array",
+          "title": "Feedback"
+        },
+        "settings": {
+          "$ref": "#/components/schemas/ProductSettings"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "format"
+      ],
+      "title": "ExportBundle"
+    },
+    "ExportMessage": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Request Id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Content"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "role",
+        "content"
+      ],
+      "title": "ExportMessage"
+    },
+    "ExportSession": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Title"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id",
+          "default": ""
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/components/schemas/ExportMessage"
+          },
+          "type": "array",
+          "title": "Messages"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "title"
+      ],
+      "title": "ExportSession"
+    },
+    "FeedbackView": {
+      "properties": {
+        "feedback_id": {
+          "type": "string",
+          "title": "Feedback Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "feedback_id",
+        "session_id",
+        "text"
+      ],
+      "title": "FeedbackView"
+    },
+    "FeedbackWrite": {
+      "properties": {
+        "feedback_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Feedback Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id",
+          "default": ""
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Text"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "feedback_id",
+        "text"
+      ],
+      "title": "FeedbackWrite"
+    },
+    "FileChange": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        },
+        "diff": {
+          "type": "string",
+          "title": "Diff"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "digest",
+        "diff"
+      ],
+      "title": "FileChange"
+    },
+    "FileContent": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "absolute_path": {
+          "type": "string",
+          "title": "Absolute Path",
+          "default": ""
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        },
+        "content": {
+          "type": "string",
+          "title": "Content"
+        },
+        "truncated": {
+          "type": "boolean",
+          "title": "Truncated",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "digest",
+        "content"
+      ],
+      "title": "FileContent"
+    },
+    "FileEntry": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "kind": {
+          "type": "string",
+          "title": "Kind"
+        },
+        "size": {
+          "type": "integer",
+          "title": "Size"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "kind",
+        "size"
+      ],
+      "title": "FileEntry"
+    },
+    "FileList": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "absolute_path": {
+          "type": "string",
+          "title": "Absolute Path",
+          "default": ""
+        },
+        "entries": {
+          "items": {
+            "$ref": "#/components/schemas/FileEntry"
+          },
+          "type": "array",
+          "title": "Entries"
+        },
+        "truncated": {
+          "type": "boolean",
+          "title": "Truncated",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "entries"
+      ],
+      "title": "FileList"
+    },
+    "FileWrite": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Path"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 1048576,
+          "title": "Content"
+        },
+        "expected_digest": {
+          "type": "string",
+          "maxLength": 64,
+          "title": "Expected Digest",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "content"
+      ],
+      "title": "FileWrite"
+    },
+    "HTTPValidationError": {
+      "properties": {
+        "detail": {
+          "items": {
+            "$ref": "#/components/schemas/ValidationError"
+          },
+          "type": "array",
+          "title": "Detail"
+        }
+      },
+      "type": "object",
+      "title": "HTTPValidationError"
+    },
+    "Health": {
+      "properties": {
+        "identity": {
+          "$ref": "#/components/schemas/Identity"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "recovering",
+            "frozen",
+            "blocked"
+          ],
+          "title": "State"
+        },
+        "supervisor": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/SupervisorHealth"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "update": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/UpdateRecord"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pending_deliveries": {
+          "type": "integer",
+          "title": "Pending Deliveries",
+          "default": 0
+        },
+        "errors": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Errors"
+        },
+        "supervisors": {
+          "items": {
+            "$ref": "#/components/schemas/ServiceInfo"
+          },
+          "type": "array",
+          "title": "Supervisors"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "identity",
+        "state"
+      ],
+      "title": "Health"
+    },
+    "HostFence": {
+      "properties": {
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host_epoch",
+        "build_id"
+      ],
+      "title": "HostFence"
+    },
+    "Identity": {
+      "properties": {
+        "version": {
+          "type": "string",
+          "title": "Version",
+          "default": "0.1.0"
+        },
+        "protocol": {
+          "type": "string",
+          "title": "Protocol",
+          "default": "amazme-http/1"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        },
+        "profile_id": {
+          "type": "string",
+          "title": "Profile Id"
+        },
+        "instance_id": {
+          "type": "string",
+          "title": "Instance Id"
+        },
+        "pid": {
+          "type": "integer",
+          "title": "Pid"
+        },
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch",
+          "default": 0
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "host",
+            "supervisor",
+            "worker"
+          ],
+          "title": "Role",
+          "default": "host"
+        },
+        "state": {
+          "type": "string",
+          "title": "State",
+          "default": "ready"
+        },
+        "fingerprint": {
+          "type": "string",
+          "title": "Fingerprint",
+          "default": ""
+        },
+        "storage_format": {
+          "type": "integer",
+          "const": 2,
+          "title": "Storage Format",
+          "default": 2
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "build_id",
+        "profile_id",
+        "instance_id",
+        "pid"
+      ],
+      "title": "Identity"
+    },
+    "ImagePart": {
+      "properties": {
+        "media_type": {
+          "type": "string",
+          "enum": [
+            "image/png",
+            "image/jpeg",
+            "image/webp",
+            "image/gif"
+          ],
+          "title": "Media Type"
+        },
+        "data_base64": {
+          "type": "string",
+          "maxLength": 11184812,
+          "minLength": 1,
+          "title": "Data Base64"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "media_type",
+        "data_base64"
+      ],
+      "title": "ImagePart"
+    },
+    "ImportResult": {
+      "properties": {
+        "format": {
+          "type": "string",
+          "const": "amazme-export/1",
+          "title": "Format"
+        },
+        "sessions": {
+          "type": "integer",
+          "title": "Sessions"
+        },
+        "created": {
+          "type": "integer",
+          "title": "Created"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "format",
+        "sessions",
+        "created"
+      ],
+      "title": "ImportResult"
+    },
+    "JsonValue": {},
+    "Login": {
+      "properties": {
+        "token": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Token"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "token"
+      ],
+      "title": "Login"
+    },
+    "McpCall": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "server_id": {
+          "type": "string",
+          "title": "Server Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "waiting_approval",
+            "running",
+            "done",
+            "denied",
+            "unknown",
+            "conflict"
+          ],
+          "title": "Phase"
+        },
+        "result": {
+          "type": "string",
+          "title": "Result",
+          "default": ""
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Arguments"
+        },
+        "result_data": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Result Data"
+        },
+        "is_error": {
+          "type": "boolean",
+          "title": "Is Error",
+          "default": false
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "model"
+          ],
+          "title": "Origin",
+          "default": "manual"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "server_id",
+        "name",
+        "phase",
+        "digest"
+      ],
+      "title": "McpCall"
+    },
+    "McpCallRequest": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Call Id"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,128}$",
+          "title": "Name"
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Arguments"
+        },
+        "schema_digest": {
+          "type": "string",
+          "title": "Schema Digest",
+          "default": ""
+        },
+        "origin": {
+          "type": "string",
+          "enum": [
+            "manual",
+            "model"
+          ],
+          "title": "Origin",
+          "default": "manual"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "name"
+      ],
+      "title": "McpCallRequest"
+    },
+    "McpDecision": {
+      "properties": {
+        "decision_id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Decision Id"
+        },
+        "approve": {
+          "type": "boolean",
+          "title": "Approve"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Digest"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "decision_id",
+        "approve",
+        "digest"
+      ],
+      "title": "McpDecision"
+    },
+    "McpOpen": {
+      "properties": {
+        "server_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Server Id"
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Command"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "server_id",
+        "command"
+      ],
+      "title": "McpOpen"
+    },
+    "McpState": {
+      "properties": {
+        "servers": {
+          "items": {
+            "$ref": "#/components/schemas/McpView"
+          },
+          "type": "array",
+          "title": "Servers"
+        },
+        "calls": {
+          "items": {
+            "$ref": "#/components/schemas/McpCall"
+          },
+          "type": "array",
+          "title": "Calls"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "servers",
+        "calls"
+      ],
+      "title": "McpState"
+    },
+    "McpTool": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]{1,128}$",
+          "title": "Name"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "default": ""
+        },
+        "input_schema": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Input Schema"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "title": "McpTool"
+    },
+    "McpView": {
+      "properties": {
+        "server_id": {
+          "type": "string",
+          "title": "Server Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id",
+          "default": ""
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "command": {
+          "type": "string",
+          "title": "Command",
+          "default": ""
+        },
+        "protocol_version": {
+          "type": "string",
+          "title": "Protocol Version",
+          "default": ""
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "ready",
+            "exited",
+            "unknown"
+          ],
+          "title": "Phase"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/components/schemas/McpTool"
+          },
+          "type": "array",
+          "title": "Tools"
+        },
+        "clean": {
+          "type": "boolean",
+          "title": "Clean"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "server_id",
+        "phase",
+        "tools",
+        "clean"
+      ],
+      "title": "McpView"
+    },
+    "MemoryList": {
+      "properties": {
+        "workspace": {
+          "type": "string",
+          "title": "Workspace"
+        },
+        "memories": {
+          "items": {
+            "$ref": "#/components/schemas/MemoryView"
+          },
+          "type": "array",
+          "title": "Memories"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workspace",
+        "memories"
+      ],
+      "title": "MemoryList"
+    },
+    "MemoryView": {
+      "properties": {
+        "memory_id": {
+          "type": "string",
+          "title": "Memory Id"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "memory_id",
+        "workspace",
+        "text"
+      ],
+      "title": "MemoryView"
+    },
+    "MemoryWrite": {
+      "properties": {
+        "memory_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Memory Id"
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 500,
+          "minLength": 1,
+          "title": "Text"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "memory_id",
+        "text"
+      ],
+      "title": "MemoryWrite"
+    },
+    "ModelCatalog": {
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/components/schemas/CatalogModel"
+          },
+          "type": "array",
+          "title": "Models"
+        },
+        "current": {
+          "$ref": "#/components/schemas/ModelSettings"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "models",
+        "current"
+      ],
+      "title": "ModelCatalog"
+    },
+    "ModelScope": {
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/components/schemas/ScopedModel"
+          },
+          "type": "array",
+          "title": "Models"
+        },
+        "diagnostics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Diagnostics"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "models"
+      ],
+      "title": "ModelScope"
+    },
+    "ModelScopeRequest": {
+      "properties": {
+        "patterns": {
+          "items": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1
+          },
+          "type": "array",
+          "maxItems": 128,
+          "minItems": 1,
+          "title": "Patterns"
+        },
+        "provider": {
+          "type": "string",
+          "pattern": "^(?:[a-z][a-z0-9._-]{0,63})?$",
+          "title": "Provider",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "patterns"
+      ],
+      "title": "ModelScopeRequest"
+    },
+    "ModelSelection": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+          "title": "Provider"
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w./:@+-]+$",
+          "title": "Model"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "model"
+      ],
+      "title": "ModelSelection"
+    },
+    "ModelSettings": {
+      "properties": {
+        "api": {
+          "type": "string",
+          "enum": [
+            "openai-completions",
+            "openai-responses",
+            "openai-codex-responses",
+            "anthropic-messages",
+            "google-generative-ai"
+          ],
+          "title": "Api",
+          "default": "openai-completions"
+        },
+        "auth_type": {
+          "type": "string",
+          "enum": [
+            "api_key",
+            "oauth"
+          ],
+          "title": "Auth Type",
+          "default": "api_key"
+        },
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+          "title": "Provider"
+        },
+        "model": {
+          "type": "string",
+          "title": "Model"
+        },
+        "base_url": {
+          "type": "string",
+          "title": "Base Url"
+        },
+        "max_tokens": {
+          "type": "integer",
+          "title": "Max Tokens"
+        },
+        "key_configured": {
+          "type": "boolean",
+          "title": "Key Configured"
+        },
+        "credential_revision": {
+          "type": "integer",
+          "title": "Credential Revision",
+          "default": 0
+        },
+        "proxy": {
+          "type": "string",
+          "title": "Proxy",
+          "default": ""
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Headers"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "model",
+        "base_url",
+        "max_tokens",
+        "key_configured"
+      ],
+      "title": "ModelSettings"
+    },
+    "OAuthInput": {
+      "properties": {
+        "value": {
+          "type": "string",
+          "maxLength": 8192,
+          "format": "password",
+          "title": "Value",
+          "writeOnly": true
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "value"
+      ],
+      "title": "OAuthInput"
+    },
+    "OAuthStart": {
+      "properties": {
+        "login_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Login Id"
+        },
+        "provider": {
+          "type": "string",
+          "title": "Provider"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        },
+        "method": {
+          "type": "string",
+          "enum": [
+            "browser",
+            "device_code",
+            "copy_code"
+          ],
+          "title": "Method",
+          "default": "browser"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "login_id",
+        "provider",
+        "expected_revision"
+      ],
+      "title": "OAuthStart"
+    },
+    "OAuthView": {
+      "properties": {
+        "login_id": {
+          "type": "string",
+          "title": "Login Id"
+        },
+        "provider": {
+          "type": "string",
+          "title": "Provider"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "complete",
+            "failed",
+            "cancelled",
+            "expired",
+            "unknown"
+          ],
+          "title": "Phase"
+        },
+        "url": {
+          "type": "string",
+          "title": "Url",
+          "default": ""
+        },
+        "user_code": {
+          "type": "string",
+          "title": "User Code",
+          "default": ""
+        },
+        "expires_ms": {
+          "type": "integer",
+          "title": "Expires Ms",
+          "default": 0
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "login_id",
+        "provider",
+        "phase"
+      ],
+      "title": "OAuthView"
+    },
+    "PluginCallRequest": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "tool",
+            "command"
+          ],
+          "title": "Kind",
+          "default": "tool"
+        },
+        "call_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Call Id"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$",
+          "title": "Name"
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Arguments"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "name"
+      ],
+      "title": "PluginCallRequest"
+    },
+    "PluginCallView": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "done",
+            "failed",
+            "unknown",
+            "conflict",
+            "cancelled"
+          ],
+          "title": "Phase"
+        },
+        "cancel_requested": {
+          "type": "boolean",
+          "title": "Cancel Requested",
+          "default": false
+        },
+        "clean": {
+          "type": "boolean",
+          "title": "Clean",
+          "default": false
+        },
+        "result": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/PluginResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "phase"
+      ],
+      "title": "PluginCallView"
+    },
+    "PluginDraft": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "plugin_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Plugin Id"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,64}$",
+          "title": "Name"
+        },
+        "entry": {
+          "type": "string",
+          "maxLength": 4096,
+          "minLength": 1,
+          "title": "Entry"
+        },
+        "config": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Config"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "plugin_id",
+        "name",
+        "entry"
+      ],
+      "title": "PluginDraft"
+    },
+    "PluginList": {
+      "properties": {
+        "plugins": {
+          "items": {
+            "$ref": "#/components/schemas/PluginView"
+          },
+          "type": "array",
+          "title": "Plugins"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "plugins"
+      ],
+      "title": "PluginList"
+    },
+    "PluginReload": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "reload_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Reload Id"
+        },
+        "entry": {
+          "type": "string",
+          "maxLength": 4096,
+          "title": "Entry",
+          "default": ""
+        },
+        "config": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Config"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "reload_id"
+      ],
+      "title": "PluginReload"
+    },
+    "PluginResult": {
+      "properties": {
+        "content": {
+          "items": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "type": "object"
+          },
+          "type": "array",
+          "maxItems": 16,
+          "title": "Content"
+        },
+        "details": {
+          "$ref": "#/components/schemas/JsonValue"
+        },
+        "is_error": {
+          "type": "boolean",
+          "title": "Is Error",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "PluginResult"
+    },
+    "PluginTool": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]{0,63}$",
+          "title": "Name"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Label"
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 4000,
+          "title": "Description"
+        },
+        "parameters": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Parameters"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "tool",
+            "command"
+          ],
+          "title": "Kind",
+          "default": "tool"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "label",
+        "description",
+        "parameters"
+      ],
+      "title": "PluginTool"
+    },
+    "PluginView": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "plugin_id": {
+          "type": "string",
+          "title": "Plugin Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "capabilities": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Capabilities"
+        },
+        "config": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Config"
+        },
+        "fingerprint": {
+          "type": "string",
+          "title": "Fingerprint"
+        },
+        "entry": {
+          "type": "string",
+          "title": "Entry"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/components/schemas/PluginTool"
+          },
+          "type": "array",
+          "title": "Tools"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "loading",
+            "ready",
+            "disconnected",
+            "failed",
+            "unknown"
+          ],
+          "title": "Phase",
+          "default": "disconnected"
+        },
+        "load_id": {
+          "type": "string",
+          "title": "Load Id",
+          "default": ""
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "plugin_id",
+        "name",
+        "capabilities",
+        "config",
+        "fingerprint",
+        "entry"
+      ],
+      "title": "PluginView"
+    },
+    "PrepareFileWrite": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "worker_id": {
+          "type": "string",
+          "title": "Worker Id"
+        },
+        "execution_epoch": {
+          "type": "integer",
+          "title": "Execution Epoch"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        },
+        "supervisor_id": {
+          "type": "string",
+          "title": "Supervisor Id",
+          "default": ""
+        },
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch"
+        },
+        "call_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Call Id"
+        },
+        "write": {
+          "$ref": "#/components/schemas/WriteFile"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "worker_id",
+        "execution_epoch",
+        "build_id",
+        "host_epoch",
+        "call_id",
+        "write"
+      ],
+      "title": "PrepareFileWrite"
+    },
+    "PrepareUpdate": {
+      "properties": {
+        "update_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Update Id"
+        },
+        "target_build": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Target Build"
+        },
+        "cancel_work": {
+          "type": "boolean",
+          "title": "Cancel Work",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "update_id",
+        "target_build"
+      ],
+      "title": "PrepareUpdate"
+    },
+    "PreparedFileWrite": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "expected_digest": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{64})?$",
+          "title": "Expected Digest"
+        },
+        "checkpoint_id": {
+          "type": "string",
+          "title": "Checkpoint Id",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "path",
+        "expected_digest"
+      ],
+      "title": "PreparedFileWrite"
+    },
+    "Preview": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "run_id": {
+          "title": "Run Id",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        },
+        "preview_seq": {
+          "title": "Preview Seq",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        }
+      },
+      "required": [
+        "request_id",
+        "run_id",
+        "generation",
+        "preview_seq",
+        "text"
+      ],
+      "title": "Preview",
+      "type": "object"
+    },
+    "ProcessLease": {
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "title": "Instance Id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "host",
+            "worker",
+            "supervisor",
+            "execution"
+          ],
+          "title": "Role"
+        },
+        "profile_path": {
+          "type": "string",
+          "title": "Profile Path"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "device": {
+          "type": "integer",
+          "title": "Device"
+        },
+        "inode": {
+          "type": "integer",
+          "title": "Inode"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "instance_id",
+        "role",
+        "profile_path",
+        "path",
+        "device",
+        "inode"
+      ],
+      "title": "ProcessLease"
+    },
+    "ProductSettings": {
+      "properties": {
+        "display_name": {
+          "type": "string",
+          "title": "Display Name",
+          "default": ""
+        },
+        "revision": {
+          "type": "integer",
+          "title": "Revision",
+          "default": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "ProductSettings"
+    },
+    "ProjectList": {
+      "properties": {
+        "projects": {
+          "items": {
+            "$ref": "#/components/schemas/ProjectView"
+          },
+          "type": "array",
+          "title": "Projects"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "ProjectList"
+    },
+    "ProjectView": {
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "title": "Project Id"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "project_id",
+        "name"
+      ],
+      "title": "ProjectView"
+    },
+    "ProjectWrite": {
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Project Id"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Name"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "project_id",
+        "name"
+      ],
+      "title": "ProjectWrite"
+    },
+    "Receipt": {
+      "additionalProperties": false,
+      "properties": {
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "text": {
+          "title": "Text",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_children",
+            "waiting_time",
+            "waiting_host",
+            "cancelling",
+            "cleaning",
+            "blocked",
+            "succeeded",
+            "cancelled",
+            "interrupted",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "answer": {
+          "default": "",
+          "title": "Answer",
+          "type": "string"
+        },
+        "error": {
+          "default": "",
+          "title": "Error",
+          "type": "string"
+        },
+        "accepted_revision": {
+          "default": "0",
+          "title": "Accepted Revision",
+          "type": "string"
+        },
+        "revision": {
+          "default": "0",
+          "title": "Revision",
+          "type": "string"
+        },
+        "run_id": {
+          "default": "",
+          "title": "Run Id",
+          "type": "string"
+        },
+        "parent_id": {
+          "default": "",
+          "title": "Parent Id",
+          "type": "string"
+        },
+        "kind": {
+          "default": "root",
+          "enum": [
+            "root",
+            "child",
+            "steer"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "generation": {
+          "default": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "cancel_requested": {
+          "default": false,
+          "title": "Cancel Requested",
+          "type": "boolean"
+        },
+        "decision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decision"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "children": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Children",
+          "type": "array"
+        },
+        "not_before_ms": {
+          "default": 0,
+          "title": "Not Before Ms",
+          "type": "integer"
+        },
+        "image_count": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Image Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "request_id",
+        "text",
+        "status"
+      ],
+      "title": "Receipt",
+      "type": "object"
+    },
+    "Recovery": {
+      "properties": {
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        },
+        "recovery_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Recovery Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host_epoch",
+        "build_id",
+        "recovery_id"
+      ],
+      "title": "Recovery"
+    },
+    "RemoteCallView": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "done",
+            "conflict"
+          ],
+          "title": "Phase"
+        },
+        "result": {
+          "type": "string",
+          "title": "Result",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "phase"
+      ],
+      "title": "RemoteCallView"
+    },
+    "RemoteHostKey": {
+      "properties": {
+        "line": {
+          "type": "string",
+          "title": "Line"
+        },
+        "fingerprint": {
+          "type": "string",
+          "title": "Fingerprint"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "line",
+        "fingerprint"
+      ],
+      "title": "RemoteHostKey"
+    },
+    "RemoteHostKeys": {
+      "properties": {
+        "keys": {
+          "items": {
+            "$ref": "#/components/schemas/RemoteHostKey"
+          },
+          "type": "array",
+          "title": "Keys"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "keys"
+      ],
+      "title": "RemoteHostKeys"
+    },
+    "RemoteKeyScan": {
+      "properties": {
+        "host": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[^-\\s\\x00-\\x1f\\x7f][^\\s\\x00-\\x1f\\x7f]*$",
+          "title": "Host"
+        },
+        "user": {
+          "type": "string",
+          "maxLength": 100,
+          "title": "User",
+          "default": ""
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 65535.0,
+              "minimum": 1.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Port"
+        },
+        "identity_file": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Identity File",
+          "default": ""
+        },
+        "config_file": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Config File",
+          "default": ""
+        },
+        "remote_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Remote Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host",
+        "remote_id"
+      ],
+      "title": "RemoteKeyScan"
+    },
+    "RemoteOpen": {
+      "properties": {
+        "host": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[^-\\s\\x00-\\x1f\\x7f][^\\s\\x00-\\x1f\\x7f]*$",
+          "title": "Host"
+        },
+        "user": {
+          "type": "string",
+          "maxLength": 100,
+          "title": "User",
+          "default": ""
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 65535.0,
+              "minimum": 1.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Port"
+        },
+        "identity_file": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Identity File",
+          "default": ""
+        },
+        "config_file": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Config File",
+          "default": ""
+        },
+        "remote_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Remote Id"
+        },
+        "host_key": {
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 16,
+          "title": "Host Key"
+        },
+        "generation": {
+          "type": "integer",
+          "maximum": 1000000.0,
+          "minimum": 1.0,
+          "title": "Generation",
+          "default": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host",
+        "remote_id",
+        "host_key"
+      ],
+      "title": "RemoteOpen"
+    },
+    "RemoteRun": {
+      "properties": {
+        "host": {
+          "type": "string",
+          "maxLength": 200,
+          "minLength": 1,
+          "pattern": "^[^-\\s\\x00-\\x1f\\x7f][^\\s\\x00-\\x1f\\x7f]*$",
+          "title": "Host"
+        },
+        "user": {
+          "type": "string",
+          "maxLength": 100,
+          "title": "User",
+          "default": ""
+        },
+        "port": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 65535.0,
+              "minimum": 1.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Port"
+        },
+        "identity_file": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Identity File",
+          "default": ""
+        },
+        "config_file": {
+          "type": "string",
+          "maxLength": 1024,
+          "title": "Config File",
+          "default": ""
+        },
+        "remote_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Remote Id"
+        },
+        "host_key": {
+          "type": "string",
+          "maxLength": 2048,
+          "minLength": 16,
+          "title": "Host Key"
+        },
+        "generation": {
+          "type": "integer",
+          "maximum": 1000000.0,
+          "minimum": 1.0,
+          "title": "Generation",
+          "default": 1
+        },
+        "call_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Call Id"
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Command"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host",
+        "remote_id",
+        "host_key",
+        "call_id",
+        "command"
+      ],
+      "title": "RemoteRun"
+    },
+    "RemoteView": {
+      "properties": {
+        "remote_id": {
+          "type": "string",
+          "title": "Remote Id"
+        },
+        "host": {
+          "type": "string",
+          "title": "Host"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "disconnected",
+            "blocked"
+          ],
+          "title": "Phase"
+        },
+        "generation": {
+          "type": "integer",
+          "title": "Generation"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "remote_id",
+        "host",
+        "phase",
+        "generation"
+      ],
+      "title": "RemoteView"
+    },
+    "ResourceCatalog": {
+      "properties": {
+        "context_files": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Context Files"
+        },
+        "skills": {
+          "items": {
+            "$ref": "#/components/schemas/ResourceItem"
+          },
+          "type": "array",
+          "title": "Skills"
+        },
+        "prompts": {
+          "items": {
+            "$ref": "#/components/schemas/ResourceItem"
+          },
+          "type": "array",
+          "title": "Prompts"
+        },
+        "diagnostics": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Diagnostics"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "context_files",
+        "skills",
+        "prompts",
+        "diagnostics"
+      ],
+      "title": "ResourceCatalog"
+    },
+    "ResourceItem": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "description": {
+          "type": "string",
+          "title": "Description",
+          "default": ""
+        },
+        "disable_model_invocation": {
+          "type": "boolean",
+          "title": "Disable Model Invocation",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "path"
+      ],
+      "title": "ResourceItem"
+    },
+    "ResourceOptions": {
+      "properties": {
+        "no_context_files": {
+          "type": "boolean",
+          "title": "No Context Files",
+          "default": false
+        },
+        "no_skills": {
+          "type": "boolean",
+          "title": "No Skills",
+          "default": false
+        },
+        "skill_paths": {
+          "items": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1
+          },
+          "type": "array",
+          "maxItems": 32,
+          "title": "Skill Paths"
+        },
+        "no_prompt_templates": {
+          "type": "boolean",
+          "title": "No Prompt Templates",
+          "default": false
+        },
+        "prompt_paths": {
+          "items": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1
+          },
+          "type": "array",
+          "maxItems": 32,
+          "title": "Prompt Paths"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "ResourceOptions"
+    },
+    "RpcCall": {
+      "properties": {
+        "jsonrpc": {
+          "type": "string",
+          "const": "2.0",
+          "title": "Jsonrpc",
+          "default": "2.0"
+        },
+        "id": {
+          "type": "string",
+          "title": "Id",
+          "default": ""
+        },
+        "method": {
+          "type": "string",
+          "title": "Method",
+          "default": ""
+        },
+        "params": {
+          "$ref": "#/components/schemas/RpcParams"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "RpcCall"
+    },
+    "RpcParams": {
+      "properties": {
+        "model_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModelSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Thinking"
+        },
+        "resource_options": {
+          "$ref": "#/components/schemas/ResourceOptions"
+        },
+        "system_prompt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 32000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "System Prompt"
+        },
+        "append_system_prompt": {
+          "type": "string",
+          "maxLength": 32000,
+          "title": "Append System Prompt",
+          "default": ""
+        },
+        "allowed_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "maxItems": 128
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Allowed Tools"
+        },
+        "excluded_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 128,
+          "title": "Excluded Tools"
+        },
+        "model_scope": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModelScopeRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "code_run": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/CodeRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "run_id": {
+          "type": "string",
+          "title": "Run Id",
+          "default": ""
+        },
+        "tool_call": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolCall"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plugin_id": {
+          "type": "string",
+          "title": "Plugin Id",
+          "default": ""
+        },
+        "plugin_draft": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/PluginDraft"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plugin_reload": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/PluginReload"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "plugin_call": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/PluginCallRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computer_inspect": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerInspect"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computer_policy": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerPolicy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computer_action": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerActionRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computer_ground": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerGroundRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "computer_locate": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ComputerLocateRequest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider": {
+          "type": "string",
+          "title": "Provider",
+          "default": ""
+        },
+        "login_id": {
+          "type": "string",
+          "title": "Login Id",
+          "default": ""
+        },
+        "model_settings": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/UpdateModelSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "credential": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/CredentialUpdate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "oauth": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/OAuthStart"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "authorization": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/OAuthInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id",
+          "default": ""
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": ""
+        },
+        "attachment_id": {
+          "type": "string",
+          "title": "Attachment Id",
+          "default": ""
+        },
+        "request_id": {
+          "type": "string",
+          "title": "Request Id",
+          "default": ""
+        },
+        "title": {
+          "type": "string",
+          "title": "Title",
+          "default": ""
+        },
+        "text": {
+          "type": "string",
+          "title": "Text",
+          "default": ""
+        },
+        "images": {
+          "items": {
+            "$ref": "#/components/schemas/ImagePart"
+          },
+          "type": "array",
+          "maxItems": 8,
+          "title": "Images"
+        },
+        "not_before_ms": {
+          "type": "integer",
+          "title": "Not Before Ms",
+          "default": 0
+        },
+        "decision_id": {
+          "type": "string",
+          "title": "Decision Id",
+          "default": ""
+        },
+        "approval_id": {
+          "type": "string",
+          "title": "Approval Id",
+          "default": ""
+        },
+        "expected_revision": {
+          "type": "string",
+          "title": "Expected Revision",
+          "default": ""
+        },
+        "proposal_digest": {
+          "type": "string",
+          "title": "Proposal Digest",
+          "default": ""
+        },
+        "approve": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Approve"
+        },
+        "path": {
+          "type": "string",
+          "title": "Path",
+          "default": ""
+        },
+        "checkpoint_id": {
+          "type": "string",
+          "title": "Checkpoint Id",
+          "default": ""
+        },
+        "terminal_id": {
+          "type": "string",
+          "title": "Terminal Id",
+          "default": ""
+        },
+        "command": {
+          "type": "string",
+          "title": "Command",
+          "default": ""
+        },
+        "cols": {
+          "type": "integer",
+          "title": "Cols",
+          "default": 80
+        },
+        "rows": {
+          "type": "integer",
+          "title": "Rows",
+          "default": 24
+        },
+        "input_id": {
+          "type": "string",
+          "title": "Input Id",
+          "default": ""
+        },
+        "data": {
+          "type": "string",
+          "title": "Data",
+          "default": ""
+        },
+        "server_id": {
+          "type": "string",
+          "title": "Server Id",
+          "default": ""
+        },
+        "call_id": {
+          "type": "string",
+          "title": "Call Id",
+          "default": ""
+        },
+        "name": {
+          "type": "string",
+          "title": "Name",
+          "default": ""
+        },
+        "arguments": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "type": "object",
+          "title": "Arguments"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest",
+          "default": ""
+        },
+        "schema_digest": {
+          "type": "string",
+          "title": "Schema Digest",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "RpcParams"
+    },
+    "ScopedModel": {
+      "properties": {
+        "model": {
+          "$ref": "#/components/schemas/CatalogModel"
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Thinking"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "model"
+      ],
+      "title": "ScopedModel"
+    },
+    "SearchHit": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "ordinal": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Ordinal"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role"
+        },
+        "excerpt": {
+          "type": "string",
+          "title": "Excerpt"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "ordinal",
+        "role",
+        "excerpt"
+      ],
+      "title": "SearchHit"
+    },
+    "SearchResults": {
+      "properties": {
+        "query": {
+          "type": "string",
+          "title": "Query"
+        },
+        "hits": {
+          "items": {
+            "$ref": "#/components/schemas/SearchHit"
+          },
+          "type": "array",
+          "title": "Hits"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "query",
+        "hits"
+      ],
+      "title": "SearchResults"
+    },
+    "ServiceInfo": {
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "title": "Instance Id"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        },
+        "process_lease": {
+          "$ref": "#/components/schemas/ProcessLease"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "running",
+            "stopping",
+            "stopped",
+            "unknown"
+          ],
+          "title": "State"
+        },
+        "pid": {
+          "type": "integer",
+          "title": "Pid",
+          "default": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "instance_id",
+        "build_id",
+        "process_lease",
+        "state"
+      ],
+      "title": "ServiceInfo"
+    },
+    "Session": {
+      "properties": {
+        "updated_ms": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Updated Ms",
+          "default": 0
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "title": {
+          "type": "string",
+          "title": "Title"
+        },
+        "parent_id": {
+          "type": "string",
+          "title": "Parent Id",
+          "default": ""
+        },
+        "fork_request_id": {
+          "type": "string",
+          "title": "Fork Request Id",
+          "default": ""
+        },
+        "archived": {
+          "type": "boolean",
+          "title": "Archived",
+          "default": false
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "title"
+      ],
+      "title": "Session"
+    },
+    "SessionDiagnostic": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "present": {
+          "type": "boolean",
+          "title": "Present"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "absent",
+            "ready",
+            "blocked",
+            "stopping",
+            "frozen"
+          ],
+          "title": "State"
+        },
+        "blocked_code": {
+          "type": "string",
+          "title": "Blocked Code",
+          "default": ""
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Failed",
+          "default": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Unknown",
+          "default": 0
+        },
+        "error_codes": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Error Codes"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "present",
+        "state"
+      ],
+      "title": "SessionDiagnostic",
+      "description": "Persisted session state. Error text that is not a short code is replaced before it leaves."
+    },
+    "SessionList": {
+      "properties": {
+        "sessions": {
+          "items": {
+            "$ref": "#/components/schemas/Session"
+          },
+          "type": "array",
+          "title": "Sessions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "sessions"
+      ],
+      "title": "SessionList"
+    },
+    "SessionModel": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+          "title": "Provider"
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w./:@+-]+$",
+          "title": "Model"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$",
+          "title": "Session Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "model",
+        "session_id"
+      ],
+      "title": "SessionModel",
+      "description": "The model last selected for one session. This does not add a provider implementation."
+    },
+    "SettingsUpdate": {
+      "properties": {
+        "display_name": {
+          "type": "string",
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Display Name"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "display_name",
+        "expected_revision"
+      ],
+      "title": "SettingsUpdate"
+    },
+    "ShareMessage": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role"
+        },
+        "content": {
+          "type": "string",
+          "title": "Content"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "role",
+        "content"
+      ],
+      "title": "ShareMessage"
+    },
+    "ShareView": {
+      "properties": {
+        "share_id": {
+          "type": "string",
+          "title": "Share Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "digest": {
+          "type": "string",
+          "title": "Digest"
+        },
+        "messages": {
+          "items": {
+            "$ref": "#/components/schemas/ShareMessage"
+          },
+          "type": "array",
+          "title": "Messages"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "share_id",
+        "session_id",
+        "digest"
+      ],
+      "title": "ShareView"
+    },
+    "ShareWrite": {
+      "properties": {
+        "share_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Share Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "share_id"
+      ],
+      "title": "ShareWrite"
+    },
+    "Snapshot": {
+      "additionalProperties": false,
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "stream_id": {
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "string"
+        },
+        "state": {
+          "enum": [
+            "recovering",
+            "ready",
+            "blocked",
+            "stopping",
+            "frozen"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "requests": {
+          "items": {
+            "$ref": "#/$defs/Receipt"
+          },
+          "title": "Requests",
+          "type": "array"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "title": "Events",
+          "type": "array"
+        },
+        "approvals": {
+          "items": {
+            "$ref": "#/$defs/Approval"
+          },
+          "title": "Approvals",
+          "type": "array"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/$defs/EffectHold"
+          },
+          "title": "Effects",
+          "type": "array"
+        },
+        "previews": {
+          "items": {
+            "$ref": "#/$defs/Preview"
+          },
+          "title": "Previews",
+          "type": "array"
+        },
+        "next_wake_ms": {
+          "default": 0,
+          "title": "Next Wake Ms",
+          "type": "integer"
+        },
+        "pending": {
+          "default": 0,
+          "title": "Pending",
+          "type": "integer"
+        },
+        "compaction": {
+          "default": "",
+          "title": "Compaction",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "stream_id",
+        "seq",
+        "state",
+        "requests",
+        "events"
+      ],
+      "title": "Snapshot",
+      "type": "object"
+    },
+    "Submit": {
+      "properties": {
+        "model_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModelSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "thinking": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "off",
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Thinking"
+        },
+        "resource_options": {
+          "$ref": "#/components/schemas/ResourceOptions"
+        },
+        "system_prompt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 32000
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "System Prompt"
+        },
+        "append_system_prompt": {
+          "type": "string",
+          "maxLength": 32000,
+          "title": "Append System Prompt",
+          "default": ""
+        },
+        "allowed_tools": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array",
+              "maxItems": 128
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Allowed Tools"
+        },
+        "excluded_tools": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 128,
+          "title": "Excluded Tools"
+        },
+        "tool_call": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ToolCall"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Request Id"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 16000,
+          "title": "Text"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "queue",
+            "steer",
+            "reject_busy"
+          ],
+          "title": "Mode",
+          "default": "queue"
+        },
+        "target_run_id": {
+          "type": "string",
+          "title": "Target Run Id",
+          "default": ""
+        },
+        "not_before_ms": {
+          "type": "integer",
+          "maximum": 253402300799000.0,
+          "minimum": 0.0,
+          "title": "Not Before Ms",
+          "default": 0
+        },
+        "images": {
+          "items": {
+            "$ref": "#/components/schemas/ImagePart"
+          },
+          "type": "array",
+          "maxItems": 8,
+          "title": "Images"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "text"
+      ],
+      "title": "Submit"
+    },
+    "SupervisorHealth": {
+      "properties": {
+        "mcp_servers": {
+          "items": {
+            "$ref": "#/components/schemas/McpView"
+          },
+          "type": "array",
+          "title": "Mcp Servers"
+        },
+        "terminals": {
+          "items": {
+            "$ref": "#/components/schemas/TerminalView"
+          },
+          "type": "array",
+          "title": "Terminals"
+        },
+        "identity": {
+          "$ref": "#/components/schemas/Identity"
+        },
+        "registry_revision": {
+          "type": "string",
+          "title": "Registry Revision"
+        },
+        "freeze_id": {
+          "type": "string",
+          "title": "Freeze Id",
+          "default": ""
+        },
+        "workers": {
+          "items": {
+            "$ref": "#/components/schemas/WorkerInfo"
+          },
+          "type": "array",
+          "title": "Workers"
+        },
+        "epochs": {
+          "items": {
+            "$ref": "#/components/schemas/EpochHealth"
+          },
+          "type": "array",
+          "title": "Epochs"
+        },
+        "effects": {
+          "items": {
+            "$ref": "#/components/schemas/EffectHold"
+          },
+          "type": "array",
+          "title": "Effects"
+        },
+        "execution": {
+          "type": "string",
+          "const": "native",
+          "title": "Execution",
+          "default": "native"
+        },
+        "resources": {
+          "items": {
+            "$ref": "#/components/schemas/ExecutionResource"
+          },
+          "type": "array",
+          "title": "Resources"
+        },
+        "session_errors": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "type": "object",
+          "title": "Session Errors"
+        },
+        "blocked": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "title": "Blocked"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "identity",
+        "registry_revision",
+        "workers",
+        "epochs"
+      ],
+      "title": "SupervisorHealth"
+    },
+    "TerminalList": {
+      "properties": {
+        "terminals": {
+          "items": {
+            "$ref": "#/components/schemas/TerminalView"
+          },
+          "type": "array",
+          "title": "Terminals"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "terminals"
+      ],
+      "title": "TerminalList"
+    },
+    "TerminalOpen": {
+      "properties": {
+        "terminal_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Terminal Id"
+        },
+        "command": {
+          "type": "string",
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Command"
+        },
+        "cols": {
+          "type": "integer",
+          "maximum": 200.0,
+          "minimum": 1.0,
+          "title": "Cols",
+          "default": 80
+        },
+        "rows": {
+          "type": "integer",
+          "maximum": 80.0,
+          "minimum": 1.0,
+          "title": "Rows",
+          "default": 24
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "terminal_id",
+        "command"
+      ],
+      "title": "TerminalOpen"
+    },
+    "TerminalSize": {
+      "properties": {
+        "cols": {
+          "type": "integer",
+          "maximum": 200.0,
+          "minimum": 1.0,
+          "title": "Cols"
+        },
+        "rows": {
+          "type": "integer",
+          "maximum": 80.0,
+          "minimum": 1.0,
+          "title": "Rows"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "cols",
+        "rows"
+      ],
+      "title": "TerminalSize"
+    },
+    "TerminalType": {
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Input Id"
+        },
+        "data": {
+          "type": "string",
+          "maxLength": 4000,
+          "title": "Data"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "input_id",
+        "data"
+      ],
+      "title": "TerminalType"
+    },
+    "TerminalView": {
+      "properties": {
+        "terminal_id": {
+          "type": "string",
+          "title": "Terminal Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id",
+          "default": ""
+        },
+        "cols": {
+          "type": "integer",
+          "title": "Cols"
+        },
+        "rows": {
+          "type": "integer",
+          "title": "Rows"
+        },
+        "queued": {
+          "type": "integer",
+          "title": "Queued"
+        },
+        "written": {
+          "type": "integer",
+          "title": "Written"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "output": {
+          "type": "string",
+          "title": "Output"
+        },
+        "output_seq": {
+          "type": "integer",
+          "title": "Output Seq",
+          "default": 0
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "running",
+            "exited",
+            "unknown"
+          ],
+          "title": "Phase"
+        },
+        "clean": {
+          "type": "boolean",
+          "title": "Clean",
+          "default": false
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "input_id": {
+          "type": "string",
+          "title": "Input Id",
+          "default": ""
+        },
+        "input_status": {
+          "type": "string",
+          "enum": [
+            "",
+            "accepted",
+            "unknown"
+          ],
+          "title": "Input Status",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "terminal_id",
+        "cols",
+        "rows",
+        "queued",
+        "written",
+        "output",
+        "phase"
+      ],
+      "title": "TerminalView"
+    },
+    "ToolCall": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$",
+          "title": "Name",
+          "type": "string"
+        },
+        "arguments": {
+          "title": "Arguments",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "arguments"
+      ],
+      "title": "ToolCall",
+      "type": "object"
+    },
+    "UpdateModelSettings": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+          "title": "Provider"
+        },
+        "api": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "openai-completions",
+                "openai-responses",
+                "openai-codex-responses",
+                "anthropic-messages",
+                "google-generative-ai"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Api"
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w./:@+-]+$",
+          "title": "Model"
+        },
+        "base_url": {
+          "type": "string",
+          "maxLength": 300,
+          "title": "Base Url",
+          "default": ""
+        },
+        "max_tokens": {
+          "type": "integer",
+          "maximum": 8192.0,
+          "minimum": 32.0,
+          "title": "Max Tokens",
+          "default": 2048
+        },
+        "proxy": {
+          "type": "string",
+          "maxLength": 300,
+          "title": "Proxy",
+          "default": ""
+        },
+        "headers": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Headers"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "model"
+      ],
+      "title": "UpdateModelSettings",
+      "description": "Model selection never carries an API key. Credential changes use CredentialUpdate."
+    },
+    "UpdateRecord": {
+      "properties": {
+        "update_id": {
+          "type": "string",
+          "title": "Update Id"
+        },
+        "source_build": {
+          "type": "string",
+          "title": "Source Build"
+        },
+        "target_build": {
+          "type": "string",
+          "title": "Target Build"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "freezing",
+            "retiring",
+            "prepared",
+            "validating",
+            "completed"
+          ],
+          "title": "Phase"
+        },
+        "revision": {
+          "type": "string",
+          "title": "Revision"
+        },
+        "cancel_work": {
+          "type": "boolean",
+          "title": "Cancel Work"
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        },
+        "roster": {
+          "items": {
+            "$ref": "#/components/schemas/WorkerInfo"
+          },
+          "type": "array",
+          "title": "Roster"
+        },
+        "validation": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/WorkerInfo"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "activated": {
+          "type": "boolean",
+          "title": "Activated",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "update_id",
+        "source_build",
+        "target_build",
+        "phase",
+        "revision",
+        "cancel_work"
+      ],
+      "title": "UpdateRecord"
+    },
+    "UsageReport": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "model_calls": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Model Calls",
+          "default": 0
+        },
+        "input_tokens": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Input Tokens",
+          "default": 0
+        },
+        "output_tokens": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Output Tokens",
+          "default": 0
+        },
+        "cache_read_tokens": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Cache Read Tokens",
+          "default": 0
+        },
+        "cache_write_tokens": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Cache Write Tokens",
+          "default": 0
+        },
+        "reasoning_signatures": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Reasoning Signatures",
+          "default": 0
+        },
+        "priced_calls": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Priced Calls",
+          "default": 0
+        },
+        "unpriced_calls": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Unpriced Calls",
+          "default": 0
+        },
+        "priced": {
+          "type": "boolean",
+          "title": "Priced",
+          "default": false
+        },
+        "cost_micro_usd": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cost Micro Usd"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "title": "UsageReport",
+      "description": "Token totals and catalog cost already stored with finished model calls.\n\n``priced`` is true only when every finished call had a catalog rate. A partial sum is not returned\nas ``cost_micro_usd``. One micro-USD is one millionth of a US dollar; the stored product truncates."
+    },
+    "ValidationError": {
+      "properties": {
+        "loc": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              }
+            ]
+          },
+          "type": "array",
+          "title": "Location"
+        },
+        "msg": {
+          "type": "string",
+          "title": "Message"
+        },
+        "type": {
+          "type": "string",
+          "title": "Error Type"
+        },
+        "input": {
+          "title": "Input"
+        },
+        "ctx": {
+          "type": "object",
+          "title": "Context"
+        }
+      },
+      "type": "object",
+      "required": [
+        "loc",
+        "msg",
+        "type"
+      ],
+      "title": "ValidationError"
+    },
+    "WebCallRequest": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Call Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "search",
+            "fetch"
+          ],
+          "title": "Kind"
+        },
+        "query": {
+          "type": "string",
+          "title": "Query",
+          "default": ""
+        },
+        "url": {
+          "type": "string",
+          "title": "Url",
+          "default": ""
+        },
+        "count": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 50.0,
+              "minimum": 1.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Count"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "kind"
+      ],
+      "title": "WebCallRequest"
+    },
+    "WebCallView": {
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "title": "Call Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "search",
+            "fetch"
+          ],
+          "title": "Kind"
+        },
+        "phase": {
+          "type": "string",
+          "enum": [
+            "unknown",
+            "done",
+            "failed"
+          ],
+          "title": "Phase"
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        },
+        "result": {
+          "type": "string",
+          "title": "Result",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "call_id",
+        "session_id",
+        "kind",
+        "phase"
+      ],
+      "title": "WebCallView"
+    },
+    "WebPolicy": {
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "default": false
+        },
+        "base_url": {
+          "type": "string",
+          "title": "Base Url",
+          "default": "https://api.deepseek.com/v1/tools"
+        },
+        "count": {
+          "type": "integer",
+          "maximum": 50.0,
+          "minimum": 1.0,
+          "title": "Count",
+          "default": 10
+        },
+        "send_original_question": {
+          "type": "boolean",
+          "title": "Send Original Question",
+          "default": true
+        },
+        "timeout_ms": {
+          "type": "integer",
+          "maximum": 300000.0,
+          "minimum": 1.0,
+          "title": "Timeout Ms",
+          "default": 30000
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "maximum": 16777216.0,
+          "minimum": 1.0,
+          "title": "Max Response Bytes",
+          "default": 2097152
+        },
+        "max_content_chars": {
+          "type": "integer",
+          "maximum": 200000.0,
+          "minimum": 1.0,
+          "title": "Max Content Chars",
+          "default": 20000
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "WebPolicy"
+    },
+    "WorkerInfo": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "worker_id": {
+          "type": "string",
+          "title": "Worker Id"
+        },
+        "pid": {
+          "type": "integer",
+          "title": "Pid"
+        },
+        "socket": {
+          "type": "string",
+          "title": "Socket"
+        },
+        "build_id": {
+          "type": "string",
+          "title": "Build Id"
+        },
+        "process_lease": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ProcessLease"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "ready",
+            "frozen",
+            "stopping",
+            "stopped",
+            "blocked",
+            "unknown"
+          ],
+          "title": "State",
+          "default": "starting"
+        },
+        "execution_epoch": {
+          "type": "integer",
+          "title": "Execution Epoch",
+          "default": 0
+        },
+        "fingerprint": {
+          "type": "string",
+          "title": "Fingerprint",
+          "default": ""
+        },
+        "plugin_fingerprint": {
+          "type": "string",
+          "title": "Plugin Fingerprint",
+          "default": ""
+        },
+        "purpose": {
+          "type": "string",
+          "enum": [
+            "business",
+            "validation"
+          ],
+          "title": "Purpose",
+          "default": "business"
+        },
+        "host_epoch": {
+          "type": "integer",
+          "title": "Host Epoch",
+          "default": 0
+        },
+        "storage_ready": {
+          "type": "boolean",
+          "title": "Storage Ready",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id",
+        "worker_id",
+        "pid",
+        "socket",
+        "build_id"
+      ],
+      "title": "WorkerInfo"
+    },
+    "WorkflowChild": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "check",
+            "correction"
+          ],
+          "title": "Role"
+        },
+        "text": {
+          "type": "string",
+          "title": "Text"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_children",
+            "waiting_time",
+            "waiting_host",
+            "cancelling",
+            "cleaning",
+            "blocked",
+            "succeeded",
+            "cancelled",
+            "interrupted",
+            "failed",
+            "unknown"
+          ],
+          "title": "Status",
+          "default": "queued"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "role",
+        "text"
+      ],
+      "title": "WorkflowChild"
+    },
+    "WorkflowOpen": {
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Workflow Id"
+        },
+        "check": {
+          "type": "string",
+          "maxLength": 16000,
+          "minLength": 1,
+          "title": "Check"
+        },
+        "correction_limit": {
+          "type": "integer",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "title": "Correction Limit",
+          "default": 1
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workflow_id",
+        "check"
+      ],
+      "title": "WorkflowOpen"
+    },
+    "WorkflowVerdict": {
+      "properties": {
+        "verdict_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Verdict Id"
+        },
+        "passed": {
+          "type": "boolean",
+          "title": "Passed"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "verdict_id",
+        "passed"
+      ],
+      "title": "WorkflowVerdict"
+    },
+    "WorkflowView": {
+      "properties": {
+        "workflow_id": {
+          "type": "string",
+          "title": "Workflow Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "stage": {
+          "type": "string",
+          "enum": [
+            "check",
+            "correction",
+            "passed",
+            "exhausted",
+            "cancelled"
+          ],
+          "title": "Stage"
+        },
+        "correction_limit": {
+          "type": "integer",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "title": "Correction Limit"
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Attempts"
+        },
+        "parent_id": {
+          "type": "string",
+          "title": "Parent Id"
+        },
+        "parent_status": {
+          "type": "string",
+          "enum": [
+            "queued",
+            "running",
+            "waiting_approval",
+            "waiting_children",
+            "waiting_time",
+            "waiting_host",
+            "cancelling",
+            "cleaning",
+            "blocked",
+            "succeeded",
+            "cancelled",
+            "interrupted",
+            "failed",
+            "unknown"
+          ],
+          "title": "Parent Status",
+          "default": "waiting_children"
+        },
+        "check": {
+          "type": "string",
+          "title": "Check"
+        },
+        "children": {
+          "items": {
+            "$ref": "#/components/schemas/WorkflowChild"
+          },
+          "type": "array",
+          "title": "Children"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workflow_id",
+        "session_id",
+        "stage",
+        "correction_limit",
+        "attempts",
+        "parent_id",
+        "check"
+      ],
+      "title": "WorkflowView"
+    },
+    "WorkspaceGrantRequest": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,31}$",
+          "title": "Name"
+        },
+        "host_path": {
+          "type": "string",
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Host Path"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "host_path"
+      ],
+      "title": "WorkspaceGrantRequest"
+    },
+    "WorkspaceGrantView": {
+      "properties": {
+        "name": {
+          "type": "string",
+          "title": "Name"
+        },
+        "host_path": {
+          "type": "string",
+          "title": "Host Path"
+        },
+        "primary": {
+          "type": "boolean",
+          "title": "Primary",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "name",
+        "host_path"
+      ],
+      "title": "WorkspaceGrantView"
+    },
+    "WorkspaceList": {
+      "properties": {
+        "workspaces": {
+          "items": {
+            "$ref": "#/components/schemas/WorkspaceGrantView"
+          },
+          "type": "array",
+          "title": "Workspaces"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "workspaces"
+      ],
+      "title": "WorkspaceList"
+    },
+    "WorkspaceSelect": {
+      "properties": {
+        "host_path": {
+          "type": "string",
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Host Path"
+        },
+        "name": {
+          "type": "string",
+          "title": "Name",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "host_path"
+      ],
+      "title": "WorkspaceSelect"
+    },
+    "WriteFile": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Path"
+        },
+        "content": {
+          "type": "string",
+          "maxLength": 32000,
+          "title": "Content"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "content"
+      ],
+      "title": "WriteFile"
+    },
+    "CommitBatch": {
+      "additionalProperties": false,
+      "properties": {
+        "stream_id": {
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "seq": {
+          "title": "Seq",
+          "type": "string"
+        },
+        "base_revision": {
+          "title": "Base Revision",
+          "type": "string"
+        },
+        "revision": {
+          "title": "Revision",
+          "type": "string"
+        },
+        "events": {
+          "items": {
+            "$ref": "#/$defs/Event"
+          },
+          "title": "Events",
+          "type": "array"
+        }
+      },
+      "required": [
+        "stream_id",
+        "seq",
+        "base_revision",
+        "revision",
+        "events"
+      ],
+      "title": "CommitBatch",
+      "type": "object"
+    },
+    "Stream": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Snapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "batches": {
+          "items": {
+            "$ref": "#/$defs/CommitBatch"
+          },
+          "title": "Batches",
+          "type": "array"
+        },
+        "stream_id": {
+          "default": "",
+          "title": "Stream Id",
+          "type": "string"
+        },
+        "binding_id": {
+          "default": "",
+          "title": "Binding Id",
+          "type": "string"
+        },
+        "build_id": {
+          "default": "",
+          "title": "Build Id",
+          "type": "string"
+        },
+        "resync": {
+          "default": "",
+          "title": "Resync",
+          "type": "string"
+        }
+      },
+      "title": "Stream",
+      "type": "object"
+    }
+  },
+  "operations": {
+    "GET /api/v1/bootstrap": {
+      "response": {
+        "$ref": "#/components/schemas/Identity"
+      },
+      "body": null
+    },
+    "POST /api/v1/memories": {
+      "response": {
+        "$ref": "#/components/schemas/MemoryView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/MemoryWrite"
+      }
+    },
+    "GET /api/v1/memories": {
+      "response": {
+        "$ref": "#/components/schemas/MemoryList"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session_id}/memories": {
+      "response": {
+        "$ref": "#/components/schemas/MemoryList"
+      },
+      "body": null
+    },
+    "POST /api/v1/automations": {
+      "response": {
+        "$ref": "#/components/schemas/AutomationView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/AutomationCreate"
+      }
+    },
+    "POST /api/v1/automations/tick": {
+      "response": {
+        "$ref": "#/components/schemas/AutomationTick"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/workflows": {
+      "response": {
+        "$ref": "#/components/schemas/WorkflowView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/WorkflowOpen"
+      }
+    },
+    "GET /api/v1/sessions/{session}/workflows/{workflow_id}": {
+      "response": {
+        "$ref": "#/components/schemas/WorkflowView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/workflows/{workflow_id}/verdicts": {
+      "response": {
+        "$ref": "#/components/schemas/WorkflowView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/WorkflowVerdict"
+      }
+    },
+    "POST /api/v1/sessions/{session}/workflows/{workflow_id}/resume": {
+      "response": {
+        "$ref": "#/components/schemas/WorkflowView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/workflows/{workflow_id}/cancel": {
+      "response": {
+        "$ref": "#/components/schemas/WorkflowView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/workflows/{workflow_id}/children/{request_id}/cancel": {
+      "response": {
+        "$ref": "#/components/schemas/WorkflowView"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session}/web": {
+      "response": {
+        "$ref": "#/components/schemas/WebPolicy"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/web": {
+      "response": {
+        "$ref": "#/components/schemas/WebPolicy"
+      },
+      "body": {
+        "$ref": "#/components/schemas/WebPolicy"
+      }
+    },
+    "POST /api/v1/sessions/{session}/web/calls": {
+      "response": {
+        "$ref": "#/components/schemas/WebCallView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/WebCallRequest"
+      }
+    },
+    "GET /api/v1/sessions/{session}/computer": {
+      "response": {
+        "$ref": "#/components/schemas/ComputerPolicy"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/computer": {
+      "response": {
+        "$ref": "#/components/schemas/ComputerPolicy"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ComputerPolicy"
+      }
+    },
+    "POST /api/v1/sessions/{session}/computer/observe": {
+      "response": {
+        "$ref": "#/components/schemas/ComputerObserve"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ComputerInspect"
+      }
+    },
+    "GET /api/v1/classifiers": {
+      "response": {
+        "$ref": "#/components/schemas/ClassifierCatalog"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/computer/locate": {
+      "response": {
+        "$ref": "#/components/schemas/ComputerActionView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ComputerLocateRequest"
+      }
+    },
+    "POST /api/v1/sessions/{session}/computer/ground": {
+      "response": {
+        "$ref": "#/components/schemas/ComputerActionView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ComputerGroundRequest"
+      }
+    },
+    "POST /api/v1/sessions/{session}/computer/actions": {
+      "response": {
+        "$ref": "#/components/schemas/ComputerActionView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ComputerActionRequest"
+      }
+    },
+    "POST /api/v1/sessions/{session}/computer/cleanup": {
+      "response": {
+        "$ref": "#/components/schemas/ComputerCleanup"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/artifacts": {
+      "response": {
+        "$ref": "#/components/schemas/ArtifactView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ArtifactWrite"
+      }
+    },
+    "GET /api/v1/sessions/{session}/artifacts": {
+      "response": {
+        "$ref": "#/components/schemas/ArtifactList"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session}/artifacts/{artifact_id}": {
+      "response": {
+        "$ref": "#/components/schemas/ArtifactBody"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session}/resources": {
+      "response": {
+        "$ref": "#/components/schemas/ResourceCatalog"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/resources": {
+      "response": {
+        "$ref": "#/components/schemas/ResourceCatalog"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ResourceOptions"
+      }
+    },
+    "GET /api/v1/workspaces": {
+      "response": {
+        "$ref": "#/components/schemas/WorkspaceList"
+      },
+      "body": null
+    },
+    "POST /api/v1/workspaces": {
+      "response": {
+        "$ref": "#/components/schemas/WorkspaceGrantView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/WorkspaceGrantRequest"
+      }
+    },
+    "POST /api/v1/workspaces/select": {
+      "response": {
+        "$ref": "#/components/schemas/WorkspaceGrantView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/WorkspaceSelect"
+      }
+    },
+    "DELETE /api/v1/workspaces/{name}": {
+      "response": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "boolean"
+        },
+        "title": "Response Remove Workspace Api V1 Workspaces  Name  Delete"
+      },
+      "body": null
+    },
+    "GET /api/v1/files": {
+      "response": {
+        "$ref": "#/components/schemas/FileList"
+      },
+      "body": null
+    },
+    "GET /api/v1/files/content": {
+      "response": {
+        "$ref": "#/components/schemas/FileContent"
+      },
+      "body": null
+    },
+    "POST /api/v1/files/content": {
+      "response": {
+        "$ref": "#/components/schemas/FileChange"
+      },
+      "body": {
+        "$ref": "#/components/schemas/FileWrite"
+      }
+    },
+    "POST /api/v1/checkpoints": {
+      "response": {
+        "$ref": "#/components/schemas/CheckpointView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/CheckpointCreate"
+      }
+    },
+    "GET /api/v1/checkpoints": {
+      "response": {
+        "$ref": "#/components/schemas/CheckpointList"
+      },
+      "body": null
+    },
+    "GET /api/v1/checkpoints/{checkpoint_id}": {
+      "response": {
+        "$ref": "#/components/schemas/CheckpointPreview"
+      },
+      "body": null
+    },
+    "POST /api/v1/checkpoints/{checkpoint_id}/restore": {
+      "response": {
+        "$ref": "#/components/schemas/FileChange"
+      },
+      "body": {
+        "$ref": "#/components/schemas/CheckpointRestore"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/terminals": {
+      "response": {
+        "$ref": "#/components/schemas/TerminalView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/TerminalOpen"
+      }
+    },
+    "GET /api/v1/sessions/{session_id}/terminals": {
+      "response": {
+        "$ref": "#/components/schemas/TerminalList"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/close": {
+      "response": {
+        "$ref": "#/components/schemas/TerminalView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/input": {
+      "response": {
+        "$ref": "#/components/schemas/TerminalView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/TerminalType"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/resize": {
+      "response": {
+        "$ref": "#/components/schemas/TerminalView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/TerminalSize"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/read": {
+      "response": {
+        "$ref": "#/components/schemas/TerminalView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session_id}/code": {
+      "response": {
+        "$ref": "#/components/schemas/CodeView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/CodeRun"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/code/{run_id}/cancel": {
+      "response": {
+        "$ref": "#/components/schemas/CodeView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session_id}/remotes/keys": {
+      "response": {
+        "$ref": "#/components/schemas/RemoteHostKeys"
+      },
+      "body": {
+        "$ref": "#/components/schemas/RemoteKeyScan"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/remotes": {
+      "response": {
+        "$ref": "#/components/schemas/RemoteView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/RemoteOpen"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/remotes/{remote_id}/reconnect": {
+      "response": {
+        "$ref": "#/components/schemas/RemoteView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/RemoteOpen"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/remotes/{remote_id}/disconnect": {
+      "response": {
+        "$ref": "#/components/schemas/RemoteView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/RemoteOpen"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/remotes/{remote_id}/calls": {
+      "response": {
+        "$ref": "#/components/schemas/RemoteCallView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/RemoteRun"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/mcp": {
+      "response": {
+        "$ref": "#/components/schemas/McpView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/McpOpen"
+      }
+    },
+    "GET /api/v1/sessions/{session_id}/mcp": {
+      "response": {
+        "$ref": "#/components/schemas/McpState"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session_id}/mcp/{server_id}/calls": {
+      "response": {
+        "$ref": "#/components/schemas/McpCall"
+      },
+      "body": {
+        "$ref": "#/components/schemas/McpCallRequest"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/mcp/{server_id}/calls/{call_id}/decision": {
+      "response": {
+        "$ref": "#/components/schemas/McpCall"
+      },
+      "body": {
+        "$ref": "#/components/schemas/McpDecision"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/mcp/{server_id}/cancel": {
+      "response": {
+        "$ref": "#/components/schemas/McpView"
+      },
+      "body": null
+    },
+    "GET /api/v1/session-models/{session_id}": {
+      "response": {
+        "$ref": "#/components/schemas/SessionModel"
+      },
+      "body": null
+    },
+    "PUT /api/v1/session-models/{session_id}": {
+      "response": {
+        "$ref": "#/components/schemas/SessionModel"
+      },
+      "body": {
+        "$ref": "#/components/schemas/SessionModel"
+      }
+    },
+    "GET /api/v1/models": {
+      "response": {
+        "$ref": "#/components/schemas/ModelCatalog"
+      },
+      "body": null
+    },
+    "POST /api/v1/models": {
+      "response": {
+        "$ref": "#/components/schemas/ModelSettings"
+      },
+      "body": {
+        "$ref": "#/components/schemas/UpdateModelSettings"
+      }
+    },
+    "POST /api/v1/models/scope": {
+      "response": {
+        "$ref": "#/components/schemas/ModelScope"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ModelScopeRequest"
+      }
+    },
+    "GET /api/v1/accounts": {
+      "response": {
+        "$ref": "#/components/schemas/AccountsView"
+      },
+      "body": null
+    },
+    "POST /api/v1/accounts/oauth": {
+      "response": {
+        "$ref": "#/components/schemas/OAuthView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/OAuthStart"
+      }
+    },
+    "GET /api/v1/accounts/oauth/{login_id}": {
+      "response": {
+        "$ref": "#/components/schemas/OAuthView"
+      },
+      "body": null
+    },
+    "DELETE /api/v1/accounts/oauth/{login_id}": {
+      "response": {
+        "$ref": "#/components/schemas/OAuthView"
+      },
+      "body": null
+    },
+    "POST /api/v1/accounts/oauth/{login_id}/input": {
+      "response": {
+        "$ref": "#/components/schemas/OAuthView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/OAuthInput"
+      }
+    },
+    "POST /api/v1/accounts/{provider}": {
+      "response": {
+        "$ref": "#/components/schemas/AccountsView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/CredentialUpdate"
+      }
+    },
+    "POST /api/v1/models/credential": {
+      "response": {
+        "$ref": "#/components/schemas/ModelSettings"
+      },
+      "body": {
+        "$ref": "#/components/schemas/CredentialUpdate"
+      }
+    },
+    "GET /api/v1/health": {
+      "response": {
+        "$ref": "#/components/schemas/Health"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions": {
+      "response": {
+        "$ref": "#/components/schemas/SessionList"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions": {
+      "response": {
+        "$ref": "#/components/schemas/Session"
+      },
+      "body": {
+        "$ref": "#/components/schemas/CreateSession"
+      }
+    },
+    "GET /api/v1/projects": {
+      "response": {
+        "$ref": "#/components/schemas/ProjectList"
+      },
+      "body": null
+    },
+    "POST /api/v1/projects": {
+      "response": {
+        "$ref": "#/components/schemas/ProjectView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ProjectWrite"
+      }
+    },
+    "GET /api/v1/settings": {
+      "response": {
+        "$ref": "#/components/schemas/ProductSettings"
+      },
+      "body": null
+    },
+    "POST /api/v1/settings": {
+      "response": {
+        "$ref": "#/components/schemas/ProductSettings"
+      },
+      "body": {
+        "$ref": "#/components/schemas/SettingsUpdate"
+      }
+    },
+    "POST /api/v1/feedback": {
+      "response": {
+        "$ref": "#/components/schemas/FeedbackView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/FeedbackWrite"
+      }
+    },
+    "POST /api/v1/sessions/{session}/shares": {
+      "response": {
+        "$ref": "#/components/schemas/ShareView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ShareWrite"
+      }
+    },
+    "GET /api/v1/sessions/{session}/shares/{share_id}": {
+      "response": {
+        "$ref": "#/components/schemas/ShareView"
+      },
+      "body": null
+    },
+    "GET /api/v1/export": {
+      "response": {
+        "$ref": "#/components/schemas/ExportBundle"
+      },
+      "body": null
+    },
+    "POST /api/v1/import": {
+      "response": {
+        "$ref": "#/components/schemas/ImportResult"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ExportBundle"
+      }
+    },
+    "POST /api/v1/sessions/{session}/branches": {
+      "response": {
+        "$ref": "#/components/schemas/Session"
+      },
+      "body": {
+        "$ref": "#/components/schemas/BranchSession"
+      }
+    },
+    "POST /api/v1/sessions/{session}/archive": {
+      "response": {
+        "$ref": "#/components/schemas/Session"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ArchiveSession"
+      }
+    },
+    "POST /api/v1/sessions/{session}/compactions": {
+      "response": {
+        "$ref": "#/components/schemas/Compaction"
+      },
+      "body": {
+        "$ref": "#/components/schemas/CompactSession"
+      }
+    },
+    "POST /api/v1/sessions/{session}/attachments": {
+      "response": {
+        "$ref": "#/components/schemas/Attachment"
+      },
+      "body": null
+    },
+    "DELETE /api/v1/sessions/{session}/attachments/{identity}": {
+      "response": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "boolean"
+        },
+        "title": "Response Detach Api V1 Sessions  Session  Attachments  Identity  Delete"
+      },
+      "body": null
+    },
+    "POST /api/v1/rpc": {
+      "response": {
+        "additionalProperties": true,
+        "type": "object",
+        "title": "Response Rpc Api V1 Rpc Post"
+      },
+      "body": {
+        "$ref": "#/components/schemas/RpcCall"
+      }
+    },
+    "GET /api/v1/plugins": {
+      "response": {
+        "$ref": "#/components/schemas/PluginList"
+      },
+      "body": null
+    },
+    "POST /api/v1/plugins": {
+      "response": {
+        "$ref": "#/components/schemas/PluginView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/PluginDraft"
+      }
+    },
+    "POST /api/v1/plugins/{plugin_id}/reload": {
+      "response": {
+        "$ref": "#/components/schemas/PluginView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/PluginReload"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls": {
+      "response": {
+        "$ref": "#/components/schemas/PluginCallView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/PluginCallRequest"
+      }
+    },
+    "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/close": {
+      "response": {
+        "$ref": "#/components/schemas/PluginView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls/{call_id}/cancel": {
+      "response": {
+        "$ref": "#/components/schemas/PluginCallView"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session_id}/search": {
+      "response": {
+        "$ref": "#/components/schemas/SearchResults"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session_id}/usage": {
+      "response": {
+        "$ref": "#/components/schemas/UsageReport"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session_id}/diagnostics": {
+      "response": {
+        "$ref": "#/components/schemas/SessionDiagnostic"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session}/snapshot": {
+      "response": {
+        "$ref": "#/components/schemas/Snapshot"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/submissions": {
+      "response": {
+        "$ref": "#/components/schemas/Receipt"
+      },
+      "body": {
+        "$ref": "#/components/schemas/Submit"
+      }
+    },
+    "GET /api/v1/sessions/{session}/requests/{request_id}": {
+      "response": {
+        "$ref": "#/components/schemas/Receipt"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/requests/{request_id}/cancel": {
+      "response": {
+        "$ref": "#/components/schemas/Receipt"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/approvals": {
+      "response": {
+        "$ref": "#/components/schemas/Receipt"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ApprovalDecision"
+      }
+    },
+    "POST /api/v1/sessions/{session}/effects/resolve": {
+      "response": {
+        "$ref": "#/components/schemas/Receipt"
+      },
+      "body": {
+        "$ref": "#/components/schemas/EffectResolution"
+      }
+    },
+    "GET /api/v1/sessions/{session_id}/code/tools": {
+      "response": {
+        "$ref": "#/components/schemas/CodeTools"
+      },
+      "body": null
+    }
+  }
+}
