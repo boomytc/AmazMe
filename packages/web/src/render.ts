@@ -3612,10 +3612,6 @@ export function createRenderer(
 			}
 		}
 		if (text.length === 0 && (lastView?.attachments.length ?? 0) === 0) return;
-		elements.prompt.value = "";
-		fitPrompt(elements.prompt);
-		renderPrimary();
-		renderer.onDraftChange("");
 		renderer.onSubmit(text);
 	});
 	acceptSuggestion.addEventListener("click", takeSuggestion);

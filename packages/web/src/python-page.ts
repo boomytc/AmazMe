@@ -1328,6 +1328,12 @@ export class DesktopPage {
 			const settings = await update(current, identity);
 			if (this.client.identity?.instance_id !== identity.instance_id) return;
 			this.settings = settings; this.applyPreferences(settings.preferences ?? {}); this.render();
+		}).catch(error => {
+			if (this.hostActive(identity)) {
+				this.notice = { tone: "error", text: error instanceof Error ? error.message : String(error) };
+				this.render();
+			}
+			throw error;
 		});
 		this.settingsQueue = task;
 		return task;

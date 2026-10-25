@@ -69,10 +69,12 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
 
 test("a submission captures the displayed model, retries the same request, and preserves a newer draft", async () => {
  const { page, submitted } = await startPage();
- page.renderer.onDraftChange("original");
- page.renderer.setDraft("original");
- page.renderer.onSubmit("original");
+ const prompt = document.querySelector<HTMLTextAreaElement>("#prompt");
+ if (!prompt?.form) throw new Error("composer missing");
+ prompt.value = "original"; prompt.dispatchEvent(new Event("input"));
+ prompt.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
  await vi.waitFor(() => expect(submitted).toHaveLength(1));
+ expect(prompt.value).toBe("original");
  expect(submitted[0].model_selection).toEqual({ provider: "faux", model: "shown" });
  page.renderer.onSelectModel("faux", "different");
  await vi.waitFor(() => expect(page?.renderer.view?.model.label).toBe("Different"));
@@ -81,6 +83,52 @@ test("a submission captures the displayed model, retries the same request, and p
  await vi.waitFor(() => expect(submitted).toHaveLength(2));
  expect(submitted[1]).toEqual(submitted[0]);
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
+});
+
+test("a rejected composer draft remains editable and clears only after a successful receipt", async () => {
+ const submitted: Submit[] = [];
+ await startPage((path, options) => {
+  if (!path.endsWith("/submissions")) return undefined;
+  const body = parseContract("Submit", JSON.parse(String(options.body)));
+  submitted.push(body);
+  return new Response(JSON.stringify({ request_id: body.request_id, text: body.text, status: "queued" }), { status: 202 });
+ });
+ const prompt = document.querySelector<HTMLTextAreaElement>("#prompt");
+ if (!prompt?.form) throw new Error("composer missing");
+ prompt.value = "x".repeat(16001); prompt.dispatchEvent(new Event("input"));
+ prompt.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+ await vi.waitFor(() => expect(document.body.textContent).toContain("请求不符合后端契约"));
+ expect(prompt.value).toHaveLength(16001);
+ expect(submitted).toEqual([]);
+ expect(Object.keys(sessionStorage).some(key => key.endsWith(":submission"))).toBe(false);
+ prompt.value = "corrected draft"; prompt.dispatchEvent(new Event("input"));
+ prompt.form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+ await vi.waitFor(() => expect(prompt.value).toBe(""));
+ expect(submitted.map(request => request.text)).toEqual(["corrected draft"]);
+});
+
+test("a failed queued setting remains visible when a later setting saves successfully", async () => {
+ let failName: (response: Response) => void = () => { throw new Error("save not started"); };
+ let nameStarted = false;
+ let settings = parseContract("ProductSettings", { revision: 0, display_name: "original" });
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/settings" && options.method === "POST") return new Promise<Response>(resolve => { nameStarted = true; failName = resolve; });
+  if (path === "/api/v1/settings/preferences") {
+   const update = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+   settings = { ...settings, revision: 1, preferences: update.preferences };
+   return new Response(JSON.stringify(settings));
+  }
+  if (path === "/api/v1/settings") return new Response(JSON.stringify(settings));
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "open", panel: P.SETTINGS_VIEW });
+ page.renderer.onPanelAction({ kind: "control", id: P.SETTINGS_FIELD_ACTION, data: "display_name", value: "new name" });
+ await vi.waitFor(() => expect(nameStarted).toBe(true));
+ page.renderer.onPanelAction({ kind: "control", id: P.SETTINGS_FIELD_ACTION, data: "appearance", value: "dark" });
+ failName(new Response(JSON.stringify({ code: "name_save_failed" }), { status: 503 }));
+ await vi.waitFor(() => expect(settings.preferences?.appearance).toBe("dark"));
+ await vi.waitFor(() => expect(document.body.textContent).toContain("name_save_failed"));
+ expect(settings.display_name).toBe("original");
 });
 
 test("a confirmed receipt preserves even an identical draft typed after sending, and stale retry controls cannot submit again", async () => {
