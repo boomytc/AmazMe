@@ -296,6 +296,8 @@ def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions |
         {"type":"function","function":{"name":"computer_ground","description":"One bounded native operation: observe an exact window, select a safe AX candidate or locate a visual click target with Jev, assess risk, act in the background once, then independently observe and verify the explicit postcondition. No loop or automatic retry. User enables computer policy and configures Jev. Returns review for uncertainty and already_satisfied when no action is needed.","parameters":ComputerGround.model_json_schema()}},
     ]
     for offer in offers or []:
+        if offer.exposure != "direct" and not offer.active:
+            continue
         description = (
             f"MCP tool {offer.name} on service {offer.server_id} in workspace {offer.workspace}. "
             f"{offer.description} Do not retry an unknown result."
@@ -308,6 +310,9 @@ def tool_definitions(offers: list[McpOffer] | None = None, options: RunOptions |
         tools.append({"type":"function", "function":{"name":plugin.alias,
             "description":f"Plugin tool {plugin.name} in workspace {plugin.workspace}. {plugin.description} Do not retry an unknown result."[:4000],
             "parameters":cast(dict[str, object], plugin.parameters)}})
+    if any(offer.exposure in {"codemode", "deferred"} and not offer.active for offer in offers or []):
+        from .tool_search import ToolSearchInput
+        tools.append({"type": "function", "function": {"name": "tool_search", "description": "Search deferred tool metadata with BM25 and load matching tools for the next model call. For MCP tool discovery, use tool_search.", "parameters": ToolSearchInput.model_json_schema()}})
     return tools if options is None else [tool for tool in tools if options.tool_allowed(tool["function"]["name"])]
 
 

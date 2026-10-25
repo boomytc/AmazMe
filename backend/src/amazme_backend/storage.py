@@ -64,7 +64,7 @@ from .contracts import (
 )
 from .faults import Faults
 from .manage import contains_secret
-from .mcp_session import mcp_alias
+from .mcp_session import McpOffer, mcp_alias
 from .providers import Completion, selected_provider, token_cost_micro
 from .resources import session_resources
 from .session_domain import (
@@ -99,6 +99,7 @@ from .session_domain import (
     normalized_call,
     resolve_model_call,
 )
+from .tool_search import ToolSearchInput, ToolSearchOutput, rank_tools, search_result
 
 TERMINAL = frozenset({"succeeded", "cancelled", "interrupted", "failed", "unknown"})
 _PUBLIC_CODE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -114,6 +115,35 @@ _SESSION_FILES = frozenset({
 
 def compaction_basis(payloads: list[str]) -> str:
     return hashlib.sha256("\n".join(payloads).encode()).hexdigest()
+
+
+def loaded_mcp_keys(db: sqlite3.Connection, request_id: str) -> list[str]:
+    row = db.execute("SELECT payload FROM requests WHERE id=?", (request_id,)).fetchone()
+    if row is None:
+        raise BackendError("request_not_found", status=404)
+    current = Receipt.model_validate_json(row[0])
+    ancestors = [current.request_id]
+    while current.parent_id:
+        row = db.execute("SELECT payload FROM requests WHERE id=?", (current.parent_id,)).fetchone()
+        if row is None:
+            raise BackendError("storage_corrupt", status=503)
+        current = Receipt.model_validate_json(row[0])
+        ancestors.append(current.request_id)
+    ordinal = db.execute("SELECT ordinal FROM requests WHERE id=?", (current.request_id,)).fetchone()[0]
+    seed = db.execute("SELECT value FROM metadata WHERE key='loaded_mcp_tools'").fetchone()
+    loaded = set(TypeAdapter(list[str]).validate_json(seed[0]) if seed else [])
+    placeholders = ",".join("?" for _ in ancestors)
+    rows = db.execute("SELECT s.payload FROM steps s JOIN requests r ON r.id=s.request_id WHERE "
+                      f"((r.kind='root' AND r.ordinal<=?) OR r.id IN ({placeholders})) "
+                      "AND json_extract(s.payload,'$.call.name')='tool_search' "
+                      "AND json_extract(s.payload,'$.phase') IN ('result','applied') ORDER BY r.ordinal,s.ordinal",
+                      (ordinal, *ancestors))
+    for row in rows:
+        step = Step.model_validate_json(row[0])
+        result = ToolSearchOutput.model_validate_json(step.result)
+        offers = TypeAdapter(list[McpOffer]).validate_json(step.search_catalog or "[]")
+        loaded.update(offer.activation_key() for offer in offers if offer.alias in result.details.loaded)
+    return sorted(loaded)
 
 
 def session_database(profile: Path, session: str) -> Path:
@@ -167,8 +197,9 @@ def read_settled_root(path: Path, request_id: str) -> tuple[str, Receipt, list[t
                    and not run.opening and not run.cleanup_required)
         if not settled:
             raise BackendError("branch_point_unsettled")
-        assert run_row is not None
-        return str(row[0]), receipt, messages, str(run_row[0])
+        assert run is not None
+        run.loaded_mcp_tools = loaded_mcp_keys(connection, request_id)
+        return str(row[0]), receipt, messages, run.model_dump_json()
     finally:
         connection.close()
 
@@ -222,7 +253,7 @@ def event_step_text(step: Step) -> str:
         result = Completion.model_validate_json(step.result)
         result.message = result.message.model_copy(update={"images": [], "reasoning_signature": ""})
         step = step.model_copy(update={"result": result.model_dump_json()})
-    return step.model_dump_json()
+    return step.model_dump_json(exclude={"mcp_catalog", "plugin_catalog", "search_catalog"})
 
 
 def digest(value: str) -> str:
@@ -1254,7 +1285,10 @@ class SessionStore:
             return request
         return await self._tx(operation)
 
-    async def bind_model_tools(self, step_id: str, generation: int, catalog_json: str, plugin_catalog_json: str = "[]") -> None:
+    async def active_mcp_tools(self, request_id: str) -> list[str]:
+        return await self.db.call(lambda db: loaded_mcp_keys(db, request_id))
+
+    async def bind_model_tools(self, step_id: str, generation: int, catalog_json: str, plugin_catalog_json: str = "[]", search_catalog: str = "[]") -> None:
         """Persist the tool list before the provider stream. A later catalog cannot replace it."""
         plugins = TypeAdapter(list[PluginOffer]).validate_json(plugin_catalog_json)
         if any(plugin.session_id != self.session_id for plugin in plugins):
@@ -1269,9 +1303,12 @@ class SessionStore:
                 raise BackendError("plugin_catalog_conflict")
             if step.mcp_catalog and step.mcp_catalog != catalog_json:
                 raise BackendError("mcp_catalog_conflict")
-            if step.mcp_catalog != catalog_json or step.plugin_catalog != plugin_catalog_json:
+            if step.search_catalog and step.search_catalog != search_catalog:
+                raise BackendError("mcp_catalog_conflict")
+            if step.mcp_catalog != catalog_json or step.plugin_catalog != plugin_catalog_json or step.search_catalog != search_catalog:
                 step.mcp_catalog = catalog_json
                 step.plugin_catalog = plugin_catalog_json
+                step.search_catalog = search_catalog
                 self._save_step(db, step)
         await self._tx(operation)
 
@@ -1526,7 +1563,8 @@ class SessionStore:
                     call = resolve_model_call(step.mcp_catalog, call, tool_id[:32], step.plugin_catalog)
                     self._save_step(db, Step(step_id=tool_id, request_id=request.request_id,
                                             ordinal=step.ordinal + i + 1, kind="tool", phase="proposed",
-                                            generation=request.generation, call=call))
+                                            generation=request.generation, call=call,
+                                            search_catalog=step.search_catalog if call.name == "tool_search" else ""))
         else:
             assert step.call is not None
             self._message(db, c, request.request_id, step.step_id,
@@ -1663,6 +1701,17 @@ class SessionStore:
                     return Continue()
                 return Park("children")
             if step.phase == "proposed":
+                if step.call is not None and step.call.name == "tool_search":
+                    search = ToolSearchInput.model_validate_json(step.call.arguments)
+                    loaded = set(loaded_mcp_keys(db, request.request_id))
+                    candidates = [offer for offer in TypeAdapter(list[McpOffer]).validate_json(step.search_catalog or "[]")
+                                  if offer.exposure in {"codemode", "deferred"} and offer.activation_key() not in loaded
+                                  and run.config.tool_allowed(offer.alias)]
+                    step.result = search_result(rank_tools(search.query, candidates, search.limit)).model_dump_json()
+                    step.phase = "result"
+                    self._save_step(db, step)
+                    c.emit("tool", request.request_id, event_step_text(step))
+                    return Continue()
                 if not self._grant(db, c, request, step):
                     if request.decision:
                         return Continue()
@@ -2466,6 +2515,8 @@ class SessionStore:
             db.execute("INSERT INTO requests(id,digest,payload) VALUES(?,?,?)",
                        (request_id, copied_digest, local.model_dump_json()))
             db.execute("INSERT INTO runs(request_id,payload) VALUES(?,?)", (request_id, run_payload))
+            loaded = Run.model_validate_json(run_payload).loaded_mcp_tools
+            self._set_meta(db, "loaded_mcp_tools", json.dumps(loaded))
             for key, payload in messages:
                 message = Message.model_validate_json(payload)
                 self._message(db, c, request_id, key, message)

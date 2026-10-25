@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 
-from .contracts import BackendError, McpTool, McpView, Model
+from .contracts import BackendError, McpExposure, McpTool, McpView, Model
 from .mcp_gate import LIMIT, MESSAGE
 from .mcp_management import exposure
 
@@ -139,6 +139,12 @@ class McpOffer(Model):
     description: str = ""
     input_schema: dict[str, JsonValue]
     schema_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+    managed_id: str = ""
+    exposure: McpExposure = "direct"
+    active: bool = False
+
+    def activation_key(self) -> str:
+        return f"{self.managed_id or self.server_id}:{self.name}"
 
 
 def schema_digest(schema: dict[str, JsonValue]) -> str:
@@ -167,7 +173,7 @@ def catalog_schema_digest(catalog: str, name: str) -> str:
     return ""
 
 
-def offers_from_views(servers: list[McpView], *, surface: Literal["model", "code"] = "model") -> list[McpOffer]:
+def offers_from_views(servers: list[McpView], *, surface: Literal["model", "code", "catalog"] = "model") -> list[McpOffer]:
     """Tools the model may call. Only a ready server's stored catalog is offered."""
     offers: list[McpOffer] = []
     for server in servers:
@@ -183,7 +189,8 @@ def offers_from_views(servers: list[McpView], *, surface: Literal["model", "code
             offers.append(McpOffer(alias=mcp_alias(server.server_id, tool.name), server_id=server.server_id,
                                    workspace=server.workspace, command=server.command, name=tool.name,
                                    description=tool.description[:500], input_schema=schema,
-                                   schema_digest=schema_digest(schema)))
+                                   schema_digest=schema_digest(schema), managed_id=server.managed_id,
+                                   exposure=visible, active=surface == "code"))
     if len({item.alias for item in offers}) != len(offers):
         raise BackendError("mcp_catalog_conflict")
     return offers

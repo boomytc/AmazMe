@@ -386,11 +386,13 @@ class Worker:
     async def _mcp_fence(self) -> HostFence:
         return HostFence(host_epoch=await self.store.host_epoch(), build_id=self.build)
 
-    async def _mcp_offers(self):
+    async def _mcp_offers(self, request_id: str = ""):
         fence = await self._mcp_fence()
         state = await self.supervisor.call("POST", "/mcp/state", McpState, McpSession(
             host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session))
-        return offers_from_views(state.servers)
+        loaded = set(await self.store.active_mcp_tools(request_id)) if request_id else set[str]()
+        return [offer.model_copy(update={"active": offer.exposure == "direct" or offer.activation_key() in loaded})
+                for offer in offers_from_views(state.servers, surface="catalog")]
 
     @staticmethod
     def _mcp_decision_id(step_id: str) -> str:
@@ -556,11 +558,11 @@ class Worker:
             last_preview = 0.0
             messages = await self.model_input(action.messages)
             # A direct model probe has no session database. A live turn binds the catalog before any token.
-            offers = await self._mcp_offers() if self.storage_ready else []
+            offers = await self._mcp_offers(action.request_id) if self.storage_ready else []
             plugins = await self._plugin_offers() if self.storage_ready else []
             if self.storage_ready:
-                await self.store.bind_model_tools(action.step_id, action.generation, catalog_payload(offers),
-                    json.dumps([offer.model_dump() for offer in plugins], ensure_ascii=False, sort_keys=True))
+                await self.store.bind_model_tools(action.step_id, action.generation, catalog_payload([offer for offer in offers if offer.active]),
+                    json.dumps([offer.model_dump() for offer in plugins], ensure_ascii=False, sort_keys=True), catalog_payload(offers))
             # Read the key after the awaits. A logout that landed first must not be sent.
             # A queued workflow check is not this turn's typed prompt. Leave that prompt intact.
             check = await self.store.workflow_check_text(action.request_id) if self.storage_ready else ""

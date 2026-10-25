@@ -38,6 +38,7 @@ from .contracts import (
 )
 from .mcp_session import McpOffer
 from .providers import Completion
+from .tool_search import ToolSearchInput
 from .web_tools import validate_fetch_url
 
 
@@ -46,6 +47,11 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
+    elif call.name == "tool_search":
+        search = ToolSearchInput.model_validate_json(call.arguments)
+        if not search.query.strip():
+            raise BackendError("tool_search_query")
+        return call.model_copy(update={"arguments": search.model_copy(update={"query": search.query.strip()}).model_dump_json()})
     elif call.name == "write_file":
         value = WriteFile.model_validate_json(call.arguments)
     elif call.name == "delegate_task":
@@ -121,6 +127,7 @@ def resolve_model_call(catalog_json: str, call: ToolCall, call_id: str, plugin_c
 
 
 class Run(Model):
+    loaded_mcp_tools: list[str] = Field(default_factory=lambda: list[str]())
     input_text: str | None = None
     direct_call: ToolCall | None = None
     request_id: str
@@ -143,6 +150,7 @@ class Step(Model):
     result: str = ""
     mcp_catalog: str = ""
     plugin_catalog: str = ""
+    search_catalog: str = ""
     approval_id: str = ""
     proposal_digest: str = ""
     children: list[str] = Field(default_factory=list)
