@@ -141,6 +141,63 @@ async def test_custom_provider_catalog_and_old_configuration_receipts_preserve_n
     assert "gateway-private-key" not in catalog.model_dump_json() + json.dumps(result)
 
 
+@pytest.mark.parametrize("target", ["session", "default"])
+@pytest.mark.parametrize("credential_kind", ["api_key", "expired_oauth"])
+async def test_model_save_rejects_excluded_models_before_persistence(
+    owner: Host, monkeypatch: pytest.MonkeyPatch, target: str, credential_kind: str,
+) -> None:
+    from amazme_backend.accounts import ApiKeyCredential
+    from amazme_backend.contracts import SessionModel
+    from amazme_backend.oauth import OAuthCredential
+
+    await owner.configure_provider(ConfigureProvider(
+        operation_id="1" * 32, expected_revision=0, provider="openai", api="openai-completions",
+        base_url="https://gateway.example/v1", model_ids=["allowed-custom-model"],
+    ))
+    credential = (ApiKeyCredential(key=SecretStr("provider-key")) if credential_kind == "api_key" else
+        OAuthCredential(access=SecretStr("expired-access"), refresh=SecretStr("refresh-token"), expires=1))
+    await owner.accounts.set("openai", credential, 0)
+    previous = await owner.save_session_model(SessionModel(session_id=PARENT, provider="faux", model="faux"))
+    profile_before = (owner.profile.path / "config.json").read_bytes()
+    accounts_before = owner.accounts.path.read_bytes()
+    refreshes: list[str] = []
+
+    async def renew(client: httpx.AsyncClient, provider: str, credential: OAuthCredential) -> OAuthCredential:
+        refreshes.append(provider)
+        return credential.model_copy(update={"access": SecretStr("renewed-access"), "expires": 2**60})
+
+    monkeypatch.setattr("amazme_backend.accounts.refresh", renew)
+    headers = {"Authorization": "Bearer web-only", "Origin": owner.origin,
+        "x-amazme-build": owner.build, "x-amazme-epoch": str(owner.fence.host_epoch)}
+    body = {"provider": "openai", "model": "gpt-5"}
+    if target == "session":
+        method, route = "PUT", f"/api/v1/session-models/{PARENT}"
+        body["session_id"] = PARENT
+    else:
+        method, route = "POST", "/api/v1/models"
+        body.update({"api": "openai-completions", "base_url": "https://override.example/v1"})
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)),
+                                base_url=owner.origin, headers=headers) as client:
+        rejected = await client.request(method, route, json=body)
+        assert rejected.status_code == 409 and rejected.json()["code"] == "model_not_available"
+        assert refreshes == []
+        assert (owner.profile.path / "config.json").read_bytes() == profile_before
+        assert owner.accounts.path.read_bytes() == accounts_before
+        assert await owner.session_model(PARENT) == previous
+        assert (await client.get("/api/v1/models")).status_code == 200
+
+        body["model"] = "allowed-custom-model"
+        accepted = await client.request(method, route, json=body)
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["model"] == "allowed-custom-model"
+        if target == "session":
+            assert (await owner.session_model(PARENT)).model == "allowed-custom-model"
+            assert refreshes == [] and owner.accounts.path.read_bytes() == accounts_before
+        else:
+            assert owner.model_catalog().current.model == "allowed-custom-model"
+            assert refreshes == (["openai"] if credential_kind == "expired_oauth" else [])
+
+
 async def test_worker_submit_uses_the_reloaded_model_without_the_key(tmp_path: Path) -> None:
     write_profile(tmp_path, provider="faux", model="faux", base_url="", key=SECRET)
     profile = Profile(tmp_path)

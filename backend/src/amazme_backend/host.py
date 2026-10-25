@@ -1285,9 +1285,13 @@ class Host:
 
     async def save_session_model(self, value: SessionModel) -> SessionModel:
         self._admit()
-        if await self.store.active_update():
-            raise BackendError("update_frozen", status=503)
-        return await self.store.save_session_model(value)
+        async with self.provider_lock:
+            if await self.store.active_update():
+                raise BackendError("update_frozen", status=503)
+            self.profile.reload_provider()
+            select_model(self.profile.config.provider, ModelSelection(provider=value.provider, model=value.model),
+                         self.accounts.read().transports)
+            return await self.store.save_session_model(value)
 
     def _published_model(self, document: AccountDocument | None = None) -> ModelSettings:
         document = document if document is not None else self.accounts.read()
@@ -1307,6 +1311,9 @@ class Host:
             if await self.store.active_update():
                 raise BackendError("update_frozen", status=503)
             self.profile.reload_provider()
+            # A new default may name a custom model, but must respect an explicit provider model list.
+            select_model(self.profile.config.provider.model_copy(update={"provider": value.provider, "model": value.model}),
+                         None, self.accounts.read().transports)
             await self.accounts.ensure(self._account_write_guard)
             target = self.profile.config.provider.model_copy(update={"provider": value.provider})
             target = await self.accounts.configured(target)
