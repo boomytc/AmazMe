@@ -340,8 +340,7 @@ export class DesktopPage {
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
 		this.draft = this.drafts.get(id) ?? { text: "", images: [], revision: 0 };
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined; this.feedback = undefined;
-		const scopeKey = `${this.client.identity?.profile_id}:${id}`;
-		this.enabledModels = (this.modelScopes.has(scopeKey) ? this.modelScopes.get(scopeKey) : this.globalModelIds) ?? null;
+		this.enabledModels = this.sessionModelIds(id);
 		this.thinking = this.catalog?.current.thinking ?? "off";
 		this.pluginRuntime = []; this.pluginsGeneration++;
 		this.mcpConfiguration = undefined; this.mcpRuntime = undefined;
@@ -354,6 +353,7 @@ export class DesktopPage {
 		history.replaceState(null, "", url);
 		this.renderer.setDraft(this.draft.text);
 		await this.client.connect(id);
+		if (this.client.connection?.sessionId === id) { this.enabledModels = this.sessionModelIds(id); this.render(); }
 	}
 	private async createSession(projectId = this.selectedProject): Promise<void> {
 		if (this.newSessionPending) return;
@@ -646,10 +646,19 @@ export class DesktopPage {
 		}
 		if (id === A.MODEL_SCOPE_MODAL) {
 			const connection = this.requireConnection(), modal = this.modal;
+			if (action.kind !== "modal-submit" || modal?.id !== id || this.modalPending) return;
 			const ids = parseContract("InterfacePreferences", { enabledModels: JSON.parse(fields.models || "null") }).enabledModels ?? null;
-			if (fields.persist === "true") await this.updatePreferences(current => ({ ...current, enabledModels: ids }));
 			this.modelScopes.set(`${connection.identity.profile_id}:${connection.sessionId}`, ids);
-			if (connection.active()) { this.enabledModels = ids; if (this.modal === modal) this.modal = undefined; this.render(); }
+			this.enabledModels = ids;
+			if (fields.persist !== "true") { if (this.modal === modal) this.modal = undefined; this.render(); return; }
+			this.pendingModal = modal; this.render();
+			try {
+				await this.updatePreferences(current => ({ ...current, enabledModels: ids }));
+				if (connection.active() && this.modal === modal) this.modal = undefined;
+			} finally {
+				if (this.pendingModal === modal) this.pendingModal = undefined;
+				if (connection.active()) this.render();
+			}
 			return;
 		}
 		if (id === A.MODEL_DEFAULTS_ACTION) {
@@ -1336,12 +1345,16 @@ export class DesktopPage {
 		const scope = await this.client.call("POST /api/v1/models/scope", { body: { patterns: [...patterns] }, identity });
 		return scope.models.map(item => `${item.model.provider}/${item.model.model}`);
 	}
+	private sessionModelIds(sessionId: string): string[] | null {
+		const key = `${this.client.identity?.profile_id}:${sessionId}`;
+		return (this.modelScopes.has(key) ? this.modelScopes.get(key) : this.globalModelIds) ?? null;
+	}
 	private applyPreferences(preferences: InterfacePreferences): void {
 		this.locale = resolveLocale(preferences.locale ?? "auto", navigator.languages);
 		this.typography = resolveTypography(preferences);
 		applyTheme(resolveThemePreference(preferences.appearance));
-		const session = this.client.connection?.sessionId, key = `${this.client.identity?.profile_id}:${session}`;
-		this.enabledModels = (session && this.modelScopes.has(key) ? this.modelScopes.get(key) : this.globalModelIds) ?? null;
+		const session = this.client.connection?.sessionId;
+		this.enabledModels = session ? this.sessionModelIds(session) : this.globalModelIds;
 	}
 	private updateSettings(update: (current: ProductSettings, identity: Identity) => Promise<ProductSettings>): Promise<void> {
 		const identity = this.client.identity;

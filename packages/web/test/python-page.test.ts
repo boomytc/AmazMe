@@ -366,6 +366,95 @@ test("an older global load cannot restore model choices superseded by a settings
  expect(page.renderer.view?.modelConnections?.state.enabledModelIds).toEqual(["faux/different"]);
 });
 
+test("a slower persisted model scope cannot replace a newer session scope", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });
+ let persistStarted = false;
+ let finishPersist = () => {};
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/settings/preferences" && !persistStarted) {
+   const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+   persistStarted = true;
+   return new Promise<Response>(resolve => { finishPersist = () => {
+    settings = { revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+    resolve(response(settings));
+   }; });
+  }
+  if (path === "/api/v1/settings" || path === "/api/v1/settings/preferences") {
+   if (options.method === "PUT") {
+    const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+    settings = { revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+   }
+   return response(settings);
+  }
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "command", id: A.MODEL_SCOPE_ACTION, data: undefined });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.MODEL_SCOPE_MODAL, data: undefined, fields: { models: JSON.stringify(["faux/shown", "faux/different"]), persist: "true" } });
+ await vi.waitFor(() => expect(persistStarted).toBe(true));
+ expect(page.renderer.view?.panel.modal?.pending).toBe(true);
+ page.renderer.onPanelAction({ kind: "command", id: A.MODEL_SCOPE_ACTION, data: undefined });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.MODEL_SCOPE_MODAL, data: undefined, fields: { models: JSON.stringify(["faux/different"]) } });
+ await vi.waitFor(() => expect(page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]));
+ finishPersist();
+ page.renderer.onPanelAction({ kind: "control", id: P.SETTINGS_FIELD_ACTION, data: "textSize", value: "16" });
+ await vi.waitFor(() => expect(page.renderer.view?.typography.textSize).toBe(16));
+ expect(settings.preferences?.enabledModels).toEqual(["faux/shown", "faux/different"]);
+ expect(page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]);
+});
+
+test("a session model scope survives preferences completed during its bootstrap", async () => {
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });
+ let holdBootstrap = false, bootstrapStarted = false;
+ let finishBootstrap = () => {};
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/sessions") return response({ sessions: [{ session_id: "a", title: "A", workspace: "primary" }, { session_id: "b", title: "B", workspace: "primary" }] });
+  if (path.endsWith("/attachments")) {
+   const sessionId = path.split("/")[4];
+   return response({ attachment_id: `attachment-${sessionId}`, session_id: sessionId, host_epoch: 1, build_id: "build" });
+  }
+  if (path.startsWith("/api/v1/session-models/")) return response({ code: "session_model_missing" }, 404);
+  if (path.endsWith("/bootstrap") && holdBootstrap) {
+   holdBootstrap = false; bootstrapStarted = true;
+   return new Promise<Response>(resolve => { finishBootstrap = () => resolve(response({ build_id: "build", profile_id: "host", instance_id: "instance", pid: 1, host_epoch: 1, role: "host", protocol: "amazme-http/1" })); });
+  }
+  if (path === "/api/v1/settings" || path === "/api/v1/settings/preferences") {
+   if (options.method === "PUT") {
+    const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+    settings = { revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+   }
+   return response(settings);
+  }
+  return undefined;
+ });
+ const markReady = () => {
+  const current = page.client.connection;
+  if (!current) throw new Error("connection missing");
+  current.ready = true;
+  current.snapshot = { session_id: current.sessionId, stream_id: "stream", seq: "0", state: "ready", requests: [], events: [] };
+  page.client.onChange();
+ };
+ page.renderer.onSelect("b");
+ await vi.waitFor(() => expect(page.client.connection?.sessionId).toBe("b"));
+ markReady();
+ page.renderer.onPanelAction({ kind: "command", id: A.MODEL_SCOPE_ACTION, data: undefined });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.MODEL_SCOPE_MODAL, data: undefined, fields: { models: JSON.stringify(["faux/different"]) } });
+ await vi.waitFor(() => expect(page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]));
+ page.renderer.onSelect("a");
+ await vi.waitFor(() => expect(page.client.connection?.sessionId).toBe("a"));
+ holdBootstrap = true;
+ page.renderer.onSelect("b");
+ await vi.waitFor(() => expect(bootstrapStarted).toBe(true));
+ expect(page.client.connection).toBeUndefined();
+ page.renderer.onPanelAction({ kind: "control", id: P.SETTINGS_FIELD_ACTION, data: "textSize", value: "16" });
+ await vi.waitFor(() => expect(page.renderer.view?.typography.textSize).toBe(16));
+ finishBootstrap();
+ await vi.waitFor(() => expect(page.client.connection?.socket).toBeDefined());
+ markReady();
+ await vi.waitFor(() => expect(page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]));
+});
+
 test("model choices follow configured connections and refresh an open picker without losing the draft", async () => {
  const response = (value: unknown) => new Response(JSON.stringify(value));
  let configured = true;
