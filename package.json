@@ -14,7 +14,7 @@
 		"build:native:win32": "npm --prefix packages/tui run build:native:win32",
 		"dev:tui": "node --import ./packages/coding-agent/src/source-resolver.ts ./packages/coding-agent/src/cli.ts",
 		"dev:web": "node scripts/dev-web.mjs",
-		"dev:desktop": "node scripts/build-workspace-dependencies.mjs @amazme/gui && npm start --workspace @amazme/gui",
+		"dev:desktop": "node scripts/dev-desktop.mjs",
 		"check:model-data": "backend/.venv/bin/python -m pytest backend/tests/test_model_catalog.py backend/tests/test_thinking.py -q",
 		"test:engineering": "node --test scripts/*.test.mjs",
 		"typecheck": "tsc -b tsconfig.json --pretty false",

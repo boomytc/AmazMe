@@ -6,34 +6,17 @@
 
 ## 从源码安装与使用
 
-需要 Python 3.13、uv 和 Node.js 22.19 或更新版本。下文用 `/absolute/AmazMe` 表示仓库绝对路径，用 `/absolute/project` 表示实际项目目录；执行时替换成本机路径。
+需要 Python 3.13、uv 和 Node.js 22.19 或更新版本。除特别说明外，下面的命令都默认在仓库根目录执行，仓库目录也就是默认工作区。
 
-### 准备依赖
-
-在仓库根目录执行：
+### 一键启动桌面（macOS/Linux）
 
 ```bash
-uv sync --project backend --frozen
-npm install --ignore-scripts
-npm run build:offline
-export AMAZME_PYTHON_BACKEND=/absolute/AmazMe/backend/.venv/bin/amazme-backend
+./start.sh
 ```
 
-新开终端时需要重新设置 `AMAZME_PYTHON_BACKEND`。构建使用仓库中的 Python 模型快照，不联网刷新；只有需要同步上游模型数据时，才显式指定 Pi 源码：
+脚本会自动回到仓库根目录，检查 uv 和 npm，同步 Python 与 Node 依赖，构建桌面所需的 workspace，并使用仓库内的 Python 后端打开 Electron。可以重复执行，不需要先手动运行 `serve` 或设置后端路径。
 
-```bash
-npm run sync:pi-models -- --source /absolute/pi/packages/ai/src/providers/data
-```
-
-### 桌面端
-
-在仓库根目录启动 Electron，并指定实际项目目录：
-
-```bash
-AMAZME_GUI_CWD=/absolute/project npm run dev:desktop
-```
-
-该命令会构建桌面端所需的 workspace 依赖、拉起 Python 后端并打开窗口，不需要先手动执行 `serve`。省略 `AMAZME_GUI_CWD` 时默认使用用户主目录；也可用 `AMAZME_GUI_SESSION=会话ID` 直接打开已有会话。
+依赖已经准备好时，可跳过依赖安装，直接运行 `npm run dev:desktop`；它同样会自动使用仓库后端。需要打开其他项目时，使用 `AMAZME_GUI_CWD=/absolute/project ./start.sh`，或用 `AMAZME_GUI_SESSION=会话ID` 指定已有会话。
 
 首次打开后，在「设置 → 模型与连接」中：
 
@@ -43,19 +26,37 @@ AMAZME_GUI_CWD=/absolute/project npm run dev:desktop
 
 关闭主窗口默认只隐藏，已接纳的会话和后台工作继续运行；通过托盘恢复窗口。需要结束时，使用托盘菜单或 `Cmd/Ctrl+Q` 显式退出，桌面壳才会停止自己拥有的后端。更多窗口行为见 [桌面说明](packages/gui/README.md)。
 
-### 交互终端与一次性命令
+### 手动准备与其他客户端
 
-进入实际项目目录，使用构建后的 Node 入口：
+一键桌面不需要先执行全量构建。需要终端、RPC 或手动分步操作时，在仓库根目录执行：
 
 ```bash
-cd /absolute/project
-node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js
+uv sync --project backend --frozen
+npm install --ignore-scripts
+npm run build:offline
+export AMAZME_PYTHON_BACKEND=backend/.venv/bin/amazme-backend
+```
+
+`AMAZME_PYTHON_BACKEND` 用于终端和 Web 找到后端，桌面启动脚本会自动处理。继续在仓库根目录操作时可直接使用这个相对路径；离开仓库目录运行终端命令时，应改成对应入口的绝对路径。新开终端也需要重新设置该变量。
+
+构建使用仓库中的 Python 模型快照，不联网刷新；只有需要同步上游模型数据时，才显式指定 Pi 源码：
+
+```bash
+npm run sync:pi-models -- --source /absolute/pi/packages/ai/src/providers/data
+```
+
+### 交互终端与一次性命令
+
+直接使用构建后的 Node 入口：
+
+```bash
+node packages/coding-agent/dist/bundle/cli.js
 ```
 
 不带参数会进入交互终端（TUI）。一次性提问或用于脚本时：
 
 ```bash
-node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js --print '说明当前项目的启动入口'
+node packages/coding-agent/dist/bundle/cli.js --print '说明当前项目的启动入口'
 ```
 
 终端入口按启动目录选择工作区，会复用仍存活的本机 Host，没有时才启动新的 Host。`--workspace NAME` 选择已登记工作区，`--continue` 继续最近的非归档会话，`--session ID` 打开指定会话；`workspaces list` 可查看登记目录。
@@ -88,12 +89,7 @@ amazme --continue
 npm run dev:web
 ```
 
-该命令构建 Web 依赖、启动或复用本机 Host，并输出窗口链接；在浏览器中打开终端给出的地址即可。此方式以仓库目录作为工作区。需要让页面使用另一个项目时，改为从该项目目录调用 Node 入口：
-
-```bash
-cd /absolute/project
-node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js web
-```
+该命令构建 Web 依赖、启动或复用本机 Host，并输出窗口链接；在浏览器中打开终端给出的地址即可，默认以仓库目录作为工作区。需要其他项目时，可从该项目目录运行 CLI 的 `web`，此时 Node 和后端入口应使用绝对路径。
 
 只需要 Host 根地址而不需要窗口链接时，使用 `server` 替代 `web`。关闭网页或释放客户端绑定不会取消已经接纳的工作。
 
@@ -116,8 +112,7 @@ backend/.venv/bin/python -m amazme_backend pair --profile /absolute/profile
 然后用 Host 地址和配对码连接。以 Web 页面为例：
 
 ```bash
-cd /absolute/project
-node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js web --python-url http://127.0.0.1:PORT --python-token '配对码'
+node packages/coding-agent/dist/bundle/cli.js web --python-url http://127.0.0.1:PORT --python-token '配对码'
 ```
 
 `--python-url` 和 `--python-token` 必须同时提供，同样适用于 TUI、一次性命令及 `models`、`auth`、`doctor` 等命令。配对码属于本机凭据，不要提交到仓库或放进分享链接。新 profile 的初始化方式见 [Python 后端说明](backend/README.md)。
