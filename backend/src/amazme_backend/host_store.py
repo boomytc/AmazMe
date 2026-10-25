@@ -35,7 +35,6 @@ from .contracts import (
     WorkerInfo,
     WriteFile,
 )
-from .manage import contains_secret
 from .providers import selected_provider
 from .storage import Database
 
@@ -49,7 +48,7 @@ def checkpoint_id(workspace: str, path: str, digest: str) -> str:
     return hashlib.sha256(f"{workspace}\n{path}\n{digest}".encode()).hexdigest()[:32]
 
 
-def _grant_present(db: sqlite3.Connection, workspace: str) -> bool:
+def grant_present(db: sqlite3.Connection, workspace: str) -> bool:
     """Primary is the profile directory. Any other name must still be granted."""
     if workspace == "primary":
         return True
@@ -60,7 +59,7 @@ def _grant_present(db: sqlite3.Connection, workspace: str) -> bool:
     return row is not None
 
 
-def _delivery_provider(db: sqlite3.Connection, session: str, value: Submit, provider: ProviderConfig) -> str:
+def delivery_provider(db: sqlite3.Connection, session: str, value: Submit, provider: ProviderConfig) -> str:
     if value.mode == "steer":
         return ""
     selection = value.model_selection
@@ -171,10 +170,10 @@ class HostStore:
                   path TEXT NOT NULL, digest TEXT NOT NULL, content TEXT NOT NULL, used INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS file_write_preparations(session TEXT NOT NULL, call TEXT NOT NULL,
                   request_digest TEXT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(session,call));
-                CREATE TABLE IF NOT EXISTS automations(id TEXT PRIMARY KEY, session TEXT NOT NULL,
-                  workspace TEXT NOT NULL, text TEXT NOT NULL, zone TEXT NOT NULL, local TEXT NOT NULL,
-                  fold INTEGER NOT NULL, due_ms INTEGER NOT NULL, phase TEXT NOT NULL,
-                  delivery_id TEXT NOT NULL DEFAULT '');
+                CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY, session TEXT NOT NULL,
+                  digest TEXT NOT NULL,payload TEXT NOT NULL,deleted INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS schedule_runs(schedule TEXT NOT NULL,request TEXT NOT NULL,
+                  outcome TEXT NOT NULL DEFAULT '',PRIMARY KEY(schedule,request));
                 CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, name TEXT NOT NULL, digest TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS project_sessions(session TEXT PRIMARY KEY, project TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS product_settings(id INTEGER PRIMARY KEY, display_name TEXT NOT NULL,
@@ -399,70 +398,6 @@ class HostStore:
             return str(row[0]), str(row[1]), str(row[2]), str(row[3]), str(row[4])
         return await self._call(operation)
 
-    async def save_automation(self, automation_id: str, session_id: str, workspace: str, text: str,
-                              zone: str, local: str, fold: int, due_ms: int) -> sqlite3.Row:
-        def operation(db: sqlite3.Connection) -> sqlite3.Row:
-            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-                raise BackendError("update_frozen", status=503)
-            existing = db.execute("SELECT * FROM automations WHERE id=?", (automation_id,)).fetchone()
-            if existing is not None:
-                same = (str(existing["session"]), str(existing["workspace"]), str(existing["text"]),
-                        str(existing["zone"]), str(existing["local"]), int(existing["fold"]), int(existing["due_ms"]))
-                if same != (session_id, workspace, text, zone, local, fold, due_ms):
-                    raise BackendError("automation_conflict")
-                return existing
-            session = db.execute("SELECT archived, workspace FROM sessions WHERE id=?", (session_id,)).fetchone()
-            if session is None:
-                raise BackendError("session_not_found", status=404)
-            if int(session["archived"]):
-                raise BackendError("session_archived")
-            if str(session["workspace"] or "primary") != workspace:
-                raise BackendError("workspace_conflict")
-            db.execute(
-                "INSERT INTO automations(id,session,workspace,text,zone,local,fold,due_ms,phase) VALUES(?,?,?,?,?,?,?,?, 'scheduled')",
-                (automation_id, session_id, workspace, text, zone, local, fold, due_ms))
-            row = db.execute("SELECT * FROM automations WHERE id=?", (automation_id,)).fetchone()
-            assert row is not None
-            return row
-        return await self.transaction(operation)
-
-    async def claim_due_automation(self, now_ms: int, secret: str | tuple[str, ...] = "") -> sqlite3.Row | None:
-        """One scheduler claims one due automation and its submit delivery in the same transaction."""
-        def operation(db: sqlite3.Connection) -> sqlite3.Row | None:
-            row = db.execute(
-                "SELECT * FROM automations WHERE phase='scheduled' AND due_ms<=? ORDER BY due_ms, id LIMIT 1",
-                (now_ms,)).fetchone()
-            if row is None:
-                return None
-            session = db.execute("SELECT archived, workspace FROM sessions WHERE id=?", (str(row["session"]),)).fetchone()
-            workspace = "" if session is None else str(session["workspace"] or "primary")
-            if (session is None or int(session["archived"]) or workspace != str(row["workspace"] or "primary")
-                    or not _grant_present(db, workspace) or contains_secret(str(row["text"]), secret)):
-                db.execute("UPDATE automations SET phase='unknown' WHERE id=? AND phase='scheduled'", (str(row["id"]),))
-                updated = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
-                assert updated is not None
-                return updated
-            claimed = db.execute(
-                "UPDATE automations SET phase='unknown' WHERE id=? AND phase='scheduled'", (str(row["id"]),))
-            if claimed.rowcount != 1:
-                return None
-            submit = Submit(request_id=str(row["id"]), text=str(row["text"]))
-            payload = submit.model_dump_json()
-            digest = hashlib.sha256(payload.encode()).hexdigest()
-            identity = hashlib.sha256(json.dumps([str(row["session"]), "submit", str(row["id"])]).encode()).hexdigest()
-            existing = db.execute("SELECT digest FROM deliveries WHERE id=?", (identity,)).fetchone()
-            if existing is not None and str(existing["digest"]) != digest:
-                return db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
-            if existing is None:
-                db.execute("INSERT INTO deliveries(id,session,kind,digest,payload) VALUES(?,?,?,?,?)",
-                           (identity, str(row["session"]), "submit", digest, payload))
-                db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (time.time_ns() // 1_000_000, str(row["session"])))
-            db.execute("UPDATE automations SET phase='done', delivery_id=? WHERE id=?", (identity, str(row["id"])))
-            done = db.execute("SELECT * FROM automations WHERE id=?", (str(row["id"]),)).fetchone()
-            assert done is not None
-            return done
-        return await self.transaction(operation)
-
     async def session_model(self, session_id: str) -> SessionModel | None:
         def operation(db: sqlite3.Connection) -> SessionModel | None:
             row = db.execute("SELECT provider, model FROM session_models WHERE session=?", (session_id,)).fetchone()
@@ -600,7 +535,7 @@ class HostStore:
                 raise BackendError("delivery_capacity", status=429)
             configured = ""
             if isinstance(value, Submit) and provider is not None:
-                configured = _delivery_provider(db, session, value, provider)
+                configured = delivery_provider(db, session, value, provider)
             db.execute("INSERT INTO deliveries(id,session,kind,digest,payload,provider) VALUES(?,?,?,?,?,?)",
                        (identity, session, kind, digest, payload, configured))
             db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (time.time_ns() // 1_000_000, session))
@@ -615,7 +550,7 @@ class HostStore:
                 raise BackendError("delivery_not_found")
             if row["kind"] == "submit" and row["state"] == "pending" and not row["provider"]:
                 value = Submit.model_validate_json(row["payload"])
-                captured = _delivery_provider(db, str(row["session"]), value, provider)
+                captured = delivery_provider(db, str(row["session"]), value, provider)
                 db.execute("UPDATE deliveries SET provider=? WHERE id=? AND provider=''", (captured, identity))
             return self._delivery(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())
         return await self.transaction(operation)
@@ -636,7 +571,8 @@ class HostStore:
 
     async def pending(self, session: str | None = None) -> list[Delivery]:
         return await self._call(lambda db: [self._delivery(row) for row in db.execute(
-            "SELECT * FROM deliveries WHERE state='pending' AND (? IS NULL OR session=?) ORDER BY ordinal LIMIT 128",
+            "SELECT * FROM deliveries WHERE state='pending' AND (? IS NULL OR session=?) "
+            "ORDER BY CASE kind WHEN 'cancel' THEN 0 ELSE 1 END,ordinal LIMIT 128",
             (session, session))])
 
     async def set_archived(self, session_id: str, archived: bool) -> Session:
@@ -690,7 +626,8 @@ class HostStore:
         def operation(db: sqlite3.Connection) -> None:
             if not db.execute("SELECT 1 FROM session_removals WHERE session=?", (session,)).fetchone():
                 raise BackendError("session_removal_pending")
-            for table in ("project_sessions", "session_models", "deliveries", "automations", "feedback", "shares", "file_write_preparations"):
+            db.execute("DELETE FROM schedule_runs WHERE schedule IN (SELECT id FROM schedules WHERE session=?)", (session,))
+            for table in ("project_sessions", "session_models", "deliveries", "schedules", "feedback", "shares", "file_write_preparations"):
                 db.execute(f"DELETE FROM {table} WHERE session=?", (session,))
             db.execute("DELETE FROM sessions WHERE id=?", (session,))
             db.execute("UPDATE session_removals SET completed=1 WHERE session=?", (session,))

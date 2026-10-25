@@ -114,6 +114,18 @@ test("unknown results and stale binding errors keep the original record", async 
  expect(restored.read("submit", record.operation)).toEqual(record);
 });
 
+test("a global write endpoint cannot send another session's body from this ledger", async () => {
+ const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
+ const current = "a".repeat(32), other = "b".repeat(32);
+ const client = new PythonClient("http://127.0.0.1:4310"), ledger = new PendingWrites(sessionStorage, "host", current);
+ const record = ledger.prepare("schedule:create", "POST /api/v1/schedules", id => ({ path: {}, body: {
+  schedule_id: id, session_id: other, text: "original", rule: { kind: "interval", every_minutes: 5 },
+ } }));
+ await expect(ledger.send("schedule:create", record, client, connection(current))).rejects.toThrow("其他会话");
+ expect(fetcher).not.toHaveBeenCalled();
+ expect(ledger.read("schedule:create", record.operation)).toEqual(record);
+});
+
 test("a damaged persisted payload and a reply for a different request preserve the original record", async () => {
  const ledger = new PendingWrites(sessionStorage, "host", "a"), operation = "POST /api/v1/sessions/{session}/submissions";
  const record = ledger.prepare("submit", operation, id => ({ path: { session: "a" }, body: { request_id: id, text: "你好" } }));

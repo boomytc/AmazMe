@@ -215,6 +215,7 @@ async def test_unknown_tool_queries_closes_and_never_reexecutes(store: SessionSt
     await submit(store)
     driver = Driver(store)
     invocation = await driver.until(ToolInvocation)
+    assert not await store.request_cleanup_complete("root")
     await store.advance(Failed(invocation, "lost_reply"))
     query = await driver.next()
     assert isinstance(query, QueryTool)
@@ -229,13 +230,18 @@ async def test_unknown_tool_queries_closes_and_never_reexecutes(store: SessionSt
     snapshot = await store.snapshot()
     assert snapshot.requests[0].status == "unknown" and snapshot.effects[0].resource_clean
     assert snapshot.pending == 1 and not driver.tools
+    assert not await store.request_cleanup_complete("root")
     resolution = EffectResolution(resolution_id="resolve", call_id=query.step_id, outcome="not_applied", evidence="checked")
     await store.resolve(resolution, FENCE)
+    assert not await store.request_cleanup_complete("root")
     assert isinstance(await driver.next(), ReconcileEffect)
     await store.advance(EffectResolved(resolution, EffectHold(call_id=query.step_id, session_id=SESSION,
         request_id="root", reason="tool_outcome_unknown", resource_clean=True, reconciled=True)))
     await driver.drain()
     assert (await store.get("root")).status == "unknown" and (await store.snapshot()).pending == 0
+    await store.accept(Submit(request_id="other", text="later", not_before_ms=now_ms() + 60000), FENCE)
+    assert await store.request_cleanup_complete("root")
+    assert not await store.request_cleanup_complete("other")
 
 
 @pytest.mark.parametrize("settled", [False, True])

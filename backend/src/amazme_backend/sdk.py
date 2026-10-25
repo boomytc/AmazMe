@@ -2,7 +2,7 @@
 
 import asyncio
 import base64
-from typing import cast
+from typing import Literal, cast
 from urllib.parse import quote
 
 import httpx
@@ -49,6 +49,11 @@ from .contracts import (
     PluginView,
     Receipt,
     ResourceOptions,
+    ScheduleControl,
+    ScheduleInput,
+    ScheduleNow,
+    SchedulesView,
+    ScheduleView,
     Session,
     SessionList,
     Snapshot,
@@ -174,6 +179,22 @@ class Client:
 
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
+
+    async def schedules(self) -> SchedulesView:
+        return SchedulesView.model_validate(await self._send("GET", "/api/v1/schedules"))
+
+    async def save_schedule(self, value: ScheduleInput) -> ScheduleView:
+        return ScheduleView.model_validate(await self._send("POST", "/api/v1/schedules",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def run_schedule(self, schedule_id: str, value: ScheduleNow) -> ScheduleView:
+        return ScheduleView.model_validate(await self._send("POST", f"/api/v1/schedules/{quote(schedule_id, safe='')}/run",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def control_schedule(self, schedule_id: str, value: ScheduleControl,
+                               action: Literal["enabled", "cancel", "remove"]) -> ScheduleView:
+        return ScheduleView.model_validate(await self._send("POST", f"/api/v1/schedules/{quote(schedule_id, safe='')}/{action}",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
 
     async def model_scope(self, patterns: list[str], *, provider: str = "") -> ModelScope:
         value = ModelScopeRequest(patterns=patterns, provider=provider)

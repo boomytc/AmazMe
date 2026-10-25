@@ -788,6 +788,22 @@ class SessionStore:
             raise BackendError("request_not_found", status=404)
         return await self.db.call(operation)
 
+    async def request_cleanup_complete(self, request_id: str) -> bool:
+        """Read the original subtree's process and effect facts without starting a worker."""
+        def operation(db: sqlite3.Connection) -> bool:
+            ids = {str(row[0]) for row in db.execute(
+                "WITH RECURSIVE tree(id) AS (SELECT ? UNION SELECT r.id FROM requests r JOIN tree t "
+                "ON json_extract(r.payload,'$.parent_id')=t.id) SELECT id FROM tree", (request_id,))}
+            if ids & self._pending_ids(db):
+                return False
+            slots = ",".join("?" for _ in ids)
+            for row in db.execute(f"SELECT payload FROM runs WHERE request_id IN ({slots})", tuple(ids)):
+                run = Run.model_validate_json(row[0])
+                if run.lease is not None or run.opening or run.cleanup_required:
+                    return False
+            return True
+        return await self.db.call(operation)
+
     def _workflow_row(self, db: sqlite3.Connection, workflow_id: str) -> tuple[str, WorkflowView]:
         row = db.execute("SELECT digest,payload FROM workflows WHERE id=?", (workflow_id,)).fetchone()
         if row is None:

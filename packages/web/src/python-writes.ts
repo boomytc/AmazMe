@@ -60,6 +60,8 @@ export class PendingWrites {
 			const target: unknown = Reflect.get(record.path, field);
 			if (target !== undefined && target !== connection.sessionId) throw new Error("操作目标与原会话不一致；原记录已保留。");
 		}
+		const boundBody: unknown = record.body;
+		if (isRecord(boundBody) && typeof boundBody.session_id === "string" && boundBody.session_id !== connection.sessionId) throw new Error("操作内容属于其他会话；原记录已保留。");
 		if (!connection.active() || !connection.ready) throw new Error("请等待原会话重新连接；操作编号仍保留。");
 		if (this.running.has(key)) throw new Error("原操作仍在发送");
 		this.running.add(key);
@@ -68,7 +70,7 @@ export class PendingWrites {
 			const value: unknown = result;
 			const body: unknown = record.body;
 			if (isRecord(value) && isRecord(body) && typeof body.branch_id === "string" && value.session_id !== body.branch_id) throw new Error("分支回执编号不匹配；原记录已保留。");
-			if (isRecord(value) && isRecord(body)) for (const field of ["request_id", "terminal_id", "call_id", "compaction_id", "workflow_id", "plugin_id", "automation_id"]) {
+			if (isRecord(value) && isRecord(body)) for (const field of ["request_id", "terminal_id", "call_id", "compaction_id", "workflow_id", "plugin_id", "schedule_id"]) {
 				if (typeof body[field] === "string" && typeof value[field] === "string" && body[field] !== value[field]) throw new Error("回执操作编号不匹配；原记录已保留。");
 			}
 			if (!isRecord(value) || (value.phase !== "unknown" && value.input_status !== "unknown" && value.status !== "unknown")) this.forget(key, record);

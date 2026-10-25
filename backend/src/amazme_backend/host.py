@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, SecretStr, TypeAdapter
 
+from . import schedules
 from .accounts import AccountStore, AccountsView, ApiKeyCredential
 from .artifacts import (
     ArtifactBody,
@@ -32,7 +33,6 @@ from .artifacts import (
     read_artifact,
     save_artifact,
 )
-from .automations import resolve_due
 from .classifiers import MODELS as CLASSIFIER_MODELS
 from .classifiers import BoolAnswer, ClassifierCatalog, ClassifierContext, ClassifierResult, classify
 from .common import Peer, Profile, build_id, child_command, lock, private_write, wait_peer
@@ -53,9 +53,6 @@ from .contracts import (
     ApprovalEnvelope,
     ArchiveSession,
     Attachment,
-    AutomationCreate,
-    AutomationTick,
-    AutomationView,
     BackendError,
     BranchSession,
     Cancel,
@@ -169,6 +166,12 @@ from .contracts import (
     ResolutionEnvelope,
     ResourceOptions,
     RetireSupervisor,
+    ScheduleControl,
+    ScheduleInput,
+    ScheduleNow,
+    ScheduleOutcome,
+    SchedulesView,
+    ScheduleView,
     SearchResults,
     Session,
     SessionDiagnostic,
@@ -303,6 +306,8 @@ class Host:
         self.service_lock = asyncio.Lock()
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
+        self.schedule_lock = asyncio.Lock()
+        self.schedule_tick_ms = 0
         self.accounts = AccountStore(profile.account_path)
         self.oauth_logins: dict[str, OAuthLogin] = {}
         self.attached = ""
@@ -1389,37 +1394,114 @@ class Host:
         found = match_memories(await self.store.memory_rows(), session.workspace, query)
         return MemoryList(workspace=session.workspace, memories=found)
 
-    def _automation(self, row: sqlite3.Row) -> AutomationView:
-        phase = str(row["phase"])
-        if phase not in {"scheduled", "done", "unknown"}:
-            phase = "unknown"
-        return AutomationView(
-            automation_id=str(row["id"]), session_id=str(row["session"]), workspace=str(row["workspace"]),
-            text=str(row["text"]), zone=str(row["zone"]), local=str(row["local"]), fold=int(row["fold"]),
-            due_ms=int(row["due_ms"]), phase=phase, delivery_id=str(row["delivery_id"]))  # type: ignore[arg-type]
+    async def list_schedules(self) -> SchedulesView:
+        return SchedulesView(path=str(self.profile.path / "host.sqlite"),
+                             schedules=await self.store.transaction(schedules.listing))
 
-    async def create_automation(self, value: AutomationCreate) -> AutomationView:
+    async def save_schedule(self, value: ScheduleInput) -> ScheduleView:
         self._admit()
-        due_ms, fold = resolve_due(value.local, value.zone, value.fold)
-        if not await self.store.exists(value.session_id):
-            raise BackendError("session_not_found", status=404)
-        session = next(item for item in (await self.sessions()).sessions if item.session_id == value.session_id)
-        await self._require_workspace(session.workspace)
-        if contains_secret(value.text, self._provider_secret()):
-            raise BackendError("automation_secret")
-        row = await self.store.save_automation(
-            value.automation_id, value.session_id, session.workspace, value.text.strip(),
-            value.zone, value.local, fold, due_ms)
-        return self._automation(row)
+        async with self.schedule_lock:
+            return await self.store.transaction(lambda db: schedules.save(db, value, time.time_ns() // 1_000_000,
+                                                                          self._provider_secret()))
 
-    async def tick_automations(self) -> AutomationTick:
+    async def _schedule_busy(self, record: ScheduleView) -> bool:
+        if not session_database(self.profile.path, record.session_id).is_file():
+            return False
+        activity = await self._read_session(record.session_id, lambda store: store.activity())
+        return activity.pending > 0
+
+    async def _reconcile_schedule(self, record: ScheduleView, now: int) -> ScheduleView:
+        pending = record.pending
+        if pending is None:
+            return record
+        try:
+            path = session_database(self.profile.path, record.session_id)
+            receipt = None
+            if path.is_file():
+                try:
+                    receipt = await self._read_session(record.session_id, lambda store: store.get(pending.request_id))
+                except BackendError as error:
+                    if error.code != "request_not_found":
+                        raise
+            if receipt is None or receipt.status not in {"succeeded", "cancelled", "interrupted", "failed", "unknown"}:
+                if now < pending.deadline_at and not pending.cancel_reason:
+                    return record
+                pending.cancel_reason = pending.cancel_reason or "timed_out"
+                await self.store.transaction(lambda db: schedules.persist(db, record))
+                await self.deliver(record.session_id, "cancel", pending.request_id,
+                                   Cancel(host_epoch=0, build_id="", request_id=pending.request_id))
+                receipt = await self._read_session(record.session_id, lambda store: store.get(pending.request_id))
+            if receipt.status == "unknown":
+                record.enabled = False
+                pending.problem = "结果未知，计划已暂停；核对原调用和资源后，可取消本次运行。"
+                if pending.cancel_reason and await self._read_session(record.session_id,
+                        lambda store: store.request_cleanup_complete(pending.request_id)):
+                    return await self.store.transaction(lambda db: schedules.finish(db, record, ScheduleOutcome(
+                        request_id=pending.request_id, started_at=pending.started_at, finished_at=now,
+                        scheduled_for=pending.scheduled_for, status="unanswered", detail="unknown_reconciled"), now))
+            elif receipt.status in {"succeeded", "cancelled", "interrupted", "failed"}:
+                if not await self._read_session(record.session_id, lambda store: store.request_cleanup_complete(pending.request_id)):
+                    record.enabled = False
+                    pending.problem = "原任务或子任务仍有待核对的效果或资源，计划已暂停。"
+                    return await self.store.transaction(lambda db: schedules.persist(db, record))
+                outcome = ScheduleOutcome(request_id=pending.request_id, started_at=pending.started_at,
+                    finished_at=now, scheduled_for=pending.scheduled_for,
+                    status="done" if receipt.status == "succeeded" else pending.cancel_reason or (
+                           "cancelled" if receipt.status == "cancelled" else "unanswered"), detail=receipt.error or None)
+                return await self.store.transaction(lambda db: schedules.finish(db, record, outcome, now))
+            else:
+                pending.problem = None
+        except BackendError as error:
+            if error.code not in {"request_not_found", "storage_missing"}:
+                pending.problem = error.code
+        return await self.store.transaction(lambda db: schedules.persist(db, record))
+
+    async def tick_schedules(self, *, force: bool = False) -> SchedulesView:
         self._admit()
-        if await self.store.active_update():
-            return AutomationTick()
-        row = await self.store.claim_due_automation(int(time.time() * 1000), self._provider_secret())
-        if row is None:
-            return AutomationTick()
-        return AutomationTick(fired=self._automation(row))
+        now = time.time_ns() // 1_000_000
+        async with self.schedule_lock:
+            due = force or now - self.schedule_tick_ms >= 5000
+            if due:
+                self.schedule_tick_ms = now
+            if await self.store.active_update():
+                return await self.list_schedules()
+            self.profile.reload_provider()
+            records = (await self.list_schedules()).schedules
+            records.sort(key=lambda item: item.pending.started_at if item.pending else item.next_run_at or schedules.MAX_TIME)
+            for record in records:
+                try:
+                    if record.pending:
+                        await self._reconcile_schedule(record, now)
+                    elif due and record.enabled and record.next_run_at is not None and record.next_run_at <= now:
+                        busy = record.busy == "skip" and await self._schedule_busy(record)
+                        await self.store.transaction(lambda db: schedules.claim(db, record.schedule_id, now,
+                            self.profile.config.provider, self._provider_secret(), busy=busy))
+                except BackendError as error:
+                    if error.code not in {"schedule_not_found", "schedule_running_capacity", "delivery_capacity"}:
+                        raise
+            return await self.list_schedules()
+
+    async def run_schedule(self, schedule_id: str, value: ScheduleNow) -> ScheduleView:
+        self._admit()
+        async with self.schedule_lock:
+            record = await self.store.transaction(lambda db: schedules.load(db, schedule_id))
+            busy = record.busy == "skip" and await self._schedule_busy(record)
+            self.profile.reload_provider()
+            return await self.store.transaction(lambda db: schedules.claim(db, schedule_id, time.time_ns() // 1_000_000,
+                self.profile.config.provider, self._provider_secret(), operation_id=value.operation_id,
+                generation=value.expected_generation, busy=busy))
+
+    async def control_schedule(self, schedule_id: str, value: ScheduleControl, action: Literal["enabled", "cancel", "remove"]) -> ScheduleView:
+        self._admit()
+        async with self.schedule_lock:
+            record = await self.store.transaction(lambda db: schedules.control(db, schedule_id, value, action))
+            if action in {"cancel", "remove"}:
+                record = await self._reconcile_schedule(record, time.time_ns() // 1_000_000)
+            if action == "remove":
+                if record.pending:
+                    raise BackendError("schedule_cleanup_pending")
+                await self.store.transaction(lambda db: db.execute("UPDATE schedules SET deleted=1 WHERE id=?", (schedule_id,)))
+            return record
 
     def _session_store(self, path: Path, session: str, *, read_only: bool) -> SessionStore:
         return SessionStore(path, session, build=self.build, config=self.profile.config.provider,
@@ -2521,7 +2603,7 @@ class Host:
                         del tasks[session]
                 try:
                     self._admit()
-                    await self.tick_automations()
+                    await self.tick_schedules()
                     if await self.store.active_update() is None:
                         await self.ensure_supervisor()
                         sessions = {d.session_id for d in await self.store.pending()}
@@ -2955,13 +3037,33 @@ def application(owner: Host) -> FastAPI:
     async def session_memories(session_id: str, q: str = "") -> MemoryList:
         return await owner.injection_preview(session_id, q)
 
-    @app.post("/api/v1/automations")
-    async def create_automation(value: AutomationCreate) -> AutomationView:
-        return await owner.create_automation(value)
+    @app.get("/api/v1/schedules")
+    async def list_schedules() -> SchedulesView:
+        return await owner.list_schedules()
 
-    @app.post("/api/v1/automations/tick")
-    async def tick_automations() -> AutomationTick:
-        return await owner.tick_automations()
+    @app.post("/api/v1/schedules")
+    async def save_schedule(value: ScheduleInput) -> ScheduleView:
+        return await owner.save_schedule(value)
+
+    @app.post("/api/v1/schedules/tick")
+    async def tick_schedules() -> SchedulesView:
+        return await owner.tick_schedules(force=True)
+
+    @app.post("/api/v1/schedules/{schedule_id}/run")
+    async def run_schedule(schedule_id: str, value: ScheduleNow) -> ScheduleView:
+        return await owner.run_schedule(schedule_id, value)
+
+    @app.post("/api/v1/schedules/{schedule_id}/enabled")
+    async def enable_schedule(schedule_id: str, value: ScheduleControl) -> ScheduleView:
+        return await owner.control_schedule(schedule_id, value, "enabled")
+
+    @app.post("/api/v1/schedules/{schedule_id}/cancel")
+    async def cancel_schedule(schedule_id: str, value: ScheduleControl) -> ScheduleView:
+        return await owner.control_schedule(schedule_id, value, "cancel")
+
+    @app.post("/api/v1/schedules/{schedule_id}/remove")
+    async def remove_schedule(schedule_id: str, value: ScheduleControl) -> ScheduleView:
+        return await owner.control_schedule(schedule_id, value, "remove")
 
     @app.post("/api/v1/sessions/{session}/workflows")
     async def open_workflow(session: str, value: WorkflowOpen) -> WorkflowView:

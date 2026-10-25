@@ -327,139 +327,6 @@
       ],
       "title": "Attachment"
     },
-    "AutomationCreate": {
-      "properties": {
-        "automation_id": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{32}$",
-          "title": "Automation Id"
-        },
-        "session_id": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{32}$",
-          "title": "Session Id"
-        },
-        "text": {
-          "type": "string",
-          "maxLength": 4000,
-          "minLength": 1,
-          "title": "Text"
-        },
-        "zone": {
-          "type": "string",
-          "maxLength": 64,
-          "minLength": 1,
-          "title": "Zone"
-        },
-        "local": {
-          "type": "string",
-          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$",
-          "title": "Local"
-        },
-        "fold": {
-          "anyOf": [
-            {
-              "type": "integer"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "title": "Fold"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "automation_id",
-        "session_id",
-        "text",
-        "zone",
-        "local"
-      ],
-      "title": "AutomationCreate"
-    },
-    "AutomationTick": {
-      "properties": {
-        "fired": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/AutomationView"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "title": "AutomationTick"
-    },
-    "AutomationView": {
-      "properties": {
-        "automation_id": {
-          "type": "string",
-          "title": "Automation Id"
-        },
-        "session_id": {
-          "type": "string",
-          "title": "Session Id"
-        },
-        "workspace": {
-          "type": "string",
-          "title": "Workspace"
-        },
-        "text": {
-          "type": "string",
-          "title": "Text"
-        },
-        "zone": {
-          "type": "string",
-          "title": "Zone"
-        },
-        "local": {
-          "type": "string",
-          "title": "Local"
-        },
-        "fold": {
-          "type": "integer",
-          "title": "Fold"
-        },
-        "due_ms": {
-          "type": "integer",
-          "title": "Due Ms"
-        },
-        "phase": {
-          "type": "string",
-          "enum": [
-            "scheduled",
-            "done",
-            "unknown"
-          ],
-          "title": "Phase"
-        },
-        "delivery_id": {
-          "type": "string",
-          "title": "Delivery Id",
-          "default": ""
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "automation_id",
-        "session_id",
-        "workspace",
-        "text",
-        "zone",
-        "local",
-        "fold",
-        "due_ms",
-        "phase"
-      ],
-      "title": "AutomationView"
-    },
     "BranchSession": {
       "properties": {
         "branch_id": {
@@ -2221,6 +2088,35 @@
       ],
       "title": "CredentialUpdate"
     },
+    "CronRule": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "cron",
+          "title": "Kind"
+        },
+        "expression": {
+          "type": "string",
+          "maxLength": 256,
+          "minLength": 1,
+          "title": "Expression"
+        },
+        "time_zone": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Time Zone"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "expression",
+        "time_zone"
+      ],
+      "title": "CronRule"
+    },
     "Decision": {
       "additionalProperties": false,
       "properties": {
@@ -3139,6 +3035,28 @@
       "title": "InterfacePreferences",
       "description": "Presentation fields keep the original client's public names."
     },
+    "IntervalRule": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "interval",
+          "title": "Kind"
+        },
+        "every_minutes": {
+          "type": "integer",
+          "maximum": 4223371679.0,
+          "minimum": 1.0,
+          "title": "Every Minutes"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "every_minutes"
+      ],
+      "title": "IntervalRule"
+    },
     "JsonValue": {},
     "Login": {
       "properties": {
@@ -3799,6 +3717,34 @@
         "phase"
       ],
       "title": "OAuthView"
+    },
+    "OnceRule": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "once",
+          "title": "Kind"
+        },
+        "at": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,3})?)?$",
+          "title": "At"
+        },
+        "time_zone": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Time Zone"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "at",
+        "time_zone"
+      ],
+      "title": "OnceRule"
     },
     "PluginCallRequest": {
       "properties": {
@@ -5175,6 +5121,41 @@
           "maxItems": 128,
           "title": "Excluded Tools"
         },
+        "schedule_id": {
+          "type": "string",
+          "title": "Schedule Id",
+          "default": ""
+        },
+        "schedule": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ScheduleInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schedule_now": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ScheduleNow"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "schedule_control": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ScheduleControl"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "model_scope": {
           "anyOf": [
             {
@@ -5495,6 +5476,433 @@
       "additionalProperties": false,
       "type": "object",
       "title": "RpcParams"
+    },
+    "ScheduleControl": {
+      "properties": {
+        "expected_generation": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Expected Generation"
+        },
+        "enabled": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Enabled"
+        },
+        "request_id": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{32})?$",
+          "title": "Request Id",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "expected_generation"
+      ],
+      "title": "ScheduleControl"
+    },
+    "ScheduleInput": {
+      "properties": {
+        "schedule_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Schedule Id"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Text"
+        },
+        "rule": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/IntervalRule"
+            },
+            {
+              "$ref": "#/components/schemas/OnceRule"
+            },
+            {
+              "$ref": "#/components/schemas/CronRule"
+            }
+          ],
+          "title": "Rule",
+          "discriminator": {
+            "propertyName": "kind",
+            "mapping": {
+              "cron": "#/components/schemas/CronRule",
+              "interval": "#/components/schemas/IntervalRule",
+              "once": "#/components/schemas/OnceRule"
+            }
+          }
+        },
+        "busy": {
+          "type": "string",
+          "enum": [
+            "queue",
+            "skip"
+          ],
+          "title": "Busy",
+          "default": "queue"
+        },
+        "missed": {
+          "type": "string",
+          "enum": [
+            "latest",
+            "skip"
+          ],
+          "title": "Missed",
+          "default": "latest"
+        },
+        "grace_minutes": {
+          "type": "integer",
+          "maximum": 10080.0,
+          "minimum": 0.0,
+          "title": "Grace Minutes",
+          "default": 10
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "maximum": 86400.0,
+          "minimum": 1.0,
+          "title": "Timeout Seconds",
+          "default": 600
+        },
+        "expected_generation": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Generation",
+          "default": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schedule_id",
+        "session_id",
+        "text",
+        "rule"
+      ],
+      "title": "ScheduleInput"
+    },
+    "ScheduleNow": {
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Operation Id"
+        },
+        "expected_generation": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Expected Generation"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "operation_id",
+        "expected_generation"
+      ],
+      "title": "ScheduleNow"
+    },
+    "ScheduleOutcome": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "started_at": {
+          "type": "integer",
+          "title": "Started At"
+        },
+        "finished_at": {
+          "type": "integer",
+          "title": "Finished At"
+        },
+        "scheduled_for": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scheduled For"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "done",
+            "unanswered",
+            "refused",
+            "cancelled",
+            "timed_out",
+            "skipped"
+          ],
+          "title": "Status"
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Detail"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "started_at",
+        "finished_at",
+        "status"
+      ],
+      "title": "ScheduleOutcome"
+    },
+    "ScheduleRun": {
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "started_at": {
+          "type": "integer",
+          "title": "Started At"
+        },
+        "deadline_at": {
+          "type": "integer",
+          "title": "Deadline At"
+        },
+        "scheduled_for": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Scheduled For"
+        },
+        "cancel_reason": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "cancelled",
+                "timed_out"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Cancel Reason"
+        },
+        "problem": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Problem"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "request_id",
+        "started_at",
+        "deadline_at"
+      ],
+      "title": "ScheduleRun"
+    },
+    "ScheduleView": {
+      "properties": {
+        "schedule_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Schedule Id"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8000,
+          "minLength": 1,
+          "title": "Text"
+        },
+        "rule": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/IntervalRule"
+            },
+            {
+              "$ref": "#/components/schemas/OnceRule"
+            },
+            {
+              "$ref": "#/components/schemas/CronRule"
+            }
+          ],
+          "title": "Rule",
+          "discriminator": {
+            "propertyName": "kind",
+            "mapping": {
+              "cron": "#/components/schemas/CronRule",
+              "interval": "#/components/schemas/IntervalRule",
+              "once": "#/components/schemas/OnceRule"
+            }
+          }
+        },
+        "busy": {
+          "type": "string",
+          "enum": [
+            "queue",
+            "skip"
+          ],
+          "title": "Busy",
+          "default": "queue"
+        },
+        "missed": {
+          "type": "string",
+          "enum": [
+            "latest",
+            "skip"
+          ],
+          "title": "Missed",
+          "default": "latest"
+        },
+        "grace_minutes": {
+          "type": "integer",
+          "maximum": 10080.0,
+          "minimum": 0.0,
+          "title": "Grace Minutes",
+          "default": 10
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "maximum": 86400.0,
+          "minimum": 1.0,
+          "title": "Timeout Seconds",
+          "default": 600
+        },
+        "expected_generation": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Generation",
+          "default": 0
+        },
+        "workspace": {
+          "type": "string",
+          "title": "Workspace"
+        },
+        "generation": {
+          "type": "integer",
+          "title": "Generation",
+          "default": 1
+        },
+        "enabled": {
+          "type": "boolean",
+          "title": "Enabled",
+          "default": true
+        },
+        "created_at": {
+          "type": "integer",
+          "title": "Created At"
+        },
+        "next_run_at": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Next Run At"
+        },
+        "pending": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ScheduleRun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "history": {
+          "items": {
+            "$ref": "#/components/schemas/ScheduleOutcome"
+          },
+          "type": "array",
+          "title": "History"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "schedule_id",
+        "session_id",
+        "text",
+        "rule",
+        "workspace",
+        "created_at",
+        "next_run_at"
+      ],
+      "title": "ScheduleView"
+    },
+    "SchedulesView": {
+      "properties": {
+        "path": {
+          "type": "string",
+          "title": "Path"
+        },
+        "tick_ms": {
+          "type": "integer",
+          "title": "Tick Ms",
+          "default": 5000
+        },
+        "schedules": {
+          "items": {
+            "$ref": "#/components/schemas/ScheduleView"
+          },
+          "type": "array",
+          "title": "Schedules"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "path",
+        "schedules"
+      ],
+      "title": "SchedulesView"
     },
     "ScopedModel": {
       "properties": {
@@ -7411,19 +7819,57 @@
       },
       "body": null
     },
-    "POST /api/v1/automations": {
+    "GET /api/v1/schedules": {
       "response": {
-        "$ref": "#/components/schemas/AutomationView"
-      },
-      "body": {
-        "$ref": "#/components/schemas/AutomationCreate"
-      }
-    },
-    "POST /api/v1/automations/tick": {
-      "response": {
-        "$ref": "#/components/schemas/AutomationTick"
+        "$ref": "#/components/schemas/SchedulesView"
       },
       "body": null
+    },
+    "POST /api/v1/schedules": {
+      "response": {
+        "$ref": "#/components/schemas/ScheduleView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ScheduleInput"
+      }
+    },
+    "POST /api/v1/schedules/tick": {
+      "response": {
+        "$ref": "#/components/schemas/SchedulesView"
+      },
+      "body": null
+    },
+    "POST /api/v1/schedules/{schedule_id}/run": {
+      "response": {
+        "$ref": "#/components/schemas/ScheduleView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ScheduleNow"
+      }
+    },
+    "POST /api/v1/schedules/{schedule_id}/enabled": {
+      "response": {
+        "$ref": "#/components/schemas/ScheduleView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ScheduleControl"
+      }
+    },
+    "POST /api/v1/schedules/{schedule_id}/cancel": {
+      "response": {
+        "$ref": "#/components/schemas/ScheduleView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ScheduleControl"
+      }
+    },
+    "POST /api/v1/schedules/{schedule_id}/remove": {
+      "response": {
+        "$ref": "#/components/schemas/ScheduleView"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ScheduleControl"
+      }
     },
     "POST /api/v1/sessions/{session}/workflows": {
       "response": {

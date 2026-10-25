@@ -70,32 +70,6 @@ export type Attachment = {
   "build_id": string;
 };
 
-export type AutomationCreate = {
-  "automation_id": string;
-  "session_id": string;
-  "text": string;
-  "zone": string;
-  "local": string;
-  "fold"?: number | null;
-};
-
-export type AutomationTick = {
-  "fired"?: AutomationView | null;
-};
-
-export type AutomationView = {
-  "automation_id": string;
-  "session_id": string;
-  "workspace": string;
-  "text": string;
-  "zone": string;
-  "local": string;
-  "fold": number;
-  "due_ms": number;
-  "phase": "scheduled" | "done" | "unknown";
-  "delivery_id"?: string;
-};
-
 export type BranchSession = {
   "branch_id"?: string;
   "request_id": string;
@@ -430,6 +404,12 @@ export type CredentialUpdate = {
   "api_key"?: string;
 };
 
+export type CronRule = {
+  "kind": "cron";
+  "expression": string;
+  "time_zone": string;
+};
+
 export type Decision = {
   "status": "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
   "answer"?: string;
@@ -612,6 +592,11 @@ export type InterfacePreferences = {
   "terminalSize"?: number;
 };
 
+export type IntervalRule = {
+  "kind": "interval";
+  "every_minutes": number;
+};
+
 export type JsonValue = unknown;
 
 export type Login = {
@@ -743,6 +728,12 @@ export type OAuthView = {
   "user_code"?: string;
   "expires_ms"?: number;
   "error"?: string;
+};
+
+export type OnceRule = {
+  "kind": "once";
+  "at": string;
+  "time_zone": string;
 };
 
 export type PluginCallRequest = {
@@ -1011,6 +1002,10 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "schedule_id"?: string;
+  "schedule"?: ScheduleInput | null;
+  "schedule_now"?: ScheduleNow | null;
+  "schedule_control"?: ScheduleControl | null;
   "model_scope"?: ModelScopeRequest | null;
   "code_run"?: CodeRun | null;
   "run_id"?: string;
@@ -1057,6 +1052,72 @@ export type RpcParams = {
   "arguments"?: Record<string, JsonValue>;
   "digest"?: string;
   "schema_digest"?: string;
+};
+
+export type ScheduleControl = {
+  "expected_generation": number;
+  "enabled"?: boolean | null;
+  "request_id"?: string;
+};
+
+export type ScheduleInput = {
+  "schedule_id": string;
+  "session_id": string;
+  "text": string;
+  "rule": IntervalRule | OnceRule | CronRule;
+  "busy"?: "queue" | "skip";
+  "missed"?: "latest" | "skip";
+  "grace_minutes"?: number;
+  "timeout_seconds"?: number;
+  "expected_generation"?: number;
+};
+
+export type ScheduleNow = {
+  "operation_id": string;
+  "expected_generation": number;
+};
+
+export type ScheduleOutcome = {
+  "request_id": string;
+  "started_at": number;
+  "finished_at": number;
+  "scheduled_for"?: number | null;
+  "status": "done" | "unanswered" | "refused" | "cancelled" | "timed_out" | "skipped";
+  "detail"?: string | null;
+};
+
+export type ScheduleRun = {
+  "request_id": string;
+  "started_at": number;
+  "deadline_at": number;
+  "scheduled_for"?: number | null;
+  "cancel_reason"?: "cancelled" | "timed_out" | null;
+  "problem"?: string | null;
+};
+
+export type ScheduleView = {
+  "schedule_id": string;
+  "session_id": string;
+  "text": string;
+  "rule": IntervalRule | OnceRule | CronRule;
+  "busy"?: "queue" | "skip";
+  "missed"?: "latest" | "skip";
+  "grace_minutes"?: number;
+  "timeout_seconds"?: number;
+  "expected_generation"?: number;
+  "workspace": string;
+  "generation"?: number;
+  "enabled"?: boolean;
+  "created_at": number;
+  "next_run_at": number | null;
+  "pending"?: ScheduleRun | null;
+  "history"?: Array<ScheduleOutcome>;
+};
+
+export type SchedulesView = {
+  "path": string;
+  "tick_ms"?: number;
+  "schedules": Array<ScheduleView>;
 };
 
 export type ScopedModel = {
@@ -1423,9 +1484,6 @@ export interface ApiModels {
   ArtifactView: ArtifactView;
   ArtifactWrite: ArtifactWrite;
   Attachment: Attachment;
-  AutomationCreate: AutomationCreate;
-  AutomationTick: AutomationTick;
-  AutomationView: AutomationView;
   BranchSession: BranchSession;
   CatalogModel: CatalogModel;
   CheckpointCreate: CheckpointCreate;
@@ -1471,6 +1529,7 @@ export interface ApiModels {
   ComputerWindow: ComputerWindow;
   CreateSession: CreateSession;
   CredentialUpdate: CredentialUpdate;
+  CronRule: CronRule;
   Decision: Decision;
   EffectHold: EffectHold;
   EffectResolution: EffectResolution;
@@ -1495,6 +1554,7 @@ export interface ApiModels {
   ImagePart: ImagePart;
   ImportResult: ImportResult;
   InterfacePreferences: InterfacePreferences;
+  IntervalRule: IntervalRule;
   JsonValue: JsonValue;
   Login: Login;
   McpCall: McpCall;
@@ -1515,6 +1575,7 @@ export interface ApiModels {
   OAuthInput: OAuthInput;
   OAuthStart: OAuthStart;
   OAuthView: OAuthView;
+  OnceRule: OnceRule;
   PluginCallRequest: PluginCallRequest;
   PluginCallView: PluginCallView;
   PluginDraft: PluginDraft;
@@ -1549,6 +1610,13 @@ export interface ApiModels {
   ResourceOptions: ResourceOptions;
   RpcCall: RpcCall;
   RpcParams: RpcParams;
+  ScheduleControl: ScheduleControl;
+  ScheduleInput: ScheduleInput;
+  ScheduleNow: ScheduleNow;
+  ScheduleOutcome: ScheduleOutcome;
+  ScheduleRun: ScheduleRun;
+  ScheduleView: ScheduleView;
+  SchedulesView: SchedulesView;
   ScopedModel: ScopedModel;
   SearchHit: SearchHit;
   SearchResults: SearchResults;
@@ -1607,8 +1675,21 @@ export interface HttpOperations {
 }; query: {
   "q"?: string;
 }; body: undefined };
-  "POST /api/v1/automations": { response: AutomationView; path: Record<string, unknown>; query: Record<string, unknown>; body: AutomationCreate };
-  "POST /api/v1/automations/tick": { response: AutomationTick; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
+  "GET /api/v1/schedules": { response: SchedulesView; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/schedules": { response: ScheduleView; path: Record<string, unknown>; query: Record<string, unknown>; body: ScheduleInput };
+  "POST /api/v1/schedules/tick": { response: SchedulesView; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/schedules/{schedule_id}/run": { response: ScheduleView; path: {
+  "schedule_id": string;
+}; query: Record<string, unknown>; body: ScheduleNow };
+  "POST /api/v1/schedules/{schedule_id}/enabled": { response: ScheduleView; path: {
+  "schedule_id": string;
+}; query: Record<string, unknown>; body: ScheduleControl };
+  "POST /api/v1/schedules/{schedule_id}/cancel": { response: ScheduleView; path: {
+  "schedule_id": string;
+}; query: Record<string, unknown>; body: ScheduleControl };
+  "POST /api/v1/schedules/{schedule_id}/remove": { response: ScheduleView; path: {
+  "schedule_id": string;
+}; query: Record<string, unknown>; body: ScheduleControl };
   "POST /api/v1/sessions/{session}/workflows": { response: WorkflowView; path: {
   "session": string;
 }; query: Record<string, unknown>; body: WorkflowOpen };

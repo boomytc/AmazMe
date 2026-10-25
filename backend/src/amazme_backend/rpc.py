@@ -53,6 +53,11 @@ from .contracts import (
     Receipt,
     ResourceOptions,
     RunOptions,
+    ScheduleControl,
+    ScheduleInput,
+    ScheduleNow,
+    SchedulesView,
+    ScheduleView,
     Session,
     SessionList,
     Snapshot,
@@ -75,6 +80,10 @@ from .workspace_files import FileContent
 
 
 class RpcParams(RunOptions):
+    schedule_id: str = ""
+    schedule: ScheduleInput | None = None
+    schedule_now: ScheduleNow | None = None
+    schedule_control: ScheduleControl | None = None
     model_scope: ModelScopeRequest | None = None
     code_run: CodeRun | None = None
     run_id: str = ""
@@ -192,6 +201,15 @@ class RpcHost(Protocol):
     async def remove_workspace(self, name: str) -> None: ...
 
     async def sessions(self) -> SessionList: ...
+
+    async def list_schedules(self) -> SchedulesView: ...
+
+    async def save_schedule(self, value: ScheduleInput) -> ScheduleView: ...
+
+    async def run_schedule(self, schedule_id: str, value: ScheduleNow) -> ScheduleView: ...
+
+    async def control_schedule(self, schedule_id: str, value: ScheduleControl,
+                               action: Literal["enabled", "cancel", "remove"]) -> ScheduleView: ...
 
     async def create_session(self, value: CreateSession) -> Session: ...
 
@@ -313,6 +331,21 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.computer_locate(session,params.computer_locate)
     if method == "computer.cleanup":
         return await owner.computer_cleanup(await _bound(owner, params))
+    if method == "schedule.list":
+        return await owner.list_schedules()
+    if method == "schedule.save":
+        if params.schedule is None:
+            raise BackendError("schedule_required")
+        return await owner.save_schedule(params.schedule)
+    if method == "schedule.run":
+        if not params.schedule_id or params.schedule_now is None:
+            raise BackendError("schedule_required")
+        return await owner.run_schedule(params.schedule_id, params.schedule_now)
+    if method in {"schedule.enabled", "schedule.cancel", "schedule.remove"}:
+        if not params.schedule_id or params.schedule_control is None:
+            raise BackendError("schedule_required")
+        action = "enabled" if method == "schedule.enabled" else "cancel" if method == "schedule.cancel" else "remove"
+        return await owner.control_schedule(params.schedule_id, params.schedule_control, action)
     if method == "model.scope":
         if params.model_scope is None:
             raise BackendError("model_scope_required")

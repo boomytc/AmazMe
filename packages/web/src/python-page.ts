@@ -11,7 +11,7 @@ import { collectPageElements, createRenderer, type PageRenderer } from "./render
 import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { seq, settled } from "./python-stream.ts";
@@ -26,6 +26,16 @@ const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 interface ImageDraft { readonly id: string; readonly name: string; readonly dataUrl: string; readonly bytes: number; readonly image: ImagePart }
 interface Draft { text: string; images: ImageDraft[] }
 interface ActiveTerminal { readonly connection: ClientConnection; readonly id: string; readonly queue: TerminalInputQueue; view: TerminalView; desiredSize?: { cols: number; rows: number }; resizing: boolean }
+
+function scheduleRecord(row: ScheduleView): P.ScheduleRecordLike {
+	return { id: row.schedule_id, generation: row.generation ?? 1, sessionId: row.session_id, conversationId: "1", prompt: row.text,
+		rule: row.rule.kind === "interval" ? { kind: "interval", everyMinutes: row.rule.every_minutes } : row.rule.kind === "once" ? { kind: "once", at: row.rule.at, timeZone: row.rule.time_zone } : { kind: "cron", expression: row.rule.expression, timeZone: row.rule.time_zone },
+		busy: row.busy ?? "queue", missed: row.missed ?? "latest", graceMinutes: row.grace_minutes ?? 10, timeoutSeconds: row.timeout_seconds ?? 600,
+		enabled: row.enabled ?? true, createdAt: row.created_at, nextRunAt: row.next_run_at,
+		pending: row.pending ? { deadlineAt: row.pending.deadline_at, cancelReason: row.pending.cancel_reason ?? null, problem: row.pending.problem ?? null } : null,
+		history: row.history?.map(item => ({ startedAt: item.started_at, finishedAt: item.finished_at, scheduledFor: item.scheduled_for ?? null, status: item.status, detail: item.detail ?? null })) ?? [],
+	};
+}
 
 /** The original DOM surface, driven by the Python HTTP and event boundary. */
 export class DesktopPage {
@@ -53,6 +63,8 @@ export class DesktopPage {
 	private historyConnection?: ClientConnection;
 	private historyLatestRevision = 0n;
 	private historyStarted = false;
+	private schedules?: SchedulesView;
+	private schedulesGeneration = 0;
 	private currentPanel = P.CHAT_VIEW;
 	private modal?: P.PanelModal;
 	private notice?: P.PanelNotice;
@@ -232,6 +244,7 @@ export class DesktopPage {
 			if (health.identity.profile_id !== connection.identity.profile_id) throw new Error("宿主身份已更换");
 			if (health.identity.host_epoch !== connection.identity.host_epoch || health.identity.build_id !== connection.identity.build_id) { await this.client.connect(connection.sessionId); return; }
 			this.ready = health.state === "ready";
+			if (this.currentPanel === P.AUTOMATION_VIEW) await this.loadSchedules();
 			this.render();
 		} catch (error) { if (connection.active()) this.error(error); }
 		finally { if (connection.active()) this.healthTimer = setTimeout(() => { void this.poll(connection); }, 3000); }
@@ -361,13 +374,14 @@ export class DesktopPage {
 			this.modalGeneration++;
 			clearTimeout(this.oauthTimer);
 		}
-		if (action.kind === "open") { this.currentPanel = action.panel; this.modal = undefined; this.render(); return; }
+		if (action.kind === "open") { this.currentPanel = action.panel; this.modal = undefined; this.render(); if (action.panel === P.AUTOMATION_VIEW) { await this.loadSchedules(); this.render(); } return; }
 		if (action.kind === "modal-close") { this.modal = undefined; this.render(); return; }
 		const id = action.id, data = action.data;
 		const fields = action.kind === "modal-submit" ? action.fields : {};
 		const value = action.kind === "control" ? action.value : data ?? "";
 		if (await this.managementAction(id, data, fields)) return;
 		if (await this.skillAction(action)) return;
+		if (await this.scheduleAction(action)) return;
 		if (id === A.HISTORY_MORE_ACTION || id === A.TRANSCRIPT_SEARCH_ACTION) {
 			await this.loadHistory(this.requireConnection(), true, id === A.TRANSCRIPT_SEARCH_ACTION);
 			if (id === A.TRANSCRIPT_SEARCH_ACTION) this.renderer.refreshTranscriptSearch();
@@ -563,6 +577,63 @@ export class DesktopPage {
 			if (current() && generation === this.resourceGeneration) { this.resources = resources; this.modal = undefined; }
 		} finally { if (this.pendingModal === modal) this.pendingModal = undefined; if (navigation === this.navigationGeneration) this.render(); }
 		return true;
+	}
+	private async loadSchedules(): Promise<void> {
+		const generation = ++this.schedulesGeneration, identity = this.client.identity;
+		const state = await this.client.call("GET /api/v1/schedules", { identity });
+		if (generation === this.schedulesGeneration && identity === this.client.identity) this.schedules = state;
+	}
+	private async scheduleAction(action: P.PanelAction): Promise<boolean> {
+		if (action.kind === "open" || action.kind === "modal-close") return false;
+		const { id, data } = action, fields = action.kind === "modal-submit" ? action.fields : {};
+		const row = this.schedules?.schedules.find(item => item.schedule_id === data), modal = this.modal;
+		if (id === A.SCHEDULE_RELOAD_ACTION) { await this.loadSchedules(); this.render(); return true; }
+		if (id === A.SCHEDULE_ADD_ACTION) {
+			const connection = this.requireConnection(), pending = this.ledger(connection).read("schedule:create", "POST /api/v1/schedules");
+			this.modal = P.addScheduleModal(this.locale, connection.sessionId, "1", pending?.body.schedule_id ?? newId());
+			if (pending) {
+				const body = pending.body, rule = body.rule;
+				const values: Readonly<Record<string, string>> = { prompt: body.text, kind: rule.kind, everyMinutes: rule.kind === "interval" ? String(rule.every_minutes) : "15", at: rule.kind === "once" ? rule.at : "", expression: rule.kind === "cron" ? rule.expression : "", timeZone: rule.kind === "interval" ? "" : rule.time_zone, busy: body.busy ?? "queue", missed: body.missed ?? "latest", graceMinutes: String(body.grace_minutes ?? 10), timeoutSeconds: String(body.timeout_seconds ?? 600) };
+				this.modal = { ...this.modal, notice: { tone: "info", text: "上次创建尚待确认；本次提交沿用原编号和输入。" }, fields: this.modal.fields.map(field => ({ ...field, value: values[field.id] ?? field.value, readOnly: true })) };
+			}
+			this.render(); return true;
+		}
+		if ([A.SCHEDULE_EDIT_ACTION, A.SCHEDULE_REMOVE_ACTION, A.SCHEDULE_HISTORY_ACTION].includes(id)) {
+			if (!row) throw new Error("定时计划不存在");
+			const record = scheduleRecord(row);
+			this.modal = id === A.SCHEDULE_EDIT_ACTION ? P.editScheduleModal(this.locale, record) : id === A.SCHEDULE_REMOVE_ACTION ? P.removeScheduleModal(this.locale, row.schedule_id) : P.scheduleHistoryModal(this.locale, record);
+			if (id === A.SCHEDULE_REMOVE_ACTION) this.modal = { ...this.modal, data: JSON.stringify({ id: row.schedule_id, generation: row.generation, request_id: row.pending?.request_id ?? "" }) };
+			this.render(); return true;
+		}
+		if (id === A.SCHEDULE_HISTORY_MODAL) { this.modal = undefined; this.render(); return true; }
+		if (id === A.SCHEDULE_ADD_MODAL) {
+			if (modal?.id !== id || modal.data !== data) return true;
+			const target: unknown = JSON.parse(data ?? "null");
+			if (!isRecord(target) || typeof target.id !== "string" || typeof target.sessionId !== "string") throw new Error("定时计划归属损坏");
+			const scheduleId = target.id, sessionId = target.sessionId;
+			const kind = fields.kind;
+			const rule: ScheduleInput["rule"] = kind === "interval" ? { kind, every_minutes: Number(fields.everyMinutes) } : kind === "once" ? { kind, at: fields.at ?? "", time_zone: fields.timeZone ?? "" } : { kind: "cron", expression: fields.expression ?? "", time_zone: fields.timeZone ?? "" };
+			if (fields.busy !== "queue" && fields.busy !== "skip" || fields.missed !== "latest" && fields.missed !== "skip") throw new Error("请选择运行策略");
+			const body: ScheduleInput = { schedule_id: scheduleId, session_id: sessionId, text: fields.prompt ?? "", rule, busy: fields.busy, missed: fields.missed, grace_minutes: Number(fields.graceMinutes), timeout_seconds: Number(fields.timeoutSeconds), expected_generation: typeof target.expectedGeneration === "number" ? target.expectedGeneration : 0 };
+			await this.client.withSession(sessionId, connection => {
+				const ledger = this.ledger(connection), key = body.expected_generation ? `schedule:save:${scheduleId}` : "schedule:create";
+				return ledger.send(key, ledger.prepare(key, "POST /api/v1/schedules", () => ({ path: {}, body })), this.client, connection);
+			});
+		} else if (id === A.SCHEDULE_REMOVE_MODAL) {
+			if (modal?.id !== id || modal.data !== data) return true;
+			const target: unknown = JSON.parse(data ?? "null");
+			if (!isRecord(target) || typeof target.id !== "string" || typeof target.generation !== "number" || typeof target.request_id !== "string") throw new Error("定时计划归属损坏");
+			await this.client.call("POST /api/v1/schedules/{schedule_id}/remove", { path: { schedule_id: target.id }, body: { expected_generation: target.generation, request_id: target.request_id } });
+		} else if ([A.SCHEDULE_RUN_ACTION, A.SCHEDULE_CANCEL_ACTION, A.SCHEDULE_ENABLED_ACTION].includes(id)) {
+			if (!row) throw new Error("定时计划不存在");
+			if (id === A.SCHEDULE_RUN_ACTION) await this.client.withSession(row.session_id, connection => {
+				const ledger = this.ledger(connection), key = `schedule:run:${row.schedule_id}`;
+				return ledger.send(key, ledger.prepare(key, "POST /api/v1/schedules/{schedule_id}/run", operationId => ({ path: { schedule_id: row.schedule_id }, body: { operation_id: operationId, expected_generation: row.generation ?? 1 } })), this.client, connection);
+			});
+			else if (id === A.SCHEDULE_CANCEL_ACTION) await this.client.call("POST /api/v1/schedules/{schedule_id}/cancel", { path: { schedule_id: row.schedule_id }, body: { expected_generation: row.generation ?? 1, request_id: row.pending?.request_id ?? "" } });
+			else await this.client.call("POST /api/v1/schedules/{schedule_id}/enabled", { path: { schedule_id: row.schedule_id }, body: { expected_generation: row.generation ?? 1, enabled: action.kind === "control" && action.value === "true" } });
+		} else return false;
+		await this.loadSchedules(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
 	}
 	private latestTranscriptRevision(connection: ClientConnection): bigint {
 		return (connection.snapshot?.requests ?? []).filter(row => row.kind === "root").reduce((latest, row) => {
@@ -762,6 +833,7 @@ export class DesktopPage {
 		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, projects: this.projects, selectedProject: this.selectedProject, expandedProjects: this.expandedProjects, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
+				automation: { state: this.schedules ? { path: this.schedules.path, tickMs: this.schedules.tick_ms ?? 5000, schedules: this.schedules.schedules.map(scheduleRecord) } : undefined, sessionId: connection?.sessionId },
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
 			}), connections: this.connections(), mode: this.mode, usage: this.usage, history: this.history, historyLoading: this.historyLoading,

@@ -1354,7 +1354,7 @@ export function mcpProjectModal(locale: Locale, server: { readonly name: string;
 /**
  * The modal a plan-a-prompt action opens: the text the host will send, and the gap between runs.
  */
-export function addScheduleModal(locale: Locale, sessionId: string, conversationId = "1", id = crypto.randomUUID()): PanelModal {
+export function addScheduleModal(locale: Locale, sessionId: string, conversationId = "1", id: string = crypto.randomUUID()): PanelModal {
 	return scheduleModal(locale, { id, sessionId, conversationId });
 }
 

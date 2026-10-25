@@ -1611,12 +1611,12 @@ function startClient() {
     if (!selected || !identity || health?.state !== "ready") return;
     automationId = automationId || crypto.randomUUID().replaceAll("-", "");
     try {
-      const view = await api("/api/v1/automations", "POST", {
-        automation_id: automationId, session_id: selected, text: $("automation-text").value,
-        zone: $("automation-zone").value, local: $("automation-local").value,
+      const view = await api("/api/v1/schedules", "POST", {
+        schedule_id: automationId, session_id: selected, text: $("automation-text").value,
+        rule: {kind: "once", time_zone: $("automation-zone").value, at: $("automation-local").value},
       }, connection);
       if (!operation.active()) return;
-      $("automation-state").textContent = `${view.phase} · ${view.due_ms}`;
+      $("automation-state").textContent = `${view.enabled ? "scheduled" : "paused"} · ${view.next_run_at}`;
       $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }
   };
@@ -1625,9 +1625,9 @@ function startClient() {
     if (!operation) return;
     const {connection, session:selected, identity} = operation;
     try {
-      const tick = await api("/api/v1/automations/tick", "POST", {}, connection);
+      const tick = await api("/api/v1/schedules/tick", "POST", {}, connection);
       if (!operation.active()) return;
-      $("automation-state").textContent = tick.fired ? `${tick.fired.phase} · ${tick.fired.delivery_id}` : "没有到期任务";
+      $("automation-state").textContent = JSON.stringify(tick.schedules);
       $("error").textContent = "";
     } catch (failure) { if (operation.active()) error(failure); }
   };

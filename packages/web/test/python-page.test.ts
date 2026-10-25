@@ -6,11 +6,14 @@ import { afterEach, expect, test, vi } from "vitest";
 import { DesktopPage } from "../src/python-page.ts";
 import type { Submit } from "../src/python-contracts.ts";
 import { parseContract } from "../src/python-api.ts";
+import * as A from "../src/actions.ts";
+import * as P from "../src/panels.ts";
 
 let page: DesktopPage | undefined;
 afterEach(() => { page?.dispose(); page = undefined; sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 async function startPage(extra?: (path: string, options: RequestInit, query: URLSearchParams) => Response | undefined | Promise<Response | undefined>): Promise<{ page: DesktopPage; submitted: Submit[] }> {
+ history.replaceState(null, "", "/");
  const html = readFileSync(resolve("src/page/index.html"), "utf8");
  document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.lastIndexOf("</body>")).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
  const submitted: Submit[] = [];
@@ -52,7 +55,7 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
  const connection = page.client.connection;
  if (!connection) throw new Error("Session was not attached");
  connection.ready = true;
- connection.snapshot = { session_id: "a", stream_id: "stream", seq: "0", state: "ready", requests: [], events: [] };
+ connection.snapshot = { session_id: connection.sessionId, stream_id: "stream", seq: "0", state: "ready", requests: [], events: [] };
  page.client.onChange();
  return { page, submitted };
 }
@@ -71,6 +74,53 @@ test("a submission captures the displayed model, retries the same request, and p
  await vi.waitFor(() => expect(submitted).toHaveLength(2));
  expect(submitted[1]).toEqual(submitted[0]);
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
+});
+
+test("schedule creation retains its original session, ID and input after a lost receipt, and cannot close a newer dialog", async () => {
+ const session = "a".repeat(32), saved: Array<import("../src/python-contracts.ts").ScheduleInput> = [];
+ let finish: (response: Response) => void = () => { throw new Error("retry not started"); };
+ let records: unknown[] = [];
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/sessions") return response({ sessions: [{ session_id: session, title: "A", workspace: "primary" }] });
+  if (path.endsWith("/attachments")) return response({ attachment_id: "attachment", session_id: session, host_epoch: 1, build_id: "build" });
+  if (path.startsWith("/api/v1/session-models/")) return response({ code: "session_model_missing" }, 404);
+  if (path.endsWith("/history")) return response({ session_id: session, requests: [], events: [] });
+  if (path.endsWith("/usage")) return response({ session_id: session });
+  if (path === "/api/v1/schedules") {
+   if (options.method !== "POST") return response({ path: "/profile/host.sqlite", schedules: records });
+   saved.push(parseContract("ScheduleInput", JSON.parse(String(options.body))));
+   if (saved.length === 1) return response({ code: "receipt_lost" }, 503);
+   return new Promise<Response>(resolve => { finish = resolve; });
+  }
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "open", panel: P.AUTOMATION_VIEW });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.panel?.id).toBe(P.AUTOMATION_VIEW));
+ page.renderer.onPanelAction({ kind: "command", id: A.SCHEDULE_ADD_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(A.SCHEDULE_ADD_MODAL));
+ const original = page.renderer.view?.panel.modal;
+ if (!original) throw new Error("schedule dialog missing");
+ const fields = { prompt: "original", kind: "interval", everyMinutes: "3", at: "", expression: "", timeZone: "UTC", busy: "queue", missed: "latest", graceMinutes: "10", timeoutSeconds: "600" };
+ page.renderer.onPanelAction({ kind: "modal-submit", id: original.id, data: original.data, fields });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.notice?.text).toContain("receipt_lost"));
+ page.renderer.onPanelAction({ kind: "modal-close" });
+ page.renderer.onPanelAction({ kind: "command", id: A.SCHEDULE_ADD_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(A.SCHEDULE_ADD_MODAL));
+ const retry = page.renderer.view?.panel.modal;
+ expect(retry?.data).toBe(original.data);
+ expect(retry?.fields.find(field => field.id === "prompt")?.value).toBe("original");
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.SCHEDULE_ADD_MODAL, data: retry?.data, fields: { ...fields, prompt: "changed" } });
+ await vi.waitFor(() => expect(saved).toHaveLength(2));
+ expect(saved[0].session_id).toBe(session);
+ expect(saved[1]).toEqual(saved[0]);
+ page.renderer.onPanelAction({ kind: "command", id: "skills:new", data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe("skills:create"));
+ const record = { ...saved[0], workspace: "primary", generation: 1, enabled: true, created_at: 1000, next_run_at: 181000 };
+ records = [record]; finish(response(record));
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe("skills:create"));
+ await vi.waitFor(() => expect(sessionStorage.getItem(`amazme:write:host:${session}:schedule:create`)).toBeNull());
+ expect(page.renderer.view?.panel.modal?.id).toBe("skills:create");
 });
 
 

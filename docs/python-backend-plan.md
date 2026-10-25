@@ -76,6 +76,11 @@ PID 必须结合出生身份和归属核对；身份不明不发信号，不按�
 WebSocket 的 attachment、ACK、有界重放、快照重同步保留。客户端断线不取消已接纳工作。
 原生执行契约通过 Pydantic 生成 OpenAPI/事件 schema/TS 声明，消费者同一阶段修改，禁止保留两套含义。
 
+定时计划沿原客户端的 interval、once、五字段 cron、IANA 时区、busy/missed 策略和超时规则。
+`/api/v1/schedules`、`schedule.*` RPC 和 Python SDK 共用 Host SQLite 计划与投递事务；不另起调度宿主。
+每次运行先持久化原 ID、模型配置、目标会话和截止时间；失联后只核对原运行，不重放未知效果。
+unknown 暂停计划，原任务及子任务的进程和效果完成核对后才能收回；手动取消和删除不能把取消回执视为退出证明。
+
 ## 实施与验收
 
 | 阶段 | 交付 | 运行验收 |
