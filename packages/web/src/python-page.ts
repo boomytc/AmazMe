@@ -529,4 +529,3 @@ export class DesktopPage {
 	}
 	dispose(): void { clearTimeout(this.healthTimer); clearTimeout(this.oauthTimer); clearTimeout(this.terminalTimer); this.client.retire(); }
 }
-

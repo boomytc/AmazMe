@@ -53,7 +53,7 @@ def boot_script(manifest: dict[str, object]) -> str:
 def page_content_security_policy(source: str, html: str = "", style_nonce: str = "") -> str:
     digest = base64.b64encode(hashlib.sha256(source.encode()).digest()).decode()
     scripts = [f"'sha256-{digest}'"]
-    styles = []
+    styles: list[str] = []
     if style_nonce:
         styles.append(f"'nonce-{style_nonce}'")
     for tag, content in re.findall(r"<(script|style)(?:\s[^>]*)?>(.*?)</\1>", html, re.DOTALL):
