@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, SecretStr, TypeAdapter
 
 from . import mcp_management, plugin_packages, schedules
-from .accounts import AccountStore, AccountsView, ApiKeyCredential
+from .accounts import AccountDocument, AccountStore, AccountsView, ApiKeyCredential, select_model
 from .artifacts import (
     ArtifactBody,
     ArtifactList,
@@ -94,6 +94,7 @@ from .contracts import (
     ComputerToolRequest,
     ComputerToolResult,
     ComputerWindow,
+    ConfigureProvider,
     CreateSession,
     CredentialUpdate,
     EffectResolution,
@@ -159,6 +160,7 @@ from .contracts import (
     ProjectUpdate,
     ProjectView,
     ProjectWrite,
+    ProviderConfigured,
     Receipt,
     Recovery,
     ReloadPlugin,
@@ -230,7 +232,7 @@ from .oauth import Login as OAuthLogin
 from .page_boot import boot_document, frontend_directory
 from .plugin_run import entry_digest
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
-from .providers import CATALOG, choose_model, public_settings, selected_provider, summarize
+from .providers import CATALOG, checked_model_endpoint, choose_model, public_settings, summarize
 from .remote_session import daemon_identity
 from .resources import ResourceCatalog, session_resources
 from .rpc import RpcCall, handle_rpc
@@ -1153,7 +1155,38 @@ class Host:
     def model_catalog(self) -> ModelCatalog:
         self._admit()
         self.profile.reload_provider()
-        return ModelCatalog(models=list(CATALOG), current=self._published_model())
+        document = self.accounts.read()
+        definitions = {item.provider: item for item in self.accounts.provider_definitions(document)}
+        models: list[CatalogModel] = []
+        for item in CATALOG:
+            definition = definitions.get(item.provider)
+            if definition and definition.model_ids is not None and item.model not in definition.model_ids:
+                continue
+            models.append(item.model_copy(update={"base_url": definition.base_url, "api": definition.api}) if definition else item)
+        for definition in definitions.values():
+            for name in definition.model_ids or []:
+                if not any(item.provider == definition.provider and item.model == name for item in models):
+                    models.append(CatalogModel(provider=definition.provider, model=name, label=f"{definition.name} · {name}",
+                        api=definition.api, base_url=definition.base_url, endpoint_editable=True))
+        current = self._published_model(document)
+        if not any(item.provider == current.provider and item.model == current.model for item in models):
+            models.append(CatalogModel(provider=current.provider, model=current.model, label=current.model,
+                api=current.api, base_url=current.base_url, endpoint_editable=True))
+        return ModelCatalog(models=models, current=current, providers=list(definitions.values()), configuration_revision=document.configuration_revision)
+
+    async def configure_provider(self, value: ConfigureProvider) -> ProviderConfigured:
+        self._admit()
+        if value.provider == "faux" or not value.model_ids and not any(item.provider == value.provider for item in CATALOG):
+            raise BackendError("provider_models_required")
+        if value.api not in {"openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"}:
+            raise BackendError("provider_configuration_readonly")
+        checked_model_endpoint(value.base_url)
+        async with self.provider_lock:
+            self.profile.reload_provider()
+            if value.operation_id not in self.accounts.read().configuration_receipts:
+                if value.provider == self.profile.config.provider.provider and value.model_ids is not None and self.profile.config.provider.model not in value.model_ids:
+                    raise BackendError("default_model_not_available")
+            return await self.accounts.configure_provider(value, self._account_write_guard)
 
     def model_scope(self, value: ModelScopeRequest) -> ModelScope:
         from .model_scope import resolve_scope
@@ -1176,13 +1209,16 @@ class Host:
             raise BackendError("update_frozen", status=503)
         return await self.store.save_session_model(value)
 
-    def _published_model(self) -> ModelSettings:
-        document = self.accounts.read()
+    def _published_model(self, document: AccountDocument | None = None) -> ModelSettings:
+        document = document if document is not None else self.accounts.read()
         credential = document.credentials.get(self.profile.config.provider.provider)
+        transport = document.transports.get(self.profile.config.provider.provider)
         key = credential.key if isinstance(credential, ApiKeyCredential) else (
             credential.access if credential is not None else SecretStr(""))
-        configured = self.profile.config.provider.model_copy(update={"api_key": key,
-            "auth_type": credential.type if credential is not None else "api_key"})
+        configured = select_model(self.profile.config.provider, None, document.transports).model_copy(update={"api_key": key,
+            "auth_type": credential.type if credential is not None else "api_key",
+            "proxy": transport.proxy if transport else self.profile.config.provider.proxy,
+            "headers": transport.headers if transport else self.profile.config.provider.headers})
         return public_settings(configured, document.revision)
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
@@ -1194,7 +1230,8 @@ class Host:
             await self.accounts.ensure(self._account_write_guard)
             target = self.profile.config.provider.model_copy(update={"provider": value.provider})
             target = await self.accounts.configured(target)
-            chosen = choose_model(target, value)
+            requested = value.model_copy(update={key: getattr(target, key) for key in ("proxy", "headers", "max_tokens") if key not in value.model_fields_set})
+            chosen = choose_model(target, requested)
             # Credential refresh may have awaited network I/O; recheck freeze before saving settings.
             await self._account_write_guard()
             await self.accounts.save_transport(chosen, self._account_write_guard)
@@ -1573,7 +1610,7 @@ class Host:
                     elif due and record.enabled and record.next_run_at is not None and record.next_run_at <= now:
                         busy = record.busy == "skip" and await self._schedule_busy(record)
                         await self.store.transaction(lambda db: schedules.claim(db, record.schedule_id, now,
-                            self.profile.config.provider, self._provider_secret(), busy=busy))
+                            self.profile.config.provider, self._provider_secret(), busy=busy, transports=self.accounts.read().transports))
                 except BackendError as error:
                     if error.code not in {"schedule_not_found", "schedule_running_capacity", "delivery_capacity"}:
                         raise
@@ -1587,7 +1624,7 @@ class Host:
             self.profile.reload_provider()
             return await self.store.transaction(lambda db: schedules.claim(db, schedule_id, time.time_ns() // 1_000_000,
                 self.profile.config.provider, self._provider_secret(), operation_id=value.operation_id,
-                generation=value.expected_generation, busy=busy))
+                generation=value.expected_generation, busy=busy, transports=self.accounts.read().transports))
 
     async def control_schedule(self, schedule_id: str, value: ScheduleControl, action: Literal["enabled", "cancel", "remove"]) -> ScheduleView:
         self._admit()
@@ -1681,7 +1718,7 @@ class Host:
         if not existing and not await self._grant_allows_new_work(session):
             raise BackendError("workspace_not_found", status=404)
         choice = await self.store.session_model(session)
-        captured = selected_provider(self.profile.config.provider, choice) if not existing else None
+        captured = select_model(self.profile.config.provider, choice, self.accounts.read().transports) if not existing else None
         return await self._with_session(
             session, lambda store: store.open_workflow(value.workflow_id, value.check, value.correction_limit,
                                                        accepted_config=captured))
@@ -2683,7 +2720,7 @@ class Host:
     async def deliver(self, session: str, kind: Literal["submit", "cancel", "approval", "resolve"], key: str, value: Model) -> Receipt:
         self._admit()
         self.profile.reload_provider()
-        delivery = await self.store.enqueue(session, kind, key, value, provider=self.profile.config.provider)
+        delivery = await self.store.enqueue(session, kind, key, value, provider=self.profile.config.provider, transports=self.accounts.read().transports)
         if delivery.state == "rejected":
             raise BackendError(delivery.error_code, status=delivery.error_status)
         if delivery.receipt is not None:
@@ -2708,7 +2745,7 @@ class Host:
     async def _dispatch(self, delivery: Delivery) -> Delivery:
         self._admit()
         self.profile.reload_provider()
-        delivery = await self.store.pin_delivery_provider(delivery.delivery_id, self.profile.config.provider)
+        delivery = await self.store.pin_delivery_provider(delivery.delivery_id, self.profile.config.provider, self.accounts.read().transports)
         peer = await self.worker(delivery.session_id)
         expected_request = ""
         try:
@@ -3491,6 +3528,12 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/models")
     async def models() -> ModelCatalog:
         return owner.model_catalog()
+
+    @app.put("/api/v1/providers/{provider}")
+    async def configure_provider(provider: str, value: ConfigureProvider) -> ProviderConfigured:
+        if provider != value.provider:
+            raise BackendError("provider_mismatch")
+        return await owner.configure_provider(value)
 
     @app.post("/api/v1/models/scope")
     async def model_scope(value: ModelScopeRequest) -> ModelScope:

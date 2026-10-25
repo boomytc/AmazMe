@@ -12,6 +12,7 @@ from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from .accounts import ProviderTransport
 from .contracts import (
     BackendError,
     CronRule,
@@ -223,7 +224,8 @@ def finish(db: sqlite3.Connection, record: ScheduleView, outcome: ScheduleOutcom
 
 
 def claim(db: sqlite3.Connection, schedule_id: str, now: int, provider: ProviderConfig,
-          secrets: tuple[str, ...], *, operation_id: str = "", generation: int = 0, busy: bool = False) -> ScheduleView:
+          secrets: tuple[str, ...], *, operation_id: str = "", generation: int = 0, busy: bool = False,
+          transports: dict[str, ProviderTransport] | None = None) -> ScheduleView:
     check_open(db)
     record = load(db, schedule_id)
     occurrence = None if operation_id else latest_due(record.rule, record.next_run_at or now, now)
@@ -260,7 +262,7 @@ def claim(db: sqlite3.Connection, schedule_id: str, now: int, provider: Provider
     value = Submit(request_id=request_id, text=record.text)
     payload = value.model_dump_json()
     identity = hashlib.sha256(json.dumps([record.session_id, "submit", request_id]).encode()).hexdigest()
-    configured = delivery_provider(db, record.session_id, value, provider)
+    configured = delivery_provider(db, record.session_id, value, provider, transports)
     db.execute("INSERT INTO deliveries(id,session,kind,digest,payload,provider) VALUES(?,?,?,?,?,?)",
                (identity, record.session_id, "submit", hashlib.sha256(payload.encode()).hexdigest(), payload, configured))
     db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (now, record.session_id))

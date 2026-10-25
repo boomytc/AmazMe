@@ -8,6 +8,7 @@ from typing import Literal
 
 from pydantic import ValidationError
 
+from .accounts import ProviderTransport, select_model
 from .contracts import (
     ApprovalDecision,
     BackendError,
@@ -35,7 +36,6 @@ from .contracts import (
     WorkerInfo,
     WriteFile,
 )
-from .providers import selected_provider
 from .storage import Database
 
 
@@ -59,7 +59,8 @@ def grant_present(db: sqlite3.Connection, workspace: str) -> bool:
     return row is not None
 
 
-def delivery_provider(db: sqlite3.Connection, session: str, value: Submit, provider: ProviderConfig) -> str:
+def delivery_provider(db: sqlite3.Connection, session: str, value: Submit, provider: ProviderConfig,
+                      transports: dict[str, ProviderTransport] | None = None) -> str:
     if value.mode == "steer":
         return ""
     selection = value.model_selection
@@ -67,7 +68,7 @@ def delivery_provider(db: sqlite3.Connection, session: str, value: Submit, provi
         chosen = db.execute("SELECT provider,model FROM session_models WHERE session=?", (session,)).fetchone()
         if chosen is not None:
             selection = ModelSelection(provider=str(chosen[0]), model=str(chosen[1]))
-    captured = selected_provider(provider, selection)
+    captured = select_model(provider, selection, transports or {})
     db.execute("INSERT INTO session_models(session,provider,model) VALUES(?,?,?) "
         "ON CONFLICT(session) DO UPDATE SET provider=excluded.provider,model=excluded.model",
         (session, captured.provider, captured.model))
@@ -522,7 +523,8 @@ class HostStore:
         return value
 
     async def enqueue(self, session: str, kind: Literal["submit", "cancel", "approval", "resolve"],
-                      key: str, value: Model, *, provider: ProviderConfig | None = None) -> Delivery:
+                      key: str, value: Model, *, provider: ProviderConfig | None = None,
+                      transports: dict[str, ProviderTransport] | None = None) -> Delivery:
         payload = value.model_dump_json()
         digest = hashlib.sha256(payload.encode()).hexdigest()
         identity = hashlib.sha256(json.dumps([session, kind, key]).encode()).hexdigest()
@@ -545,14 +547,15 @@ class HostStore:
                 raise BackendError("delivery_capacity", status=429)
             configured = ""
             if isinstance(value, Submit) and provider is not None:
-                configured = delivery_provider(db, session, value, provider)
+                configured = delivery_provider(db, session, value, provider, transports)
             db.execute("INSERT INTO deliveries(id,session,kind,digest,payload,provider) VALUES(?,?,?,?,?,?)",
                        (identity, session, kind, digest, payload, configured))
             db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (time.time_ns() // 1_000_000, session))
             return self._delivery(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())
         return await self.transaction(operation)
 
-    async def pin_delivery_provider(self, identity: str, provider: ProviderConfig) -> Delivery:
+    async def pin_delivery_provider(self, identity: str, provider: ProviderConfig,
+                                    transports: dict[str, ProviderTransport] | None = None) -> Delivery:
         """Scheduled deliveries reserve their model before starting any worker."""
         def operation(db: sqlite3.Connection) -> Delivery:
             row = db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone()
@@ -560,7 +563,7 @@ class HostStore:
                 raise BackendError("delivery_not_found")
             if row["kind"] == "submit" and row["state"] == "pending" and not row["provider"]:
                 value = Submit.model_validate_json(row["payload"])
-                captured = delivery_provider(db, str(row["session"]), value, provider)
+                captured = delivery_provider(db, str(row["session"]), value, provider, transports)
                 db.execute("UPDATE deliveries SET provider=? WHERE id=? AND provider=''", (captured, identity))
             return self._delivery(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())
         return await self.transaction(operation)

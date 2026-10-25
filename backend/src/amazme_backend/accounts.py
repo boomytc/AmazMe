@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -17,7 +18,17 @@ import httpx
 from pydantic import Field, SecretStr
 
 from .common import private_write
-from .contracts import BackendError, Model, ProfileConfig, ProviderConfig
+from .contracts import (
+    BackendError,
+    ConfigureProvider,
+    Model,
+    ModelSelection,
+    ProfileConfig,
+    ProviderApi,
+    ProviderConfig,
+    ProviderConfigured,
+    ProviderDefinition,
+)
 from .oauth import OAuthCredential, OAuthStart, OAuthView, refresh
 
 
@@ -40,6 +51,28 @@ class LoginRecord(Model):
 class ProviderTransport(Model):
     proxy: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
+    name: str = ""
+    base_url: str = ""
+    api: ProviderApi | None = None
+    model_ids: list[str] | None = None
+
+
+def select_model(config: ProviderConfig, selection: ModelSelection | None, transports: dict[str, ProviderTransport]) -> ProviderConfig:
+    """Resolve a provider definition before admission; credential refresh cannot change this endpoint."""
+    from .providers import selected_provider, stored_provider
+
+    selected = selection or ModelSelection(provider=config.provider, model=config.model)
+    transport = transports.get(selected.provider)
+    if transport and transport.model_ids is not None:
+        if selected.model not in transport.model_ids:
+            raise BackendError("model_not_available")
+        chosen = stored_provider(config.model_copy(update={"provider": selected.provider, "model": selected.model}))
+    else:
+        chosen = selected_provider(config, selected)
+    if transport:
+        chosen = chosen.model_copy(update={**({"base_url": transport.base_url} if transport.base_url else {}),
+            **({"api": transport.api} if transport.api else {})})
+    return chosen
 
 
 class AccountDocument(Model):
@@ -49,6 +82,8 @@ class AccountDocument(Model):
     uncertain_refresh: list[str] = Field(default_factory=list)
     logins: dict[str, LoginRecord] = Field(default_factory=dict)
     transports: dict[str, ProviderTransport] = Field(default_factory=dict)
+    configuration_receipts: dict[str, ConfigurationReceipt] = Field(default_factory=dict)
+    configuration_revision: int = 0
 
 
 class AccountInfo(Model):
@@ -61,6 +96,11 @@ class AccountInfo(Model):
 class AccountsView(Model):
     revision: int
     accounts: list[AccountInfo]
+
+
+class ConfigurationReceipt(Model):
+    digest: str
+    view: ProviderConfigured
 
 
 class AccountStore:
@@ -91,7 +131,9 @@ class AccountStore:
                "credentials": {provider: credential.storage() for provider, credential in value.credentials.items()},
                "uncertain_refresh": value.uncertain_refresh,
                "logins": {key: row.model_dump(mode="json") for key, row in value.logins.items()},
-               "transports": {key: row.model_dump() for key, row in value.transports.items()}}
+               "transports": {key: row.model_dump() for key, row in value.transports.items()},
+               "configuration_revision": value.configuration_revision,
+               "configuration_receipts": {key: row.model_dump(mode="json") for key, row in value.configuration_receipts.items()}}
         private_write(self.path, json.dumps(raw))
 
     @asynccontextmanager
@@ -122,11 +164,48 @@ class AccountStore:
         async with self.locked():
             await guard()
             document = self.read()
-            document.transports[config.provider] = ProviderTransport(proxy=config.proxy, headers=config.headers)
+            current = document.transports.get(config.provider, ProviderTransport())
+            updated = current.model_copy(update={"proxy": config.proxy, "headers": config.headers,
+                "base_url": config.base_url, "api": config.api})
+            if updated != current:
+                document.configuration_revision += 1
+            document.transports[config.provider] = updated
             self.write(document)
 
+    async def configure_provider(self, value: ConfigureProvider, guard: Callable[[], Awaitable[None]]) -> ProviderConfigured:
+        async with self.locked():
+            await guard()
+            document = self.read()
+            digest = hashlib.sha256(value.model_dump_json().encode()).hexdigest()
+            previous = document.configuration_receipts.get(value.operation_id)
+            if previous:
+                if previous.digest != digest:
+                    raise BackendError("provider_configuration_conflict")
+                return previous.view
+            current = document.transports.get(value.provider, ProviderTransport())
+            updated = current.model_copy(update=value.model_dump(exclude={"provider", "expected_revision", "operation_id"}))
+            if document.configuration_revision != value.expected_revision:
+                raise BackendError("provider_configuration_conflict")
+            if len(document.configuration_receipts) >= 4096:
+                raise BackendError("provider_configuration_capacity", status=429)
+            document.transports[value.provider] = updated
+            document.configuration_revision += 1
+            view = ProviderConfigured(operation_id=value.operation_id, revision=document.configuration_revision,
+                credential_revision=document.revision, provider=value.provider)
+            document.configuration_receipts[value.operation_id] = ConfigurationReceipt(digest=digest, view=view)
+            self.write(document)
+            return view
+
+    def provider_definitions(self, document: AccountDocument | None = None) -> list[ProviderDefinition]:
+        document = document if document is not None else self.read()
+        return [ProviderDefinition(provider=name, name=value.name or name, base_url=value.base_url, api=value.api,
+                model_ids=value.model_ids) for name, value in document.transports.items() if value.api and value.base_url]
+
     def view(self) -> AccountsView:
-        document = self.read()
+        return self._view(self.read())
+
+    @staticmethod
+    def _view(document: AccountDocument) -> AccountsView:
         return AccountsView(revision=document.revision, accounts=[AccountInfo(provider=provider,
             type=credential.type, expires_ms=credential.expires if isinstance(credential, OAuthCredential) else None,
             login_required=provider in document.uncertain_refresh)

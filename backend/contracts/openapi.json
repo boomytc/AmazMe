@@ -3429,6 +3429,55 @@
         }
       }
     },
+    "/api/v1/providers/{provider}": {
+      "put": {
+        "summary": "Configure Provider",
+        "operationId": "configure_provider_api_v1_providers__provider__put",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureProvider"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConfigured"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/models/scope": {
       "post": {
         "summary": "Model Scope",
@@ -7996,6 +8045,72 @@
         ],
         "title": "ComputerWindow"
       },
+      "ConfigureProvider": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+            "title": "Provider"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Name",
+            "default": ""
+          },
+          "base_url": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Base Url"
+          },
+          "api": {
+            "type": "string",
+            "enum": [
+              "openai-completions",
+              "openai-responses",
+              "openai-codex-responses",
+              "anthropic-messages",
+              "google-generative-ai"
+            ],
+            "title": "Api"
+          },
+          "model_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Ids"
+          },
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Operation Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "base_url",
+          "api",
+          "operation_id",
+          "expected_revision"
+        ],
+        "title": "ConfigureProvider"
+      },
       "CreateSession": {
         "properties": {
           "title": {
@@ -8937,6 +9052,23 @@
       },
       "InterfacePreferences": {
         "properties": {
+          "enabledModels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 193,
+                  "minLength": 1
+                },
+                "type": "array",
+                "maxItems": 4096
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabledmodels"
+          },
           "appearance": {
             "type": "string",
             "enum": [
@@ -9808,6 +9940,18 @@
           },
           "current": {
             "$ref": "#/components/schemas/ModelSettings"
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderDefinition"
+            },
+            "type": "array",
+            "title": "Providers"
+          },
+          "configuration_revision": {
+            "type": "integer",
+            "title": "Configuration Revision",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -9952,6 +10096,20 @@
             },
             "type": "object",
             "title": "Headers"
+          },
+          "thinking": {
+            "type": "string",
+            "enum": [
+              "off",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ],
+            "title": "Thinking",
+            "default": "off"
           }
         },
         "additionalProperties": false,
@@ -10871,6 +11029,89 @@
         ],
         "title": "ProjectWrite"
       },
+      "ProviderConfigured": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "title": "Operation Id"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "credential_revision": {
+            "type": "integer",
+            "title": "Credential Revision"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "revision",
+          "credential_revision",
+          "provider"
+        ],
+        "title": "ProviderConfigured"
+      },
+      "ProviderDefinition": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+            "title": "Provider"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100,
+            "title": "Name",
+            "default": ""
+          },
+          "base_url": {
+            "type": "string",
+            "maxLength": 300,
+            "title": "Base Url"
+          },
+          "api": {
+            "type": "string",
+            "enum": [
+              "openai-completions",
+              "openai-responses",
+              "openai-codex-responses",
+              "anthropic-messages",
+              "google-generative-ai"
+            ],
+            "title": "Api"
+          },
+          "model_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array",
+                "maxItems": 256
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model Ids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "base_url",
+          "api"
+        ],
+        "title": "ProviderDefinition"
+      },
       "Receipt": {
         "properties": {
           "request_id": {
@@ -11571,6 +11812,16 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "provider_configuration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigureProvider"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "mcp_config": {
             "anyOf": [
@@ -13537,6 +13788,26 @@
             },
             "type": "object",
             "title": "Headers"
+          },
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking"
           }
         },
         "additionalProperties": false,

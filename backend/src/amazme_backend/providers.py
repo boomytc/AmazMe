@@ -108,7 +108,7 @@ def public_settings(config: ProviderConfig, credential_revision: int = 0) -> Mod
     return ModelSettings(provider=config.provider, model=config.model, base_url=config.base_url, api=config.api, auth_type=config.auth_type,
                          max_tokens=config.max_tokens, key_configured=bool(config.api_key.get_secret_value()),
                          credential_revision=credential_revision,
-                         proxy=redact_proxy(config.proxy), headers=dict(config.headers))
+                         proxy=redact_proxy(config.proxy), headers=dict(config.headers), thinking=config.thinking or "off")
 
 
 def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> ProviderConfig:
@@ -117,6 +117,7 @@ def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> Pro
         "proxy": _normalize_proxy(current.proxy, requested.proxy),
         "headers": _clean_headers(requested.headers),
         "max_tokens": requested.max_tokens,
+        **({"thinking": requested.thinking} if requested.thinking is not None else {}),
     }
     if requested.provider == "faux":
         if requested.model != "faux":
@@ -128,16 +129,21 @@ def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> Pro
         raise BackendError("provider_not_configured")
     model = INDEX.get((requested.provider, requested.model))
     api = requested.api or (model.api if model is not None else current.api)
-    parts = urlsplit((requested.base_url.strip() or (model.base_url if model is not None else "")))
+    endpoint = checked_model_endpoint(requested.base_url.strip() or (model.base_url if model is not None else ""))
+    return current.model_copy(update={
+        "provider": requested.provider, "model": requested.model, "api": api, "base_url": endpoint, **transport,
+    })
+
+
+def checked_model_endpoint(value: str) -> str:
+    parts = urlsplit(value)
     try:
         loopback = parts.hostname == "localhost" or ipaddress.ip_address(parts.hostname or "").is_loopback
     except ValueError:
         loopback = False
     if (parts.scheme != "https" and not (parts.scheme == "http" and loopback)) or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
         raise BackendError("invalid_model_endpoint")
-    return current.model_copy(update={
-        "provider": requested.provider, "model": requested.model, "api": api, "base_url": parts.geturl(), **transport,
-    })
+    return parts.geturl()
 
 
 class Completion(Model):

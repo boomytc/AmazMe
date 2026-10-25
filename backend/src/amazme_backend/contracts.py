@@ -94,11 +94,44 @@ class ModelSettings(Model):
     credential_revision: int = 0
     proxy: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
+    thinking: ThinkingLevel = "off"
+
+
+class ProviderDefinition(Model):
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
+    name: str = Field(default="", max_length=100)
+    base_url: str = Field(max_length=300)
+    api: ProviderApi
+    model_ids: list[str] | None = Field(default=None, max_length=256)
+
+    @field_validator("model_ids")
+    @classmethod
+    def checked_model_ids(cls, value: list[str] | None) -> list[str] | None:
+        if value is not None:
+            if not value or len(set(value)) != len(value):
+                raise ValueError("model ids must be nonempty and unique")
+            for name in value:
+                ModelSelection(provider="custom", model=name)
+        return value
+
+
+class ConfigureProvider(ProviderDefinition):
+    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    expected_revision: int = Field(ge=0)
+
+
+class ProviderConfigured(Model):
+    operation_id: str
+    revision: int
+    credential_revision: int
+    provider: str
 
 
 class ModelCatalog(Model):
     models: list[CatalogModel]
     current: ModelSettings
+    providers: list[ProviderDefinition] = Field(default_factory=lambda: list[ProviderDefinition]())
+    configuration_revision: int = 0
 
 
 class ScopedModel(Model):
@@ -132,6 +165,7 @@ class UpdateModelSettings(Model):
     max_tokens: int = Field(default=2048, ge=32, le=8192)
     proxy: str = Field(default="", max_length=300)
     headers: dict[str, str] = Field(default_factory=dict)
+    thinking: ThinkingLevel | None = None
 
 
 class CredentialUpdate(Model):
@@ -476,6 +510,7 @@ class ProjectList(Model):
 class InterfacePreferences(Model):
     """Presentation fields keep the original client's public names."""
 
+    enabledModels: list[Annotated[str, Field(min_length=1, max_length=193)]] | None = Field(default=None, max_length=4096)
     appearance: Literal["system", "light", "dark"] = "system"
     locale: Literal["auto", "zh", "en"] = "auto"
     showWelcome: bool = True

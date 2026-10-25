@@ -26,6 +26,7 @@ from .contracts import (
     ComputerLocateRequest,
     ComputerObserve,
     ComputerPolicy,
+    ConfigureProvider,
     CredentialUpdate,
     ErrorBody,
     ExportBundle,
@@ -54,6 +55,7 @@ from .contracts import (
     PluginPackages,
     PluginReload,
     PluginView,
+    ProviderConfigured,
     Receipt,
     ResourceOptions,
     ScheduleControl,
@@ -202,6 +204,10 @@ class Client:
 
     async def models(self) -> ModelCatalog:
         return ModelCatalog.model_validate(await self._send("GET", "/api/v1/models"))
+
+    async def configure_provider(self, value: ConfigureProvider) -> ProviderConfigured:
+        return ProviderConfigured.model_validate(await self._send("PUT", "/api/v1/providers/" + quote(value.provider, safe=""),
+            json_body=value.model_dump(mode="json"), headers=self._write()))
 
     async def schedules(self) -> SchedulesView:
         return SchedulesView.model_validate(await self._send("GET", "/api/v1/schedules"))

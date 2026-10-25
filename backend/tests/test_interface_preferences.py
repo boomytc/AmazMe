@@ -25,7 +25,8 @@ async def test_preferences_persist_reject_stale_edits_and_boot_before_the_theme(
                                     base_url=host.origin, headers=headers) as client:
             saved = await client.put("/api/v1/settings/preferences", json={"expected_revision": 0,
                 "preferences": {"appearance": "dark", "locale": "zh", "textSize": 18,
-                                "terminalFont": '"Noto Sans SC", Menlo, Menlo', "showWelcome": False}})
+                                "terminalFont": '"Noto Sans SC", Menlo, Menlo', "showWelcome": False,
+                                "enabledModels": ["deepseek/deepseek-flash"]}})
             assert saved.status_code == 200, saved.text
             view = saved.json()
             assert view["revision"] == 1 and view["preferences"]["terminalFont"] == "Noto Sans SC, Menlo"
@@ -54,6 +55,7 @@ async def test_preferences_persist_reject_stale_edits_and_boot_before_the_theme(
         settings = await reopened.product_settings()
         assert settings.display_name == "本机名称" and settings.revision == 2
         assert settings.preferences.appearance == "dark" and settings.preferences.textSize == 18
+        assert settings.preferences.enabledModels == ["deepseek/deepseek-flash"]
     finally:
         await reopened.db.close()
 

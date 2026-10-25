@@ -391,6 +391,16 @@ export type ComputerWindow = {
   "window_id": number;
 };
 
+export type ConfigureProvider = {
+  "provider": string;
+  "name"?: string;
+  "base_url": string;
+  "api": "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
+  "model_ids"?: Array<string> | null;
+  "operation_id": string;
+  "expected_revision": number;
+};
+
 export type CreateSession = {
   "title"?: string;
   "workspace"?: string;
@@ -582,6 +592,7 @@ export type ImportResult = {
 };
 
 export type InterfacePreferences = {
+  "enabledModels"?: Array<string> | null;
   "appearance"?: "system" | "light" | "dark";
   "locale"?: "auto" | "zh" | "en";
   "showWelcome"?: boolean;
@@ -744,6 +755,8 @@ export type MemoryWrite = {
 export type ModelCatalog = {
   "models": Array<CatalogModel>;
   "current": ModelSettings;
+  "providers"?: Array<ProviderDefinition>;
+  "configuration_revision"?: number;
 };
 
 export type ModelScope = {
@@ -772,6 +785,7 @@ export type ModelSettings = {
   "credential_revision"?: number;
   "proxy"?: string;
   "headers"?: Record<string, string>;
+  "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 };
 
 export type OAuthInput = {
@@ -963,6 +977,21 @@ export type ProjectWrite = {
   "workspaces"?: Array<string>;
 };
 
+export type ProviderConfigured = {
+  "operation_id": string;
+  "revision": number;
+  "credential_revision": number;
+  "provider": string;
+};
+
+export type ProviderDefinition = {
+  "provider": string;
+  "name"?: string;
+  "base_url": string;
+  "api": "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
+  "model_ids"?: Array<string> | null;
+};
+
 export type Receipt = {
   "request_id": string;
   "text": string;
@@ -1089,6 +1118,7 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "provider_configuration"?: ConfigureProvider | null;
   "mcp_config"?: McpConfigWrite | null;
   "mcp_patch"?: McpConfigPatch | null;
   "mcp_reconnect"?: McpReconnect | null;
@@ -1424,6 +1454,7 @@ export type UpdateModelSettings = {
   "max_tokens"?: number;
   "proxy"?: string;
   "headers"?: Record<string, string>;
+  "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
 };
 
 export type UpdateRecord = {
@@ -1630,6 +1661,7 @@ export interface ApiModels {
   ComputerToolRequest: ComputerToolRequest;
   ComputerToolResult: ComputerToolResult;
   ComputerWindow: ComputerWindow;
+  ConfigureProvider: ConfigureProvider;
   CreateSession: CreateSession;
   CredentialUpdate: CredentialUpdate;
   CronRule: CronRule;
@@ -1708,6 +1740,8 @@ export interface ApiModels {
   ProjectUpdate: ProjectUpdate;
   ProjectView: ProjectView;
   ProjectWrite: ProjectWrite;
+  ProviderConfigured: ProviderConfigured;
+  ProviderDefinition: ProviderDefinition;
   Receipt: Receipt;
   Recovery: Recovery;
   RemoteCallView: RemoteCallView;
@@ -2007,6 +2041,9 @@ export interface HttpOperations {
 }; query: Record<string, unknown>; body: SessionModel };
   "GET /api/v1/models": { response: ModelCatalog; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/models": { response: ModelSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: UpdateModelSettings };
+  "PUT /api/v1/providers/{provider}": { response: ProviderConfigured; path: {
+  "provider": string;
+}; query: Record<string, unknown>; body: ConfigureProvider };
   "POST /api/v1/models/scope": { response: ModelScope; path: Record<string, unknown>; query: Record<string, unknown>; body: ModelScopeRequest };
   "GET /api/v1/accounts": { response: AccountsView; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/accounts/oauth": { response: OAuthView; path: Record<string, unknown>; query: Record<string, unknown>; body: OAuthStart };

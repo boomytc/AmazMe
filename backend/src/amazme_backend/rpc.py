@@ -30,6 +30,7 @@ from .contracts import (
     ComputerLocateRequest,
     ComputerObserve,
     ComputerPolicy,
+    ConfigureProvider,
     CreateSession,
     CredentialUpdate,
     ImagePart,
@@ -57,6 +58,7 @@ from .contracts import (
     PluginPackages,
     PluginReload,
     PluginView,
+    ProviderConfigured,
     Receipt,
     ResourceOptions,
     RunOptions,
@@ -87,6 +89,7 @@ from .workspace_files import FileContent
 
 
 class RpcParams(RunOptions):
+    provider_configuration: ConfigureProvider | None = None
     mcp_config: McpConfigWrite | None = None
     mcp_patch: McpConfigPatch | None = None
     mcp_reconnect: McpReconnect | None = None
@@ -192,6 +195,8 @@ class RpcHost(Protocol):
     def model_scope(self, value: ModelScopeRequest) -> ModelScope: ...
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings: ...
+
+    async def configure_provider(self, value: ConfigureProvider) -> ProviderConfigured: ...
 
     def account_list(self) -> AccountsView: ...
 
@@ -387,6 +392,10 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if params.model_settings is None:
             raise BackendError("model_settings_required")
         return await owner.update_model(params.model_settings)
+    if method == "provider.configure":
+        if params.provider_configuration is None:
+            raise BackendError("provider_configuration_required")
+        return await owner.configure_provider(params.provider_configuration)
     if method == "account.list":
         return owner.account_list()
     if method == "account.update":

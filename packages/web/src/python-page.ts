@@ -8,10 +8,10 @@ import { modelScopeModal } from "./model-scope.ts";
 import * as P from "./panels.ts";
 import * as Projects from "./projects.ts";
 import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
-import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
+import { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, definitive, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { seq, settled } from "./python-stream.ts";
@@ -26,6 +26,12 @@ const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 interface ImageDraft { readonly id: string; readonly name: string; readonly dataUrl: string; readonly bytes: number; readonly image: ImagePart }
 interface Draft { text: string; images: ImageDraft[] }
 interface ActiveTerminal { readonly connection: ClientConnection; readonly id: string; readonly queue: TerminalInputQueue; view: TerminalView; desiredSize?: { cols: number; rows: number }; resizing: boolean }
+
+function modelReference(value: string): ModelSelection {
+	const selected: unknown = JSON.parse(value);
+	if (!Array.isArray(selected) || selected.length !== 2) throw new Error("模型选择无效");
+	return parseContract("ModelSelection", { provider: selected[0], model: selected[1] });
+}
 
 function scheduleRecord(row: ScheduleView): P.ScheduleRecordLike {
 	return { id: row.schedule_id, generation: row.generation ?? 1, sessionId: row.session_id, conversationId: "1", prompt: row.text,
@@ -109,6 +115,8 @@ export class DesktopPage {
 	private thinking = "off";
 	private selectedProvider?: string;
 	private enabledModels: string[] | null = null;
+	private readonly modelScopes = new Map<string, string[] | null>();
+	private providerEdit?: { readonly generation: number; readonly revision: number; readonly configurationRevision: number; configuration?: ConfigureProvider; credentialRevision?: number; credential?: CredentialUpdate };
 	private paletteSelection = 0;
 	private newSessionPending = false;
 	private ready = false;
@@ -237,13 +245,14 @@ export class DesktopPage {
 	}
 	private async loadGlobal(): Promise<void> {
 		const generation = ++this.globalLoadGeneration;
+		const identity = this.client.identity;
 		const connection = this.client.connection, resourcesGeneration = ++this.resourceGeneration;
 		const [sessions, workspaces, catalog, accounts, settings, projects, resources] = await Promise.all([
 			this.client.call("GET /api/v1/sessions"), this.client.call("GET /api/v1/workspaces"), this.client.call("GET /api/v1/models"), this.client.call("GET /api/v1/accounts"), this.client.call("GET /api/v1/settings"),
 			this.client.call("GET /api/v1/projects"),
 			this.client.call("GET /api/v1/skills", { query: { session_id: connection?.sessionId ?? "" } }),
 		]);
-		if (generation === this.globalLoadGeneration) {
+		if (generation === this.globalLoadGeneration && identity && this.hostActive(identity)) {
 			this.sessions = sessions.sessions; this.workspaces = workspaces.workspaces; this.catalog = catalog; this.accounts = accounts; this.settings = settings;
 			this.projects = projects.projects ?? [];
 			if (this.client.connection === connection && resourcesGeneration === this.resourceGeneration) this.resources = resources;
@@ -293,6 +302,9 @@ export class DesktopPage {
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
 		this.draft = this.drafts.get(id) ?? { text: "", images: [] };
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined;
+		const scopeKey = `${this.client.identity?.profile_id}:${id}`;
+		this.enabledModels = (this.modelScopes.has(scopeKey) ? this.modelScopes.get(scopeKey) : this.settings?.preferences?.enabledModels) ?? null;
+		this.thinking = this.catalog?.current.thinking ?? "off";
 		this.pluginRuntime = []; this.pluginsGeneration++;
 		this.mcpConfiguration = undefined; this.mcpRuntime = undefined;
 		this.history = undefined; this.historyLatestRevision = 0n; this.historyStarted = false; this.historyGeneration++; this.historyLoading = false;
@@ -406,6 +418,7 @@ export class DesktopPage {
 		this.notice = undefined;
 		if (action.kind === "open" || action.kind === "modal-close" || (action.kind === "command" && ![A.PROVIDER_AUTH_OPEN_ACTION, A.PROVIDER_AUTH_CANCEL_ACTION].includes(action.id))) {
 			this.modalGeneration++;
+			this.providerEdit = undefined;
 			clearTimeout(this.oauthTimer);
 		}
 		if (action.kind === "open") { this.currentPanel = action.panel; this.modal = undefined; this.render(); if (action.panel === P.AUTOMATION_VIEW) await this.loadSchedules(); if (action.panel === "plugins") await this.loadPlugins(); this.render(); return; }
@@ -475,23 +488,76 @@ export class DesktopPage {
 			if (record.body.approve !== (id === A.APPROVAL_APPROVE_ACTION)) throw new Error("原审批决定尚未确认；请先重试原决定。");
 			await ledger.send(key, record, this.client, connection); return;
 		}
-		if (id === A.MODEL_SELECT_ACTION) { const selected: unknown = JSON.parse(value); if (!Array.isArray(selected) || selected.length !== 2 || !selected.every(item => typeof item === "string")) throw new Error("模型选择无效"); await this.selectModel(selected[0], selected[1]); return; }
+		if (id === A.MODEL_SELECT_ACTION) { const selected = modelReference(value); await this.selectModel(selected.provider, selected.model); return; }
 		if (id === A.MODEL_THINKING_ACTION) { this.thinking = value; this.render(); return; }
 		if (id === A.REFRESH_MODELS_ACTION || id === P.SETTINGS_RELOAD_ACTION || id === A.SESSION_RELOAD_ACTION) { await this.loadGlobal(); const connection = this.client.connection; if (connection?.ready) await this.loadSession(connection); this.render(); return; }
 		if (id === A.MODEL_SCOPE_ACTION) { this.modal = modelScopeModal(this.locale, { allModels: this.catalog?.models.map(item => ({ provider: item.provider, id: item.model, name: item.label })) ?? [], enabledModelIds: this.enabledModels }); this.render(); return; }
-		if (id === A.MODEL_SCOPE_MODAL) { const ids: unknown = JSON.parse(fields.models || "null"); if (ids !== null && (!Array.isArray(ids) || !ids.every(item => typeof item === "string"))) throw new Error("模型范围无效"); this.enabledModels = ids; this.modal = undefined; this.render(); return; }
+		if (id === A.MODEL_SCOPE_MODAL) {
+			const connection = this.requireConnection(), modal = this.modal;
+			const ids = parseContract("InterfacePreferences", { enabledModels: JSON.parse(fields.models || "null") }).enabledModels ?? null;
+			if (fields.persist === "true") await this.updatePreferences(current => ({ ...current, enabledModels: ids }));
+			this.modelScopes.set(`${connection.identity.profile_id}:${connection.sessionId}`, ids);
+			if (connection.active()) { this.enabledModels = ids; if (this.modal === modal) this.modal = undefined; this.render(); }
+			return;
+		}
+		if (id === A.MODEL_DEFAULTS_ACTION) {
+			const identity = this.client.identity;
+			if (!identity || !this.catalog) throw new Error("请先连接后端");
+			const selected = data ? modelReference(data) : this.selection ?? this.catalog.current;
+			const model = this.catalog.models.find(item => item.provider === selected.provider && item.model === selected.model);
+			if (!model) throw new Error("模型不可用");
+			const levels = model.thinking_levels ?? ["off"], thinking = levels.find(level => level === this.thinking) ?? levels[0] ?? "off";
+			await this.client.call("POST /api/v1/models", { body: parseContract("UpdateModelSettings", { provider: selected.provider, model: selected.model, api: model.api ?? "openai-completions", base_url: model.base_url ?? "", thinking }), identity });
+			await this.loadGlobal(); return;
+		}
 		if (id === PROVIDER_SELECT_ACTION) { this.selectedProvider = data; this.render(); return; }
 		if (id === PROVIDER_EDIT_ACTION) {
+			this.oauth = undefined;
 			const connections = this.connections(), provider = connections.state.providers.find(item => item.id === data);
 			this.modal = providerConfigurationModal(this.locale, provider, connections.models, connections.state.authentication.providers, provider ? connections.state.authentication.providers.find(item => item.id === provider.id)?.methods ?? [] : []);
+			const identity = this.client.identity, raw = identity && provider ? sessionStorage.getItem(`amazme:provider:${identity.profile_id}:${provider.id}`) : null;
+			if (raw) {
+				const previous = parseContract("ConfigureProvider", JSON.parse(raw));
+				this.modal = { ...this.modal, notice: { tone: "info", text: "上次配置尚待确认；提交将沿用原编号和内容。" }, fields: this.modal.fields.map(field => {
+					const values: Readonly<Record<string, string>> = { name: previous.name ?? previous.provider, baseUrl: previous.base_url, api: previous.api, models: previous.model_ids?.join("\n") ?? "" };
+					return field.id in values ? { ...field, value: values[field.id], readOnly: true } : field;
+				}) };
+			}
+			this.providerEdit = { generation: this.modalGeneration, revision: this.accounts.revision, configurationRevision: this.catalog?.configuration_revision ?? 0 };
 			this.render(); return;
 		}
-		if (id === PROVIDER_LOGOUT_ACTION) { this.modal = providerLogoutModal(this.locale, data ?? "", data ?? ""); this.render(); return; }
-		if (id === PROVIDER_EDIT_MODAL || id === PROVIDER_LOGOUT_MODAL) { await this.saveProvider(data, fields, id === PROVIDER_LOGOUT_MODAL); return; }
+		if (id === PROVIDER_LOGOUT_ACTION) { this.oauth = undefined; this.modal = providerLogoutModal(this.locale, data ?? "", data ?? ""); this.providerEdit = { generation: this.modalGeneration, revision: this.accounts.revision, configurationRevision: this.catalog?.configuration_revision ?? 0 }; this.render(); return; }
+		if (id === PROVIDER_EDIT_MODAL || id === PROVIDER_LOGOUT_MODAL) { if (this.modal?.id !== id || this.modal.data !== data) return; await this.saveProvider(data, fields, id === PROVIDER_LOGOUT_MODAL); return; }
 		if (id === A.PROVIDER_AUTH_OPEN_ACTION) { if (!data || !/^https?:\/\//.test(data)) throw new Error("授权链接无效"); window.open(data, "_blank", "noopener,noreferrer"); return; }
-		if (id === A.PROVIDER_AUTH_CANCEL_ACTION && this.oauth) { const login = this.oauth, connection = this.requireConnection(); await this.client.call("DELETE /api/v1/accounts/oauth/{login_id}", { path: { login_id: login.login_id }, connection }); if (connection.active() && this.oauth === login) { this.oauth = undefined; this.modal = undefined; clearTimeout(this.oauthTimer); this.render(); } return; }
-		if (id === A.PROVIDER_AUTH_MODAL && this.oauth) { const login = this.oauth, connection = this.requireConnection(); await this.client.call("POST /api/v1/accounts/oauth/{login_id}/input", { path: { login_id: login.login_id }, body: { value: fields.value ?? "" }, connection }); return; }
-		if (id === MODEL_ENABLED_ACTION) { const all = this.catalog?.models.map(item => `${item.provider}/${item.model}`) ?? []; const selected = new Set(this.enabledModels ?? all); if (value === "true") selected.add(data ?? ""); else selected.delete(data ?? ""); this.enabledModels = [...selected]; this.render(); return; }
+		if (id === A.PROVIDER_AUTH_ACTION) { this.oauth = undefined; this.modal = providerAuthModal(this.locale, this.authentication(), data); this.providerEdit = { generation: this.modalGeneration, revision: this.accounts.revision, configurationRevision: this.catalog?.configuration_revision ?? 0 }; this.render(); return; }
+		if (id === A.PROVIDER_AUTH_CANCEL_ACTION) {
+			const login = this.oauth, identity = this.client.identity, generation = this.modalGeneration;
+			if (!identity || !login || data !== login.login_id) return;
+			const result = await this.client.call("DELETE /api/v1/accounts/oauth/{login_id}", { path: { login_id: login.login_id }, identity });
+			if (result.login_id !== login.login_id || result.provider !== login.provider) throw new Error("授权回执归属不匹配，原记录已保留");
+			this.forgetOAuth(identity, result);
+			if (this.hostActive(identity) && this.oauth === login && generation === this.modalGeneration) {
+				if (result.phase === "pending" || result.phase === "unknown") this.showOAuth(identity, result, generation);
+				else { this.oauth = undefined; this.modal = undefined; clearTimeout(this.oauthTimer); this.render(); }
+			}
+			return;
+		}
+		if (id === A.PROVIDER_AUTH_MODAL) {
+			if (this.modal?.id !== id || this.modal.data !== data) return;
+			if (this.oauth) { const login = this.oauth, identity = this.client.identity; if (!identity) return; await this.client.call("POST /api/v1/accounts/oauth/{login_id}/input", { path: { login_id: login.login_id }, body: { value: fields.value ?? "" }, identity }); return; }
+			const provider = fields.provider, method = fields[`method:${provider}`];
+			if (method === "oauth" || method === "logout") { await this.saveProvider(provider, fields, method === "logout"); return; }
+			const state = this.connections(), target = state.state.providers.find(item => item.id === provider);
+			if (!target) throw new Error("供应商不可用");
+			this.modal = providerConfigurationModal(this.locale, target, state.models, state.state.authentication.providers, state.state.authentication.providers.find(item => item.id === provider)?.methods ?? []);
+			this.render(); return;
+		}
+		if (id === MODEL_ENABLED_ACTION) {
+			const reference = modelReference(data ?? ""), key = `${reference.provider}/${reference.model}`;
+			const all = this.catalog?.models.map(item => `${item.provider}/${item.model}`) ?? [];
+			await this.updatePreferences(current => { const selected = new Set(current.enabledModels ?? all); if (value === "true") selected.add(key); else selected.delete(key); return { ...current, enabledModels: [...selected] }; });
+			return;
+		}
 		if (id === P.SETTINGS_FIELD_ACTION) { await this.setPreference(data ?? "", value); return; }
 		if (id === P.DIAGNOSTICS_ACTION) { const connection = this.requireConnection(); const report = await this.client.call("GET /api/v1/sessions/{session_id}/diagnostics", { path: { session_id: connection.sessionId } }); if (connection.active()) { this.modal = { id: "diagnostics:close", title: "诊断", fields: [{ id: "report", label: "会话诊断", kind: "textarea", readOnly: true, value: JSON.stringify(report, null, 2) }] }; this.render(); } return; }
 		throw new Error(`入口尚未接通：${id}`);
@@ -888,56 +954,106 @@ export class DesktopPage {
 		else { const result = await this.client.call("GET /api/v1/files", { query: { path: relative } }); if (!connection.active() || generation !== this.workspaceGeneration) return; this.workspace = { cwd, view: { kind: "listing", path: result.absolute_path ?? cwd, parent: (result.absolute_path ?? cwd) === cwd ? null : (result.absolute_path ?? cwd).split("/").slice(0, -1).join("/"), entries: result.entries.map(item => ({ ...item, kind: item.kind === "dir" ? "dir" : "file" })) } }; }
 		this.dockOpen = true; this.dockTab = "files"; this.render();
 	}
+	private hostActive(identity: Identity): boolean {
+		const current = this.client.identity;
+		return current?.profile_id === identity.profile_id && current.instance_id === identity.instance_id && current.host_epoch === identity.host_epoch && current.build_id === identity.build_id;
+	}
 	private authentication(): ProviderAuthLike {
 		const ids = [...new Set([...(this.catalog?.models.map(item => item.provider) ?? []), ...Object.keys(OAUTH_METHODS)])];
-		const providers: ProviderAuthLike["providers"] = ids.map(id => ({ id, name: id, configured: this.accounts.accounts.some(item => item.provider === id), methods: [{ type: "api_key", label: "API Key" }, ...(OAUTH_METHODS[id] ? [{ type: "oauth" as const, label: "登录" }] : [])] }));
+		const current = this.catalog?.current;
+		const providers: ProviderAuthLike["providers"] = ids.map(id => ({ id, name: this.catalog?.providers?.find(item => item.provider === id)?.name || id,
+			configured: this.accounts.accounts.some(item => item.provider === id) || current?.provider === id && current.key_configured,
+			methods: [{ type: "api_key", label: "API Key" }, ...(OAUTH_METHODS[id] ? [{ type: "oauth" as const, label: "登录" }] : [])] }));
 		const login = this.oauth;
 		return { providers, login: login ? { id: login.login_id, provider: login.provider, status: login.phase === "pending" ? "awaiting" : login.phase === "complete" ? "done" : login.phase === "cancelled" ? "cancelled" : "error", authorization: login.url ? login.user_code ? { type: "device_code", userCode: login.user_code, verificationUri: login.url } : { type: "auth_url", url: login.url } : null, message: null, links: [], prompt: login.phase === "pending" && !login.user_code ? { id: login.login_id, type: "secret", message: "回调地址或授权码" } : null, error: login.error ?? null } : null };
 	}
 	private connections(): ModelConnectionsLike {
-		const authentication = this.authentication();
-		const current = this.catalog?.current;
-		const models = this.catalog?.models.map(item => ({ provider: item.provider, modelId: item.model, name: item.label, available: this.accounts.accounts.some(account => account.provider === item.provider) || (current?.provider === item.provider && current.key_configured) })) ?? [];
-		return { state: { providers: authentication.providers.map(provider => { const model = this.catalog?.models.find(item => item.provider === provider.id); return { id: provider.id, name: provider.name, configured: provider.configured, baseUrl: current?.provider === provider.id ? current.base_url : model?.base_url ?? "", api: current?.provider === provider.id ? current.api ?? "openai-completions" : model?.api ?? "openai-completions", modelCount: models.filter(item => item.provider === provider.id).length, custom: false, verification: { status: "idle" } }; }), authentication, enabledModelIds: this.enabledModels, defaults: current ? { model: { provider: current.provider, modelId: current.model }, thinkingLevel: "off" } : null, error: null, refresh: { status: "idle" } }, selected: this.selectedProvider, models, enabledModels: models.filter(item => this.enabledModels === null || this.enabledModels.includes(`${item.provider}/${item.modelId}`)), loading: false, disabled: !this.ready };
+		const authentication = this.authentication(), current = this.catalog?.current;
+		const models = this.catalog?.models.map(item => ({ provider: item.provider, modelId: item.model, name: item.label,
+			available: authentication.providers.some(provider => provider.id === item.provider && provider.configured) })) ?? [];
+		const selected = this.selectedProvider ?? authentication.providers.find(provider => provider.configured)?.id;
+		const enabled = this.settings?.preferences?.enabledModels ?? null;
+		return { state: { providers: authentication.providers.map(provider => {
+			const model = this.catalog?.models.find(item => item.provider === provider.id), definition = this.catalog?.providers?.find(item => item.provider === provider.id);
+			return { id: provider.id, name: provider.name, configured: provider.configured, baseUrl: definition?.base_url ?? (current?.provider === provider.id ? current.base_url : model?.base_url ?? ""),
+				api: definition?.api ?? (current?.provider === provider.id ? current.api ?? "openai-completions" : model?.api ?? "openai-completions"),
+				modelCount: models.filter(item => item.provider === provider.id).length, custom: definition?.model_ids != null, modelIds: definition?.model_ids ?? undefined, verification: { status: "idle" } };
+		}), authentication, enabledModelIds: enabled, defaults: current ? { model: { provider: current.provider, modelId: current.model }, thinkingLevel: current.thinking ?? "off" } : null, error: null, refresh: { status: "idle" } },
+		selected, models: models.filter(item => item.provider === selected), enabledModels: models.filter(item => enabled === null || enabled.includes(`${item.provider}/${item.modelId}`)), loading: false, disabled: !this.ready };
 	}
 	private async saveProvider(data: string | undefined, fields: Readonly<Record<string, string>>, clear: boolean): Promise<void> {
 		if (this.modalPending) return;
-		const connection = this.requireConnection(), provider = data ?? fields.id;
-		if (!provider) throw new Error("请选择供应商");
-		const modal = this.modal;
-		const generation = this.modalGeneration;
+		const identity = this.client.identity, provider = data ?? fields.id, modal = this.modal, generation = this.modalGeneration;
+		if (!identity || !modal || !provider) throw new Error("请选择供应商并连接后端");
+		const owner = this.providerEdit?.generation === generation ? this.providerEdit : { generation, revision: this.accounts.revision, configurationRevision: this.catalog?.configuration_revision ?? 0 };
+		this.providerEdit = owner;
+		const current = () => this.hostActive(identity) && generation === this.modalGeneration;
 		this.pendingModal = modal; this.render();
 		try {
-			const latest = await this.client.call("GET /api/v1/accounts");
-			if (!connection.active()) return;
-			if (clear) await this.client.call("POST /api/v1/accounts/{provider}", { path: { provider }, body: { expected_revision: latest.revision, clear: true }, connection });
-			else if (fields[`method:${provider}`] === "oauth" || (!fields[`key:${provider}`] && OAUTH_METHODS[provider] && !latest.accounts.some(item => item.provider === provider))) {
-				const key = `amazme:oauth:${connection.identity.profile_id}:${provider}`;
-				const id = sessionStorage.getItem(key) ?? newId(); sessionStorage.setItem(key, id);
-				const login = await this.client.call("POST /api/v1/accounts/oauth", { body: { login_id: id, provider, expected_revision: latest.revision, method: OAUTH_METHODS[provider] ?? "browser" }, connection });
-				if (connection.active() && this.modal === modal) { this.oauth = login; this.showOAuth(connection, login, generation); } return;
-			} else {
+			if (clear) await this.client.call("POST /api/v1/accounts/{provider}", { path: { provider }, body: { expected_revision: owner.revision, clear: true }, identity });
+			else {
+				if (fields.baseUrl !== undefined) {
+					const storageKey = `amazme:provider:${identity.profile_id}:${provider}`;
+					const saved = sessionStorage.getItem(storageKey);
+					owner.configuration ??= saved ? parseContract("ConfigureProvider", JSON.parse(saved)) : parseContract("ConfigureProvider", {
+						operation_id: newId(), expected_revision: owner.configurationRevision, provider, name: fields.name || provider, base_url: fields.baseUrl, api: fields.api,
+						...(fields.models === undefined ? {} : { model_ids: fields.models.split("\n").map(item => item.trim()).filter(Boolean) }),
+					});
+					if (owner.configuration.provider !== provider) throw new Error("配置归属不匹配，原记录已保留");
+					sessionStorage.setItem(storageKey, JSON.stringify(owner.configuration));
+					const result = await this.client.call("PUT /api/v1/providers/{provider}", { path: { provider }, body: owner.configuration, identity });
+					if (result.operation_id !== owner.configuration.operation_id || result.provider !== provider) throw new Error("配置回执归属不匹配，原记录已保留");
+					owner.credentialRevision = result.credential_revision;
+					const stored = sessionStorage.getItem(storageKey);
+					if (stored && parseContract("ConfigureProvider", JSON.parse(stored)).operation_id === owner.configuration.operation_id) sessionStorage.removeItem(storageKey);
+				}
+				const revision = owner.credentialRevision ?? owner.revision;
+				if (fields[`method:${provider}`] === "oauth") {
+					if (!OAUTH_METHODS[provider]) throw new Error("供应商不支持此登录方式");
+					const storageKey = `amazme:oauth:${identity.profile_id}:${provider}`, saved = sessionStorage.getItem(storageKey);
+					const request = saved ? parseContract("OAuthStart", JSON.parse(saved)) : { login_id: newId(), provider, expected_revision: revision, method: OAUTH_METHODS[provider] };
+					if (request.provider !== provider) throw new Error("授权归属不匹配，原记录已保留");
+					sessionStorage.setItem(storageKey, JSON.stringify(request));
+					const login = await this.client.call("POST /api/v1/accounts/oauth", { body: request, identity });
+					if (current()) { this.oauth = login; this.showOAuth(identity, login, generation); } return;
+				}
 				const key = fields[`key:${provider}`] ?? "";
-				if (key) await this.client.call("POST /api/v1/accounts/{provider}", { path: { provider }, body: { expected_revision: latest.revision, api_key: key }, connection });
-				const model = this.catalog?.models.find(item => item.provider === provider);
-				if (model && fields.baseUrl) await this.client.call("POST /api/v1/models", { body: { provider, model: model.model, base_url: fields.baseUrl }, connection });
+				if (key || owner.credential) {
+					owner.credential ??= { expected_revision: revision, api_key: key };
+					await this.client.call("POST /api/v1/accounts/{provider}", { path: { provider }, body: owner.credential, identity });
+				}
+				else if (!this.accounts.accounts.some(item => item.provider === provider) && !(this.catalog?.current.provider === provider && this.catalog.current.key_configured)) throw new Error("请输入密钥或选择登录方式");
 			}
-			const accounts = await this.client.call("GET /api/v1/accounts");
-			if (connection.active() && this.modal === modal) { this.accounts = accounts; this.modal = undefined; this.render(); }
-		} finally { if (this.pendingModal === modal) this.pendingModal = undefined; if (connection.active() && generation === this.modalGeneration) this.render(); }
+			if (this.hostActive(identity)) await this.loadGlobal();
+			if (current()) { this.modal = undefined; this.render(); }
+		} finally { if (this.pendingModal === modal) this.pendingModal = undefined; if (current()) this.render(); }
 	}
-	private showOAuth(connection: ClientConnection, login: OAuthView, generation: number): void {
-		if (!connection.active() || generation !== this.modalGeneration || this.oauth?.login_id !== login.login_id) return;
+	private showOAuth(identity: Identity, login: OAuthView, generation: number): void {
+		const current = () => this.hostActive(identity) && generation === this.modalGeneration && this.oauth?.login_id === login.login_id;
+		if (!current()) return;
 		this.oauth = login;
 		const auth = this.authentication(); this.modal = providerLoginModal(this.locale, auth, auth.login); this.render();
 		clearTimeout(this.oauthTimer);
-		if (login.phase === "pending") this.oauthTimer = setTimeout(() => { void this.client.call("GET /api/v1/accounts/oauth/{login_id}", { path: { login_id: login.login_id } }).then(value => this.showOAuth(connection, value, generation)).catch(error => { if (connection.active() && generation === this.modalGeneration) this.error(error); }); }, 750);
-		else { const key = `amazme:oauth:${connection.identity.profile_id}:${login.provider}`; if (sessionStorage.getItem(key) === login.login_id && login.phase !== "unknown") sessionStorage.removeItem(key); void this.client.call("GET /api/v1/accounts").then(accounts => { if (connection.active()) { this.accounts = accounts; this.render(); } }); }
+		if (login.phase === "pending") this.oauthTimer = setTimeout(() => {
+			if (!current()) return;
+			void this.client.call("GET /api/v1/accounts/oauth/{login_id}", { path: { login_id: login.login_id }, identity }).then(value => this.showOAuth(identity, value, generation)).catch(error => { if (current()) this.error(error); });
+		}, 750);
+		else {
+			this.forgetOAuth(identity, login);
+			void this.loadGlobal().catch(error => { if (current()) this.error(error); });
+		}
+	}
+	private forgetOAuth(identity: Identity, login: OAuthView): void {
+		if (login.phase === "pending" || login.phase === "unknown") return;
+		const key = `amazme:oauth:${identity.profile_id}:${login.provider}`, stored = sessionStorage.getItem(key);
+		if (stored && parseContract("OAuthStart", JSON.parse(stored)).login_id === login.login_id) sessionStorage.removeItem(key);
 	}
 	private applyPreferences(preferences: InterfacePreferences): void {
 		this.locale = resolveLocale(preferences.locale ?? "auto", navigator.languages);
 		this.typography = resolveTypography(preferences);
 		applyTheme(resolveThemePreference(preferences.appearance));
+		const session = this.client.connection?.sessionId, key = `${this.client.identity?.profile_id}:${session}`;
+		this.enabledModels = (session && this.modelScopes.has(key) ? this.modelScopes.get(key) : preferences.enabledModels) ?? null;
 	}
 	private updateSettings(update: (current: ProductSettings, identity: Identity) => Promise<ProductSettings>): Promise<void> {
 		const identity = this.client.identity;

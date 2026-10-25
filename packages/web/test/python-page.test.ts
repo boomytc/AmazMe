@@ -8,6 +8,7 @@ import type { Submit } from "../src/python-contracts.ts";
 import { parseContract } from "../src/python-api.ts";
 import * as A from "../src/actions.ts";
 import * as P from "../src/panels.ts";
+import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL } from "../src/model-connections.ts";
 
 let page: DesktopPage | undefined;
 afterEach(() => { page?.dispose(); page = undefined; sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
@@ -55,9 +56,10 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
  page = new DesktopPage("http://127.0.0.1:4310");
  await page.start();
  const connection = page.client.connection;
- if (!connection) throw new Error("Session was not attached");
- connection.ready = true;
- connection.snapshot = { session_id: connection.sessionId, stream_id: "stream", seq: "0", state: "ready", requests: [], events: [] };
+ if (connection) {
+  connection.ready = true;
+  connection.snapshot = { session_id: connection.sessionId, stream_id: "stream", seq: "0", state: "ready", requests: [], events: [] };
+ }
  page.client.onChange();
  return { page, submitted };
 }
@@ -76,6 +78,129 @@ test("a submission captures the displayed model, retries the same request, and p
  await vi.waitFor(() => expect(submitted).toHaveLength(2));
  expect(submitted[1]).toEqual(submitted[0]);
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
+});
+
+test("the original JSON model toggle persists the global scope and survives a fresh page", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });
+ const api = (path: string, options: RequestInit) => {
+  if (path !== "/api/v1/settings" && path !== "/api/v1/settings/preferences") return undefined;
+  if (options.method === "PUT") {
+   const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+   expect(body.expected_revision).toBe(settings.revision);
+   settings = { revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+  }
+  return response(settings);
+ };
+ const first = await startPage(api);
+ first.page.renderer.onPanelAction({ kind: "control", id: MODEL_ENABLED_ACTION, data: JSON.stringify(["faux", "shown"]), value: "false" });
+ await vi.waitFor(() => expect(settings.preferences?.enabledModels).toEqual(["faux/different"]));
+ expect(first.page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).not.toContain("shown");
+ first.page.dispose();
+ const reopened = await startPage(api);
+ expect(reopened.page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]);
+});
+
+test("provider configuration works before a session exists and a lost reply keeps its original public settings", async () => {
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ const configurations: Array<import("../src/python-contracts.ts").ConfigureProvider> = [];
+ let modelWrites = 0;
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/sessions") return response({ sessions: [] });
+  if (path === "/api/v1/accounts") return response({ revision: 4, accounts: [{ provider: "openai", type: "api_key" }] });
+  if (path === "/api/v1/models") {
+   if (options.method === "POST") modelWrites++;
+   return response({ models: [{ provider: "openai", model: "gpt", label: "GPT", endpoint_editable: true, api: "openai-completions", base_url: "https://api.openai.com/v1" }],
+    current: { provider: "openai", model: "gpt", base_url: "https://api.openai.com/v1", max_tokens: 2048, key_configured: true }, configuration_revision: 2 });
+  }
+  if (path === "/api/v1/providers/openai") {
+   const body = parseContract("ConfigureProvider", JSON.parse(String(options.body))); configurations.push(body);
+   if (configurations.length === 1) return response({ code: "receipt_lost" }, 503);
+   return response({ operation_id: body.operation_id, revision: 3, credential_revision: 4, provider: body.provider });
+  }
+  return undefined;
+ });
+ expect(page.client.connection).toBeUndefined();
+ page.renderer.onPanelAction({ kind: "command", id: PROVIDER_EDIT_ACTION, data: "openai" });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(PROVIDER_EDIT_MODAL));
+ const fields = { name: "工作网关", baseUrl: "https://gateway.example/v1", api: "openai-responses", "key:openai": "" };
+ page.renderer.onPanelAction({ kind: "modal-submit", id: PROVIDER_EDIT_MODAL, data: "openai", fields });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.notice?.text).toContain("receipt_lost"));
+ page.renderer.onPanelAction({ kind: "modal-submit", id: PROVIDER_EDIT_MODAL, data: "openai", fields: { ...fields, baseUrl: "https://unconfirmed-change.example" } });
+ await vi.waitFor(() => expect(configurations).toHaveLength(2));
+ expect(configurations[0]).toMatchObject({ provider: "openai", name: fields.name, base_url: fields.baseUrl, api: fields.api, expected_revision: 2 });
+ expect(configurations[1]).toEqual(configurations[0]);
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal).toBeUndefined());
+ expect(modelWrites).toBe(0);
+});
+
+test("an unconfirmed credential keeps its original content and revision when its modal shows an error", async () => {
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ const writes: Array<import("../src/python-contracts.ts").CredentialUpdate> = [];
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/accounts") return response({ revision: 4, accounts: [{ provider: "openai", type: "api_key" }] });
+  if (path === "/api/v1/models") return response({ models: [{ provider: "openai", model: "gpt", label: "GPT", endpoint_editable: true, api: "openai-completions", base_url: "https://api.openai.com/v1" }],
+   current: { provider: "openai", model: "gpt", base_url: "https://api.openai.com/v1", max_tokens: 2048, key_configured: true } });
+  if (path === "/api/v1/providers/openai") return response({ operation_id: parseContract("ConfigureProvider", JSON.parse(String(options.body))).operation_id, revision: 1, credential_revision: 4, provider: "openai" });
+  if (path === "/api/v1/accounts/openai") {
+   writes.push(parseContract("CredentialUpdate", JSON.parse(String(options.body))));
+   return response({ code: writes.length === 1 ? "receipt_lost" : "credential_conflict" }, writes.length === 1 ? 503 : 409);
+  }
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "command", id: PROVIDER_EDIT_ACTION, data: "openai" });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(PROVIDER_EDIT_MODAL));
+ const fields = { name: "OpenAI", baseUrl: "https://api.openai.com/v1", api: "openai-completions", "key:openai": "original-private-key" };
+ page.renderer.onPanelAction({ kind: "modal-submit", id: PROVIDER_EDIT_MODAL, data: "openai", fields });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.notice?.text).toContain("receipt_lost"));
+ page.renderer.onPanelAction({ kind: "modal-submit", id: PROVIDER_EDIT_MODAL, data: "openai", fields: { ...fields, "key:openai": "replacement-key" } });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.notice?.text).toContain("credential_conflict"));
+ expect(writes).toHaveLength(2);
+ expect(writes[0]).toEqual({ expected_revision: 4, api_key: fields["key:openai"] });
+ expect(writes[1]).toEqual(writes[0]);
+ expect(Object.values(sessionStorage).join(" ")).not.toContain(fields["key:openai"]);
+});
+
+test("late OAuth controls cannot cancel or submit to a newer login, and confirmed cancellation clears only its own ID", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ const logins: Array<import("../src/python-contracts.ts").OAuthStart> = [], cancellations: string[] = [], inputs: string[] = [];
+ let finish: (response: Response) => void = () => { throw new Error("cancellation not started"); };
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/accounts/oauth") {
+   const request = parseContract("OAuthStart", JSON.parse(String(options.body))); logins.push(request);
+   return response({ login_id: request.login_id, provider: request.provider, phase: "pending", url: "https://login.example/authorize" });
+  }
+  if (path.startsWith("/api/v1/accounts/oauth/")) {
+   const login = logins.find(item => path.includes(item.login_id));
+   if (!login) throw new Error("unknown login");
+   if (options.method === "DELETE") { cancellations.push(login.login_id); return new Promise<Response>(resolve => { finish = resolve; }); }
+   if (path.endsWith("/input")) inputs.push(login.login_id);
+   return response({ login_id: login.login_id, provider: login.provider, phase: options.method === "DELETE" ? "cancelled" : "pending", url: "https://login.example/authorize" });
+  }
+  return undefined;
+ });
+ for (const provider of ["openai", "openrouter"]) {
+  page.renderer.onPanelAction({ kind: "command", id: A.PROVIDER_AUTH_ACTION, data: provider });
+  await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.fields.some(field => field.id === "provider")).toBe(true));
+  page.renderer.onPanelAction({ kind: "modal-submit", id: A.PROVIDER_AUTH_MODAL, data: undefined, fields: { provider, [`method:${provider}`]: "oauth" } });
+  await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.data).toContain(logins.find(item => item.provider === provider)?.login_id));
+ }
+ const [first, latest] = logins;
+ expect(logins).toHaveLength(2);
+ page.renderer.onPanelAction({ kind: "command", id: A.PROVIDER_AUTH_CANCEL_ACTION, data: first.login_id });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.PROVIDER_AUTH_MODAL, data: JSON.stringify([first.login_id, first.login_id]), fields: { value: "old-code" } });
+ await new Promise(resolve => setTimeout(resolve, 0));
+ expect(cancellations).toEqual([]); expect(inputs).toEqual([]);
+ expect(page.renderer.view?.panel.modal?.data).toContain(latest.login_id);
+ page.renderer.onPanelAction({ kind: "command", id: A.PROVIDER_AUTH_CANCEL_ACTION, data: latest.login_id });
+ await vi.waitFor(() => expect(cancellations).toHaveLength(1));
+ page.renderer.onPanelAction({ kind: "command", id: A.MODEL_SCOPE_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(A.MODEL_SCOPE_MODAL));
+ finish(response({ login_id: latest.login_id, provider: latest.provider, phase: "cancelled" }));
+ await vi.waitFor(() => expect(sessionStorage.getItem("amazme:oauth:host:openrouter")).toBeNull());
+ expect(page.renderer.view?.panel.modal?.id).toBe(A.MODEL_SCOPE_MODAL);
+ expect(cancellations).toEqual([latest.login_id]);
+ expect(JSON.parse(sessionStorage.getItem("amazme:oauth:host:openai") ?? "null").login_id).toBe(first.login_id);
 });
 
 test("schedule creation retains its original session, ID and input after a lost receipt, and cannot close a newer dialog", async () => {
