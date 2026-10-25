@@ -631,9 +631,11 @@ export type McpDecision = {
 };
 
 export type McpOpen = {
-  "server_id": string;
   "command": string;
   "workspace"?: string;
+  "cwd"?: string;
+  "environment"?: Record<string, string>;
+  "server_id": string;
 };
 
 export type McpState = {
@@ -1067,6 +1069,8 @@ export type RpcParams = {
   "checkpoint_id"?: string;
   "terminal_id"?: string;
   "command"?: string;
+  "cwd"?: string;
+  "environment"?: Record<string, string>;
   "cols"?: number;
   "rows"?: number;
   "input_id"?: string;

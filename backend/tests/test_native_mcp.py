@@ -61,6 +61,29 @@ async def state(owner):
     return await owner.mcp_state(McpSession(**fence(owner).model_dump(), session_id="a" * 32))
 
 
+async def test_mcp_launch_pins_explicit_environment_and_working_directory_without_publishing_values(terminal_owner):
+    owner = terminal_owner
+    script = owner.profile.path / "configured.py"
+    script.write_text(SERVER.replace("'private_env':os.getenv('AMAZME_PRIVATE_TEST_KEY','absent')",
+        "'private_env':os.getenv('AMAZME_PRIVATE_TEST_KEY','absent'),'explicit':os.getenv('LOCAL_MCP_TOKEN','absent')"))
+    (owner.profile.path / "nested").mkdir()
+    value = OpenMcp(**query(owner).model_dump(), command=f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} calls.txt",
+                    cwd="nested", environment={"LOCAL_MCP_TOKEN": "explicit-token", "LOCAL_MCP_SECOND": "ok"})
+    opened = await owner.open_mcp(value)
+    assert "explicit-token" not in opened.model_dump_json()
+    assert await owner.open_mcp(value.model_copy(update={"workspace": "primary", "environment": dict(reversed(list(value.environment.items())))})) == opened
+    for changes in ({"cwd": "."}, {"environment": {"LOCAL_MCP_TOKEN": "changed"}}):
+        with pytest.raises(BackendError, match="mcp_server_conflict"):
+            await owner.open_mcp(value.model_copy(update=changes))
+    call = await proposal(owner)
+    await approve(owner, call)
+    result = await completed(owner, call.call_id)
+    assert result.result_data["structuredContent"]["explicit"] == "explicit-token"
+    assert result.result_data["structuredContent"]["cwd"] == str(owner.profile.path / "nested")
+    assert (owner.profile.path / "nested/calls.txt").read_text() == "x"
+    assert not (owner.profile.path / "calls.txt").exists()
+
+
 async def proposal(owner, identity="e" * 32, name="demo.echo", arguments=None):
     return await owner.request_mcp_call("a" * 32, "d" * 32,
         McpCallRequest(call_id=identity, name=name, arguments=arguments or {}), fence(owner))

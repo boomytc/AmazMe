@@ -3227,11 +3227,6 @@
     },
     "McpOpen": {
       "properties": {
-        "server_id": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{32}$",
-          "title": "Server Id"
-        },
         "command": {
           "type": "string",
           "maxLength": 16000,
@@ -3242,13 +3237,32 @@
           "type": "string",
           "title": "Workspace",
           "default": ""
+        },
+        "cwd": {
+          "type": "string",
+          "maxLength": 4096,
+          "title": "Cwd",
+          "default": ""
+        },
+        "environment": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "maxProperties": 64,
+          "title": "Environment"
+        },
+        "server_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Server Id"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "server_id",
-        "command"
+        "command",
+        "server_id"
       ],
       "title": "McpOpen"
     },
@@ -5544,6 +5558,18 @@
           "type": "string",
           "title": "Command",
           "default": ""
+        },
+        "cwd": {
+          "type": "string",
+          "title": "Cwd",
+          "default": ""
+        },
+        "environment": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "title": "Environment"
         },
         "cols": {
           "type": "integer",

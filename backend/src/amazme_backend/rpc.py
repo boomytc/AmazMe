@@ -126,6 +126,8 @@ class RpcParams(RunOptions):
     checkpoint_id: str = ""
     terminal_id: str = ""
     command: str = ""
+    cwd: str = ""
+    environment: dict[str, str] = Field(default_factory=dict)
     cols: int = 80
     rows: int = 24
     input_id: str = ""
@@ -516,7 +518,7 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
     if method == "mcp.open":
         session = await _bound(owner, params)
         return await owner.open_mcp(session, McpOpen(
-            server_id=params.server_id, command=params.command, workspace=params.workspace))
+            server_id=params.server_id, command=params.command, workspace=params.workspace, cwd=params.cwd, environment=params.environment))
     if method == "mcp.call":
         session = await _bound(owner, params)
         return await owner.request_mcp(session, params.server_id, McpCallRequest(

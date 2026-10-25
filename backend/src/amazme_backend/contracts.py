@@ -1032,17 +1032,35 @@ class TerminalSize(Model):
     rows: int = Field(ge=1, le=80)
 
 
-class McpOpen(Model):
-    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+class McpLaunch(Model):
     command: str = Field(min_length=1, max_length=16000)
     workspace: str = ""
+    cwd: str = Field(default="", max_length=4096)
+    environment: dict[str, str] = Field(default_factory=dict, max_length=64)
+
+    @field_validator("command", "cwd")
+    @classmethod
+    def launch_text(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("invalid MCP launch text")
+        return value
+
+    @field_validator("environment")
+    @classmethod
+    def explicit_environment(cls, value: dict[str, str]) -> dict[str, str]:
+        if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key) or "\x00" in content or len(content) > 16384
+               or key.startswith("AMAZME_") for key, content in value.items()):
+            raise ValueError("invalid MCP environment")
+        return value
 
 
-class OpenMcp(HostFence):
+class McpOpen(McpLaunch):
+    server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class OpenMcp(McpLaunch, HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     server_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    command: str = Field(min_length=1, max_length=16000)
-    workspace: str = ""
 
 
 class McpQuery(HostFence):

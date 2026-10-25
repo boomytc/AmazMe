@@ -42,8 +42,9 @@ class McpClient:
         self.busy: set[str] = set()
         self.protocol_version = ""
 
-    def permit(self, command: str, uid: int, gid: int, cwd: str) -> None:
-        self._send({"op": "permit", "command": command, "uid": uid, "gid": gid, "cwd": cwd})
+    def permit(self, command: str, uid: int, gid: int, cwd: str, environment: dict[str, str] | None = None) -> None:
+        values: dict[str, JsonValue] = {key: value for key, value in (environment or {}).items()}
+        self._send({"op": "permit", "command": command, "uid": uid, "gid": gid, "cwd": cwd, "environment": values})
         self.pump(10, lambda: self.ready or self.closed or self.exit_code is not None)
         if not self.ready:
             raise BackendError("mcp_catalog_failed", status=503)

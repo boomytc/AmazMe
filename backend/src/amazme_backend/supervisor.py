@@ -401,6 +401,7 @@ class Supervisor:
                     db.execute(f"ALTER TABLE terminals ADD COLUMN {column} {definition}")
             for table, additions in {
                 "mcp_servers": {"workspace": "TEXT NOT NULL DEFAULT 'primary'", "protocol_version": "TEXT NOT NULL DEFAULT ''",
+                                "launch_digest": "TEXT NOT NULL DEFAULT ''",
                                 "lease": "TEXT NOT NULL DEFAULT ''", "directory": "TEXT NOT NULL DEFAULT ''", "permitted": "INTEGER NOT NULL DEFAULT 0"},
                 "mcp_calls": {"result_data": "TEXT", "is_error": "INTEGER NOT NULL DEFAULT 0",
                               "schema_digest": "TEXT NOT NULL DEFAULT ''", "origin": "TEXT NOT NULL DEFAULT 'manual'"},
@@ -1322,9 +1323,16 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             old = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
+            workspace = value.workspace or (str(old["workspace"]) if old is not None else session_workspace(self.profile.path, value.session_id))
+            launch_body = value.model_dump(exclude={"host_epoch", "build_id", "server_id"})
+            launch_body["workspace"] = workspace
+            launch = hashlib.sha256(json.dumps(launch_body, sort_keys=True).encode()).hexdigest()
             if old is not None:
                 workspace = value.workspace or str(old["workspace"])
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
+                    raise BackendError("mcp_server_conflict")
+                if (str(old["launch_digest"]) and str(old["launch_digest"]) != launch
+                        or not str(old["launch_digest"]) and (value.cwd or value.environment)):
                     raise BackendError("mcp_server_conflict")
                 return self._mcp_view(old)
             self._admit(value.session_id)
@@ -1340,20 +1348,24 @@ class Supervisor:
             location = self.profile.config.workspace if workspace == PRIMARY else dict(load_grants(self.profile.path)).get(workspace)
             if location is None:
                 raise BackendError("workspace_not_found")
+            configured_cwd = Path(value.cwd).expanduser()
+            cwd = (Path(location) / configured_cwd).resolve() if value.cwd else Path(location)
+            if not cwd.is_dir():
+                raise BackendError("mcp_cwd_invalid")
             instance = hashlib.sha256(("mcp:" + value.server_id).encode()).hexdigest()[:32]
             directory = self.profile.path / "executions" / instance
             directory.mkdir(mode=0o700, parents=True, exist_ok=False)
             try:
                 with ProcessReservation(self.profile.path, "execution", instance) as reservation:
                     await self.db.call(lambda db: db.execute(
-                        "INSERT INTO mcp_servers(id,session,command,phase,workspace,lease,directory) VALUES(?,?,?,'unknown',?,?,?)",
-                        (value.server_id, value.session_id, value.command, workspace, reservation.lease.model_dump_json(), str(directory))), write=True)
+                        "INSERT INTO mcp_servers(id,session,command,phase,workspace,lease,directory,launch_digest) VALUES(?,?,?,'unknown',?,?,?,?)",
+                        (value.server_id, value.session_id, value.command, workspace, reservation.lease.model_dump_json(), str(directory), launch)), write=True)
                     process = await ServiceProcess.start(self.profile.path, instance, directory, reservation, "mcp")
                     self.mcp_processes[value.server_id] = process
                 client = McpClient(process.sock)
                 self.mcp_clients[value.server_id] = client
                 await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET permitted=1 WHERE id=?", (value.server_id,)), write=True)
-                await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), location)
+                await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), str(cwd), value.environment)
                 catalog = json.dumps([tool.model_dump() for tool in client.tools], ensure_ascii=False)
                 busy = await self.db.call(lambda db: db.execute(
                     "SELECT 1 FROM mcp_calls WHERE server=? AND phase IN ('waiting_approval','running')",

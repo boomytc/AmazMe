@@ -12,7 +12,7 @@ from typing import cast
 
 from pydantic import JsonValue, TypeAdapter
 
-from .contracts import McpTool
+from .contracts import McpLaunch, McpTool
 from .native_execution import tool_environment
 
 LIMIT = 262144
@@ -103,13 +103,17 @@ def main() -> int:
         return 125
     permit = messages[0]
     command, cwd = permit.get("command"), permit.get("cwd")
-    if (set(permit) != {"op", "command", "cwd", "uid", "gid"} or permit["op"] != "permit"
+    if (set(permit) != {"op", "command", "cwd", "uid", "gid", "environment"} or permit["op"] != "permit"
             or (permit["uid"], permit["gid"]) != (os.getuid(), os.getgid())
             or not isinstance(command, str) or not command or len(command) > 16000 or "\0" in command
             or not isinstance(cwd, str) or not os.path.isabs(cwd) or "\0" in cwd):
         return 125
+    try:
+        launch = McpLaunch.model_validate({"command": command, "cwd": cwd, "environment": permit["environment"]})
+    except ValueError:
+        return 125
     shell = pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
-    server = subprocess.Popen([shell, "-c", command], cwd=cwd, env=tool_environment(),
+    server = subprocess.Popen([shell, "-c", command], cwd=cwd, env={**tool_environment(), **launch.environment},
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               start_new_session=True)
     assert server.stdin is not None and server.stdout is not None

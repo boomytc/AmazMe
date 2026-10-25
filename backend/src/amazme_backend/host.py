@@ -815,7 +815,7 @@ class Host:
             raise BackendError("update_frozen", status=503)
         await self._require_session(session_id)
         return await self.supervisor.call("POST", "/mcp/open", McpView, OpenMcp(
-            **self._mcp_fence(session_id), server_id=value.server_id, command=value.command, workspace=value.workspace))  # type: ignore[arg-type]
+            **self._mcp_fence(session_id), **value.model_dump()))  # type: ignore[arg-type]
 
     async def mcp_state(self, session_id: str) -> McpState:
         self._admit()

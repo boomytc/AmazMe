@@ -462,10 +462,12 @@ class Client:
         payload = await self._send("GET", f"/api/v1/sessions/{session_id}/mcp")
         return McpState.model_validate(payload)
 
-    async def open_mcp(self, *, session_id: str, attachment_id: str, server_id: str, command: str, workspace: str) -> McpView:
+    async def open_mcp(self, *, session_id: str, attachment_id: str, server_id: str, command: str, workspace: str,
+                       cwd: str = "", environment: dict[str, str] | None = None) -> McpView:
         payload = await self._send(
             "POST", f"/api/v1/sessions/{session_id}/mcp",
-            json_body={"server_id": server_id, "command": command, "workspace": workspace},
+            json_body={"server_id": server_id, "command": command, "workspace": workspace,
+                       "cwd": cwd, "environment": environment or {}},
             headers=self._write(attachment_id))
         return McpView.model_validate(payload)
 
