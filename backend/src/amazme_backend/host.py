@@ -151,6 +151,7 @@ from .contracts import (
     ProcessLease,
     ProductSettings,
     ProjectList,
+    ProjectUpdate,
     ProjectView,
     ProjectWrite,
     Receipt,
@@ -163,6 +164,7 @@ from .contracts import (
     RemoteOpen,
     RemoteRun,
     RemoteView,
+    RenameSession,
     ResolutionEnvelope,
     ResourceOptions,
     RetireSupervisor,
@@ -285,6 +287,7 @@ class Host:
         self.worker_peers: dict[str, tuple[str, Peer]] = {}
         self.worker_locks: dict[str, asyncio.Lock] = {}
         self.delivery_locks: dict[str, asyncio.Lock] = {}
+        self.session_management_locks: dict[str, asyncio.Lock] = {}
         self.service_lock = asyncio.Lock()
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
@@ -1104,13 +1107,41 @@ class Host:
 
     async def save_project(self, value: ProjectWrite) -> ProjectView:
         self._admit()
-        project_id, name = await self.store.save_project(value.project_id, value.name.strip())
-        return ProjectView(project_id=project_id, name=name)
+        if not value.name.strip():
+            raise BackendError("project_name_required")
+        for workspace in value.workspaces:
+            await self._require_workspace(workspace)
+        return await self.store.save_project(value.project_id, value.name.strip(), list(dict.fromkeys(value.workspaces)))
 
     async def projects(self) -> ProjectList:
         self._admit()
-        return ProjectList(projects=[ProjectView(project_id=project_id, name=name)
-                                     for project_id, name in await self.store.projects()])
+        return ProjectList(projects=await self.store.projects())
+
+    async def update_project(self, project_id: str, value: ProjectUpdate) -> ProjectView:
+        self._admit()
+        if not value.name.strip():
+            raise BackendError("project_name_required")
+        if not value.removed:
+            for workspace in value.workspaces:
+                await self._require_workspace(workspace)
+        updated = await self.store.update_project(project_id, value.model_copy(update={
+            "name": value.name.strip(), "workspaces": list(dict.fromkeys(value.workspaces))}))
+        if value.removed:
+            for session in (await self.sessions()).sessions:
+                if session.project_id == project_id:
+                    async with self.session_management_locks.setdefault(session.session_id, asyncio.Lock()):
+                        current = next((item for item in (await self.sessions()).sessions if item.session_id == session.session_id), None)
+                        if current is not None and current.archived:
+                            await self._cancel_unstarted(session.session_id)
+                            await self._retire_session_resources(session.session_id)
+        return updated
+
+    async def rename_session(self, session_id: str, value: RenameSession) -> Session:
+        self._admit()
+        title = value.title.strip()
+        if not title:
+            raise BackendError("session_name_required")
+        return await self.store.rename_session(session_id, title, value.expected_title)
 
     async def product_settings(self) -> ProductSettings:
         self._admit()
@@ -1220,11 +1251,13 @@ class Host:
         if len(bundle.sessions) > 32 or len(bundle.projects) > 32 or len(bundle.feedback) > 32:
             raise BackendError("import_capacity", status=429)
         existing = {item.session_id: item for item in (await self.sessions()).sessions}
-        known_projects = {project.project_id: project.name for project in (await self.projects()).projects}
+        known_projects = {project.project_id: project for project in (await self.projects()).projects}
         for project in bundle.projects:
             current = known_projects.get(project.project_id)
-            if current is not None and current != project.name:
+            if current is not None and (current.name, current.workspaces, current.removed) != (project.name, project.workspaces, project.removed):
                 raise BackendError("import_conflict")
+            for workspace in project.workspaces:
+                await self._require_workspace(workspace)
         current_settings = await self.store.product_settings()
         if bundle.settings.display_name and current_settings.revision and current_settings.display_name != bundle.settings.display_name:
             raise BackendError("import_conflict")
@@ -1257,7 +1290,11 @@ class Host:
                     or transcript_digest(current) != transcript_digest(incoming)):
                 raise BackendError("import_conflict")
         for project in bundle.projects:
-            await self.store.save_project(project.project_id, project.name)
+            if project.project_id not in known_projects:
+                await self.store.save_project(project.project_id, project.name, project.workspaces)
+                if project.removed:
+                    await self.store.update_project(project.project_id, ProjectUpdate(
+                        name=project.name, workspaces=project.workspaces, expected_revision=0, removed=True))
         if current_settings.revision == 0:
             if bundle.settings.display_name:
                 current_settings = await self.store.save_product_settings(bundle.settings.display_name, 0)
@@ -2079,11 +2116,62 @@ class Host:
             host_epoch=self.fence.host_epoch, build_id=self.build, session_id=session_id, plugin_id=plugin_id, call_id=call_id))
 
     async def archive_session(self, session: str, archived: bool) -> Session:
-        self._admit()
-        updated = await self.store.set_archived(session, archived)
-        if archived:
+        async with self.session_management_locks.setdefault(session, asyncio.Lock()):
+            self._admit()
+            if not archived:
+                current = next((item for item in (await self.sessions()).sessions if item.session_id == session), None)
+                # A previous host may have stopped before recording the cleanup response.
+                if current is not None and current.archived:
+                    await self._cancel_unstarted(session)
+                    await self._retire_session_resources(session)
+                return await self.store.set_archived(session, False)
+            updated = await self.store.set_archived(session, True)
             await self._cancel_unstarted(session)
-        return updated
+            await self._retire_session_resources(session)
+            return updated
+
+    async def _retire_session_resources(self, session: str) -> None:
+        driver = self.computer_drivers.get(session)
+        if driver is not None:
+            code = await self._park_driver(session, driver)
+            await self._with_session(session, lambda store: store.note_computer_exit(code), require_active=False)
+            if code is None:
+                raise BackendError("computer_exit_unproven", status=503)
+        service = await self.store.service()
+        if service is not None and service.state != "stopped":
+            await self.ensure_supervisor()
+            result = await self.supervisor.call("POST", "/sessions/retire", Cleanup, TerminalSession(
+                **self.fence.model_dump(), session_id=session))
+            if result.session_id != session or result.state != "clean" or not result.proof_id:
+                raise BackendError("execution_cleanup_pending", status=503)
+            cached = self.worker_peers.pop(session, None)
+            if cached:
+                await cached[1].close()
+
+    async def remove_session(self, session: str) -> None:
+        async with self.session_management_locks.setdefault(session, asyncio.Lock()):
+            async with self.update_lock:
+                self._admit()
+                directory = session_database(self.profile.path, session).parent
+                if directory.is_symlink() or directory.parent.is_symlink():
+                    raise BackendError("branch_cleanup_refused")
+                if not await self.store.begin_session_removal(session):
+                    return
+                await self._cancel_unstarted(session)
+                await self._retire_session_resources(session)
+                async with self.worker_locks.setdefault(session, asyncio.Lock()):
+                    # Diagnostic readers can create a worker after the first retirement.
+                    await self._retire_session_resources(session)
+                    if directory.exists():
+                        handle = lock(directory / "session.lock")
+                        try:
+                            remove_session_directory(directory)
+                        finally:
+                            handle.close()
+                    await self.store.finish_session_removal(session)
+                    for attachment_id, attachment in list(self.attachments.items()):
+                        if attachment.session_id == session:
+                            self.release_attachment(session, attachment_id)
 
     async def _cancel_unstarted(self, session: str) -> None:
         path = session_database(self.profile.path, session)
@@ -3083,6 +3171,19 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/projects")
     async def save_project(value: ProjectWrite) -> ProjectView:
         return await owner.save_project(value)
+
+    @app.put("/api/v1/projects/{project_id}")
+    async def update_project(project_id: str, value: ProjectUpdate) -> ProjectView:
+        return await owner.update_project(project_id, value)
+
+    @app.put("/api/v1/sessions/{session}/title")
+    async def rename_session(session: str, value: RenameSession) -> Session:
+        return await owner.rename_session(session, value)
+
+    @app.delete("/api/v1/sessions/{session}")
+    async def remove_session(session: str) -> dict[str, bool]:
+        await owner.remove_session(session)
+        return {"removed": True}
 
     @app.get("/api/v1/settings")
     async def product_settings() -> ProductSettings:

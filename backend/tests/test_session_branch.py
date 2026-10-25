@@ -289,7 +289,7 @@ async def test_failed_branch_keeps_the_parent_project_and_refuses_a_missing_work
         assert {item.session_id for item in (await owner.sessions()).sessions} == {PARENT, created.session_id}
 
         project = "b" * 32
-        await owner.store.save_project(project, "项目")
+        await owner.store.save_project(project, "项目", ["primary"])
         await owner.store.transaction(lambda db: db.execute(
             "INSERT INTO project_sessions(session,project) VALUES(?,?)", (PARENT, project)))
 

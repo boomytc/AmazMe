@@ -6,12 +6,13 @@ import { documentLanguage, resolveLocale, type Locale } from "./locale.ts";
 import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, providerConfigurationModal, providerLogoutModal, type ModelConnectionsLike } from "./model-connections.ts";
 import { modelScopeModal } from "./model-scope.ts";
 import * as P from "./panels.ts";
+import * as Projects from "./projects.ts";
 import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
 import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ResourceCatalog, Session, SessionModel, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
-import { pythonView } from "./python-view.ts";
+import type { AccountsView, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ProjectView, ResourceCatalog, Session, SessionModel, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { settled } from "./python-stream.ts";
 import { TerminalInputQueue } from "./python-terminal.ts";
@@ -34,6 +35,11 @@ export class DesktopPage {
 	private typography: Typography = { ...DEFAULT_TYPOGRAPHY };
 	private sessions: Session[] = [];
 	private workspaces: WorkspaceGrantView[] = [];
+	private projects: ProjectView[] = [];
+	private selectedProject?: string;
+	private expandedProjects: readonly string[] = [];
+	private sessionEdit?: Session;
+	private projectEdit?: ProjectView;
 	private catalog?: ModelCatalog;
 	private accounts: AccountsView = { revision: 0, accounts: [] };
 	private settings?: ProductSettings;
@@ -70,6 +76,7 @@ export class DesktopPage {
 	private terminalTimer?: ReturnType<typeof setTimeout>;
 	private readonly terminalQueues = new Map<string, TerminalInputQueue>();
 	private terminalLoadGeneration = 0;
+	private workspaceGeneration = 0;
 	private settingsQueue = Promise.resolve();
 	private readonly commands: CommandLike[] = [
 		{ name: "new", description: "新建会话" }, { name: "model", description: "模型与连接" }, { name: "settings", description: "设置" },
@@ -176,11 +183,13 @@ export class DesktopPage {
 	}
 	private async loadGlobal(): Promise<void> {
 		const generation = ++this.globalLoadGeneration;
-		const [sessions, workspaces, catalog, accounts, settings] = await Promise.all([
+		const [sessions, workspaces, catalog, accounts, settings, projects] = await Promise.all([
 			this.client.call("GET /api/v1/sessions"), this.client.call("GET /api/v1/workspaces"), this.client.call("GET /api/v1/models"), this.client.call("GET /api/v1/accounts"), this.client.call("GET /api/v1/settings"),
+			this.client.call("GET /api/v1/projects"),
 		]);
 		if (generation === this.globalLoadGeneration) {
 			this.sessions = sessions.sessions; this.workspaces = workspaces.workspaces; this.catalog = catalog; this.accounts = accounts; this.settings = settings;
+			this.projects = projects.projects ?? [];
 			this.applyPreferences(settings.preferences ?? {});
 		}
 	}
@@ -215,6 +224,8 @@ export class DesktopPage {
 		this.modalGeneration++;
 		const session = this.sessions.find(item => item.session_id === id);
 		if (!session) throw new Error("会话不存在");
+		this.selectedProject = session.project_id || undefined;
+		if (this.selectedProject && !this.expandedProjects.includes(this.selectedProject)) this.expandedProjects = [...this.expandedProjects, this.selectedProject];
 		const previous = this.client.connection;
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
 		this.draft = this.drafts.get(id) ?? { text: "", images: [] };
@@ -228,17 +239,18 @@ export class DesktopPage {
 		this.renderer.setDraft(this.draft.text);
 		await this.client.connect(id);
 	}
-	private async createSession(): Promise<void> {
+	private async createSession(projectId = this.selectedProject): Promise<void> {
 		if (this.newSessionPending) return;
 		const identity = this.client.identity;
 		if (!identity) throw new Error("请先连接后端");
 		const navigation = ++this.navigationGeneration;
-		const workspace = this.sessions.find(item => item.session_id === this.client.connection?.sessionId)?.workspace ?? new URLSearchParams(location.search).get("workspace") ?? "primary";
-		const key = `amazme:create:${identity.profile_id}:${workspace}`;
+		const project = this.projects.find(item => item.project_id === projectId && !item.removed);
+		const workspace = project?.workspaces?.[0] ?? this.sessions.find(item => item.session_id === this.client.connection?.sessionId)?.workspace ?? new URLSearchParams(location.search).get("workspace") ?? "primary";
+		const key = `amazme:create:${identity.profile_id}:${projectId ?? ""}:${workspace}`;
 		const id = sessionStorage.getItem(key) ?? newId(); sessionStorage.setItem(key, id);
 		this.newSessionPending = true; this.render();
 		try {
-			const session = await this.client.call("POST /api/v1/sessions", { body: { session_id: id, title: "新会话", workspace }, identity });
+			const session = await this.client.call("POST /api/v1/sessions", { body: { session_id: id, title: "新会话", workspace, project_id: projectId ?? "" }, identity });
 			if (sessionStorage.getItem(key) === id) sessionStorage.removeItem(key);
 			await this.loadGlobal();
 			if (navigation === this.navigationGeneration) await this.selectSession(session.session_id);
@@ -328,6 +340,7 @@ export class DesktopPage {
 		const id = action.id, data = action.data;
 		const fields = action.kind === "modal-submit" ? action.fields : {};
 		const value = action.kind === "control" ? action.value : data ?? "";
+		if (await this.managementAction(id, data, fields)) return;
 		if (id === "auth:pair") {
 			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: fields.token }) });
 			if (!response.ok) throw new ApiError(response.status, await response.json()); this.modal = undefined; await this.start(); return;
@@ -401,6 +414,88 @@ export class DesktopPage {
 		if (id === P.DIAGNOSTICS_ACTION) { const connection = this.requireConnection(); const report = await this.client.call("GET /api/v1/sessions/{session_id}/diagnostics", { path: { session_id: connection.sessionId } }); if (connection.active()) { this.modal = { id: "diagnostics:close", title: "诊断", fields: [{ id: "report", label: "会话诊断", kind: "textarea", readOnly: true, value: JSON.stringify(report, null, 2) }] }; this.render(); } return; }
 		throw new Error(`入口尚未接通：${id}`);
 	}
+	private async managementAction(id: string, data: string | undefined, fields: Readonly<Record<string, string>>): Promise<boolean> {
+		const session = this.sessions.find(item => item.session_id === data);
+		const project = this.projects.find(item => item.project_id === data);
+		if (id === A.SESSION_COPY_ID_ACTION && data) { await navigator.clipboard.writeText(data); return true; }
+		if (id === A.SESSION_REMOVE_ACTION) {
+			if (!session) throw new Error("会话不存在");
+			this.modal = P.removeSessionModal(this.locale, session.session_id); this.render(); return true;
+		}
+		if (id === A.SESSION_REMOVE_MODAL && data) {
+			const identity = this.client.identity, modal = this.modal, navigation = this.navigationGeneration;
+			if (!identity || modal?.id !== id || modal.data !== data) return true;
+			await this.client.call("DELETE /api/v1/sessions/{session}", { path: { session: data }, identity });
+			this.drafts.delete(data);
+			await this.loadGlobal();
+			if (this.modal === modal) this.modal = undefined;
+			if (navigation === this.navigationGeneration && this.client.connection?.sessionId === data) {
+				this.client.retire(); this.draft = { text: "", images: [] }; this.renderer.setDraft("");
+				const next = this.sessions.findLast(item => !item.archived && item.project_id === session?.project_id);
+				if (next) await this.selectSession(next.session_id);
+			}
+			this.render(); return true;
+		}
+		if (id === A.SESSION_RENAME_ACTION || id === A.CONVERSATION_RENAME_ACTION) {
+			if (!session) throw new Error("会话不存在");
+			this.sessionEdit = session; this.modal = P.renameSessionModal(this.locale, session.session_id, session.title); this.render(); return true;
+		}
+		if (id === A.SESSION_RENAME_MODAL) {
+			const original = this.sessionEdit, modal = this.modal;
+			if (!original || original.session_id !== data || modal?.id !== id) return true;
+			await this.client.withSession(original.session_id, connection => this.client.call("PUT /api/v1/sessions/{session}/title", {
+				path: { session: original.session_id }, body: { title: fields.name ?? "", expected_title: original.title }, connection,
+			}));
+			await this.loadGlobal(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
+		}
+		if (id === Projects.SESSION_ARCHIVE_ACTION || id === A.CONVERSATION_ARCHIVE_ACTION) {
+			if (!session) throw new Error("会话不存在");
+			this.modal = Projects.archiveSessionModal(this.locale, session.session_id); this.render(); return true;
+		}
+		if (id === Projects.SESSION_ARCHIVE_MODAL || id === Projects.SESSION_RESTORE_ACTION || id === A.CONVERSATION_RESTORE_ACTION) {
+			if (!session) throw new Error("会话不存在");
+			const modal = this.modal;
+			await this.client.withSession(session.session_id, connection => this.client.call("POST /api/v1/sessions/{session}/archive", {
+				path: { session: session.session_id }, body: { archived: id === Projects.SESSION_ARCHIVE_MODAL }, connection,
+			}));
+			await this.loadGlobal(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
+		}
+		if (id === Projects.SESSION_ARCHIVE_OPEN_ACTION || id === A.CONVERSATION_SELECT_ACTION) { if (data) await this.selectSession(data); return true; }
+		if (id === A.CONVERSATIONS_REFRESH_ACTION) { await this.loadGlobal(); this.render(); return true; }
+		if (id === Projects.PROJECT_SELECT_ACTION) { if (!project) throw new Error("项目不存在"); this.selectedProject = project.project_id; this.expandedProjects = Projects.toggleExpandedProjects(this.expandedProjects, project.project_id); this.render(); return true; }
+		if (id === Projects.PROJECT_NEW_SESSION_ACTION) { await this.createSession(data); return true; }
+		if (id === Projects.PROJECT_ADD_ACTION) { this.projectEdit = undefined; this.modal = Projects.addProjectModal(this.locale); this.render(); return true; }
+		if (id === Projects.PROJECT_EDIT_ACTION || id === Projects.PROJECT_RENAME_ACTION || id === Projects.PROJECT_REMOVE_ACTION) {
+			if (!project) throw new Error("项目不存在");
+			this.projectEdit = project;
+			const paths = project.workspaces?.map(name => this.workspaces.find(item => item.name === name)?.host_path ?? "") ?? [];
+			this.modal = id === Projects.PROJECT_EDIT_ACTION ? Projects.editProjectModal(this.locale, { id: project.project_id, name: project.name, cwd: paths[0] ?? "", workspaces: paths }) : id === Projects.PROJECT_RENAME_ACTION ? Projects.renameProjectModal(this.locale, project.project_id, project.name) : Projects.removeProjectModal(this.locale, project.project_id, project.name);
+			this.render(); return true;
+		}
+		if ([Projects.PROJECT_ADD_MODAL, Projects.PROJECT_EDIT_MODAL, Projects.PROJECT_RENAME_MODAL, Projects.PROJECT_REMOVE_MODAL].includes(id)) {
+			const identity = this.client.identity, modal = this.modal, original = this.projectEdit;
+			if (!identity || modal?.id !== id || (id !== Projects.PROJECT_ADD_MODAL && (!original || original.project_id !== data))) return true;
+			let workspaces = original?.workspaces ?? ["primary"];
+			if (id === Projects.PROJECT_ADD_MODAL || id === Projects.PROJECT_EDIT_MODAL) {
+				const paths: unknown = JSON.parse(fields.workspaces ?? "[]");
+				if (!Array.isArray(paths) || !paths.length || !paths.every(item => typeof item === "string" && item.startsWith("/"))) throw new Error("请选择项目目录");
+				workspaces = [];
+				for (const path of paths) { const grant = await this.client.call("POST /api/v1/workspaces/select", { body: { host_path: path }, identity }); workspaces.push(grant.name); }
+			}
+			if (id === Projects.PROJECT_ADD_MODAL) {
+				const key = `amazme:project:${identity.profile_id}`, previous = sessionStorage.getItem(key);
+				const record = parseContract("ProjectWrite", previous ? JSON.parse(previous) : { project_id: newId(), name: fields.name ?? "", workspaces });
+				sessionStorage.setItem(key, JSON.stringify(record));
+				const created = await this.client.call("POST /api/v1/projects", { body: record, identity });
+				if (sessionStorage.getItem(key) === JSON.stringify(record)) sessionStorage.removeItem(key);
+				if (this.modal === modal) { this.selectedProject = created.project_id; this.expandedProjects = [...this.expandedProjects, created.project_id]; }
+			} else if (original) await this.client.call("PUT /api/v1/projects/{project_id}", { path: { project_id: original.project_id }, body: {
+				name: fields.name ?? original.name, workspaces, expected_revision: original.revision ?? 0, removed: id === Projects.PROJECT_REMOVE_MODAL,
+			}, identity });
+			await this.loadGlobal(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
+		}
+		return false;
+	}
 	private observeTerminal(terminal: ActiveTerminal, view: TerminalView): void {
 		if (view.terminal_id !== terminal.id || (view.session_id && view.session_id !== terminal.connection.sessionId)) throw new Error("终端归属不匹配");
 		if ((view.output_seq ?? 0) < (terminal.view.output_seq ?? 0) || (terminal.view.phase === "exited" && view.phase === "running")) return;
@@ -452,11 +547,13 @@ export class DesktopPage {
 	}
 	private async openWorkspace(path?: string, file = false): Promise<void> {
 		const connection = this.requireConnection();
+		const generation = ++this.workspaceGeneration;
 		const session = this.sessions.find(item => item.session_id === connection.sessionId);
 		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
-		const relative = path ? path.startsWith(cwd + "/") ? `${session?.workspace ?? "primary"}/${path.slice(cwd.length + 1)}` : path === cwd ? `${session?.workspace ?? "primary"}/` : path : `${session?.workspace ?? "primary"}/`;
-		if (file) { const result = await this.client.call("GET /api/v1/files/content", { query: { path: relative } }); if (!connection.active()) return; this.workspace = { cwd, view: { kind: "text", path: result.absolute_path ?? result.path, text: result.content, truncated: result.truncated ?? false } }; }
-		else { const result = await this.client.call("GET /api/v1/files", { query: { path: relative } }); if (!connection.active()) return; this.workspace = { cwd, view: { kind: "listing", path: result.absolute_path ?? cwd, parent: (result.absolute_path ?? cwd) === cwd ? null : (result.absolute_path ?? cwd).split("/").slice(0, -1).join("/"), entries: result.entries.map(item => ({ ...item, kind: item.kind === "dir" ? "dir" : "file" })) } }; }
+		const name = session?.workspace ?? "primary", prefix = name === "primary" ? "" : `grant/${name}/`;
+		const relative = path ? path.startsWith(cwd + "/") ? prefix + path.slice(cwd.length + 1) : path === cwd ? prefix : path : prefix;
+		if (file) { const result = await this.client.call("GET /api/v1/files/content", { query: { path: relative } }); if (!connection.active() || generation !== this.workspaceGeneration) return; this.workspace = { cwd, view: { kind: "text", path: result.absolute_path ?? result.path, text: result.content, truncated: result.truncated ?? false } }; }
+		else { const result = await this.client.call("GET /api/v1/files", { query: { path: relative } }); if (!connection.active() || generation !== this.workspaceGeneration) return; this.workspace = { cwd, view: { kind: "listing", path: result.absolute_path ?? cwd, parent: (result.absolute_path ?? cwd) === cwd ? null : (result.absolute_path ?? cwd).split("/").slice(0, -1).join("/"), entries: result.entries.map(item => ({ ...item, kind: item.kind === "dir" ? "dir" : "file" })) } }; }
 		this.dockOpen = true; this.dockTab = "files"; this.render();
 	}
 	private authentication(): ProviderAuthLike {
@@ -549,10 +646,11 @@ export class DesktopPage {
 	private render(): void {
 		document.documentElement.lang = documentLanguage(this.locale);
 		const connection = this.client.connection, session = this.sessions.find(item => item.session_id === connection?.sessionId);
-		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
+		const directory = pythonDirectory(this.sessions, this.projects, this.workspaces);
+		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, projects: this.projects, selectedProject: this.selectedProject, expandedProjects: this.expandedProjects, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
-				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() } },
+				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: true })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
 			}), connections: this.connections(), mode: this.mode, usage: this.usage, welcomeDismissed: this.settings?.preferences?.showWelcome === false, newSessionPending: this.newSessionPending, ready: this.ready });
 		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";

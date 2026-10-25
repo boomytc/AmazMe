@@ -854,14 +854,25 @@ export type ProjectList = {
   "projects"?: Array<ProjectView>;
 };
 
+export type ProjectUpdate = {
+  "name": string;
+  "workspaces": Array<string>;
+  "expected_revision": number;
+  "removed"?: boolean;
+};
+
 export type ProjectView = {
   "project_id": string;
   "name": string;
+  "workspaces"?: Array<string>;
+  "revision"?: number;
+  "removed"?: boolean;
 };
 
 export type ProjectWrite = {
   "project_id": string;
   "name": string;
+  "workspaces"?: Array<string>;
 };
 
 export type Receipt = {
@@ -943,6 +954,11 @@ export type RemoteView = {
   "host": string;
   "phase": "connected" | "disconnected" | "blocked";
   "generation": number;
+};
+
+export type RenameSession = {
+  "title": string;
+  "expected_title": string;
 };
 
 export type ResourceCatalog = {
@@ -1478,6 +1494,7 @@ export interface ApiModels {
   ProcessLease: ProcessLease;
   ProductSettings: ProductSettings;
   ProjectList: ProjectList;
+  ProjectUpdate: ProjectUpdate;
   ProjectView: ProjectView;
   ProjectWrite: ProjectWrite;
   Receipt: Receipt;
@@ -1489,6 +1506,7 @@ export interface ApiModels {
   RemoteOpen: RemoteOpen;
   RemoteRun: RemoteRun;
   RemoteView: RemoteView;
+  RenameSession: RenameSession;
   ResourceCatalog: ResourceCatalog;
   ResourceItem: ResourceItem;
   ResourceOptions: ResourceOptions;
@@ -1740,6 +1758,15 @@ export interface HttpOperations {
   "POST /api/v1/sessions": { response: Session; path: Record<string, unknown>; query: Record<string, unknown>; body: CreateSession };
   "GET /api/v1/projects": { response: ProjectList; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/projects": { response: ProjectView; path: Record<string, unknown>; query: Record<string, unknown>; body: ProjectWrite };
+  "PUT /api/v1/projects/{project_id}": { response: ProjectView; path: {
+  "project_id": string;
+}; query: Record<string, unknown>; body: ProjectUpdate };
+  "PUT /api/v1/sessions/{session}/title": { response: Session; path: {
+  "session": string;
+}; query: Record<string, unknown>; body: RenameSession };
+  "DELETE /api/v1/sessions/{session}": { response: Record<string, boolean>; path: {
+  "session": string;
+}; query: Record<string, unknown>; body: undefined };
   "GET /api/v1/settings": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/settings": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: SettingsUpdate };
   "PUT /api/v1/settings/preferences": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: PreferencesUpdate };

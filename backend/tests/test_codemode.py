@@ -123,8 +123,8 @@ async def test_supervisor_commits_only_success_and_does_not_rerun(tmp_path: Path
     private_write(tmp_path / "control.token", "token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
     with sqlite3.connect(tmp_path / "host.sqlite") as db:
-        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT)")
-        db.execute("INSERT INTO sessions VALUES(?,?)",("a"*32,"primary"))
+        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT, archived INTEGER NOT NULL DEFAULT 0)")
+        db.execute("INSERT INTO sessions(id,workspace) VALUES(?,?)",("a"*32,"primary"))
     owner = Supervisor(Profile(tmp_path), "supervisor-code")
     await owner.initialize()
     owner.monitor_task.cancel()
@@ -177,8 +177,8 @@ async def test_supervisor_cancel_does_not_commit(tmp_path: Path, monkeypatch: py
     private_write(tmp_path / "control.token", "token")
     monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
     with sqlite3.connect(tmp_path / "host.sqlite") as db:
-        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT)")
-        db.execute("INSERT INTO sessions VALUES(?,?)",("a"*32,"primary"))
+        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT, archived INTEGER NOT NULL DEFAULT 0)")
+        db.execute("INSERT INTO sessions(id,workspace) VALUES(?,?)",("a"*32,"primary"))
     owner = Supervisor(Profile(tmp_path), "supervisor-cancel")
     await owner.initialize()
     owner.monitor_task.cancel()
@@ -386,8 +386,8 @@ async def test_supervisor_owns_script_after_waiter_cancels_and_close_stops_it(tm
     private_write(tmp_path / 'control.token','token')
     monkeypatch.setattr('amazme_backend.supervisor.build_id',lambda:'build-one')
     with sqlite3.connect(tmp_path / 'host.sqlite') as db:
-        db.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT)')
-        db.executemany('INSERT INTO sessions VALUES(?,?)',[('a'*32,'primary'),('b'*32,'primary')])
+        db.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT, archived INTEGER NOT NULL DEFAULT 0)')
+        db.executemany('INSERT INTO sessions(id,workspace) VALUES(?,?)',[('a'*32,'primary'),('b'*32,'primary')])
     owner = Supervisor(Profile(tmp_path),'code-ownership')
     await owner.initialize()
     owner.monitor_task.cancel()

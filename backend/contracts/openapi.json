@@ -3180,6 +3180,147 @@
         }
       }
     },
+    "/api/v1/projects/{project_id}": {
+      "put": {
+        "summary": "Update Project",
+        "operationId": "update_project_api_v1_projects__project_id__put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}/title": {
+      "put": {
+        "summary": "Rename Session",
+        "operationId": "rename_session_api_v1_sessions__session__title_put",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameSession"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Session"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session}": {
+      "delete": {
+        "summary": "Remove Session",
+        "operationId": "remove_session_api_v1_sessions__session__delete",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "boolean"
+                  },
+                  "title": "Response Remove Session Api V1 Sessions  Session  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/settings": {
       "get": {
         "summary": "Product Settings",
@@ -9212,6 +9353,43 @@
         "type": "object",
         "title": "ProjectList"
       },
+      "ProjectUpdate": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "workspaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Workspaces"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "removed": {
+            "type": "boolean",
+            "title": "Removed",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "workspaces",
+          "expected_revision"
+        ],
+        "title": "ProjectUpdate"
+      },
       "ProjectView": {
         "properties": {
           "project_id": {
@@ -9221,6 +9399,23 @@
           "name": {
             "type": "string",
             "title": "Name"
+          },
+          "workspaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Workspaces"
+          },
+          "revision": {
+            "type": "integer",
+            "title": "Revision",
+            "default": 0
+          },
+          "removed": {
+            "type": "boolean",
+            "title": "Removed",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -9243,6 +9438,15 @@
             "maxLength": 80,
             "minLength": 1,
             "title": "Name"
+          },
+          "workspaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "minItems": 1,
+            "title": "Workspaces"
           }
         },
         "additionalProperties": false,
@@ -9703,6 +9907,27 @@
           "generation"
         ],
         "title": "RemoteView"
+      },
+      "RenameSession": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Title"
+          },
+          "expected_title": {
+            "type": "string",
+            "title": "Expected Title"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title",
+          "expected_title"
+        ],
+        "title": "RenameSession"
       },
       "ResourceCatalog": {
         "properties": {

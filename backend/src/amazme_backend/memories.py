@@ -61,7 +61,7 @@ def relevant_memories(profile: Path, workspace: str, query: str) -> list[MemoryV
     return match_memories(load_memory_rows(profile), workspace, query)
 
 
-def session_workspace(profile: Path, session_id: str) -> str:
+def session_workspace(profile: Path, session_id: str, *, active: bool = False) -> str:
     """Return the stored workspace. Unreadable state is not the primary directory."""
     database = profile / "host.sqlite"
     if not database.is_file():
@@ -69,13 +69,16 @@ def session_workspace(profile: Path, session_id: str) -> str:
     connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
     try:
         try:
-            row = connection.execute("SELECT workspace FROM sessions WHERE id=?", (session_id,)).fetchone()
+            columns = "workspace, archived" if active else "workspace, 0"
+            row = connection.execute(f"SELECT {columns} FROM sessions WHERE id=?", (session_id,)).fetchone()
         except sqlite3.Error as error:
             raise BackendError("workspace_unresolved", status=503) from error
     finally:
         connection.close()
     if row is None:
         raise BackendError("session_not_found", status=404)
+    if active and bool(row[1]):
+        raise BackendError("session_archived")
     workspace = str(row[0] or "")
     if not workspace:
         raise BackendError("workspace_unresolved", status=503)

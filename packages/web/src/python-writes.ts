@@ -43,7 +43,15 @@ export class PendingWrites {
 		const raw = this.storage.getItem(storageKey);
 		if (!raw) return;
 		const current: unknown = JSON.parse(raw);
-		if (isRecord(current) && current.id === record.id) this.storage.removeItem(storageKey);
+		if (isRecord(current) && current.id === record.id) {
+			this.storage.removeItem(storageKey);
+			if (this.storage.getItem(storageKey + ":uncertain") === record.id) this.storage.removeItem(storageKey + ":uncertain");
+		}
+	}
+	private uncertain(key: string, record: PendingWrite): void {
+		const raw = this.storage.getItem(this.prefix + key);
+		const current: unknown = raw ? JSON.parse(raw) : undefined;
+		if (isRecord(current) && current.id === record.id) this.storage.setItem(this.prefix + key + ":uncertain", record.id);
 	}
 	isRunning(key: string): boolean { return this.running.has(key); }
 	async send<K extends Operation>(key: string, record: PendingWrite<K>, client: PythonClient, connection: ClientConnection): Promise<HttpOperations[K]["response"]> {
@@ -63,9 +71,11 @@ export class PendingWrites {
 				if (typeof body[field] === "string" && typeof value[field] === "string" && body[field] !== value[field]) throw new Error("回执操作编号不匹配；原记录已保留。");
 			}
 			if (!isRecord(value) || (value.phase !== "unknown" && value.input_status !== "unknown" && value.status !== "unknown")) this.forget(key, record);
+			else this.uncertain(key, record);
 			return result;
 		} catch (error) {
-			if (definitive(error)) this.forget(key, record);
+			if (!definitive(error)) this.uncertain(key, record);
+			else if (this.storage.getItem(this.prefix + key + ":uncertain") !== record.id) this.forget(key, record);
 			throw error;
 		} finally { this.running.delete(key); }
 	}

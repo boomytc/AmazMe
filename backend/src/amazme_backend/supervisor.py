@@ -452,7 +452,7 @@ class Supervisor:
         if fence.host_epoch != self.host_epoch:
             raise BackendError("stale_host_epoch")
 
-    def _admit(self, *, validation: bool = False) -> None:
+    def _admit(self, session: str = "", *, validation: bool = False) -> None:
         if self.db.failed or self.blocked:
             raise BackendError("execution_blocked", self.db.failed or self.blocked, 503)
         if self.draining:
@@ -461,6 +461,8 @@ class Supervisor:
             raise BackendError("worker_fence_pending", status=503)
         if self.freeze_id and not validation:
             raise BackendError("supervisor_frozen", status=503)
+        if session:
+            session_workspace(self.profile.path, session, active=True)
 
     async def _workers(self, session: str = "") -> list[WorkerInfo]:
         return await self.db.call(lambda db: [WorkerInfo.model_validate_json(str(r[0])) for r in db.execute(
@@ -739,7 +741,7 @@ class Supervisor:
                     if old["outcome"] == "completed":
                         return ToolResult.model_validate_json(str(old["result"]))
                     raise BackendError("tool_outcome_unknown")
-                self._admit()
+                self._admit(value.session_id)
                 if value.effect == "write" and await self._write_conflict(value.session_id):
                     raise BackendError("unknown_effect_conflict", status=503)
                 workspace = session_workspace(self.profile.path, value.session_id)
@@ -1009,6 +1011,29 @@ class Supervisor:
             if value.execution_epoch != worker.execution_epoch:
                 raise BackendError("stale_execution_epoch")
             return await self._retire_worker(worker, value.reason)
+
+    async def retire_session(self, value: TerminalSession) -> Cleanup:
+        self.check_host(value)
+        session_workspace(self.profile.path, value.session_id)
+        await self._stop_codes(value.session_id)
+        async with self.control:
+            self.check_host(value)
+            codes = await self.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE session=?", (value.session_id,)).fetchall())
+            for code in codes:
+                if not (await self._retire_code(code)).clean:
+                    raise BackendError("codemode_cleanup_pending", status=503)
+            for worker in await self._workers(value.session_id):
+                if worker.state != "stopped":
+                    result = await self._retire_worker(worker, "shutdown")
+                    if result.state != "clean":
+                        raise BackendError("execution_cleanup_pending", status=503)
+            for epoch in await self._unclean_epochs(value.session_id):
+                result = await self._cleanup_epoch(epoch)
+                if result.state != "clean":
+                    raise BackendError("execution_cleanup_pending", status=503)
+            await self._close_services(value.session_id)
+            return Cleanup(session_id=value.session_id, execution_epoch=0, state="clean", resources=[],
+                           proof_id=secrets.token_hex(16))
 
     async def _refresh_workers(self) -> list[WorkerInfo]:
         workers = await self._workers()
@@ -1302,7 +1327,7 @@ class Supervisor:
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
                     raise BackendError("mcp_server_conflict")
                 return self._mcp_view(old)
-            self._admit()
+            self._admit(value.session_id)
             recorded = session_workspace(self.profile.path, value.session_id)
             workspace = value.workspace or recorded
             count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_servers WHERE clean=0").fetchone()[0])
@@ -1432,6 +1457,7 @@ class Supervisor:
                     existing = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
                     assert existing is not None
                 return self._mcp_call(existing)
+            self._admit(session_id)
             await self._sync_mcp(server_id)
             server = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
             assert server is not None
@@ -1476,6 +1502,7 @@ class Supervisor:
                 if row["decision_id"] != value.decision_id or (row["phase"] != "conflict" and row["decision"] != decision):
                     raise BackendError("mcp_decision_conflict")
                 return self._mcp_call(row)
+            self._admit(session_id)
             if row["phase"] != "waiting_approval":
                 raise BackendError("mcp_call_conflict")
             if value.approve and client is not None and client.catalog_failed:
@@ -1538,8 +1565,8 @@ class Supervisor:
         assert current is not None
         return self._mcp_view(current)
 
-    async def _close_mcps(self, *, require_clean: bool = True) -> None:
-        rows = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE clean=0").fetchall())
+    async def _close_mcps(self, session: str = "", *, require_clean: bool = True) -> None:
+        rows = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE clean=0 AND (?='' OR session=?)", (session, session)).fetchall())
         results = await asyncio.gather(*(self._close_mcp(row,
             interrupted=str(row["id"]) not in self.mcp_processes) for row in rows), return_exceptions=True)
         for result in results:
@@ -1556,9 +1583,9 @@ class Supervisor:
             await self.db.call(lambda db: db.execute("UPDATE remotes SET transport='' WHERE id=?", (row["id"],)), write=True)
         return stopped
 
-    async def _close_remotes(self, *, require_clean: bool = True) -> None:
+    async def _close_remotes(self, session: str = "", *, require_clean: bool = True) -> None:
         async with self.remote_control:
-            rows = await self.db.call(lambda db: db.execute("SELECT * FROM remotes").fetchall())
+            rows = await self.db.call(lambda db: db.execute("SELECT * FROM remotes WHERE 1 AND (?='' OR session=?)", (session, session)).fetchall())
             errors: list[Exception] = []
             for row in rows:
                 try:
@@ -1570,11 +1597,11 @@ class Supervisor:
             if errors:
                 raise errors[0]
 
-    async def _close_services(self, *, require_clean: bool = True) -> None:
-        results = await asyncio.gather(self._close_terminals(require_clean=require_clean),
-                                       self._close_mcps(require_clean=require_clean),
-                                       self._close_plugins(require_clean=require_clean),
-                                       self._close_remotes(require_clean=require_clean), return_exceptions=True)
+    async def _close_services(self, session: str = "", *, require_clean: bool = True) -> None:
+        results = await asyncio.gather(self._close_terminals(session, require_clean=require_clean),
+                                       self._close_mcps(session, require_clean=require_clean),
+                                       self._close_plugins(session, require_clean=require_clean),
+                                       self._close_remotes(session, require_clean=require_clean), return_exceptions=True)
         for result in results:
             if isinstance(result, BaseException):
                 raise result
@@ -1680,7 +1707,7 @@ class Supervisor:
                 if existing["session"] != value.session_id or existing["source"] != value.source:
                     raise BackendError("codemode_conflict")
                 return await self._code_view_with_state(existing)
-            self._admit()
+            self._admit(value.session_id)
             if len(self.code_jobs) >= 8:
                 raise BackendError("codemode_capacity")
             await self._code_blocked(value.session_id)
@@ -1882,10 +1909,13 @@ class Supervisor:
             "SELECT * FROM code_runs WHERE id=? AND session=?", (value.run_id, value.session_id)).fetchone())
         return CodeView(run_id=value.run_id,phase="unknown",cancel_requested=True) if row is None else await self._retire_code(row)
 
-    async def _stop_codes(self) -> None:
-        for event in list(self.code_cancels.values()):
-            event.set()
-        tasks = list(self.code_jobs.values())
+    async def _stop_codes(self, session: str = "") -> None:
+        ids = None if not session else {str(row[0]) for row in await self.db.call(lambda db: db.execute(
+            "SELECT id FROM code_runs WHERE session=?", (session,)).fetchall())}
+        for run_id, event in list(self.code_cancels.items()):
+            if ids is None or run_id in ids:
+                event.set()
+        tasks = [task for run_id, task in self.code_jobs.items() if ids is None or run_id in ids]
         if tasks:
             try:
                 await asyncio.wait_for(asyncio.shield(asyncio.gather(*tasks,return_exceptions=True)),25)
@@ -1966,8 +1996,8 @@ class Supervisor:
             ("disconnected" if clean else "unknown", plugin_id)), write=True)
         return clean
 
-    async def _close_plugins(self, *, require_clean: bool = True) -> None:
-        rows = await self.db.call(lambda db: db.execute("SELECT * FROM plugins").fetchall())
+    async def _close_plugins(self, session: str = "", *, require_clean: bool = True) -> None:
+        rows = await self.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE 1 AND (?='' OR session=?)", (session, session)).fetchall())
         results = await asyncio.gather(*(self._close_plugin(row) for row in rows), return_exceptions=True)
         if require_clean and any(result is not True for result in results):
             raise BackendError("execution_cleanup_pending", status=503)
@@ -2022,6 +2052,7 @@ class Supervisor:
                 if previous is None or str(previous["digest"]) != identity:
                     raise BackendError("plugin_conflict")
                 return self._plugin_view(existing)
+            self._admit(value.session_id)
             if len(self.plugin_clients) >= 8:
                 raise BackendError("plugin_capacity", status=429)
             entry, source_digest = entry_digest(value.entry)
@@ -2053,6 +2084,7 @@ class Supervisor:
                 if str(previous["digest"]) != identity or str(previous["plugin"]) != value.plugin_id:
                     raise BackendError("plugin_reload_conflict")
                 return PluginView.model_validate_json(str(previous["result"])) if str(previous["result"]) else self._plugin_view(current)
+            self._admit(value.session_id)
             config = validate_config(value.config)
             entry, source_digest = entry_digest(value.entry or str(current["entry"]))
             fingerprint = plugin_fingerprint(value.plugin_id, str(current["name"]), config, entry=entry, source_digest=source_digest, load_id=load_id)
@@ -2121,7 +2153,7 @@ class Supervisor:
                 await self.db.call(lambda db: db.execute("INSERT INTO plugin_calls(id,plugin,session,text,phase,cancel_requested,clean) VALUES(?,?,?,?,'cancelled',1,1)",
                     (value.call_id, value.plugin_id, value.session_id, payload)), write=True)
                 return PluginCallView(call_id=value.call_id, phase="cancelled", cancel_requested=True, clean=True)
-            self._admit()
+            self._admit(value.session_id)
             if await self._write_conflict(value.session_id):
                 raise BackendError("unknown_effect_conflict", status=503)
             await self._plugin_fingerprint_ready(await self.plugin_set_fingerprint(value.session_id), value.session_id)
@@ -2288,7 +2320,7 @@ class Supervisor:
 
     async def _open_remote(self, value: OpenRemote) -> RemoteView:
         self.check_host(value)
-        self._admit()
+        self._admit(value.session_id)
         target = SshTarget.model_validate(value.model_dump(include=set(SshTarget.model_fields))).model_dump_json()
         existing = await self._remote_row(value.remote_id)
         if existing is not None:
@@ -2321,7 +2353,7 @@ class Supervisor:
 
     async def _reconnect_remote(self, value: OpenRemote) -> RemoteView:
         self.check_host(value)
-        self._admit()
+        self._admit(value.session_id)
         row = await self._remote_row(value.remote_id)
         if row is None or row["session"] != value.session_id:
             raise BackendError("remote_not_found", status=404)
@@ -2379,7 +2411,7 @@ class Supervisor:
 
     async def _submit_remote(self, value: OpenRemote, call: RemoteCallRequest) -> RemoteCallView:
         self.check_host(value)
-        self._admit()
+        self._admit(value.session_id)
         row = await self._remote_row(value.remote_id)
         if row is None or row["session"] != value.session_id:
             raise BackendError("remote_not_found", status=404)
@@ -2475,7 +2507,7 @@ class Supervisor:
                 if (old["session"], old["command"], old["workspace"]) != (value.session_id, value.command, workspace):
                     raise BackendError("terminal_conflict")
                 return self._view(old)
-            self._admit()
+            self._admit(value.session_id)
             recorded = session_workspace(self.profile.path, value.session_id)
             workspace = value.workspace or recorded
             count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM terminals WHERE clean=0").fetchone()[0])
@@ -2543,8 +2575,8 @@ class Supervisor:
         assert current is not None
         return self._view(current)
 
-    async def _close_terminals(self, *, require_clean: bool = True) -> None:
-        rows = await self.db.call(lambda db: db.execute("SELECT * FROM terminals WHERE clean=0").fetchall())
+    async def _close_terminals(self, session: str = "", *, require_clean: bool = True) -> None:
+        rows = await self.db.call(lambda db: db.execute("SELECT * FROM terminals WHERE clean=0 AND (?='' OR session=?)", (session, session)).fetchall())
         results = await asyncio.gather(*(self._close_terminal(row,
             interrupted=str(row["id"]) not in self.terminal_processes) for row in rows), return_exceptions=True)
         for result in results:
@@ -2574,7 +2606,7 @@ class Supervisor:
                     raise BackendError("terminal_input_conflict")
                 return self._view(row).model_copy(update={"input_id": value.input_id,
                     "input_status": "accepted" if previous["accepted"] == len(value.data.encode()) else "unknown"})
-            self._admit()
+            self._admit(value.session_id)
             if row["phase"] != "running" or row["exit_code"] is not None:
                 raise BackendError("terminal_not_running")
             client = self.terminals.get(value.terminal_id)
@@ -2602,7 +2634,7 @@ class Supervisor:
     async def resize_terminal(self, value: TerminalResize) -> TerminalView:
         async with self.control:
             self.check_host(value)
-            self._admit()
+            self._admit(value.session_id)
             row = await self._terminal_row(value.terminal_id)
             if row is None or row["session"] != value.session_id:
                 raise BackendError("terminal_not_found", status=404)
@@ -2687,6 +2719,7 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/workers/ensure")(owner.ensure_worker)
     app.post("/workers/heartbeat")(owner.heartbeat)
     app.post("/workers/stop")(owner.stop_worker)
+    app.post("/sessions/retire")(owner.retire_session)
     app.post("/epochs/open")(owner.open_epoch)
 
     @app.post("/epochs/close")

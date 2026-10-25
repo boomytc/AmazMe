@@ -104,11 +104,14 @@ test("A's late reply neither clears B's pending ID nor a replacement record in A
 test("unknown results and stale binding errors keep the original record", async () => {
  const client = new PythonClient("http://127.0.0.1:4310"), ledger = new PendingWrites(sessionStorage, "host", "a");
  const record = ledger.prepare("submit", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: "a" }, body: { request_id: id, text: "你好" } }));
- vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(receipt(record.body.request_id, "unknown")), { status: 202 })).mockResolvedValueOnce(new Response('{"code":"stale_client_binding"}', { status: 409 })));
+ vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(receipt(record.body.request_id, "unknown")), { status: 202 })).mockResolvedValueOnce(new Response('{"code":"stale_client_binding"}', { status: 409 })).mockResolvedValueOnce(new Response('{"code":"session_archived"}', { status: 409 })));
  await ledger.send("submit", record, client, connection("a"));
  expect(ledger.read("submit", record.operation)?.id).toBe(record.id);
  await expect(ledger.send("submit", record, client, connection("a"))).rejects.toBeInstanceOf(ApiError);
  expect(ledger.read("submit", record.operation)?.id).toBe(record.id);
+ const restored = new PendingWrites(sessionStorage, "host", "a");
+ await expect(restored.send("submit", record, client, connection("a"))).rejects.toBeInstanceOf(ApiError);
+ expect(restored.read("submit", record.operation)).toEqual(record);
 });
 
 test("a damaged persisted payload and a reply for a different request preserve the original record", async () => {

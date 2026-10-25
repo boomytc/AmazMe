@@ -71,6 +71,22 @@ export class PythonClient {
 		return identity;
 	}
 
+	/** Sidebar management may address a session other than the visible conversation. */
+	async withSession<T>(sessionId: string, work: (connection: ClientConnection) => Promise<T>): Promise<T> {
+		const current = this.connection;
+		if (current?.sessionId === sessionId && current.ready && current.active()) return work(current);
+		const identity = this.identity;
+		if (!identity) throw new Error("请先连接后端");
+		const attachment = await this.call("POST /api/v1/sessions/{session}/attachments", { path: { session: sessionId }, identity });
+		const connection: ClientConnection = { sessionId, identity, attachment, generation: this.generation, ready: true,
+			active: () => this.identity === identity };
+		try {
+			if (attachment.session_id !== sessionId || attachment.build_id !== identity.build_id || attachment.host_epoch !== identity.host_epoch) throw new Error("会话绑定不匹配");
+			return await work(connection);
+		}
+		finally { await this.detach(connection); }
+	}
+
 	async connect(sessionId: string, resume = false): Promise<void> {
 		const cached = resume && this.connection?.sessionId === sessionId ? this.connection.snapshot : undefined;
 		this.retire();

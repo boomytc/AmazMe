@@ -28,7 +28,7 @@ async def terminal_owner(tmp_path):
     await owner.initialize()
     connection = sqlite3.connect(tmp_path / "host.sqlite")
     try:
-        connection.execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+        connection.execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)")
         connection.execute("INSERT INTO sessions(id, workspace) VALUES(?, 'primary')", ("a" * 32,))
         connection.commit()
     finally:
@@ -111,6 +111,29 @@ async def test_session_terminal_survives_worker_cleanup_and_only_own_terminal_is
     with pytest.raises(BackendError, match="terminal_not_found"):
         await owner.close_terminal(query(owner, "c" * 32).model_copy(update={"session_id": "d" * 32}))
     await owner.close_terminal(query(owner, other.terminal_id))
+
+
+async def test_session_retirement_closes_only_its_terminals_and_blocks_new_archived_input(terminal_owner):
+    owner = terminal_owner
+    first, _ = await opened(owner)
+    with sqlite3.connect(owner.profile.path / "host.sqlite") as db:
+        db.execute("INSERT INTO sessions(id,workspace) VALUES(?, 'primary')", ("d" * 32,))
+    other = first.model_copy(update={"session_id": "d" * 32, "terminal_id": "c" * 32})
+    await owner.open_terminal(other)
+    with sqlite3.connect(owner.profile.path / "host.sqlite") as db:
+        db.execute("UPDATE sessions SET archived=1 WHERE id=?", (first.session_id,))
+    typed = TerminalInput(**query(owner).model_dump(), input_id="new", data="echo should-not-run\n")
+    with pytest.raises(BackendError, match="session_archived"):
+        await owner.write_terminal(typed)
+    receipt = await owner.retire_session(TerminalSession(
+        build_id=owner.build, host_epoch=owner.host_epoch, session_id=first.session_id))
+    assert receipt.state == "clean" and receipt.proof_id
+    assert (await owner.read_terminal(query(owner))).clean is True
+    other_query = query(owner, "c" * 32).model_copy(update={"session_id": "d" * 32})
+    assert (await owner.read_terminal(other_query)).phase == "running"
+    assert (await owner.retire_session(TerminalSession(
+        build_id=owner.build, host_epoch=owner.host_epoch, session_id=first.session_id))).state == "clean"
+    assert (await owner.read_terminal(other_query)).phase == "running"
 
 
 async def test_terminal_restart_marks_channel_unknown_without_relaunch(terminal_owner):

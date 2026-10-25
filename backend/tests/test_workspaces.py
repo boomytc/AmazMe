@@ -259,7 +259,7 @@ async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path:
     await owner.initialize()
     database = sqlite3.connect(tmp_path / "host.sqlite")
     try:
-        database.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL DEFAULT 'primary')")
+        database.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL DEFAULT 'primary', archived INTEGER NOT NULL DEFAULT 0)")
         database.commit()
     finally:
         database.close()
@@ -367,7 +367,7 @@ async def test_unreadable_workspace_does_not_start_shell_terminal_or_mcp(tmp_pat
         blank, primary = await start("blank")
         connection = sqlite3.connect(blank.profile.path / "host.sqlite")
         try:
-            connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+            connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)")
             connection.execute("INSERT INTO sessions(id, workspace) VALUES(?, '')", (session,))
             connection.commit()
         finally:
@@ -377,7 +377,7 @@ async def test_unreadable_workspace_does_not_start_shell_terminal_or_mcp(tmp_pat
         present, primary = await start("present")
         connection = sqlite3.connect(present.profile.path / "host.sqlite")
         try:
-            connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+            connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)")
             connection.execute("INSERT INTO sessions(id, workspace) VALUES(?, 'primary')", (session,))
             connection.commit()
         finally:
@@ -406,7 +406,7 @@ def _seed_host(profile: Path, session: str, grant: Path) -> None:
     database = sqlite3.connect(profile / "host.sqlite")
     try:
         database.executescript("""
-            CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL DEFAULT 'primary');
+            CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL DEFAULT 'primary', archived INTEGER NOT NULL DEFAULT 0);
             CREATE TABLE workspace_grants(name TEXT PRIMARY KEY, host_path TEXT NOT NULL);
         """)
         database.execute("INSERT INTO sessions(id, workspace) VALUES(?, 'docs')", (session,))

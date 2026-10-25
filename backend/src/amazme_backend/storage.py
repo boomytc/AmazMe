@@ -123,7 +123,7 @@ def session_database(profile: Path, session: str) -> Path:
 def remove_session_directory(directory: Path) -> None:
     if not directory.exists():
         return
-    if not directory.is_dir():
+    if directory.is_symlink() or directory.parent.is_symlink() or not directory.is_dir():
         raise BackendError("branch_cleanup_refused")
     names = {item.name for item in directory.iterdir()}
     if not names <= _SESSION_FILES:

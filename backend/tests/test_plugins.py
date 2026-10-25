@@ -36,9 +36,9 @@ async def owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv('OPENAI_API_KEY', 'never-inherit-this')
     monkeypatch.setenv('AMAZME_CONTROL_TOKEN', 'never-inherit-control')
     with sqlite3.connect(tmp_path / 'host.sqlite') as db:
-        db.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT)')
-        db.execute('INSERT INTO sessions VALUES(?,?)', (SESSION,'primary'))
-        db.execute('INSERT INTO sessions VALUES(?,?)', ('9'*32,'primary'))
+        db.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT, archived INTEGER NOT NULL DEFAULT 0)')
+        db.execute('INSERT INTO sessions(id,workspace) VALUES(?,?)', (SESSION,'primary'))
+        db.execute('INSERT INTO sessions(id,workspace) VALUES(?,?)', ('9'*32,'primary'))
     (tmp_path / 'extension.py').write_text(SOURCE)
     value = Supervisor(Profile(tmp_path), 'plugin-owner')
     await value.initialize()

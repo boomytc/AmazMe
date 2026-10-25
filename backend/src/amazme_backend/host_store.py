@@ -21,6 +21,8 @@ from .contracts import (
     PrepareUpdate,
     ProcessLease,
     ProductSettings,
+    ProjectUpdate,
+    ProjectView,
     ProviderConfig,
     Receipt,
     ServiceInfo,
@@ -154,6 +156,7 @@ class HostStore:
                   wanted INTEGER NOT NULL DEFAULT 0,next_check INTEGER NOT NULL DEFAULT 0,
                   parent_id TEXT NOT NULL DEFAULT '',fork_request_id TEXT NOT NULL DEFAULT '',
                   archived INTEGER NOT NULL DEFAULT 0);
+                CREATE TABLE IF NOT EXISTS session_removals(session TEXT PRIMARY KEY, completed INTEGER NOT NULL DEFAULT 0);
                 CREATE TABLE IF NOT EXISTS deliveries(ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
                   id TEXT UNIQUE NOT NULL,session TEXT NOT NULL,kind TEXT NOT NULL,digest TEXT NOT NULL,
                   payload TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'pending',receipt TEXT NOT NULL DEFAULT '',
@@ -207,6 +210,11 @@ class HostStore:
             settings_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(product_settings)")}
             if "preferences" not in settings_columns:
                 db.execute("ALTER TABLE product_settings ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'")
+            project_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(projects)")}
+            for name, declaration in {"workspaces": "TEXT NOT NULL DEFAULT '[\"primary\"]'",
+                                      "revision": "INTEGER NOT NULL DEFAULT 0", "removed": "INTEGER NOT NULL DEFAULT 0"}.items():
+                if name not in project_columns:
+                    db.execute(f"ALTER TABLE projects ADD COLUMN {name} {declaration}")
         await self._call(create)
         def begin(db: sqlite3.Connection) -> int:
             db.execute("UPDATE control SET epoch=epoch+1 WHERE id=1")
@@ -466,6 +474,8 @@ class HostStore:
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
+            if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
+                raise BackendError("session_removed")
             workspace = value.workspace or "primary"
             project_id = value.project_id
             row = db.execute("SELECT title, workspace FROM sessions WHERE id=?", (session_id,)).fetchone()
@@ -477,8 +487,12 @@ class HostStore:
                 return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
             if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
                 raise BackendError("session_capacity", status=429)
-            if project_id and db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
+            if project_id and db.execute("SELECT 1 FROM projects WHERE id=? AND removed=0", (project_id,)).fetchone() is None:
                 raise BackendError("project_not_found", status=404)
+            if project_id:
+                project = self._project(db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+                if workspace not in project.workspaces:
+                    raise BackendError("project_workspace_mismatch")
             db.execute("INSERT INTO sessions(id,title,workspace,updated_ms) VALUES(?,?,?,?)", (session_id, value.title, workspace, time.time_ns() // 1_000_000))
             if project_id:
                 db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
@@ -597,6 +611,8 @@ class HostStore:
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
+            if not archived and db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
+                raise BackendError("session_removal_pending")
             current = db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone()
             if current is None:
                 raise BackendError("session_not_found", status=404)
@@ -608,6 +624,45 @@ class HostStore:
                     "WHERE session=? AND kind='submit' AND state='pending'", (session_id,))
             return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
         return await self.transaction(operation)
+
+    async def rename_session(self, session_id: str, title: str, expected: str) -> Session:
+        def operation(db: sqlite3.Connection) -> Session:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone()
+            if row is None:
+                raise BackendError("session_not_found", status=404)
+            if str(row["title"]) not in {expected, title}:
+                raise BackendError("session_conflict", status=409)
+            db.execute("UPDATE sessions SET title=? WHERE id=?", (title, session_id))
+            return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
+        return await self.transaction(operation)
+
+    async def begin_session_removal(self, session: str) -> bool:
+        def operation(db: sqlite3.Connection) -> bool:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            removal = db.execute("SELECT completed FROM session_removals WHERE session=?", (session,)).fetchone()
+            if removal is not None and bool(removal[0]):
+                return False
+            if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session,)).fetchone():
+                raise BackendError("session_not_found", status=404)
+            db.execute("INSERT OR IGNORE INTO session_removals(session) VALUES(?)", (session,))
+            db.execute("UPDATE sessions SET archived=1,wanted=0,next_check=0 WHERE id=?", (session,))
+            db.execute("UPDATE deliveries SET state='rejected',error_code='session_removed',error_status=409 "
+                       "WHERE session=? AND kind='submit' AND state='pending'", (session,))
+            return True
+        return await self.transaction(operation)
+
+    async def finish_session_removal(self, session: str) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            if not db.execute("SELECT 1 FROM session_removals WHERE session=?", (session,)).fetchone():
+                raise BackendError("session_removal_pending")
+            for table in ("project_sessions", "session_models", "deliveries", "automations", "feedback", "shares", "file_write_preparations"):
+                db.execute(f"DELETE FROM {table} WHERE session=?", (session,))
+            db.execute("DELETE FROM sessions WHERE id=?", (session,))
+            db.execute("UPDATE session_removals SET completed=1 WHERE session=?", (session,))
+        await self.transaction(operation)
 
     async def activity(self, session: str, activity: WorkerActivity) -> None:
         wanted = activity.runnable or activity.next_wake_ms > 0
@@ -778,24 +833,53 @@ class HostStore:
             return value
         return await self.transaction(operation)
 
-    async def save_project(self, project_id: str, name: str) -> tuple[str, str]:
-        key = hashlib.sha256(name.encode()).hexdigest()
+    @staticmethod
+    def _project(row: sqlite3.Row) -> ProjectView:
+        return ProjectView(project_id=str(row["id"]), name=str(row["name"]),
+                           workspaces=json.loads(str(row["workspaces"])), revision=int(row["revision"]),
+                           removed=bool(row["removed"]))
 
-        def operation(db: sqlite3.Connection) -> tuple[str, str]:
+    async def save_project(self, project_id: str, name: str, workspaces: list[str]) -> ProjectView:
+        key = hashlib.sha256(json.dumps([name, workspaces], ensure_ascii=False).encode()).hexdigest()
+
+        def operation(db: sqlite3.Connection) -> ProjectView:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
-            row = db.execute("SELECT digest,name FROM projects WHERE id=?", (project_id,)).fetchone()
+            row = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
             if row is not None:
-                if str(row[0]) != key:
+                if str(row["digest"]) != key:
                     raise BackendError("project_conflict")
-                return project_id, str(row[1])
-            db.execute("INSERT INTO projects(id,name,digest) VALUES(?,?,?)", (project_id, name, key))
-            return project_id, name
+                return self._project(row)
+            db.execute("INSERT INTO projects(id,name,digest,workspaces) VALUES(?,?,?,?)",
+                       (project_id, name, key, json.dumps(workspaces)))
+            return self._project(db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
         return await self.transaction(operation)
 
-    async def projects(self) -> list[tuple[str, str]]:
-        return await self._call(lambda db: [(str(row[0]), str(row[1])) for row in db.execute(
-            "SELECT id,name FROM projects ORDER BY rowid")])
+    async def projects(self) -> list[ProjectView]:
+        return await self._call(lambda db: [self._project(row) for row in db.execute("SELECT * FROM projects ORDER BY rowid")])
+
+    async def update_project(self, project_id: str, value: ProjectUpdate) -> ProjectView:
+        def operation(db: sqlite3.Connection) -> ProjectView:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+            if row is None:
+                raise BackendError("project_not_found", status=404)
+            current = self._project(row)
+            if (current.name, current.workspaces, current.removed) == (value.name, value.workspaces, value.removed):
+                return current
+            if current.revision != value.expected_revision:
+                raise BackendError("project_conflict", status=409)
+            db.execute("UPDATE projects SET name=?,workspaces=?,removed=?,revision=revision+1 WHERE id=?",
+                       (value.name, json.dumps(value.workspaces), int(value.removed), project_id))
+            if value.removed:
+                db.execute("UPDATE sessions SET archived=1,wanted=0,next_check=0 "
+                           "WHERE id IN (SELECT session FROM project_sessions WHERE project=?)", (project_id,))
+                db.execute("UPDATE deliveries SET state='rejected',error_code='session_archived',error_status=409 "
+                           "WHERE kind='submit' AND state='pending' AND session IN "
+                           "(SELECT session FROM project_sessions WHERE project=?)", (project_id,))
+            return self._project(db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
+        return await self.transaction(operation)
 
     @staticmethod
     def _settings(row: sqlite3.Row | None) -> ProductSettings:
@@ -892,7 +976,7 @@ class HostStore:
         def operation(db: sqlite3.Connection) -> None:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
-            if project_id and db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
+            if project_id and db.execute("SELECT 1 FROM projects WHERE id=? AND removed=0", (project_id,)).fetchone() is None:
                 raise BackendError("import_conflict")
             row = db.execute("SELECT 1 FROM sessions WHERE id=?", (session_id,)).fetchone()
             if row is None:

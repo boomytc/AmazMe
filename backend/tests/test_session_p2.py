@@ -479,7 +479,7 @@ def make_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, validation: 
         provider=ProviderConfig(provider="faux"), approval_policy="auto", user_resources=str(tmp_path / "agent"))
     (tmp_path / "config.json").write_text(profile.config.model_dump_json())
     with sqlite3.connect(tmp_path / "host.sqlite") as db:
-        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+        db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)")
         db.execute("INSERT INTO sessions(id,workspace) VALUES(?, 'primary')", (SESSION,))
     (tmp_path / "sessions" / SESSION).mkdir(parents=True)
     supervisor = FakeSupervisor()

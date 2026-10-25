@@ -63,7 +63,7 @@ async def owner(profile):
 def seed_session(profile: Path, session_id: str, workspace: str = "primary") -> None:
     connection = sqlite3.connect(profile / "host.sqlite")
     try:
-        connection.execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL)")
+        connection.execute("CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, workspace TEXT NOT NULL, archived INTEGER NOT NULL DEFAULT 0)")
         connection.execute(
             "INSERT INTO sessions(id, workspace) VALUES(?, ?) "
             "ON CONFLICT(id) DO UPDATE SET workspace=excluded.workspace",

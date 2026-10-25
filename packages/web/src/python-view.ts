@@ -4,16 +4,17 @@ import { dockView, type DockView } from "./dock.ts";
 import type { Locale } from "./locale.ts";
 import type { ModelConnectionsLike } from "./model-connections.ts";
 import type { PanelView } from "./panels.ts";
+import { projectGroups } from "./projects.ts";
 import { isRecord } from "./python-api.ts";
 import type { ClientConnection } from "./python-client.ts";
-import type { ModelCatalog, Session, SessionModel, Snapshot, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { ModelCatalog, ProjectView, Session, SessionModel, Snapshot, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { requestStatus, settled } from "./python-stream.ts";
 import { shortcuts } from "./shortcuts.ts";
 import { translate } from "./strings.ts";
 import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
 import { toolResultView } from "./tool-results.ts";
 import type { Typography } from "./typography.ts";
-import { approvalCards, approvalIndicator, failureView, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SubmitMode, type TranscriptBlock, type WebView } from "./view.ts";
+import { approvalCards, approvalIndicator, failureView, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "./view.ts";
 
 /** Project only the host's committed receipts and generation-matched previews. */
 export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined): TranscriptBlock[] {
@@ -56,6 +57,9 @@ export interface PresentationInput {
 	readonly locale: Locale;
 	readonly typography: Typography;
 	readonly sessions: readonly Session[];
+	readonly projects?: readonly ProjectView[];
+	readonly selectedProject?: string;
+	readonly expandedProjects?: readonly string[];
 	readonly workspaces: readonly WorkspaceGrantView[];
 	readonly connection?: ClientConnection;
 	readonly catalog?: ModelCatalog;
@@ -82,8 +86,8 @@ export function pythonView(input: PresentationInput): WebView {
 	const snapshot = connection?.snapshot;
 	const session = input.sessions.find(item => item.session_id === connection?.sessionId);
 	const cwd = input.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
-	const directory = { sessions: input.sessions.map(item => ({ sessionId: item.session_id, projectId: item.project_id, name: item.title,
-		createdAt: item.updated_ms ?? 0, cwd: input.workspaces.find(root => root.name === item.workspace)?.host_path, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })) };
+	const directory = pythonDirectory(input.sessions, input.projects ?? [], input.workspaces);
+	const roster = rosterItems(locale, directory, connection?.sessionId, Date.now(), input.rosterFilter);
 	const selected = input.selection ?? (catalog ? { provider: catalog.current.provider, model: catalog.current.model } : undefined);
 	const models: ModelsStateLike | undefined = catalog ? { catalog: { revision: 0, enabledModelIds: input.enabledModels === null ? null : [...input.enabledModels],
 		availableModels: catalog.models.map(item => ({ provider: item.provider, modelId: item.model, name: item.label, reasoning: (item.thinking_levels?.length ?? 0) > 1 })) },
@@ -93,7 +97,9 @@ export function pythonView(input: PresentationInput): WebView {
 	const approvalState = { pending: (snapshot?.approvals ?? []).filter(item => item.state === "pending").map(item => ({ id: item.approval_id, tool: item.call.name, detail: item.call.arguments })) };
 	const approvals = approvalCards(locale, approvalState);
 	const base = failureView(locale, "");
-	return { ...base, typography: input.typography, modelConnections: input.connections, roster: rosterItems(locale, directory, connection?.sessionId, Date.now(), input.rosterFilter),
+	return { ...base, typography: input.typography, modelConnections: input.connections, roster,
+		projects: projectGroups(directory, roster, input.selectedProject, input.rosterFilter, input.expandedProjects),
+		archivedAttached: session?.archived ? rosterItems(locale, directory, connection?.sessionId, Date.now(), "", true).find(item => item.id === connection?.sessionId) : undefined,
 		rosterFilter: input.rosterFilter, transcriptScope: connection ? `${connection.identity.profile_id}:${connection.sessionId}` : undefined,
 		attachedId: connection?.ready ? connection.sessionId : undefined, sessionLabel: session?.title, readOnly: session?.archived || !connection?.ready || !input.ready || snapshot?.state !== "ready",
 		blocks: transcriptBlocks(locale, snapshot), status: snapshot?.state === "ready" ? pending.length ? requestStatus[pending[0].status] : "" : snapshot?.state ?? "",
@@ -107,5 +113,12 @@ export function pythonView(input: PresentationInput): WebView {
 		shortcuts: shortcuts(locale, typeof navigator === "undefined" ? "" : navigator.platform),
 		dock: input.dock ?? dockView(locale, { open: false, tab: "files", cwd, workspace: undefined, terminal: undefined, conversations: undefined }),
 		meter: { context: "?", tokens: input.usage ? `${input.usage.input_tokens ?? 0} / ${input.usage.output_tokens ?? 0}` : "? / ?", cost: input.usage?.priced && input.usage.cost_micro_usd !== null && input.usage.cost_micro_usd !== undefined ? `$${(input.usage.cost_micro_usd / 1_000_000).toFixed(3)}` : "?", tone: "neutral" },
+	};
+}
+
+export function pythonDirectory(sessions: readonly Session[], projects: readonly ProjectView[], workspaces: readonly WorkspaceGrantView[]): SessionDirectoryLike {
+	return { sessions: sessions.map(item => ({ sessionId: item.session_id, projectId: item.project_id || undefined, name: item.title,
+		createdAt: item.updated_ms ?? 0, cwd: workspaces.find(root => root.name === (item.workspace ?? "primary"))?.host_path, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })),
+		projects: projects.map(item => { const paths = (item.workspaces ?? ["primary"]).map(name => workspaces.find(root => root.name === name)?.host_path ?? name); return { id: item.project_id, name: item.name, cwd: paths[0] ?? "", workspaces: paths, createdAt: 0, revision: item.revision, ...(item.removed ? { removed: true as const } : {}) }; }),
 	};
 }

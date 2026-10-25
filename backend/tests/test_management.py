@@ -88,7 +88,7 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             assert changed.status_code == 409 and changed.json()["code"] == "project_conflict"
             listed_projects = await client.get("/api/v1/projects")
             assert listed_projects.status_code == 200
-            assert listed_projects.json()["projects"] == [{"project_id": PROJECT, "name": "演示"}]
+            assert listed_projects.json()["projects"] == [{"project_id": PROJECT, "name": "演示", "workspaces": ["primary"], "revision": 0, "removed": False}]
             missing = await client.post("/api/v1/sessions", json={"title": "孤立", "project_id": "e" * 32})
             assert missing.status_code == 404 and missing.json()["code"] == "project_not_found"
             created = await client.post("/api/v1/sessions", json={"title": "笔记", "project_id": PROJECT})
@@ -213,7 +213,7 @@ async def test_import_checks_every_workspace_before_writing(tmp_path: Path) -> N
             listed = {item["session_id"]: item["workspace"] for item in (await client.get("/api/v1/sessions")).json()["sessions"]}
             assert listed == {first: "primary", second: "docs"}
             assert (await client.get("/api/v1/projects")).json()["projects"] == [
-                {"project_id": project_id, "name": "待导入"}]
+                {"project_id": project_id, "name": "待导入", "workspaces": ["primary"], "revision": 0, "removed": False}]
             primary_hits = await client.get(f"/api/v1/sessions/{first}/search", params={"q": "甲"})
             docs_hits = await client.get(f"/api/v1/sessions/{second}/search", params={"q": "乙"})
             assert primary_hits.status_code == 200 and primary_hits.json()["hits"]
@@ -262,7 +262,7 @@ async def test_import_rejects_feedback_for_an_unknown_session_before_writing(tmp
             accepted = await client.post("/api/v1/import", json=accepted_body)
             assert accepted.status_code == 200 and accepted.json()["created"] == 1
             again = (await client.get("/api/v1/export")).json()
-            assert again["projects"] == [{"project_id": project_id, "name": "不该出现"}]
+            assert again["projects"] == [{"project_id": project_id, "name": "不该出现", "workspaces": ["primary"], "revision": 0, "removed": False}]
             assert again["feedback"] == [{"feedback_id": feedback_id, "session_id": session_id, "text": "跟着会话"}]
             assert again["settings"]["display_name"] == "已导入"
             assert any(item["session_id"] == session_id for item in again["sessions"])

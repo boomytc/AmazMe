@@ -26,6 +26,7 @@ test("a submission captures the displayed model, retries the same request, and p
   if (path === "/api/v1/models") return response({ models: [{ provider: "faux", model: "shown", label: "Shown", endpoint_editable: true }, { provider: "faux", model: "different", label: "Different", endpoint_editable: true }], current: { provider: "faux", model: "shown", base_url: "http://model", max_tokens: 10, key_configured: true } });
   if (path === "/api/v1/accounts") return response({ revision: 0, accounts: [] });
   if (path === "/api/v1/settings") return response({ revision: 0 });
+  if (path === "/api/v1/projects") return response({ projects: [] });
   if (path.endsWith("/attachments")) return response({ attachment_id: "attachment", session_id: "a", host_epoch: 1, build_id: "build" });
   if (path === "/api/v1/session-models/a") {
    if (method === "PUT") selected = "different";
