@@ -11,6 +11,26 @@ export type AccountsView = {
   "accounts": Array<AccountInfo>;
 };
 
+export type AnswerFeedback = {
+  "operation_id": string;
+  "session_id": string;
+  "request_id": string;
+  "rating"?: "up" | "down" | null;
+  "revision": number;
+};
+
+export type AnswerFeedbackList = {
+  "session_id": string;
+  "records"?: Array<AnswerFeedback>;
+};
+
+export type AnswerFeedbackWrite = {
+  "operation_id": string;
+  "request_id": string;
+  "rating"?: "up" | "down" | null;
+  "expected_revision": number;
+};
+
 export type Approval = {
   "approval_id": string;
   "request_id": string;
@@ -478,6 +498,7 @@ export type ExportBundle = {
   "projects"?: Array<ProjectView>;
   "sessions"?: Array<ExportSession>;
   "feedback"?: Array<FeedbackView>;
+  "answer_feedback"?: Array<AnswerFeedback>;
   "settings"?: ProductSettings;
 };
 
@@ -1123,6 +1144,7 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "feedback"?: AnswerFeedbackWrite | null;
   "compaction"?: CompactSession | null;
   "offset"?: number;
   "provider_configuration"?: ConfigureProvider | null;
@@ -1617,6 +1639,9 @@ export type Stream = {
 export interface ApiModels {
   AccountInfo: AccountInfo;
   AccountsView: AccountsView;
+  AnswerFeedback: AnswerFeedback;
+  AnswerFeedbackList: AnswerFeedbackList;
+  AnswerFeedbackWrite: AnswerFeedbackWrite;
   Approval: Approval;
   ApprovalDecision: ApprovalDecision;
   ArchiveSession: ArchiveSession;
@@ -2086,6 +2111,12 @@ export interface HttpOperations {
   "POST /api/v1/settings": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: SettingsUpdate };
   "PUT /api/v1/settings/preferences": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: PreferencesUpdate };
   "POST /api/v1/feedback": { response: FeedbackView; path: Record<string, unknown>; query: Record<string, unknown>; body: FeedbackWrite };
+  "GET /api/v1/sessions/{session}/feedback": { response: AnswerFeedbackList; path: {
+  "session": string;
+}; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/sessions/{session}/feedback": { response: AnswerFeedback; path: {
+  "session": string;
+}; query: Record<string, unknown>; body: AnswerFeedbackWrite };
   "POST /api/v1/sessions/{session}/shares": { response: ShareView; path: {
   "session": string;
 }; query: Record<string, unknown>; body: ShareWrite };

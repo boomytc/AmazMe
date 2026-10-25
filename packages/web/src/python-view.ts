@@ -7,20 +7,22 @@ import type { PanelView } from "./panels.ts";
 import { projectGroups } from "./projects.ts";
 import { isRecord } from "./python-api.ts";
 import type { ClientConnection } from "./python-client.ts";
-import type { HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, TranscriptMessage, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, TranscriptMessage, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { requestStatus, seq, settled } from "./python-stream.ts";
 import { shortcuts } from "./shortcuts.ts";
 import { translate } from "./strings.ts";
 import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
 import { toolResultView } from "./tool-results.ts";
 import type { Typography } from "./typography.ts";
-import { approvalCards, approvalIndicator, failureView, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "./view.ts";
+import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "./view.ts";
 
 /** Project only the host's committed receipts and generation-matched previews. */
-export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined): TranscriptBlock[] {
+export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined, feedback?: AnswerFeedbackList): TranscriptBlock[] {
 	if (!snapshot) return [];
 	const blocks: TranscriptBlock[] = [];
 	for (const receipt of snapshot.requests) {
+		const rating = feedback?.session_id === snapshot.session_id ? feedback.records?.find(item => item.request_id === receipt.request_id) : undefined;
+		const controls = feedback?.session_id === snapshot.session_id && receipt.kind === "root" && receipt.status === "succeeded" && receipt.answer ? feedbackControls(locale, JSON.stringify([snapshot.session_id, receipt.request_id, rating?.rating ?? null, rating?.revision ?? 0]), rating?.rating ?? null) : undefined;
 		if (receipt.text || receipt.image_count) blocks.push({ id: `${receipt.request_id}:user`, kind: "user", title: locale === "zh" ? "你" : "You", text: receipt.text, tone: "plain", running: false,
 			images: Array.from({ length: receipt.image_count ?? 0 }, (_, index) => ({ dataUrl: `/api/v1/sessions/${encodeURIComponent(snapshot.session_id)}/requests/${encodeURIComponent(receipt.request_id)}/images/${index}`, alt: `${locale === "zh" ? "图片" : "Image"} ${index + 1}` })) });
 		const tools = new Map<string, TranscriptBlock>();
@@ -51,7 +53,7 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined)
 		for (const message of [...messages.values()].sort((a, b) => a.ordinal - b.ordinal)) {
 			if (message.key === "compaction" || message.key.startsWith("history:")) continue;
 			if (message.role === "assistant") {
-				if (message.content) blocks.push({ id: `${receipt.request_id}:message:${message.key}`, kind: "assistant", title: "AmazMe", text: message.content, tone: "plain", running: false });
+				if (message.content) blocks.push({ id: `${receipt.request_id}:message:${message.key}`, kind: "assistant", title: "AmazMe", text: message.content, tone: "plain", running: false, ...(!message.tool_calls?.length ? { feedback: controls } : {}) });
 				if (!message.tool_calls?.length) finalMessage = true;
 				for (const call of message.tool_calls ?? []) {
 					const block = tools.get(call);
@@ -62,7 +64,7 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined)
 		blocks.push(...tools.values());
 		const preview = snapshot.previews?.find(item => item.request_id === receipt.request_id && item.run_id === receipt.run_id && item.generation === receipt.generation);
 		const text = !settled.has(receipt.status) && preview?.text ? preview.text : !finalMessage ? receipt.answer : undefined;
-		if (text) blocks.push({ id: `${receipt.request_id}:answer`, kind: "assistant", title: "AmazMe", text, tone: "plain", running: !settled.has(receipt.status), interrupted: receipt.status === "interrupted" || receipt.status === "cancelled" });
+		if (text) blocks.push({ id: `${receipt.request_id}:answer`, kind: "assistant", title: "AmazMe", text, tone: "plain", running: !settled.has(receipt.status), interrupted: receipt.status === "interrupted" || receipt.status === "cancelled", feedback: controls });
 		if (receipt.error || ["failed", "unknown", "interrupted", "cancelled"].includes(receipt.status)) blocks.push({ id: `${receipt.request_id}:status`, kind: "notice", title: requestStatus[receipt.status], text: receipt.error ?? requestStatus[receipt.status], tone: receipt.status === "failed" ? "error" : "muted", running: false });
 	}
 	return blocks;
@@ -92,6 +94,7 @@ export interface PresentationInput {
 	readonly mode: SubmitMode;
 	readonly usage?: UsageReport;
 	readonly history?: HistoryPage;
+	readonly feedback?: AnswerFeedbackList;
 	readonly historyMore?: boolean;
 	readonly historyLoading?: boolean;
 	readonly welcomeDismissed: boolean;
@@ -120,7 +123,7 @@ export function pythonView(input: PresentationInput): WebView {
 		archivedAttached: session?.archived ? rosterItems(locale, directory, connection?.sessionId, Date.now(), "", true).find(item => item.id === connection?.sessionId) : undefined,
 		rosterFilter: input.rosterFilter, transcriptScope: connection ? `${connection.identity.profile_id}:${connection.sessionId}` : undefined,
 		attachedId: connection?.ready ? connection.sessionId : undefined, sessionLabel: session?.title, readOnly: session?.archived || !connection?.ready || !input.ready || snapshot?.state !== "ready",
-		blocks: [...(input.history?.truncated ? [{ id: "history:truncated", kind: "notice" as const, title: locale === "zh" ? "历史记录" : "History", text: locale === "zh" ? "部分工具输出超过展示上限；原始记录仍保存在本机。" : "Some tool output exceeds the display limit. Original records remain stored locally.", tone: "muted" as const, running: false }] : []), ...transcriptBlocks(locale, withHistory(snapshot, input.history))], history: { blocks: [], more: input.historyMore ?? false, loading: input.historyLoading ?? false }, status: snapshot?.state === "ready" ? pending.length ? requestStatus[pending[0].status] : "" : snapshot?.state ?? "",
+		blocks: [...(input.history?.truncated ? [{ id: "history:truncated", kind: "notice" as const, title: locale === "zh" ? "历史记录" : "History", text: locale === "zh" ? "部分工具输出超过展示上限；原始记录仍保存在本机。" : "Some tool output exceeds the display limit. Original records remain stored locally.", tone: "muted" as const, running: false }] : []), ...transcriptBlocks(locale, withHistory(snapshot, input.history), input.feedback)], history: { blocks: [], more: input.historyMore ?? false, loading: input.historyLoading ?? false }, status: snapshot?.state === "ready" ? pending.length ? requestStatus[pending[0].status] : "" : snapshot?.state ?? "",
 		queue: pending.filter(item => item.status === "queued" || item.status === "waiting_time").map(item => ({ id: item.request_id, text: item.text,
 			cancel: { id: actions.QUEUE_CANCEL_ACTION, data: item.request_id, label: "取消排队", weight: "text" } })),
 		attachments: input.attachments, approvals, approvalIndicator: approvalIndicator(locale, approvalState), busy: pending.some(item => item.status !== "queued"),

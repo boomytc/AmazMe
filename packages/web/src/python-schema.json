@@ -61,6 +61,121 @@
       ],
       "title": "AccountsView"
     },
+    "AnswerFeedback": {
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Operation Id"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
+        "request_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Request Id"
+        },
+        "rating": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "up",
+                "down"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rating"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Revision"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "operation_id",
+        "session_id",
+        "request_id",
+        "revision"
+      ],
+      "title": "AnswerFeedback"
+    },
+    "AnswerFeedbackList": {
+      "properties": {
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "records": {
+          "items": {
+            "$ref": "#/components/schemas/AnswerFeedback"
+          },
+          "type": "array",
+          "title": "Records"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "session_id"
+      ],
+      "title": "AnswerFeedbackList"
+    },
+    "AnswerFeedbackWrite": {
+      "properties": {
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Operation Id"
+        },
+        "request_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w.-]+$",
+          "title": "Request Id"
+        },
+        "rating": {
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "up",
+                "down"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rating"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "operation_id",
+        "request_id",
+        "expected_revision"
+      ],
+      "title": "AnswerFeedbackWrite"
+    },
     "Approval": {
       "additionalProperties": false,
       "properties": {
@@ -2511,6 +2626,13 @@
           },
           "type": "array",
           "title": "Feedback"
+        },
+        "answer_feedback": {
+          "items": {
+            "$ref": "#/components/schemas/AnswerFeedback"
+          },
+          "type": "array",
+          "title": "Answer Feedback"
         },
         "settings": {
           "$ref": "#/components/schemas/ProductSettings"
@@ -5831,6 +5953,16 @@
           "type": "array",
           "maxItems": 128,
           "title": "Excluded Tools"
+        },
+        "feedback": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/AnswerFeedbackWrite"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "compaction": {
           "anyOf": [
@@ -9362,6 +9494,20 @@
       },
       "body": {
         "$ref": "#/components/schemas/FeedbackWrite"
+      }
+    },
+    "GET /api/v1/sessions/{session}/feedback": {
+      "response": {
+        "$ref": "#/components/schemas/AnswerFeedbackList"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session}/feedback": {
+      "response": {
+        "$ref": "#/components/schemas/AnswerFeedback"
+      },
+      "body": {
+        "$ref": "#/components/schemas/AnswerFeedbackWrite"
       }
     },
     "POST /api/v1/sessions/{session}/shares": {

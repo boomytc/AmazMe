@@ -11,6 +11,9 @@ from pydantic import JsonValue
 from .accounts import AccountsView
 from .artifacts import ArtifactBody, ArtifactView
 from .contracts import (
+    AnswerFeedback,
+    AnswerFeedbackList,
+    AnswerFeedbackWrite,
     Approval,
     Attachment,
     BackendError,
@@ -134,6 +137,14 @@ class Client:
     async def compact(self, session_id: str, workspace: str, attachment_id: str, value: CompactSession) -> Compaction:
         await self._require_workspace(session_id, workspace)
         return Compaction.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/compactions",
+            json_body=value.model_dump(), headers=self._write(attachment_id)))
+
+    async def answer_feedback(self, session_id: str) -> AnswerFeedbackList:
+        return AnswerFeedbackList.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/feedback"))
+
+    async def save_answer_feedback(self, session_id: str, workspace: str, attachment_id: str, value: AnswerFeedbackWrite) -> AnswerFeedback:
+        await self._require_workspace(session_id, workspace)
+        return AnswerFeedback.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/feedback",
             json_body=value.model_dump(), headers=self._write(attachment_id)))
 
     async def workspaces(self) -> WorkspaceList:

@@ -10,6 +10,8 @@ from pydantic import ValidationError
 
 from .accounts import ProviderTransport, select_model
 from .contracts import (
+    AnswerFeedback,
+    AnswerFeedbackWrite,
     ApprovalDecision,
     BackendError,
     Cancel,
@@ -46,6 +48,10 @@ def now_ms() -> int:
 def checkpoint_id(workspace: str, path: str, digest: str) -> str:
     """One id for the same workspace file bytes. A different file or digest is a different row."""
     return hashlib.sha256(f"{workspace}\n{path}\n{digest}".encode()).hexdigest()[:32]
+
+
+def answer_feedback_key(session: str, value: AnswerFeedbackWrite) -> str:
+    return hashlib.sha256((session + "\n" + value.model_dump_json()).encode()).hexdigest()
 
 
 def grant_present(db: sqlite3.Connection, workspace: str) -> bool:
@@ -191,6 +197,8 @@ class HostStore:
                   revision INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS feedback(id TEXT PRIMARY KEY, session TEXT NOT NULL,
                   text TEXT NOT NULL, digest TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS answer_feedback(id TEXT PRIMARY KEY,session TEXT NOT NULL,request TEXT NOT NULL,
+                  revision INTEGER NOT NULL,digest TEXT NOT NULL,payload TEXT NOT NULL,UNIQUE(session,request,revision));
                 CREATE TABLE IF NOT EXISTS shares(id TEXT PRIMARY KEY, session TEXT NOT NULL,
                   digest TEXT NOT NULL, payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS session_models(
@@ -640,7 +648,7 @@ class HostStore:
             if not db.execute("SELECT 1 FROM session_removals WHERE session=?", (session,)).fetchone():
                 raise BackendError("session_removal_pending")
             db.execute("DELETE FROM schedule_runs WHERE schedule IN (SELECT id FROM schedules WHERE session=?)", (session,))
-            for table in ("project_sessions", "session_models", "deliveries", "schedules", "mcp_reconnects", "feedback", "shares", "file_write_preparations"):
+            for table in ("project_sessions", "session_models", "deliveries", "schedules", "mcp_reconnects", "feedback", "answer_feedback", "shares", "file_write_preparations"):
                 db.execute(f"DELETE FROM {table} WHERE session=?", (session,))
             db.execute("DELETE FROM sessions WHERE id=?", (session,))
             db.execute("UPDATE session_removals SET completed=1 WHERE session=?", (session,))
@@ -923,6 +931,68 @@ class HostStore:
     async def feedback_rows(self) -> list[tuple[str, str, str]]:
         return await self._call(lambda db: [(str(row[0]), str(row[1]), str(row[2])) for row in db.execute(
             "SELECT id,session,text FROM feedback ORDER BY rowid")])
+
+    async def save_answer_feedback(self, session: str, value: AnswerFeedbackWrite) -> AnswerFeedback:
+        key = answer_feedback_key(session, value)
+
+        def operation(db: sqlite3.Connection) -> AnswerFeedback:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            row = db.execute("SELECT digest,payload FROM answer_feedback WHERE id=?", (value.operation_id,)).fetchone()
+            if row is not None:
+                if str(row[0]) != key:
+                    raise BackendError("feedback_conflict")
+                return AnswerFeedback.model_validate_json(row[1])
+            if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session,)).fetchone():
+                raise BackendError("session_not_found", status=404)
+            current = db.execute("SELECT coalesce(max(revision),0) FROM answer_feedback WHERE session=? AND request=?",
+                                 (session, value.request_id)).fetchone()[0]
+            if int(current) != value.expected_revision:
+                raise BackendError("feedback_revision_conflict")
+            result = AnswerFeedback(operation_id=value.operation_id, session_id=session, request_id=value.request_id,
+                                    rating=value.rating, revision=value.expected_revision + 1)
+            db.execute("INSERT INTO answer_feedback(id,session,request,revision,digest,payload) VALUES(?,?,?,?,?,?)",
+                       (value.operation_id, session, value.request_id, result.revision, key, result.model_dump_json()))
+            return result
+        return await self.transaction(operation)
+
+    async def answer_feedback(self, session: str = "") -> list[AnswerFeedback]:
+        def operation(db: sqlite3.Connection) -> list[AnswerFeedback]:
+            return [AnswerFeedback.model_validate_json(row[0]) for row in db.execute(
+                "SELECT a.payload FROM answer_feedback a WHERE (?='' OR a.session=?) AND NOT EXISTS ("
+                "SELECT 1 FROM answer_feedback b WHERE b.session=a.session AND b.request=a.request AND b.revision>a.revision) "
+                "ORDER BY a.rowid", (session, session))]
+        return await self._call(operation)
+
+    @staticmethod
+    def _check_answer_feedback_import(db: sqlite3.Connection, value: AnswerFeedback) -> bool:
+        rows = db.execute("SELECT payload FROM answer_feedback WHERE id=? OR (session=? AND request=?) ORDER BY revision DESC LIMIT 1",
+                          (value.operation_id, value.session_id, value.request_id)).fetchone()
+        if rows is None:
+            return False
+        if AnswerFeedback.model_validate_json(rows[0]) != value:
+            raise BackendError("import_conflict")
+        return True
+
+    async def check_answer_feedback_import(self, values: list[AnswerFeedback]) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            for value in values:
+                self._check_answer_feedback_import(db, value)
+        await self._call(operation)
+
+    async def import_answer_feedback(self, values: list[AnswerFeedback]) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            for value in values:
+                if self._check_answer_feedback_import(db, value):
+                    continue
+                original = AnswerFeedbackWrite(operation_id=value.operation_id, request_id=value.request_id,
+                                               rating=value.rating, expected_revision=value.revision - 1)
+                db.execute("INSERT INTO answer_feedback(id,session,request,revision,digest,payload) VALUES(?,?,?,?,?,?)",
+                           (value.operation_id, value.session_id, value.request_id, value.revision,
+                            answer_feedback_key(value.session_id, original), value.model_dump_json()))
+        await self.transaction(operation)
 
     async def save_share(self, share_id: str, session_id: str, key: str, payload: str) -> str:
         def operation(db: sqlite3.Connection) -> str:

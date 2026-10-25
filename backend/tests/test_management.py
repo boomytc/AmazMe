@@ -111,6 +111,7 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             settings = await client.get("/api/v1/settings")
             assert settings.json() == {"display_name": "", "revision": 0, "preferences": {
                 "appearance": "system", "locale": "auto", "showWelcome": True,
+                "enabledModels": None,
                 "textFont": "", "codeFont": "", "terminalFont": "",
                 "textSize": 15, "codeSize": 13, "terminalSize": 12,
             }}

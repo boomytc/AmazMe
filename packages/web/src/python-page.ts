@@ -11,7 +11,7 @@ import { collectPageElements, createRenderer, type PageRenderer } from "./render
 import { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, definitive, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { seq, settled } from "./python-stream.ts";
@@ -113,6 +113,7 @@ export class DesktopPage {
 	private readonly writes = new Map<string, PendingWrites>();
 	private mode: SubmitMode = "followUp";
 	private thinking = "off";
+	private feedback?: AnswerFeedbackList;
 	private selectedProvider?: string;
 	private enabledModels: string[] | null = null;
 	private readonly modelScopes = new Map<string, string[] | null>();
@@ -268,15 +269,17 @@ export class DesktopPage {
 	private async loadSession(connection: ClientConnection): Promise<void> {
 		const selectionGeneration = ++this.selectionGeneration;
 		const resourceGeneration = ++this.resourceGeneration;
-		const [selection, resources, usage] = await Promise.all([
+		const [selection, resources, usage, feedback] = await Promise.all([
 			this.client.call("GET /api/v1/session-models/{session_id}", { path: { session_id: connection.sessionId } }).catch(error => { if (error instanceof ApiError && error.code === "session_model_missing") return undefined; throw error; }),
 			this.client.call("GET /api/v1/sessions/{session}/resources", { path: { session: connection.sessionId } }),
 			this.client.call("GET /api/v1/sessions/{session_id}/usage", { path: { session_id: connection.sessionId } }),
+			this.client.call("GET /api/v1/sessions/{session}/feedback", { path: { session: connection.sessionId } }),
 		]);
 		if (!connection.active()) return;
 		if (selectionGeneration === this.selectionGeneration) this.selection = selection;
 		if (resourceGeneration === this.resourceGeneration) this.resources = resources;
 		this.usage = usage;
+		this.mergeFeedback(feedback);
 		await this.loadHistory(connection, false);
 		if (this.dockOpen && this.dockTab === "terminal") await this.loadTerminal(connection);
 		this.render();
@@ -290,6 +293,9 @@ export class DesktopPage {
 			if (health.identity.profile_id !== connection.identity.profile_id) throw new Error("宿主身份已更换");
 			if (health.identity.host_epoch !== connection.identity.host_epoch || health.identity.build_id !== connection.identity.build_id) { await this.client.connect(connection.sessionId); return; }
 			this.ready = health.state === "ready";
+			const feedback = await this.client.call("GET /api/v1/sessions/{session}/feedback", { path: { session: connection.sessionId } });
+			if (!connection.active()) return;
+			this.mergeFeedback(feedback);
 			if (this.currentPanel === P.AUTOMATION_VIEW) await this.loadSchedules();
 			if (this.currentPanel === "plugins") await this.loadPlugins();
 			this.render();
@@ -307,7 +313,7 @@ export class DesktopPage {
 		const previous = this.client.connection;
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
 		this.draft = this.drafts.get(id) ?? { text: "", images: [], revision: 0 };
-		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined;
+		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined; this.feedback = undefined;
 		const scopeKey = `${this.client.identity?.profile_id}:${id}`;
 		this.enabledModels = (this.modelScopes.has(scopeKey) ? this.modelScopes.get(scopeKey) : this.settings?.preferences?.enabledModels) ?? null;
 		this.thinking = this.catalog?.current.thinking ?? "off";
@@ -382,6 +388,12 @@ export class DesktopPage {
 		const request = id ?? connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status))?.request_id;
 		if (!request) return;
 		await this.client.call("POST /api/v1/sessions/{session}/requests/{request_id}/cancel", { path: { session: connection.sessionId, request_id: request }, connection });
+	}
+	private mergeFeedback(value: AnswerFeedbackList): void {
+		if (value.session_id !== this.client.connection?.sessionId) return;
+		const records = new Map((this.feedback?.records ?? []).map(record => [record.request_id, record]));
+		for (const record of value.records ?? []) if (record.session_id === value.session_id && record.revision >= (records.get(record.request_id)?.revision ?? 0)) records.set(record.request_id, record);
+		this.feedback = { session_id: value.session_id, records: [...records.values()] };
 	}
 	private async selectModel(provider: string, model: string): Promise<void> {
 		const connection = this.requireConnection();
@@ -472,6 +484,23 @@ export class DesktopPage {
 		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
 		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.draft.revision++; this.render(); return; }
 		if (id === A.QUEUE_CANCEL_ACTION) { await this.cancel(data); return; }
+		if (id === A.FEEDBACK_UP_ACTION || id === A.FEEDBACK_DOWN_ACTION || id === "write:retry-feedback") {
+			const connection = this.requireConnection(), target: unknown = JSON.parse(data ?? "null");
+			if (!Array.isArray(target) || target[0] !== connection.sessionId || typeof target[1] !== "string") throw new Error("反馈不属于当前答案，请刷新后重试");
+			const ledger = this.ledger(connection), key = `feedback:${target[1]}`;
+			let record = ledger.read(key, "POST /api/v1/sessions/{session}/feedback");
+			if (id === "write:retry-feedback") {
+				if (target.length !== 3 || !record || record.id !== target[2]) throw new Error("原反馈请求已变化，请核对当前记录");
+			} else {
+				if (target.length !== 4 || ![null, "up", "down"].includes(target[2])) throw new Error("答案反馈无效");
+				const rating = id === A.FEEDBACK_UP_ACTION ? "up" : "down";
+				const value = parseContract("AnswerFeedbackWrite", { operation_id: newId(), request_id: target[1], rating: target[2] === rating ? null : rating, expected_revision: target[3] });
+				record ??= ledger.prepare(key, "POST /api/v1/sessions/{session}/feedback", operation => ({ path: { session: connection.sessionId }, body: { ...value, operation_id: operation } }));
+			}
+			const result = await ledger.send(key, record, this.client, connection);
+			if (connection.active()) { this.mergeFeedback({ session_id: connection.sessionId, records: [result] }); this.render(); }
+			return;
+		}
 		if (id === A.TERMINAL_RUN_ACTION) {
 			const connection = this.requireConnection();
 			if (!this.terminal || this.terminal.connection !== connection || this.terminal.view.phase !== "running") await this.loadTerminal(connection, true);
@@ -1160,7 +1189,7 @@ export class DesktopPage {
 				automation: { state: this.schedules ? { path: this.schedules.path, tickMs: this.schedules.tick_ms ?? 5000, schedules: this.schedules.schedules.map(scheduleRecord) } : undefined, sessionId: connection?.sessionId },
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
-			}), connections: this.connections(), mode: this.mode, usage: this.usage, history: this.history, historyLoading: this.historyLoading,
+			}), connections: this.connections(), mode: this.mode, usage: this.usage, history: this.history, feedback: this.feedback, historyLoading: this.historyLoading,
 			historyMore: this.history?.more === true || Boolean(connection && (connection.snapshot?.requests.filter(row => row.kind === "root" && settled.has(row.status)).length ?? 0) >= 20 && this.latestTranscriptRevision(connection) > this.historyLatestRevision),
 			welcomeDismissed: this.settings?.preferences?.showWelcome === false, newSessionPending: this.newSessionPending, ready: this.ready });
 		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
@@ -1172,9 +1201,16 @@ export class DesktopPage {
 		let branchPending: string | undefined;
 		try { branchPending = connection ? this.ledger(connection).read("branch", "POST /api/v1/sessions/{session}/branches")?.id : undefined; }
 		catch (error) { pendingError = error instanceof Error ? error.message : String(error); }
+		const feedbackPending: Array<{ id: string; text: string; retry: P.PanelButton }> = [];
+		try {
+			if (connection) for (const request of new Set([...(connection.snapshot?.requests ?? []), ...(this.history?.requests ?? [])].map(item => item.request_id))) {
+				const record = this.ledger(connection).read(`feedback:${request}`, "POST /api/v1/sessions/{session}/feedback");
+				if (record) feedbackPending.push({ id: record.id, text: "答案反馈尚未确认", retry: { id: "write:retry-feedback", data: JSON.stringify([connection.sessionId, request, record.id]), label: "重试原反馈", weight: "line" } });
+			}
+		} catch (error) { pendingError = error instanceof Error ? error.message : String(error); }
 		const terminal = this.terminal?.connection === connection ? this.terminal : undefined;
 		const dock = dockView(this.locale, { open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.session_id === session?.parent_id || item.parent_id === connection?.sessionId || Boolean(session?.parent_id && item.parent_id === session.parent_id)).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, role: item.parent_id ? "fork" as const : "main" as const, parentConversationId: item.parent_id || undefined, children: this.sessions.filter(child => child.parent_id === item.session_id).length, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
-		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", data: branchPending, label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", data: pending.id, label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", data: pending.id, label: "取消原请求", weight: "text" as const } }] : [])],
+		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...feedbackPending, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", data: branchPending, label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", data: pending.id, label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", data: pending.id, label: "取消原请求", weight: "text" as const } }] : [])],
 			dock: terminal && this.dockTab === "terminal" ? { ...dock, panel: { ...dock.panel, texts: [], notices: terminal.queue.paused ? [{ tone: "warning", text: "终端输入尚未确认；请重试原输入或核对后继续。" }] : dock.panel.notices, actions: [
 				{ id: "terminal:retry", label: "重试原输入", weight: "line", disabled: terminal.queue.busy || !terminal.queue.items.length },
 				{ id: "terminal:confirm", label: "核对后继续", weight: "text", disabled: terminal.queue.busy || !terminal.queue.items.length },

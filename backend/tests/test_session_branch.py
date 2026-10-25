@@ -15,6 +15,7 @@ from pydantic import SecretStr
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
+    AnswerFeedbackWrite,
     BackendError,
     BranchSession,
     Cleanup,
@@ -588,6 +589,60 @@ async def test_compaction_pins_instructions_to_the_id_and_uses_the_session_model
             await parent.commit_compaction("held-focus", "r1", "错误摘要", created.basis, "改变要求")
     finally:
         await parent.db.close()
+
+
+async def test_answer_feedback_retries_retracts_and_restores_without_overwriting_newer_votes(owner: Host) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "answer me", "r-vote", owner.build)
+    finally:
+        await parent.db.close()
+    original = AnswerFeedbackWrite(operation_id="1" * 32, request_id="r-vote", rating="up", expected_revision=0)
+    first = await owner.save_answer_feedback(PARENT, original)
+    second = await owner.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "2" * 32, "rating": "down", "expected_revision": 1}))
+    assert first.revision == 1 and second.revision == 2
+    assert await owner.save_answer_feedback(PARENT, original) == first
+    assert (await owner.answer_feedback(PARENT)).records == [second]
+    with pytest.raises(BackendError, match="feedback_conflict"):
+        await owner.save_answer_feedback(PARENT, original.model_copy(update={"rating": "down"}))
+    with pytest.raises(BackendError, match="feedback_revision_conflict"):
+        await owner.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "3" * 32}))
+    sdk = Client(owner.origin, "web-only")
+    await sdk._http.aclose()
+    sdk._http = httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)), base_url=owner.origin)
+    clear = original.model_copy(update={"operation_id": "4" * 32, "rating": None, "expected_revision": 2})
+    async with sdk:
+        attachment = await sdk.attach(PARENT)
+        cleared = await sdk.save_answer_feedback(PARENT, "primary", attachment.attachment_id, clear)
+        assert cleared.rating is None and cleared.revision == 3
+        assert (await sdk.answer_feedback(PARENT)).records == [cleared]
+        rpc = await sdk.rpc("feedback.rate", session_id=PARENT, workspace="primary", attachment_id=attachment.attachment_id, feedback=clear.model_dump())
+        assert rpc["revision"] == 3 and rpc["rating"] is None
+        with pytest.raises(BackendError, match="workspace_mismatch"):
+            await sdk.save_answer_feedback(PARENT, "other", attachment.attachment_id, clear)
+    exported = await owner.export_bundle()
+    assert exported.answer_feedback == [cleared]
+    destination = owner.profile.path / "imported-votes"
+    destination.mkdir()
+    private_write(destination / "config.json", json.dumps({"profile_id": "imported", "workspace": str(destination), "resources": "unused", "provider": {"provider": "faux"}}))
+    private_write(destination / "control.token", "imported-control")
+    private_write(destination / "web.token", "imported-web")
+    target = Host(Profile(destination))
+    target.fence = fence_for(target.build)
+    lease = ProcessLease(instance_id="import-host", role="host", profile_path=str(destination), path=str(destination / "lease"), device=1, inode=1)
+    target.fence.host_epoch = await target.store.initialize(target.instance, target.build, lease)
+    try:
+        await target.import_bundle(exported)
+        assert (await target.answer_feedback(PARENT)).records == [cleared]
+        assert await target.save_answer_feedback(PARENT, clear) == cleared
+        updated = await target.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "5" * 32, "expected_revision": 3}))
+        assert updated.revision == 4
+        with pytest.raises(BackendError, match="import_conflict"):
+            await target.import_bundle(exported)
+        assert (await target.answer_feedback(PARENT)).records == [updated]
+    finally:
+        await target.supervisor.close()
+        await target.store.db.close()
 
 
 async def test_compaction_does_not_send_or_keep_the_provider_secret(

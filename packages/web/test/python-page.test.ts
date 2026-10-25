@@ -41,6 +41,7 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
   }
   if (path.endsWith("/resources")) return response({ context_files: [], skills: [], prompts: [], diagnostics: [] });
   if (path.endsWith("/usage")) return response({ session_id: "a" });
+  if (path.endsWith("/feedback")) return response({ session_id: "a", records: [] });
   if (path.endsWith("/history")) return response({ session_id: "a", requests: [], events: [] });
   if (path.endsWith("/mcp-configuration")) return response({ revision: 0, workspace: "primary", path: "/profile/host.sqlite", servers: [] });
   if (path.endsWith("/mcp")) return response({ servers: [], calls: [] });
@@ -175,6 +176,44 @@ test("the original compaction dialog pins its instructions and completed turn ac
  finish(new Response(JSON.stringify({ ...requests[0], basis: "basis", summary: "summary", message_count: 2 })));
  await vi.waitFor(() => expect(sessionStorage.getItem("amazme:write:host:a:compaction")).toBeNull());
  expect(page.renderer.view?.panel.modal?.id).toBe(A.MODEL_SCOPE_MODAL);
+});
+
+test("original answer feedback retries the original vote, toggles to retract, and rejects controls from another session", async () => {
+ const session = "a".repeat(32), requests: Array<import("../src/python-contracts.ts").AnswerFeedbackWrite> = [];
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/sessions") return response({ sessions: [{ session_id: session, title: "A", workspace: "primary" }] });
+  if (path.endsWith("/attachments")) return response({ attachment_id: "attachment", session_id: session, host_epoch: 1, build_id: "build" });
+  if (path.startsWith("/api/v1/session-models/")) return response({ code: "session_model_missing" }, 404);
+  if (path.endsWith("/feedback")) {
+   if (options.method !== "POST") return response({ session_id: session, records: [] });
+   const request = parseContract("AnswerFeedbackWrite", JSON.parse(String(options.body))); requests.push(request);
+   if (requests.length === 1) return response({ code: "receipt_lost" }, 503);
+   return response({ operation_id: request.operation_id, session_id: session, request_id: request.request_id, rating: request.rating, revision: request.expected_revision + 1 });
+  }
+  return undefined;
+ });
+ const connection = page.client.connection;
+ if (!connection?.snapshot) throw new Error("session missing");
+ connection.snapshot = { ...connection.snapshot, requests: [{ request_id: "answer", text: "task", answer: "answer", kind: "root", status: "succeeded" }] };
+ page.client.onChange();
+ const controls = () => page.renderer.view?.blocks.find(block => block.kind === "assistant")?.feedback;
+ await vi.waitFor(() => expect(controls()).toBeDefined());
+ const original = controls();
+ if (!original) throw new Error("feedback missing");
+ page.renderer.onPanelAction({ kind: "command", id: original.up.id, data: original.up.data });
+ await vi.waitFor(() => expect(document.body.textContent).toContain("receipt_lost"));
+ page.renderer.onPanelAction({ kind: "command", id: original.down.id, data: original.down.data });
+ await vi.waitFor(() => expect(controls()?.rating).toBe("up"));
+ expect(requests).toHaveLength(2); expect(requests[1]).toEqual(requests[0]);
+ const selected = controls();
+ if (!selected) throw new Error("confirmed feedback missing");
+ page.renderer.onPanelAction({ kind: "command", id: selected.up.id, data: selected.up.data });
+ await vi.waitFor(() => expect(controls()?.rating).toBeNull());
+ expect(requests[2]).toMatchObject({ request_id: "answer", expected_revision: 1, rating: null });
+ page.renderer.onPanelAction({ kind: "command", id: original.up.id, data: JSON.stringify(["b".repeat(32), "answer", null, 0]) });
+ await vi.waitFor(() => expect(document.body.textContent).toContain("反馈不属于当前答案"));
+ expect(requests).toHaveLength(3);
 });
 
 test("the original JSON model toggle persists the global scope and survives a fresh page", async () => {

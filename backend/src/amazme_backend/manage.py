@@ -17,6 +17,7 @@ def transcript_digest(messages: list[tuple[str, str, str]]) -> str:
 
 def bundle_digest(bundle: ExportBundle) -> str:
     payload = {
+        "answer_feedback": [item.model_dump() for item in bundle.answer_feedback],
         "feedback": [item.model_dump() for item in bundle.feedback],
         "format": "amazme-export/1",
         "projects": [item.model_dump() for item in bundle.projects],

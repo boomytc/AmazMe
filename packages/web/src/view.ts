@@ -208,7 +208,7 @@ export interface FeedbackScope {
 	readonly conversationId: string;
 }
 
-function feedbackControls(locale: Locale, entryId: string, rating: MessageRatingLike | null): FeedbackControls {
+export function feedbackControls(locale: Locale, entryId: string, rating: MessageRatingLike | null): FeedbackControls {
 	return {
 		rating,
 		up: {

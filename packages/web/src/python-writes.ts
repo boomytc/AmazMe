@@ -71,7 +71,7 @@ export class PendingWrites {
 			const value: unknown = result;
 			const body: unknown = record.body;
 			if (isRecord(value) && isRecord(body) && typeof body.branch_id === "string" && value.session_id !== body.branch_id) throw new Error("分支回执编号不匹配；原记录已保留。");
-			if (isRecord(value) && isRecord(body)) for (const field of ["request_id", "terminal_id", "call_id", "compaction_id", "workflow_id", "plugin_id", "schedule_id"]) {
+			if (isRecord(value) && isRecord(body)) for (const field of ["operation_id", "request_id", "terminal_id", "call_id", "compaction_id", "workflow_id", "plugin_id", "schedule_id"]) {
 				if (typeof body[field] === "string" && typeof value[field] === "string" && body[field] !== value[field]) throw new Error("回执操作编号不匹配；原记录已保留。");
 			}
 			if (!isRecord(value) || (value.phase !== "unknown" && value.input_status !== "unknown" && value.status !== "unknown")) this.forget(key, record);

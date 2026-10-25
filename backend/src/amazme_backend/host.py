@@ -49,6 +49,9 @@ from .computer_grounding import (
 from .computer_run import ComputerDriver, start_driver
 from .computer_use import driver_point, upright_size
 from .contracts import (
+    AnswerFeedback,
+    AnswerFeedbackList,
+    AnswerFeedbackWrite,
     ApprovalDecision,
     ApprovalEnvelope,
     ArchiveSession,
@@ -1357,6 +1360,21 @@ class Host:
         feedback_id, session_id, stored = await self.store.save_feedback(value.feedback_id, value.session_id, text, key)
         return FeedbackView(feedback_id=feedback_id, session_id=session_id, text=stored)
 
+    async def answer_feedback(self, session: str) -> AnswerFeedbackList:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        return AnswerFeedbackList(session_id=session, records=await self.store.answer_feedback(session))
+
+    async def save_answer_feedback(self, session: str, value: AnswerFeedbackWrite) -> AnswerFeedback:
+        self._admit()
+        if not await self.store.exists(session):
+            raise BackendError("session_not_found", status=404)
+        receipt = await self._read_session(session, lambda store: store.get(value.request_id))
+        if receipt.kind != "root" or receipt.status != "succeeded" or not receipt.answer:
+            raise BackendError("feedback_answer_missing")
+        return await self.store.save_answer_feedback(session, value)
+
     def _reject_artifact_secret(self, value: ArtifactWrite) -> None:
         secret = self._provider_secret()
         if not secret:
@@ -1424,7 +1442,7 @@ class Host:
                 messages=[ExportMessage.model_validate({"request_id": request_id, "role": role, "content": content})
                           for request_id, role, content in messages if content]))
         bundle = ExportBundle(format="amazme-export/1", projects=projects.projects, sessions=sessions,
-                             feedback=feedback, settings=settings)
+                             feedback=feedback, answer_feedback=await self.store.answer_feedback(), settings=settings)
         if contains_secret(bundle_text(bundle), self._provider_secret()):
             raise BackendError("export_secret")
         return bundle.model_copy(update={"digest": bundle_digest(bundle)})
@@ -1437,7 +1455,7 @@ class Host:
             raise BackendError("import_digest")
         if contains_secret(bundle_text(bundle), self._provider_secret()):
             raise BackendError("import_secret")
-        if len(bundle.sessions) > 32 or len(bundle.projects) > 32 or len(bundle.feedback) > 32:
+        if len(bundle.sessions) > 32 or len(bundle.projects) > 32 or len(bundle.feedback) > 32 or len(bundle.answer_feedback) > 4096:
             raise BackendError("import_capacity", status=429)
         existing = {item.session_id: item for item in (await self.sessions()).sessions}
         known_projects = {project.project_id: project for project in (await self.projects()).projects}
@@ -1466,6 +1484,18 @@ class Host:
                 raise BackendError("import_conflict")
         for item in bundle.feedback:
             if item.session_id and item.session_id not in existing and item.session_id not in incoming_sessions:
+                raise BackendError("import_conflict")
+        if (len({item.operation_id for item in bundle.answer_feedback}) != len(bundle.answer_feedback)
+                or len({(item.session_id, item.request_id) for item in bundle.answer_feedback}) != len(bundle.answer_feedback)):
+            raise BackendError("import_conflict")
+        await self.store.check_answer_feedback_import(bundle.answer_feedback)
+        incoming_transcripts = {item.session_id: item.messages for item in bundle.sessions}
+        for item in bundle.answer_feedback:
+            if item.session_id not in existing and item.session_id not in incoming_sessions:
+                raise BackendError("import_conflict")
+            messages = ([(message.request_id, message.role, message.content) for message in incoming_transcripts[item.session_id]]
+                        if item.session_id in incoming_transcripts else await self._open_transcript(item.session_id))
+            if not any(request == item.request_id and role == "assistant" and content for request, role, content in messages):
                 raise BackendError("import_conflict")
         created = 0
         for item in bundle.sessions:
@@ -1499,6 +1529,7 @@ class Host:
             messages = [(message.request_id, message.role, message.content) for message in item.messages]
             await self._with_session(
                 item.session_id, lambda store: store.import_transcript(messages), require_active=False)
+        await self.store.import_answer_feedback(bundle.answer_feedback)
         return ImportResult(format="amazme-export/1", sessions=len(bundle.sessions), created=created)
 
     async def save_memory(self, value: MemoryWrite) -> MemoryView:
@@ -3624,6 +3655,14 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/feedback")
     async def save_feedback(value: FeedbackWrite) -> FeedbackView:
         return await owner.save_feedback(value)
+
+    @app.get("/api/v1/sessions/{session}/feedback")
+    async def answer_feedback(session: str) -> AnswerFeedbackList:
+        return await owner.answer_feedback(session)
+
+    @app.post("/api/v1/sessions/{session}/feedback")
+    async def save_answer_feedback(session: str, value: AnswerFeedbackWrite) -> AnswerFeedback:
+        return await owner.save_answer_feedback(session, value)
 
     @app.post("/api/v1/sessions/{session}/shares")
     async def share_session(session: str, value: ShareWrite) -> ShareView:

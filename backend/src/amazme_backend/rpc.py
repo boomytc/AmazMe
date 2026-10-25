@@ -13,6 +13,9 @@ from pydantic import Field, JsonValue, ValidationError
 from .accounts import AccountsView
 from .contracts import (
     IMAGE_MAX_COUNT,
+    AnswerFeedback,
+    AnswerFeedbackList,
+    AnswerFeedbackWrite,
     ApprovalDecision,
     Attachment,
     BackendError,
@@ -91,6 +94,7 @@ from .workspace_files import FileContent, FileList
 
 
 class RpcParams(RunOptions):
+    feedback: AnswerFeedbackWrite | None = None
     compaction: CompactSession | None = None
     offset: int = Field(default=0, ge=0, le=9007199254740991)
     provider_configuration: ConfigureProvider | None = None
@@ -174,6 +178,10 @@ def rpc_error(identity: str, code: str) -> dict[str, object]:
 
 
 class RpcHost(Protocol):
+    async def answer_feedback(self, session: str) -> AnswerFeedbackList: ...
+
+    async def save_answer_feedback(self, session: str, value: AnswerFeedbackWrite) -> AnswerFeedback: ...
+
     async def compact_session(self, session: str, value: CompactSession) -> Compaction: ...
 
     async def code_tools(self, session_id: str) -> CodeTools: ...
@@ -489,6 +497,12 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if not params.plugin_id or params.plugin_call is None:
             raise BackendError("plugin_binding_required")
         return await owner.call_plugin(session, params.plugin_id, params.plugin_call)
+    if method == "feedback.state":
+        return await owner.answer_feedback(await _bound(owner, params))
+    if method == "feedback.rate":
+        if params.feedback is None:
+            raise BackendError("feedback_required")
+        return await owner.save_answer_feedback(await _bound(owner, params), params.feedback)
     if method == "session.compact":
         if params.compaction is None:
             raise BackendError("compaction_required")

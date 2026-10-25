@@ -2335,7 +2335,8 @@ class SessionStore:
                 for index, (role, content) in enumerate(items):
                     message = Message.model_validate({"role": role, "content": content})
                     self._message(db, c, request_id, f"import:{index}", message)
-                self._decide(db, c, receipt, Decision(status="succeeded", answer=""))
+                answer = next((content for role, content in reversed(items) if role == "assistant"), "")
+                self._decide(db, c, receipt, Decision(status="succeeded", answer=answer))
                 self._settle(db, c, receipt)
         await self._tx(operation)
 
