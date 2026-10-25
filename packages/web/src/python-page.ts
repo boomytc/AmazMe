@@ -24,7 +24,7 @@ const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 	anthropic: "browser", openai: "browser", "openai-codex": "browser", openrouter: "browser", "github-copilot": "device_code", "kimi-coding": "device_code", xai: "device_code", meta: "device_code",
 };
 interface ImageDraft { readonly id: string; readonly name: string; readonly dataUrl: string; readonly bytes: number; readonly image: ImagePart }
-interface Draft { text: string; images: ImageDraft[] }
+interface Draft { text: string; images: ImageDraft[]; revision: number; submission?: { readonly id: string; readonly revision: number } }
 interface ActiveTerminal { readonly connection: ClientConnection; readonly id: string; readonly queue: TerminalInputQueue; view: TerminalView; desiredSize?: { cols: number; rows: number }; resizing: boolean }
 
 function modelReference(value: string): ModelSelection {
@@ -108,7 +108,7 @@ export class DesktopPage {
 	private pendingModal?: P.PanelModal;
 	private get modalPending(): boolean { return this.modal !== undefined && this.pendingModal === this.modal; }
 	private rosterFilter = "";
-	private draft: Draft = { text: "", images: [] };
+	private draft: Draft = { text: "", images: [], revision: 0 };
 	private readonly drafts = new Map<string, Draft>();
 	private readonly writes = new Map<string, PendingWrites>();
 	private mode: SubmitMode = "followUp";
@@ -139,10 +139,16 @@ export class DesktopPage {
 	private terminalLoadGeneration = 0;
 	private workspaceGeneration = 0;
 	private settingsQueue = Promise.resolve();
-	private readonly commands: CommandLike[] = [
-		{ name: "new", description: "新建会话" }, { name: "model", description: "模型与连接" }, { name: "settings", description: "设置" },
-		{ name: "compact", description: "压缩上下文" }, { name: "fork", description: "创建分支" }, { name: "export", description: "导出会话" },
-	];
+	private get commands(): CommandLike[] {
+		const builtins: CommandLike[] = [
+			{ name: "new", description: "新建会话", source: "builtin" }, { name: "model", description: "模型与连接", source: "builtin" }, { name: "settings", description: "设置", source: "builtin" },
+			{ name: "compact", description: "压缩上下文", source: "builtin" }, { name: "fork", description: "创建分支", source: "builtin" }, { name: "export", description: "导出会话", source: "builtin" },
+		];
+		const commands = new Map(builtins.map(item => [item.name, item]));
+		for (const item of this.resources?.prompts ?? []) if (!commands.has(item.name)) commands.set(item.name, { name: item.name, description: item.description ?? "", source: "template" });
+		for (const item of this.resources?.skills ?? []) commands.set(`skill:${item.name}`, { name: `skill:${item.name}`, description: item.description ?? "", source: "skill" });
+		return [...commands.values()];
+	}
 	constructor(origin = location.origin) {
 		this.client = new PythonClient(origin);
 		const boot: unknown = Reflect.get(globalThis, "__AMAZME_BOOT__");
@@ -173,9 +179,9 @@ export class DesktopPage {
 		this.renderer.onAbort = () => run(() => this.cancel());
 		this.renderer.onSelectModel = (provider, model) => run(() => this.selectModel(provider, model));
 		this.renderer.onSelectThinking = level => { this.thinking = level; this.render(); };
-		this.renderer.onDraftChange = text => { this.draft.text = text; this.paletteSelection = 0; this.render(); };
+		this.renderer.onDraftChange = text => { this.draft.text = text; this.draft.revision++; this.paletteSelection = 0; this.render(); };
 		this.renderer.onPaletteSelection = index => { this.paletteSelection = index; this.render(); };
-		this.renderer.onCommandPick = value => { this.draft.text = `/${value} `; this.renderer.setDraft(this.draft.text, true); this.render(); };
+		this.renderer.onCommandPick = value => { this.draft.text = `/${value} `; this.draft.revision++; this.renderer.setDraft(this.draft.text, true); this.render(); };
 		this.renderer.onFilterRoster = text => { this.rosterFilter = text; this.render(); };
 		this.renderer.onAttachFiles = files => run(() => this.attachFiles(files));
 		this.renderer.onPanelAction = action => run(() => this.action(action));
@@ -300,7 +306,7 @@ export class DesktopPage {
 		if (this.selectedProject && !this.expandedProjects.includes(this.selectedProject)) this.expandedProjects = [...this.expandedProjects, this.selectedProject];
 		const previous = this.client.connection;
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
-		this.draft = this.drafts.get(id) ?? { text: "", images: [] };
+		this.draft = this.drafts.get(id) ?? { text: "", images: [], revision: 0 };
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined;
 		const scopeKey = `${this.client.identity?.profile_id}:${id}`;
 		this.enabledModels = (this.modelScopes.has(scopeKey) ? this.modelScopes.get(scopeKey) : this.settings?.preferences?.enabledModels) ?? null;
@@ -334,27 +340,41 @@ export class DesktopPage {
 			if (navigation === this.navigationGeneration) await this.selectSession(session.session_id);
 		} finally { this.newSessionPending = false; this.render(); }
 	}
-	private async submit(text: string): Promise<void> {
-		const command = parseCommandLine(text);
-		if (command && this.commands.some(item => item.name === command.name)) {
-			await this.command(command.name, command.args); this.draft.text = ""; this.renderer.setDraft(""); this.render(); return;
+	private clearDraft(draft: Draft, revision: number): void {
+		if (draft.revision !== revision) return;
+		draft.text = ""; draft.images = []; draft.revision++;
+		if (this.draft === draft) this.renderer.setDraft("");
+	}
+	private async submit(text: string, expectedRequest?: string): Promise<void> {
+		const draft = this.draft, revision = draft.revision, initial = this.client.connection;
+		const previous = initial?.ready && initial.active() ? this.ledger(initial).read("submission", "POST /api/v1/sessions/{session}/submissions") : undefined;
+		if (expectedRequest && previous?.id !== expectedRequest) throw new Error("原请求已变化，请核对当前记录");
+		if (!previous) {
+			const command = parseCommandLine(text);
+			if (command) {
+				const descriptor = this.commands.find(item => item.name === command.name);
+				if (!descriptor) throw new Error(`未识别的命令：/${command.name}`);
+				if (descriptor.source === "builtin") { await this.command(command.name, command.args); this.clearDraft(draft, revision); this.render(); return; }
+			}
 		}
-		const connection = this.requireConnection(), ledger = this.ledger(connection), draft = this.draft;
+		const connection = this.requireConnection(), ledger = this.ledger(connection);
 		const displayedModel = this.selection ?? this.catalog?.current;
 		const root = connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status));
-		const thinking = this.catalog?.models.find(item => item.provider === this.selection?.provider && item.model === this.selection.model)?.thinking_levels?.find(level => level === this.thinking);
-		const record = ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
-			request_id: id, text, images: draft.images.map(item => item.image), mode: this.mode === "steer" ? "steer" : "queue",
-			...(this.mode === "steer" ? { target_run_id: root?.run_id } : {
+		const thinking = this.catalog?.models.find(item => item.provider === displayedModel?.provider && item.model === displayedModel.model)?.thinking_levels?.find(level => level === this.thinking);
+		const steer = this.mode === "steer" && root?.run_id;
+		const record = previous ?? ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
+			request_id: id, text, images: draft.images.map(item => item.image), mode: steer ? "steer" : "queue",
+			...(steer ? { target_run_id: steer } : {
 				...(displayedModel ? { model_selection: { provider: displayedModel.provider, model: displayedModel.model } } : {}), ...(thinking ? { thinking } : {}),
 			}),
 		} }));
+		if (!previous) draft.submission = { id: record.id, revision };
+		const owner = draft.submission?.id === record.id ? draft.submission : undefined;
 		this.render();
 		try {
-			await ledger.send("submission", record, this.client, connection);
-			if (connection.active() && this.draft === draft && draft.text.trim() === record.body.text.trim() && JSON.stringify(draft.images.map(item => item.image)) === JSON.stringify(record.body.images ?? [])) {
-				this.draft = { text: "", images: [] }; this.renderer.setDraft("");
-			}
+			const result = await ledger.send("submission", record, this.client, connection);
+			if (owner) this.clearDraft(draft, owner.revision);
+			if (result.status !== "unknown" && draft.submission === owner) draft.submission = undefined;
 		} finally { if (connection.active()) this.render(); }
 	}
 	private async cancel(id?: string): Promise<void> {
@@ -379,6 +399,7 @@ export class DesktopPage {
 			if (mediaType !== "image/png" && mediaType !== "image/jpeg" && mediaType !== "image/webp" && mediaType !== "image/gif") continue;
 			const dataUrl = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("图片读取失败")); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); });
 			draft.images.push({ id: newId(), name: file.name, dataUrl, bytes: file.size, image: { media_type: mediaType, data_base64: dataUrl.slice(dataUrl.indexOf(",") + 1) } });
+			draft.revision++;
 		}
 		if (connection.active() && this.draft === draft) this.render();
 	}
@@ -399,11 +420,12 @@ export class DesktopPage {
 	private download(data: string, name: string, type: string): void {
 		const url = URL.createObjectURL(new Blob([data], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 	}
-	private async fork(sessionId = this.requireConnection().sessionId): Promise<void> {
+	private async fork(sessionId = this.requireConnection().sessionId, expectedBranch?: string): Promise<void> {
 		const navigation = this.navigationGeneration;
 		const session = await this.client.withSession(sessionId, async connection => {
 			const ledger = this.ledger(connection);
 			let record = ledger.read("branch", "POST /api/v1/sessions/{session}/branches");
+			if (expectedBranch && record?.id !== expectedBranch) throw new Error("原分支请求已变化，请核对当前记录");
 			if (!record) {
 				const snapshot = this.client.connection?.sessionId === sessionId ? this.client.connection.snapshot : await this.client.call("GET /api/v1/sessions/{session}/snapshot", { path: { session: sessionId } });
 				const request = snapshot?.requests.findLast(item => item.kind === "root" && item.status === "succeeded");
@@ -448,7 +470,7 @@ export class DesktopPage {
 		if (id === A.WORKSPACE_OPEN_ACTION || id === A.WORKSPACE_READ_ACTION) { await this.openWorkspace(value, id === A.WORKSPACE_READ_ACTION); return; }
 		if (id === A.WORKSPACE_RELOAD_ACTION || id === A.WORKSPACE_PAGE_ACTION) { const target = parseWorkspaceAction(data); await this.openWorkspace(target.path, target.kind === "read", target.offset); return; }
 		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
-		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.render(); return; }
+		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.draft.revision++; this.render(); return; }
 		if (id === A.QUEUE_CANCEL_ACTION) { await this.cancel(data); return; }
 		if (id === A.TERMINAL_RUN_ACTION) {
 			const connection = this.requireConnection();
@@ -464,14 +486,16 @@ export class DesktopPage {
 		if (id === "terminal:retry") { this.terminal?.queue.retry(); return; }
 		if (id === "terminal:confirm") { this.modal = { id: "terminal:confirm-submit", title: "核对终端输入", description: "确认已经核对终端内容后，清除这些未确认输入；不会重新发送它们。", fields: [], submit: "已核对，继续", data: this.terminal?.id }; this.render(); return; }
 		if (id === "terminal:confirm-submit" && this.terminal && data === this.terminal.id) { this.terminal.queue.confirm(); this.modal = undefined; this.render(); return; }
-		if (id === "write:retry-submit") { await this.submit(this.draft.text); return; }
+		if (id === "write:retry-submit") { if (!data) throw new Error("缺少原请求编号"); await this.submit(this.draft.text, data); return; }
 		if (id === "write:cancel-submit") {
 			const connection = this.requireConnection(), ledger = this.ledger(connection);
 			const record = ledger.read("submission", "POST /api/v1/sessions/{session}/submissions");
+			if (record?.id !== data) throw new Error("原请求已变化，请核对当前记录");
 			if (record) { await this.cancel(record.body.request_id); ledger.forget("submission", record); if (connection.active()) this.render(); }
 			return;
 		}
-		if (id === A.CONVERSATION_FORK_ACTION || id === "write:retry-branch") { await this.fork(data); return; }
+		if (id === A.CONVERSATION_FORK_ACTION) { await this.fork(data); return; }
+		if (id === "write:retry-branch") { if (!data) throw new Error("缺少原分支编号"); await this.fork(this.requireConnection().sessionId, data); return; }
 		if (id === A.COMPACT_ACTION) { this.modal = P.compactModal(this.locale); this.render(); return; }
 		if (id === A.COMPACT_MODAL) {
 			const connection = this.requireConnection(), ledger = this.ledger(connection);
@@ -579,7 +603,7 @@ export class DesktopPage {
 			await this.loadGlobal();
 			if (this.modal === modal) this.modal = undefined;
 			if (navigation === this.navigationGeneration && this.client.connection?.sessionId === data) {
-				this.client.retire(); this.draft = { text: "", images: [] }; this.renderer.setDraft("");
+				this.client.retire(); this.draft = { text: "", images: [], revision: 0 }; this.renderer.setDraft("");
 				const next = this.sessions.findLast(item => !item.archived && item.project_id === session?.project_id);
 				if (next) await this.selectSession(next.session_id);
 			}
@@ -1146,7 +1170,7 @@ export class DesktopPage {
 		catch (error) { pendingError = error instanceof Error ? error.message : String(error); }
 		const terminal = this.terminal?.connection === connection ? this.terminal : undefined;
 		const dock = dockView(this.locale, { open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.session_id === session?.parent_id || item.parent_id === connection?.sessionId || Boolean(session?.parent_id && item.parent_id === session.parent_id)).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, role: item.parent_id ? "fork" as const : "main" as const, parentConversationId: item.parent_id || undefined, children: this.sessions.filter(child => child.parent_id === item.session_id).length, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
-		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", label: "取消原请求", weight: "text" as const } }] : [])],
+		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", data: branchPending, label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", data: pending.id, label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", data: pending.id, label: "取消原请求", weight: "text" as const } }] : [])],
 			dock: terminal && this.dockTab === "terminal" ? { ...dock, panel: { ...dock.panel, texts: [], notices: terminal.queue.paused ? [{ tone: "warning", text: "终端输入尚未确认；请重试原输入或核对后继续。" }] : dock.panel.notices, actions: [
 				{ id: "terminal:retry", label: "重试原输入", weight: "line", disabled: terminal.queue.busy || !terminal.queue.items.length },
 				{ id: "terminal:confirm", label: "核对后继续", weight: "text", disabled: terminal.queue.busy || !terminal.queue.items.length },

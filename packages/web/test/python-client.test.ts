@@ -108,6 +108,14 @@ test("an uncertain write retains its original ID and only retries after an expli
  expect(restored.read("submit", record.operation)).toBeUndefined();
 });
 
+test("invalid new input is rejected before it can poison the durable pending key", () => {
+ const ledger = new PendingWrites(sessionStorage, "host", "a"), operation = "POST /api/v1/sessions/{session}/submissions";
+ expect(() => ledger.prepare("submit", operation, id => ({ path: { session: "a" }, body: { request_id: id, text: "x".repeat(16001) } }))).toThrow("请求不符合后端契约");
+ expect(sessionStorage.getItem(ledger.prefix + "submit")).toBeNull();
+ const valid = ledger.prepare("submit", operation, id => ({ path: { session: "a" }, body: { request_id: id, text: "valid" } }));
+ expect(ledger.read("submit", operation)).toEqual(valid);
+});
+
 test("A's late reply neither clears B's pending ID nor a replacement record in A's key", async () => {
  let finish: (value: Response) => void = () => { throw new Error("fetch has not started"); };
  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(resolve => { finish = resolve; })));

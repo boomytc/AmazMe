@@ -35,6 +35,7 @@ export class PendingWrites {
 		if (existing) return existing;
 		const id = newId();
 		const record: PendingWrite<K> = { id, operation, ...create(id) };
+		validateRequest(operation, record.body);
 		this.storage.setItem(this.prefix + key, JSON.stringify(record));
 		return record;
 	}

@@ -80,6 +80,74 @@ test("a submission captures the displayed model, retries the same request, and p
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
 });
 
+test("a confirmed receipt preserves even an identical draft typed after sending, and stale retry controls cannot submit again", async () => {
+ const requests: Submit[] = [];
+ let finish: (response: Response) => void = () => { throw new Error("submission not started"); };
+ const { page } = await startPage((path, options) => {
+  if (!path.endsWith("/submissions")) return undefined;
+  requests.push(parseContract("Submit", JSON.parse(String(options.body))));
+  return new Promise<Response>(resolve => { finish = resolve; });
+ });
+ page.renderer.onDraftChange("same words"); page.renderer.setDraft("same words");
+ page.renderer.onSubmit("same words");
+ await vi.waitFor(() => expect(requests).toHaveLength(1));
+ const retry = page.renderer.view?.queue.find(item => item.id === requests[0].request_id)?.retry;
+ if (!retry) throw new Error("pending retry missing");
+ page.renderer.onDraftChange("same words"); page.renderer.setDraft("same words");
+ finish(new Response(JSON.stringify({ request_id: requests[0].request_id, text: "same words", status: "queued" }), { status: 202 }));
+ await vi.waitFor(() => expect(page.renderer.view?.queue.some(item => item.id === requests[0].request_id)).toBe(false));
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("same words");
+ page.renderer.onPanelAction({ kind: "command", id: retry.id, data: retry.data });
+ await vi.waitFor(() => expect(document.body.textContent).toContain("原请求已变化"));
+ expect(requests).toHaveLength(1);
+});
+
+test("a pending request takes precedence over a newly typed command", async () => {
+ const { page, submitted } = await startPage();
+ page.renderer.onDraftChange("original"); page.renderer.onSubmit("original");
+ await vi.waitFor(() => expect(document.body.textContent).toContain("receipt_lost"));
+ page.renderer.onDraftChange("/new"); page.renderer.setDraft("/new");
+ page.renderer.onSubmit("/new");
+ await vi.waitFor(() => expect(submitted).toHaveLength(2));
+ expect(submitted[1]).toEqual(submitted[0]);
+ expect(page.client.connection?.sessionId).toBe("a");
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("/new");
+});
+
+test("a late command response cannot clear the draft edited while it ran", async () => {
+ let exporting = false;
+ let finish: (response: Response) => void = () => { throw new Error("export not started"); };
+ vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
+ vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+ const { page } = await startPage(path => path === "/api/v1/export" ? new Promise<Response>(resolve => { exporting = true; finish = resolve; }) : undefined);
+ page.renderer.onDraftChange("/export"); page.renderer.onSubmit("/export");
+ await vi.waitFor(() => expect(exporting).toBe(true));
+ page.renderer.onDraftChange("next task"); page.renderer.setDraft("next task");
+ finish(new Response(JSON.stringify({ format: "amazme/1" })));
+ await vi.waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledOnce());
+ await new Promise(resolve => setTimeout(resolve, 0));
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("next task");
+});
+
+test("the original resource palette submits resource commands for Python expansion and keeps the displayed thinking level", async () => {
+ const requests: Submit[] = [];
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/models") return response({ models: [{ provider: "faux", model: "shown", label: "Shown", endpoint_editable: true, thinking_levels: ["off", "high"] }], current: { provider: "faux", model: "shown", base_url: "http://model", max_tokens: 10, key_configured: true, thinking: "high" } });
+  if (path.endsWith("/resources")) return response({ context_files: [], skills: [{ name: "review", path: "/skills/review/SKILL.md", description: "Review" }], prompts: [{ name: "explain", path: "/prompts/explain.md", description: "Explain" }], diagnostics: [] });
+  if (!path.endsWith("/submissions")) return undefined;
+  const request = parseContract("Submit", JSON.parse(String(options.body))); requests.push(request);
+  return response({ request_id: request.request_id, text: request.text, status: "queued" });
+ });
+ page.renderer.onDraftChange("/");
+ await vi.waitFor(() => expect(page.renderer.view?.palette?.rows.map(item => item.value)).toEqual(expect.arrayContaining(["explain", "skill:review"])));
+ page.renderer.onPanelAction({ kind: "control", id: A.SUBMIT_MODE_ACTION, data: undefined, value: "steer" });
+ page.renderer.onDraftChange("/explain original arguments"); page.renderer.onSubmit("/explain original arguments");
+ await vi.waitFor(() => expect(requests).toHaveLength(1));
+ expect(requests[0]).toMatchObject({ text: "/explain original arguments", thinking: "high", mode: "queue" });
+ expect(requests[0].target_run_id).toBeUndefined();
+});
+
 test("the original JSON model toggle persists the global scope and survives a fresh page", async () => {
  const response = (value: unknown) => new Response(JSON.stringify(value));
  let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });
