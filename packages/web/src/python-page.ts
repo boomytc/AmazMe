@@ -59,13 +59,13 @@ function pluginPanelState(packages: PluginPackages | undefined, plugins: readonl
 	};
 }
 
-function mcpPanelRuntime(config: McpConfiguration | undefined, state: McpState | undefined, ready: boolean, canConnect: boolean): P.McpRuntimeLike | undefined {
+function mcpPanelRuntime(config: McpConfiguration | undefined, state: McpState | undefined, ready: boolean, canConnect: boolean, login?: OAuthView): P.McpRuntimeLike | undefined {
 	if (!config) return undefined;
-	return { disabled: !ready, canConnect, canOverrideProject: Boolean(config.workspace), errors: [], login: null,
+	return { disabled: !ready, canConnect, canOverrideProject: Boolean(config.workspace), errors: [], login: login ? { id: login.login_id, server: login.provider, status: login.phase === "pending" ? login.url ? "awaiting" : "preparing" : login.phase === "complete" ? "done" : "failed", url: login.url || null, error: login.error || null } : null,
 		servers: config.servers.map(item => {
 			const live = state?.servers.find(server => server.managed_id === item.config_id && server.enabled);
 			return { name: item.name, detail: item.detail, state: !item.enabled ? "disabled" : live?.phase === "ready" ? "connected" : live?.phase ?? "disconnected", tools: live?.tools.length ?? 0,
-				enabled: item.enabled, exposure: item.exposure, scope: item.scope, canLogin: false, error: live?.phase === "unknown" ? "连接结果待核对；显式重连会先核对原资源退出。" : null };
+				enabled: item.enabled, exposure: item.exposure, scope: item.scope, canLogin: item.can_login === true, error: live?.phase === "unknown" ? "连接结果待核对；显式重连会先核对原资源退出。" : null };
 		}),
 	};
 }
@@ -103,6 +103,9 @@ export class DesktopPage {
 	private pluginsGeneration = 0;
 	private mcpConfiguration?: McpConfiguration;
 	private mcpRuntime?: McpState;
+	private mcpLogin?: OAuthView;
+	private mcpLoginTimer?: ReturnType<typeof setTimeout>;
+	private mcpLoginGeneration = 0;
 	private currentPanel = P.CHAT_VIEW;
 	private modal?: P.PanelModal;
 	private notice?: P.PanelNotice;
@@ -843,6 +846,7 @@ export class DesktopPage {
 	private async mcpAction(action: P.PanelAction): Promise<boolean> {
 		if (action.kind === "open" || action.kind === "modal-close") return false;
 		const { id, data } = action, fields = action.kind === "modal-submit" ? action.fields : {};
+		if ([P.PLUGIN_MCP_LOGIN_ACTION, P.PLUGIN_MCP_LOGIN_OPEN_ACTION, P.PLUGIN_MCP_LOGIN_REDIRECT_ACTION, P.PLUGIN_MCP_LOGIN_CANCEL_ACTION, P.PLUGIN_MCP_LOGIN_MODAL].includes(id)) { await this.mcpLoginAction(action); return true; }
 		if (![P.PLUGIN_MCP_ADD_ACTION, P.PLUGIN_MCP_MODAL, P.PLUGIN_MCP_ENABLED_ACTION, P.PLUGIN_MCP_EXPOSURE_ACTION, P.PLUGIN_MCP_REMOVE_ACTION, P.PLUGIN_MCP_RELOAD_ACTION, P.PLUGIN_MCP_RECONNECT_ACTION, P.PLUGIN_MCP_PROJECT_ACTION, P.PLUGIN_MCP_PROJECT_MODAL, "plugins:mcp-remove-confirm"].includes(id)) return false;
 		const connection = this.client.connection, identity = this.client.identity, modal = this.modal;
 		if (!identity) throw new Error("请先连接后端");
@@ -900,6 +904,54 @@ export class DesktopPage {
 			await patchLedger.send(key, record, this.client, scope === "project" ? binding : identity);
 		}
 		await this.loadPlugins(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
+	}
+	private async mcpLoginAction(action: P.PanelAction): Promise<void> {
+		if (action.kind === "open" || action.kind === "modal-close") return;
+		const identity = this.client.identity, { id, data } = action;
+		if (!identity) throw new Error("请先连接后端");
+		if (id === P.PLUGIN_MCP_LOGIN_OPEN_ACTION) {
+			if (!data || data !== this.mcpLogin?.url || !/^https?:\/\//.test(data)) throw new Error("授权链接已变化");
+			window.open(data, "_blank", "noopener,noreferrer"); return;
+		}
+		if (id === P.PLUGIN_MCP_LOGIN_ACTION) {
+			const config = this.mcpConfiguration, server = config?.servers.find(item => item.name === data);
+			if (!config || !server?.can_login) throw new Error("MCP 未配置 OAuth");
+			const key = `amazme:mcp-login:${identity.profile_id}:${server.name}`, raw = sessionStorage.getItem(key);
+			const request = raw ? parseContract("McpLoginRequest", JSON.parse(raw)) : { login_id: newId(), name: server.name, expected_revision: config.revision };
+			if (!raw) sessionStorage.setItem(key, JSON.stringify(request));
+			const generation = ++this.mcpLoginGeneration;
+			clearTimeout(this.mcpLoginTimer);
+			const result = await this.client.call("POST /api/v1/mcp-configuration/logins", { body: request, identity });
+			this.showMcpLogin(identity, request.name, request.login_id, result, generation); return;
+		}
+		const login = this.mcpLogin, generation = this.mcpLoginGeneration;
+		if (!login || data !== login.login_id) throw new Error("原授权已变化，请核对当前记录");
+		if (id === P.PLUGIN_MCP_LOGIN_REDIRECT_ACTION) {
+			this.modal = { id: P.PLUGIN_MCP_LOGIN_MODAL, title: "完成 MCP 登录", description: "粘贴浏览器中的完整回调地址。", fields: [{ id: "value", label: "回调地址", kind: "text", value: "" }], submit: "确认", data: login.login_id };
+			this.render(); return;
+		}
+		if (id === P.PLUGIN_MCP_LOGIN_MODAL && action.kind === "modal-submit") {
+			const modal = this.modal;
+			if (modal?.id !== id || modal.data !== data) return;
+			const result = await this.client.call("POST /api/v1/mcp-configuration/logins/{login_id}/input", { path: { login_id: login.login_id }, body: { value: action.fields.value ?? "" }, identity });
+			this.showMcpLogin(identity, login.provider, login.login_id, result, generation);
+			if (this.hostActive(identity) && generation === this.mcpLoginGeneration && this.modal === modal) { this.modal = undefined; this.render(); } return;
+		}
+		if (id === P.PLUGIN_MCP_LOGIN_CANCEL_ACTION) {
+			const result = await this.client.call("DELETE /api/v1/mcp-configuration/logins/{login_id}", { path: { login_id: login.login_id }, identity });
+			this.showMcpLogin(identity, login.provider, login.login_id, result, generation);
+		}
+	}
+	private showMcpLogin(identity: Identity, name: string, loginId: string, result: OAuthView, generation: number): void {
+		if (result.login_id !== loginId || result.provider !== name) throw new Error("MCP 授权回执归属不匹配；原编号已保留");
+		const key = `amazme:mcp-login:${identity.profile_id}:${name}`, raw = sessionStorage.getItem(key);
+		if (raw && parseContract("McpLoginRequest", JSON.parse(raw)).login_id === loginId && result.phase !== "pending" && result.phase !== "unknown") sessionStorage.removeItem(key);
+		if (!this.hostActive(identity) || generation !== this.mcpLoginGeneration) return;
+		this.mcpLogin = result; clearTimeout(this.mcpLoginTimer); this.render();
+		if (result.phase === "pending") this.mcpLoginTimer = setTimeout(() => {
+			if (!this.hostActive(identity) || generation !== this.mcpLoginGeneration || this.mcpLogin?.login_id !== loginId) return;
+			void this.client.call("GET /api/v1/mcp-configuration/logins/{login_id}", { path: { login_id: loginId }, identity }).then(value => this.showMcpLogin(identity, name, loginId, value, generation)).catch(error => { if (this.hostActive(identity) && generation === this.mcpLoginGeneration) this.error(error); });
+		}, 1000);
 	}
 	private async pluginAction(action: P.PanelAction): Promise<boolean> {
 		if (action.kind === "open" || action.kind === "modal-close") return false;
@@ -1310,7 +1362,7 @@ export class DesktopPage {
 		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, projects: this.projects, selectedProject: this.selectedProject, expandedProjects: this.expandedProjects, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
-				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true, this.mcpConfiguration?.path ?? "AmazMe"), runtime: mcpPanelRuntime(this.mcpConfiguration, this.mcpRuntime, this.ready && (!connection || connection.ready), connection?.ready === true) },
+				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true, this.mcpConfiguration?.path ?? "AmazMe"), runtime: mcpPanelRuntime(this.mcpConfiguration, this.mcpRuntime, this.ready && (!connection || connection.ready), connection?.ready === true, this.mcpLogin) },
 				automation: { state: this.schedules ? { path: this.schedules.path, tickMs: this.schedules.tick_ms ?? 5000, schedules: this.schedules.schedules.map(scheduleRecord) } : undefined, sessionId: connection?.sessionId },
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
@@ -1355,5 +1407,5 @@ export class DesktopPage {
 			] }, pty: { id: terminal.id, cols: terminal.view.cols, rows: terminal.view.rows, output: terminal.view.output, outputSeq: terminal.view.output_seq ?? terminal.view.output.length, fontFamily: this.typography.terminalFont, fontSize: this.typography.terminalSize, inputEnabled: connection?.ready === true && terminal.view.phase === "running" && !terminal.queue.paused } } : dock });
 		if (pendingError) this.renderer.setConnection(pendingError, "error");
 	}
-	dispose(): void { clearTimeout(this.healthTimer); clearTimeout(this.oauthTimer); clearTimeout(this.terminalTimer); this.client.retire(); }
+	dispose(): void { clearTimeout(this.healthTimer); clearTimeout(this.oauthTimer); clearTimeout(this.mcpLoginTimer); clearTimeout(this.terminalTimer); this.client.retire(); }
 }

@@ -13,6 +13,7 @@ dependencies = [
     "psutil==7.2.2",
     "pillow>=12.0,<13",
     "pathspec==0.12.1",
+    "mcp==1.26.0",
 ]
 
 [project.scripts]
@@ -32,7 +33,6 @@ dev = [
     "types-PyYAML",
     "playwright",
     "types-psutil>=7.2.2.20260906",
-    "mcp==1.26.0",
 ]
 
 [tool.hatch.build.targets.wheel]

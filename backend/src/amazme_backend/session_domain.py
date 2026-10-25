@@ -10,6 +10,7 @@ from .contracts import (
     BackendError,
     Cleanup,
     CodeStatus,
+    ImagePart,
     ComputerGround,
     ComputerInspect,
     ComputerLocate,
@@ -347,6 +348,7 @@ class McpReturned:
     phase: Literal["done", "denied", "unknown", "conflict", "cancelled"]
     error: str = ""
     result: str = ""
+    images: list[ImagePart] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

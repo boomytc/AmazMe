@@ -8,6 +8,7 @@ import re
 import shlex
 from fnmatch import fnmatchcase
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, SecretStr, field_validator, model_validator
 
@@ -20,7 +21,7 @@ ProviderApi = Literal["openai-completions", "openai-responses", "openai-codex-re
                       "anthropic-messages", "google-generative-ai"]
 
 
-TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$"
+TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$"
 
 
 class ResourceOptions(Model):
@@ -1119,17 +1120,21 @@ class TerminalSize(Model):
 McpExposure = Literal["codemode", "deferred", "direct", "hidden"]
 
 
-class McpStdioSettings(Model):
-    type: Literal["stdio"] = "stdio"
-    command: str = Field(min_length=1, max_length=4096)
-    args: list[Annotated[str, Field(max_length=4096)]] = Field(default_factory=list, max_length=128)
-    env: dict[str, str] = Field(default_factory=dict, max_length=64)
-    cwd: str = Field(default="", max_length=4096)
+class McpSettings(Model):
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
     enabled: bool = True
     exposure: McpExposure = "codemode"
     description: str = Field(default="", max_length=4000)
     tool_exposure: dict[str, McpExposure] = Field(default_factory=dict, alias="toolExposure", max_length=128)
     timeout: float = Field(default=60, gt=0, le=86400)
+
+
+class McpStdioSettings(McpSettings):
+    type: Literal["stdio"] = "stdio"
+    command: str = Field(min_length=1, max_length=4096)
+    args: list[Annotated[str, Field(max_length=4096)]] = Field(default_factory=list, max_length=128)
+    env: dict[str, str] = Field(default_factory=dict, max_length=64)
+    cwd: str = Field(default="", max_length=4096)
 
     @model_validator(mode="after")
     def checked_launch(self) -> McpStdioSettings:
@@ -1137,11 +1142,75 @@ class McpStdioSettings(Model):
         return self
 
 
+def mcp_secure_url(value: str) -> str:
+    parts = urlsplit(value)
+    if (parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password
+            or parts.fragment or parts.scheme == "http" and parts.hostname not in {"localhost", "127.0.0.1", "::1"}):
+        raise ValueError("MCP credentials require HTTPS or loopback HTTP")
+    return value
+
+
+class McpOAuthSettings(Model):
+    model_config = ConfigDict(extra="forbid", strict=True, populate_by_name=True)
+    client_id: str = Field(default="", alias="clientId", max_length=4096)
+    client_secret: str = Field(default="", alias="clientSecret", max_length=16384)
+    callback_port: int | None = Field(default=None, alias="callbackPort", ge=1, le=65535)
+    callback_url: str = Field(default="", alias="callbackUrl", max_length=4096)
+    scope: str = Field(default="", max_length=4000)
+    client_name: str = Field(default="pi", alias="clientName", min_length=1, max_length=200)
+    registration: Literal["dcr", "cimd"] = Field(default="dcr", alias="clientRegistration")
+    metadata_url: str = Field(default="", alias="authServerMetadataUrl", max_length=4096)
+
+    @model_validator(mode="after")
+    def checked_callback(self) -> McpOAuthSettings:
+        if self.callback_url:
+            parts = urlsplit(self.callback_url)
+            mcp_secure_url(self.callback_url)
+            if (parts.scheme != "http" or parts.query or self.callback_port and parts.port and self.callback_port != parts.port):
+                raise ValueError("MCP OAuth callback must be loopback HTTP without query or fragment and use one port")
+            if self.registration == "cimd" and (parts.hostname == "::1" or parts.path != "/callback"):
+                raise ValueError("MCP CIMD requires localhost or 127.0.0.1 /callback")
+        if self.metadata_url:
+            mcp_secure_url(self.metadata_url)
+        if self.registration == "cimd" and (self.client_id or self.client_name != "pi"):
+            raise ValueError("MCP CIMD cannot override the Pi client identity")
+        return self
+
+
+class McpProviderAuth(Model):
+    provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
+
+
+class McpHttpSettings(McpSettings):
+    type: Literal["http", "streamable-http"] = "http"
+    url: str = Field(min_length=1, max_length=4096)
+    headers: dict[str, str] = Field(default_factory=dict, max_length=64)
+    oauth: McpOAuthSettings | None = None
+    auth: McpProviderAuth | None = None
+
+    @model_validator(mode="after")
+    def checked_transport(self) -> McpHttpSettings:
+        parts = urlsplit(self.url)
+        if parts.scheme not in {"http", "https"} or not parts.hostname or parts.username or parts.password or parts.fragment:
+            raise ValueError("invalid streamable HTTP URL")
+        if self.oauth or self.auth or self.headers:
+            mcp_secure_url(self.url)
+        if self.oauth and self.auth:
+            raise ValueError("MCP OAuth and provider authentication are mutually exclusive")
+        if any(not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", key) or "\r" in content or "\n" in content or len(content) > 16384
+               or key.lower() in {"host", "content-length", "mcp-session-id", "mcp-protocol-version"} for key, content in self.headers.items()):
+            raise ValueError("invalid MCP HTTP headers")
+        return self
+
+
+McpServerSettings = McpStdioSettings | McpHttpSettings
+
+
 class McpConfigWrite(Model):
     operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     expected_revision: int = Field(ge=0)
     name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
-    entry: McpStdioSettings
+    entry: McpServerSettings
 
 
 class McpConfigPatch(Model):
@@ -1163,6 +1232,7 @@ class McpConfiguredServer(Model):
     overridden: bool = False
     enabled: bool
     exposure: McpExposure
+    can_login: bool = False
 
 
 class McpConfiguration(Model):
@@ -1177,6 +1247,12 @@ class McpReconnect(Model):
     name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
 
 
+class McpLoginRequest(Model):
+    login_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    expected_revision: int = Field(ge=0)
+
+
 class McpLaunch(Model):
     command: str = Field(min_length=1, max_length=16000)
     workspace: str = ""
@@ -1186,6 +1262,13 @@ class McpLaunch(Model):
     timeout_seconds: float = Field(default=60, gt=0, le=86400)
     managed_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     name: str = Field(default="", max_length=64)
+    http: McpHttpSettings | None = None
+
+    @model_validator(mode="after")
+    def checked_transport(self) -> McpLaunch:
+        if self.http is not None and (self.command != self.http.url or self.environment or self.environment_commands):
+            raise ValueError("HTTP MCP uses its URL and explicit HTTP settings")
+        return self
 
     @field_validator("command", "cwd")
     @classmethod

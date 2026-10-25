@@ -44,6 +44,7 @@ from .contracts import (
     McpConfiguration,
     McpConfigWrite,
     McpReconnect,
+    McpLoginRequest,
     McpState,
     McpView,
     ModelCatalog,
@@ -502,6 +503,18 @@ class Client:
     async def mcp_configuration(self, session_id: str = "") -> McpConfiguration:
         path = f"/api/v1/sessions/{session_id}/mcp-configuration" if session_id else "/api/v1/mcp-configuration"
         return McpConfiguration.model_validate(await self._send("GET", path))
+
+    async def mcp_login(self, value: McpLoginRequest) -> OAuthView:
+        return OAuthView.model_validate(await self._send("POST", "/api/v1/mcp-configuration/logins", json_body=value.model_dump(), headers=self._write()))
+
+    async def mcp_login_status(self, login_id: str) -> OAuthView:
+        return OAuthView.model_validate(await self._send("GET", f"/api/v1/mcp-configuration/logins/{login_id}"))
+
+    async def mcp_login_input(self, login_id: str, value: OAuthInput) -> OAuthView:
+        return OAuthView.model_validate(await self._send("POST", f"/api/v1/mcp-configuration/logins/{login_id}/input", json_body={"value": value.value.get_secret_value()}, headers=self._write()))
+
+    async def mcp_login_cancel(self, login_id: str) -> OAuthView:
+        return OAuthView.model_validate(await self._send("DELETE", f"/api/v1/mcp-configuration/logins/{login_id}", headers=self._write()))
 
     async def change_mcp_configuration(self, session_id: str, workspace: str, attachment_id: str,
                                        value: McpConfigWrite | McpConfigPatch) -> McpConfiguration:

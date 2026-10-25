@@ -9,6 +9,7 @@ import time
 import httpx
 import uvicorn
 from fastapi import FastAPI
+from pydantic import JsonValue, TypeAdapter
 
 from .accounts import AccountStore, ApiKeyCredential
 from .common import Peer, Profile, build_id, lock, unix_listener
@@ -407,9 +408,32 @@ class Worker:
 
     def _mcp_observation(self, action: McpRetrieval, call: McpCall) -> McpReturned:
         if call.phase == "done":
-            payload = json.dumps({"text": call.result, "is_error": call.is_error, "data": call.result_data},
+            data = dict(call.result_data or {})
+            content = data.get("content")
+            images: list[ImagePart] = []
+            parts: list[object] = []
+            for part in content if isinstance(content, list) else []:
+                resource = part.get("resource") if isinstance(part, dict) else None
+                image = {"media_type": part.get("mimeType"), "data_base64": part.get("data")} if isinstance(part, dict) and part.get("type") == "image" else (
+                    {"media_type": resource.get("mimeType"), "data_base64": resource.get("blob")} if isinstance(resource, dict) and str(resource.get("mimeType", "")).startswith("image/") else None)
+                if image is None:
+                    parts.append(part)
+                else:
+                    try:
+                        images.append(ImagePart.model_validate(image))
+                    except ValueError:
+                        parts.append({"type": "text", "text": "MCP completed; invalid image omitted. Do not repeat the call."})
+            try:
+                checked_images(images)
+            except BackendError:
+                images = []
+                parts.append({"type": "text", "text": "MCP completed; invalid media omitted. Do not repeat the call."})
+            if isinstance(content, list):
+                data["content"] = TypeAdapter(list[JsonValue]).validate_python(parts)
+            summary = "\n".join(str(part["text"]) for part in parts if isinstance(part, dict) and isinstance(part.get("text"), str)) if isinstance(content, list) else call.result
+            payload = json.dumps({"text": summary or "MCP result", "is_error": call.is_error, "data": data},
                                  ensure_ascii=False)
-            return McpReturned(action, "done", result=payload)
+            return McpReturned(action, "done", result=payload[:64000], images=images)
         if call.phase == "denied":
             return McpReturned(action, "denied", "mcp_call_denied")
         if call.phase == "conflict":

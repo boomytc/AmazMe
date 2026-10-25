@@ -15,7 +15,7 @@ from pydantic import JsonValue, TypeAdapter
 from .contracts import McpLaunch, McpTool
 from .native_execution import tool_environment
 
-LIMIT = 262144
+LIMIT = 16 * 1024 * 1024
 CALL_IDENTITY_LIMIT = 4096
 VERSIONS = {"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
 MESSAGE = TypeAdapter(dict[str, JsonValue])
@@ -139,6 +139,12 @@ def main() -> int:
     if len(messages) != 1:
         return 125
     permit = messages[0]
+    if "http" in permit:
+        import asyncio
+
+        from .mcp_http import run_http_gate
+
+        return asyncio.run(run_http_gate(permit))
     command, cwd = permit.get("command"), permit.get("cwd")
     if (set(permit) != {"op", "command", "cwd", "uid", "gid", "environment", "environment_commands", "timeout_seconds"} or permit["op"] != "permit"
             or (permit["uid"], permit["gid"]) != (os.getuid(), os.getgid())

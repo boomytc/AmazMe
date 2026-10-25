@@ -1413,7 +1413,8 @@ class Supervisor:
                 client = McpClient(process.sock)
                 self.mcp_clients[value.server_id] = client
                 await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET permitted=1 WHERE id=?", (value.server_id,)), write=True)
-                await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), str(cwd), value.environment, value.environment_commands, value.timeout_seconds)
+                await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), str(cwd), value.environment, value.environment_commands, value.timeout_seconds,
+                                        value.http, str(self.profile.path), value.name or value.server_id)
                 catalog = json.dumps([tool.model_dump() for tool in client.tools], ensure_ascii=False)
                 busy = await self.db.call(lambda db: db.execute(
                     "SELECT 1 FROM mcp_calls WHERE server=? AND phase IN ('waiting_approval','running')",

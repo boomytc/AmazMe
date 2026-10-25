@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 
-from .contracts import BackendError, McpExposure, McpTool, McpView, Model
+from .contracts import BackendError, McpExposure, McpHttpSettings, McpTool, McpView, Model
 from .mcp_gate import LIMIT, MESSAGE
 from .mcp_management import exposure
 
@@ -44,10 +44,14 @@ class McpClient:
         self.protocol_version = ""
 
     def permit(self, command: str, uid: int, gid: int, cwd: str, environment: dict[str, str] | None = None,
-               environment_commands: dict[str, str] | None = None, timeout_seconds: float = 60) -> None:
+               environment_commands: dict[str, str] | None = None, timeout_seconds: float = 60,
+               http: McpHttpSettings | None = None, profile: str = "", name: str = "") -> None:
         values: dict[str, JsonValue] = {key: value for key, value in (environment or {}).items()}
         commands: dict[str, JsonValue] = {key: value for key, value in (environment_commands or {}).items()}
-        self._send({"op": "permit", "command": command, "uid": uid, "gid": gid, "cwd": cwd, "environment": values, "environment_commands": commands, "timeout_seconds": timeout_seconds})
+        permit: dict[str, JsonValue] = {"op": "permit", "command": command, "uid": uid, "gid": gid, "cwd": cwd, "environment": values, "environment_commands": commands, "timeout_seconds": timeout_seconds}
+        if http is not None:
+            permit.update({"http": http.model_dump(mode="json", by_alias=True), "profile": profile, "name": name})
+        self._send(permit)
         self.pump(20 if commands else 10, lambda: self.ready or self.closed or self.exit_code is not None)
         if not self.ready:
             raise BackendError("mcp_catalog_failed", status=503)

@@ -127,6 +127,7 @@ from .contracts import (
     McpOpen,
     McpQuery,
     McpReconnect,
+    McpLoginRequest,
     McpSession,
     McpState,
     McpView,
@@ -236,6 +237,7 @@ from .memories import match_memories, remember, session_workspace
 from .oauth import BROWSER, DEVICE, OAuthInput, OAuthStart, OAuthView
 from .oauth import Login as OAuthLogin
 from .page_boot import boot_document, frontend_directory
+from .mcp_auth import McpLogins
 from .plugin_run import entry_digest
 from .processes import ProcessReservation, exited, retain_inherited, wait_exited
 from .providers import CATALOG, Completion, checked_model_endpoint, choose_model, public_settings, stream, summarize
@@ -329,6 +331,7 @@ class Host:
         self.schedule_tick_ms = 0
         self.accounts = AccountStore(profile.account_path)
         self.oauth_logins: dict[str, OAuthLogin] = {}
+        self.mcp_signins = McpLogins(profile, self.store.db, self._account_write_guard)
         self.attached = ""
         self.stop = asyncio.Event()
         self.closing = False
@@ -1097,6 +1100,19 @@ class Host:
         self.oauth_logins[value.login_id] = login
         login.task = asyncio.create_task(self._run_oauth(login))
         return view
+
+    async def start_mcp_oauth(self, value: McpLoginRequest) -> OAuthView:
+        return await self.mcp_signins.start(value)
+
+    async def mcp_oauth_view(self, login_id: str) -> OAuthView:
+        return await self.mcp_signins.view(login_id)
+
+    async def mcp_oauth_input(self, login_id: str, value: OAuthInput) -> OAuthView:
+        return await self.mcp_signins.input(login_id, value.value.get_secret_value())
+
+    async def cancel_mcp_oauth(self, login_id: str) -> OAuthView:
+        await self._account_write_guard()
+        return await self.mcp_signins.cancel(login_id)
 
     def oauth_view(self, login_id: str) -> OAuthView:
         login = self.oauth_logins.get(login_id)
@@ -3228,6 +3244,7 @@ class Host:
 
     async def close(self) -> None:
         self.closing = True
+        await self.mcp_signins.close()
         await asyncio.gather(*(self.cancel_oauth(key) for key, login in self.oauth_logins.items()
                                if login.view.phase == "pending"), return_exceptions=True)
         self.stop.set()
@@ -3564,6 +3581,22 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/mcp-configuration")
     async def global_mcp_configuration() -> McpConfiguration:
         return await owner.mcp_configuration("")
+
+    @app.post("/api/v1/mcp-configuration/logins")
+    async def mcp_login(value: McpLoginRequest) -> OAuthView:
+        return await owner.start_mcp_oauth(value)
+
+    @app.get("/api/v1/mcp-configuration/logins/{login_id}")
+    async def mcp_login_view(login_id: str) -> OAuthView:
+        return await owner.mcp_oauth_view(login_id)
+
+    @app.post("/api/v1/mcp-configuration/logins/{login_id}/input")
+    async def mcp_login_input(login_id: str, value: OAuthInput) -> OAuthView:
+        return await owner.mcp_oauth_input(login_id, value)
+
+    @app.delete("/api/v1/mcp-configuration/logins/{login_id}")
+    async def mcp_login_cancel(login_id: str) -> OAuthView:
+        return await owner.cancel_mcp_oauth(login_id)
 
     @app.post("/api/v1/mcp-configuration")
     async def save_global_mcp_configuration(value: McpConfigWrite) -> McpConfiguration:

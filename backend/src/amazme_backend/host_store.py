@@ -191,6 +191,7 @@ class HostStore:
                 CREATE TABLE IF NOT EXISTS mcp_config_revision(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
                 INSERT OR IGNORE INTO mcp_config_revision(id,revision) VALUES(1,0);
                 CREATE TABLE IF NOT EXISTS mcp_config_changes(id TEXT PRIMARY KEY,digest TEXT NOT NULL,result TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS mcp_logins(id TEXT PRIMARY KEY,payload TEXT NOT NULL,view TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS mcp_reconnects(operation TEXT PRIMARY KEY,session TEXT NOT NULL,name TEXT NOT NULL,
                   launch TEXT NOT NULL,server TEXT NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, name TEXT NOT NULL, digest TEXT NOT NULL);

@@ -1621,7 +1621,7 @@ class SessionStore:
             self._message(db, c, request.request_id, step.step_id,
                           Message(role="tool", content=step.result, tool_call_id=step.call.id,
                                   images=self._computer_images(db, step.step_id)
-                                  if step.call.name in {"computer_observe", "computer_locate", "computer_ground", "plugin_tool", "codemode"} else []))
+                                  if step.call.name in {"computer_observe", "computer_locate", "computer_ground", "plugin_tool", "codemode", "mcp_tool"} else []))
             if self._run(db, request.request_id).direct_call is not None:
                 self._decide(db, c, request, Decision(status="succeeded", answer=step.result))
         step.phase = "applied"
@@ -2070,6 +2070,10 @@ class SessionStore:
                     or action.call != step.call):
                 raise BackendError("stale_generation")
             if observation.phase == "done":
+                if observation.images:
+                    checked_images(observation.images)
+                    db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
+                               (step.step_id, json.dumps([image.model_dump() for image in observation.images])))
                 step.result, step.phase = observation.result, "result"
                 self._save_step(db, step)
                 c.emit("tool", request.request_id, event_step_text(step))

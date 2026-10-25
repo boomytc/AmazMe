@@ -47,6 +47,7 @@ from .contracts import (
     McpDecision,
     McpOpen,
     McpReconnect,
+    McpLoginRequest,
     McpState,
     McpView,
     Model,
@@ -104,6 +105,7 @@ class RpcParams(RunOptions):
     mcp_config: McpConfigWrite | None = None
     mcp_patch: McpConfigPatch | None = None
     mcp_reconnect: McpReconnect | None = None
+    mcp_login: McpLoginRequest | None = None
     package_id: str = ""
     plugin_package: PluginPackageAdd | None = None
     plugin_package_remove: PluginPackageRemove | None = None
@@ -248,6 +250,14 @@ class RpcHost(Protocol):
     async def reload_mcp_configuration(self, session: str) -> McpState: ...
 
     async def reconnect_mcp(self, session: str, value: McpReconnect) -> McpView: ...
+
+    async def start_mcp_oauth(self, value: McpLoginRequest) -> OAuthView: ...
+
+    async def mcp_oauth_view(self, login_id: str) -> OAuthView: ...
+
+    async def mcp_oauth_input(self, login_id: str, value: OAuthInput) -> OAuthView: ...
+
+    async def cancel_mcp_oauth(self, login_id: str) -> OAuthView: ...
 
     async def plugin_packages(self) -> PluginPackages: ...
 
@@ -579,6 +589,18 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.mcp_state(await _bound(owner, params))
     if method == "mcp.config":
         return await owner.mcp_configuration(await _bound(owner, params) if params.session_id else "")
+    if method == "mcp.login":
+        if params.mcp_login is None:
+            raise BackendError("mcp_login_required")
+        return await owner.start_mcp_oauth(params.mcp_login)
+    if method == "mcp.login.status":
+        return await owner.mcp_oauth_view(params.login_id)
+    if method == "mcp.login.input":
+        if params.authorization is None:
+            raise BackendError("oauth_input_required")
+        return await owner.mcp_oauth_input(params.login_id, params.authorization)
+    if method == "mcp.login.cancel":
+        return await owner.cancel_mcp_oauth(params.login_id)
     if method == "mcp.config.save" or method == "mcp.config.patch":
         value = params.mcp_config if method == "mcp.config.save" else params.mcp_patch
         if value is None:

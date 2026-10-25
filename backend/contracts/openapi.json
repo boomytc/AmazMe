@@ -2911,6 +2911,169 @@
         }
       }
     },
+    "/api/v1/mcp-configuration/logins": {
+      "post": {
+        "summary": "Mcp Login",
+        "operationId": "mcp_login_api_v1_mcp_configuration_logins_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp-configuration/logins/{login_id}": {
+      "get": {
+        "summary": "Mcp Login View",
+        "operationId": "mcp_login_view_api_v1_mcp_configuration_logins__login_id__get",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Mcp Login Cancel",
+        "operationId": "mcp_login_cancel_api_v1_mcp_configuration_logins__login_id__delete",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mcp-configuration/logins/{login_id}/input": {
+      "post": {
+        "summary": "Mcp Login Input",
+        "operationId": "mcp_login_input_api_v1_mcp_configuration_logins__login_id__input_post",
+        "parameters": [
+          {
+            "name": "login_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Login Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/mcp-configuration": {
       "get": {
         "summary": "Mcp Configuration",
@@ -9776,7 +9939,15 @@
             "title": "Name"
           },
           "entry": {
-            "$ref": "#/components/schemas/McpStdioSettings"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpStdioSettings"
+              },
+              {
+                "$ref": "#/components/schemas/McpHttpSettings"
+              }
+            ],
+            "title": "Entry"
           }
         },
         "additionalProperties": false,
@@ -9865,6 +10036,11 @@
               "hidden"
             ],
             "title": "Exposure"
+          },
+          "can_login": {
+            "type": "boolean",
+            "title": "Can Login",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -9906,6 +10082,195 @@
           "digest"
         ],
         "title": "McpDecision"
+      },
+      "McpHttpSettings": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "exposure": {
+            "type": "string",
+            "enum": [
+              "codemode",
+              "deferred",
+              "direct",
+              "hidden"
+            ],
+            "title": "Exposure",
+            "default": "codemode"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Description",
+            "default": ""
+          },
+          "toolExposure": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "codemode",
+                "deferred",
+                "direct",
+                "hidden"
+              ]
+            },
+            "type": "object",
+            "maxProperties": 128,
+            "title": "Toolexposure"
+          },
+          "timeout": {
+            "type": "number",
+            "maximum": 86400.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout",
+            "default": 60
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "http",
+              "streamable-http"
+            ],
+            "title": "Type",
+            "default": "http"
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Url"
+          },
+          "headers": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 64,
+            "title": "Headers"
+          },
+          "oauth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpOAuthSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "auth": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpProviderAuth"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "McpHttpSettings"
+      },
+      "McpLoginRequest": {
+        "properties": {
+          "login_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Login Id"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Name"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "login_id",
+          "name",
+          "expected_revision"
+        ],
+        "title": "McpLoginRequest"
+      },
+      "McpOAuthSettings": {
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Clientid",
+            "default": ""
+          },
+          "clientSecret": {
+            "type": "string",
+            "maxLength": 16384,
+            "title": "Clientsecret",
+            "default": ""
+          },
+          "callbackPort": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 65535.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Callbackport"
+          },
+          "callbackUrl": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Callbackurl",
+            "default": ""
+          },
+          "scope": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Scope",
+            "default": ""
+          },
+          "clientName": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Clientname",
+            "default": "pi"
+          },
+          "clientRegistration": {
+            "type": "string",
+            "enum": [
+              "dcr",
+              "cimd"
+            ],
+            "title": "Clientregistration",
+            "default": "dcr"
+          },
+          "authServerMetadataUrl": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Authservermetadataurl",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "McpOAuthSettings"
       },
       "McpOpen": {
         "properties": {
@@ -9961,6 +10326,16 @@
             "title": "Name",
             "default": ""
           },
+          "http": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpHttpSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "server_id": {
             "type": "string",
             "pattern": "^[a-f0-9]{32}$",
@@ -9974,6 +10349,21 @@
           "server_id"
         ],
         "title": "McpOpen"
+      },
+      "McpProviderAuth": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+            "title": "Provider"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider"
+        ],
+        "title": "McpProviderAuth"
       },
       "McpReconnect": {
         "properties": {
@@ -10023,41 +10413,6 @@
       },
       "McpStdioSettings": {
         "properties": {
-          "type": {
-            "type": "string",
-            "const": "stdio",
-            "title": "Type",
-            "default": "stdio"
-          },
-          "command": {
-            "type": "string",
-            "maxLength": 4096,
-            "minLength": 1,
-            "title": "Command"
-          },
-          "args": {
-            "items": {
-              "type": "string",
-              "maxLength": 4096
-            },
-            "type": "array",
-            "maxItems": 128,
-            "title": "Args"
-          },
-          "env": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "maxProperties": 64,
-            "title": "Env"
-          },
-          "cwd": {
-            "type": "string",
-            "maxLength": 4096,
-            "title": "Cwd",
-            "default": ""
-          },
           "enabled": {
             "type": "boolean",
             "title": "Enabled",
@@ -10100,6 +10455,41 @@
             "exclusiveMinimum": 0.0,
             "title": "Timeout",
             "default": 60
+          },
+          "type": {
+            "type": "string",
+            "const": "stdio",
+            "title": "Type",
+            "default": "stdio"
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Command"
+          },
+          "args": {
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "type": "array",
+            "maxItems": 128,
+            "title": "Args"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 64,
+            "title": "Env"
+          },
+          "cwd": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Cwd",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -12370,6 +12760,16 @@
               }
             ]
           },
+          "mcp_login": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpLoginRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "package_id": {
             "type": "string",
             "title": "Package Id",
@@ -14189,7 +14589,7 @@
           },
           "name": {
             "type": "string",
-            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20})$",
+            "pattern": "^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
             "title": "Name"
           },
           "arguments": {

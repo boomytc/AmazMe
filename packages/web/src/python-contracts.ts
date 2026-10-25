@@ -676,7 +676,7 @@ export type McpConfigWrite = {
   "operation_id": string;
   "expected_revision": number;
   "name": string;
-  "entry": McpStdioSettings;
+  "entry": McpStdioSettings | McpHttpSettings;
 };
 
 export type McpConfiguration = {
@@ -695,12 +695,43 @@ export type McpConfiguredServer = {
   "overridden"?: boolean;
   "enabled": boolean;
   "exposure": "codemode" | "deferred" | "direct" | "hidden";
+  "can_login"?: boolean;
 };
 
 export type McpDecision = {
   "decision_id": string;
   "approve": boolean;
   "digest": string;
+};
+
+export type McpHttpSettings = {
+  "enabled"?: boolean;
+  "exposure"?: "codemode" | "deferred" | "direct" | "hidden";
+  "description"?: string;
+  "toolExposure"?: Record<string, "codemode" | "deferred" | "direct" | "hidden">;
+  "timeout"?: number;
+  "type"?: "http" | "streamable-http";
+  "url": string;
+  "headers"?: Record<string, string>;
+  "oauth"?: McpOAuthSettings | null;
+  "auth"?: McpProviderAuth | null;
+};
+
+export type McpLoginRequest = {
+  "login_id": string;
+  "name": string;
+  "expected_revision": number;
+};
+
+export type McpOAuthSettings = {
+  "clientId"?: string;
+  "clientSecret"?: string;
+  "callbackPort"?: number | null;
+  "callbackUrl"?: string;
+  "scope"?: string;
+  "clientName"?: string;
+  "clientRegistration"?: "dcr" | "cimd";
+  "authServerMetadataUrl"?: string;
 };
 
 export type McpOpen = {
@@ -712,7 +743,12 @@ export type McpOpen = {
   "timeout_seconds"?: number;
   "managed_id"?: string;
   "name"?: string;
+  "http"?: McpHttpSettings | null;
   "server_id": string;
+};
+
+export type McpProviderAuth = {
+  "provider": string;
 };
 
 export type McpReconnect = {
@@ -726,16 +762,16 @@ export type McpState = {
 };
 
 export type McpStdioSettings = {
-  "type"?: "stdio";
-  "command": string;
-  "args"?: Array<string>;
-  "env"?: Record<string, string>;
-  "cwd"?: string;
   "enabled"?: boolean;
   "exposure"?: "codemode" | "deferred" | "direct" | "hidden";
   "description"?: string;
   "toolExposure"?: Record<string, "codemode" | "deferred" | "direct" | "hidden">;
   "timeout"?: number;
+  "type"?: "stdio";
+  "command": string;
+  "args"?: Array<string>;
+  "env"?: Record<string, string>;
+  "cwd"?: string;
 };
 
 export type McpTool = {
@@ -1170,6 +1206,7 @@ export type RpcParams = {
   "mcp_config"?: McpConfigWrite | null;
   "mcp_patch"?: McpConfigPatch | null;
   "mcp_reconnect"?: McpReconnect | null;
+  "mcp_login"?: McpLoginRequest | null;
   "package_id"?: string;
   "plugin_package"?: PluginPackageAdd | null;
   "plugin_package_remove"?: PluginPackageRemove | null;
@@ -1750,7 +1787,11 @@ export interface ApiModels {
   McpConfiguration: McpConfiguration;
   McpConfiguredServer: McpConfiguredServer;
   McpDecision: McpDecision;
+  McpHttpSettings: McpHttpSettings;
+  McpLoginRequest: McpLoginRequest;
+  McpOAuthSettings: McpOAuthSettings;
   McpOpen: McpOpen;
+  McpProviderAuth: McpProviderAuth;
   McpReconnect: McpReconnect;
   McpState: McpState;
   McpStdioSettings: McpStdioSettings;
@@ -2056,6 +2097,16 @@ export interface HttpOperations {
   "GET /api/v1/mcp-configuration": { response: McpConfiguration; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/mcp-configuration": { response: McpConfiguration; path: Record<string, unknown>; query: Record<string, unknown>; body: McpConfigWrite };
   "PATCH /api/v1/mcp-configuration": { response: McpConfiguration; path: Record<string, unknown>; query: Record<string, unknown>; body: McpConfigPatch };
+  "POST /api/v1/mcp-configuration/logins": { response: OAuthView; path: Record<string, unknown>; query: Record<string, unknown>; body: McpLoginRequest };
+  "GET /api/v1/mcp-configuration/logins/{login_id}": { response: OAuthView; path: {
+  "login_id": string;
+}; query: Record<string, unknown>; body: undefined };
+  "DELETE /api/v1/mcp-configuration/logins/{login_id}": { response: OAuthView; path: {
+  "login_id": string;
+}; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/mcp-configuration/logins/{login_id}/input": { response: OAuthView; path: {
+  "login_id": string;
+}; query: Record<string, unknown>; body: OAuthInput };
   "GET /api/v1/sessions/{session_id}/mcp-configuration": { response: McpConfiguration; path: {
   "session_id": string;
 }; query: Record<string, unknown>; body: undefined };
