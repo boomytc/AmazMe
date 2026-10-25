@@ -31,6 +31,8 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
   if (path === "/api/v1/workspaces") return response({ workspaces: [{ name: "primary", host_path: "/work", primary: true }] });
   if (path === "/api/v1/models") return response({ models: [{ provider: "faux", model: "shown", label: "Shown", endpoint_editable: true }, { provider: "faux", model: "different", label: "Different", endpoint_editable: true }], current: { provider: "faux", model: "shown", base_url: "http://model", max_tokens: 10, key_configured: true } });
   if (path === "/api/v1/accounts") return response({ revision: 0, accounts: [] });
+  if (path === "/api/v1/plugin-packages") return response({ revision: 0, packages: [] });
+  if (path.endsWith("/plugins")) return response({ plugins: [] });
   if (path === "/api/v1/settings") return response({ revision: 0 });
   if (path === "/api/v1/projects") return response({ projects: [] });
   if (path === "/api/v1/skills") return response({ context_files: [], skills: [], prompts: [], diagnostics: [] });

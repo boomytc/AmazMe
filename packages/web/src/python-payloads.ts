@@ -35,6 +35,7 @@ export class PendingPayloads {
 		void write.catch(() => undefined);
 	}
 	async flush(key: string): Promise<void> { await this.writes.get(key); }
+	writing(key: string): Promise<void> | undefined { return this.writes.get(key); }
 	async remove(key: string): Promise<void> {
 		await this.flush(key);
 		await this.change(key);

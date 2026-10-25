@@ -704,7 +704,7 @@ export class DesktopPage {
 		if (id === PROVIDER_TEST_ACTION) {
 			const state = this.connections(), provider = state.state.providers.find(item => item.id === data);
 			if (!provider?.configured) throw new Error("请先配置供应商账号");
-			const models = (this.catalog?.models ?? []).filter(item => item.provider === provider.id).map(item => ({ provider: item.provider, modelId: item.model, name: item.label }));
+			const models = (this.catalog?.models ?? []).filter(item => item.provider === provider.id).map(item => ({ provider: item.provider, modelId: item.model, name: item.label, available: true }));
 			const modal = providerTestModal(this.locale, models, true);
 			this.modal = { ...modal, data: provider.id, actions: modal.actions?.map(action => ({ ...action, data: provider.id })) }; this.render(); return;
 		}

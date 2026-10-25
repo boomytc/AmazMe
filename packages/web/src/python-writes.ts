@@ -96,7 +96,8 @@ export class PendingWrites {
 		if (this.running.has(key)) throw new Error("原操作仍在发送");
 		this.running.add(key);
 		try {
-			await PendingWrites.payloads.flush(`${this.prefix}${key}:${record.id}`);
+			const writing = PendingWrites.payloads.writing(`${this.prefix}${key}:${record.id}`);
+			if (writing) await writing;
 			const result = await client.call(record.operation, { path: record.path, body: record.body, ...(connection ? { connection } : { identity }) });
 			const value: unknown = result;
 			const body: unknown = record.body;
