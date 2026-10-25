@@ -114,7 +114,7 @@ from .providers import tool_definitions
 from .pty_session import PtyClient
 from .remote_session import RemoteClient
 from .session_domain import resolve_model_call
-from .transport import app_factory
+from .transport import CONFIG_BODY_BYTES, app_factory
 from .workspace_map import PRIMARY, load_grants, tool_path
 
 MCP_UNRESOLVED_LIMIT = 512
@@ -2857,7 +2857,7 @@ class Supervisor:
 
 
 def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
-    app = app_factory(owner.profile.token)
+    app = app_factory(owner.profile.token, body_limits={r"/mcp/open": CONFIG_BODY_BYTES, r"/code/(?:start|run)": CONFIG_BODY_BYTES})
 
     @app.get("/identity")
     async def identity() -> Identity:

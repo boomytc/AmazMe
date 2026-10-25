@@ -1,17 +1,25 @@
 import asyncio
 import secrets
+from collections.abc import Mapping
+from re import fullmatch
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from .contracts import BackendError, ErrorBody
+from .contracts import IMAGE_MAX_BYTES, IMAGE_MAX_COUNT, BackendError, ErrorBody
+
+DEFAULT_BODY_BYTES = 256 * 1024
+MEDIA_BODY_BYTES = IMAGE_MAX_COUNT * ((IMAGE_MAX_BYTES + 2) // 3 * 4) + 1024 * 1024
+DOCUMENT_BODY_BYTES = 32 * 1024 * 1024
+CONFIG_BODY_BYTES = 16 * 1024 * 1024
 
 
 class BoundedHTTP:
-    def __init__(self, app: ASGIApp, token: str = ""):
+    def __init__(self, app: ASGIApp, token: str = "", body_limits: Mapping[str, int] | None = None):
         self.app, self.token = app, token
+        self.body_limits = dict(body_limits or {})
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -25,6 +33,8 @@ class BoundedHTTP:
             return
         chunks: list[bytes] = []
         size = 0
+        limit = next((limit for pattern, limit in self.body_limits.items()
+                      if scope["method"] == "POST" and fullmatch(pattern, scope["path"])), DEFAULT_BODY_BYTES)
         try:
             async with asyncio.timeout(10):
                 while True:
@@ -33,8 +43,8 @@ class BoundedHTTP:
                         return
                     body = part.get("body", b"")
                     size += len(body)
-                    if size > 262144:
-                        await JSONResponse({"code": "request_too_large", "message": "256 KiB limit"},
+                    if size > limit:
+                        await JSONResponse({"code": "request_too_large", "message": f"Request body exceeds {limit} bytes"},
                                            status_code=413)(scope, receive, send)
                         return
                     chunks.append(body)
@@ -55,9 +65,9 @@ class BoundedHTTP:
         await self.app(scope, replay, send)
 
 
-def app_factory(token: str = "") -> FastAPI:
+def app_factory(token: str = "", *, body_limits: Mapping[str, int] | None = None) -> FastAPI:
     app = FastAPI(docs_url=None, redoc_url=None)
-    app.add_middleware(BoundedHTTP, token=token)
+    app.add_middleware(BoundedHTTP, token=token, body_limits=body_limits)
 
     @app.exception_handler(BackendError)
     async def backend_error(_request: Request, error: BackendError) -> JSONResponse:

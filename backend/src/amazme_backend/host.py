@@ -275,7 +275,7 @@ from .storage import (
     remove_session_directory,
     session_database,
 )
-from .transport import app_factory
+from .transport import CONFIG_BODY_BYTES, DOCUMENT_BODY_BYTES, MEDIA_BODY_BYTES, app_factory
 from .web_tools import execute_web_call, original_question, validate_base_url
 from .workspace_files import (
     FileChange,
@@ -3285,7 +3285,13 @@ class Host:
 
 
 def application(owner: Host) -> FastAPI:
-    app = app_factory()
+    app = app_factory(body_limits={
+        r"/api/v1/sessions/[a-f0-9]{32}/submissions": MEDIA_BODY_BYTES,
+        r"/api/v1/rpc": MEDIA_BODY_BYTES,
+        r"/api/v1/import": DOCUMENT_BODY_BYTES,
+        r"/api/v1/mcp-configuration": CONFIG_BODY_BYTES,
+        r"/api/v1/sessions/[a-f0-9]{32}/mcp(?:-configuration)?": CONFIG_BODY_BYTES,
+    })
 
     @app.middleware("http")
     async def authenticate(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:

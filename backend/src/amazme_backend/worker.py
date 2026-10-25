@@ -114,7 +114,7 @@ from .session_domain import (
 )
 from .session_ops import SessionOp, SessionOpResult, run_session_op
 from .storage import SessionStore, now_ms, session_database
-from .transport import app_factory
+from .transport import MEDIA_BODY_BYTES, app_factory
 from .web_tools import execute_web_call
 from .workspace_map import client_path, tool_path
 
@@ -761,7 +761,7 @@ class Worker:
 
 
 def application(owner: Worker) -> FastAPI:
-    app = app_factory(owner.profile.token)
+    app = app_factory(owner.profile.token, body_limits={r"/submissions": MEDIA_BODY_BYTES, r"/session-ops": MEDIA_BODY_BYTES})
 
     @app.get("/identity")
     async def identity() -> Identity:
