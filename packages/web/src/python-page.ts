@@ -236,6 +236,7 @@ export class DesktopPage {
 		return ledger;
 	}
 	async start(): Promise<void> {
+		await PendingWrites.restore(sessionStorage);
 		const token = new URLSearchParams(location.hash.slice(1)).get("token");
 		if (token) {
 			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
@@ -594,14 +595,14 @@ export class DesktopPage {
 			if (!record || record.id !== data || typeof record.path.plugin_id !== "string") throw new Error("原命令已变化，请核对当前记录");
 			const result = await this.client.call("POST /api/v1/sessions/{session_id}/plugins/{plugin_id}/calls/{call_id}/cancel", { path: { session_id: connection.sessionId, plugin_id: record.path.plugin_id, call_id: record.id }, connection });
 			this.rememberCommand(connection, record.body.name, result);
-			if (result.phase !== "unknown" && result.clean) ledger.forget("command", record);
+			if (result.phase !== "unknown" && result.clean) await ledger.forget("command", record);
 			if (connection.active()) this.render(); return;
 		}
 		if (id === "write:cancel-submit") {
 			const connection = this.requireConnection(), ledger = this.ledger(connection);
 			const record = ledger.read("submission", "POST /api/v1/sessions/{session}/submissions");
 			if (record?.id !== data) throw new Error("原请求已变化，请核对当前记录");
-			if (record) { await this.cancel(record.body.request_id); ledger.forget("submission", record); if (connection.active()) this.render(); }
+			if (record) { await this.cancel(record.body.request_id); await ledger.forget("submission", record); if (connection.active()) this.render(); }
 			return;
 		}
 		if (id === A.CONVERSATION_FORK_ACTION) { await this.fork(data); return; }
