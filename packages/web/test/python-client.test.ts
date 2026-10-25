@@ -58,6 +58,29 @@ test("model journal records stay out of the transcript and applied tools stop an
  expect(blocks.find(block => block.kind === "tool")?.running).toBe(false);
 });
 
+test("committed intermediate messages remain in order through tool execution, reconnect and final receipt", () => {
+ const before = empty();
+ before.requests = [{ request_id: "a", text: "你好", status: "running", run_id: "a", generation: 1, revision: "0" }];
+ before.previews = [{ request_id: "a", run_id: "a", generation: 1, preview_seq: "1", text: "先检查" }];
+ const committed: Stream = { binding_id: "attachment", build_id: "build", stream_id: "stream", batches: [{ stream_id: "stream", seq: "1", revision: "1", base_revision: "0", events: [
+  { seq: "1", kind: "message", request_id: "a", text: "", message: { key: "first", ordinal: 2, role: "assistant", content: "先检查", tool_calls: ["call"] } },
+  { seq: "1", kind: "tool", request_id: "a", text: JSON.stringify({ kind: "tool", phase: "proposed", call: { id: "call", name: "read_file", arguments: '{"path":"a.txt"}' } }) },
+ ] }] };
+ const active = applyFrame(before, committed, binding);
+ expect(active.previews).toEqual([]);
+ expect(transcriptBlocks("zh", active).map(block => [block.kind, block.text])).toEqual([["user", "你好"], ["assistant", "先检查"], ["tool", ""]]);
+ const restored = applyFrame(undefined, { snapshot: active, binding_id: "attachment", build_id: "build", stream_id: "stream" }, binding);
+ expect(transcriptBlocks("zh", restored)).toEqual(transcriptBlocks("zh", active));
+ const finished = applyFrame(restored, { ...committed, batches: [{ stream_id: "stream", seq: "2", revision: "2", base_revision: "1", events: [
+  { seq: "2", kind: "status", request_id: "a", text: "", receipt: { ...active.requests[0], revision: "2", status: "succeeded", answer: "已完成" } },
+  { seq: "2", kind: "message", request_id: "a", text: "", message: { key: "final", ordinal: 4, role: "assistant", content: "已完成", tool_calls: [] } },
+ ] }] }, binding);
+ expect(transcriptBlocks("zh", finished).filter(block => block.kind === "assistant").map(block => block.text)).toEqual(["先检查", "已完成"]);
+ expect(transcriptBlocks("zh", applyFrame(finished, { ...committed, batches: [{ stream_id: "stream", seq: "3", revision: "3", base_revision: "2", events: [
+  { seq: "3", kind: "message", request_id: "a", text: "", message: { key: "final", ordinal: 4, role: "assistant", content: "已完成", tool_calls: [] } },
+ ] }] }, binding))).toEqual(transcriptBlocks("zh", finished));
+});
+
 test("the original approval controls retain the proposal ID and a blocked host prevents sending", () => {
  const scope = connection("a"), snapshot = empty();
  snapshot.approvals = [{ approval_id: "proposal", request_id: "request", run_id: "run", call_id: "call", call: { id: "call", name: "bash", arguments: "{}" }, build_id: "build", proposal_digest: "digest", revision: "1", state: "pending" }];

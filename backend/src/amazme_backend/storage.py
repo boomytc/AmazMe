@@ -51,6 +51,7 @@ from .contracts import (
     Snapshot,
     Submit,
     ToolCall,
+    TranscriptMessage,
     UsageReport,
     WebCallView,
     WebPolicy,
@@ -210,11 +211,18 @@ def now_ms() -> int:
     return time.time_ns() // 1_000_000
 
 
-def event_message_text(message: Message) -> str:
-    """Event and snapshot text omit image bytes. The message row keeps them for the next provider call."""
-    if message.images:
-        message = message.model_copy(update={"images": []})
-    return message.model_dump_json()
+def display_message(key: str, ordinal: int, message: Message) -> TranscriptMessage:
+    """The public projection cannot carry provider replay fields or image bytes."""
+    return TranscriptMessage(key=key, ordinal=ordinal, role=message.role, content=message.content,
+        tool_calls=[call.id for call in message.tool_calls])
+
+
+def event_step_text(step: Step) -> str:
+    if step.kind == "model" and step.result:
+        result = Completion.model_validate_json(step.result)
+        result.message = result.message.model_copy(update={"images": [], "reasoning_signature": ""})
+        step = step.model_copy(update={"result": result.model_dump_json()})
+    return step.model_dump_json()
 
 
 def digest(value: str) -> str:
@@ -380,9 +388,10 @@ class Changes:
 
     def emit(self, kind: str, request_id: str = "", text: str = "", *,
              receipt: Receipt | None = None, approval: Approval | None = None,
-             preview: Preview | None = None) -> None:
+             preview: Preview | None = None, message: TranscriptMessage | None = None) -> None:
         self.events.append(Event.model_validate(dict(seq=str(self.seq), kind=kind, request_id=request_id, text=text,
-                                                     receipt=receipt, approval=approval, preview=preview)))
+                                                     receipt=receipt, approval=approval, preview=preview,
+                                                     message=message)))
 
     def hit(self, point: str, request_id: str = "", call_id: str = "") -> None:
         self.hooks.append((point, request_id, call_id))
@@ -621,23 +630,22 @@ class SessionStore:
             "SELECT payload FROM messages WHERE request_id=? ORDER BY ordinal", (request_id,))]
 
     @staticmethod
-    @staticmethod
     def _text_bytes(payload: str) -> int:
         message = Message.model_validate_json(payload)
-        return len(event_message_text(message).encode())
+        return len(message.model_copy(update={"images": []}).model_dump_json().encode())
 
     def _message(self, db: sqlite3.Connection, c: Changes, request_id: str, key: str, message: Message) -> None:
         size = 0
         for row in db.execute("SELECT payload FROM messages WHERE request_id=?", (request_id,)):
             size += self._text_bytes(str(row[0]))
         payload = message.model_dump_json()
-        if size + len(event_message_text(message).encode()) > CONTEXT_BYTES:
+        if size + self._text_bytes(payload) > CONTEXT_BYTES:
             raise BackendError("context_limit")
         ordinal = db.execute("SELECT coalesce(max(ordinal),0)+1 FROM messages WHERE request_id=?", (request_id,)).fetchone()[0]
         changed = db.execute("INSERT OR IGNORE INTO messages VALUES(?,?,?,?)",
                              (request_id, ordinal, key, payload)).rowcount
         if changed:
-            c.emit("message", request_id, event_message_text(message))
+            c.emit("message", request_id, message=display_message(key, ordinal, message))
 
     @staticmethod
     def _save_images(db: sqlite3.Connection, request_id: str, images: list[ImagePart]) -> None:
@@ -1674,7 +1682,7 @@ class SessionStore:
                     self._save_step(db, step)
                     request.status = "running"
                     self._save_request(db, c, request)
-                    c.emit("tool", request.request_id, step.model_dump_json())
+                    c.emit("tool", request.request_id, event_step_text(step))
                     return ComputerRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if step.call.name == "plugin_tool":
                     self._consume(db, c, step)
@@ -1682,7 +1690,7 @@ class SessionStore:
                     self._save_step(db, step)
                     request.status = "running"
                     self._save_request(db, c, request)
-                    c.emit("tool", request.request_id, step.model_dump_json())
+                    c.emit("tool", request.request_id, event_step_text(step))
                     return PluginRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if step.call.name == "mcp_tool":
                     self._consume(db, c, step)
@@ -1690,7 +1698,7 @@ class SessionStore:
                     self._save_step(db, step)
                     request.status = "running"
                     self._save_request(db, c, request)
-                    c.emit("tool", request.request_id, step.model_dump_json())
+                    c.emit("tool", request.request_id, event_step_text(step))
                     c.hit("mcp_intent", request.request_id, step.step_id)
                     return McpRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if step.call.name in {"web_search", "web_fetch"}:
@@ -1700,7 +1708,7 @@ class SessionStore:
                     self._save_step(db, step)
                     request.status = "running"
                     self._save_request(db, c, request)
-                    c.emit("tool", request.request_id, step.model_dump_json())
+                    c.emit("tool", request.request_id, event_step_text(step))
                     c.hit("web_intent", request.request_id, step.step_id)
                     return WebRetrieval(step.step_id, request.request_id, request.generation, step.call)
                 if not run.lease:
@@ -1713,7 +1721,7 @@ class SessionStore:
                 self._save_step(db, step)
                 request.status = "running"
                 self._save_request(db, c, request)
-                c.emit("tool", request.request_id, step.model_dump_json())
+                c.emit("tool", request.request_id, event_step_text(step))
                 c.hit("tool_intent", request.request_id, step.step_id)
                 return ToolInvocation(step.step_id, request.request_id, request.generation, run.lease, step.call)
             if step.kind == "model" and step.phase == "intent":
@@ -1741,7 +1749,7 @@ class SessionStore:
         self._save_step(db, step)
         request.status = "running"
         self._save_request(db, c, request)
-        c.emit("tool", request.request_id, step.model_dump_json())
+        c.emit("tool", request.request_id, event_step_text(step))
         c.hit("model_intent", request.request_id, step_id)
         return ModelInvocation(step_id, request.request_id, request.generation,
                                self._messages(db, request.request_id), run.config)
@@ -1819,7 +1827,7 @@ class SessionStore:
             step.result = observation.result if observation.phase == "done" else observation.error
             step.phase = "result"
             self._save_step(db, step)
-            c.emit("tool", request.request_id, step.model_dump_json())
+            c.emit("tool", request.request_id, event_step_text(step))
             c.hit("web_result", request.request_id, step.step_id)
             return
         if isinstance(observation, ComputerReturned):
@@ -1842,7 +1850,7 @@ class SessionStore:
                 db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
                            (step.step_id, json.dumps([image.model_dump() for image in result.images])))
             self._save_step(db, step)
-            c.emit("tool", request.request_id, step.model_dump_json())
+            c.emit("tool", request.request_id, event_step_text(step))
             if request.cancel_requested and not request.decision:
                 self._materialize(db, c, request, step)
                 self._decide(db, c, request, Decision(status="cancelled"))
@@ -1873,7 +1881,7 @@ class SessionStore:
                     db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
                                (step.step_id, json.dumps([image.model_dump() for image in observation.images])))
                 self._save_step(db, step)
-                c.emit("tool", request.request_id, step.model_dump_json())
+                c.emit("tool", request.request_id, event_step_text(step))
             else:
                 self._decide(db, c, request, Decision(status="cancelled" if view.phase == "cancelled" else "failed",
                                                      error=view.error))
@@ -1889,7 +1897,7 @@ class SessionStore:
             if observation.phase == "done":
                 step.result, step.phase = observation.result, "result"
                 self._save_step(db, step)
-                c.emit("tool", request.request_id, step.model_dump_json())
+                c.emit("tool", request.request_id, event_step_text(step))
                 c.hit("mcp_result", request.request_id, step.step_id)
                 # A result that arrives after cancel stays in the transcript and does not start another model turn.
                 if request.cancel_requested and not request.decision:
@@ -1973,14 +1981,14 @@ class SessionStore:
                     or any(not call.id for call in calls) or len({call.id for call in calls}) != len(calls)):
                 raise BackendError("invalid_tool_calls")
             step.result, step.phase = completion.model_dump_json(), "result"
-            c.emit("tool", request.request_id, step.model_dump_json())
+            c.emit("tool", request.request_id, event_step_text(step))
             c.hit("model_result", request.request_id, step.step_id)
         elif isinstance(observation, ToolReturned) or observation.observation.state == "completed":
             result = observation.result if isinstance(observation, ToolReturned) else observation.observation.result
             if result is None or result.call_id != step.step_id:
                 raise BackendError("tool_result_identity_mismatch")
             step.result, step.phase = result.model_dump_json(), "result"
-            c.emit("tool", request.request_id, step.model_dump_json())
+            c.emit("tool", request.request_id, event_step_text(step))
             c.hit("tool_result", request.request_id, step.step_id)
         else:
             observed = observation.observation
@@ -2004,7 +2012,7 @@ class SessionStore:
                     self._set_meta(db, "blocked", "execution_cleanup_pending")
                 self._decide(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
                                                      error="tool_outcome_unknown"))
-            c.emit("tool", request.request_id, step.model_dump_json())
+            c.emit("tool", request.request_id, event_step_text(step))
         self._save_step(db, step)
 
     async def advance(self, observation: Observation | None = None) -> Action:
@@ -2251,6 +2259,18 @@ class SessionStore:
                     break
                 used += size
                 requests.append(request)
+                for message_row in db.execute("SELECT message_key,ordinal,payload FROM messages WHERE request_id=? ORDER BY ordinal", (request.request_id,)):
+                    key = str(message_row[0])
+                    if key == "compaction" or key.startswith("history:"):
+                        continue
+                    event = Event(seq=seq, kind="message", request_id=request.request_id, text="",
+                        message=display_message(key, int(message_row[1]), Message.model_validate_json(str(message_row[2]))))
+                    event_size = len(event.model_dump_json().encode())
+                    if event_bytes + event_size > SNAPSHOT_VIEW_BYTES:
+                        truncated = True
+                        continue
+                    event_bytes += event_size
+                    events.append(event)
                 for step_row in db.execute("SELECT payload FROM steps WHERE request_id=? ORDER BY ordinal", (request.request_id,)):
                     text = str(step_row[0])
                     if Step.model_validate_json(text).kind != "tool":
@@ -2520,16 +2540,24 @@ class SessionStore:
             # Display history is bounded separately from all pending business facts.
             for request in reversed(requests):
                 for table, kind in (("messages", "message"), ("steps", "tool")):
-                    rows = db.execute(f"SELECT payload FROM {table} WHERE request_id=? ORDER BY ordinal DESC LIMIT 9",
+                    columns = "payload,message_key,ordinal" if kind == "message" else "payload"
+                    rows = db.execute(f"SELECT {columns} FROM {table} WHERE request_id=? ORDER BY ordinal DESC LIMIT 9",
                                       (request.request_id,)).fetchall()
                     truncated = truncated or len(rows) > 8
                     accepted: list[Event] = []
                     for row in rows[:8]:
                         text = str(row[0])
+                        message = None
                         if kind == "message":
-                            text = event_message_text(Message.model_validate_json(text))
+                            key = str(row[1])
+                            if key == "compaction" or key.startswith("history:"):
+                                continue
+                            message = display_message(key, int(row[2]), Message.model_validate_json(text))
+                            text = ""
+                        else:
+                            text = event_step_text(Step.model_validate_json(text))
                         event = Event.model_validate(dict(seq=seq, kind=kind, request_id=request.request_id,
-                                                          text=text))
+                                                          text=text, message=message))
                         size = len(event.model_dump_json().encode())
                         if view_bytes + size > SNAPSHOT_VIEW_BYTES - 256:
                             truncated = True

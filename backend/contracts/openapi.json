@@ -8259,6 +8259,16 @@
             "type": "string",
             "title": "Text"
           },
+          "message": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranscriptMessage"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "receipt": {
             "anyOf": [
               {
@@ -13427,6 +13437,48 @@
           "arguments"
         ],
         "title": "ToolCall"
+      },
+      "TranscriptMessage": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "ordinal": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Ordinal"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant",
+              "tool"
+            ],
+            "title": "Role"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "tool_calls": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tool Calls"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "key",
+          "ordinal",
+          "role",
+          "content"
+        ],
+        "title": "TranscriptMessage"
       },
       "UpdateModelSettings": {
         "properties": {

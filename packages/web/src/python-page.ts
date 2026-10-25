@@ -803,7 +803,7 @@ export class DesktopPage {
 			const ordered = prepend ? [...page.requests, ...(previous?.requests ?? [])] : [...(previous?.requests ?? []), ...page.requests];
 			const rows = new Map<string, HistoryPage["requests"][number]>();
 			for (const row of ordered) { const previous = rows.get(row.request_id); if (!previous || seq(row.revision ?? "0") >= seq(previous.revision ?? "0")) rows.set(row.request_id, row); }
-			const events = new Map([...(previous?.events ?? []), ...page.events].map(event => [`${event.request_id}:${event.kind}:${event.text}`, event]));
+			const events = new Map([...(previous?.events ?? []), ...page.events].map(event => [`${event.request_id}:${event.kind}:${event.message?.key ?? event.text}`, event]));
 			this.history = { ...page, requests: [...rows.values()], events: [...events.values()], truncated: page.truncated || previous?.truncated,
 				...(!prepend && this.historyStarted && previous ? { cursor: previous.cursor, more: previous.more } : {}),
 			};

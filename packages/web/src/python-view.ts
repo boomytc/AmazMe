@@ -7,7 +7,7 @@ import type { PanelView } from "./panels.ts";
 import { projectGroups } from "./projects.ts";
 import { isRecord } from "./python-api.ts";
 import type { ClientConnection } from "./python-client.ts";
-import type { HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, TranscriptMessage, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { requestStatus, seq, settled } from "./python-stream.ts";
 import { shortcuts } from "./shortcuts.ts";
 import { translate } from "./strings.ts";
@@ -45,9 +45,23 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined)
 				...(done ? { result: toolResultView(locale, String(call.name), args, { content: [{ type: "text", text: result || error }], isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }) } : {}),
 				tone: error ? "error" : "plain", running: !done && !settled.has(receipt.status) });
 		}
+		const messages = new Map<string, TranscriptMessage>();
+		for (const event of snapshot.events) if (event.request_id === receipt.request_id && event.kind === "message" && event.message) messages.set(event.message.key, event.message);
+		let finalMessage = false;
+		for (const message of [...messages.values()].sort((a, b) => a.ordinal - b.ordinal)) {
+			if (message.key === "compaction" || message.key.startsWith("history:")) continue;
+			if (message.role === "assistant") {
+				if (message.content) blocks.push({ id: `${receipt.request_id}:message:${message.key}`, kind: "assistant", title: "AmazMe", text: message.content, tone: "plain", running: false });
+				if (!message.tool_calls?.length) finalMessage = true;
+				for (const call of message.tool_calls ?? []) {
+					const block = tools.get(call);
+					if (block) { blocks.push(block); tools.delete(call); }
+				}
+			}
+		}
 		blocks.push(...tools.values());
 		const preview = snapshot.previews?.find(item => item.request_id === receipt.request_id && item.run_id === receipt.run_id && item.generation === receipt.generation);
-		const text = receipt.answer || (!settled.has(receipt.status) ? preview?.text : undefined);
+		const text = !settled.has(receipt.status) && preview?.text ? preview.text : !finalMessage ? receipt.answer : undefined;
 		if (text) blocks.push({ id: `${receipt.request_id}:answer`, kind: "assistant", title: "AmazMe", text, tone: "plain", running: !settled.has(receipt.status), interrupted: receipt.status === "interrupted" || receipt.status === "cancelled" });
 		if (receipt.error || ["failed", "unknown", "interrupted", "cancelled"].includes(receipt.status)) blocks.push({ id: `${receipt.request_id}:status`, kind: "notice", title: requestStatus[receipt.status], text: receipt.error ?? requestStatus[receipt.status], tone: receipt.status === "failed" ? "error" : "muted", running: false });
 	}

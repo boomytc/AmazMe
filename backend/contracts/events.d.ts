@@ -39,6 +39,7 @@ export type Event = {
   "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction";
   "request_id": string;
   "text": string;
+  "message"?: TranscriptMessage | null;
   "receipt"?: Receipt | null;
   "approval"?: Approval | null;
   "preview"?: Preview | null;
@@ -90,6 +91,14 @@ export type ToolCall = {
   "id": string;
   "name": string;
   "arguments": string;
+};
+
+export type TranscriptMessage = {
+  "key": string;
+  "ordinal": number;
+  "role": "user" | "assistant" | "tool";
+  "content": string;
+  "tool_calls"?: Array<string>;
 };
 
 export type Stream = {

@@ -78,7 +78,11 @@ export function applyFrame(previous: Snapshot | undefined, frame: Stream, bindin
 				const old = model.previews.find(item => item.request_id === preview.request_id);
 				if (previewMatches(preview, receipt) && (!old || old.generation !== preview.generation || old.run_id !== preview.run_id || seq(preview.preview_seq) > seq(old.preview_seq))) upsert(model.previews, preview, "request_id");
 			}
-			if (event.kind === "message") model.previews = model.previews.filter(item => item.request_id !== event.request_id);
+			if (event.kind === "message" && event.message) {
+				model.previews = model.previews.filter(item => item.request_id !== event.request_id);
+				model.events = model.events.filter(old => old.kind !== "message" || old.request_id !== event.request_id || old.message?.key !== event.message?.key);
+				model.events.push(event);
+			}
 			if (event.kind === "effect") {
 				const value: unknown = JSON.parse(event.text);
 				if (isRecord(value) && typeof value.resource_clean === "boolean" && value.session_id === binding.session_id) upsert(model.effects, parseContract("EffectHold", value), "call_id");

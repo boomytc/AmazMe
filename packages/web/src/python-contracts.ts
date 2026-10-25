@@ -445,6 +445,7 @@ export type Event = {
   "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction";
   "request_id": string;
   "text": string;
+  "message"?: TranscriptMessage | null;
   "receipt"?: Receipt | null;
   "approval"?: Approval | null;
   "preview"?: Preview | null;
@@ -1407,6 +1408,14 @@ export type ToolCall = {
   "arguments": string;
 };
 
+export type TranscriptMessage = {
+  "key": string;
+  "ordinal": number;
+  "role": "user" | "assistant" | "tool";
+  "content": string;
+  "tool_calls"?: Array<string>;
+};
+
 export type UpdateModelSettings = {
   "provider": string;
   "api"?: "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai" | null;
@@ -1746,6 +1755,7 @@ export interface ApiModels {
   TerminalType: TerminalType;
   TerminalView: TerminalView;
   ToolCall: ToolCall;
+  TranscriptMessage: TranscriptMessage;
   UpdateModelSettings: UpdateModelSettings;
   UpdateRecord: UpdateRecord;
   UsageReport: UsageReport;

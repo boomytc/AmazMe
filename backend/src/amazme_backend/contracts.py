@@ -346,12 +346,21 @@ class ToolResult(Model):
     stop_reason: str = ""
 
 
+class TranscriptMessage(Model):
+    key: str
+    ordinal: int = Field(ge=1)
+    role: Literal["user", "assistant", "tool"]
+    content: str
+    tool_calls: list[str] = Field(default_factory=list)
+
+
 class Event(Model):
     seq: str
     kind: Literal["accepted", "status", "preview", "message", "tool", "cleanup", "approval", "children", "effect",
                   "freeze", "compaction"]
     request_id: str
     text: str
+    message: TranscriptMessage | None = None
     receipt: Receipt | None = None
     approval: Approval | None = None
     preview: Preview | None = None

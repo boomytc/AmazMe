@@ -2295,6 +2295,17 @@
           "title": "Text",
           "type": "string"
         },
+        "message": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TranscriptMessage"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "receipt": {
           "anyOf": [
             {
@@ -7465,6 +7476,48 @@
         "arguments"
       ],
       "title": "ToolCall",
+      "type": "object"
+    },
+    "TranscriptMessage": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "ordinal": {
+          "minimum": 1,
+          "title": "Ordinal",
+          "type": "integer"
+        },
+        "role": {
+          "enum": [
+            "user",
+            "assistant",
+            "tool"
+          ],
+          "title": "Role",
+          "type": "string"
+        },
+        "content": {
+          "title": "Content",
+          "type": "string"
+        },
+        "tool_calls": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tool Calls",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "ordinal",
+        "role",
+        "content"
+      ],
+      "title": "TranscriptMessage",
       "type": "object"
     },
     "UpdateModelSettings": {

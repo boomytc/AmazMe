@@ -423,14 +423,22 @@ async def test_snapshot_context_usage_and_preview_replacement(store: SessionStor
     preview = Preview(request_id="root", run_id="root", generation=action.generation, preview_seq="1", text="prefix")
     await store.advance(Previewed(action, preview))
     assert (await store.snapshot()).previews == [preview]
-    result = Completion(message=Message(role="assistant", content="answer"), response_id="response",
+    result = Completion(message=Message(role="assistant", content="answer", reasoning_signature="opaque-provider-replay"), response_id="response",
                         input_tokens=12, output_tokens=6)
     await store.advance(ModelReturned(action, result))
     await driver.drain()
     snapshot = await store.snapshot()
     assert not snapshot.previews
-    messages = [Message.model_validate_json(e.text) for e in snapshot.events if e.kind == "message"]
-    assert [m.content for m in messages] == ["input", "answer"] and messages[-1].provider_response_id == "response"
+    messages = [e.message for e in snapshot.events if e.message]
+    assert [m.content for m in messages] == ["input", "answer"]
+    assert [(m.key, m.ordinal) for m in messages] == [("input", 1), (action.step_id, 2)]
+    stored = (await store.messages("root"))[-1]
+    assert stored.provider_response_id == "response" and stored.reasoning_signature == "opaque-provider-replay"
+    replay = await store.events(0)
+    history = await store.history()
+    assert "opaque-provider-replay" not in snapshot.model_dump_json() + replay.model_dump_json() + history.model_dump_json()
+    assert [event.message for batch in replay.batches for event in batch.events if event.message] == messages
+    assert [event.message for event in history.events if event.message] == messages
     assert any('input_tokens' in e.text and '12' in e.text for e in snapshot.events if e.kind == "tool")
     with pytest.raises(BackendError, match="stale_generation"):
         await store.advance(Previewed(action, preview.model_copy(update={"preview_seq": "2"})))
