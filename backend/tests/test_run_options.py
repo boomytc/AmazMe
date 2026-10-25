@@ -9,7 +9,7 @@ import pytest
 from amazme_backend.contracts import BackendError, HostFence, Message, ProviderConfig, Submit, ToolCall
 from amazme_backend.provider_wire import anthropic_body, google_body, responses_body
 from amazme_backend.providers import Completion, provider_messages, tool_definitions
-from amazme_backend.session_domain import Continue, ModelInvocation, ModelReturned, Park
+from amazme_backend.session_domain import Continue, ModelInvocation, ModelReturned, OpenEpoch, Park
 from amazme_backend.storage import SessionStore
 
 FENCE = HostFence(host_epoch=1, build_id='test-build')
@@ -98,7 +98,7 @@ async def test_children_inherit_prompt_and_tool_scope(tmp_path: Path) -> None:
     store = await opened(tmp_path / 'session.sqlite')
     try:
         await store.accept(Submit(request_id='root', text='delegate', system_prompt='parent prompt',
-                                  allowed_tools=['delegate_task', 'read_file'], excluded_tools=['mcp_*']), FENCE)
+                                  allowed_tools=['delegate_task', 'read_file'], excluded_tools=['mcp_*'], approval_policy='mutations'), FENCE)
         model = await next_action(store)
         assert isinstance(model, ModelInvocation)
         await store.advance(ModelReturned(model, Completion(response_id='model', message=Message(role='assistant', content='', tool_calls=[
@@ -107,11 +107,46 @@ async def test_children_inherit_prompt_and_tool_scope(tmp_path: Path) -> None:
         assert isinstance(child, ModelInvocation) and child.request_id != 'root'
         assert child.config.system_prompt == 'parent prompt'
         assert child.config.allowed_tools == ['delegate_task','read_file'] and child.config.excluded_tools == ['mcp_*']
+        assert child.config.approval_policy == 'mutations'
     finally:
         await store.db.close()
 
 
-async def test_sdk_and_rpc_preserve_run_options() -> None:
+@pytest.mark.parametrize('policy,tool,requires_approval', [
+    ('all', 'read_file', True), ('all', 'shell', True),
+    ('mutations', 'read_file', False), ('mutations', 'shell', True),
+    ('auto', 'read_file', False), ('auto', 'shell', False),
+])
+async def test_permission_choice_survives_restart_and_controls_the_tool_gate(tmp_path: Path, policy, tool, requires_approval) -> None:
+    path = tmp_path / 'session.sqlite'
+    store = await opened(path)
+    value = Submit(request_id='permission', text='use tool', approval_policy=policy,
+                   tool_call=ToolCall(id='call', name=tool, arguments=json.dumps(
+                       {'path':'test.txt'} if tool == 'read_file' else {'command':'printf ok'})))
+    await store.accept(value, FENCE)
+    await store.db.close()
+    store = await opened(path)
+    store.approval_policy = 'all' if policy == 'auto' else 'auto'
+    try:
+        assert (await store.accept(value, FENCE)).request_id == 'permission'
+        with pytest.raises(BackendError, match='request_conflict'):
+            await store.accept(value.model_copy(update={'approval_policy':'auto' if policy != 'auto' else 'all'}), FENCE)
+        with pytest.raises(BackendError, match='run_options_immutable'):
+            await store.accept(Submit(request_id='steer', text='change permissions', mode='steer',
+                                      target_run_id='permission', approval_policy='auto'), FENCE)
+        action = await next_action(store)
+        if requires_approval:
+            assert isinstance(action, Park) and action.reason == 'approval'
+            assert (await store.snapshot()).approvals[-1].state == 'pending'
+        else:
+            assert isinstance(action, OpenEpoch)
+            assert (await store.snapshot()).approvals == []
+    finally:
+        await store.db.close()
+
+
+@pytest.mark.parametrize('policy', ['all', 'mutations', 'auto'])
+async def test_sdk_and_rpc_preserve_run_options(policy) -> None:
     from unittest.mock import AsyncMock, Mock
 
     import httpx
@@ -120,7 +155,8 @@ async def test_sdk_and_rpc_preserve_run_options() -> None:
     from amazme_backend.rpc import RpcHost, RpcParams, _dispatch
     from amazme_backend.sdk import Client
 
-    options = {'system_prompt':'pinned', 'append_system_prompt':'tail', 'allowed_tools':[], 'excluded_tools':['mcp_*']}
+    options = {'system_prompt':'pinned', 'append_system_prompt':'tail', 'allowed_tools':[], 'excluded_tools':['mcp_*'],
+               'approval_policy':policy}
     receipt = Receipt(request_id='original', text='hello', status='queued')
     sent = []
 

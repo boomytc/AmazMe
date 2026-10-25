@@ -2,6 +2,7 @@ import * as actions from "./actions.ts";
 import { commandPalette, type CommandLike } from "./commands.ts";
 import { dockView, type DockView } from "./dock.ts";
 import type { Locale } from "./locale.ts";
+import type { ApprovalPolicy } from "./permission-picker.ts";
 import type { ModelConnectionsLike } from "./model-connections.ts";
 import type { PanelView } from "./panels.ts";
 import { projectGroups } from "./projects.ts";
@@ -82,6 +83,7 @@ export interface PresentationInput {
 	readonly catalog?: ModelCatalog;
 	readonly selection?: SessionModel;
 	readonly thinking: string;
+	readonly approvalPolicy?: ApprovalPolicy;
 	readonly enabledModels: readonly string[] | null;
 	readonly connections?: ModelConnectionsLike;
 	readonly rosterFilter: string;
@@ -121,7 +123,7 @@ export function pythonView(input: PresentationInput): WebView {
 	const approvalState = { pending: (snapshot?.approvals ?? []).filter(item => item.state === "pending").map(item => ({ id: item.approval_id, tool: item.call.name, detail: item.call.arguments })) };
 	const approvals = approvalCards(locale, approvalState);
 	const base = failureView(locale, "");
-	return { ...base, typography: input.typography, modelConnections: input.connections, roster,
+	return { ...base, typography: input.typography, modelConnections: input.connections, roster, approvalPolicy: input.approvalPolicy,
 		projects: projectGroups(directory, roster, input.selectedProject, input.rosterFilter, input.expandedProjects),
 		archivedAttached: session?.archived ? rosterItems(locale, directory, connection?.sessionId, Date.now(), "", true).find(item => item.id === connection?.sessionId) : undefined,
 		rosterFilter: input.rosterFilter, transcriptScope: connection ? `${connection.identity.profile_id}:${connection.sessionId}` : undefined,

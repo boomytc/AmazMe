@@ -374,7 +374,8 @@ class Host:
             raise BackendError("host_stopping", status=503)
 
     def identity(self, state: str = "ready") -> Identity:
-        return self.profile.identity(self.instance, self.build, role="host", state=state, host_epoch=self.fence.host_epoch)
+        return self.profile.identity(self.instance, self.build, role="host", state=state, host_epoch=self.fence.host_epoch).model_copy(
+            update={"approval_policy": self.profile.config.approval_policy})
 
     async def initialize(self) -> None:
         if self.process_lease is None:

@@ -5,6 +5,7 @@ import { dockView, parseWorkspaceAction, type WorkspaceStateLike } from "./dock.
 import { documentLanguage, resolveLocale, type Locale } from "./locale.ts";
 import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, PROVIDER_TEST_ACTION, PROVIDER_TEST_ALL_ACTION, PROVIDER_TEST_MODAL, providerConfigurationModal, providerLogoutModal, providerTestModal, verificationStatusText, type ModelConnectionsLike } from "./model-connections.ts";
 import { modelScopeModal } from "./model-scope.ts";
+import type { ApprovalPolicy } from "./permission-picker.ts";
 import * as P from "./panels.ts";
 import * as Projects from "./projects.ts";
 import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
@@ -189,6 +190,11 @@ export class DesktopPage {
 		this.renderer.onAbort = () => run(() => this.cancel());
 		this.renderer.onSelectModel = (provider, model) => run(() => this.selectModel(provider, model));
 		this.renderer.onSelectThinking = level => { this.thinking = level; this.render(); };
+		this.renderer.onSelectPermission = policy => run(async () => {
+			const connection = this.requireConnection();
+			sessionStorage.setItem(this.permissionKey(connection), policy);
+			this.render();
+		});
 		this.renderer.onDraftChange = text => { this.draft.text = text; this.draft.revision++; this.paletteSelection = 0; this.render(); };
 		this.renderer.onPaletteSelection = index => { this.paletteSelection = index; this.render(); };
 		this.renderer.onCommandPick = value => { this.draft.text = `/${value} `; this.draft.revision++; this.renderer.setDraft(this.draft.text, true); this.render(); };
@@ -377,6 +383,15 @@ export class DesktopPage {
 		draft.text = ""; draft.images = []; draft.revision++;
 		if (this.draft === draft) this.renderer.setDraft("");
 	}
+	private permissionKey(connection: ClientConnection): string {
+		return `amazme:permission:${connection.identity.profile_id}:${connection.sessionId}`;
+	}
+	private get approvalPolicy(): ApprovalPolicy {
+		const connection = this.client.connection;
+		const saved = connection ? sessionStorage.getItem(this.permissionKey(connection)) : null;
+		return saved === "all" || saved === "mutations" || saved === "auto" ? saved
+			: this.client.identity?.approval_policy ?? "mutations";
+	}
 	private async submit(text: string, expectedRequest?: string): Promise<void> {
 		const draft = this.draft, revision = draft.revision, initial = this.client.connection;
 		const previous = initial?.ready && initial.active() ? this.ledger(initial).read("submission", "POST /api/v1/sessions/{session}/submissions") : undefined;
@@ -399,6 +414,7 @@ export class DesktopPage {
 		const record = previous ?? ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
 			request_id: id, text, images: draft.images.map(item => item.image), mode: steer ? "steer" : "queue",
 			...(steer ? { target_run_id: steer } : {
+				approval_policy: this.approvalPolicy,
 				...(displayedModel ? { model_selection: { provider: displayedModel.provider, model: displayedModel.model } } : {}), ...(thinking ? { thinking } : {}),
 			}),
 		} }));
@@ -1406,7 +1422,7 @@ export class DesktopPage {
 		const connection = this.client.connection, session = this.sessions.find(item => item.session_id === connection?.sessionId);
 		const directory = pythonDirectory(this.sessions, this.projects, this.workspaces);
 		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, projects: this.projects, selectedProject: this.selectedProject, expandedProjects: this.expandedProjects, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
-			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
+			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images), approvalPolicy: this.approvalPolicy,
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
 				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true, this.mcpConfiguration?.path ?? "AmazMe"), runtime: mcpPanelRuntime(this.mcpConfiguration, this.mcpRuntime, this.ready && (!connection || connection.ready), connection?.ready === true, this.mcpLogin) },
 				automation: { state: this.schedules ? { path: this.schedules.path, tickMs: this.schedules.tick_ms ?? 5000, schedules: this.schedules.schedules.map(scheduleRecord) } : undefined, sessionId: connection?.sessionId },

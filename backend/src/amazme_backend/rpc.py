@@ -535,9 +535,7 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.deliver(
             session, "submit", params.request_id,
             Submit(request_id=params.request_id, text=params.text, images=params.images, not_before_ms=params.not_before_ms,
-                   system_prompt=params.system_prompt, append_system_prompt=params.append_system_prompt,
-                   resource_options=params.resource_options, thinking=params.thinking, model_selection=params.model_selection,
-                   allowed_tools=params.allowed_tools, excluded_tools=params.excluded_tools, tool_call=params.tool_call))
+                   tool_call=params.tool_call, **params.model_dump(include=set(RunOptions.model_fields))))
     if method == "request.cancel":
         if not params.request_id:
             raise BackendError("binding_required")

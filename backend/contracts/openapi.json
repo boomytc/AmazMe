@@ -9536,6 +9536,16 @@
             "const": 2,
             "title": "Storage Format",
             "default": 2
+          },
+          "approval_policy": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "mutations",
+              "all"
+            ],
+            "title": "Approval Policy",
+            "default": "mutations"
           }
         },
         "additionalProperties": false,
@@ -12619,6 +12629,22 @@
               }
             ]
           },
+          "approval_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "mutations",
+                  "all"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Policy"
+          },
           "thinking": {
             "anyOf": [
               {
@@ -14167,6 +14193,22 @@
                 "type": "null"
               }
             ]
+          },
+          "approval_policy": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "auto",
+                  "mutations",
+                  "all"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approval Policy"
           },
           "thinking": {
             "anyOf": [

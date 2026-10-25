@@ -15,6 +15,7 @@ from .contracts import (
     AnswerFeedbackList,
     AnswerFeedbackWrite,
     Approval,
+    ApprovalPolicy,
     Attachment,
     BackendError,
     CheckpointView,
@@ -361,7 +362,8 @@ class Client:
                      system_prompt: str | None = None, append_system_prompt: str = "",
                      allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None,
                      resource_options: ResourceOptions | None = None, thinking: ThinkingLevel | None = None,
-                     tool_call: ToolCall | None = None, model_selection: ModelSelection | None = None) -> Receipt:
+                     tool_call: ToolCall | None = None, model_selection: ModelSelection | None = None,
+                     approval_policy: ApprovalPolicy | None = None) -> Receipt:
         await self._require_workspace(session_id, workspace)
         body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms,
                                    "system_prompt": system_prompt, "append_system_prompt": append_system_prompt, "thinking": thinking,
@@ -371,6 +373,8 @@ class Client:
                                    "tool_call":tool_call.model_dump() if tool_call is not None else None}
         if images:
             body["images"] = [image.model_dump() for image in images]
+        if approval_policy is not None:
+            body["approval_policy"] = approval_policy
         payload = await self._send(
             "POST", f"/api/v1/sessions/{session_id}/submissions",
             json_body=body,

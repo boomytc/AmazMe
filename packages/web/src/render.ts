@@ -8,6 +8,7 @@ import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTIO
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
 import { createModelPicker } from "./model-picker.ts";
+import { createPermissionPicker, type ApprovalPolicy } from "./permission-picker.ts";
 import { createModelConnections } from "./model-connections.ts";
 import { COMPOSER_PROJECT_ACTION, PROJECT_ADD_ACTION, PROJECT_SELECT_ACTION, PROJECT_EDIT_ACTION, PROJECT_NEW_SESSION_ACTION, PROJECT_REMOVE_ACTION, SESSION_ARCHIVE_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import { createDirectoryField, type DirectoryListing } from "./directories.ts";
@@ -158,6 +159,7 @@ export interface PageRenderer {
 	onAbort: () => void;
 	onSelectModel: (provider: string, modelId: string) => void;
 	onSelectThinking: (level: string) => void;
+	onSelectPermission: (policy: ApprovalPolicy) => void;
 	/** Images the reader picked, pasted, or dropped; reading them is the page's job. */
 	onAttachFiles: (files: readonly File[]) => void;
 	/** The roster's filter text; the page owns it so it survives a repaint. */
@@ -735,6 +737,8 @@ export function createRenderer(
 		report({ kind: "command", id: MODEL_CONNECTIONS_ACTION, data: undefined });
 	});
 	elements.modelSelect.insertAdjacentElement("beforebegin", sharedModelPicker.element);
+	const permissionPicker = createPermissionPicker(policy => renderer.onSelectPermission(policy));
+	elements.attach.insertAdjacentElement("afterend", permissionPicker.element);
 	const connections = createModelConnections(action => report(action));
 	const transcriptLatest = elements.transcriptLatest ?? transcriptLatestElement(elements.transcript);
 	const quoteAction = button("quote-action");
@@ -3276,6 +3280,7 @@ export function createRenderer(
 		onAbort: () => {},
 		onSelectModel: () => {},
 		onSelectThinking: () => {},
+		onSelectPermission: () => {},
 		onAttachFiles: () => {},
 		onFilterRoster: () => {},
 		onShortcut: () => {},
@@ -3296,6 +3301,7 @@ export function createRenderer(
 			const languageChanged = lastView?.locale !== view.locale;
 			const sessionChanged = lastView?.attachedId !== view.attachedId;
 			if (sessionChanged) {
+				permissionPicker.close();
 				drafts.clear();
 				hideQuoteAction();
 			}
@@ -3313,6 +3319,7 @@ export function createRenderer(
 				};
 			}
 			lastView = view;
+			permissionPicker.update(view.locale, view.approvalPolicy ?? "mutations", view.readOnly === true || !view.attachedId || view.panel.current !== CHAT_VIEW);
 			const preview = attachmentPreview;
 			if (preview !== undefined && (attachmentScope(view) !== preview.scope || view.panel.current !== CHAT_VIEW ||
 				!view.attachments.some(attachment => attachment.id === preview.attachmentId))) closeAttachmentPreview();

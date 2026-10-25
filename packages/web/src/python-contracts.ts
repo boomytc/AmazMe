@@ -604,6 +604,7 @@ export type Identity = {
   "state"?: string;
   "fingerprint"?: string;
   "storage_format"?: 2;
+  "approval_policy"?: "auto" | "mutations" | "all";
 };
 
 export type ImagePart = {
@@ -1192,6 +1193,7 @@ export type RpcCall = {
 
 export type RpcParams = {
   "model_selection"?: ModelSelection | null;
+  "approval_policy"?: "auto" | "mutations" | "all" | null;
   "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   "resource_options"?: ResourceOptions;
   "system_prompt"?: string | null;
@@ -1448,6 +1450,7 @@ export type Snapshot = {
 
 export type Submit = {
   "model_selection"?: ModelSelection | null;
+  "approval_policy"?: "auto" | "mutations" | "all" | null;
   "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
   "resource_options"?: ResourceOptions;
   "system_prompt"?: string | null;

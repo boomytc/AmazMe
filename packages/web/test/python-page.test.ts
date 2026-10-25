@@ -69,6 +69,7 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
 
 test("a submission captures the displayed model, retries the same request, and preserves a newer draft", async () => {
  const { page, submitted } = await startPage();
+ page.renderer.onSelectPermission("all");
  const prompt = document.querySelector<HTMLTextAreaElement>("#prompt");
  if (!prompt?.form) throw new Error("composer missing");
  prompt.value = "original"; prompt.dispatchEvent(new Event("input"));
@@ -76,6 +77,8 @@ test("a submission captures the displayed model, retries the same request, and p
  await vi.waitFor(() => expect(submitted).toHaveLength(1));
  expect(prompt.value).toBe("original");
  expect(submitted[0].model_selection).toEqual({ provider: "faux", model: "shown" });
+ expect(submitted[0].approval_policy).toBe("all");
+ page.renderer.onSelectPermission("auto");
  page.renderer.onSelectModel("faux", "different");
  await vi.waitFor(() => expect(page?.renderer.view?.model.label).toBe("Different"));
  page.renderer.onDraftChange("new draft"); page.renderer.setDraft("new draft");
@@ -83,6 +86,42 @@ test("a submission captures the displayed model, retries the same request, and p
  await vi.waitFor(() => expect(submitted).toHaveLength(2));
  expect(submitted[1]).toEqual(submitted[0]);
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
+});
+
+test("permission menu selects, survives reload, and stays scoped to the original session", async () => {
+ const { page: first } = await startPage();
+ const trigger = document.querySelector<HTMLButtonElement>(".permission-trigger");
+ const dialog = document.querySelector<HTMLDialogElement>(".permission-menu");
+ trigger?.click();
+ expect(dialog?.open).toBe(true);
+ expect(document.querySelectorAll('.permission-option[aria-checked="true"]')).toHaveLength(1);
+ document.querySelector<HTMLButtonElement>('.permission-option[data-policy="auto"]')?.click();
+ expect(dialog?.open).toBe(false);
+ expect(first.renderer.view?.approvalPolicy).toBe("auto");
+ expect(trigger?.dataset.policy).toBe("auto");
+ first.dispose();
+ const { page: restored } = await startPage();
+ expect(restored.renderer.view?.approvalPolicy).toBe("auto");
+ const connection = restored.client.connection;
+ if (!connection) throw new Error("missing connection");
+ restored.client.connection = { ...connection, sessionId: "other" };
+ restored.client.onChange();
+ expect(restored.renderer.view?.approvalPolicy).toBe("mutations");
+ restored.client.connection = connection;
+ restored.client.onChange();
+ expect(restored.renderer.view?.approvalPolicy).toBe("auto");
+ document.querySelector<HTMLButtonElement>(".permission-trigger")?.click();
+ document.querySelector<HTMLDialogElement>(".permission-menu")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+ expect(document.querySelector<HTMLDialogElement>(".permission-menu")?.open).toBe(false);
+ connection.ready = false;
+ restored.client.onChange();
+ expect(document.querySelector<HTMLButtonElement>(".permission-trigger")?.disabled).toBe(true);
+});
+
+test("permission defaults reflect the connected host and invalid saved modes are ignored", async () => {
+ sessionStorage.setItem("amazme:permission:host:a", "invalid");
+ const { page } = await startPage(path => path.endsWith("/bootstrap") ? new Response(JSON.stringify({ build_id: "build", profile_id: "host", instance_id: "instance", pid: 1, host_epoch: 1, role: "host", protocol: "amazme-http/1", approval_policy: "all" })) : undefined);
+ expect(page.renderer.view?.approvalPolicy).toBe("all");
 });
 
 test("a rejected composer draft remains editable and clears only after a successful receipt", async () => {

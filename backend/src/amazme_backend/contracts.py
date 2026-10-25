@@ -33,6 +33,7 @@ class ResourceOptions(Model):
 
 
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+ApprovalPolicy = Literal["auto", "mutations", "all"]
 
 
 class ModelSelection(Model):
@@ -42,6 +43,7 @@ class ModelSelection(Model):
 
 class RunOptions(Model):
     model_selection: ModelSelection | None = None
+    approval_policy: ApprovalPolicy | None = None
     thinking: ThinkingLevel | None = None
     resource_options: ResourceOptions = Field(default_factory=ResourceOptions)
     system_prompt: str | None = Field(default=None, max_length=32000)
@@ -183,7 +185,7 @@ class ProfileConfig(Model):
     user_resources: str = ""
     account_profile: str = ""
     provider: ProviderConfig
-    approval_policy: Literal["auto", "mutations", "all"] = "mutations"
+    approval_policy: ApprovalPolicy = "mutations"
     testing: bool = False
     credential_revision: int = Field(default=0, ge=0)
 
@@ -200,6 +202,7 @@ class Identity(Model):
     state: str = "ready"
     fingerprint: str = ""
     storage_format: Literal[2] = 2
+    approval_policy: ApprovalPolicy = "mutations"
 
 
 class HostReady(Identity):

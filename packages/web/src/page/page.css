@@ -2762,6 +2762,39 @@ p {
 	min-width: 0;
 }
 
+.permission-control { flex: none; }
+.permission-trigger {
+	display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 8px;
+	border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2);
+	font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer;
+}
+.permission-trigger .icon { width: 16px; height: 16px; }
+.permission-trigger .icon:last-child { width: 12px; height: 12px; }
+.permission-trigger:hover:not(:disabled), .permission-trigger[aria-expanded="true"] { background: var(--hover); }
+.permission-trigger:disabled { opacity: .5; cursor: default; }
+.permission-trigger[data-policy="auto"], .permission-option[data-policy="auto"] { color: #e87635; }
+:root[data-theme="light"] .permission-trigger[data-policy="auto"],
+:root[data-theme="light"] .permission-option[data-policy="auto"] { color: #b94e16; }
+.permission-menu {
+	position: fixed; inset: auto; margin: 0; width: min(440px, calc(100vw - 16px));
+	padding: 6px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-lg);
+	background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover);
+}
+.permission-menu::backdrop { background: transparent; }
+.permission-option {
+	display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 10px;
+	border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text);
+	font: inherit; text-align: left; cursor: pointer;
+}
+.permission-option:hover, .permission-option:focus-visible { background: var(--hover); }
+.permission-option > .icon { flex: none; width: 22px; height: 22px; }
+.permission-copy { display: grid; gap: 3px; flex: 1; min-width: 0; }
+.permission-label { font-size: 15px; font-weight: 500; line-height: 22px; }
+.permission-description { color: var(--text-3); font-size: 13px; line-height: 19px; }
+.permission-option[data-policy="auto"] .permission-description { color: inherit; }
+.permission-option > .permission-check { width: 18px; height: 18px; }
+.permission-hint { margin: 4px 10px 6px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; line-height: 17px; }
+
 .composer-trailing {
 	position: relative;
 	margin-left: auto;

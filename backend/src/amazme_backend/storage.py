@@ -732,6 +732,8 @@ class SessionStore:
         self._save_images(db, value.request_id, value.images)
         # Store public provider configuration only. Credentials remain in Profile.
         config = selected_provider(inherited or accepted_config or self.config, value.model_selection)
+        if value.approval_policy is not None:
+            config.approval_policy = value.approval_policy
         if value.thinking is not None:
             config.thinking = value.thinking
         if value.system_prompt is not None:
@@ -811,6 +813,8 @@ class SessionStore:
             if value.mode == "reject_busy" and pending and not tombstone:
                 raise BackendError("session_busy")
             if value.mode == "steer" and not tombstone:
+                if value.approval_policy is not None:
+                    raise BackendError("run_options_immutable")
                 if value.tool_call is not None or value.system_prompt is not None or value.append_system_prompt or value.allowed_tools is not None or value.excluded_tools or value.resource_options != ResourceOptions() or value.thinking is not None or value.model_selection is not None:
                     raise BackendError("run_options_immutable")
                 if value.not_before_ms:
@@ -1273,7 +1277,7 @@ class SessionStore:
         context = [m.model_dump_json() for m in self._messages(db, request_id)]
         arguments: object = json.loads(normalized_call(call).arguments)
         return digest(json.dumps({"call": call.name, "arguments": arguments, "context": context,
-                                  "steer": pending_steer, "policy": self.approval_policy, "build": self.build,
+                                  "steer": pending_steer, "policy": self._run(db, request_id).config.approval_policy or self.approval_policy, "build": self.build,
                                   "run": request_id}, sort_keys=True, ensure_ascii=False))
 
     async def approve(self, value: ApprovalDecision, fence: HostFence) -> Receipt:
@@ -1551,8 +1555,9 @@ class SessionStore:
     def _grant(self, db: sqlite3.Connection, c: Changes, request: Receipt, step: Step) -> bool:
         assert step.call is not None
         binding = self._binding(db, request.request_id, step.call)
-        required = self.approval_policy == "all" or (
-            self.approval_policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_act", "computer_ground", "plugin_tool"})
+        policy = self._run(db, request.request_id).config.approval_policy or self.approval_policy
+        required = policy == "all" or (
+            policy == "mutations" and step.call.name in {"shell", "write_file", "mcp_tool", "computer_act", "computer_ground", "plugin_tool"})
         if not required:
             return True
         approval: Approval | None = None

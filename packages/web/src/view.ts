@@ -1,6 +1,7 @@
 /** Pure client presentation contracts. Python owns session and execution state. */
 import { DEFAULT_TYPOGRAPHY, type Typography } from "./typography.ts";
 import type { ProjectGroup } from "./projects.ts";
+import type { ApprovalPolicy } from "./permission-picker.ts";
 import type { Locale } from "./locale.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
 import type { ModelConnectionsLike } from "./model-connections.ts";
@@ -442,6 +443,7 @@ export interface WebView {
 	};
 	readonly model: ModelPicker;
 	readonly modelPending?: boolean;
+	readonly approvalPolicy?: ApprovalPolicy;
 	/** The sidebar's navigation and the management panel the main area shows. */
 	readonly panel: PanelView;
 	/** The session dock beside the conversation. */
