@@ -4,9 +4,13 @@
 
 会话支持分支、压缩、子任务、记忆、定时任务、工作流、搜索、项目、产物、分享及新格式导入导出。未知副作用保留原调用 ID，不自动重放；取消受理和进程退出分别核对。本机 shell 使用当前用户权限，路径校验和审批不构成操作系统沙箱。
 
-## 从源码启动
+## 从源码安装与使用
 
-需要 Python 3.13、uv 和 Node.js 22.19 或更新版本。在仓库根目录准备依赖：
+需要 Python 3.13、uv 和 Node.js 22.19 或更新版本。下文用 `/absolute/AmazMe` 表示仓库绝对路径，用 `/absolute/project` 表示实际项目目录；执行时替换成本机路径。
+
+### 准备依赖
+
+在仓库根目录执行：
 
 ```bash
 uv sync --project backend --frozen
@@ -15,44 +19,129 @@ npm run build:offline
 export AMAZME_PYTHON_BACKEND=/absolute/AmazMe/backend/.venv/bin/amazme-backend
 ```
 
-构建使用仓库中的 Python 模型快照，不联网刷新。需要同步上游时显式指定 Pi 源码数据：
+新开终端时需要重新设置 `AMAZME_PYTHON_BACKEND`。构建使用仓库中的 Python 模型快照，不联网刷新；只有需要同步上游模型数据时，才显式指定 Pi 源码：
 
 ```bash
 npm run sync:pi-models -- --source /absolute/pi/packages/ai/src/providers/data
 ```
 
-在实际项目目录启动终端客户端：
+### 桌面端
+
+在仓库根目录启动 Electron，并指定实际项目目录：
+
+```bash
+AMAZME_GUI_CWD=/absolute/project npm run dev:desktop
+```
+
+该命令会构建桌面端所需的 workspace 依赖、拉起 Python 后端并打开窗口，不需要先手动执行 `serve`。省略 `AMAZME_GUI_CWD` 时默认使用用户主目录；也可用 `AMAZME_GUI_SESSION=会话ID` 直接打开已有会话。
+
+首次打开后，在「设置 → 模型与连接」中：
+
+1. 添加或配置供应商，完成 API Key 或 OAuth 登录。
+2. 检测连接，勾选要启用的模型。
+3. 在「新聊天默认模型」中选择默认值。输入区的模型选择器只修改当前会话，不改写新聊天的默认值。
+
+关闭主窗口默认只隐藏，已接纳的会话和后台工作继续运行；通过托盘恢复窗口。需要结束时，使用托盘菜单或 `Cmd/Ctrl+Q` 显式退出，桌面壳才会停止自己拥有的后端。更多窗口行为见 [桌面说明](packages/gui/README.md)。
+
+### 交互终端与一次性命令
+
+进入实际项目目录，使用构建后的 Node 入口：
 
 ```bash
 cd /absolute/project
 node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js
 ```
 
-首次使用先配置供应商及账号，再选择模型。详细命令见 [CLI](packages/coding-agent/README.md) 和 [Python 后端](backend/README.md)。OAuth 沿用 Pi 的客户端 ID、回调及请求身份；凭据由 Python 私有账号库管理，不写入会话导出或工具环境。
+不带参数会进入交互终端（TUI）。一次性提问或用于脚本时：
+
+```bash
+node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js --print '说明当前项目的启动入口'
+```
+
+终端入口按启动目录选择工作区，会复用仍存活的本机 Host，没有时才启动新的 Host。`--workspace NAME` 选择已登记工作区，`--continue` 继续最近的非归档会话，`--session ID` 打开指定会话；`workspaces list` 可查看登记目录。
+
+如果希望使用短命令，可在仓库根目录执行一次：
+
+```bash
+npm link --workspace @amazme/coding-agent --ignore-scripts
+```
+
+之后可将完整 Node 入口替换为 `amazme`。首次配置和常用操作示例：
 
 ```bash
 amazme models
 amazme auth login --provider openai-codex
+amazme auth login --provider openai --method api-key
 amazme doctor
 amazme --continue
-amazme --print '说明当前项目的启动入口'
-amazme --mode rpc
 ```
 
-上例的 `amazme` 可用完整 Node 入口替代，或构建后运行 `npm link --workspace @amazme/coding-agent --ignore-scripts`。
-本机 CLI 按启动目录选择工作区；`--workspace NAME` 选择已登记目录。`--session ID` 指定会话，`--no-session` 使用按退出证明清理的临时历史。
-技能、上下文文件、提示模板、图片输入及推理等级沿用 Pi 的使用方式。
+`auth login` 用于完成账号登录，`models` 查看模型目录，`doctor` 检查 Host 健康状态。API Key 也可通过隐藏的交互提示输入，不必写进命令。更多会话、技能、图片和推理参数见 [CLI 说明](packages/coding-agent/README.md)。
+
+普通持久会话在离开 TUI 或一次性命令结束后，不会因释放客户端绑定而取消已接纳的工作。`--no-session` 是临时会话，退出时按清理证明关闭其拥有的后端并清除已结算历史。
+
+### 浏览器页面
+
+在仓库根目录执行：
+
+```bash
+npm run dev:web
+```
+
+该命令构建 Web 依赖、启动或复用本机 Host，并输出窗口链接；在浏览器中打开终端给出的地址即可。此方式以仓库目录作为工作区。需要让页面使用另一个项目时，改为从该项目目录调用 Node 入口：
+
+```bash
+cd /absolute/project
+node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js web
+```
+
+只需要 Host 根地址而不需要窗口链接时，使用 `server` 替代 `web`。关闭网页或释放客户端绑定不会取消已经接纳的工作。
+
+### 已有 Host、独立服务、RPC 与 SDK
+
+普通桌面、TUI 和 Web 使用不需要提前手动启动服务。只有需要连接已有 Host、独立管理服务，或使用 RPC/Python SDK 时，才需要以下方式。
+
+已有初始化的 profile 时，在仓库根目录启动服务：
+
+```bash
+backend/.venv/bin/python -m amazme_backend serve --profile /absolute/profile
+```
+
+保持该终端运行。在另一个终端取得配对码：
+
+```bash
+backend/.venv/bin/python -m amazme_backend pair --profile /absolute/profile
+```
+
+然后用 Host 地址和配对码连接。以 Web 页面为例：
+
+```bash
+cd /absolute/project
+node /absolute/AmazMe/packages/coding-agent/dist/bundle/cli.js web --python-url http://127.0.0.1:PORT --python-token '配对码'
+```
+
+`--python-url` 和 `--python-token` 必须同时提供，同样适用于 TUI、一次性命令及 `models`、`auth`、`doctor` 等命令。配对码属于本机凭据，不要提交到仓库或放进分享链接。新 profile 的初始化方式见 [Python 后端说明](backend/README.md)。
+
+RPC 客户端使用 `--mode rpc`；Python SDK 使用 Host URL 和配对码连接，示例见 [SDK 与 RPC 文档](packages/coding-agent/docs/sdk.md)。
+
+独立服务需要停止时，在另一个终端执行：
+
+```bash
+backend/.venv/bin/python -m amazme_backend stop --profile /absolute/profile
+```
+
+`stop` 会停止该 profile 的 Host 及所属服务，所有连接它的客户端都会受影响。桌面端应优先使用窗口或托盘提供的显式退出操作。
 
 ## 客户端与工具
 
-Electron 加载 Python 提供的页面；Web、TUI、CLI 与 SDK 都连接原服务。
-关闭页面或释放 attachment 不取消已接纳的工作，显式退出收回客户端拥有的进程。
+Electron 加载 Python 提供的页面；Web、TUI、CLI、RPC 与 SDK 共用 Host、会话、账号和副作用账本。
 真实 macOS 桌面驱动使用已有 CUA App 和系统 TCC 状态；SSH 使用系统 OpenSSH 和明确的主机密钥接纳。
 这两项需要用户自己的系统授权或账号，不以固定场景探针冒充产品实现。
 
 Python factory 注册会话插件工具和命令，Codemode 通过现有 QuickJS helper 调用这些工具。
 项目记忆、检查点、网页、定时任务等使用 Python 业务入口，不加载旧 TS Host、Chord facets 或 Durable 会话。
 旧历史格式及旧生态不迁移；未知用户数据和凭据不删除。
+OAuth 沿用 Pi 的客户端 ID、回调及请求身份；凭据由 Python 私有账号库管理，不写入会话导出或工具环境。
 
 ## 开发与文档
 
