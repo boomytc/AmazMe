@@ -1,6 +1,7 @@
 """Exercise the Electron source launcher or one specified frozen app with owned cleanup."""
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -12,6 +13,8 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
@@ -189,7 +192,7 @@ def connected_pages(browser):
     found = []
     for page in product_pages(browser):
         try:
-            if page.locator("#connection").inner_text(timeout=1000) == "已连接":
+            if page.locator("#connection-status").get_attribute("data-state", timeout=1000) == "connected":
                 found.append(page)
         except Exception:
             continue
@@ -209,13 +212,58 @@ def session_of(page) -> str:
     return page.url.split("session=")[1].split("&")[0] if "session=" in page.url else ""
 
 
+@contextmanager
+def http_mcp_fixture(marker):
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_GET(self):
+            self.send_error(405)
+
+        def do_DELETE(self):
+            self.send_response(204)
+            self.end_headers()
+
+        def do_POST(self):
+            value = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
+            method, identity = value.get("method"), value.get("id")
+            if identity is None:
+                self.send_response(202)
+                self.end_headers()
+                return
+            if method == "initialize":
+                result = {"protocolVersion": "2025-11-25", "serverInfo": {"name": "frozen-fixture", "version": "1"}, "capabilities": {"tools": {}}}
+            elif method == "tools/list":
+                result = {"tools": [{"name": "native_echo", "description": "Fixture echo", "inputSchema": {"type": "object"}}]}
+            else:
+                with marker.open("a") as output:
+                    output.write("x")
+                result = {"content": [{"type": "text", "text": "FROZEN_HTTP_MCP_OK"}]}
+            raw = json.dumps({"jsonrpc": "2.0", "id": identity, "result": result}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/mcp"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--app", type=Path, help="One local candidate app; uses its embedded backend")
+    parser.add_argument("--app", type=Path, help="One current local app with its embedded backend")
     args = parser.parse_args()
     app = args.app.resolve() if args.app else None
     if app is not None and not (app / "Contents/MacOS/AmazMe").is_file():
-        raise SystemExit("candidate app is missing its executable")
+        raise SystemExit("candidate app executable is missing")
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
     release_named_slot(parent, "electron-", 2)
@@ -224,152 +272,150 @@ def main() -> None:
     workspace.mkdir()
     (root / "agent").mkdir()
     wrapper = root / "amazme-backend"
-    wrapper.write_text(f"#!/bin/sh\nexec {shlex.quote(str(PYTHON))} -m amazme_backend \"$@\"\n")
+    wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(str(PYTHON))} -m amazme_backend "$@"\n')
     wrapper.chmod(0o755)
-    report: dict[str, object] = {"status": "running", "execution": "electron-source", "vm_created": False, "checks": []}
     if app is not None:
         wrapper = app / "Contents/Resources/amazme-backend/amazme-backend"
-        report.update(execution="electron-frozen", app=str(app))
-    runtime: ElectronRun | None = ElectronRun(root, workspace, wrapper, app)
+    runtime = ElectronRun(root, workspace, wrapper, app)
+    report = {"status": "running", "execution": "electron-frozen" if app else "electron-source",
+              "provider": "faux", "external_accounts_tested": False, "checks": []}
     decoy = subprocess.Popen(["/bin/sleep", "600"])
     budget = ResourceBudget([ROOT / ".artifacts"], limit_bytes=512 * 1024**2, deadline_seconds=240)
     try:
         with budget:
             port = free_port()
             runtime.start(port)
-            token = (root / "python-profile" / "web.token").read_text().strip()
+            token = (root / "python-profile/web.token").read_text().strip()
             with httpx.Client(base_url=runtime.origin, timeout=30, trust_env=False,
-                               headers={"Authorization": f"Bearer {token}"}) as client:
+                              headers={"Authorization": "Bearer " + token}) as client:
                 boot = client.get("/api/v1/bootstrap").json()
-                report["identity"] = {"build_id": boot["build_id"], "url": runtime.origin, "host_pid": runtime.host_pid}
+                report["identity"] = {name: boot[name] for name in ("build_id", "profile_id", "host_epoch")}
                 fence = {"x-amazme-build": boot["build_id"], "x-amazme-epoch": str(boot["host_epoch"])}
                 with sync_playwright() as playwright:
                     browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-                    page = until(lambda: connected_pages(browser)[:1] or [None], lambda items: items[0] is not None, timeout=30)[0]
-                    assert "Electron" in page.evaluate("() => navigator.userAgent")
-                    session = until(lambda: session_of(page), lambda value: len(value) == 32, timeout=15)
-                    errors: list[str] = []
+                    page = until(lambda: product_pages(browser), lambda pages: bool(pages), timeout=30)[0]
+                    errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
+                    expect(page.locator("#composer")).to_be_visible()
+                    expect(page.locator("#new-chat")).to_be_enabled(timeout=30000)
+                    if not session_of(page):
+                        page.locator("#new-chat").click()
+                    until(lambda: session_of(page), bool, timeout=30)
+                    session = session_of(page)
+                    expect(page.locator("#prompt")).to_be_enabled(timeout=30000)
+                    assert page.locator("#model-form").count() == 0
+                    page.locator("#prompt").fill("界面恢复核对")
+                    page.locator("#primary").click()
+                    expect(page.locator("#transcript")).to_contain_text("已收到：界面恢复核对", timeout=30000)
+                    report["checks"].append("original sidebar, conversation, composer and faux model response")
 
-                    page.locator("#terminal summary").click()
-                    expect(page.locator("#terminal-state")).to_have_text("尚无终端，点击新建")
-                    page.locator("#terminal-new").click()
-                    expect(page.locator("#terminal-state")).to_have_text("运行中")
-                    lost_ids: list[str] = []
-                    lost_attempts = {"count": 0}
+                    marker = workspace / "mcp-effect.txt"
+                    with http_mcp_fixture(marker) as url:
+                        binding = client.post(f"/api/v1/sessions/{session}/attachments", headers=fence).json()["attachment_id"]
+                        headers = {**fence, "x-amazme-attachment": binding}
+                        server_id = "cd" * 16
+                        connected = client.post(f"/api/v1/sessions/{session}/mcp", headers=headers, json={"server_id": server_id, "command": url, "http": {"url": url}})
+                        connected.raise_for_status()
+                        assert connected.json()["phase"] == "ready"
+                        alias = "mcp_" + hashlib.sha256((server_id + "\nnative_echo").encode()).hexdigest()[:20]
+                        request_id = "ef" * 16
+                        submitted = client.post(f"/api/v1/sessions/{session}/submissions", headers=headers, json={"request_id": request_id, "text": "/mcp " + json.dumps({"alias": alias, "arguments": {}})})
+                        submitted.raise_for_status()
+                        approval = page.locator('[data-action="approval:approve"]')
+                        expect(approval).to_be_visible(timeout=30000)
+                        assert not marker.exists()
+                        approval.click()
+                        until(lambda: marker.read_text() if marker.exists() else "", lambda value: value == "x", timeout=20)
+                        expect(page.locator("#transcript")).to_contain_text("FROZEN_HTTP_MCP_OK", timeout=30000)
+                        repeated = client.post(f"/api/v1/sessions/{session}/submissions", headers=headers, json={"request_id": request_id, "text": "/mcp " + json.dumps({"alias": alias, "arguments": {}})})
+                        repeated.raise_for_status()
+                        assert marker.read_text() == "x"
+                        closed = client.post(f"/api/v1/sessions/{session}/mcp/{server_id}/cancel", headers=headers)
+                        closed.raise_for_status()
+                        assert closed.json()["clean"] is True
+                        report["checks"].append("embedded HTTP SDK loaded, original approval controls gated a fixture MCP call, same ID wrote once")
 
-                    def fail_first_input(route) -> None:
-                        request = route.request
-                        lost_attempts["count"] += 1
-                        body = request.post_data_json
-                        if isinstance(body, dict) and isinstance(body.get("input_id"), str):
-                            lost_ids.append(str(body["input_id"]))
-                        if lost_attempts["count"] == 1:
-                            route.fetch()
-                            route.abort()
-                            return
-                        route.continue_()
+                    page.locator('[data-action="dock:toggle"]').click()
+                    page.locator('#dock-tabs [data-tab="terminal"]').click()
+                    terminal = page.locator("#dock-body .xterm")
+                    expect(terminal).to_be_visible(timeout=20000)
+                    terminal.click()
+                    page.keyboard.type("printf '%s' '你好🙂' > electron-input.txt")
+                    page.keyboard.press("Enter")
+                    until(lambda: (workspace / "electron-input.txt").read_text() if (workspace / "electron-input.txt").exists() else "", lambda text: text == "你好🙂", timeout=20)
+                    page.keyboard.type("sleep 30")
+                    page.keyboard.press("Enter")
+                    time.sleep(.2)
+                    page.keyboard.press("Control+c")
+                    page.keyboard.type("printf ok > electron-interrupt.txt")
+                    page.keyboard.press("Enter")
+                    until(lambda: (workspace / "electron-interrupt.txt").exists(), bool, timeout=10)
+                    page.set_viewport_size({"width": 1280, "height": 900})
+                    page.screenshot(path=str(root / "original-client.png"), full_page=True)
+                    report["screenshot"] = str(root / "original-client.png")
+                    report["checks"].append("xterm fast ordered input, Chinese/emoji, Ctrl-C and resize in the original dock")
 
-                    page.route("**/terminals/**/input", fail_first_input)
-                    page.locator("#terminal-input").fill("printf x >> electron-lost.txt")
-                    page.locator("#terminal-form button").first.click()
-                    expect(page.locator("#error")).not_to_have_text("", timeout=15000)
-                    until(lambda: (workspace / "electron-lost.txt").read_text() if (workspace / "electron-lost.txt").exists() else "",
-                          lambda value: value == "x")
-                    page.locator("#terminal-retry").click()
-                    expect(page.locator("#terminal-pending")).to_have_text("")
-                    assert (workspace / "electron-lost.txt").read_text() == "x"
-                    assert len(lost_ids) >= 2 and lost_ids[0] == lost_ids[1]
-                    page.unroute("**/terminals/**/input", fail_first_input)
-                    report["checks"].append("electron page reused one terminal input after the first receipt was lost")
-                    page.locator("#terminal-input").fill("printf x > electron-term.txt; printf 'ELECTRON_TERM_OK\\n'")
-                    page.locator("#terminal-form button").first.click()
-                    expect(page.locator("#terminal-output")).to_contain_text("ELECTRON_TERM_OK")
-                    expect(page.locator("#terminal-output .xterm")).to_be_visible()
-                    until(lambda: (workspace / "electron-term.txt").read_text() if (workspace / "electron-term.txt").exists() else "",
-                          lambda value: value == "x")
-                    page.locator("#terminal-input").fill("printf '\\033[31mRED\\033[0m'")
-                    page.locator("#terminal-form button").first.click()
-                    expect(page.locator("#terminal-output .xterm-fg-1")).to_be_visible(timeout=15000)
-                    expect(page.locator("#terminal-output")).to_contain_text("RED")
-                    report["checks"].append("electron page xterm DOM painted a red cell")
-                    page.locator("#terminal-resize").click()
-                    page.locator("#terminal-input").fill("stty size")
-                    page.locator("#terminal-form button").first.click()
-                    expect(page.locator("#terminal-output")).to_contain_text("40 100")
+                    # A valid PNG bigger than sessionStorage's quota exercises the real IndexedDB path.
+                    from PIL import Image
+                    image = root / "large.png"
+                    Image.frombytes("RGB", (1536, 1536), os.urandom(1536 * 1536 * 3)).save(image)
+                    assert 5 * 1024**2 < image.stat().st_size < 8 * 1024**2
+                    submitted = []
+                    def lose_first_ack(route):
+                        submitted.append(route.request.post_data_json["request_id"])
+                        if len(submitted) == 1:
+                            response = route.fetch(headers=route.request.all_headers(), timeout=30000)
+                            report["lost_ack_response"] = {"status": response.status}
+                            if response.status != 202:
+                                error = response.json()
+                                report["lost_ack_response"]["code"] = error.get("code", "invalid_response")
+                                route.fulfill(response=response)
+                                raise AssertionError(str(report["lost_ack_response"]))
+                            route.abort("failed")
+                        else:
+                            route.continue_()
+                    page.route("**/api/v1/sessions/*/submissions", lose_first_ack)
+                    page.locator("#file-input").set_input_files(image)
+                    page.locator("#prompt").fill("图片原编号核对")
+                    page.locator("#primary").click()
+                    retry = page.locator('[data-action="write:retry-submit"]')
+                    expect(retry).to_be_visible(timeout=30000)
+                    def first_ack():
+                        page.wait_for_timeout(25)
+                        return report.get("lost_ack_response")
+                    until(first_ack, bool, timeout=40)
+                    assert report["lost_ack_response"]["status"] == 202
+                    stored = page.evaluate("Object.entries(sessionStorage).filter(([key]) => key.startsWith('amazme:write:') && key.endsWith(':submission')).map(([key, value]) => ({key, bytes: value.length, payload: JSON.parse(value).payload}))")
+                    assert len(stored) == 1 and stored[0]["bytes"] < 1024 and stored[0]["payload"]
                     page.reload()
-                    expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
-                    assert session_of(page) == session
-                    page.locator("#terminal summary").click()
-                    expect(page.locator("#terminal-state")).to_have_text("运行中")
-                    expect(page.locator("#terminal-output")).to_contain_text("ELECTRON_TERM_OK")
-                    page.locator("#terminal-close").click()
-                    expect(page.locator("#terminal-state")).to_contain_text("已退出")
-                    report["checks"].append("electron page showed terminal output, observed resize, kept the terminal across reload, and explicit close exited it")
-
-                    page.locator("#prompt").fill("/shell printf y > electron-shell.txt")
-                    page.locator("#send").click()
-                    page.locator("#approvals").get_by_role("button", name="批准", exact=True).click()
-                    until(lambda: (workspace / "electron-shell.txt").read_text() if (workspace / "electron-shell.txt").exists() else "",
-                          lambda value: value == "y", timeout=40)
-                    report["checks"].append("electron page approval was required before the shell wrote its file")
-
-                    page.locator("#files summary").click()
-                    page.locator("#file-list").get_by_role("button", name="electron-shell.txt", exact=True).click()
-                    expect(page.locator("#file-content")).to_have_value("y")
-                    page.locator("#checkpoint-save").click()
-                    expect(page.locator("#file-diff")).to_contain_text("已保存")
-                    report["checks"].append("electron page saved a checkpoint for the shell output")
-
-                    command = shlex.join([str(PYTHON), str(ROOT / "backend/tools/mcp_probe_server.py"),
-                                          "--workspace", str(workspace)])
-                    page.locator("#mcp summary").click()
-                    page.locator("#mcp-command").fill(command)
-                    page.locator("#mcp-form button").click()
-                    expect(page.locator("#mcp-state")).to_contain_text("已连接", timeout=20000)
-                    page.get_by_role("button", name="native_echo", exact=True).click()
-                    page.locator("#mcp-arguments").fill('{"text":"denied","numbers":[1]}')
-                    page.locator("#mcp-request").click()
-                    page.get_by_role("button", name="拒绝调用", exact=True).click()
-                    expect(page.locator("#mcp-result")).to_contain_text("denied")
-                    assert not (workspace / "mcp-effect.txt").exists()
-                    page.locator("#mcp-arguments").fill('{"text":"x","numbers":[2,3]}')
-                    page.locator("#mcp-request").click()
-                    page.get_by_role("button", name="批准调用", exact=True).click()
-                    until(lambda: (workspace / "mcp-effect.txt").read_text() if (workspace / "mcp-effect.txt").exists() else "",
-                          lambda value: value == "x", timeout=20)
-                    report["checks"].append("electron page denied an MCP call with no effect, then one approval wrote once")
+                    expect(page.locator("#prompt")).to_be_enabled(timeout=30000)
+                    retry = page.locator('[data-action="write:retry-submit"]')
+                    expect(retry).to_be_visible()
+                    retry.click()
+                    expect(retry).to_have_count(0, timeout=30000)
+                    assert len(submitted) == 2 and submitted[0] == submitted[1]
+                    requests = client.get(f"/api/v1/sessions/{session}/snapshot").json()["requests"]
+                    assert len([row for row in requests if row["request_id"] == submitted[0]]) == 1
+                    report["checks"].append("large PNG body persisted in IndexedDB, lost ACK survived reload, explicit retry retained its ID")
 
                     runtime.open_second_window()
-                    pages = until(lambda: connected_pages(browser),
-                                  lambda items: len(items) == 2 and len({session_of(item) for item in items}) == 2, timeout=30)
+                    pages = until(lambda: connected_pages(browser), lambda rows: len(rows) == 2 and len({session_of(item) for item in rows}) == 2, timeout=30)
                     other = next(item for item in pages if session_of(item) != session)
-                    assert session_of(other) != session
-                    attachment = client.post(f"/api/v1/sessions/{session}/attachments", headers=fence).json()["attachment_id"]
+                    binding = client.post(f"/api/v1/sessions/{session}/attachments", headers=fence).json()["attachment_id"]
                     request_id = "ab" * 16
-                    parked = client.post(f"/api/v1/sessions/{session}/submissions", headers={**fence, "x-amazme-attachment": attachment},
-                                         json={"request_id": request_id, "text": "窗口仍在", "not_before_ms": int(time.time() * 1000) + 3_600_000}).json()
-                    assert parked["status"] == "waiting_time" and parked["cancel_requested"] is False
+                    parked = client.post(f"/api/v1/sessions/{session}/submissions", headers={**fence, "x-amazme-attachment": binding}, json={"request_id": request_id, "text": "窗口任务保留", "not_before_ms": int(time.time() * 1000) + 3600000})
+                    parked.raise_for_status()
                     other.close()
-                    until(lambda: [session_of(item) for item in product_pages(browser)], lambda items: items == [session], timeout=15)
-                    still = client.get(f"/api/v1/sessions/{session}/requests/{request_id}").json()
-                    assert still["status"] == "waiting_time" and still["cancel_requested"] is False
-                    servers = client.get(f"/api/v1/sessions/{session}/mcp").json()["servers"]
-                    assert servers and servers[0]["phase"] == "ready"
                     page.close()
-                    until(lambda: product_pages(browser), lambda items: items == [], timeout=15)
-                    after = client.get(f"/api/v1/sessions/{session}/requests/{request_id}").json()
-                    assert after["status"] == "waiting_time" and after["cancel_requested"] is False
-                    assert alive(runtime.host_pid)
-                    assert client.get("/").status_code == 200
-                    report["checks"].append("closing either Electron window kept the owned backend, the other session, the parked request, and the MCP service")
-                    assert not errors, errors
+                    until(lambda: product_pages(browser), lambda rows: not rows, timeout=15)
+                    receipt = client.get(f"/api/v1/sessions/{session}/requests/{request_id}").json()
+                    assert receipt["status"] == "waiting_time" and not receipt["cancel_requested"]
+                    assert alive(runtime.host_pid) and not errors, errors
                     report["page_errors"] = errors
-                    report["user_agent"] = "Electron"
+                    report["checks"].append("two windows keep independent sessions; closing both windows preserves accepted work and the backend")
             runtime.quit()
-            assert not alive(runtime.host_pid)
-            assert alive(decoy.pid or -1)
-            report["checks"].append("explicit Electron quit stopped the owned backend it started and left an unrelated process")
+            assert not alive(runtime.host_pid) and alive(decoy.pid)
+            report["checks"].append("explicit quit stops only its owned backend")
             report["status"] = "passed"
     except BaseException as error:
         report.update(status="failed", error=f"{type(error).__name__}: {error}")
