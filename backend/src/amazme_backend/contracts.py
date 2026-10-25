@@ -5,6 +5,7 @@ import binascii
 import hashlib
 import json
 import re
+import shlex
 from fnmatch import fnmatchcase
 from typing import Annotated, Literal
 
@@ -1032,11 +1033,76 @@ class TerminalSize(Model):
     rows: int = Field(ge=1, le=80)
 
 
+McpExposure = Literal["codemode", "deferred", "direct", "hidden"]
+
+
+class McpStdioSettings(Model):
+    type: Literal["stdio"] = "stdio"
+    command: str = Field(min_length=1, max_length=4096)
+    args: list[Annotated[str, Field(max_length=4096)]] = Field(default_factory=list, max_length=128)
+    env: dict[str, str] = Field(default_factory=dict, max_length=64)
+    cwd: str = Field(default="", max_length=4096)
+    enabled: bool = True
+    exposure: McpExposure = "codemode"
+    description: str = Field(default="", max_length=4000)
+    tool_exposure: dict[str, McpExposure] = Field(default_factory=dict, alias="toolExposure", max_length=128)
+    timeout: float = Field(default=60, gt=0, le=86400)
+
+    @model_validator(mode="after")
+    def checked_launch(self) -> McpStdioSettings:
+        McpLaunch(command=shlex.join([self.command, *self.args]), cwd=self.cwd, environment=self.env)
+        return self
+
+
+class McpConfigWrite(Model):
+    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    expected_revision: int = Field(ge=0)
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    entry: McpStdioSettings
+
+
+class McpConfigPatch(Model):
+    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    expected_revision: int = Field(ge=0)
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    scope: Literal["global", "project"] = "global"
+    enabled: bool | None = None
+    exposure: McpExposure | None = None
+    remove: bool = False
+
+
+class McpConfiguredServer(Model):
+    config_id: str
+    launch_id: str
+    name: str
+    detail: str
+    scope: Literal["global", "project"]
+    overridden: bool = False
+    enabled: bool
+    exposure: McpExposure
+
+
+class McpConfiguration(Model):
+    revision: int
+    workspace: str
+    path: str
+    servers: list[McpConfiguredServer]
+
+
+class McpReconnect(Model):
+    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    name: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+
+
 class McpLaunch(Model):
     command: str = Field(min_length=1, max_length=16000)
     workspace: str = ""
     cwd: str = Field(default="", max_length=4096)
     environment: dict[str, str] = Field(default_factory=dict, max_length=64)
+    environment_commands: dict[str, str] = Field(default_factory=dict, max_length=64)
+    timeout_seconds: float = Field(default=60, gt=0, le=86400)
+    managed_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
+    name: str = Field(default="", max_length=64)
 
     @field_validator("command", "cwd")
     @classmethod
@@ -1045,7 +1111,7 @@ class McpLaunch(Model):
             raise ValueError("invalid MCP launch text")
         return value
 
-    @field_validator("environment")
+    @field_validator("environment", "environment_commands")
     @classmethod
     def explicit_environment(cls, value: dict[str, str]) -> dict[str, str]:
         if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key) or "\x00" in content or len(content) > 16384
@@ -1083,6 +1149,11 @@ class McpView(Model):
     session_id: str = ""
     workspace: str = "primary"
     command: str = ""
+    managed_id: str = ""
+    name: str = ""
+    enabled: bool = True
+    exposure: McpExposure = "direct"
+    tool_exposure: dict[str, McpExposure] = Field(default_factory=dict)
     protocol_version: str = ""
     phase: Literal["ready", "exited", "unknown"]
     exit_code: int | None = None

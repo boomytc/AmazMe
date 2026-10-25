@@ -35,8 +35,12 @@ from .contracts import (
     ImagePart,
     McpCall,
     McpCallRequest,
+    McpConfigPatch,
+    McpConfiguration,
+    McpConfigWrite,
     McpDecision,
     McpOpen,
+    McpReconnect,
     McpState,
     McpView,
     Model,
@@ -83,6 +87,9 @@ from .workspace_files import FileContent
 
 
 class RpcParams(RunOptions):
+    mcp_config: McpConfigWrite | None = None
+    mcp_patch: McpConfigPatch | None = None
+    mcp_reconnect: McpReconnect | None = None
     package_id: str = ""
     plugin_package: PluginPackageAdd | None = None
     plugin_package_remove: PluginPackageRemove | None = None
@@ -209,6 +216,14 @@ class RpcHost(Protocol):
     async def remove_workspace(self, name: str) -> None: ...
 
     async def sessions(self) -> SessionList: ...
+
+    async def mcp_configuration(self, session: str) -> McpConfiguration: ...
+
+    async def change_mcp_configuration(self, session: str, value: McpConfigWrite | McpConfigPatch) -> McpConfiguration: ...
+
+    async def reload_mcp_configuration(self, session: str) -> McpState: ...
+
+    async def reconnect_mcp(self, session: str, value: McpReconnect) -> McpView: ...
 
     async def plugin_packages(self) -> PluginPackages: ...
 
@@ -515,6 +530,19 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         return await owner.close_terminal(session, params.terminal_id)
     if method == "mcp.state":
         return await owner.mcp_state(await _bound(owner, params))
+    if method == "mcp.config":
+        return await owner.mcp_configuration(await _bound(owner, params))
+    if method == "mcp.config.save" or method == "mcp.config.patch":
+        value = params.mcp_config if method == "mcp.config.save" else params.mcp_patch
+        if value is None:
+            raise BackendError("mcp_config_required")
+        return await owner.change_mcp_configuration(await _bound(owner, params), value)
+    if method == "mcp.reload":
+        return await owner.reload_mcp_configuration(await _bound(owner, params))
+    if method == "mcp.reconnect":
+        if params.mcp_reconnect is None:
+            raise BackendError("mcp_config_required")
+        return await owner.reconnect_mcp(await _bound(owner, params), params.mcp_reconnect)
     if method == "mcp.open":
         session = await _bound(owner, params)
         return await owner.open_mcp(session, McpOpen(

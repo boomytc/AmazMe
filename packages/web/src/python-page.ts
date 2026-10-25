@@ -11,7 +11,7 @@ import { collectPageElements, createRenderer, type PageRenderer } from "./render
 import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
 import { ApiError, definitive, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, OAuthView, PluginPackages, PluginView, ProductSettings, ProjectView, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonDirectory, pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { seq, settled } from "./python-stream.ts";
@@ -37,7 +37,7 @@ function scheduleRecord(row: ScheduleView): P.ScheduleRecordLike {
 	};
 }
 
-function pluginPanelState(packages: PluginPackages | undefined, plugins: readonly PluginView[], canLoad: boolean): P.PluginsStateLike | undefined {
+function pluginPanelState(packages: PluginPackages | undefined, plugins: readonly PluginView[], canLoad: boolean, mcpPath: string): P.PluginsStateLike | undefined {
 	if (!packages) return undefined;
 	return {
 		packages: packages.packages.map(item => item.entry),
@@ -48,7 +48,18 @@ function pluginPanelState(packages: PluginPackages | undefined, plugins: readonl
 				: "已配置，将在会话执行时加载";
 			return [item.entry, { detail, canLoad: canLoad && item.phase === "installed" }];
 		})),
-		mcp: { servers: [], errors: [], globalPath: "AmazMe" },
+		mcp: { servers: [], errors: [], globalPath: mcpPath },
+	};
+}
+
+function mcpPanelRuntime(config: McpConfiguration | undefined, state: McpState | undefined, ready: boolean): P.McpRuntimeLike | undefined {
+	if (!config) return undefined;
+	return { disabled: !ready, canOverrideProject: true, errors: [], login: null,
+		servers: config.servers.map(item => {
+			const live = state?.servers.find(server => server.managed_id === item.config_id && server.enabled);
+			return { name: item.name, detail: item.detail, state: !item.enabled ? "disabled" : live?.phase === "ready" ? "connected" : live?.phase ?? "disconnected", tools: live?.tools.length ?? 0,
+				enabled: item.enabled, exposure: item.exposure, scope: item.scope, canLogin: false, error: live?.phase === "unknown" ? "连接结果待核对；显式重连会先核对原资源退出。" : null };
+		}),
 	};
 }
 
@@ -83,6 +94,8 @@ export class DesktopPage {
 	private pluginPackages?: PluginPackages;
 	private pluginRuntime: PluginView[] = [];
 	private pluginsGeneration = 0;
+	private mcpConfiguration?: McpConfiguration;
+	private mcpRuntime?: McpState;
 	private currentPanel = P.CHAT_VIEW;
 	private modal?: P.PanelModal;
 	private notice?: P.PanelNotice;
@@ -281,6 +294,7 @@ export class DesktopPage {
 		this.draft = this.drafts.get(id) ?? { text: "", images: [] };
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined;
 		this.pluginRuntime = []; this.pluginsGeneration++;
+		this.mcpConfiguration = undefined; this.mcpRuntime = undefined;
 		this.history = undefined; this.historyLatestRevision = 0n; this.historyStarted = false; this.historyGeneration++; this.historyLoading = false;
 		this.terminal = undefined; this.terminalLoadGeneration++; clearTimeout(this.terminalTimer);
 		this.modal = undefined; this.notice = undefined; this.currentPanel = P.CHAT_VIEW;
@@ -403,6 +417,7 @@ export class DesktopPage {
 		if (await this.skillAction(action)) return;
 		if (await this.scheduleAction(action)) return;
 		if (await this.pluginAction(action)) return;
+		if (await this.mcpAction(action)) return;
 		if (id === A.HISTORY_MORE_ACTION || id === A.TRANSCRIPT_SEARCH_ACTION) {
 			await this.loadHistory(this.requireConnection(), true, id === A.TRANSCRIPT_SEARCH_ACTION);
 			if (id === A.TRANSCRIPT_SEARCH_ACTION) this.renderer.refreshTranscriptSearch();
@@ -601,12 +616,67 @@ export class DesktopPage {
 	}
 	private async loadPlugins(): Promise<void> {
 		const connection = this.client.connection, identity = this.client.identity, generation = ++this.pluginsGeneration;
-		const [packages, runtime] = await Promise.all([
+		const [packages, runtime, config, mcp] = await Promise.all([
 			this.client.call("GET /api/v1/plugin-packages", { identity }),
 			connection ? this.client.call("GET /api/v1/plugins", { query: { session_id: connection.sessionId } }) : undefined,
+			connection ? this.client.call("GET /api/v1/sessions/{session_id}/mcp-configuration", { path: { session_id: connection.sessionId } }) : undefined,
+			connection ? this.client.call("GET /api/v1/sessions/{session_id}/mcp", { path: { session_id: connection.sessionId } }) : undefined,
 		]);
 		if (identity !== this.client.identity || generation !== this.pluginsGeneration || connection !== this.client.connection) return;
 		this.pluginPackages = packages; this.pluginRuntime = runtime?.plugins ?? [];
+		this.mcpConfiguration = config; this.mcpRuntime = mcp;
+	}
+	private async mcpAction(action: P.PanelAction): Promise<boolean> {
+		if (action.kind === "open" || action.kind === "modal-close") return false;
+		const { id, data } = action, fields = action.kind === "modal-submit" ? action.fields : {};
+		if (![P.PLUGIN_MCP_ADD_ACTION, P.PLUGIN_MCP_MODAL, P.PLUGIN_MCP_ENABLED_ACTION, P.PLUGIN_MCP_EXPOSURE_ACTION, P.PLUGIN_MCP_REMOVE_ACTION, P.PLUGIN_MCP_RELOAD_ACTION, P.PLUGIN_MCP_RECONNECT_ACTION, P.PLUGIN_MCP_PROJECT_ACTION, P.PLUGIN_MCP_PROJECT_MODAL, "plugins:mcp-remove-confirm"].includes(id)) return false;
+		const connection = this.requireConnection(), modal = this.modal, ledger = this.ledger(connection);
+		const path = { session_id: connection.sessionId }, config = this.mcpConfiguration;
+		if (!config) throw new Error("请等待 MCP 配置加载完成");
+		const target = config.servers.find(item => item.name === data);
+		if (id === P.PLUGIN_MCP_ADD_ACTION) {
+			const previous = ledger.read("mcp:save", "POST /api/v1/sessions/{session_id}/mcp-configuration");
+			this.modal = P.addMcpServerModal(this.locale);
+			if (previous) this.modal = { ...this.modal, notice: { tone: "info", text: "上次配置尚待确认；提交将沿用原编号和内容。" }, fields: this.modal.fields.map(field => ({ ...field, value: field.id === "name" ? previous.body.name : JSON.stringify(previous.body.entry, null, 2), readOnly: true })) };
+			this.render(); return true;
+		}
+		if (id === P.PLUGIN_MCP_PROJECT_ACTION) {
+			if (!target) throw new Error("MCP 配置不存在");
+			this.modal = P.mcpProjectModal(this.locale, target);
+			this.modal = { ...this.modal, data: JSON.stringify({ name: target.name, revision: config.revision }) };
+			this.render(); return true;
+		}
+		if (id === P.PLUGIN_MCP_REMOVE_ACTION) {
+			if (!target) throw new Error("MCP 配置不存在");
+			this.modal = { id: "plugins:mcp-remove-confirm", title: "移除 MCP 服务", description: `停止配置所属连接并移除 ${target.name}，原调用结果保留。`, fields: [], danger: true, submit: "移除", data: JSON.stringify({ name: target.name, revision: config.revision }) };
+			this.render(); return true;
+		}
+		if (id === P.PLUGIN_MCP_MODAL) {
+			if (modal?.id !== id) return true;
+			const record = ledger.prepare("mcp:save", "POST /api/v1/sessions/{session_id}/mcp-configuration", operationId => ({ path, body: parseContract("McpConfigWrite", { operation_id: operationId, expected_revision: config.revision, name: fields.name ?? "", entry: JSON.parse(fields.entry ?? "null") }) }));
+			await ledger.send("mcp:save", record, this.client, connection);
+		} else if (id === P.PLUGIN_MCP_RELOAD_ACTION) await this.client.call("POST /api/v1/sessions/{session_id}/mcp-configuration/reload", { path, connection });
+		else if (id === P.PLUGIN_MCP_RECONNECT_ACTION) {
+			if (!target) throw new Error("MCP 配置不存在");
+			const key = `mcp:reconnect:${target.name}`;
+			await ledger.send(key, ledger.prepare(key, "POST /api/v1/sessions/{session_id}/mcp-configuration/reconnect", operationId => ({ path, body: { operation_id: operationId, name: target.name } })), this.client, connection);
+		} else {
+			let name = target?.name, revision = config.revision, scope: "global" | "project" = "global";
+			if (id === P.PLUGIN_MCP_PROJECT_MODAL || id === "plugins:mcp-remove-confirm") {
+				if (modal?.id !== id || modal.data !== data) return true;
+				const original: unknown = JSON.parse(data ?? "null");
+				if (!isRecord(original) || typeof original.name !== "string" || typeof original.revision !== "number") throw new Error("MCP 配置归属损坏");
+				name = original.name; revision = original.revision; scope = id === P.PLUGIN_MCP_PROJECT_MODAL ? "project" : "global";
+			}
+			if (!name) throw new Error("MCP 配置不存在");
+			const enabled = id === P.PLUGIN_MCP_ENABLED_ACTION ? action.kind === "control" && action.value === "true" : id === P.PLUGIN_MCP_PROJECT_MODAL ? fields.enabled === "true" : undefined;
+			const exposure = id === P.PLUGIN_MCP_EXPOSURE_ACTION ? action.kind === "control" ? action.value : undefined : id === P.PLUGIN_MCP_PROJECT_MODAL ? fields.exposure : undefined;
+			const key = `mcp:patch:${scope}:${name}:${id}`;
+			const record = ledger.prepare(key, "PATCH /api/v1/sessions/{session_id}/mcp-configuration", operationId => ({ path, body: parseContract("McpConfigPatch", { operation_id: operationId, expected_revision: revision, name, scope,
+				...(enabled === undefined ? {} : { enabled }), ...(exposure === undefined ? {} : { exposure }), remove: id === "plugins:mcp-remove-confirm" }) }));
+			await ledger.send(key, record, this.client, connection);
+		}
+		await this.loadPlugins(); if (this.modal === modal) this.modal = undefined; this.render(); return true;
 	}
 	private async pluginAction(action: P.PanelAction): Promise<boolean> {
 		if (action.kind === "open" || action.kind === "modal-close") return false;
@@ -913,7 +983,7 @@ export class DesktopPage {
 		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, projects: this.projects, selectedProject: this.selectedProject, expandedProjects: this.expandedProjects, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
-				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true) },
+				plugins: { state: pluginPanelState(this.pluginPackages, this.pluginRuntime, connection?.ready === true, this.mcpConfiguration?.path ?? "AmazMe"), runtime: mcpPanelRuntime(this.mcpConfiguration, this.mcpRuntime, connection?.ready === true) },
 				automation: { state: this.schedules ? { path: this.schedules.path, tickMs: this.schedules.tick_ms ?? 5000, schedules: this.schedules.schedules.map(scheduleRecord) } : undefined, sessionId: connection?.sessionId },
 				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() }, archives: { sessions: directory.sessions, projects: directory.projects ?? [], retentionDays: 0, now: Date.now() } },
 				skills: { state: { directory: this.resources?.skill_directory ?? "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: item.scope ?? "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: item.editable ?? false })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },

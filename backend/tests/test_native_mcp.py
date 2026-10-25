@@ -84,6 +84,32 @@ async def test_mcp_launch_pins_explicit_environment_and_working_directory_withou
     assert not (owner.profile.path / "calls.txt").exists()
 
 
+async def test_mcp_progress_resets_request_timeout_and_timeout_never_replays(terminal_owner):
+    owner = terminal_owner
+    script = owner.profile.path / "progress.py"
+    script.write_text(SERVER.replace("        if name=='demo.slow': time.sleep(args.get('seconds',2.3))", """        if name=='demo.slow':
+            for count in range(3):
+                time.sleep(.6)
+                if args.get('progress'):
+                    print(json.dumps({'jsonrpc':'2.0','method':'notifications/progress','params':{'progressToken':message['params']['_meta']['progressToken'],'progress':count}}),flush=True)"""))
+    value = OpenMcp(**query(owner).model_dump(), command=f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} calls.txt", timeout_seconds=1)
+    await owner.open_mcp(value)
+    progressing = await proposal(owner, name="demo.slow", arguments={"progress": True})
+    await approve(owner, progressing)
+    assert (await completed(owner, progressing.call_id)).phase == "done"
+    timing_out = await proposal(owner, identity="f" * 32, name="demo.slow", arguments={"progress": False})
+    await approve(owner, timing_out)
+    for _ in range(100):
+        current = await state(owner)
+        timed_out = next(call for call in current.calls if call.call_id == timing_out.call_id)
+        if timed_out.phase == "unknown" and current.servers[0].clean:
+            break
+        await asyncio.sleep(.03)
+    assert timed_out.phase == "unknown" and current.servers[0].clean
+    assert (await proposal(owner, identity=timing_out.call_id, name="demo.slow", arguments={"progress": False})).phase == "unknown"
+    assert (owner.profile.path / "calls.txt").read_text() == "xx"
+
+
 async def proposal(owner, identity="e" * 32, name="demo.echo", arguments=None):
     return await owner.request_mcp_call("a" * 32, "d" * 32,
         McpCallRequest(call_id=identity, name=name, arguments=arguments or {}), fence(owner))

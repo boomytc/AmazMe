@@ -624,6 +624,41 @@ export type McpCallRequest = {
   "origin"?: "manual" | "model";
 };
 
+export type McpConfigPatch = {
+  "operation_id": string;
+  "expected_revision": number;
+  "name": string;
+  "scope"?: "global" | "project";
+  "enabled"?: boolean | null;
+  "exposure"?: "codemode" | "deferred" | "direct" | "hidden" | null;
+  "remove"?: boolean;
+};
+
+export type McpConfigWrite = {
+  "operation_id": string;
+  "expected_revision": number;
+  "name": string;
+  "entry": McpStdioSettings;
+};
+
+export type McpConfiguration = {
+  "revision": number;
+  "workspace": string;
+  "path": string;
+  "servers": Array<McpConfiguredServer>;
+};
+
+export type McpConfiguredServer = {
+  "config_id": string;
+  "launch_id": string;
+  "name": string;
+  "detail": string;
+  "scope": "global" | "project";
+  "overridden"?: boolean;
+  "enabled": boolean;
+  "exposure": "codemode" | "deferred" | "direct" | "hidden";
+};
+
 export type McpDecision = {
   "decision_id": string;
   "approve": boolean;
@@ -635,12 +670,34 @@ export type McpOpen = {
   "workspace"?: string;
   "cwd"?: string;
   "environment"?: Record<string, string>;
+  "environment_commands"?: Record<string, string>;
+  "timeout_seconds"?: number;
+  "managed_id"?: string;
+  "name"?: string;
   "server_id": string;
+};
+
+export type McpReconnect = {
+  "operation_id": string;
+  "name": string;
 };
 
 export type McpState = {
   "servers": Array<McpView>;
   "calls": Array<McpCall>;
+};
+
+export type McpStdioSettings = {
+  "type"?: "stdio";
+  "command": string;
+  "args"?: Array<string>;
+  "env"?: Record<string, string>;
+  "cwd"?: string;
+  "enabled"?: boolean;
+  "exposure"?: "codemode" | "deferred" | "direct" | "hidden";
+  "description"?: string;
+  "toolExposure"?: Record<string, "codemode" | "deferred" | "direct" | "hidden">;
+  "timeout"?: number;
 };
 
 export type McpTool = {
@@ -654,6 +711,11 @@ export type McpView = {
   "session_id"?: string;
   "workspace"?: string;
   "command"?: string;
+  "managed_id"?: string;
+  "name"?: string;
+  "enabled"?: boolean;
+  "exposure"?: "codemode" | "deferred" | "direct" | "hidden";
+  "tool_exposure"?: Record<string, "codemode" | "deferred" | "direct" | "hidden">;
   "protocol_version"?: string;
   "phase": "ready" | "exited" | "unknown";
   "exit_code"?: number | null;
@@ -1026,6 +1088,9 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "mcp_config"?: McpConfigWrite | null;
+  "mcp_patch"?: McpConfigPatch | null;
+  "mcp_reconnect"?: McpReconnect | null;
   "package_id"?: string;
   "plugin_package"?: PluginPackageAdd | null;
   "plugin_package_remove"?: PluginPackageRemove | null;
@@ -1588,9 +1653,15 @@ export interface ApiModels {
   Login: Login;
   McpCall: McpCall;
   McpCallRequest: McpCallRequest;
+  McpConfigPatch: McpConfigPatch;
+  McpConfigWrite: McpConfigWrite;
+  McpConfiguration: McpConfiguration;
+  McpConfiguredServer: McpConfiguredServer;
   McpDecision: McpDecision;
   McpOpen: McpOpen;
+  McpReconnect: McpReconnect;
   McpState: McpState;
+  McpStdioSettings: McpStdioSettings;
   McpTool: McpTool;
   McpView: McpView;
   MemoryList: MemoryList;
@@ -1884,6 +1955,21 @@ export interface HttpOperations {
   "session_id": string;
   "remote_id": string;
 }; query: Record<string, unknown>; body: RemoteRun };
+  "GET /api/v1/sessions/{session_id}/mcp-configuration": { response: McpConfiguration; path: {
+  "session_id": string;
+}; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/sessions/{session_id}/mcp-configuration": { response: McpConfiguration; path: {
+  "session_id": string;
+}; query: Record<string, unknown>; body: McpConfigWrite };
+  "PATCH /api/v1/sessions/{session_id}/mcp-configuration": { response: McpConfiguration; path: {
+  "session_id": string;
+}; query: Record<string, unknown>; body: McpConfigPatch };
+  "POST /api/v1/sessions/{session_id}/mcp-configuration/reload": { response: McpState; path: {
+  "session_id": string;
+}; query: Record<string, unknown>; body: undefined };
+  "POST /api/v1/sessions/{session_id}/mcp-configuration/reconnect": { response: McpView; path: {
+  "session_id": string;
+}; query: Record<string, unknown>; body: McpReconnect };
   "POST /api/v1/sessions/{session_id}/mcp": { response: McpView; path: {
   "session_id": string;
 }; query: Record<string, unknown>; body: McpOpen };

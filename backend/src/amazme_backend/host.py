@@ -22,7 +22,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, JsonValue, SecretStr, TypeAdapter
 
-from . import plugin_packages, schedules
+from . import mcp_management, plugin_packages, schedules
 from .accounts import AccountStore, AccountsView, ApiKeyCredential
 from .artifacts import (
     ArtifactBody,
@@ -114,10 +114,14 @@ from .contracts import (
     McpCall,
     McpCallEnvelope,
     McpCallRequest,
+    McpConfigPatch,
+    McpConfiguration,
+    McpConfigWrite,
     McpDecision,
     McpDecisionEnvelope,
     McpOpen,
     McpQuery,
+    McpReconnect,
     McpSession,
     McpState,
     McpView,
@@ -311,6 +315,7 @@ class Host:
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
         self.package_lock = asyncio.Lock()
+        self.mcp_lock = asyncio.Lock()
         self.schedule_lock = asyncio.Lock()
         self.schedule_tick_ms = 0
         self.accounts = AccountStore(profile.account_path)
@@ -808,6 +813,94 @@ class Host:
 
     def _mcp_fence(self, session_id: str) -> dict[str, object]:
         return {"host_epoch": self.fence.host_epoch, "build_id": self.build, "session_id": session_id}
+
+    async def mcp_configuration(self, session: str) -> McpConfiguration:
+        await self._require_session(session)
+        value = await self.store.session(session)
+        assert value is not None
+        return await self.store.transaction(lambda db: mcp_management.listing(db, value.workspace, self.profile.path / "host.sqlite"))
+
+    async def change_mcp_configuration(self, session: str, value: McpConfigWrite | McpConfigPatch) -> McpConfiguration:
+        self._admit()
+        await self._require_session(session)
+        target = await self.store.session(session)
+        assert target is not None
+        await self._require_workspace(target.workspace)
+        async with self.mcp_lock:
+            result = await self.store.transaction(lambda db: mcp_management.change(db, value, target.workspace, self.profile.path / "host.sqlite"))
+        await self.ensure_supervisor()
+        # Global changes reach only already-open session bindings; other sessions load on demand.
+        try:
+            for selected in (await self.sessions()).sessions:
+                if selected.archived:
+                    continue
+                if selected.workspace == target.workspace or not isinstance(value, McpConfigPatch) or value.scope == "global":
+                    await self._sync_mcp_configuration(selected.session_id, connect=selected.session_id == session)
+        except BackendError as error:
+            raise BackendError("mcp_config_apply_pending", error.code, status=503) from error
+        return result
+
+    async def _sync_mcp_configuration(self, session: str, *, connect: bool = True) -> McpState:
+        async with self.mcp_lock:
+            target = await self.store.session(session)
+            if target is None:
+                raise BackendError("session_not_found", status=404)
+            configured = await self.store.transaction(lambda db: mcp_management.effective(db, target.workspace))
+            ids = {item.config_id: await self.store.transaction(lambda db: mcp_management.current_server(db, item, session)) for item in configured if item.settings.enabled}
+            state = await self.mcp_state(session)
+            for server in state.servers:
+                if server.managed_id and ids.get(server.managed_id) != server.server_id and not server.clean:
+                    stopped = await self.cancel_mcp(session, server.server_id)
+                    if not stopped.clean:
+                        raise BackendError("execution_cleanup_pending", status=503)
+            known = {server.server_id for server in state.servers}
+            if connect:
+                for item in configured:
+                    server_id = ids.get(item.config_id)
+                    if server_id and server_id not in known:
+                        await self.open_mcp(session, McpOpen(server_id=server_id, **mcp_management.launch(item, target.workspace).model_dump()))
+            return await self.mcp_state(session)
+
+    async def reconnect_mcp(self, session: str, value: McpReconnect) -> McpView:
+        self._admit()
+        await self._require_session(session)
+        target = await self.store.session(session)
+        assert target is not None
+        async with self.mcp_lock:
+            def reserve(db: sqlite3.Connection) -> McpOpen:
+                previous = db.execute("SELECT session,name,payload FROM mcp_reconnects WHERE operation=?", (value.operation_id,)).fetchone()
+                if previous:
+                    if (str(previous[0]), str(previous[1])) != (session, value.name):
+                        raise BackendError("mcp_reconnect_conflict")
+                    return McpOpen.model_validate_json(str(previous[2]))
+                if db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]:
+                    raise BackendError("update_frozen", status=503)
+                item = next((item for item in mcp_management.effective(db, target.workspace) if item.name == value.name and item.settings.enabled), None)
+                if item is None:
+                    raise BackendError("mcp_config_not_enabled")
+                launch = McpOpen(server_id=mcp_management.server_id(item, session, value.operation_id), **mcp_management.launch(item, target.workspace).model_dump())
+                db.execute("INSERT INTO mcp_reconnects(operation,session,name,launch,server,payload) VALUES(?,?,?,?,?,?)",
+                           (value.operation_id, session, value.name, item.launch_id, launch.server_id, launch.model_dump_json()))
+                return launch
+            launch = await self.store.transaction(reserve)
+        await self.ensure_supervisor()
+        await self._sync_mcp_configuration(session, connect=False)
+        # Old retries may query their original channel, but cannot displace a later binding.
+        config = await self.mcp_configuration(session)
+        item = next((item for item in config.servers if item.name == value.name and item.enabled), None)
+        current = await self.store.transaction(lambda db: db.execute("SELECT server FROM mcp_reconnects WHERE session=? AND name=? AND launch=? ORDER BY rowid DESC LIMIT 1", (session, value.name, item.launch_id if item else "")).fetchone())
+        if current and str(current[0]) == launch.server_id:
+            return await self.open_mcp(session, launch)
+        return await self.supervisor.call("POST", "/mcp/query", McpView, McpQuery(
+            **self.fence.model_dump(), session_id=session, server_id=launch.server_id))
+
+    async def reload_mcp_configuration(self, session: str) -> McpState:
+        self._admit()
+        await self._require_session(session)
+        if await self.store.active_update():
+            raise BackendError("update_frozen", status=503)
+        await self.ensure_supervisor()
+        return await self._sync_mcp_configuration(session)
 
     async def open_mcp(self, session_id: str, value: McpOpen) -> McpView:
         self._admit()
@@ -2522,6 +2615,7 @@ class Host:
             purpose = "validation" if active else "business"
             if not active and not validation_probe:
                 await self._sync_plugin_packages(session)
+                await self._sync_mcp_configuration(session)
             info = await self.supervisor.call("POST", "/workers/ensure", WorkerInfo, WorkerSpec(
                 **self.fence.model_dump(), session_id=session, frozen=active is not None, purpose=purpose))
             if (info.session_id != session or info.build_id != self.build or info.purpose != purpose
@@ -3343,6 +3437,26 @@ def application(owner: Host) -> FastAPI:
         if value.remote_id != remote_id:
             raise BackendError("remote_conflict")
         return await owner.submit_remote(session_id, value)
+
+    @app.get("/api/v1/sessions/{session_id}/mcp-configuration")
+    async def mcp_configuration(session_id: str) -> McpConfiguration:
+        return await owner.mcp_configuration(session_id)
+
+    @app.post("/api/v1/sessions/{session_id}/mcp-configuration")
+    async def save_mcp_configuration(session_id: str, value: McpConfigWrite) -> McpConfiguration:
+        return await owner.change_mcp_configuration(session_id, value)
+
+    @app.patch("/api/v1/sessions/{session_id}/mcp-configuration")
+    async def patch_mcp_configuration(session_id: str, value: McpConfigPatch) -> McpConfiguration:
+        return await owner.change_mcp_configuration(session_id, value)
+
+    @app.post("/api/v1/sessions/{session_id}/mcp-configuration/reload")
+    async def reload_mcp_configuration(session_id: str) -> McpState:
+        return await owner.reload_mcp_configuration(session_id)
+
+    @app.post("/api/v1/sessions/{session_id}/mcp-configuration/reconnect")
+    async def reconnect_mcp_configuration(session_id: str, value: McpReconnect) -> McpView:
+        return await owner.reconnect_mcp(session_id, value)
 
     @app.post("/api/v1/sessions/{session_id}/mcp")
     async def open_mcp(session_id: str, value: McpOpen) -> McpView:

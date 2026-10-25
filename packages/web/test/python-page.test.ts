@@ -41,6 +41,8 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
   if (path.endsWith("/resources")) return response({ context_files: [], skills: [], prompts: [], diagnostics: [] });
   if (path.endsWith("/usage")) return response({ session_id: "a" });
   if (path.endsWith("/history")) return response({ session_id: "a", requests: [], events: [] });
+  if (path.endsWith("/mcp-configuration")) return response({ revision: 0, workspace: "primary", path: "/profile/host.sqlite", servers: [] });
+  if (path.endsWith("/mcp")) return response({ servers: [], calls: [] });
   if (path.endsWith("/submissions")) {
    const body = parseContract("Submit", JSON.parse(String(options.body)));
    submitted.push(body);
@@ -156,6 +158,39 @@ test("a package add retries its original profile operation and a late response c
  finish(response({ revision: 1, packages }));
  await vi.waitFor(() => expect(sessionStorage.getItem("amazme:plugin-package:host")).toBeNull());
  expect(page.renderer.view?.panel.modal?.id).toBe("skills:create");
+});
+
+test("the MCP switch retries its original revision and intent before accepting a new opposite change", async () => {
+ const calls: Array<import("../src/python-contracts.ts").McpConfigPatch> = [];
+ const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
+ let revision = 4, enabled = true;
+ const configuration = () => ({ revision, workspace: "primary", path: "/profile/host.sqlite", servers: [{ config_id: "c".repeat(32), launch_id: "d".repeat(32), name: "local", detail: "python3 server.py", scope: "global", enabled, exposure: "direct" }] });
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/plugin-packages") return response({ revision: 0, packages: [] });
+  if (path === "/api/v1/plugins") return response({ plugins: [] });
+  if (path.endsWith("/mcp-configuration")) {
+   if (options.method !== "PATCH") return response(configuration());
+   const body = parseContract("McpConfigPatch", JSON.parse(String(options.body)));
+   calls.push(body);
+   enabled = body.enabled ?? true; revision = calls.length === 1 ? 5 : calls.length === 2 ? 5 : 6;
+   return calls.length === 1 ? response({ code: "mcp_config_apply_pending" }, 503) : response(configuration());
+  }
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "open", panel: "plugins" });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.panel?.groups[1].rows?.[0].title).toBe("local"));
+ page.renderer.onPanelAction({ kind: "control", id: P.PLUGIN_MCP_ENABLED_ACTION, data: "local", value: "false" });
+ await vi.waitFor(() => expect(calls).toHaveLength(1));
+ await vi.waitFor(() => expect(page.renderer.view?.panel.panel?.notices?.[0].text).toContain("mcp_config_apply_pending"));
+ page.renderer.onPanelAction({ kind: "control", id: P.PLUGIN_MCP_ENABLED_ACTION, data: "local", value: "true" });
+ await vi.waitFor(() => expect(calls).toHaveLength(2));
+ expect(calls[1]).toEqual(calls[0]);
+ expect(calls[0]).toMatchObject({ enabled: false, expected_revision: 4, name: "local", scope: "global" });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.panel?.groups[1].rows?.[0].controls?.[0].value).toBe("false"));
+ page.renderer.onPanelAction({ kind: "control", id: P.PLUGIN_MCP_ENABLED_ACTION, data: "local", value: "true" });
+ await vi.waitFor(() => expect(calls).toHaveLength(3));
+ expect(calls[2]).toMatchObject({ enabled: true, expected_revision: 5 });
+ expect(calls[2].operation_id).not.toBe(calls[0].operation_id);
 });
 
 

@@ -34,6 +34,10 @@ from .contracts import (
     ImagePart,
     ImportResult,
     McpCall,
+    McpConfigPatch,
+    McpConfiguration,
+    McpConfigWrite,
+    McpReconnect,
     McpState,
     McpView,
     ModelCatalog,
@@ -461,6 +465,26 @@ class Client:
     async def mcp_state(self, session_id: str) -> McpState:
         payload = await self._send("GET", f"/api/v1/sessions/{session_id}/mcp")
         return McpState.model_validate(payload)
+
+    async def mcp_configuration(self, session_id: str) -> McpConfiguration:
+        return McpConfiguration.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/mcp-configuration"))
+
+    async def change_mcp_configuration(self, session_id: str, workspace: str, attachment_id: str,
+                                       value: McpConfigWrite | McpConfigPatch) -> McpConfiguration:
+        await self._require_workspace(session_id, workspace)
+        return McpConfiguration.model_validate(await self._send("POST" if isinstance(value, McpConfigWrite) else "PATCH",
+            f"/api/v1/sessions/{session_id}/mcp-configuration", json_body=value.model_dump(mode="json", by_alias=True),
+            headers=self._write(attachment_id)))
+
+    async def reload_mcp_configuration(self, session_id: str, workspace: str, attachment_id: str) -> McpState:
+        await self._require_workspace(session_id, workspace)
+        return McpState.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/mcp-configuration/reload",
+            headers=self._write(attachment_id)))
+
+    async def reconnect_mcp(self, session_id: str, workspace: str, attachment_id: str, value: McpReconnect) -> McpView:
+        await self._require_workspace(session_id, workspace)
+        return McpView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/mcp-configuration/reconnect",
+            json_body=value.model_dump(), headers=self._write(attachment_id)))
 
     async def open_mcp(self, *, session_id: str, attachment_id: str, server_id: str, command: str, workspace: str,
                        cwd: str = "", environment: dict[str, str] | None = None) -> McpView:

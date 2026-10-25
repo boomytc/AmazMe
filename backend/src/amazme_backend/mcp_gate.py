@@ -89,6 +89,43 @@ def _stop_server(server: subprocess.Popen[bytes]) -> int:
     raise TimeoutError("MCP process exit unconfirmed")
 
 
+def _environment(launch: McpLaunch, shell: str, cwd: str) -> dict[str, str]:
+    environment = {**tool_environment(), **launch.environment}
+    deadline = time.monotonic() + 10
+    cached: dict[str, str] = {}
+    for key, command in launch.environment_commands.items():
+        if command not in cached:
+            process = subprocess.Popen([shell, "-c", command], cwd=cwd, env=environment,
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+            assert process.stdout is not None
+            fd, output = process.stdout.fileno(), bytearray()
+            os.set_blocking(fd, False)
+            try:
+                while True:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("MCP environment command timed out")
+                    readable, _, _ = select.select([fd], [], [], .05)
+                    if not readable:
+                        continue
+                    part = os.read(fd, 4096)
+                    if not part:
+                        break
+                    output.extend(part)
+                    if len(output) > 16384:
+                        raise ValueError("MCP environment command output exceeds limit")
+                process.wait(timeout=max(.01, deadline - time.monotonic()))
+                if process.returncode != 0:
+                    raise ValueError("MCP environment command failed")
+                cached[command] = output.decode().strip()
+                if not cached[command]:
+                    raise ValueError("MCP environment command returned no value")
+            finally:
+                _stop_server(process)
+                process.stdout.close()
+        environment[key] = cached[command]
+    return environment
+
+
 def main() -> int:
     control = bytearray()
     while b"\n" not in control:
@@ -103,17 +140,17 @@ def main() -> int:
         return 125
     permit = messages[0]
     command, cwd = permit.get("command"), permit.get("cwd")
-    if (set(permit) != {"op", "command", "cwd", "uid", "gid", "environment"} or permit["op"] != "permit"
+    if (set(permit) != {"op", "command", "cwd", "uid", "gid", "environment", "environment_commands", "timeout_seconds"} or permit["op"] != "permit"
             or (permit["uid"], permit["gid"]) != (os.getuid(), os.getgid())
             or not isinstance(command, str) or not command or len(command) > 16000 or "\0" in command
             or not isinstance(cwd, str) or not os.path.isabs(cwd) or "\0" in cwd):
         return 125
     try:
-        launch = McpLaunch.model_validate({"command": command, "cwd": cwd, "environment": permit["environment"]})
+        launch = McpLaunch.model_validate({"command": command, "cwd": cwd, "environment": permit["environment"], "environment_commands": permit["environment_commands"], "timeout_seconds": permit["timeout_seconds"]})
     except ValueError:
         return 125
     shell = pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
-    server = subprocess.Popen([shell, "-c", command], cwd=cwd, env={**tool_environment(), **launch.environment},
+    server = subprocess.Popen([shell, "-c", command], cwd=cwd, env=_environment(launch, shell, cwd),
                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               start_new_session=True)
     assert server.stdin is not None and server.stdout is not None
@@ -123,6 +160,7 @@ def main() -> int:
     inbox = bytearray()
     number = 1
     waiting: tuple[str, int, str] | None = None
+    call_deadline = 0.0
     seen: dict[str, tuple[str, dict[str, JsonValue]]] = {}
     tools: list[McpTool] = []
     cursors: set[str] = set()
@@ -171,6 +209,9 @@ def main() -> int:
                                           "clientInfo": {"name": "amazme", "version": "0.1.0"}})
         while True:
             readable, _, _ = select.select([0, reader], [], [], .05)
+            if waiting is not None and time.monotonic() >= call_deadline:
+                _send(writer, {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": waiting[1], "reason": "Request timed out"}})
+                return 125
             if phase == "refresh" and time.monotonic() > refresh_deadline:
                 fail_refresh()
                 continue
@@ -220,7 +261,8 @@ def main() -> int:
                         # Keep every sent identity. A full history refuses the new id and does not stop the service.
                         _send(1, {"op": "conflict", "call_id": call_id})
                         continue
-                    waiting = (call_id, request("tools/call", {"name": name, "arguments": arguments}), canonical)
+                    waiting = (call_id, request("tools/call", {"name": name, "arguments": arguments, "_meta": {"progressToken": number}}), canonical)
+                    call_deadline = time.monotonic() + launch.timeout_seconds
             if reader in readable:
                 data = os.read(reader, 4096)
                 if not data:
@@ -233,6 +275,10 @@ def main() -> int:
                         raise ValueError("Invalid JSON-RPC version")
                     if "method" in message:
                         if "id" not in message:
+                            params = message.get("params")
+                            if (message.get("method") == "notifications/progress" and waiting is not None
+                                    and isinstance(params, dict) and params.get("progressToken") == waiting[1]):
+                                call_deadline = time.monotonic() + launch.timeout_seconds
                             if (message.get("method") == "notifications/tools/list_changed"
                                     and phase in {"catalog", "refresh", "ready"}):
                                 if phase == "ready" and waiting is None:

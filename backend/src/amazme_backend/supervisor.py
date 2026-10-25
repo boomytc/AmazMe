@@ -24,6 +24,7 @@ import uvicorn
 from fastapi import FastAPI
 from pydantic import TypeAdapter
 
+from . import mcp_management
 from .codemode_run import CodemodeOutcome, json_object, run_codemode
 from .common import Peer, Profile, build_id, child_command, lock, private_write, unix_listener
 from .contracts import (
@@ -402,6 +403,7 @@ class Supervisor:
             for table, additions in {
                 "mcp_servers": {"workspace": "TEXT NOT NULL DEFAULT 'primary'", "protocol_version": "TEXT NOT NULL DEFAULT ''",
                                 "launch_digest": "TEXT NOT NULL DEFAULT ''",
+                                "managed_id": "TEXT NOT NULL DEFAULT ''", "name": "TEXT NOT NULL DEFAULT ''",
                                 "lease": "TEXT NOT NULL DEFAULT ''", "directory": "TEXT NOT NULL DEFAULT ''", "permitted": "INTEGER NOT NULL DEFAULT 0"},
                 "mcp_calls": {"result_data": "TEXT", "is_error": "INTEGER NOT NULL DEFAULT 0",
                               "schema_digest": "TEXT NOT NULL DEFAULT ''", "origin": "TEXT NOT NULL DEFAULT 'manual'"},
@@ -1303,9 +1305,14 @@ class Supervisor:
                     await self._set_blocked(self.blocked)
 
     def _mcp_view(self, row: sqlite3.Row) -> McpView:
+        config = mcp_management.policy(self.profile.path, str(row["session"]), str(row["managed_id"]), str(row["id"]))
         return McpView.model_validate({
             "server_id": row["id"], "session_id": row["session"], "workspace": row["workspace"],
             "command": row["command"], "protocol_version": row["protocol_version"],
+            "managed_id": str(row["managed_id"]), "name": str(row["name"]),
+            "enabled": config.enabled if config else not bool(row["managed_id"]),
+            "exposure": config.exposure if config else "hidden" if row["managed_id"] else "direct",
+            "tool_exposure": config.tool_exposure if config else {},
             "phase": row["phase"] if row["phase"] in {"ready", "exited", "unknown"} else "unknown",
             "exit_code": row["exit_code"], "tools": json.loads(row["catalog"]), "clean": bool(row["clean"]),
         })
@@ -1326,6 +1333,7 @@ class Supervisor:
             workspace = value.workspace or (str(old["workspace"]) if old is not None else session_workspace(self.profile.path, value.session_id))
             launch_body = value.model_dump(exclude={"host_epoch", "build_id", "server_id"})
             launch_body["workspace"] = workspace
+            launch_body["environment_commands"] = list(value.environment_commands.items())
             launch = hashlib.sha256(json.dumps(launch_body, sort_keys=True).encode()).hexdigest()
             if old is not None:
                 workspace = value.workspace or str(old["workspace"])
@@ -1338,6 +1346,10 @@ class Supervisor:
             self._admit(value.session_id)
             recorded = session_workspace(self.profile.path, value.session_id)
             workspace = value.workspace or recorded
+            if value.managed_id:
+                config = mcp_management.policy(self.profile.path, value.session_id, value.managed_id, value.server_id)
+                if config is None or not config.enabled:
+                    raise BackendError("mcp_config_changed")
             count = await self.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_servers WHERE clean=0").fetchone()[0])
             if count >= 8:
                 raise BackendError("mcp_server_capacity", status=429)
@@ -1358,14 +1370,14 @@ class Supervisor:
             try:
                 with ProcessReservation(self.profile.path, "execution", instance) as reservation:
                     await self.db.call(lambda db: db.execute(
-                        "INSERT INTO mcp_servers(id,session,command,phase,workspace,lease,directory,launch_digest) VALUES(?,?,?,'unknown',?,?,?,?)",
-                        (value.server_id, value.session_id, value.command, workspace, reservation.lease.model_dump_json(), str(directory), launch)), write=True)
+                        "INSERT INTO mcp_servers(id,session,command,phase,workspace,lease,directory,launch_digest,managed_id,name) VALUES(?,?,?,'unknown',?,?,?,?,?,?)",
+                        (value.server_id, value.session_id, value.command, workspace, reservation.lease.model_dump_json(), str(directory), launch, value.managed_id, value.name)), write=True)
                     process = await ServiceProcess.start(self.profile.path, instance, directory, reservation, "mcp")
                     self.mcp_processes[value.server_id] = process
                 client = McpClient(process.sock)
                 self.mcp_clients[value.server_id] = client
                 await self.db.call(lambda db: db.execute("UPDATE mcp_servers SET permitted=1 WHERE id=?", (value.server_id,)), write=True)
-                await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), str(cwd), value.environment)
+                await asyncio.to_thread(client.permit, value.command, os.getuid(), os.getgid(), str(cwd), value.environment, value.environment_commands, value.timeout_seconds)
                 catalog = json.dumps([tool.model_dump() for tool in client.tools], ensure_ascii=False)
                 busy = await self.db.call(lambda db: db.execute(
                     "SELECT 1 FROM mcp_calls WHERE server=? AND phase IN ('waiting_approval','running')",
@@ -1408,6 +1420,17 @@ class Supervisor:
             await self.db.call(lambda db: db.execute(
                 "UPDATE mcp_servers SET catalog=? WHERE id=? AND phase='ready' AND catalog!=?",
                 (catalog, server_id, catalog)), write=True)
+
+    async def query_mcp(self, value: McpQuery) -> McpView:
+        async with self.control:
+            self.check_host(value)
+            row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=? AND session=?", (value.server_id, value.session_id)).fetchone())
+            if row is None:
+                raise BackendError("mcp_channel_unconfirmed", status=503)
+            await self._sync_mcp(value.server_id)
+            row = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
+            assert row is not None
+            return self._mcp_view(row)
 
     async def mcp_state(self, value: McpSession) -> McpState:
         async with self.control:
@@ -1478,6 +1501,9 @@ class Supervisor:
                 raise BackendError("mcp_catalog_stale", status=503)
             if server["phase"] != "ready":
                 raise BackendError("mcp_not_ready")
+            managed = self._mcp_view(server)
+            if not managed.enabled or mcp_management.exposure(managed.exposure, managed.tool_exposure, value.name) == "hidden":
+                raise BackendError("mcp_tool_hidden")
             if value.name not in {item["name"] for item in json.loads(server["catalog"])}:
                 raise BackendError("mcp_tool_unknown")
             counts = await self.db.call(lambda db: db.execute(
@@ -1517,6 +1543,9 @@ class Supervisor:
             self._admit(session_id)
             if row["phase"] != "waiting_approval":
                 raise BackendError("mcp_call_conflict")
+            managed = self._mcp_view(server)
+            if value.approve and (not managed.enabled or mcp_management.exposure(managed.exposure, managed.tool_exposure, str(row["name"])) == "hidden"):
+                raise BackendError("mcp_tool_hidden")
             if value.approve and client is not None and client.catalog_failed:
                 raise BackendError("mcp_catalog_stale", status=503)
             pinned = str(row["schema_digest"] or "")
@@ -1681,7 +1710,7 @@ class Supervisor:
     async def code_tools(self, session_id: str) -> CodeTools:
         workspace = session_workspace(self.profile.path, session_id)
         servers = (await self.mcp_state(McpSession(host_epoch=self.host_epoch,build_id=self.build,session_id=session_id))).servers
-        offers = offers_from_views(servers)
+        offers = offers_from_views(servers, surface="code")
         plugins = [offer for view in (await self.list_plugins(session_id)).plugins for offer in PluginOffer.from_view(view,workspace)]
         return CodeTools.model_validate({"tools":[tool["function"] for tool in tool_definitions(offers,self.profile.config.provider,plugins)]})
 
@@ -1725,7 +1754,7 @@ class Supervisor:
             await self._code_blocked(value.session_id)
             workspace = session_workspace(self.profile.path,value.session_id)
             servers = await self.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE session=?", (value.session_id,)).fetchall())
-            offers = offers_from_views([self._mcp_view(row) for row in servers])
+            offers = offers_from_views([self._mcp_view(row) for row in servers], surface="code")
             plugins = [offer for view in (await self.list_plugins(value.session_id)).plugins for offer in PluginOffer.from_view(view,workspace)]
             definitions = [dict(tool["function"]) for tool in tool_definitions(offers,self.profile.config.provider,plugins)]
             cancelled = await self.db.call(lambda db: db.execute(
@@ -2780,6 +2809,7 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/mcp/open")(owner.open_mcp)
     app.post("/mcp/cancel")(owner.cancel_mcp)
     app.post("/mcp/state")(owner.mcp_state)
+    app.post("/mcp/query")(owner.query_mcp)
     app.post("/code/run")(owner.run_code)
     app.get("/code/tools")(owner.code_tools)
     app.post("/code/tools/bind")(owner.bind_code_tool)

@@ -12,6 +12,7 @@ from pydantic import Field, JsonValue, TypeAdapter, ValidationError
 
 from .contracts import BackendError, McpTool, McpView, Model
 from .mcp_gate import LIMIT, MESSAGE
+from .mcp_management import exposure
 
 
 class McpResult(Model):
@@ -42,10 +43,12 @@ class McpClient:
         self.busy: set[str] = set()
         self.protocol_version = ""
 
-    def permit(self, command: str, uid: int, gid: int, cwd: str, environment: dict[str, str] | None = None) -> None:
+    def permit(self, command: str, uid: int, gid: int, cwd: str, environment: dict[str, str] | None = None,
+               environment_commands: dict[str, str] | None = None, timeout_seconds: float = 60) -> None:
         values: dict[str, JsonValue] = {key: value for key, value in (environment or {}).items()}
-        self._send({"op": "permit", "command": command, "uid": uid, "gid": gid, "cwd": cwd, "environment": values})
-        self.pump(10, lambda: self.ready or self.closed or self.exit_code is not None)
+        commands: dict[str, JsonValue] = {key: value for key, value in (environment_commands or {}).items()}
+        self._send({"op": "permit", "command": command, "uid": uid, "gid": gid, "cwd": cwd, "environment": values, "environment_commands": commands, "timeout_seconds": timeout_seconds})
+        self.pump(20 if commands else 10, lambda: self.ready or self.closed or self.exit_code is not None)
         if not self.ready:
             raise BackendError("mcp_catalog_failed", status=503)
 
@@ -164,13 +167,16 @@ def catalog_schema_digest(catalog: str, name: str) -> str:
     return ""
 
 
-def offers_from_views(servers: list[McpView]) -> list[McpOffer]:
+def offers_from_views(servers: list[McpView], *, surface: Literal["model", "code"] = "model") -> list[McpOffer]:
     """Tools the model may call. Only a ready server's stored catalog is offered."""
     offers: list[McpOffer] = []
     for server in servers:
-        if server.phase != "ready" or not server.command or not server.workspace:
+        if not server.enabled or server.phase != "ready" or not server.command or not server.workspace:
             continue
         for tool in server.tools:
+            visible = exposure(server.exposure, server.tool_exposure, tool.name)
+            if visible == "hidden" or surface == "model" and visible != "direct":
+                continue
             schema = tool.input_schema
             if schema.get("type") not in (None, "object"):
                 continue

@@ -2809,6 +2809,227 @@
         }
       }
     },
+    "/api/v1/sessions/{session_id}/mcp-configuration": {
+      "get": {
+        "summary": "Mcp Configuration",
+        "operationId": "mcp_configuration_api_v1_sessions__session_id__mcp_configuration_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpConfiguration"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Save Mcp Configuration",
+        "operationId": "save_mcp_configuration_api_v1_sessions__session_id__mcp_configuration_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpConfigWrite"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpConfiguration"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Patch Mcp Configuration",
+        "operationId": "patch_mcp_configuration_api_v1_sessions__session_id__mcp_configuration_patch",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpConfigPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpConfiguration"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/mcp-configuration/reload": {
+      "post": {
+        "summary": "Reload Mcp Configuration",
+        "operationId": "reload_mcp_configuration_api_v1_sessions__session_id__mcp_configuration_reload_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpState"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{session_id}/mcp-configuration/reconnect": {
+      "post": {
+        "summary": "Reconnect Mcp Configuration",
+        "operationId": "reconnect_mcp_configuration_api_v1_sessions__session_id__mcp_configuration_reconnect_post",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/McpReconnect"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpView"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session_id}/mcp": {
       "post": {
         "summary": "Open Mcp",
@@ -8939,6 +9160,197 @@
         ],
         "title": "McpCallRequest"
       },
+      "McpConfigPatch": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Operation Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Name"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "project"
+            ],
+            "title": "Scope",
+            "default": "global"
+          },
+          "enabled": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enabled"
+          },
+          "exposure": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "codemode",
+                  "deferred",
+                  "direct",
+                  "hidden"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Exposure"
+          },
+          "remove": {
+            "type": "boolean",
+            "title": "Remove",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "expected_revision",
+          "name"
+        ],
+        "title": "McpConfigPatch"
+      },
+      "McpConfigWrite": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Operation Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Name"
+          },
+          "entry": {
+            "$ref": "#/components/schemas/McpStdioSettings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "expected_revision",
+          "name",
+          "entry"
+        ],
+        "title": "McpConfigWrite"
+      },
+      "McpConfiguration": {
+        "properties": {
+          "revision": {
+            "type": "integer",
+            "title": "Revision"
+          },
+          "workspace": {
+            "type": "string",
+            "title": "Workspace"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "servers": {
+            "items": {
+              "$ref": "#/components/schemas/McpConfiguredServer"
+            },
+            "type": "array",
+            "title": "Servers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "revision",
+          "workspace",
+          "path",
+          "servers"
+        ],
+        "title": "McpConfiguration"
+      },
+      "McpConfiguredServer": {
+        "properties": {
+          "config_id": {
+            "type": "string",
+            "title": "Config Id"
+          },
+          "launch_id": {
+            "type": "string",
+            "title": "Launch Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "project"
+            ],
+            "title": "Scope"
+          },
+          "overridden": {
+            "type": "boolean",
+            "title": "Overridden",
+            "default": false
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "exposure": {
+            "type": "string",
+            "enum": [
+              "codemode",
+              "deferred",
+              "direct",
+              "hidden"
+            ],
+            "title": "Exposure"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "config_id",
+          "launch_id",
+          "name",
+          "detail",
+          "scope",
+          "enabled",
+          "exposure"
+        ],
+        "title": "McpConfiguredServer"
+      },
       "McpDecision": {
         "properties": {
           "decision_id": {
@@ -8993,6 +9405,33 @@
             "maxProperties": 64,
             "title": "Environment"
           },
+          "environment_commands": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 64,
+            "title": "Environment Commands"
+          },
+          "timeout_seconds": {
+            "type": "number",
+            "maximum": 86400.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout Seconds",
+            "default": 60
+          },
+          "managed_id": {
+            "type": "string",
+            "pattern": "^(?:[a-f0-9]{32})?$",
+            "title": "Managed Id",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Name",
+            "default": ""
+          },
           "server_id": {
             "type": "string",
             "pattern": "^[a-f0-9]{32}$",
@@ -9006,6 +9445,27 @@
           "server_id"
         ],
         "title": "McpOpen"
+      },
+      "McpReconnect": {
+        "properties": {
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Operation Id"
+          },
+          "name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,64}$",
+            "title": "Name"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "operation_id",
+          "name"
+        ],
+        "title": "McpReconnect"
       },
       "McpState": {
         "properties": {
@@ -9031,6 +9491,94 @@
           "calls"
         ],
         "title": "McpState"
+      },
+      "McpStdioSettings": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "stdio",
+            "title": "Type",
+            "default": "stdio"
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Command"
+          },
+          "args": {
+            "items": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "type": "array",
+            "maxItems": 128,
+            "title": "Args"
+          },
+          "env": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "maxProperties": 64,
+            "title": "Env"
+          },
+          "cwd": {
+            "type": "string",
+            "maxLength": 4096,
+            "title": "Cwd",
+            "default": ""
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "exposure": {
+            "type": "string",
+            "enum": [
+              "codemode",
+              "deferred",
+              "direct",
+              "hidden"
+            ],
+            "title": "Exposure",
+            "default": "codemode"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Description",
+            "default": ""
+          },
+          "toolExposure": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "codemode",
+                "deferred",
+                "direct",
+                "hidden"
+              ]
+            },
+            "type": "object",
+            "maxProperties": 128,
+            "title": "Toolexposure"
+          },
+          "timeout": {
+            "type": "number",
+            "maximum": 86400.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout",
+            "default": 60
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "command"
+        ],
+        "title": "McpStdioSettings"
       },
       "McpTool": {
         "properties": {
@@ -9079,6 +9627,45 @@
             "type": "string",
             "title": "Command",
             "default": ""
+          },
+          "managed_id": {
+            "type": "string",
+            "title": "Managed Id",
+            "default": ""
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "default": ""
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": true
+          },
+          "exposure": {
+            "type": "string",
+            "enum": [
+              "codemode",
+              "deferred",
+              "direct",
+              "hidden"
+            ],
+            "title": "Exposure",
+            "default": "direct"
+          },
+          "tool_exposure": {
+            "additionalProperties": {
+              "type": "string",
+              "enum": [
+                "codemode",
+                "deferred",
+                "direct",
+                "hidden"
+              ]
+            },
+            "type": "object",
+            "title": "Tool Exposure"
           },
           "protocol_version": {
             "type": "string",
@@ -10974,6 +11561,36 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "mcp_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpConfigWrite"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mcp_patch": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpConfigPatch"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "mcp_reconnect": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/McpReconnect"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "package_id": {
             "type": "string",

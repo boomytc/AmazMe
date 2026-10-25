@@ -177,6 +177,13 @@ class HostStore:
                 CREATE TABLE IF NOT EXISTS plugin_packages(id TEXT PRIMARY KEY,entry TEXT NOT NULL,intent TEXT NOT NULL,phase TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS plugin_package_revision(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
                 INSERT OR IGNORE INTO plugin_package_revision(id,revision) VALUES(1,0);
+                CREATE TABLE IF NOT EXISTS mcp_configuration(workspace TEXT NOT NULL,name TEXT NOT NULL,id TEXT NOT NULL,
+                  launch TEXT NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(workspace,name));
+                CREATE TABLE IF NOT EXISTS mcp_config_revision(id INTEGER PRIMARY KEY,revision INTEGER NOT NULL);
+                INSERT OR IGNORE INTO mcp_config_revision(id,revision) VALUES(1,0);
+                CREATE TABLE IF NOT EXISTS mcp_config_changes(id TEXT PRIMARY KEY,digest TEXT NOT NULL,result TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS mcp_reconnects(operation TEXT PRIMARY KEY,session TEXT NOT NULL,name TEXT NOT NULL,
+                  launch TEXT NOT NULL,server TEXT NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, name TEXT NOT NULL, digest TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS project_sessions(session TEXT PRIMARY KEY, project TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS product_settings(id INTEGER PRIMARY KEY, display_name TEXT NOT NULL,
@@ -630,7 +637,7 @@ class HostStore:
             if not db.execute("SELECT 1 FROM session_removals WHERE session=?", (session,)).fetchone():
                 raise BackendError("session_removal_pending")
             db.execute("DELETE FROM schedule_runs WHERE schedule IN (SELECT id FROM schedules WHERE session=?)", (session,))
-            for table in ("project_sessions", "session_models", "deliveries", "schedules", "feedback", "shares", "file_write_preparations"):
+            for table in ("project_sessions", "session_models", "deliveries", "schedules", "mcp_reconnects", "feedback", "shares", "file_write_preparations"):
                 db.execute(f"DELETE FROM {table} WHERE session=?", (session,))
             db.execute("DELETE FROM sessions WHERE id=?", (session,))
             db.execute("UPDATE session_removals SET completed=1 WHERE session=?", (session,))
