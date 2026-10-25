@@ -383,6 +383,7 @@ class Session(Model):
     archived: bool = False
     workspace: str = "primary"
     project_id: str = ""
+    prepared: bool = True
 
 
 class SessionList(Model):
@@ -390,6 +391,7 @@ class SessionList(Model):
 
 
 class BranchSession(Model):
+    branch_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     title: str = Field(default="", max_length=100)
 

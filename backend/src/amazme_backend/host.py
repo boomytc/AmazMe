@@ -1127,8 +1127,11 @@ class Host:
 
     async def _require_session(self, session_id: str) -> None:
         """A missing session must not fall through to the primary directory."""
-        if not await self.store.exists(session_id):
+        session = await self.store.session(session_id)
+        if session is None:
             raise BackendError("session_not_found", status=404)
+        if not session.prepared:
+            raise BackendError("branch_preparation_pending", status=409)
 
     async def create_session(self, value: CreateSession) -> Session:
         self._admit()
@@ -1439,6 +1442,8 @@ class Host:
         if not await self.store.exists(session):
             raise BackendError("session_not_found", status=404)
         source = next(item for item in (await self.sessions()).sessions if item.session_id == session)
+        if require_active and not source.prepared:
+            raise BackendError("branch_preparation_pending")
         if require_active and source.archived:
             raise BackendError("session_archived")
         path = session_database(self.profile.path, session)
@@ -2028,40 +2033,50 @@ class Host:
         return ComputerCleanup(cleared=True, proof=stored)
 
     async def branch_session(self, parent: str, value: BranchSession) -> Session:
-        self._admit()
-        if not await self.store.exists(parent):
-            raise BackendError("session_not_found", status=404)
-        parent_path = session_database(self.profile.path, parent)
-        read_settled_root(parent_path, value.request_id)
-        web, computer = read_session_policies(parent_path)
-        web = web.model_copy(update={"base_url": validate_base_url(web.base_url)})
-        source = next(item for item in (await self.sessions()).sessions if item.session_id == parent)
-        if source.archived:
-            raise BackendError("session_archived")
-        await self._require_workspace(source.workspace)
-        title = value.title.strip() or f"分支：{source.title}"
-        child_id = secrets.token_hex(16)
-        created = await self.store.create_branch(child_id, parent, value.request_id, title[:100])
-        directory = session_database(self.profile.path, child_id).parent
-        child: SessionStore | None = None
-        try:
-            directory.mkdir(parents=True, mode=0o700)
-            child = SessionStore(directory / "session.sqlite", child_id, build=self.build,
-                                 config=self.profile.config.provider,
-                                 approval_policy=self.profile.config.approval_policy)
-            await child.initialize()
-            await child.import_settled_root(parent_path, value.request_id)
-            await child.save_web_policy(web)
-            await child.save_computer_policy(computer)
-        except Exception:
-            if child is not None:
-                await child.db.close()
-                child = None
-            await self.store.discard_unopened_branch(child_id)
-            remove_session_directory(directory)
-            raise
-        await child.db.close()
-        return created
+        async with self.update_lock:
+            self._admit()
+            child_id = value.branch_id or secrets.token_hex(16)
+            request_key = hashlib.sha256(json.dumps([parent, value.model_dump()], sort_keys=True).encode()).hexdigest()
+            async with self.worker_locks.setdefault(child_id, asyncio.Lock()):
+                existing = await self.store.exists(child_id)
+                if existing:
+                    prior = await self.store.create_branch(child_id, parent, value.request_id, value.title, request_key)
+                    if prior.prepared:
+                        return prior
+                await self._require_session(parent)
+                parent_path = session_database(self.profile.path, parent)
+                read_settled_root(parent_path, value.request_id)
+                web, computer = read_session_policies(parent_path)
+                web = web.model_copy(update={"base_url": validate_base_url(web.base_url)})
+                source = next(item for item in (await self.sessions()).sessions if item.session_id == parent)
+                if source.archived:
+                    raise BackendError("session_archived")
+                await self._require_workspace(source.workspace)
+                title = value.title.strip() or f"分支：{source.title}"
+                await self.store.create_branch(child_id, parent, value.request_id, title[:100], request_key)
+                directory = session_database(self.profile.path, child_id).parent
+                child: SessionStore | None = None
+                try:
+                    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+                    child = SessionStore(directory / "session.sqlite", child_id, build=self.build,
+                                         config=self.profile.config.provider,
+                                         approval_policy=self.profile.config.approval_policy)
+                    await child.initialize()
+                    await child.import_settled_root(parent_path, value.request_id)
+                    await child.save_web_policy(web)
+                    await child.save_computer_policy(computer)
+                except Exception:
+                    if child is not None:
+                        await child.db.close()
+                        child = None
+                    if not existing:
+                        await self.store.discard_unopened_branch(child_id)
+                        remove_session_directory(directory)
+                    raise
+                finally:
+                    if child is not None:
+                        await child.db.close()
+                return await self.store.prepared_branch(child_id)
 
     async def search_session(self, session: str, query: str) -> SearchResults:
         self._admit()
@@ -2273,8 +2288,7 @@ class Host:
     async def reader(self, session: str) -> ReadPeer:
         self._admit()
         async with self.worker_locks.setdefault(session, asyncio.Lock()):
-            if not await self.store.exists(session):
-                raise BackendError("session_not_found", status=404)
+            await self._require_session(session)
             active = await self.store.active_update()
             service = await self.store.service()
             if service and not exited(service.process_lease):
@@ -2330,8 +2344,8 @@ class Host:
         if maintenance and not update_id and not validation_probe:
             return await self.reader(session)
         async with self.worker_locks.setdefault(session, asyncio.Lock()):
-            if not await self.store.exists(session) and not validation_probe:
-                raise BackendError("session_not_found", status=404)
+            if not validation_probe:
+                await self._require_session(session)
             active = await self.store.active_update()
             if active and (not maintenance or update_id != active.update_id):
                 raise BackendError("update_frozen", status=503)
@@ -2370,8 +2384,7 @@ class Host:
             return peer
 
     async def attach_session(self, session: str) -> Attachment:
-        if not await self.store.exists(session):
-            raise BackendError("session_not_found", status=404)
+        await self._require_session(session)
         expired = [key for key in self.attachments if time.monotonic() - self.attachment_seen.get(key, 0) > 300]
         for key in expired:
             self.attachments.pop(key, None)

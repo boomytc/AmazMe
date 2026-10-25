@@ -2775,11 +2775,13 @@ export function createRenderer(
 		row.dataset.submissionId = item.id;
 		row.append(userText(item.text, "queue-text"));
 		if (item.retry) row.append(panelButton(item.retry, report));
-		const cancel = panelButton(item.cancel, report);
-		cancel.className = "queue-cancel";
-		cancel.title = item.retry ? item.cancel.label : copy("queue.cancelAria");
-		cancel.setAttribute("aria-label", cancel.title);
-		row.append(cancel);
+		if (item.cancel) {
+			const cancel = panelButton(item.cancel, report);
+			cancel.className = "queue-cancel";
+			cancel.title = item.retry ? item.cancel.label : copy("queue.cancelAria");
+			cancel.setAttribute("aria-label", cancel.title);
+			row.append(cancel);
+		}
 		return row;
 	};
 

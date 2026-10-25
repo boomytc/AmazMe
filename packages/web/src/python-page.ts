@@ -234,6 +234,7 @@ export class DesktopPage {
 		this.modalGeneration++;
 		const session = this.sessions.find(item => item.session_id === id);
 		if (!session) throw new Error("会话不存在");
+		if (session.prepared === false) throw new Error("分支仍在准备，请先重试原创建请求");
 		this.selectedProject = session.project_id || undefined;
 		if (this.selectedProject && !this.expandedProjects.includes(this.selectedProject)) this.expandedProjects = [...this.expandedProjects, this.selectedProject];
 		const previous = this.client.connection;
@@ -331,13 +332,20 @@ export class DesktopPage {
 	private download(data: string, name: string, type: string): void {
 		const url = URL.createObjectURL(new Blob([data], { type })); const link = document.createElement("a"); link.href = url; link.download = name; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 	}
-	private async fork(): Promise<void> {
-		const connection = this.requireConnection();
-		const request = connection.snapshot?.requests.findLast(item => item.kind === "root" && settled.has(item.status));
-		if (!request) throw new Error("请先完成一个回合");
-		const session = await this.client.call("POST /api/v1/sessions/{session}/branches", { path: { session: connection.sessionId }, body: { request_id: request.request_id }, connection });
-		if (!connection.active()) return;
-		await this.loadGlobal(); await this.selectSession(session.session_id);
+	private async fork(sessionId = this.requireConnection().sessionId): Promise<void> {
+		const navigation = this.navigationGeneration;
+		const session = await this.client.withSession(sessionId, async connection => {
+			const ledger = this.ledger(connection);
+			let record = ledger.read("branch", "POST /api/v1/sessions/{session}/branches");
+			if (!record) {
+				const snapshot = this.client.connection?.sessionId === sessionId ? this.client.connection.snapshot : await this.client.call("GET /api/v1/sessions/{session}/snapshot", { path: { session: sessionId } });
+				const request = snapshot?.requests.findLast(item => item.kind === "root" && item.status === "succeeded");
+				if (!request) throw new Error("请先完成一个成功回合");
+				record = ledger.prepare("branch", "POST /api/v1/sessions/{session}/branches", id => ({ path: { session: sessionId }, body: { branch_id: id, request_id: request.request_id } }));
+			}
+			return ledger.send("branch", record, this.client, connection);
+		});
+		await this.loadGlobal(); if (navigation === this.navigationGeneration) await this.selectSession(session.session_id);
 	}
 	private async action(action: P.PanelAction): Promise<void> {
 		this.notice = undefined;
@@ -386,7 +394,7 @@ export class DesktopPage {
 			if (record) { await this.cancel(record.body.request_id); ledger.forget("submission", record); if (connection.active()) this.render(); }
 			return;
 		}
-		if (id === A.CONVERSATION_FORK_ACTION) { await this.fork(); return; }
+		if (id === A.CONVERSATION_FORK_ACTION || id === "write:retry-branch") { await this.fork(data); return; }
 		if (id === A.COMPACT_ACTION) { this.modal = P.compactModal(this.locale); this.render(); return; }
 		if (id === A.COMPACT_MODAL) {
 			const connection = this.requireConnection(), ledger = this.ledger(connection);
@@ -707,9 +715,12 @@ export class DesktopPage {
 			try { return connection ? this.ledger(connection).read("submission", "POST /api/v1/sessions/{session}/submissions") : undefined; }
 			catch (error) { pendingError = error instanceof Error ? error.message : String(error); return undefined; }
 		})();
+		let branchPending: string | undefined;
+		try { branchPending = connection ? this.ledger(connection).read("branch", "POST /api/v1/sessions/{session}/branches")?.id : undefined; }
+		catch (error) { pendingError = error instanceof Error ? error.message : String(error); }
 		const terminal = this.terminal?.connection === connection ? this.terminal : undefined;
-		const dock = dockView(this.locale, { open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.parent_id === connection?.sessionId).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, children: 0, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
-		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: pending ? [...picker.queue, { id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", label: "重试原请求", weight: "line" }, cancel: { id: "write:cancel-submit", label: "取消原请求", weight: "text" } }] : picker.queue,
+		const dock = dockView(this.locale, { open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.session_id === session?.parent_id || item.parent_id === connection?.sessionId || Boolean(session?.parent_id && item.parent_id === session.parent_id)).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, role: item.parent_id ? "fork" as const : "main" as const, parentConversationId: item.parent_id || undefined, children: this.sessions.filter(child => child.parent_id === item.session_id).length, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
+		this.renderer.render({ ...picker, readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", label: "取消原请求", weight: "text" as const } }] : [])],
 			dock: terminal && this.dockTab === "terminal" ? { ...dock, panel: { ...dock.panel, texts: [], notices: terminal.queue.paused ? [{ tone: "warning", text: "终端输入尚未确认；请重试原输入或核对后继续。" }] : dock.panel.notices, actions: [
 				{ id: "terminal:retry", label: "重试原输入", weight: "line", disabled: terminal.queue.busy || !terminal.queue.items.length },
 				{ id: "terminal:confirm", label: "核对后继续", weight: "text", disabled: terminal.queue.busy || !terminal.queue.items.length },

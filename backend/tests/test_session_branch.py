@@ -1,4 +1,5 @@
 """Session branches copy one settled turn and then diverge."""
+import asyncio
 import base64
 import json
 import shutil
@@ -26,6 +27,7 @@ from amazme_backend.contracts import (
     PrepareUpdate,
     ProcessLease,
     Receipt,
+    RenameSession,
     Snapshot,
     Stream,
     Submit,
@@ -944,3 +946,72 @@ async def test_branch_copies_model_without_sharing_later_changes(owner: Host) ->
     assert await owner.store.session_model(child) == copied
     await owner.store.discard_unopened_branch(child)
     assert await owner.store.session_model(child) is None
+
+
+async def test_branch_retry_keeps_its_id_after_parent_and_child_changes(owner: Host) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+    finally:
+        await parent.db.close()
+    request = BranchSession(branch_id="c" * 32, request_id="r1")
+    first = await owner.branch_session(PARENT, request)
+    await owner.rename_session(first.session_id, RenameSession(title="手动分支名称", expected_title=first.title))
+    child = SessionStore(session_database(owner.profile.path, first.session_id), first.session_id,
+                         build=owner.build, approval_policy="auto")
+    await child.initialize()
+    await child.fence(fence_for(owner.build))
+    try:
+        await finish(child, "branch-only", "r2", owner.build)
+        before = await message_payloads(child)
+        await child.save_web_policy(WebPolicy(enabled=True))
+    finally:
+        await child.db.close()
+    await owner.archive_session(PARENT, True)
+    retried = await owner.branch_session(PARENT, request)
+    assert retried.session_id == first.session_id and retried.title == "手动分支名称" and retried.prepared
+    check = SessionStore(session_database(owner.profile.path, first.session_id), first.session_id,
+                         build=owner.build, read_only=True, require_existing=True)
+    await check.initialize()
+    try:
+        assert await message_payloads(check) == before
+        assert (await check.web_policy()).enabled is True
+    finally:
+        await check.db.close()
+    assert len((await owner.sessions()).sessions) == 2
+    with pytest.raises(BackendError, match="branch_conflict"):
+        await owner.branch_session(PARENT, request.model_copy(update={"title": "changed payload"}))
+
+
+async def test_interrupted_branch_is_not_attachable_and_explicit_retry_finishes_the_same_copy(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+    finally:
+        await parent.db.close()
+    request = BranchSession(branch_id="e" * 32, request_id="r1")
+    original = SessionStore.save_web_policy
+    interrupted = False
+
+    async def save(self: SessionStore, policy: WebPolicy) -> WebPolicy:
+        nonlocal interrupted
+        if self.session_id == request.branch_id and not interrupted:
+            interrupted = True
+            raise asyncio.CancelledError()
+        return await original(self, policy)
+
+    monkeypatch.setattr(SessionStore, "save_web_policy", save)
+    with pytest.raises(asyncio.CancelledError):
+        await owner.branch_session(PARENT, request)
+    partial = await owner.store.session(request.branch_id)
+    assert partial is not None and not partial.prepared
+    with pytest.raises(BackendError, match="branch_preparation_pending"):
+        await owner.attach_session(request.branch_id)
+    with pytest.raises(BackendError, match="branch_preparation_pending"):
+        await owner.store.enqueue(request.branch_id, "submit", "early", Submit(request_id="early", text="must wait"))
+    recovered = await owner.branch_session(PARENT, request)
+    assert recovered.prepared and recovered.session_id == request.branch_id
+    assert len((await owner.sessions()).sessions) == 2
+    attached = await owner.attach_session(request.branch_id)
+    assert attached.session_id == request.branch_id
+    owner.release_attachment(request.branch_id, attached.attachment_id)

@@ -462,6 +462,12 @@
     },
     "BranchSession": {
       "properties": {
+        "branch_id": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{32})?$",
+          "title": "Branch Id",
+          "default": ""
+        },
         "request_id": {
           "type": "string",
           "maxLength": 128,
@@ -5615,6 +5621,11 @@
           "type": "string",
           "title": "Project Id",
           "default": ""
+        },
+        "prepared": {
+          "type": "boolean",
+          "title": "Prepared",
+          "default": true
         }
       },
       "additionalProperties": false,

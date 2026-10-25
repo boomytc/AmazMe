@@ -334,7 +334,7 @@ export interface QueueItem {
 	readonly id: string;
 	readonly text: string;
 	/** The withdraw control, so the row carries its own cancel. */
-	readonly cancel: PanelButton;
+	readonly cancel?: PanelButton;
 }
 
 /** How the next submit is applied while a turn runs. */

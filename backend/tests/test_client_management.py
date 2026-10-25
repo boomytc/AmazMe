@@ -34,6 +34,9 @@ async def test_project_and_session_edits_reject_stale_writes_and_remove_only_own
             client.headers["x-amazme-attachment"] = attachment["attachment_id"]
             renamed = await client.put(f"/api/v1/sessions/{session_id}/title", json={"title": "新名", "expected_title": "原名"})
             assert renamed.status_code == 200 and renamed.json()["session_id"] == session_id
+            created_retry = await client.post("/api/v1/sessions", json={
+                "session_id": session_id, "title": "原名", "project_id": project_id})
+            assert created_retry.status_code == 201 and created_retry.json()["title"] == "新名"
             late = await client.put(f"/api/v1/sessions/{session_id}/title", json={"title": "迟到", "expected_title": "原名"})
             assert late.status_code == 409
             await _message(host, session_id, "hello", "待保留的历史")

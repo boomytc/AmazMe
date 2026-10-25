@@ -207,6 +207,10 @@ class HostStore:
                 db.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
             if "workspace" not in present:
                 db.execute("ALTER TABLE sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT 'primary'")
+            if "create_digest" not in present:
+                db.execute("ALTER TABLE sessions ADD COLUMN create_digest TEXT NOT NULL DEFAULT ''")
+            if "branch_ready" not in present:
+                db.execute("ALTER TABLE sessions ADD COLUMN branch_ready INTEGER NOT NULL DEFAULT 1")
             settings_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(product_settings)")}
             if "preferences" not in settings_columns:
                 db.execute("ALTER TABLE product_settings ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'")
@@ -234,7 +238,7 @@ class HostStore:
     def _session_sql(tail: str) -> str:
         return (
             "SELECT s.id AS id,s.title AS title,s.parent_id AS parent_id,"
-            "s.fork_request_id AS fork_request_id,s.archived AS archived,s.workspace AS workspace,s.updated_ms AS updated_ms,"
+            "s.fork_request_id AS fork_request_id,s.archived AS archived,s.workspace AS workspace,s.updated_ms AS updated_ms,s.branch_ready AS branch_ready,"
             "coalesce(p.project,'') AS project_id FROM sessions s "
             "LEFT JOIN project_sessions p ON p.session=s.id " + tail
         )
@@ -245,11 +249,17 @@ class HostStore:
         project_id = str(row["project_id"]) if "project_id" in keys else ""
         return Session(session_id=str(row["id"]), title=str(row["title"]), parent_id=str(row["parent_id"]),
                        fork_request_id=str(row["fork_request_id"]), archived=bool(row["archived"]),
-                       workspace=str(row["workspace"] or "primary"), project_id=project_id, updated_ms=int(row["updated_ms"]))
+                       workspace=str(row["workspace"] or "primary"), project_id=project_id, updated_ms=int(row["updated_ms"]), prepared=bool(row["branch_ready"]))
 
     async def sessions(self) -> SessionList:
         return await self._call(lambda db: SessionList(sessions=[
             self._session(row) for row in db.execute(self._session_sql("ORDER BY s.updated_ms,s.rowid"))]))
+
+    async def session(self, session_id: str) -> Session | None:
+        def operation(db: sqlite3.Connection) -> Session | None:
+            row = db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone()
+            return self._session(row) if row is not None else None
+        return await self._call(operation)
 
     async def workspace_grants(self) -> list[tuple[str, str]]:
         def operation(db: sqlite3.Connection) -> list[tuple[str, str]]:
@@ -471,6 +481,7 @@ class HostStore:
         return await self.transaction(operation)
 
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
+        creation = hashlib.sha256(value.model_dump_json(exclude={"session_id"}).encode()).hexdigest()
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
@@ -478,8 +489,12 @@ class HostStore:
                 raise BackendError("session_removed")
             workspace = value.workspace or "primary"
             project_id = value.project_id
-            row = db.execute("SELECT title, workspace FROM sessions WHERE id=?", (session_id,)).fetchone()
+            row = db.execute("SELECT title, workspace, create_digest FROM sessions WHERE id=?", (session_id,)).fetchone()
             if row is not None:
+                if str(row["create_digest"]):
+                    if str(row["create_digest"]) != creation:
+                        raise BackendError("session_conflict")
+                    return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
                 linked = db.execute("SELECT project FROM project_sessions WHERE session=?", (session_id,)).fetchone()
                 stored_project = "" if linked is None else str(linked[0])
                 if str(row[0]) != value.title or str(row[1] or "primary") != workspace or stored_project != project_id:
@@ -493,16 +508,25 @@ class HostStore:
                 project = self._project(db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone())
                 if workspace not in project.workspaces:
                     raise BackendError("project_workspace_mismatch")
-            db.execute("INSERT INTO sessions(id,title,workspace,updated_ms) VALUES(?,?,?,?)", (session_id, value.title, workspace, time.time_ns() // 1_000_000))
+            db.execute("INSERT INTO sessions(id,title,workspace,updated_ms,create_digest) VALUES(?,?,?,?,?)", (session_id, value.title, workspace, time.time_ns() // 1_000_000, creation))
             if project_id:
                 db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
             return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
         return await self.transaction(operation)
 
-    async def create_branch(self, session_id: str, parent_id: str, fork_request_id: str, title: str) -> Session:
+    async def create_branch(self, session_id: str, parent_id: str, fork_request_id: str, title: str, request_key: str = "") -> Session:
+        creation = request_key or hashlib.sha256(json.dumps([parent_id, fork_request_id, title]).encode()).hexdigest()
         def operation(db: sqlite3.Connection) -> Session:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
+            if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
+                raise BackendError("session_removed")
+            existing = db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone()
+            if existing is not None:
+                stored = db.execute("SELECT create_digest FROM sessions WHERE id=?", (session_id,)).fetchone()
+                if str(stored[0]) != creation:
+                    raise BackendError("branch_conflict")
+                return self._session(existing)
             parent = db.execute("SELECT workspace FROM sessions WHERE id=?", (parent_id,)).fetchone()
             if parent is None:
                 raise BackendError("session_not_found", status=404)
@@ -511,13 +535,19 @@ class HostStore:
             workspace = str(parent[0] or "primary")
             project = db.execute("SELECT project FROM project_sessions WHERE session=?", (parent_id,)).fetchone()
             project_id = str(project[0]) if project else ""
-            db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id,workspace,updated_ms) VALUES(?,?,?,?,?,?)",
-                       (session_id, title, parent_id, fork_request_id, workspace, time.time_ns() // 1_000_000))
+            db.execute("INSERT INTO sessions(id,title,parent_id,fork_request_id,workspace,updated_ms,create_digest,branch_ready) VALUES(?,?,?,?,?,?,?,0)",
+                       (session_id, title, parent_id, fork_request_id, workspace, time.time_ns() // 1_000_000, creation))
             db.execute("INSERT INTO session_models(session,provider,model) "
                        "SELECT ?,provider,model FROM session_models WHERE session=?", (session_id, parent_id))
             if project_id:
                 db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
             return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session_id,)).fetchone())
+        return await self.transaction(operation)
+
+    async def prepared_branch(self, session: str) -> Session:
+        def operation(db: sqlite3.Connection) -> Session:
+            db.execute("UPDATE sessions SET branch_ready=1 WHERE id=?", (session,))
+            return self._session(db.execute(self._session_sql("WHERE s.id=?"), (session,)).fetchone())
         return await self.transaction(operation)
 
     async def discard_unopened_branch(self, session_id: str) -> None:
@@ -557,9 +587,11 @@ class HostStore:
                 if existing["digest"] != digest:
                     raise BackendError("request_conflict")
                 return self._delivery(existing)
-            row = db.execute("SELECT archived FROM sessions WHERE id=?", (session,)).fetchone()
+            row = db.execute("SELECT archived,branch_ready FROM sessions WHERE id=?", (session,)).fetchone()
             if row is None:
                 raise BackendError("session_not_found", status=404)
+            if not bool(row["branch_ready"]):
+                raise BackendError("branch_preparation_pending")
             if kind == "submit" and int(row[0]):
                 raise BackendError("session_archived")
             if kind not in {"cancel", "resolve"} and db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]:

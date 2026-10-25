@@ -97,6 +97,7 @@ export type AutomationView = {
 };
 
 export type BranchSession = {
+  "branch_id"?: string;
   "request_id": string;
   "title"?: string;
 };
@@ -1083,6 +1084,7 @@ export type Session = {
   "archived"?: boolean;
   "workspace"?: string;
   "project_id"?: string;
+  "prepared"?: boolean;
 };
 
 export type SessionDiagnostic = {
