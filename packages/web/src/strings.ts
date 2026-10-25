@@ -1,7 +1,5 @@
-export type ScheduleRuleLike =
-	| { readonly kind: "interval"; readonly everyMinutes: number }
-	| { readonly kind: "once"; readonly at: string; readonly timeZone: string }
-	| { readonly kind: "cron"; readonly expression: string; readonly timeZone: string };
+import type { ScheduleRuleLike } from "./panels.ts";
+export type { ScheduleRuleLike } from "./panels.ts";
 /**
  * The page's copy, in both shipped languages. Everything a reader sees comes from here: the
  * conversation, the composer, and the management panels, plus the labels for the host's settings
@@ -53,10 +51,8 @@ export const EN = {
 	"modal.scheduleAdd.at": "Local date and time",
 	"modal.scheduleAdd.expression": "Cron expression",
 	"modal.scheduleAdd.timeZone": "Time zone",
-	"modal.scheduleAdd.cronHelp":
-		"Five numeric fields: minute hour day month weekday. 0 9 * * 1-5 means weekdays at 09:00. Use *, lists, ranges and steps; Sunday is 0 or 7. Restricted day and weekday fields match either.",
-	"modal.scheduleAdd.zoneHelp":
-		"IANA zone, e.g. Asia/Shanghai. Repeated clock times use the first occurrence. Missing clock times are skipped; one-time rules reject them.",
+	"modal.scheduleAdd.cronHelp": "Five numeric fields: minute hour day month weekday. 0 9 * * 1-5 means weekdays at 09:00. Use *, lists, ranges and steps; Sunday is 0 or 7. Restricted day and weekday fields match either.",
+	"modal.scheduleAdd.zoneHelp": "IANA zone, e.g. Asia/Shanghai. Repeated clock times use the first occurrence. Missing clock times are skipped; one-time rules reject them.",
 	"modal.scheduleAdd.busy": "When the conversation is busy",
 	"modal.scheduleAdd.queue": "Queue",
 	"modal.scheduleAdd.skip": "Skip",
@@ -152,8 +148,7 @@ export const EN = {
 	"project.removeFolder": "Remove folder",
 	"project.defaultFolder": "Use as default directory",
 	"project.default": "Default",
-	"project.folderHint":
-		"Select folders on the computer running AmazMe. The first folder is the default execution directory.",
+	"project.folderHint": "Select folders on the computer running AmazMe. The first folder is the default execution directory.",
 	"project.go": "Go",
 	"project.parentFolder": "Parent folder",
 	"project.chooseFolder": "Select this folder",
@@ -168,8 +163,7 @@ export const EN = {
 	"project.rename": "Rename project",
 	"project.remove": "Remove project",
 	"project.removeTitle": "Remove {name}?",
-	"project.removeHint":
-		"All sessions in this project will be archived and their work stopped. History and directory files are kept.",
+	"project.removeHint": "All sessions in this project will be archived and their work stopped. History and directory files are kept.",
 	"project.archived": "Archived",
 	"project.archivedReadOnly": "Archived · restore to continue",
 	"project.archive": "Archive",
@@ -294,8 +288,7 @@ export const EN = {
 	"model.defaultsSaved": "Defaults saved for new sessions.",
 	"model.defaultsFailed": "Could not save defaults. Check the settings file and try again.",
 	"model.nextRequest": "Changes apply to the next model request in this session.",
-	"model.manageHelp":
-		"Change the current session's model, reasoning effort and model list. Provider credentials are shared with the terminal.",
+	"model.manageHelp": "Change the current session's model, reasoning effort and model list. Provider credentials are shared with the terminal.",
 	"model.needsSession": "Select or create a session to manage its models and connections.",
 	"model.commandInstead": "Use the model selector beside the send button, or Models and connections in Settings.",
 	"page.sessionCommandInstead": "Use the session menu, history or conversation controls.",
@@ -314,8 +307,7 @@ export const EN = {
 	"auth.provider": "Provider",
 	"auth.method": "Sign-in method or action",
 	"auth.configured": "configured",
-	"auth.help":
-		"Sign in to make this provider's models available. Sign out removes saved credentials; environment credentials remain available.",
+	"auth.help": "Sign in to make this provider's models available. Sign out removes saved credentials; environment credentials remain available.",
 	"auth.logout": "Remove saved credentials",
 	"auth.loggedOut": "Saved credentials removed. Environment credentials may still be available.",
 	"auth.continue": "Continue",
@@ -331,15 +323,13 @@ export const EN = {
 	"auth.invalid": "Choose an available provider and sign-in method.",
 
 	"page.entryFailed": "AmazMe could not load",
-	"page.entryFailedHelp":
-		"The page entry could not be loaded or evaluated. Check that the local host is running, then reload. No session data has been cleared.",
+	"page.entryFailedHelp": "The page entry could not be loaded or evaluated. Check that the local host is running, then reload. No session data has been cleared.",
 	"page.entryRetry": "Reload page",
 	"block.you": "You",
 	"block.thinking": "Thinking",
 	"block.compaction": "Compaction",
 	"block.imageRecovery": "Retried without images",
-	"block.imageRecoveryText":
-		"The provider rejected the image payload. This response cannot see the images; original attachments are preserved. Resize or convert them, or switch models before asking about their contents.",
+	"block.imageRecoveryText": "The provider rejected the image payload. This response cannot see the images; original attachments are preserved. Resize or convert them, or switch models before asking about their contents.",
 	"block.compactionFailed": "Compaction failed",
 	"block.newContext": "New context",
 	"block.truncated": "Truncated",
@@ -483,8 +473,7 @@ export const EN = {
 	"review.paused.seconds": "Time budget reached; paused before the next step",
 	"review.paused.cost": "Cost budget reached; paused before the next step",
 	"review.resume": "Continue with another budget",
-	"project.archiveHint":
-		"Archive this session and stop running tasks, queued inputs and terminal commands. History is kept and file changes are not rolled back. Restore the session to start new work; cancelled tasks will not replay.",
+	"project.archiveHint": "Archive this session and stop running tasks, queued inputs and terminal commands. History is kept and file changes are not rolled back. Restore the session to start new work; cancelled tasks will not replay.",
 	"project.archivedAge": "Archived {age}",
 	"project.retentionDue": "Review retention",
 	"dock.main": "main",
@@ -497,13 +486,11 @@ export const EN = {
 	"dock.forkNameRequired": "Enter a name between 1 and 200 characters.",
 	"dock.archiveFork": "Archive fork",
 	"dock.restoreFork": "Restore fork",
-	"dock.archiveForkHint":
-		"Stop this fork's tasks, queued work and task-owned background work. The main line and other forks are unaffected. History and file changes are kept; restoring does not replay cancelled work.",
+	"dock.archiveForkHint": "Stop this fork's tasks, queued work and task-owned background work. The main line and other forks are unaffected. History and file changes are kept; restoring does not replay cancelled work.",
 	"dock.archivedForks": "Archived forks",
 	"dock.activeConversations": "Active conversations",
 	"dock.forkReadOnly": "Archived fork scope · restore the fork to continue",
-	"dock.forkSharedFiles":
-		"Forks keep separate conversation context but share project files. Archiving does not roll back files.",
+	"dock.forkSharedFiles": "Forks keep separate conversation context but share project files. Archiving does not roll back files.",
 	"dock.queuedCount": "{count} queued",
 	"dock.summarizing": "Summarizing",
 	"dock.runningTool": "Running tool",
@@ -694,16 +681,15 @@ export const EN = {
 	"panel.settings.archivedSessionsHelp": "View archived sessions and restore them to their projects.",
 	"panel.settings.archivedSessionsOpen": "Open",
 	"panel.settings.archivedGroupEmpty": "No archived sessions.",
-	"panel.settings.archivedFootnote":
-		"Retention reminder: {days} days. A due archive is only marked; nothing is deleted automatically.",
+	"panel.settings.archivedFootnote": "Retention reminder: {days} days. A due archive is only marked; nothing is deleted automatically.",
 	"panel.settings.archivedKeepForever": "Kept indefinitely. Nothing is deleted automatically.",
-	"panel.settings.description": "Manage interface preferences, models, and task execution.",
+	"panel.settings.description":
+		"Manage interface preferences, models, and task execution.",
 	"panel.settings.filesTitle": "Configuration & diagnostics",
 	"panel.settings.filesDescription": "Find configuration files, reload settings, or check runtime status.",
 	"panel.settings.reload": "Reload settings",
 	"panel.settings.diagnostics": "View diagnostic report",
-	"panel.settings.diagnosticsHelp":
-		"Local configuration and file observations. The report includes paths, but never credential values. Review it before sharing.",
+	"panel.settings.diagnosticsHelp": "Local configuration and file observations. The report includes paths, but never credential values. Review it before sharing.",
 	"panel.settings.diagnosticsLoading": "Reading local state…",
 	"panel.settings.diagnosticsFailed": "Diagnostics could not complete. Check the host connection and retry.",
 	"panel.settings.globalPath": "Global settings",
@@ -731,7 +717,8 @@ export const EN = {
 	"panel.settings.fontPreviewTerminal": "$ npm test --workspace @amazme/web  ✓ passed",
 
 	"panel.skills.title": "Skills",
-	"panel.skills.description": "Give AmazMe instructions and methods for specific tasks.",
+	"panel.skills.description":
+		"Give AmazMe instructions and methods for specific tasks.",
 	"panel.skills.loaded": "Loaded skills",
 	"panel.skills.new": "New skill",
 	"panel.skills.import": "Import skill…",
@@ -739,13 +726,17 @@ export const EN = {
 	"panel.skills.view": "View",
 	"panel.skills.remove": "Remove",
 	"panel.skills.commandOnly": "command only",
-	"panel.skills.empty": "No skills yet. Create or import a skill to reuse a familiar workflow.",
-	"panel.skills.footnote": "Reload session resources to use skill files in the current session. Saved in {directory}.",
+	"panel.skills.empty":
+		"No skills yet. Create or import a skill to reuse a familiar workflow.",
+	"panel.skills.footnote":
+		"Reload session resources to use skill files in the current session. Saved in {directory}.",
 
 	"panel.plugins.title": "Plugins",
-	"panel.plugins.description": "Manage session plugins and MCP servers.",
+	"panel.plugins.description":
+		"Manage session plugins and MCP servers.",
 	"panel.plugins.packages": "Plugin packages",
-	"panel.plugins.packagesDescription": "Plugin packages add tools and commands to sessions.",
+	"panel.plugins.packagesDescription":
+		"Plugin packages add tools and commands to sessions.",
 	"panel.plugins.addPackage": "Add package…",
 	"panel.plugins.packagesEmpty": "No plugin packages. Built-in features are available.",
 	"panel.plugins.packagesFootnote":
@@ -759,8 +750,7 @@ export const EN = {
 	"panel.plugins.pasteRedirect": "Paste redirect URL",
 	"panel.plugins.cancelLogin": "Cancel sign-in",
 	"panel.plugins.loginExpired": "This sign-in is no longer active. Start a new sign-in.",
-	"panel.plugins.redirectHelp":
-		"Approve access in the authorization page. Paste the full redirect URL if the browser cannot reach this host.",
+	"panel.plugins.redirectHelp": "Approve access in the authorization page. Paste the full redirect URL if the browser cannot reach this host.",
 	"panel.plugins.mcp": "MCP servers",
 	"panel.plugins.mcpDescription": "Connect external services so AmazMe can use their tools.",
 	"panel.plugins.addServer": "Add server…",
@@ -768,8 +758,7 @@ export const EN = {
 	"panel.plugins.exposure": "Tool exposure",
 	"panel.plugins.projectSettings": "Configure this project",
 	"panel.plugins.projectSettingsHelp": "Configure {server} for this trusted project. Global settings stay unchanged.",
-	"panel.plugins.projectSettingsFailed":
-		"Could not save project settings. Check project trust and write access, then retry.",
+	"panel.plugins.projectSettingsFailed": "Could not save project settings. Check project trust and write access, then retry.",
 	"panel.plugins.remove": "Remove",
 	"panel.plugins.mcpEmpty": "No MCP servers yet. Add a server to connect its tools.",
 	"panel.plugins.mcpUnavailable": "MCP management is unavailable for the selected session.",
@@ -778,7 +767,8 @@ export const EN = {
 	"panel.plugins.fromExtension": "From extension",
 
 	"panel.automation.title": "Automation",
-	"panel.automation.description": "Run session tasks on a schedule and review the results of each run.",
+	"panel.automation.description":
+		"Run session tasks on a schedule and review the results of each run.",
 	"panel.automation.schedules": "Planned prompts",
 	"panel.automation.conversation": "Conversation {id}",
 	"panel.automation.running": "Waiting for result",
@@ -786,7 +776,8 @@ export const EN = {
 	"panel.automation.cancelling": "Waiting for cancellation",
 	"panel.automation.cancel": "Cancel run",
 	"panel.automation.add": "Plan a prompt…",
-	"panel.automation.empty": "No scheduled tasks yet. Create a task to handle recurring work in the current session.",
+	"panel.automation.empty":
+		"No scheduled tasks yet. Create a task to handle recurring work in the current session.",
 	"panel.automation.unreadable": "Cannot read plans. Repair the file, then re-read it.",
 	"panel.automation.noSession": "Open a session before creating a scheduled task for it.",
 	"panel.automation.everyMinute": "Every minute",
@@ -811,8 +802,10 @@ export const EN = {
 	"modal.skillNew.body": "Instructions",
 	"modal.create": "Create",
 	"modal.skillEdit.title": "Edit {name}",
-	"modal.skillEdit.description": "The whole SKILL.md. The frontmatter must keep the skill's name and a description.",
-	"modal.skillView.description": "This skill lives outside the agent directory, so it is read-only here.",
+	"modal.skillEdit.description":
+		"The whole SKILL.md. The frontmatter must keep the skill's name and a description.",
+	"modal.skillView.description":
+		"This skill lives outside the agent directory, so it is read-only here.",
 	"modal.compact.title": "Compact context",
 	"modal.compact.description":
 		"Summarize the conversation so far and continue from the summary. Optional instructions steer what it keeps.",
@@ -829,12 +822,14 @@ export const EN = {
 		"The session's storage is deleted from the host. Its working directory is left alone.",
 	"modal.sessionRemove.submit": "Remove",
 	"modal.import.title": "Import a skill",
-	"modal.import.description": "Copies a skill folder or markdown file into the agent's skills directory.",
+	"modal.import.description":
+		"Copies a skill folder or markdown file into the agent's skills directory.",
 	"modal.import.path": "Path",
 	"modal.import.pathPlaceholder": "~/skills/weekly-report",
 	"modal.import.submit": "Import",
 	"modal.package.title": "Add a plugin package",
-	"modal.package.description": "An absolute path to a package with src/session.ts, built when a session starts.",
+	"modal.package.description":
+		"An absolute path to a package with src/session.ts, built when a session starts.",
 	"modal.package.path": "Package path",
 	"modal.package.pathPlaceholder": "/path/to/plugin",
 	"modal.add": "Add",
@@ -844,8 +839,7 @@ export const EN = {
 	"modal.mcp.namePlaceholder": "filesystem",
 	"modal.mcp.entry": "Entry",
 	"modal.scheduleAdd.title": "Plan a prompt",
-	"modal.scheduleAdd.description":
-		"The host sends this prompt to conversation {conversation} in {session}. Changing the selected conversation keeps this target.",
+	"modal.scheduleAdd.description": "The host sends this prompt to conversation {conversation} in {session}. Changing the selected conversation keeps this target.",
 	"modal.scheduleAdd.prompt": "Prompt",
 	"modal.scheduleAdd.promptPlaceholder": "Summarize what changed since the last run",
 	"modal.scheduleAdd.every": "Every (minutes)",
@@ -863,14 +857,11 @@ export const EN = {
 	"page.paintFailed": "could not render the host's state: {error}",
 	"page.commandFailed": "command failed: {error}",
 	"page.commandUnknown": "no such command: /{name}",
-	"page.commandTargetChanged":
-		"The conversation changed while expanding the command. Run it again in the current conversation.",
+	"page.commandTargetChanged": "The conversation changed while expanding the command. Run it again in the current conversation.",
 	"page.reloadTargetChanged": "The session changed during reload. Run /reload in the current session.",
 	"page.pluginsReloaded": "Reloaded skills, tools, plugins, and MCP connections.",
-	"page.pluginBuildFailed":
-		"Could not rebuild the plugins. The current version remains active; check the plugin source and retry /reload.",
-	"page.pluginActivationFailed":
-		"Could not activate the plugins. Finish or abort active tasks, check plugin setup, then retry /reload.",
+	"page.pluginBuildFailed": "Could not rebuild the plugins. The current version remains active; check the plugin source and retry /reload.",
+	"page.pluginActivationFailed": "Could not activate the plugins. Finish or abort active tasks, check plugin setup, then retry /reload.",
 	"page.removeFailed": "remove failed: {error}",
 	"page.newSessionFailed": "new session failed: {error}",
 	"page.modelChangeFailed": "model change failed: {error}",
@@ -916,12 +907,10 @@ export const EN = {
 	"desktop.update.current": "Installed: {version}",
 	"desktop.update.channelLabel": "Channel",
 	"desktop.update.automaticLabel": "Check automatically each day",
-	"desktop.update.trust":
-		"Downloads require your permission. Installation also requires confirmation and a trusted signature from the installed publisher.",
+	"desktop.update.trust": "Downloads require your permission. Installation also requires confirmation and a trusted signature from the installed publisher.",
 	"desktop.update.check": "Check for Updates",
 	"desktop.update.download": "Download Update",
-	"desktop.update.install":
-		"Installation could not continue. The previous app is retained in the adjacent update folder for recovery.",
+	"desktop.update.install": "Installation could not continue. The previous app is retained in the adjacent update folder for recovery.",
 	"desktop.update.cancel": "Cancel",
 	"desktop.update.later": "Later",
 	"desktop.update.stable": "Stable",
@@ -935,23 +924,18 @@ export const EN = {
 	"desktop.update.installing": "Preparing restart…",
 	"desktop.update.error": "Update could not continue.",
 	"desktop.update.availableDetail": "You can keep working while the update downloads.",
-	"desktop.update.readyDetail":
-		"Choose Install and Restart when your work is finished. The previous app is retained for recovery.",
-	"desktop.update.previewDetail":
-		"Preview builds may contain unfinished changes. They never replace the stable update feed.",
+	"desktop.update.readyDetail": "Choose Install and Restart when your work is finished. The previous app is retained for recovery.",
+	"desktop.update.previewDetail": "Preview builds may contain unfinished changes. They never replace the stable update feed.",
 	"desktop.update.downloadConfirm": "Download AmazMe {version}?",
 	"desktop.update.installConfirm": "Install the update and restart AmazMe?",
-	"desktop.update.installDetail":
-		"The web host and running work will stop. Finish your work first. Conversations and settings stay in their existing data directories. Cancel to keep working.",
+	"desktop.update.installDetail": "The web host and running work will stop. Finish your work first. Conversations and settings stay in their existing data directories. Cancel to keep working.",
 	"desktop.update.network": "Cannot reach GitHub. Check the connection and try again.",
 	"desktop.update.manifest": "The release manifest is missing or invalid. No update was installed.",
 	"desktop.update.source": "The download source is not an allowed HTTPS GitHub release source.",
 	"desktop.update.integrity": "The download size or SHA256 does not match. Download again.",
-	"desktop.update.signature":
-		"Apple trust, app identity, or publisher verification failed. Use a verified signed release installation.",
+	"desktop.update.signature": "Apple trust, app identity, or publisher verification failed. Use a verified signed release installation.",
 	"desktop.update.unsupported": "No compatible installer is available for this platform and architecture.",
-	"desktop.update.permission":
-		"Move AmazMe from the disk image to a writable Applications folder before updating. No administrator permission is requested.",
+	"desktop.update.permission": "Move AmazMe from the disk image to a writable Applications folder before updating. No administrator permission is requested.",
 	"desktop.update.busy": "Installation was postponed or another instance/update is busy. Finish work and try again.",
 	"desktop.render.gone.title": "Page error",
 	"desktop.render.gone.message": "The page process exited ({reason}, exit code {exitCode}).",
@@ -1017,10 +1001,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"modal.scheduleAdd.at": "本地日期与时间",
 	"modal.scheduleAdd.expression": "Cron 表达式",
 	"modal.scheduleAdd.timeZone": "时区",
-	"modal.scheduleAdd.cronHelp":
-		"五个数字字段：分钟 小时 日 月 星期。0 9 * * 1-5 为工作日 09:00。支持 *、列表、范围和步长，周日为 0 或 7。日与星期都指定时满足任一即可。",
-	"modal.scheduleAdd.zoneHelp":
-		"IANA 时区，如 Asia/Shanghai。夏令时重复时间只取首次；不存在的时间会跳过，一次性规则则拒绝保存。",
+	"modal.scheduleAdd.cronHelp": "五个数字字段：分钟 小时 日 月 星期。0 9 * * 1-5 为工作日 09:00。支持 *、列表、范围和步长，周日为 0 或 7。日与星期都指定时满足任一即可。",
+	"modal.scheduleAdd.zoneHelp": "IANA 时区，如 Asia/Shanghai。夏令时重复时间只取首次；不存在的时间会跳过，一次性规则则拒绝保存。",
 	"modal.scheduleAdd.busy": "会话忙碌时",
 	"modal.scheduleAdd.queue": "排队",
 	"modal.scheduleAdd.skip": "跳过",
@@ -1297,8 +1279,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"block.thinking": "思考",
 	"block.compaction": "上下文压缩",
 	"block.imageRecovery": "已不带图片重试",
-	"block.imageRecoveryText":
-		"供应商拒绝了图片载荷。本次回复无法看到图片，原始附件仍保留。若需分析图片内容，请调整大小或格式，或切换模型后重试。",
+	"block.imageRecoveryText": "供应商拒绝了图片载荷。本次回复无法看到图片，原始附件仍保留。若需分析图片内容，请调整大小或格式，或切换模型后重试。",
 	"block.compactionFailed": "上下文压缩失败",
 	"block.newContext": "新上下文",
 	"block.truncated": "已截断",
@@ -1442,8 +1423,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"review.paused.seconds": "时间预算已用完，暂停于下一步执行前",
 	"review.paused.cost": "费用预算已用完，暂停于下一步执行前",
 	"review.resume": "追加一份预算并继续",
-	"project.archiveHint":
-		"归档此会话并停止运行中的任务、排队输入和终端命令。历史保留，文件修改不会回滚；恢复后可开始新工作，已取消的任务不会自动重放。",
+	"project.archiveHint": "归档此会话并停止运行中的任务、排队输入和终端命令。历史保留，文件修改不会回滚；恢复后可开始新工作，已取消的任务不会自动重放。",
 	"project.archivedAge": "归档于 {age}",
 	"project.retentionDue": "到期，请检查是否保留",
 	"dock.main": "主线",
@@ -1456,8 +1436,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.forkNameRequired": "名称需为 1–200 个字符。",
 	"dock.archiveFork": "归档分叉",
 	"dock.restoreFork": "恢复分叉",
-	"dock.archiveForkHint":
-		"停止此分叉的任务、排队工作及任务拥有的后台工作，不影响主线和其他分叉。历史与文件修改保留；恢复不会重放已取消的工作。",
+	"dock.archiveForkHint": "停止此分叉的任务、排队工作及任务拥有的后台工作，不影响主线和其他分叉。历史与文件修改保留；恢复不会重放已取消的工作。",
 	"dock.archivedForks": "已归档分叉",
 	"dock.activeConversations": "活动对话",
 	"dock.forkReadOnly": "所属分叉已归档 · 恢复分叉后可继续",
@@ -1601,7 +1580,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"approval.hint": "拒绝会把这次调用结算成失败的工具结果，回合继续往下走。",
 
 	"welcome.title": "从一个会话开始",
-	"welcome.body": "新建会话，选择模型，然后描述你的任务。文件、终端和分叉都可以在会话工具中查看。",
+	"welcome.body":
+		"新建会话，选择模型，然后描述你的任务。文件、终端和分叉都可以在会话工具中查看。",
 	"welcome.step.session": "新建会话",
 	"welcome.step.settings": "打开设置",
 	"welcome.dismiss": "不再显示",
@@ -1702,8 +1682,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.plugins.packagesDescription": "安装插件，为 AmazMe 扩展工具和命令。",
 	"panel.plugins.addPackage": "添加插件包…",
 	"panel.plugins.packagesEmpty": "还没有插件包，仍可使用内置功能。",
-	"panel.plugins.packagesFootnote":
-		"会话插件作用于之后打开的会话，宿主服务在重启宿主后生效；运行中的会话保留当前版本。",
+	"panel.plugins.packagesFootnote": "会话插件作用于之后打开的会话，宿主服务在重启宿主后生效；运行中的会话保留当前版本。",
 	"panel.plugins.reloadMcp": "重新加载连接",
 	"panel.plugins.reconnect": "重连",
 	"panel.plugins.login": "登录",
@@ -1792,8 +1771,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"modal.mcp.namePlaceholder": "filesystem",
 	"modal.mcp.entry": "条目",
 	"modal.scheduleAdd.title": "新建定时任务",
-	"modal.scheduleAdd.description":
-		"宿主会按设定把提示发给 {session} 的分支 {conversation}。切换当前分支不会改变此目标。",
+	"modal.scheduleAdd.description": "宿主会按设定把提示发给 {session} 的分支 {conversation}。切换当前分支不会改变此目标。",
 	"modal.scheduleAdd.prompt": "提示",
 	"modal.scheduleAdd.promptPlaceholder": "总结上次运行以来的变化",
 	"modal.scheduleAdd.every": "间隔（分钟）",
@@ -1881,16 +1859,14 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"desktop.update.previewDetail": "预览版可能包含尚未完成的变更，不会替换稳定版更新源。",
 	"desktop.update.downloadConfirm": "下载 AmazMe {version}？",
 	"desktop.update.installConfirm": "安装更新并重启 AmazMe？",
-	"desktop.update.installDetail":
-		"网页宿主和运行中的工作会停止，请先完成工作。会话和设置保留在原有数据目录。取消可继续工作。",
+	"desktop.update.installDetail": "网页宿主和运行中的工作会停止，请先完成工作。会话和设置保留在原有数据目录。取消可继续工作。",
 	"desktop.update.network": "无法连接 GitHub，请检查网络后重试。",
 	"desktop.update.manifest": "发布清单缺失或无效，尚未安装更新。",
 	"desktop.update.source": "下载来源不是允许的 GitHub HTTPS 发布源。",
 	"desktop.update.integrity": "下载大小或 SHA256 不符，请重新下载。",
 	"desktop.update.signature": "Apple 信任、应用身份或发布者校验失败。请使用经过验证的签名发行版。",
 	"desktop.update.unsupported": "没有适用于当前平台和架构的安装包。",
-	"desktop.update.permission":
-		"请先将 AmazMe 从磁盘映像移至可写的应用程序文件夹，再进行更新。更新器不会请求管理员权限。",
+	"desktop.update.permission": "请先将 AmazMe 从磁盘映像移至可写的应用程序文件夹，再进行更新。更新器不会请求管理员权限。",
 	"desktop.update.busy": "安装已推迟，或另一个实例/更新正在占用。请完成工作后重试。",
 	"desktop.render.gone.title": "页面出错",
 	"desktop.render.gone.message": "页面进程已退出（{reason}，退出码 {exitCode}）。",
@@ -1952,86 +1928,32 @@ const ZH_SETTING_GROUPS: Readonly<Record<string, string>> = {
 };
 
 const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, string]>> = {
-	interface: [
-		"Choose language, appearance, fonts, next-question suggestions, and the welcome guide.",
-		"选择界面语言、外观、字体、下一问建议和欢迎引导。",
-	],
+	interface: ["Choose language, appearance, fonts, next-question suggestions, and the welcome guide.", "选择界面语言、外观、字体、下一问建议和欢迎引导。"],
 	conversation: ["Manage context, in-progress messages, and turn budgets.", "管理上下文、运行中输入和每轮预算。"],
 	"models-reasoning": ["Set default reasoning and prompt cache preferences.", "设置默认思考强度和提示缓存偏好。"],
 	"skills-tools": ["Choose how skills are offered as commands.", "选择技能是否作为快捷命令提供。"],
-	approvals: [
-		"Choose where tools can write and when they ask for confirmation.",
-		"选择工具可写入的范围，以及何时需要你的确认。",
-	],
+	approvals: ["Choose where tools can write and when they ask for confirmation.", "选择工具可写入的范围，以及何时需要你的确认。"],
 	"network-retries": ["Manage model connections, timeouts, and retries.", "设置模型连接方式、超时和重试。"],
-	"images-rendering": [
-		"Manage images sent to models and diagrams in responses.",
-		"设置发送给模型的图片，以及回答中的图表显示。",
-	],
+	"images-rendering": ["Manage images sent to models and diagrams in responses.", "设置发送给模型的图片，以及回答中的图表显示。"],
 	projects: ["Manage project trust and archive retention reminders.", "管理项目配置的信任方式和归档保留提醒。"],
 	shell: ["Choose the shell and startup commands for tool execution.", "设置命令执行时使用的 Shell 和命令前缀。"],
 };
 
 const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
-	textFont: {
-		label: "Text font",
-		description: "Conversation and composer fonts, separated by commas. Empty uses the built-in fonts.",
-		placeholder: "System fonts",
-	},
-	codeFont: {
-		label: "Code font",
-		description: "Code blocks, file content and diffs. Empty uses the built-in monospace fonts.",
-		placeholder: "Monospace fonts",
-	},
-	terminalFont: {
-		label: "Terminal font",
-		description: "Terminal command output. Empty uses the built-in monospace fonts.",
-		placeholder: "Monospace fonts",
-	},
-	textSize: {
-		label: "Text size (px)",
-		description: "Conversation and composer size. Desktop Cmd/Ctrl +, - and 0 adjust all three sizes.",
-	},
-	codeSize: {
-		label: "Code size (px)",
-		description: "Code-block size; compact file and tool text stays one pixel smaller.",
-	},
+	textFont: { label: "Text font", description: "Conversation and composer fonts, separated by commas. Empty uses the built-in fonts.", placeholder: "System fonts" },
+	codeFont: { label: "Code font", description: "Code blocks, file content and diffs. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
+	terminalFont: { label: "Terminal font", description: "Terminal command output. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
+	textSize: { label: "Text size (px)", description: "Conversation and composer size. Desktop Cmd/Ctrl +, - and 0 adjust all three sizes." },
+	codeSize: { label: "Code size (px)", description: "Code-block size; compact file and tool text stays one pixel smaller." },
 	terminalSize: { label: "Terminal size (px)", description: "Independent terminal output size." },
-	executionMode: {
-		label: "File write isolation",
-		description:
-			"Global Unix policy for built-in tools and shell children; reads and network remain available. Applies at the next tool start.",
-	},
-	repeatToolReminder: {
-		label: "Repeat reminders",
-		description: "Remind when identical calls return identical results; polling tools are excluded.",
-	},
-	reviewChanges: {
-		label: "Turn change review",
-		description: "Capture a bounded before/after workspace diff, including shell changes.",
-	},
-	contextCleanup: {
-		label: "Clean older context",
-		description:
-			"Shorten large older tool results and unload older images before summarization; originals are retained.",
-	},
-	runCalls: {
-		label: "Tool calls per turn",
-		description: "Per conversation. Pause before the next step; 0 is unlimited.",
-	},
-	runSeconds: {
-		label: "Turn time budget (seconds)",
-		description: "Pause at the next safe boundary, without interrupting an admitted command; 0 is unlimited.",
-	},
-	runCost: {
-		label: "Turn cost budget (USD)",
-		description: "Uses reported model and tool cost per conversation; 0 is unlimited. Continue grants another budget.",
-	},
-	archiveRetentionDays: {
-		label: "Archive retention reminder (days)",
-		description:
-			"Mark archives for manual review after this time. 0 keeps them indefinitely; nothing is automatically deleted.",
-	},
+	executionMode: { label: "File write isolation", description: "Global Unix policy for built-in tools and shell children; reads and network remain available. Applies at the next tool start." },
+	repeatToolReminder: { label: "Repeat reminders", description: "Remind when identical calls return identical results; polling tools are excluded." },
+	reviewChanges: { label: "Turn change review", description: "Capture a bounded before/after workspace diff, including shell changes." },
+	contextCleanup: { label: "Clean older context", description: "Shorten large older tool results and unload older images before summarization; originals are retained." },
+	runCalls: { label: "Tool calls per turn", description: "Per conversation. Pause before the next step; 0 is unlimited." },
+	runSeconds: { label: "Turn time budget (seconds)", description: "Pause at the next safe boundary, without interrupting an admitted command; 0 is unlimited." },
+	runCost: { label: "Turn cost budget (USD)", description: "Uses reported model and tool cost per conversation; 0 is unlimited. Continue grants another budget." },
+	archiveRetentionDays: { label: "Archive retention reminder (days)", description: "Mark archives for manual review after this time. 0 keeps them indefinitely; nothing is automatically deleted." },
 	locale: {
 		label: "Language",
 		description: "The interface language of the web page and other graphical surfaces.",
@@ -2046,13 +1968,11 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	steeringMode: {
 		label: "Messages during a task",
-		description:
-			"Messages sent with Adjust task join before the next model response. Choose how many pending messages to add at each step.",
+		description: "Messages sent with Adjust task join before the next model response. Choose how many pending messages to add at each step.",
 	},
 	followUpMode: {
 		label: "Messages after a task",
-		description:
-			"Messages sent with Continue after wait until the current task finishes. Choose how many queued messages to process together.",
+		description: "Messages sent with Continue after wait until the current task finishes. Choose how many queued messages to process together.",
 	},
 	hideThinkingBlock: {
 		label: "Hide thinking blocks",
@@ -2074,11 +1994,7 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 		label: "Skills as commands",
 		description: "Register every loaded skill as a slash command.",
 	},
-	promptSuggestions: {
-		label: "Next-question suggestions",
-		description:
-			"Offer one draft after an answer using a short request to the current model. May incur usage charges; never sends automatically.",
-	},
+	promptSuggestions: { label: "Next-question suggestions", description: "Offer one draft after an answer using a short request to the current model. May incur usage charges; never sends automatically." },
 	showWelcome: {
 		label: "Welcome guide",
 		description: "Show the short first-run guide while this host has no sessions.",
@@ -2132,44 +2048,20 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 };
 
 const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
-	textFont: {
-		label: "正文字体",
-		description: "对话和输入框使用的字体，以逗号分隔；留空使用内置字体。",
-		placeholder: "系统字体",
-	},
-	codeFont: {
-		label: "代码字体",
-		description: "代码块、文件内容和差异使用的字体；留空使用内置等宽字体。",
-		placeholder: "等宽字体",
-	},
-	terminalFont: {
-		label: "终端字体",
-		description: "命令输出使用的字体；留空使用内置等宽字体。",
-		placeholder: "等宽字体",
-	},
-	textSize: {
-		label: "正文字号（px）",
-		description: "对话和输入框的字号。桌面端 Cmd/Ctrl +、-、0 可同时调整三种字号。",
-	},
+	textFont: { label: "正文字体", description: "对话和输入框使用的字体，以逗号分隔；留空使用内置字体。", placeholder: "系统字体" },
+	codeFont: { label: "代码字体", description: "代码块、文件内容和差异使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
+	terminalFont: { label: "终端字体", description: "命令输出使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
+	textSize: { label: "正文字号（px）", description: "对话和输入框的字号。桌面端 Cmd/Ctrl +、-、0 可同时调整三种字号。" },
 	codeSize: { label: "代码字号（px）", description: "代码块的字号；紧凑文件和工具文本保持小一号。" },
 	terminalSize: { label: "终端字号（px）", description: "独立调整终端输出的字号。" },
-	executionMode: {
-		label: "写入隔离",
-		description: "全局 Unix 策略，约束内置工具及 shell 子进程的文件写入；读取、网络仍可用。从下一次工具启动生效。",
-	},
+	executionMode: { label: "写入隔离", description: "全局 Unix 策略，约束内置工具及 shell 子进程的文件写入；读取、网络仍可用。从下一次工具启动生效。" },
 	repeatToolReminder: { label: "重复调用提醒", description: "相同调用连续返回相同结果时提醒，轮询工具除外。" },
 	reviewChanges: { label: "记录本轮变更", description: "按限额比较工作区前后差异，也覆盖 shell 修改。" },
 	contextCleanup: { label: "清理旧上下文", description: "摘要前精简旧大工具结果、卸载历史图片，保留原始记录。" },
 	runCalls: { label: "每轮工具次数", description: "按单个对话计数，达到后在下一步执行前暂停；0 表示不限。" },
 	runSeconds: { label: "每轮时间预算（秒）", description: "在下一处执行边界暂停，已开始的命令不被打断；0 表示不限。" },
-	runCost: {
-		label: "每轮费用（美元）",
-		description: "按单个对话已报告的模型与工具费用计费；0 表示不限，继续时追加一份预算。",
-	},
-	archiveRetentionDays: {
-		label: "归档保留提醒（天）",
-		description: "到期后标记供手动检查；0 表示长期保留，不自动删除。",
-	},
+	runCost: { label: "每轮费用（美元）", description: "按单个对话已报告的模型与工具费用计费；0 表示不限，继续时追加一份预算。" },
+	archiveRetentionDays: { label: "归档保留提醒（天）", description: "到期后标记供手动检查；0 表示长期保留，不自动删除。" },
 	locale: {
 		label: "界面语言",
 		description: "网页及其他图形界面的语言。",
@@ -2210,10 +2102,7 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 		label: "技能作为命令",
 		description: "把每个已加载的技能注册为斜杠命令。",
 	},
-	promptSuggestions: {
-		label: "下一问建议",
-		description: "回答结束后使用当前模型发起一次短请求，给出可接受的草稿。可能产生用量费用，不会自动发送。",
-	},
+	promptSuggestions: { label: "下一问建议", description: "回答结束后使用当前模型发起一次短请求，给出可接受的草稿。可能产生用量费用，不会自动发送。" },
 	showWelcome: {
 		label: "欢迎引导",
 		description: "在这台宿主还没有会话时，显示简短的上手引导。",
@@ -2268,11 +2157,7 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 
 /** An enum control's names, keyed by the field's catalogue id and then its stored value. */
 const EN_SETTING_OPTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
-	executionMode: {
-		"full-access": "Full access",
-		"workspace-write": "Project folders writable",
-		"read-only": "Read only",
-	},
+	executionMode: { "full-access": "Full access", "workspace-write": "Project folders writable", "read-only": "Read only" },
 	locale: { auto: "Browser default", zh: "中文", en: "English" },
 	appearance: { system: "System", light: "Light", dark: "Dark" },
 	steeringMode: { "one-at-a-time": "Add one per step", all: "Add all pending" },
@@ -2409,42 +2294,21 @@ export function mcpExposureCopy(locale: Locale, exposure: string): string {
 
 /** Rule labels keep calendar clock values in their declared zone. */
 export function scheduleRuleCopy(locale: Locale, rule: ScheduleRuleLike): string {
-	if (rule.kind === "once")
-		return translate(locale, "panel.automation.oneTime", { at: rule.at.replace("T", " "), zone: rule.timeZone });
-	if (rule.kind === "cron")
-		return translate(locale, "panel.automation.cronRule", { expression: rule.expression, zone: rule.timeZone });
-	return rule.everyMinutes === 1
-		? translate(locale, "panel.automation.everyMinute")
-		: translate(locale, "panel.automation.everyMinutes", { count: String(rule.everyMinutes) });
+	if (rule.kind === "once") return translate(locale, "panel.automation.oneTime", { at: rule.at.replace("T", " "), zone: rule.timeZone });
+	if (rule.kind === "cron") return translate(locale, "panel.automation.cronRule", { expression: rule.expression, zone: rule.timeZone });
+	return rule.everyMinutes === 1 ? translate(locale, "panel.automation.everyMinute") : translate(locale, "panel.automation.everyMinutes", { count: String(rule.everyMinutes) });
 }
 
 export function scheduleActionCopy(locale: Locale, code: string): string {
 	const keys: Record<string, MessageKey> = {
-		added: "panel.automation.added",
-		updated: "panel.automation.updated",
-		enabled: "panel.automation.enabled",
-		paused: "panel.automation.paused",
-		idle: "panel.automation.idle",
-		done: "panel.automation.done",
-		cancelled: "panel.automation.cancelled",
-		skipped: "panel.automation.skipped",
-		refused: "panel.automation.refused",
-		unanswered: "panel.automation.unanswered",
-		timed_out: "panel.automation.timed_out",
+		added: "panel.automation.added", updated: "panel.automation.updated", enabled: "panel.automation.enabled", paused: "panel.automation.paused", idle: "panel.automation.idle",
+		done: "panel.automation.done", cancelled: "panel.automation.cancelled", skipped: "panel.automation.skipped", refused: "panel.automation.refused", unanswered: "panel.automation.unanswered", timed_out: "panel.automation.timed_out",
 	};
 	return keys[code] === undefined ? code : translate(locale, keys[code]!);
 }
 
-export function scheduleOutcomeCopy(
-	locale: Locale,
-	receipt: { readonly status: string; readonly detail: string | null },
-): string {
-	const detail =
-		receipt.detail === "busy"
-			? translate(locale, "panel.automation.reasonBusy")
-			: receipt.detail === "missed"
-				? translate(locale, "panel.automation.reasonMissed")
-				: receipt.detail;
+export function scheduleOutcomeCopy(locale: Locale, receipt: { readonly status: string; readonly detail: string | null }): string {
+	const detail = receipt.detail === "busy" ? translate(locale, "panel.automation.reasonBusy") : receipt.detail === "missed" ? translate(locale, "panel.automation.reasonMissed") : receipt.detail;
 	return scheduleActionCopy(locale, receipt.status) + (detail === null ? "" : `: ${detail}`);
 }
 
@@ -2460,24 +2324,15 @@ export function scheduleDueCopy(locale: Locale, nextRunAt: number | null, now: n
 }
 
 /** Runtime codes stay in the protocol; unknown extension codes get neutral page copy. */
-function runtimeCodeCopy(
-	locale: Locale,
-	group: "task.phase" | "task.status" | "task.blocked" | "compaction" | "activity",
-	code: string,
-): string {
+function runtimeCodeCopy(locale: Locale, group: "task.phase" | "task.status" | "task.blocked" | "compaction" | "activity", code: string): string {
 	const key = `${group}.${code}`;
 	return translate(locale, (Object.hasOwn(EN, key) ? key : `${group}.other`) as MessageKey);
 }
 
 export function taskKindCopy(locale: Locale, kind: string): string {
-	const key =
-		kind === "amazme.generation"
-			? "task.kind.generation"
-			: kind === "amazme.compaction"
-				? "task.kind.compaction"
-				: kind === "amazme.tool"
-					? "task.kind.tool"
-					: "task.kind.other";
+	const key = kind === "amazme.generation" ? "task.kind.generation"
+		: kind === "amazme.compaction" ? "task.kind.compaction"
+		: kind === "amazme.tool" ? "task.kind.tool" : "task.kind.other";
 	return translate(locale, key);
 }
 
@@ -2492,8 +2347,7 @@ export function taskBlockedCopy(locale: Locale, reason: string): string {
 export function taskPhaseCopy(locale: Locale, phase: string): string {
 	// A completing task reports its outcome in place of a checkpoint phase.
 	return Object.hasOwn(EN, `task.status.${phase}`)
-		? taskStatusCopy(locale, phase)
-		: runtimeCodeCopy(locale, "task.phase", phase);
+		? taskStatusCopy(locale, phase) : runtimeCodeCopy(locale, "task.phase", phase);
 }
 
 export function compactionReasonCopy(locale: Locale, reason: string): string {

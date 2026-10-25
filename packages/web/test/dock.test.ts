@@ -1,0 +1,364 @@
+import { describe, expect, test } from "vitest";
+import {
+	CONVERSATION_FORK_ACTION,
+	CONVERSATION_SELECT_ACTION,
+	CONVERSATIONS_REFRESH_ACTION,
+	TASK_RETRY_ACTION,
+	TERMINAL_RUN_ACTION,
+	TERMINAL_STOP_ACTION,
+	WORKSPACE_OPEN_ACTION,
+	WORKSPACE_READ_ACTION,
+	WORKSPACE_RELOAD_ACTION,
+	WORKSPACE_PAGE_ACTION,
+} from "../src/actions.ts";
+import {
+	conversationsPanel,
+	dockTabs,
+	dockView,
+	filesPanel,
+	tasksPanel,
+	terminalPanel,
+	workspaceSize,
+	parseWorkspaceAction,
+} from "../src/dock.ts";
+import type { TerminalStateLike, WorkspaceStateLike } from "../src/dock.ts";
+
+const LISTING: WorkspaceStateLike = {
+	cwd: "/workspace/AmazMe",
+	view: {
+		kind: "listing",
+		path: ".",
+		parent: null,
+		entries: [
+			{ name: "src", kind: "dir", size: 0 },
+			{ name: "README.md", kind: "file", size: 2048 },
+			{ name: "logo.png", kind: "file", size: 2_097_152 },
+		],
+	},
+};
+
+const TERMINAL: TerminalStateLike = {
+	status: "done",
+	command: "echo hi",
+	exitCode: 0,
+	output: "hi\n",
+	truncated: false,
+	error: null,
+};
+
+const CONVERSATIONS = {
+	selected: "1",
+	conversations: [
+		{ id: "1", label: "main", root: true, children: 1, hasEntries: true },
+		{ id: "2", label: "child task marker", root: false, ownerConversationId: "1", ownerTaskId: "9", children: 0, hasEntries: true },
+	],
+	tasks: [
+		{
+			id: "7",
+			kind: "amazme.generation",
+			conversationId: "1",
+			background: true,
+			status: "running",
+			phase: "request",
+			waitsOn: [],
+			conversations: ["1"],
+		},
+		{
+			id: "9",
+			kind: "amazme.tool",
+			conversationId: "2",
+			background: false,
+			status: "waiting",
+			phase: "call",
+			waitsOn: ["7"],
+			conversations: ["2"],
+		},
+	],
+};
+
+describe("the session dock", () => {
+	test("offers its tabs and remembers which one is open", () => {
+		expect(dockTabs("en", "terminal")).toEqual([
+			{ id: "files", label: "Files", active: false },
+			{ id: "terminal", label: "Terminal", active: true },
+			{ id: "conversations", label: "Conversations", active: false },
+			{ id: "tasks", label: "Tasks", active: false },
+		]);
+		expect(
+			dockView("zh", {
+				open: true,
+				tab: "terminal",
+				cwd: "/w",
+				workspace: undefined,
+				terminal: undefined,
+				conversations: undefined,
+			}),
+		).toMatchObject({
+			open: true,
+			toggle: { label: "会话工具", pressed: true },
+		});
+		// An unknown tab falls back to the first one rather than showing nothing.
+		expect(
+			dockView("en", {
+				open: true,
+				tab: "nope",
+				cwd: "/w",
+				workspace: LISTING,
+				terminal: TERMINAL,
+				conversations: undefined,
+			}).panel.id,
+		).toBe("files");
+	});
+
+	test("lists a directory with an action per entry and the way back up", () => {
+		const panel = filesPanel("en", LISTING);
+		const rows = panel.groups[0]?.rows ?? [];
+		expect(rows.map((row) => [row.title, row.badges?.[0], row.value])).toEqual([
+			["src", "directory", undefined],
+			["README.md", undefined, "2 KB"],
+			["logo.png", undefined, "2.0 MB"],
+		]);
+		expect(rows[0]?.actions?.[0]).toEqual({ id: WORKSPACE_OPEN_ACTION, label: "Open", weight: "text", data: "/workspace/AmazMe/src" });
+		expect(rows[1]?.actions?.[0]).toEqual({
+			id: WORKSPACE_READ_ACTION,
+			label: "Read",
+			weight: "text",
+			data: "/workspace/AmazMe/README.md",
+		});
+		expect(panel.groups[0]?.actions?.[0]?.id).toBe(WORKSPACE_RELOAD_ACTION);
+		// The working directory itself has no parent row; a subdirectory does.
+		expect(rows.some((row) => row.id === "files:up")).toBe(false);
+		const nested = filesPanel("en", {
+			cwd: "/w",
+			view: {
+				kind: "listing",
+				path: "src",
+				parent: ".",
+				entries: [{ name: "index.ts", kind: "file", size: 12 }],
+			},
+		});
+		expect(nested.groups[0]?.rows[0]).toMatchObject({ id: "files:up", description: ".", title: "Up" });
+		// An entry's action names the path it resolves to, not only its own name.
+		expect(nested.groups[0]?.rows[1]?.actions?.[0]).toMatchObject({ id: WORKSPACE_READ_ACTION, data: "/w/src/index.ts" });
+	});
+
+	test("shows bounded directory paging and leaves older hosts without page actions", () => {
+		if (LISTING.view.kind !== "listing") throw new Error("Expected listing");
+		for (const locale of ["en", "zh"] as const) {
+			const panel = filesPanel(locale, { ...LISTING, view: { ...LISTING.view, page: { offset: 100, limit: 100, total: 250 } } });
+			const group = panel.groups[0]!;
+			expect(group.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => parseWorkspaceAction(action.data).offset)).toEqual([0, 200]);
+			expect(group.description).toContain("101");
+			expect(group.description).toContain("250");
+		}
+		expect(filesPanel("en", LISTING).groups[0]?.actions?.some(action => action.id === WORKSPACE_PAGE_ACTION)).toBe(false);
+		expect(filesPanel("en", { ...LISTING, view: { ...LISTING.view, page: { offset: 200, limit: 100, total: 250 } } }).groups[0]?.actions?.filter(action => action.id === WORKSPACE_PAGE_ACTION).map(action => parseWorkspaceAction(action.data).offset)).toEqual([100]);
+	});
+
+	test("shows a file's text, and says when it is not text or not there", () => {
+		const text = filesPanel("en", {
+			cwd: "/w",
+			view: { kind: "text", path: "src/index.ts", text: "export const marker = 1;\n", truncated: false },
+		});
+		expect(text.title).toBe("index.ts");
+		expect(text.texts?.[0]?.text).toContain("marker = 1");
+		expect(text.groups[0]?.rows[0]?.actions?.[0]?.data).toBe("/w/src");
+		expect(
+			filesPanel("en", { cwd: "/w", view: { kind: "text", path: "big.txt", text: "…", truncated: true } }).notices[0],
+		).toEqual({ tone: "info", persistence: "pinned", text: "Only the beginning of this text is shown." });
+
+		expect(
+			filesPanel("en", { cwd: "/w", view: { kind: "binary", path: "logo.png" } }).notices[0]?.text,
+		).toContain("not text");
+		expect(filesPanel("en", { cwd: "/w", view: { kind: "missing", path: "gone" } }).notices[0]?.text).toContain(
+			"not there any more",
+		);
+		const denied = filesPanel("en", { cwd: "/w", view: { kind: "denied", path: "../etc", reason: "outside it" } });
+		expect(denied.notices[0]).toEqual({ tone: "error", text: "outside it" });
+		expect(denied.groups[0]?.rows[0]?.actions?.[0]?.data).toBe("/w");
+	});
+
+	test("gives the terminal one command line, a run, a stop, and the buffer", () => {
+		const panel = terminalPanel("en", { cwd: "/w", state: TERMINAL });
+		expect(panel.description).toBe("/w · Finished with exit code 0");
+		expect(panel.inputs?.[0]).toMatchObject({
+			placeholder: "Run a command in the session's directory",
+			submit: { id: TERMINAL_RUN_ACTION, label: "Run", disabled: false },
+		});
+		expect(panel.groups[0]?.actions?.[0]).toMatchObject({ id: TERMINAL_STOP_ACTION, label: "Stop", disabled: true });
+		expect(panel.texts?.[0]?.text).toBe("hi\n");
+
+		const running = terminalPanel("en", {
+			cwd: "/w",
+			state: { status: "running", command: "sleep 5", exitCode: null, output: "", truncated: false, error: null },
+		});
+		expect(running.description).toContain("Running sleep 5");
+		expect(running.inputs?.[0]?.submit.disabled).toBe(true);
+		expect(running.groups[0]?.actions?.[0]?.disabled).toBe(false);
+		expect(running.texts?.[0]?.empty).toBe("No output yet.");
+
+		const stopped = terminalPanel("en", {
+			cwd: "/w",
+			state: { status: "cancelled", command: "sleep 5", exitCode: null, output: "part", truncated: false, error: null },
+		});
+		expect(stopped.description).toContain("Stopped");
+
+		// A run that ended by a signal has no exit code; the panel must not claim exit 0.
+		const unknownExit = terminalPanel("en", {
+			cwd: "/w",
+			state: { status: "done", command: "kill -TERM $$", exitCode: null, output: "", truncated: false, error: null },
+		});
+		expect(unknownExit.description).toBe("/w · Finished without an exit code");
+		expect(
+			terminalPanel("en", {
+				cwd: "/w",
+				state: { status: "done", command: "x", exitCode: 2, output: "", truncated: true, error: "boom" },
+			}).notices[0]?.text,
+		).toContain("only the beginning".replace("only", "Only"));
+	});
+
+	test("lists the conversations with their ownership and the focused one", () => {
+		const panel = conversationsPanel("en", CONVERSATIONS);
+		const rows = panel.groups[0]?.rows ?? [];
+		expect(rows.map((row) => [row.title, row.badges])).toEqual([
+			["main", ["main", "1 children", "selected"]],
+			["child task marker", ["subagent"]],
+		]);
+		// A child names the task and the conversation that made it.
+		expect(rows[1]?.description).toBe("Created by Run tool in main");
+		expect(rows[0]?.description).toBe("The main conversation for this session.");
+		expect(rows[1]?.actions?.[0]).toEqual({
+			id: CONVERSATION_SELECT_ACTION,
+			label: "Open",
+			weight: "text",
+			data: "2",
+		});
+		expect(rows[1]?.actions?.[1]).toMatchObject({ id: CONVERSATION_FORK_ACTION, label: "Fork", data: "2", disabled: false });
+		expect(panel.groups[0]?.actions?.[0]?.id).toBe(CONVERSATIONS_REFRESH_ACTION);
+		const fork = conversationsPanel("en", {
+			selected: "3",
+			conversations: [
+				{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1, hasEntries: true },
+				{
+					id: "3",
+					label: "try another plan",
+					root: false,
+					role: "fork",
+					depth: 1,
+					parentConversationId: "1",
+					parentEntryId: "4",
+					children: 0,
+					hasEntries: true,
+				},
+			],
+			tasks: [],
+		});
+		expect(fork.groups[0]?.rows[1]).toMatchObject({
+			title: "  try another plan",
+			description: "Branched from main",
+			badges: ["fork", "selected"],
+		});
+		const empty = conversationsPanel("en", {
+			selected: "4",
+			conversations: [{ id: "4", label: "4", root: true, role: "main", depth: 0, children: 0, hasEntries: false }],
+			tasks: [],
+		});
+		expect(empty.groups[0]?.rows[0]?.actions?.[1]).toMatchObject({
+			id: CONVERSATION_FORK_ACTION,
+			label: "Fork",
+			data: "4",
+			disabled: true,
+		});
+		expect(empty.groups[0]?.rows[0]?.actions?.[0]?.disabled).toBeUndefined();
+		// The root is named in the reader's language, even when the host label is the raw id.
+		expect(empty.groups[0]?.rows[0]?.title).toBe("main");
+		expect(empty.groups[0]?.rows[0]?.description).toBe("The main conversation for this session.");
+		const unnamed = conversationsPanel("en", {
+			selected: "5",
+			conversations: [
+				{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1, hasEntries: true },
+				{
+					id: "5",
+					label: "5",
+					root: false,
+					role: "fork",
+					depth: 1,
+					parentConversationId: "1",
+					parentEntryId: "2",
+					children: 0,
+					hasEntries: false,
+				},
+			],
+			tasks: [],
+		});
+		expect(unnamed.groups[0]?.rows[1]).toMatchObject({
+			title: "  New conversation",
+			description: "Branched from main",
+		});
+		// The Chinese labels reach the same rows. The root title follows the badge, not the host word "main".
+		const zh = conversationsPanel("zh", CONVERSATIONS).groups[0]?.rows[0];
+		expect(zh?.title).toBe("主线");
+		expect(zh?.badges).toEqual(["主线", "1 个子对话", "当前"]);
+		expect(
+			conversationsPanel("zh", {
+				selected: "5",
+				conversations: [
+					{ id: "1", label: "main", root: true, role: "main", depth: 0, children: 1, hasEntries: true },
+					{
+						id: "5",
+						label: "5",
+						root: false,
+						role: "fork",
+						depth: 1,
+						parentConversationId: "1",
+						parentEntryId: "2",
+						children: 0,
+						hasEntries: false,
+					},
+				],
+				tasks: [],
+			}).groups[0]?.rows[1]?.title,
+		).toBe("  新对话");
+	});
+
+	test("lists the live tasks with what they wait on and own", () => {
+		const panel = tasksPanel("en", CONVERSATIONS);
+		const rows = panel.groups[0]?.rows ?? [];
+		expect(rows.map((row) => [row.title, row.description])).toEqual([
+			["Generate response #7", "Waiting for model response · main"],
+			["Run tool #9", "Preparing tool · child task marker"],
+		]);
+		expect(rows[1]?.badges).toEqual(["Waiting for tasks: 1", "Related conversations: 1"]);
+		expect(rows[0]?.badges).toEqual(["In progress", "background", "Related conversations: 1"]);
+		// With nothing live the panel says so instead of looking broken.
+		expect(
+			tasksPanel("en", { conversations: [], tasks: [], selected: "1" }).groups[0]?.empty,
+		).toEqual({ cause: "first-use", text: "No task is running." });
+	});
+
+	test("shows sleep deadlines and makes only parked tasks retryable", () => {
+		const wakeAt = Date.UTC(2026, 9, 19, 12);
+		const tasks = [
+			{ ...CONVERSATIONS.tasks[0]!, status: "sleeping", wakeAt },
+			{ ...CONVERSATIONS.tasks[1]!, status: "pending", blocked: "restart_limit" },
+		];
+		const rows = tasksPanel("zh", { ...CONVERSATIONS, tasks }).groups[0]!.rows;
+		expect(rows[0]!.badges![0]).toContain("等待至");
+		expect(rows[0]!.badges![0]).toContain("2026");
+		expect(rows[0]!.actions?.some((action) => action.id === TASK_RETRY_ACTION)).toBe(false);
+		expect(rows[1]!.badges![0]).toBe("多次中断后已暂停");
+		expect(rows[1]!.actions?.[0]).toMatchObject({ id: TASK_RETRY_ACTION, data: "9", disabled: false });
+		const archived = tasksPanel("en", {
+			...CONVERSATIONS,
+			tasks,
+			conversations: CONVERSATIONS.conversations.map((conversation) => ({ ...conversation, readOnly: true })),
+		}).groups[0]!.rows;
+		expect(archived[1]!.actions?.[0]).toMatchObject({ id: TASK_RETRY_ACTION, disabled: true });
+	});
+
+	test("sizes a file the way a listing does", () => {
+		expect(workspaceSize(512)).toBe("512 B");
+		expect(workspaceSize(4096)).toBe("4 KB");
+		expect(workspaceSize(3_145_728)).toBe("3.0 MB");
+	});
+});

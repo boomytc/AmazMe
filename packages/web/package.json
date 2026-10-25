@@ -9,7 +9,7 @@
 		"README.md",
 		"LICENSE"
 	],
-	"description": "Shared desktop icons, locale and presentation copy for AmazMe Python clients",
+	"description": "AmazMe desktop and web client presentation for the Python backend",
 	"exports": {
 		".": {
 			"types": "./dist/index.d.ts",
@@ -39,6 +39,7 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"devDependencies": {
+		"happy-dom": "20.10.5",
 		"shx": "0.3.4",
 		"vitest": "4.1.12"
 	}
