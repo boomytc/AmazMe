@@ -414,7 +414,9 @@ async def test_readiness_cannot_hide_disconnected_registered_worker(owner):
     assert not health.blocked
 
 
-async def test_validation_spawn_heartbeat_empty_epoch_and_stop_during_freeze(owner, monkeypatch):
+@pytest.mark.parametrize("attempts", [0, 4])
+async def test_validation_spawn_heartbeat_empty_epoch_and_stop_during_freeze(owner, monkeypatch, attempts):
+    await owner.db.call(lambda db: db.execute("INSERT INTO budgets VALUES(?,?)", ("a" * 32, attempts)), write=True)
     await owner.freeze(FreezeSupervisor(build_id=owner.build, host_epoch=0, freeze_id="update"))
     descriptors = []
     async def spawn(*args, **kwargs):
@@ -433,9 +435,20 @@ async def test_validation_spawn_heartbeat_empty_epoch_and_stop_during_freeze(own
                                                     execution_epoch=lease.execution_epoch))
         assert stopped.state == "clean"
         assert (await owner.health()).workers[0].state == "stopped"
+        assert await owner.db.call(lambda db: db.execute("SELECT attempts FROM budgets").fetchone()[0]) == attempts
     finally:
         for fd in descriptors:
             os.close(fd)
+
+
+@pytest.mark.parametrize("purpose,expected", [("business", 1), ("validation", 0)])
+async def test_only_business_failure_consumes_automatic_restart_budget(owner, purpose, expected):
+    info, reservation = await worker(owner, purpose=purpose)
+    reservation.close()
+    assert (await owner._retire_worker(info, "recovery", failed=True)).state == "clean"
+    assert (await owner._retire_worker(info, "recovery", failed=True)).state == "clean"
+    attempts = await owner.db.call(lambda db: db.execute("SELECT COALESCE(SUM(attempts),0) FROM budgets").fetchone()[0])
+    assert attempts == expected
 
 
 async def test_epoch_open_lost_ack_returns_original_lease(owner):

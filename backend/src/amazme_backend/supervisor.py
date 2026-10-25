@@ -596,10 +596,12 @@ class Supervisor:
                 raise BackendError("worker_identity_conflict", status=503)
             if live:
                 return live[0]
-            attempts = await self.db.call(lambda db: db.execute(
-                "SELECT attempts FROM budgets WHERE session=?", (value.session_id,)).fetchone())
-            if attempts and int(attempts[0]) > 3:
-                raise BackendError("worker_restart_budget_exhausted", status=503)
+            # Validation probes never drive business work or participate in automatic restarts.
+            if value.purpose == "business":
+                attempts = await self.db.call(lambda db: db.execute(
+                    "SELECT attempts FROM budgets WHERE session=?", (value.session_id,)).fetchone())
+                if attempts and int(attempts[0]) > 3:
+                    raise BackendError("worker_restart_budget_exhausted", status=503)
             if len([w for w in await self._workers() if w.state != "stopped"]) >= 8:
                 raise BackendError("worker_capacity", status=429)
             if await self._unclean_epochs(value.session_id):
@@ -1028,7 +1030,7 @@ class Supervisor:
             worker.state = "stopped"
             def retired(db: sqlite3.Connection) -> None:
                 row = db.execute("SELECT failure_counted FROM workers WHERE worker=?", (worker.worker_id,)).fetchone()
-                if failed and not row[0]:
+                if failed and worker.purpose == "business" and not row[0]:
                     db.execute("INSERT INTO budgets(session,attempts) VALUES(?,1) ON CONFLICT(session) "
                                "DO UPDATE SET attempts=attempts+1", (worker.session_id,))
                 self._put_worker(db, worker)

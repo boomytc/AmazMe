@@ -460,7 +460,10 @@ class Host:
     def _verify_clean(cls, health: SupervisorHealth) -> None:
         cls._verify_retired(health.workers)
         workers = {worker.worker_id: worker for worker in health.workers}
-        if health.blocked or health.session_errors or health.identity.state == "blocked":
+        # A business restart limit survives the update, but is not a missing cleanup proof.
+        session_blocked = any(error != "worker_restart_budget_exhausted"
+                              for errors in health.session_errors.values() for error in errors)
+        if health.blocked or session_blocked or health.identity.state == "blocked":
             raise BackendError("update_health_blocked", status=503)
         if any(not terminal.clean for terminal in health.terminals):
             raise BackendError("execution_cleanup_pending", status=503)

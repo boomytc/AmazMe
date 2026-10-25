@@ -597,6 +597,23 @@ async def test_target_health_failure_retains_freeze(owner, runtime, problem):
     assert not any(call[1] == "/thaw" for call in runtime.calls)
 
 
+@pytest.mark.parametrize("errors", [
+    ["worker_restart_budget_exhausted"],
+    ["worker_restart_budget_exhausted", "worker_retirement_pending:worker"],
+    ["mcp_stop_unconfirmed:server"],
+])
+def test_update_cleanup_distinguishes_restart_budget_from_unclean_resources(errors):
+    from amazme_backend.contracts import Identity, SupervisorHealth
+    health = SupervisorHealth(identity=Identity(profile_id="profile", instance_id="supervisor",
+        build_id="a" * 64, pid=1, state="frozen"), registry_revision="1", workers=[], epochs=[],
+        session_errors={"a" * 32: errors})
+    if errors == ["worker_restart_budget_exhausted"]:
+        Host._verify_clean(health)
+    else:
+        with pytest.raises(BackendError, match="update_health_blocked"):
+            Host._verify_clean(health)
+
+
 async def test_blocked_session_diagnostics_reuse_verified_owner_without_mutations(owner, runtime):
     from amazme_backend.contracts import Cancel, Snapshot
     await runtime.install(owner.build)

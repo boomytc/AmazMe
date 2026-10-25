@@ -293,7 +293,12 @@ export async function settlePythonBackendUpdate(ready: PythonReady, controlToken
 			headers: { Authorization: `Bearer ${path.startsWith("/control/") ? controlToken : webToken}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
 			...(body === undefined ? {} : { body }),
 		});
-		if (!response.ok) throw new Error(`后端更新核对失败（${response.status}），已保留冻结状态。`);
+		if (!response.ok) {
+			const failure: unknown = await response.json().catch(() => undefined);
+			const code = typeof failure === "object" && failure !== null && "code" in failure
+				&& typeof failure.code === "string" && /^[a-z][a-z0-9_]{0,127}$/u.test(failure.code) ? failure.code : "";
+			throw new Error(`后端更新核对失败（${response.status}${code ? `，${code}` : ""}），已保留冻结状态。`);
+		}
 		return response.json();
 	}
 	const health = await call("/api/v1/health", "GET");

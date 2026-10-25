@@ -191,8 +191,13 @@ describe("packaged python backend", () => {
 		expect(fetcher).toHaveBeenCalledTimes(1);
 		fetcher.mockReset().mockResolvedValueOnce(Response.json({ identity, update: { update_id: "replace-local", source_build: "1".repeat(64), target_build: BUILD, phase: "freezing", revision: "2", activated: false } }))
 			.mockResolvedValueOnce(Response.json({ code: "execution_cleanup_pending" }, { status: 503 }));
-		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("503");
+		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("503，execution_cleanup_pending");
 		expect(fetcher).toHaveBeenCalledTimes(2);
+	});
+
+	test("keeps the HTTP failure when the backend returns a non-JSON error", async () => {
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("unavailable", { status: 503 })));
+		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("后端更新核对失败（503）");
 	});
 
 	test("another Host generation or a source build cannot thaw the update", async () => {
