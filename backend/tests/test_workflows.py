@@ -1,10 +1,8 @@
 """Workflows keep an independent verdict, a bounded correction, and isolated child context."""
 
-import base64
 import json
 import shutil
 import sqlite3
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -550,81 +548,6 @@ async def test_removed_grant_does_not_open_a_workflow_or_correction(tmp_path: Pa
         shutil.rmtree(grant, ignore_errors=True)
 
 
-def test_browser_runs_the_selected_session_workflow() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    schema = __import__("amazme_backend.contracts", fromlist=["Stream"]).Stream.model_json_schema()
-    contract = "const root = " + json.dumps(schema) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\nconst boundSession=" + json.dumps(SESSION) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session='+boundSession+'&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const seen = [];
-        const session = ''' + json.dumps(SESSION) + r''';
-        globalThis.fetch = async (path, options={})=>{
-          const method = options.method || 'GET';
-          const body = options.body ? JSON.parse(options.body) : {};
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:session,title:'工作区',archived:false,workspace:'primary'}]});
-          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:session,build_id:'build',host_epoch:1});
-          if(path===`/api/v1/sessions/${session}/workflows` && method==='POST') {
-            seen.push(path+' '+body.check+' '+body.correction_limit);
-            return response({workflow_id:body.workflow_id,session_id:session,stage:'check',correction_limit:body.correction_limit,attempts:0,parent_id:'parent',parent_status:'waiting_children',check:body.check,children:[{request_id:'child',role:'check',text:body.check,status:'queued'}]});
-          }
-          if(method==='POST' && path===`/api/v1/sessions/${session}/workflows/`+ (path.split('/')[6] || '') +'/verdicts') {
-            seen.push(path+' '+String(body.passed));
-            return response({workflow_id:path.split('/')[6],session_id:session,stage:'correction',correction_limit:1,attempts:1,parent_id:'parent',parent_status:'waiting_children',check:'只检查这一句',children:[{request_id:'child',role:'check',text:'只检查这一句',status:'succeeded'},{request_id:'fix',role:'correction',text:'修正',status:'queued'}]});
-          }
-          if(method==='POST' && path.endsWith('/resume')) {
-            seen.push(path);
-            return response({workflow_id:'wf',session_id:session,stage:'correction',correction_limit:1,attempts:1,parent_id:'parent',parent_status:'waiting_children',check:'只检查这一句',children:[{request_id:'child',role:'check',text:'只检查这一句',status:'succeeded'},{request_id:'fix',role:'correction',text:'修正',status:'queued'}]});
-          }
-          if(method==='POST' && path.endsWith('/cancel')) {
-            seen.push(path);
-            return response({workflow_id:'wf',session_id:session,stage:'cancelled',correction_limit:1,attempts:1,parent_id:'parent',parent_status:'cancelled',check:'只检查这一句',children:[{request_id:'child',role:'check',text:'只检查这一句',status:'cancelled'},{request_id:'fix',role:'correction',text:'修正',status:'cancelled'}]});
-          }
-          throw Error('unexpected '+method+' '+path);
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent+' seen='+seen.join('|'));
-        }
-        await import(appURL);
-        await until(()=>$('sessions').textContent.includes('工作区'));
-        $('workflow-check').value = '只检查这一句';
-        $('workflow-limit').value = '1';
-        $('workflow-form').requestSubmit();
-        await until(()=>$('workflow-state').textContent.includes('check · 0'));
-        $('workflow-fail').click();
-        await until(()=>$('workflow-state').textContent.includes('correction · 1'));
-        $('workflow-resume').click();
-        await until(()=>seen.length>=3);
-        $('workflow-cancel').click();
-        await until(()=>$('workflow-state').textContent.includes('cancelled'));
-        assert.equal(seen[0], `/api/v1/sessions/${session}/workflows 只检查这一句 1`);
-        assert.equal(seen[1].startsWith(`/api/v1/sessions/${session}/workflows/`) && seen[1].endsWith('/verdicts false'), true);
-        assert.equal(seen[2], `/api/v1/sessions/${session}/workflows/`+seen[2].split('/')[6]+'/resume');
-        assert.equal(seen[3].endsWith('/cancel'), true);
-        assert.equal(seen.every(item => item.includes(session)), true);
-        window.happyDOM && await window.happyDOM.abort();
-        process.exit(0);
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
 async def test_workflow_children_keep_the_accepted_provider(tmp_path: Path) -> None:

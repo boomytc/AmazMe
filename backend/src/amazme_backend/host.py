@@ -3971,8 +3971,7 @@ def application(owner: Host) -> FastAPI:
         response.headers["Content-Security-Policy"] = policy
         return document
 
-    # The package's original renderer is the only product page. Protocol helper assets
-    # (including xterm) stay at their existing URLs during the client cutover.
+    # The original renderer is the only product page; this mount contains terminal assets and the event schema.
     app.mount("/client-assets", StaticFiles(directory=Path(__file__).with_name("web")), name="client-assets")
     app.mount("/", StaticFiles(directory=frontend_directory(), html=True, check_dir=False), name="web")
     return app

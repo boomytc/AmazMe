@@ -1,10 +1,7 @@
 """Model catalog selection persists without exposing the API key or clearing sessions."""
 import asyncio
-import base64
 import json
-import shutil
 import sqlite3
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -12,20 +9,7 @@ import pytest
 from pydantic import SecretStr
 
 from amazme_backend.common import Profile, build_id, private_write
-from amazme_backend.contracts import (
-    BackendError,
-    ConfigureProvider,
-    CreateSession,
-    CredentialUpdate,
-    HostFence,
-    Message,
-    ProcessLease,
-    Stream,
-    Submission,
-    Submit,
-    UpdateModelSettings,
-    UpdateRecord,
-)
+from amazme_backend.contracts import BackendError, ConfigureProvider, CreateSession, CredentialUpdate, HostFence, Message, ProcessLease, Submission, Submit, UpdateModelSettings, UpdateRecord
 from amazme_backend.host import Host, application
 from amazme_backend.host_store import HostStore
 from amazme_backend.providers import stream
@@ -374,87 +358,6 @@ async def test_credential_revision_keeps_one_key_and_a_cleared_key_is_not_sent(o
         await worker.supervisor.close()
 
 
-def test_browser_saves_the_selected_catalog_model() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    contract = "const root = " + json.dumps(Stream.model_json_schema()) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        let current = {provider:'deepseek',model:'deepseek-flash',base_url:'https://api.deepseek.com',max_tokens:2048,key_configured:true};
-        const models = [
-          {provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false},
-          {provider:'deepseek',model:'deepseek-flash',label:'DeepSeek Flash',endpoint_editable:true}];
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        globalThis.fetch = async (path, options={})=>{
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/sessions') return response({sessions:[]});
-          if(path==='/api/v1/models' && (options.method||'GET')==='GET') return response({models,current});
-          if(path==='/api/v1/models') {
-            const body=JSON.parse(options.body);
-            assert.equal(body.provider,'faux');
-            assert.equal(body.model,'faux');
-            assert.equal(body.proxy,'http://127.0.0.1:9');
-            assert.deepEqual(body.headers,{'X-Project':'demo'});
-            assert.equal(body.api_key, undefined);
-            assert.equal(options.headers['x-amazme-build'],'build');
-            current={provider:'faux',model:'faux',base_url:'',max_tokens:body.max_tokens,key_configured:true,credential_revision:0};
-            return response(current);
-          }
-          if(path==='/api/v1/accounts/faux') {
-            const body=JSON.parse(options.body);
-            assert.equal(options.headers['x-amazme-build'],'build');
-            if(body.clear) {
-              assert.equal(body.api_key,'');
-              assert.equal(body.expected_revision, 1);
-              current={...current, key_configured:false, credential_revision:2};
-              return response({revision:2,accounts:[]});
-            }
-            assert.equal(body.api_key,'next-secret');
-            assert.equal(body.clear, false);
-            assert.equal(body.expected_revision, 0);
-            current={...current, key_configured:true, credential_revision:1};
-            return response({revision:1,accounts:[{provider:'faux',type:'api_key'}]});
-          }
-          throw Error('unexpected '+path);
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('model-choice').selectedOptions[0]?.textContent==='DeepSeek Flash');
-        assert.equal($('model-key-state').textContent, '密钥已配置');
-        assert.equal($('model-key').value, '');
-        $('model-choice').value='faux\nfaux';
-        $('model-choice').onchange();
-        $('model-proxy').value='http://127.0.0.1:9';
-        $('model-headers').value='X-Project: demo';
-        assert.equal($('model-endpoint').disabled, true);
-        await $('model-form').onsubmit({preventDefault(){}});
-        await until(()=>$('model-choice').value==='faux\nfaux' && $('model-endpoint').value==='' && $('model-endpoint').disabled===true);
-        $('model-key').value = 'next-secret';
-        $('model-key-save').click();
-        await until(()=>$('model-key-state').textContent==='账号已配置' && $('model-key').value==='');
-        $('model-key-clear').click();
-        await until(()=>$('model-key-state').textContent==='账号未配置' && $('model-key').value==='');
-        window.happyDOM && await window.happyDOM.abort();
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
 @pytest.mark.parametrize("endpoint", ["http://127.0.0.1:11434/v1", "http://[::1]:11434/v1", "http://localhost:11434/v1"])

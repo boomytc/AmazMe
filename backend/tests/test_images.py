@@ -3,8 +3,6 @@
 import asyncio
 import base64
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -230,80 +228,6 @@ async def test_sdk_submit_includes_the_image_part() -> None:
         await client._http.aclose()
 
 
-def test_page_sends_the_selected_image_and_shows_the_count() -> None:
-    node = shutil.which("node")
-    if node is None:
-        raise AssertionError("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    from amazme_backend.contracts import Stream
-    schema = Stream.model_json_schema()
-    url = "data:text/javascript;base64," + base64.b64encode(
-        ("const root = " + json.dumps(schema) + ";\n" + contract).encode()).decode()
-    app = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(app.encode()).decode()
-    session = "d" * 32
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\nconst png=" + json.dumps(PNG) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=''' + session + r'''&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,FileReader:window.FileReader,WebSocket:class{
-          constructor(){ queueMicrotask(()=>this.onopen?.()); }
-          send(raw){
-            const frame=JSON.parse(raw);
-            if(frame.kind==='hello') queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot,batches:[],stream_id:'stream',binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
-          }
-          close(){}
-        }});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const calls = [];
-        const snapshot = {session_id:''' + json.dumps(session) + r''',stream_id:'stream',seq:'1',state:'ready',requests:[{
-          request_id:'shown',text:'看图',status:'succeeded',answer:'好',image_count:1,kind:'root',children:[],revision:'1',run_id:'shown'}],
-          events:[],approvals:[],effects:[],previews:[],pending:0,next_wake_ms:0,compaction:''};
-        globalThis.fetch = async (path, options={}) => {
-          calls.push({path, body: options.body});
-          if (path === '/api/v1/bootstrap') return response(identity);
-          if (path === '/api/v1/health') return response({state:'ready',identity});
-          if (path === '/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'图片',workspace:'primary'}]});
-          if (path === '/api/v1/models') return response({models:[],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
-          if (path.endsWith('/attachments') && (!options.method || options.method === 'POST')) return response({attachment_id:'bind',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1},201);
-          if (path.endsWith('/snapshot')) return response(snapshot);
-          if (path.endsWith('/submissions')) return response({request_id:'img',text:'看图',status:'queued',image_count:1},202);
-          if (path.includes('/attachments/')) return response({detached:true});
-          return response({});
-        };
-        const $=id=>document.getElementById(id);
-        await import(appURL);
-        for (let n=0;n<50 && $('connection').textContent!=='已连接';n++) await new Promise(resolve=>setTimeout(resolve,10));
-        assert.equal($('connection').textContent,'已连接', $('error').textContent);
-        assert.match($('conversation').textContent,/看图 · 1 张图片/);
-        const bytes = Uint8Array.from(atob(png), char => char.charCodeAt(0));
-        const file = new window.File([bytes], 'dot.png', {type:'image/png'});
-        const input = $('images');
-        Object.defineProperty(input, 'files', {configurable:true, value:[file]});
-        input.onchange();
-        assert.equal($('image-note').textContent,'dot.png');
-        $('prompt').value = '';
-        assert.equal($('prompt').required,false);
-        await $('composer').onsubmit({preventDefault(){}});
-        const submission = calls.find(call => String(call.path).endsWith('/submissions'));
-        const body = JSON.parse(submission.body);
-        assert.equal(body.text,'');
-        assert.equal(body.images.length,1);
-        assert.equal(body.images[0].media_type,'image/png');
-        assert.equal(body.images[0].data_base64,png);
-        assert.equal($('image-note').textContent,'');
-        process.exit(0);
-    '''
-    try:
-        result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20)
-    except subprocess.TimeoutExpired as exc:
-        err = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-        raise AssertionError(err[-1500:]) from None
-    if result.returncode != 0:
-        raise AssertionError((result.stderr or result.stdout)[-1500:])
 
 
 def test_empty_text_requires_image_context() -> None:

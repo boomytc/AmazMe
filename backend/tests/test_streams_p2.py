@@ -1,7 +1,6 @@
 """Protocol and reducer proofs without VM, credentials or a running browser."""
 
 import asyncio
-import base64
 import json
 import shutil
 import subprocess
@@ -289,12 +288,7 @@ async def test_connection_capacity_counts_prehello(monkeypatch):
 
 
 def browser_module():
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    contract = "const root = " + json.dumps(Stream.model_json_schema()) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    return "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
+    return (Path(__file__).parents[2] / "packages/web/src/python-stream.ts").resolve().as_uri()
 
 
 def browser_apply_batches(snapshot: Snapshot, batches: list[CommitBatch]) -> Snapshot:
@@ -547,143 +541,3 @@ async def test_store_replay_window_matches_stream_batch_limit(tmp_path):
         assert streams.valid_replay(replay, snapshot.stream_id, 0)
     finally:
         await store.db.close()
-
-
-def test_web_transport_limit_matches_server():
-    web = Path(__file__).parents[1] / "src/amazme_backend/web/app.js"
-    assert f"> {streams.MAX_FRAME_BYTES // (1024 * 1024)} * 1024 * 1024" in web.read_text()
-
-
-def test_browser_connection_ownership_and_safe_retry_without_browser():
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    script = "const appURL=" + json.dumps(browser_module()) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const snapshots = Object.fromEntries(['a','b'].map(id=>[id, {session_id:id,stream_id:'stream-'+id,seq:'0',state:'ready',requests:[],events:[],approvals:[],effects:[],previews:[],pending:0,next_wake_ms:0}]));
-        const calls = [], attachments = new Map(), sockets = [];
-        let count = 0, heldReply = null, holdSubmission = true, failSubmission = false, healthState = 'ready', loseResolution = true;
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        globalThis.fetch = async (path, options={})=>{
-            const method=options.method||'GET'; calls.push({path,options});
-            if(path==='/api/v1/bootstrap') return response(identity);
-          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
-            if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
-            if(path==='/api/v1/health') return response({state:healthState,identity});
-            if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A'},{session_id:'b',title:'B'}]});
-            const parts=path.split('/'), session=parts[4];
-            if(method==='POST') {
-                assert.equal(options.headers['x-amazme-build'],'build');
-                assert.equal(options.headers['x-amazme-epoch'],'1');
-                if(parts[5]!=='attachments') assert.equal(attachments.get(options.headers['x-amazme-attachment']).session_id,session);
-            }
-            if(parts[5]==='attachments') {
-                if(method==='DELETE') return response({detached:true});
-                const value={attachment_id:'binding-'+(++count),session_id:session,build_id:'build',host_epoch:1};
-                attachments.set(value.attachment_id,value); return response(value,201);
-            }
-            if(parts[5]==='snapshot') return response(snapshots[session]);
-            if(parts[5]==='effects') {
-                if(loseResolution) {loseResolution=false; throw new TypeError('network reply lost');}
-                return response({},202);
-            }
-            if(parts[5]==='submissions') {
-                if(holdSubmission) return new Promise((resolve,reject)=>heldReply=()=>reject(new TypeError('reply lost')));
-                if(failSubmission) return response({code:'stale_client_binding',message:'Reconnect before writing'},409);
-                return response({},202);
-            }
-            throw Error('unexpected request '+path);
-        };
-        globalThis.WebSocket = class {
-            constructor(url) { this.url=url; sockets.push(this); queueMicrotask(()=>this.onopen?.()); }
-            send(raw) {
-                const frame=JSON.parse(raw);
-                if(frame.kind==='hello') {
-                    this.binding=attachments.get(frame.binding_id);
-                    queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot:snapshots[this.binding.session_id],batches:[],stream_id:'stream-'+this.binding.session_id,binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
-                } else this.ack=frame;
-            }
-            close() { queueMicrotask(()=>this.onclose?.()); }
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-            for(let n=0;n<1000;n++) {if(check())return;await new Promise(resolve=>setTimeout(resolve,1));}
-            throw Error('condition timed out: '+$('error').textContent);
-        }
-        function select(index) { $('sessions').children[index].click(); }
-        await import(appURL);
-        await until(()=>$('connection').textContent==='已连接');
-        assert.equal(sockets.at(-1).ack.seq,'0');
-        $('prompt').value='ambiguous task';
-        const first=$('composer').onsubmit({preventDefault(){}});
-        await until(()=>heldReply!==null);
-        const originalID=JSON.parse(sessionStorage.getItem('pending:host-1')).request_id;
-        const old=sockets.at(-1);
-        select(1); await until(()=>$('connection').textContent==='已连接');
-        $('prompt').value='B draft';
-        old.onmessage({data:'{broken old frame'}); // callback belongs to a retired connection
-        assert.equal($('prompt').value,'B draft');
-        select(0); await until(()=>$('connection').textContent==='已连接');
-        heldReply(); await first;
-        assert.equal($('prompt').value,'ambiguous task');
-        assert.equal(JSON.parse(sessionStorage.getItem('pending:host-1')).request_id,originalID);
-        assert.equal($('send').textContent,'重试原请求');
-        holdSubmission=false;
-        await $('composer').onsubmit({preventDefault(){}});
-        const submissions=calls.filter(call=>call.path.endsWith('/submissions'));
-        assert.equal(JSON.parse(submissions[0].options.body).request_id,JSON.parse(submissions[1].options.body).request_id);
-        assert.equal(sessionStorage.getItem('pending:host-1'),null);
-        assert.equal($('prompt').value,'');
-        select(1); await until(()=>$('connection').textContent==='已连接');
-        assert.equal($('prompt').value,'B draft');
-        failSubmission=true;
-        await $('composer').onsubmit({preventDefault(){}});
-        assert.equal(JSON.parse(sessionStorage.getItem('pending:host-1')).text,'B draft');
-        assert.equal($('send').disabled,true);
-        assert.match($('error').textContent,/原请求 ID/);
-
-        failSubmission=false;
-        snapshots.b = {...snapshots.b,seq:'5',pending:1,effects:[{call_id:'call',session_id:'b',request_id:'unknown',reason:'lost tool result',resource_clean:false,reconciled:false}]};
-        select(0); await until(()=>$('connection').textContent==='已连接');
-        select(1); await until(()=>$('connection').textContent==='已连接');
-        const effectButton=()=>$('effects').querySelector('button');
-        assert.equal(effectButton().disabled,true);
-        function publish() {
-            const ws=sockets.at(-1);
-            ws.onmessage({data:JSON.stringify({snapshot:snapshots.b,batches:[],stream_id:'stream-b',binding_id:ws.binding.attachment_id,build_id:'build',resync:'refresh'})});
-        }
-        snapshots.b={...snapshots.b,seq:'6',effects:[{...snapshots.b.effects[0],resource_clean:true}]};
-        publish();
-        assert.equal(effectButton().disabled,false);
-        const evidence=$('effects').querySelector('textarea');
-        evidence.value='checked file contents'; evidence.dispatchEvent(new window.Event('input'));
-        publish();
-        assert.equal($('effects').querySelector('textarea'),evidence);
-        assert.equal(evidence.value,'checked file contents');
-        effectButton().click();
-        await until(()=>$('error').textContent.includes('原 ID'));
-        const retry=$('action-retries').querySelector('button');
-        assert.ok(retry); retry.click();
-        await until(()=>$('action-retries').children.length===0);
-        const resolutions=calls.filter(call=>call.path.endsWith('/effects/resolve'));
-        assert.equal(resolutions.length,2);
-        assert.deepEqual(JSON.parse(resolutions[0].options.body),JSON.parse(resolutions[1].options.body));
-        assert.equal(JSON.parse(resolutions[0].options.body).evidence,'checked file contents');
-        snapshots.b={...snapshots.b,seq:'7',state:'frozen'}; publish();
-        assert.equal($('send').disabled,true);
-        assert.equal(effectButton().disabled,true);
-        assert.match($('recovery').textContent,/普通网页无法解除冻结/);
-        assert.ok(!calls.some(call=>call.path.includes('/control/')));
-        window.dispatchEvent(new window.Event('pagehide'));
-        await window.happyDOM.abort();
-        console.log('client ownership verified');
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-5000:]

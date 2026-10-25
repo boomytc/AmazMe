@@ -1,10 +1,7 @@
 """Session usage reads tokens stored with finished model calls and does not invent a price."""
 
 import asyncio
-import base64
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -276,58 +273,3 @@ async def test_stream_persists_cache_cost_and_replays_reasoning_signature(tmp_pa
         server.close()
         await server.wait_closed()
         await host.store.db.close()
-
-
-def test_page_shows_usage_and_diagnostics_for_the_selected_session() -> None:
-    node = shutil.which("node")
-    if node is None:
-        raise AssertionError("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    from amazme_backend.contracts import Stream
-    schema = Stream.model_json_schema()
-    contract = "const root = " + json.dumps(schema) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
-    session = "d" * 32
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=''' + session + r'''&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const seen = [];
-        globalThis.fetch = async (path, options={})=>{
-          const method = options.method || 'GET';
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'工作区',archived:false}]});
-          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1});
-          if(path.endsWith('/usage')) { seen.push(path); return response({session_id:''' + json.dumps(session) + r''',model_calls:1,input_tokens:6,output_tokens:4,cache_read_tokens:3,cache_write_tokens:1,reasoning_signatures:1,priced_calls:1,unpriced_calls:0,priced:true,cost_micro_usd:6}); }
-          if(path.endsWith('/diagnostics')) { seen.push(path); return response({session_id:''' + json.dumps(session) + r''',present:true,state:'ready',blocked_code:'',failed:0,unknown:0,error_codes:[]}); }
-          throw Error('unexpected '+method+' '+path);
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('sessions').textContent.includes('工作区'));
-        $('usage-load').click();
-        await until(()=>$('usage-report').textContent.includes('美元'));
-        assert.equal($('usage-report').textContent, '1 次模型调用 · 输入 6 · 输出 4 · 缓存读 3 · 缓存写 1 · 推理签名 1 · 0.000006 美元');
-        $('diagnostic-load').click();
-        await until(()=>$('diagnostic-report').textContent.includes('ready'));
-        assert.equal($('diagnostic-report').textContent, 'ready · 失败 0 · 未知 0 · 无');
-        assert.deepEqual(seen, [''' + json.dumps(f"/api/v1/sessions/{session}/usage") + r''', ''' + json.dumps(f"/api/v1/sessions/{session}/diagnostics") + r''']);
-        window.happyDOM && await window.happyDOM.abort();
-        process.exit(0);
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]

@@ -1,10 +1,7 @@
 """Desktop actions follow the fixed driver: permissions, pixels, freshness, and cleanup."""
 
 import asyncio
-import base64
 import json
-import shutil
-import subprocess
 import time
 from pathlib import Path
 from typing import Literal
@@ -267,101 +264,3 @@ async def test_sdk_and_rpc_use_the_same_bound_computer_action_ledger(tmp_path: P
     finally:
         await client._http.aclose()
         await _stop(host)
-
-
-def test_browser_clicks_the_selected_session_capture() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    schema = __import__("amazme_backend.contracts", fromlist=["Stream"]).Stream.model_json_schema()
-    contract = "const root = " + json.dumps(schema) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\nconst boundSession=" + json.dumps(SESSION) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session='+boundSession+'&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const seen = [];
-        const session = ''' + json.dumps(SESSION) + r''';
-        globalThis.fetch = async (path, options={})=>{
-          const method = options.method || 'GET';
-          const body = options.body ? JSON.parse(options.body) : {};
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:session,title:'工作区',archived:false,workspace:'primary'}]});
-          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:session,build_id:'build',host_epoch:1});
-          if(path===`/api/v1/sessions/${session}/computer` && method==='POST') {
-            assert.equal(body.enabled,true);
-            assert.equal(body.jev_model,'jev-1.14.0');
-            assert.equal(body.min_presence,.8);
-            assert.equal(Object.hasOwn(body,'accessibility'),false);
-            seen.push(path);
-            return response({enabled:true,max_age_ms:55000});
-          }
-          if(path===`/api/v1/sessions/${session}/computer/observe` && method==='POST') {
-            seen.push(path);
-            return response({permitted:true,accessibility:true,screen:true,identity:'fixed-computer-driver',error:'',capture:{capture_id:'cap',width:10,height:20,raw_width:20,raw_height:10,orientation:6,scale:2,observed_ms:1}});
-          }
-          if(path===`/api/v1/sessions/${session}/computer/actions` && method==='POST') {
-            seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+body.capture_id+' '+body.action.point.x+','+body.action.point.y);
-            if(body.action.point.y===9) seen.push('id '+body.action_id+' '+body.action.point.x+','+body.action.point.y);
-            const repeat = seen.filter(item=>item==='id '+body.action_id+' '+body.action.point.x+','+body.action.point.y).length > 1;
-            if(body.action.point.y===9 && !repeat) return response({action_id:body.action_id,session_id:session,phase:'unknown',error:'',driver_x:null,driver_y:null});
-            return response({action_id:body.action_id,session_id:session,phase:'done',error:'',driver_x:8,driver_y:16});
-          }
-          if(path===`/api/v1/sessions/${session}/computer/cleanup`) {
-            seen.push(path);
-            return response({cleared:true,proof:'proof'});
-          }
-          throw Error('unexpected '+method+' '+path);
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('sessions').textContent.includes('工作区'));
-        $('computer-enabled').checked = true;
-        $('computer-form').dispatchEvent(new window.Event('submit',{bubbles:true,cancelable:true}));
-        await until(()=>$('computer-state').textContent.includes('已启用'));
-        $('computer-observe').click();
-        await until(()=>$('computer-state').textContent.includes('10×20'));
-        $('computer-act').requestSubmit();
-        await until(()=>$('computer-state').textContent.includes('8,16'));
-        $('computer-cleanup').click();
-        await until(()=>$('computer-state').textContent.includes('proof'));
-        assert.equal(seen[0], `/api/v1/sessions/${session}/computer`);
-        assert.equal(seen[1], `/api/v1/sessions/${session}/computer/observe`);
-        assert.equal(seen[2], `/api/v1/sessions/${session}/computer/actions ["action","action_id","capture_id","delivery_mode","intent","target"] cap 1,4`);
-        assert.equal(seen[3], `/api/v1/sessions/${session}/computer/cleanup`);
-        $('computer-y').value = '9';
-        $('computer-act').requestSubmit();
-        await until(()=>$('computer-state').textContent.startsWith('unknown') && $('error').textContent.includes('同一画面'));
-        const held = seen.filter(item=>item.startsWith('id '));
-        assert.equal(held.length, 1);
-        $('error').textContent = '';
-        $('computer-x').value = '2';
-        $('computer-act').requestSubmit();
-        await until(()=>$('error').textContent.includes('同一画面'));
-        assert.equal(seen.filter(item=>item.startsWith('id ')).length, 1);
-        $('computer-x').value = '1';
-        $('computer-act').requestSubmit();
-        await until(()=>$('computer-state').textContent.includes('8,16'));
-        const again = seen.filter(item=>item.startsWith('id '));
-        assert.equal(again.length, 2);
-        assert.equal(again[0], again[1]);
-        window.happyDOM && await window.happyDOM.abort();
-        process.exit(0);
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]

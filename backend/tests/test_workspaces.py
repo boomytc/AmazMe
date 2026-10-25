@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 import sqlite3
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -529,87 +528,6 @@ def test_terminal_gate_uses_native_cwd_and_rejects_relative_path() -> None:
         _allowed_cwd("/tmp/invalid\0path")
 
 
-def test_browser_switches_to_the_granted_absolute_path() -> None:
-    node = __import__("shutil").which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    import base64
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    schema = __import__("amazme_backend.contracts", fromlist=["Stream"]).Stream.model_json_schema()
-    contract = "const root = " + json.dumps(schema) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const seen = [], posted = [];
-        globalThis.fetch = async (path, options={})=>{
-          const method = options.method || 'GET';
-          if (method !== 'GET') posted.push({path, body: options.body ? JSON.parse(options.body) : {}});
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(SESSION) + r''',title:'工作区',archived:false,workspace:'primary'}]});
-          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(SESSION) + r''',build_id:'build',host_epoch:1});
-          if(path==='/api/v1/workspaces' && method==='GET') return response({workspaces:[
-            {name:'primary',host_path:'/var/primary-work',primary:true},
-            {name:'docs',host_path:'/var/docs-work',primary:false}]});
-          if(path.endsWith('/read')) return response({terminal_id:'t', cols:80, rows:24, queued:0, written:0, exit_code:null, output:'', phase:'running'});
-          if(path.endsWith('/terminals') && method==='GET') return response({terminals:[]});
-          if(path.endsWith('/terminals') && method==='POST') {
-            const body = posted.at(-1).body;
-            return response({terminal_id:body.terminal_id, workspace:body.workspace, cols:80, rows:24, queued:0, written:0, exit_code:null, output:'', phase:'running'});
-          }
-          if(path.endsWith('/mcp') && method==='GET') return response({servers:[], calls:[]});
-          if(path.endsWith('/mcp') && method==='POST') {
-            const body = posted.at(-1).body;
-            return response({server_id:body.server_id, command:body.command, workspace:body.workspace, phase:'ready', protocol_version:'2025-11-25', exit_code:null, tools:[], clean:false});
-          }
-          if(path==='/api/v1/files' || path.startsWith('/api/v1/files?')) {
-            seen.push(path);
-            if(path.includes('grant%2Fdocs') || path.includes('grant/docs')) return response({path:'grant/docs',absolute_path:'/var/docs-work',entries:[{name:'note.txt',kind:'file',size:4}],truncated:false});
-            return response({path:'',absolute_path:'/var/primary-work',entries:[{name:'keep.txt',kind:'file',size:4}],truncated:false});
-          }
-          throw Error('unexpected '+method+' '+path);
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent);
-        }
-        await import(appURL);
-        assert.equal($('session-workspace').textContent, '本机工作区');
-        $('files').open = true;
-        $('files').dispatchEvent(new window.Event('toggle'));
-        await until(()=>$('workspace-location').textContent==='/var/primary-work' && [...$('file-list').children].some(node=>node.textContent==='keep.txt'));
-        [...$('workspace-list').children].find(node=>node.textContent==='docs').click();
-        await until(()=>$('workspace-location').textContent==='/var/docs-work' && [...$('file-list').children].some(node=>node.textContent==='note.txt'));
-        assert.equal($('workspace-location').textContent.includes('grant/'), false);
-        assert.equal($('session-workspace').textContent, '本机工作区');
-        assert.ok(seen.some(path=>path.includes('grant')));
-        [...$('sessions').children].find(node=>node.textContent==='工作区').click();
-        await until(()=>$('session-workspace').textContent==='/var/primary-work');
-        assert.equal($('workspace-location').textContent, '/var/docs-work');
-        $('terminal-new').click();
-        await until(()=>posted.some(item=>item.path.endsWith('/terminals')));
-        $('mcp-command').value = 'python3 demo.py';
-        $('mcp-form').requestSubmit();
-        await until(()=>posted.some(item=>item.path.endsWith('/mcp')));
-        assert.equal(posted.find(item=>item.path.endsWith('/terminals')).body.workspace, '');
-        assert.equal(posted.find(item=>item.path.endsWith('/mcp')).body.workspace, '');
-        window.happyDOM && await window.happyDOM.abort();
-        process.exit(0);
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
 async def test_select_launch_directory_is_stable_and_never_replaces_existing_grants(tmp_path: Path) -> None:

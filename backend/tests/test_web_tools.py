@@ -1,9 +1,6 @@
 """Web calls stay off until enabled, and an unknown paid call is not sent again."""
 
-import base64
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -269,93 +266,6 @@ async def test_web_call_without_a_deepseek_key_sends_nothing(tmp_path: Path) -> 
         await host.store.db.close()
 
 
-def test_browser_enables_web_for_the_selected_session() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    schema = __import__("amazme_backend.contracts", fromlist=["Stream"]).Stream.model_json_schema()
-    contract = "const root = " + json.dumps(schema) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\nconst boundSession=" + json.dumps(SESSION) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session='+boundSession+'&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const seen = [];
-        const session = ''' + json.dumps(SESSION) + r''';
-        globalThis.fetch = async (path, options={})=>{
-          const method = options.method || 'GET';
-          const body = options.body ? JSON.parse(options.body) : {};
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:session,title:'工作区',archived:false,workspace:'primary'}]});
-          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:session,build_id:'build',host_epoch:1});
-          if(path===`/api/v1/sessions/${session}/web` && method==='GET') {
-            seen.push('GET '+path);
-            return response({enabled:true,base_url:'https://tools.example/v1/tools',count:4,send_original_question:false,timeout_ms:30000,max_response_bytes:2097152,max_content_chars:20000});
-          }
-          if(path===`/api/v1/sessions/${session}/web` && method==='POST') {
-            seen.push('POST '+String(body.enabled)+' '+body.base_url+' '+String(body.count));
-            return response(body);
-          }
-          if(path===`/api/v1/sessions/${session}/web/calls` && method==='POST') {
-            seen.push(path+' '+JSON.stringify(Object.keys(body).sort())+' '+body.query);
-            seen.push('id '+body.call_id+' '+body.query);
-            const repeat = seen.filter(item=>item==='id '+body.call_id+' '+body.query).length > 1;
-            if(body.query==='hold' && !repeat) return response({call_id:body.call_id,session_id:session,kind:'search',phase:'unknown',error:'',result:''});
-            return response({call_id:body.call_id,session_id:session,kind:'search',phase:'done',error:'',result:'{"sources":[]}'});
-          }
-          throw Error('unexpected '+method+' '+path);
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('sessions').textContent.includes('工作区'));
-        assert.equal($('web-enabled').checked, false);
-        $('web').querySelector('summary').click();
-        await until(()=>$('web-enabled').checked && $('web-state').textContent.includes('https://tools.example/v1/tools'));
-        $('web-enabled').checked = false;
-        $('web-form').requestSubmit();
-        await until(()=>$('web-state').textContent.includes('已关闭') && $('web-state').textContent.includes('https://tools.example/v1/tools'));
-        $('web-query').value = '项目结构';
-        $('web-search').requestSubmit();
-        await until(()=>$('web-state').textContent.includes('done'));
-        assert.ok(seen.includes(`GET /api/v1/sessions/${session}/web`));
-        assert.ok(seen.includes('POST false https://tools.example/v1/tools 4'));
-        assert.ok(seen.some(item => item.includes('/web/calls') && item.includes('项目结构')));
-        $('web-query').value = 'hold';
-        $('web-search').requestSubmit();
-        await until(()=>$('web-state').textContent.startsWith('unknown') && $('error').textContent.includes('同一查询'));
-        const held = seen.filter(item=>item.startsWith('id ') && item.endsWith(' hold'));
-        assert.equal(held.length, 1);
-        $('error').textContent = '';
-        $('web-query').value = 'other';
-        $('web-search').requestSubmit();
-        await until(()=>$('error').textContent.includes('同一查询'));
-        assert.equal(seen.filter(item=>item.startsWith('id ') && (item.endsWith(' hold') || item.endsWith(' other'))).length, 1);
-        $('web-query').value = 'hold';
-        $('web-search').requestSubmit();
-        await until(()=>$('web-state').textContent.startsWith('done'));
-        const again = seen.filter(item=>item.startsWith('id ') && item.endsWith(' hold'));
-        assert.equal(again.length, 2);
-        assert.equal(again[0], again[1]);
-        window.happyDOM && await window.happyDOM.abort();
-        process.exit(0);
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
 def _model_transport(seen: list[httpx.Request]) -> httpx.MockTransport:

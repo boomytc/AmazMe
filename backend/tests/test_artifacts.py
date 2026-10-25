@@ -3,8 +3,6 @@
 import base64
 import hashlib
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import httpx
@@ -127,81 +125,3 @@ async def test_sdk_put_artifact_sends_the_bytes() -> None:
         assert base64.b64decode(str(body["data_base64"])) == BODY
     finally:
         await client._http.aclose()
-
-
-def test_page_saves_an_artifact_and_reads_it_back() -> None:
-    node = shutil.which("node")
-    if node is None:
-        raise AssertionError("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    from amazme_backend.contracts import Stream
-    schema = Stream.model_json_schema()
-    url = "data:text/javascript;base64," + base64.b64encode(
-        ("const root = " + json.dumps(schema) + ";\n" + contract).encode()).decode()
-    app = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(app.encode()).decode()
-    session = "d" * 32
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=''' + session + r'''&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,FileReader:window.FileReader,atob,WebSocket:class{
-          constructor(){ queueMicrotask(()=>this.onopen?.()); }
-          send(raw){
-            const frame=JSON.parse(raw);
-            if(frame.kind==='hello') queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot,batches:[],stream_id:'stream',binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
-          }
-          close(){}
-        }});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const stored = new Map();
-        const snapshot = {session_id:''' + json.dumps(session) + r''',stream_id:'stream',seq:'1',state:'ready',requests:[],events:[],approvals:[],effects:[],previews:[],pending:0,next_wake_ms:0,compaction:''};
-        globalThis.fetch = async (path, options={}) => {
-          const method = options.method || 'GET';
-          if (path === '/api/v1/bootstrap') return response(identity);
-          if (path === '/api/v1/health') return response({state:'ready',identity});
-          if (path === '/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'产物',workspace:'primary'}]});
-          if (path === '/api/v1/models') return response({models:[],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
-          if (path.endsWith('/attachments') && method === 'POST') return response({attachment_id:'bind',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1},201);
-          if (path.endsWith('/snapshot')) return response(snapshot);
-          if (path.endsWith('/artifacts') && method === 'POST') {
-            const body = JSON.parse(options.body);
-            stored.set(body.artifact_id, body);
-            return response({artifact_id:body.artifact_id,name:body.name,media_type:body.media_type,size:atob(body.data_base64).length,digest:'abc'},201);
-          }
-          if (path.endsWith('/artifacts') && method === 'GET') {
-            return response({artifacts:[...stored.values()].map(body => ({artifact_id:body.artifact_id,name:body.name,media_type:body.media_type,size:atob(body.data_base64).length,digest:'abc'}))});
-          }
-          const id = path.split('/').pop();
-          if (path.includes('/artifacts/') && stored.has(id)) {
-            const body = stored.get(id);
-            return response({artifact_id:id,name:body.name,media_type:body.media_type,size:atob(body.data_base64).length,digest:'abc',data_base64:body.data_base64});
-          }
-          if (path.includes('/attachments/')) return response({detached:true});
-          return response({});
-        };
-        const $=id=>document.getElementById(id);
-        await import(appURL);
-        for (let n=0;n<50 && $('connection').textContent!=='已连接';n++) await new Promise(resolve=>setTimeout(resolve,10));
-        assert.equal($('connection').textContent,'已连接', $('error').textContent);
-        $('artifact-name').value = '记录.txt';
-        const file = new window.File([new TextEncoder().encode('hello artifact')], '记录.txt', {type:'text/plain'});
-        Object.defineProperty($('artifact-file'), 'files', {configurable:true, value:[file]});
-        await $('artifact-form').onsubmit({preventDefault(){}});
-        assert.equal($('error').textContent,'');
-        assert.match($('artifact-list').textContent,/记录\.txt · 14/);
-        $('artifact-list').querySelector('button').click();
-        for (let n=0;n<20 && !$('artifact-body').textContent.includes('hello artifact');n++) await new Promise(resolve=>setTimeout(resolve,10));
-        assert.match($('artifact-body').textContent,/hello artifact/);
-        process.exit(0);
-    '''
-    try:
-        result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20)
-    except subprocess.TimeoutExpired as exc:
-        err = exc.stderr.decode() if isinstance(exc.stderr, bytes) else (exc.stderr or "")
-        raise AssertionError(err[-1500:]) from None
-    if result.returncode != 0:
-        raise AssertionError((result.stderr or result.stdout)[-1500:])

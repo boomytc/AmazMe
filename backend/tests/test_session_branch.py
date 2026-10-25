@@ -1,10 +1,8 @@
 """Session branches copy one settled turn and then diverge."""
 import asyncio
-import base64
 import json
 import shutil
 import sqlite3
-import subprocess
 from collections.abc import AsyncIterator
 from pathlib import Path
 
@@ -14,30 +12,7 @@ import pytest_asyncio
 from pydantic import SecretStr
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import (
-    AnswerFeedbackWrite,
-    BackendError,
-    BranchSession,
-    Cleanup,
-    CompactSession,
-    ComputerPolicy,
-    CreateSession,
-    HostFence,
-    Lease,
-    Message,
-    PrepareUpdate,
-    ProcessLease,
-    ProviderConfig,
-    Receipt,
-    RenameSession,
-    SessionModel,
-    Snapshot,
-    Stream,
-    Submit,
-    ToolResult,
-    WebPolicy,
-    WorkspaceGrantRequest,
-)
+from amazme_backend.contracts import AnswerFeedbackWrite, BackendError, BranchSession, Cleanup, CompactSession, ComputerPolicy, CreateSession, HostFence, Lease, Message, PrepareUpdate, ProcessLease, ProviderConfig, RenameSession, SessionModel, Submit, ToolResult, WebPolicy, WorkspaceGrantRequest
 from amazme_backend.host import Host, application
 from amazme_backend.host_store import HostStore
 from amazme_backend.providers import Completion, stream
@@ -747,221 +722,12 @@ async def test_archived_session_cannot_compact(owner: Host) -> None:
         await parent.db.close()
 
 
-def browser_module() -> str:
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    contract = "const root = " + json.dumps(Stream.model_json_schema()) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    return "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
 
 
-def test_browser_branches_from_the_selected_turn() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    parent_snapshot = Snapshot(session_id="a", stream_id="stream-a", seq="2", state="ready", events=[], requests=[
-        Receipt(request_id="r1", text="alpha", status="succeeded", answer="已收到：alpha", kind="root"),
-        Receipt(request_id="r2", text="beta", status="succeeded", answer="已收到：beta", kind="root"),
-    ])
-    child_snapshot = parent_snapshot.model_copy(update={
-        "session_id": "child", "stream_id": "stream-child", "requests": [], "events": []})
-    script = "const appURL=" + json.dumps(browser_module()) + ";\n"
-    script += "const html=" + json.dumps((web / "index.html").read_text()) + ";\n"
-    script += "const parentSnapshot=" + parent_snapshot.model_dump_json() + ";\n"
-    script += "const childSnapshot=" + child_snapshot.model_dump_json() + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1',protocol:'amazme-http/1'};
-        const calls = [];
-        let branched = false, count = 0;
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        globalThis.fetch = async (path, options={})=>{
-          calls.push({path, body:options.body, build:options.headers?.['x-amazme-build']});
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/sessions') return response({sessions:branched
-            ? [{session_id:'a',title:'A',parent_id:'',fork_request_id:''},{session_id:'child',title:'分支：A',parent_id:'a',fork_request_id:'r1'}]
-            : [{session_id:'a',title:'A',parent_id:'',fork_request_id:''}]});
-          const parts=path.split('/');
-          if(parts[5]==='attachments') return response({attachment_id:'binding-'+(++count),session_id:parts[4],build_id:'build',host_epoch:1},201);
-          if(parts[5]==='snapshot') return response(parts[4]==='child' ? childSnapshot : parentSnapshot);
-          if(parts[5]==='branches') {
-            assert.equal(JSON.parse(options.body).request_id,'r1');
-            assert.equal(options.headers['x-amazme-build'],'build');
-            branched = true;
-            return response({session_id:'child',title:'分支：A',parent_id:'a',fork_request_id:'r1'},201);
-          }
-          throw Error('unexpected request '+path);
-        };
-        let hellos = 0;
-        globalThis.WebSocket = class {
-          constructor() { queueMicrotask(()=>this.onopen?.()); }
-          send(raw) {
-            const frame=JSON.parse(raw);
-            if(frame.kind!=='hello') return;
-            hellos += 1;
-            const snapshot = hellos === 1 ? parentSnapshot : childSnapshot;
-            queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot,batches:[],stream_id:snapshot.stream_id,binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
-          }
-          close() {}
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('condition timed out: '+$('error').textContent+' '+$('connection').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('connection').textContent==='已连接' && document.querySelector('#conversation article button')?.textContent==='从此处分支');
-        assert.equal(document.querySelectorAll('#conversation article button').length, 4);
-        document.querySelector('#conversation article button').click();
-        await until(()=>$('conversation').textContent.includes('alpha')===false && [...$('sessions').children].some(node=>node.textContent==='分支：A'));
-        assert.equal(calls.some(call=>String(call.path).endsWith('/branches')), true);
-        window.dispatchEvent(new window.Event('pagehide'));
-        await window.happyDOM.abort();
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
-def test_browser_archive_keeps_the_visible_turn() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    snapshot = Snapshot(session_id="a", stream_id="stream-a", seq="1", state="ready", events=[], requests=[
-        Receipt(request_id="r1", text="alpha", status="succeeded", answer="已收到：alpha", kind="root")])
-    script = "const appURL=" + json.dumps(browser_module()) + ";\n"
-    script += "const html=" + json.dumps((web / "index.html").read_text()) + ";\n"
-    script += "const snap=" + snapshot.model_dump_json() + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        let archived = false;
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        globalThis.fetch = async (path, options={})=>{
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A',parent_id:'',fork_request_id:'',archived}]});
-          const parts=path.split('/');
-          if(parts[5]==='attachments' && (options.method||'GET')==='DELETE') return response({detached:true});
-          if(parts[5]==='attachments') return response({attachment_id:'binding',session_id:parts[4],build_id:'build',host_epoch:1},201);
-          if(parts[5]==='snapshot') return response(snap);
-          if(parts[5]==='archive') {
-            assert.equal(JSON.parse(options.body).archived, true);
-            archived = true;
-            return response({session_id:'a',title:'A',parent_id:'',fork_request_id:'',archived:true});
-          }
-          throw Error('unexpected '+path);
-        };
-        globalThis.WebSocket = class {
-          constructor() { queueMicrotask(()=>this.onopen?.()); }
-          send(raw) {
-            const frame=JSON.parse(raw);
-            if(frame.kind!=='hello') return;
-            queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot:snap,batches:[],stream_id:snap.stream_id,binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
-          }
-          close() {}
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent+' '+$('connection').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('connection').textContent==='已连接' && $('conversation').textContent.includes('alpha'));
-        assert.equal($('archive').textContent, '归档');
-        $('archive').click();
-        await until(()=>$('archive').textContent==='恢复' && $('send').disabled && $('conversation').textContent.includes('已收到：alpha'));
-        assert.equal([...$('sessions').children].some(node=>node.textContent==='A（已归档）'), true);
-        window.dispatchEvent(new window.Event('pagehide'));
-        await window.happyDOM.abort();
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
-def test_browser_compaction_keeps_the_original_turn() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    snapshot = Snapshot(session_id="a", stream_id="stream-a", seq="1", state="ready", events=[], requests=[
-        Receipt(request_id="r1", text="alpha", status="succeeded", answer="已收到：alpha", kind="root")])
-    script = "const appURL=" + json.dumps(browser_module()) + ";\n"
-    script += "const html=" + json.dumps((web / "index.html").read_text()) + ";\n"
-    script += "const snap=" + snapshot.model_dump_json() + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=a&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const compactionIds=[];
-        globalThis.fetch = async (path, options={})=>{
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false}});
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:'a',title:'A',archived:false}]});
-          const parts=path.split('/');
-          if(parts[5]==='attachments' && (options.method||'GET')==='DELETE') return response({detached:true});
-          if(parts[5]==='attachments') return response({attachment_id:'binding',session_id:parts[4],build_id:'build',host_epoch:1},201);
-          if(parts[5]==='snapshot') return response(snap);
-          if(parts[5]==='compactions') {
-            const body=JSON.parse(options.body);
-            assert.equal(body.through_request_id,'r1');
-            compactionIds.push(body.compaction_id);
-            if(compactionIds.filter(item=>item===body.compaction_id).length===1) {
-              return response({code:'compaction_pending',message:'compaction_pending'},409);
-            }
-            return response({compaction_id:body.compaction_id,through_request_id:'r1',basis:'abc',message_count:2,summary:'已压缩 alpha'},201);
-          }
-          throw Error('unexpected '+path);
-        };
-        globalThis.WebSocket = class {
-          constructor() { queueMicrotask(()=>this.onopen?.()); }
-          send(raw) {
-            const frame=JSON.parse(raw);
-            if(frame.kind!=='hello') return;
-            queueMicrotask(()=>this.onmessage?.({data:JSON.stringify({snapshot:snap,batches:[],stream_id:snap.stream_id,binding_id:frame.binding_id,build_id:'build',resync:'initial'})}));
-          }
-          close() {}
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent+' '+$('connection').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('conversation').textContent.includes('alpha') && [...document.querySelectorAll('button')].some(node=>node.textContent==='压缩上下文'));
-        const compact=[...document.querySelectorAll('button')].find(node=>node.textContent==='压缩上下文');
-        compact.click();
-        await until(()=>$('error').textContent.includes('未自动重发'));
-        compact.click();
-        await until(()=>$('compaction').textContent.includes('已压缩 alpha') && $('conversation').textContent.includes('已收到：alpha'));
-        assert.equal(compactionIds.length, 2);
-        assert.equal(compactionIds[0], compactionIds[1]);
-        window.dispatchEvent(new window.Event('pagehide'));
-        await window.happyDOM.abort();
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
 async def test_search_reads_only_this_sessions_durable_text(owner: Host) -> None:
@@ -999,63 +765,6 @@ async def test_search_reads_only_this_sessions_durable_text(owner: Host) -> None
         await other.db.close()
 
 
-def test_browser_searches_the_selected_session() -> None:
-    node = shutil.which("node")
-    if node is None:
-        pytest.skip("node unavailable")
-    web = Path(__file__).parents[1] / "src/amazme_backend/web"
-    contract = (web / "contract.js").read_text().split("\n", 1)[1]
-    schema = Stream.model_json_schema()
-    contract = "const root = " + json.dumps(schema) + ";\n" + contract
-    url = "data:text/javascript;base64," + base64.b64encode(contract.encode()).decode()
-    source = (web / "app.js").read_text().replace('"/contract.js"', json.dumps(url))
-    app_url = "data:text/javascript;base64," + base64.b64encode(source.encode()).decode()
-    session = "d" * 32
-    script = "const appURL=" + json.dumps(app_url) + ";\nconst html=" + json.dumps((web / "index.html").read_text()) + ";\n" + r'''
-        import assert from 'node:assert/strict';
-        import {Window} from 'happy-dom';
-        const window = new Window({url:'http://127.0.0.1:1234/?host=host-1&session=''' + session + r'''&workspace=primary'});
-        window.document.write(html.replace(/<script[^>]*>.*?<\/script>/gs,''));
-        Object.assign(globalThis,{window,document:window.document,location:window.location,history:window.history,sessionStorage:window.sessionStorage,WebSocket:class{send(){}close(){}}});
-        const identity = {build_id:'build',host_epoch:1,state:'ready',profile_id:'host-1'};
-        const response = (value,status=200)=>new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json'}});
-        const seen = [];
-        globalThis.fetch = async (path, options={})=>{
-          const method = options.method || 'GET';
-          if(path==='/api/v1/bootstrap') return response(identity);
-          if(path.startsWith('/api/v1/session-models/')) return response({session_id:path.split('/').at(-1),provider:'faux',model:'faux'});
-          if(path==='/api/v1/health') return response({state:'ready',identity});
-          if(path==='/api/v1/models') return response({models:[{provider:'faux',model:'faux',label:'本地确定性',endpoint_editable:false}],current:{provider:'faux',model:'faux',base_url:'',max_tokens:2048,key_configured:false,proxy:'',headers:{}}});
-          if(path==='/api/v1/sessions') return response({sessions:[{session_id:''' + json.dumps(session) + r''',title:'工作区',archived:false}]});
-          if(path.endsWith('/attachments') && method==='POST') return response({attachment_id:'attach',session_id:''' + json.dumps(session) + r''',build_id:'build',host_epoch:1});
-          if(path.includes('/search')) {
-            const query = new URL(path, 'http://127.0.0.1').searchParams.get('q');
-            seen.push(path.split('?')[0] + ' ' + query);
-            if(query==='alpha') return response({query, hits:[{request_id:'r1', ordinal:0, role:'user', excerpt:'alpha token'}]});
-            return response({query, hits:[]});
-          }
-          throw Error('unexpected '+method+' '+path);
-        };
-        const $=id=>document.getElementById(id);
-        async function until(check) {
-          for(let n=0;n<1000;n++) { if(check()) return; await new Promise(resolve=>setTimeout(resolve,1)); }
-          throw Error('timed out '+$('error').textContent);
-        }
-        await import(appURL);
-        await until(()=>$('sessions').textContent.includes('工作区'));
-        $('history-query').value = 'alpha';
-        $('history-form').requestSubmit();
-        await until(()=>$('history-results').textContent==='alpha token');
-        $('history-query').value = 'nope';
-        $('history-form').requestSubmit();
-        await until(()=>$('history-results').textContent==='没有匹配');
-        assert.deepEqual(seen, [''' + json.dumps(f"/api/v1/sessions/{session}/search alpha") + r''', ''' + json.dumps(f"/api/v1/sessions/{session}/search nope") + r''']);
-        window.happyDOM && await window.happyDOM.abort();
-        process.exit(0);
-    '''
-    result = subprocess.run([node, "--input-type=module"], input=script, text=True, capture_output=True, timeout=20,
-                            cwd=Path(__file__).parents[1])
-    assert result.returncode == 0, result.stderr[-4000:] + result.stdout[-1000:]
 
 
 async def test_branch_copies_model_without_sharing_later_changes(owner: Host) -> None:
