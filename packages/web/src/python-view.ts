@@ -110,8 +110,11 @@ export function pythonView(input: PresentationInput): WebView {
 	const directory = pythonDirectory(input.sessions, input.projects ?? [], input.workspaces);
 	const roster = rosterItems(locale, directory, connection?.sessionId, Date.now(), input.rosterFilter);
 	const selected = input.selection ?? (catalog ? { provider: catalog.current.provider, model: catalog.current.model } : undefined);
-	const models: ModelsStateLike | undefined = catalog ? { catalog: { revision: 0, enabledModelIds: input.enabledModels === null ? null : [...input.enabledModels],
-		availableModels: catalog.models.map(item => ({ provider: item.provider, modelId: item.model, name: item.label, reasoning: (item.thinking_levels?.length ?? 0) > 1 })) },
+	const availableProviders = new Set(input.connections?.state.providers.filter(provider => provider.available).map(provider => provider.id));
+	const enabledModelIds = (input.connections?.enabledModels ?? []).map(model => `${model.provider}/${model.modelId}`)
+		.filter(id => input.enabledModels === null || input.enabledModels.includes(id));
+	const models: ModelsStateLike | undefined = catalog ? { catalog: { revision: 0, enabledModelIds,
+		availableModels: catalog.models.filter(item => availableProviders.has(item.provider)).map(item => ({ provider: item.provider, modelId: item.model, name: item.label, reasoning: (item.thinking_levels?.length ?? 0) > 1 })) },
 		configuration: { model: selected ? { provider: selected.provider, modelId: selected.model } : null, thinkingLevel: input.thinking }, refresh: { status: "idle" } } : undefined;
 	const levels = catalog?.models.find(item => item.provider === selected?.provider && item.model === selected.model)?.thinking_levels;
 	const pending = snapshot?.requests.filter(item => !settled.has(item.status)) ?? [];

@@ -634,7 +634,7 @@ export class DesktopPage {
 		if (id === A.MODEL_SELECT_ACTION) { const selected = modelReference(value); await this.selectModel(selected.provider, selected.model); return; }
 		if (id === A.MODEL_THINKING_ACTION) { this.thinking = value; this.render(); return; }
 		if (id === A.REFRESH_MODELS_ACTION || id === P.SETTINGS_RELOAD_ACTION || id === A.SESSION_RELOAD_ACTION) { await this.loadGlobal(); const connection = this.client.connection; if (connection?.ready) await this.loadSession(connection); this.render(); return; }
-		if (id === A.MODEL_SCOPE_ACTION) { this.modal = modelScopeModal(this.locale, { allModels: this.catalog?.models.map(item => ({ provider: item.provider, id: item.model, name: item.label })) ?? [], enabledModelIds: this.enabledModels }); this.render(); return; }
+		if (id === A.MODEL_SCOPE_ACTION) { this.modal = modelScopeModal(this.locale, { allModels: this.connections().enabledModels.map(item => ({ provider: item.provider, id: item.modelId, name: item.name })), enabledModelIds: this.enabledModels }); this.render(); return; }
 		if (id === A.MODEL_SCOPE_MODAL) {
 			const connection = this.requireConnection(), modal = this.modal;
 			const ids = parseContract("InterfacePreferences", { enabledModels: JSON.parse(fields.models || "null") }).enabledModels ?? null;
@@ -1199,24 +1199,26 @@ export class DesktopPage {
 		const ids = [...new Set([...(this.catalog?.models.map(item => item.provider) ?? []), ...Object.keys(OAUTH_METHODS)])];
 		const current = this.catalog?.current;
 		const providers: ProviderAuthLike["providers"] = ids.map(id => ({ id, name: this.catalog?.providers?.find(item => item.provider === id)?.name || id,
-			configured: this.accounts.accounts.some(item => item.provider === id) || current?.provider === id && current.key_configured,
+			configured: this.accounts.accounts.some(item => item.provider === id) || current?.provider === id && (id === "faux" || current.key_configured),
 			methods: [{ type: "api_key", label: "API Key" }, ...(OAUTH_METHODS[id] ? [{ type: "oauth" as const, label: "登录" }] : [])] }));
 		const login = this.oauth;
 		return { providers, login: login ? { id: login.login_id, provider: login.provider, status: login.phase === "pending" ? "awaiting" : login.phase === "complete" ? "done" : login.phase === "cancelled" ? "cancelled" : "error", authorization: login.url ? login.user_code ? { type: "device_code", userCode: login.user_code, verificationUri: login.url } : { type: "auth_url", url: login.url } : null, message: null, links: [], prompt: login.phase === "pending" && !login.user_code ? { id: login.login_id, type: "secret", message: "回调地址或授权码" } : null, error: login.error ?? null } : null };
 	}
 	private connections(): ModelConnectionsLike {
 		const authentication = this.authentication(), current = this.catalog?.current;
+		const availableProviders = new Set(authentication.providers.filter(provider => provider.configured &&
+			!this.accounts.accounts.some(account => account.provider === provider.id && account.login_required)).map(provider => provider.id));
 		const models = this.catalog?.models.map(item => ({ provider: item.provider, modelId: item.model, name: item.label,
-			available: authentication.providers.some(provider => provider.id === item.provider && provider.configured) })) ?? [];
+			available: availableProviders.has(item.provider) })) ?? [];
 		const selected = this.selectedProvider ?? authentication.providers.find(provider => provider.configured)?.id;
 		const enabled = this.settings?.preferences?.enabledModels ?? null;
 		return { state: { providers: authentication.providers.map(provider => {
 			const model = this.catalog?.models.find(item => item.provider === provider.id), definition = this.catalog?.providers?.find(item => item.provider === provider.id);
-			return { id: provider.id, name: provider.name, configured: provider.configured, baseUrl: definition?.base_url ?? (current?.provider === provider.id ? current.base_url : model?.base_url ?? ""),
+			return { id: provider.id, name: provider.name, configured: provider.configured, available: availableProviders.has(provider.id), baseUrl: definition?.base_url ?? (current?.provider === provider.id ? current.base_url : model?.base_url ?? ""),
 				api: definition?.api ?? (current?.provider === provider.id ? current.api ?? "openai-completions" : model?.api ?? "openai-completions"),
 				modelCount: models.filter(item => item.provider === provider.id).length, custom: definition?.model_ids != null, modelIds: definition?.model_ids ?? undefined, verification: this.verification(provider.id) };
 		}), authentication, enabledModelIds: enabled, defaults: current ? { model: { provider: current.provider, modelId: current.model }, thinkingLevel: current.thinking ?? "off" } : null, error: null, refresh: { status: "idle" } },
-		selected, models: models.filter(item => item.provider === selected), enabledModels: models.filter(item => enabled === null || enabled.includes(`${item.provider}/${item.modelId}`)), loading: false, disabled: !this.ready };
+		selected, models: models.filter(item => item.provider === selected), enabledModels: models.filter(item => item.available && (enabled === null || enabled.includes(`${item.provider}/${item.modelId}`))), loading: false, disabled: !this.ready };
 	}
 	private verification(provider: string): ModelConnectionsLike["state"]["providers"][number]["verification"] {
 		if (this.checkingProviders.has(provider)) return { status: "checking" };

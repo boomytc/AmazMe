@@ -218,7 +218,7 @@ test("original answer feedback retries the original vote, toggles to retract, an
  expect(requests).toHaveLength(3);
 });
 
-test("the original JSON model toggle persists the global scope and survives a fresh page", async () => {
+test("global model toggles constrain a session scope and survive a fresh page", async () => {
  const response = (value: unknown) => new Response(JSON.stringify(value));
  let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });
  const api = (path: string, options: RequestInit) => {
@@ -231,12 +231,66 @@ test("the original JSON model toggle persists the global scope and survives a fr
   return response(settings);
  };
  const first = await startPage(api);
+ first.page.renderer.onPanelAction({ kind: "command", id: A.MODEL_SCOPE_ACTION, data: undefined });
+ first.page.renderer.onPanelAction({ kind: "modal-submit", id: A.MODEL_SCOPE_MODAL, data: undefined, fields: { models: JSON.stringify(["faux/shown", "faux/different"]) } });
+ await vi.waitFor(() => expect(first.page.renderer.view?.panel.modal).toBeUndefined());
  first.page.renderer.onPanelAction({ kind: "control", id: MODEL_ENABLED_ACTION, data: JSON.stringify(["faux", "shown"]), value: "false" });
  await vi.waitFor(() => expect(settings.preferences?.enabledModels).toEqual(["faux/different"]));
  expect(first.page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).not.toContain("shown");
+ document.querySelector<HTMLButtonElement>(".composer-model-picker")?.click();
+ expect(document.querySelector(".model-picker-notice")?.textContent).toContain("hidden");
+ expect(first.page.renderer.view?.model.label).toBe("Shown");
  first.page.dispose();
  const reopened = await startPage(api);
  expect(reopened.page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.modelId)).toEqual(["different"]);
+});
+
+test("model choices follow configured connections and refresh an open picker without losing the draft", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let configured = true;
+ let loginRequired = false;
+ const { page } = await startPage(path => {
+  if (path === "/api/v1/models") return response({ models: [
+   { provider: "gateway", model: "shown", label: "Shown", endpoint_editable: true },
+   { provider: "gateway", model: "disabled", label: "Disabled", endpoint_editable: true },
+   { provider: "oauth", model: "remote", label: "Remote", endpoint_editable: false },
+   { provider: "missing", model: "phantom", label: "Phantom", endpoint_editable: true },
+   { provider: "faux", model: "faux", label: "Faux", endpoint_editable: false },
+  ], current: { provider: "gateway", model: "shown", base_url: "http://model", max_tokens: 10, key_configured: configured } });
+  if (path === "/api/v1/accounts") return response({ revision: configured ? 1 : 2, accounts: configured ? [{ provider: "oauth", type: "oauth", login_required: loginRequired }] : [] });
+  if (path === "/api/v1/settings") return response({ revision: 0, preferences: { enabledModels: ["gateway/shown", "oauth/remote", "missing/phantom", "faux/faux"] } });
+  return undefined;
+ });
+ expect(page.renderer.view?.model.groups.flatMap(group => group.options).map(option => option.label)).toEqual(["Shown", "Remote"]);
+ expect(page.renderer.view?.modelConnections?.enabledModels.map(model => model.name)).toEqual(["Shown", "Remote"]);
+ page.renderer.onDraftChange("keep this draft"); page.renderer.setDraft("keep this draft");
+ document.querySelector<HTMLButtonElement>(".composer-model-picker")?.click();
+ const dialog = document.querySelector<HTMLDialogElement>(".model-picker-menu");
+ expect(dialog?.open).toBe(true);
+ expect([...document.querySelectorAll(".model-picker-option-label")].map(node => node.textContent)).toEqual(["Shown", "Remote"]);
+ loginRequired = true;
+ page.renderer.onPanelAction({ kind: "command", id: A.REFRESH_MODELS_ACTION, data: undefined });
+ await vi.waitFor(() => expect([...document.querySelectorAll(".model-picker-option-label")].map(node => node.textContent)).toEqual(["Shown"]));
+ expect(page.renderer.view?.modelConnections?.state.providers.find(provider => provider.id === "oauth")?.configured).toBe(true);
+ document.querySelector<HTMLButtonElement>(".model-picker-manage")?.click();
+ await vi.waitFor(() => expect(document.querySelector('.connection-row[data-action-data="oauth"] .connection-row-state')?.textContent).toBe("Sign in again"));
+ document.querySelector<HTMLButtonElement>('#nav [data-view="chat"]')?.click();
+ await vi.waitFor(() => expect(page.renderer.view?.panel.panel).toBeUndefined());
+ document.querySelector<HTMLButtonElement>(".composer-model-picker")?.click();
+ configured = false;
+ page.renderer.onPanelAction({ kind: "command", id: A.REFRESH_MODELS_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.model.groups).toEqual([]));
+ expect(dialog?.open).toBe(true);
+ expect(document.querySelectorAll(".model-picker-option")).toHaveLength(0);
+ expect(document.querySelector(".model-picker-notice")?.textContent).toContain("unavailable");
+ expect(document.querySelector(".model-picker-empty")?.textContent).toContain("No models");
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("keep this draft");
+ document.querySelector<HTMLButtonElement>(".model-picker-manage")?.click();
+ await vi.waitFor(() => expect(document.querySelector(".connection-default-select")).not.toBeNull());
+ const defaults = document.querySelector<HTMLSelectElement>(".connection-default-select");
+ expect(defaults?.disabled).toBe(true);
+ expect(defaults?.selectedOptions[0]?.disabled).toBe(true);
+ expect(defaults?.selectedOptions[0]?.textContent).toContain("unavailable");
 });
 
 test("provider configuration works before a session exists and a lost reply keeps its original public settings", async () => {

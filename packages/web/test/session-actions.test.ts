@@ -48,13 +48,13 @@ function control(selector: string): HTMLButtonElement {
 
 describe("session actions", () => {
 	test("editing a connection preserves custom model definitions without copying the built-in catalog", () => {
-		const modal = providerConfigurationModal("en", { id: "openai", name: "OpenAI", baseUrl: "https://example.test/v1", api: "openai-completions", modelCount: 2, custom: true, modelIds: ["custom-model"], configured: true, verification: { status: "idle" } }, [
+		const modal = providerConfigurationModal("en", { id: "openai", name: "OpenAI", baseUrl: "https://example.test/v1", api: "openai-completions", modelCount: 2, custom: true, modelIds: ["custom-model"], configured: true, available: true, verification: { status: "idle" } }, [
 			{ provider: "openai", modelId: "builtin-model", name: "Built-in", available: true },
 			{ provider: "openai", modelId: "custom-model", name: "Custom", available: true },
 		]);
 		expect(modal.fields.find(field => field.id === "models")?.value).toBe("custom-model");
 		expect(modal.fields.find(field => field.id === "id")).toBeUndefined();
-		const configured = providerConfigurationModal("zh", { id: "openai", name: "OpenAI", baseUrl: "https://example.test/v1", api: "openai-completions", modelCount: 1, custom: false, configured: true, verification: { status: "idle" } }, [], [], [{ type: "api_key", label: "Key" }, { type: "oauth", label: "Login" }]);
+		const configured = providerConfigurationModal("zh", { id: "openai", name: "OpenAI", baseUrl: "https://example.test/v1", api: "openai-completions", modelCount: 1, custom: false, configured: true, available: true, verification: { status: "idle" } }, [], [], [{ type: "api_key", label: "Key" }, { type: "oauth", label: "Login" }]);
 		expect(configured.title).toBe("配置");
 		expect(configured.actions).toEqual([{ id: "models:logout", data: "openai", label: "删除", weight: "line", danger: true, placement: "start" }]);
 		expect(configured.fields.map(field => field.id)).toEqual(["name", "baseUrl", "api", "method:openai", "key:openai"]);
@@ -366,6 +366,7 @@ describe("session actions", () => {
 						id: "anthropic",
 						name: "Anthropic",
 						configured: false,
+						available: false,
 						baseUrl: "https://api.anthropic.com",
 						api: "anthropic-messages",
 						modelCount: 2,
@@ -376,6 +377,7 @@ describe("session actions", () => {
 						id: "openai",
 						name: "OpenAI",
 						configured: true,
+						available: true,
 						baseUrl: "https://api.openai.com/v1",
 						api: "openai-responses",
 						modelCount: 1,
@@ -485,14 +487,16 @@ describe("session actions", () => {
 		connections.update("zh", { ...baseView, enabledModels: [] });
 		const fallbackSelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
 		expect(fallbackSelect.value).toBe(JSON.stringify(["anthropic", "claude-sonnet-4"]));
-		expect([...fallbackSelect.options].map(option => option.textContent)).toEqual(["anthropic/claude-sonnet-4"]);
+		expect([...fallbackSelect.options].map(option => option.textContent)).toEqual(["anthropic/claude-sonnet-4（未启用或不可用）"]);
+		expect(fallbackSelect.disabled).toBe(true);
+		expect(fallbackSelect.selectedOptions[0]?.disabled).toBe(true);
 
 		// Without enabled models the overview keeps the label and explains what to do.
 		connections.update("zh", { ...baseView, enabledModels: [], state: { ...baseView.state, defaults: null } });
 		expect(connections.element.querySelector(".connection-default-text")?.textContent).toBe("新聊天默认模型");
 		const emptySelect = connections.element.querySelector<HTMLSelectElement>(".connection-overview .connection-default-select")!;
 		expect(emptySelect.disabled).toBe(true);
-		expect(emptySelect.selectedOptions[0]?.textContent).toBe("添加供应商后即可选择默认模型。");
+		expect(emptySelect.selectedOptions[0]?.textContent).toBe("请先在下方启用模型，再选择默认模型。");
 
 		searchInput.value = "";
 		connections.update("zh", {

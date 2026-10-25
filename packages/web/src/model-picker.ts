@@ -78,6 +78,9 @@ export function createModelPicker(select: (provider: string, modelId: string) =>
 	search.autocomplete = "off";
 	search.spellcheck = false;
 	searchRow.append(icon("search", "model-picker-search-icon"), search);
+	const notice = element("p", "model-picker-notice");
+	notice.setAttribute("role", "status");
+	notice.hidden = true;
 	const list = element("div", "model-picker-list");
 	const reasoning = element("div", "model-picker-reasoning");
 	const reasoningLabel = element("span", "model-picker-section");
@@ -88,7 +91,7 @@ export function createModelPicker(select: (provider: string, modelId: string) =>
 	const configureLabel = element("span", "");
 	configure.append(icon("sliders", "model-picker-manage-icon"), configureLabel);
 	configure.addEventListener("click", () => { dialog.close(); manage(); });
-	dialog.append(searchRow, list, reasoning, configure);
+	dialog.append(searchRow, notice, list, reasoning, configure);
 
 	const root = element("div", "composer-model-control");
 	root.append(trigger, dialog);
@@ -254,6 +257,9 @@ export function createModelPicker(select: (provider: string, modelId: string) =>
 	return { element: root, update(nextLocale: Locale, value: ModelPicker, disabled = false) {
 		locale = nextLocale; picker = value;
 		name.textContent = value.label;
+		notice.textContent = value.scopeNotice ?? "";
+		notice.hidden = !value.scopeNotice;
+		trigger.title = value.scopeNotice ?? value.label;
 		effort.textContent = value.effort ?? "";
 		effort.hidden = !value.effort;
 		trigger.disabled = value.disabled || disabled;

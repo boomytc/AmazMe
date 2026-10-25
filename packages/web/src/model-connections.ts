@@ -24,7 +24,7 @@ export interface ConnectionModelLike {
 export interface ModelConnectionsLike {
 	readonly state: {
 		readonly providers: readonly {
-			readonly id: string; readonly name: string; readonly configured: boolean;
+			readonly id: string; readonly name: string; readonly configured: boolean; readonly available: boolean;
 			readonly baseUrl: string; readonly api: string; readonly modelCount: number; readonly custom: boolean;
 			readonly modelIds?: readonly string[];
 			readonly verification: { readonly status: "idle" | "checking" | "success" | "error"; readonly checkedAt?: number; readonly modelId?: string };
@@ -190,7 +190,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			const meta = document.createElement("small"); meta.className = "connection-row-meta";
 			const sep = node("span", " · ", "connection-row-sep"); sep.setAttribute("aria-hidden", "true");
 			meta.append(
-				node("span", copy("connections.configured"), "connection-row-state"),
+				node("span", copy(provider.available ? "connections.configured" : "connections.loginRequired"), "connection-row-state"),
 				sep,
 				node("span", String(provider.modelCount), "connection-row-count"),
 			);
@@ -234,13 +234,13 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		const defaultSelect = document.createElement("select");
 		defaultSelect.className = "panel-select connection-default-select";
 		defaultSelect.setAttribute("aria-label", copy("connections.defaultLabel"));
-		defaultSelect.disabled = view.disabled || options.length === 0;
+		defaultSelect.disabled = view.disabled || view.enabledModels.length === 0;
 		if (defaultRef === "") {
 			const placeholder = document.createElement("option");
 			placeholder.value = "";
 			placeholder.disabled = true;
 			placeholder.selected = true;
-			placeholder.textContent = copy(options.length === 0 ? "connections.noDefault" : "connections.chooseDefault");
+			placeholder.textContent = copy(options.length > 0 ? "connections.chooseDefault" : view.state.providers.some(provider => provider.configured) ? "connections.noEnabledModels" : "connections.noDefault");
 			defaultSelect.append(placeholder);
 		}
 		const groups = new Map<string, HTMLOptGroupElement>();
@@ -254,7 +254,8 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 			}
 			const option = document.createElement("option");
 			option.value = JSON.stringify([model.provider, model.modelId]);
-			option.textContent = model.name;
+			option.textContent = model.available ? model.name : copy("connections.defaultUnavailable", { model: model.name });
+			option.disabled = !model.available;
 			option.selected = option.value === defaultRef;
 			group.append(option);
 		}
@@ -283,7 +284,7 @@ export function createModelConnections(report: (action: PanelAction) => void) {
 		const titleRow = document.createElement("div"); titleRow.className = "connection-provider-title-row";
 		titleRow.append(
 			node("h2", provider.name, "connection-provider-name"),
-			node("span", copy(provider.configured ? "connections.configured" : "connections.unconfigured"), `panel-badge connection-badge ${provider.configured ? "configured" : "unconfigured"}`),
+			node("span", copy(!provider.configured ? "connections.unconfigured" : provider.available ? "connections.configured" : "connections.loginRequired"), `panel-badge connection-badge ${provider.available ? "configured" : "unconfigured"}`),
 		);
 		providerTitles.append(titleRow, node("p", provider.baseUrl, "connection-endpoint"));
 

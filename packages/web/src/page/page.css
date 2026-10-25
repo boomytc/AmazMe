@@ -2200,6 +2200,7 @@ p {
 .model-picker-option-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 12px; font-weight: 400; }
 .model-picker-check { width: 15px; height: 15px; margin-left: auto; color: var(--accent); stroke-width: 2.2; }
 .model-picker-empty { margin: 0; padding: 18px 8px; color: var(--text-3); text-align: center; }
+.model-picker-notice { margin: 0; padding: 10px 14px; color: var(--text-2); background: var(--hover); }
 
 .model-picker-reasoning {
 	display: flex; align-items: center; gap: 12px; flex: none; padding: 10px 10px 10px 14px; border-top: 1px solid var(--line);
