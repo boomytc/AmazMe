@@ -3016,6 +3016,78 @@
       ],
       "title": "ImportResult"
     },
+    "InterfacePreferences": {
+      "properties": {
+        "appearance": {
+          "type": "string",
+          "enum": [
+            "system",
+            "light",
+            "dark"
+          ],
+          "title": "Appearance",
+          "default": "system"
+        },
+        "locale": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "zh",
+            "en"
+          ],
+          "title": "Locale",
+          "default": "auto"
+        },
+        "showWelcome": {
+          "type": "boolean",
+          "title": "Showwelcome",
+          "default": true
+        },
+        "textFont": {
+          "type": "string",
+          "maxLength": 256,
+          "title": "Textfont",
+          "default": ""
+        },
+        "codeFont": {
+          "type": "string",
+          "maxLength": 256,
+          "title": "Codefont",
+          "default": ""
+        },
+        "terminalFont": {
+          "type": "string",
+          "maxLength": 256,
+          "title": "Terminalfont",
+          "default": ""
+        },
+        "textSize": {
+          "type": "integer",
+          "maximum": 22.0,
+          "minimum": 10.0,
+          "title": "Textsize",
+          "default": 15
+        },
+        "codeSize": {
+          "type": "integer",
+          "maximum": 16.0,
+          "minimum": 10.0,
+          "title": "Codesize",
+          "default": 13
+        },
+        "terminalSize": {
+          "type": "integer",
+          "maximum": 20.0,
+          "minimum": 10.0,
+          "title": "Terminalsize",
+          "default": 12
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "InterfacePreferences",
+      "description": "Presentation fields keep the original client's public names."
+    },
     "JsonValue": {},
     "Login": {
       "properties": {
@@ -4007,6 +4079,25 @@
       ],
       "title": "PluginView"
     },
+    "PreferencesUpdate": {
+      "properties": {
+        "preferences": {
+          "$ref": "#/components/schemas/InterfacePreferences"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "preferences",
+        "expected_revision"
+      ],
+      "title": "PreferencesUpdate"
+    },
     "PrepareFileWrite": {
       "properties": {
         "session_id": {
@@ -4204,6 +4295,9 @@
           "type": "integer",
           "title": "Revision",
           "default": 0
+        },
+        "preferences": {
+          "$ref": "#/components/schemas/InterfacePreferences"
         }
       },
       "additionalProperties": false,
@@ -7581,6 +7675,14 @@
       },
       "body": {
         "$ref": "#/components/schemas/SettingsUpdate"
+      }
+    },
+    "PUT /api/v1/settings/preferences": {
+      "response": {
+        "$ref": "#/components/schemas/ProductSettings"
+      },
+      "body": {
+        "$ref": "#/components/schemas/PreferencesUpdate"
       }
     },
     "POST /api/v1/feedback": {

@@ -8,7 +8,7 @@ import secrets
 import sys
 from pathlib import Path
 
-from .contracts import BackendError, Identity
+from .contracts import BackendError, Identity, InterfacePreferences
 
 
 def frontend_directory() -> Path:
@@ -27,13 +27,14 @@ def transport_url(origin: str) -> str:
     return base.rstrip("/") + "/api/v1/events"
 
 
-def boot_manifest(identity: Identity, origin: str) -> dict[str, object]:
+def boot_manifest(identity: Identity, origin: str, preferences: InterfacePreferences | None = None) -> dict[str, object]:
     return {
         "app": {"name": "AmazMe", "version": identity.version},
         "mode": "installed" if getattr(sys, "frozen", False) else "source",
         "protocol": identity.protocol,
         "server": {"id": identity.profile_id},
         "transport": {"url": transport_url(origin), "path": "/api/v1/events"},
+        "preferences": (preferences or InterfacePreferences()).model_dump(mode="json"),
     }
 
 
@@ -69,8 +70,8 @@ def page_content_security_policy(source: str, html: str = "", style_nonce: str =
     )
 
 
-def boot_document(identity: Identity, origin: str) -> tuple[str, str]:
-    source = boot_script_source(boot_manifest(identity, origin))
+def boot_document(identity: Identity, origin: str, preferences: InterfacePreferences | None = None) -> tuple[str, str]:
+    source = boot_script_source(boot_manifest(identity, origin, preferences))
     html = (frontend_directory() / "index.html").read_text()
     if "</head>" not in html:
         raise BackendError("boot_document_invalid")

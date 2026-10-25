@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 
 from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import BackendError, HostFence
+from amazme_backend.contracts import BackendError, HostFence, ProcessLease
 from amazme_backend.host import Host, application
 from amazme_backend.page_boot import boot_page, boot_script
 
@@ -36,6 +36,9 @@ def test_script_escapes_markup() -> None:
 
 async def test_served_page_names_this_host(tmp_path: Path) -> None:
     host = _host(tmp_path)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+        instance_id="test-host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"),
+        device=1, inode=1))
     identity = host.identity()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
         response = await client.get("/")
@@ -76,6 +79,8 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     assert sheet.status_code == 200 and ".app-rail" in sheet.text
     assert "sha256-" not in script_file.headers["content-security-policy"]
     assert "unsafe-inline" not in script_file.headers["content-security-policy"]
+    await host.supervisor.close()
+    await host.store.db.close()
 
 
 def test_missing_origin_is_rejected(tmp_path: Path) -> None:

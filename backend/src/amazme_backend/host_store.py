@@ -14,11 +14,13 @@ from .contracts import (
     Cancel,
     CreateSession,
     EffectResolution,
+    InterfacePreferences,
     Model,
     ModelSelection,
     PreparedFileWrite,
     PrepareUpdate,
     ProcessLease,
+    ProductSettings,
     ProviderConfig,
     Receipt,
     ServiceInfo,
@@ -202,6 +204,9 @@ class HostStore:
                 db.execute("ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
             if "workspace" not in present:
                 db.execute("ALTER TABLE sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT 'primary'")
+            settings_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(product_settings)")}
+            if "preferences" not in settings_columns:
+                db.execute("ALTER TABLE product_settings ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'")
         await self._call(create)
         def begin(db: sqlite3.Connection) -> int:
             db.execute("UPDATE control SET epoch=epoch+1 WHERE id=1")
@@ -792,16 +797,20 @@ class HostStore:
         return await self._call(lambda db: [(str(row[0]), str(row[1])) for row in db.execute(
             "SELECT id,name FROM projects ORDER BY rowid")])
 
-    async def product_settings(self) -> tuple[str, int]:
-        def operation(db: sqlite3.Connection) -> tuple[str, int]:
-            row = db.execute("SELECT display_name,revision FROM product_settings WHERE id=1").fetchone()
-            if row is None:
-                return "", 0
-            return str(row[0]), int(row[1])
+    @staticmethod
+    def _settings(row: sqlite3.Row | None) -> ProductSettings:
+        if row is None:
+            return ProductSettings()
+        return ProductSettings(display_name=str(row["display_name"]), revision=int(row["revision"]),
+                               preferences=InterfacePreferences.model_validate_json(str(row["preferences"])))
+
+    async def product_settings(self) -> ProductSettings:
+        def operation(db: sqlite3.Connection) -> ProductSettings:
+            return self._settings(db.execute("SELECT * FROM product_settings WHERE id=1").fetchone())
         return await self._call(operation)
 
-    async def save_product_settings(self, name: str, expected: int) -> tuple[str, int]:
-        def operation(db: sqlite3.Connection) -> tuple[str, int]:
+    async def save_product_settings(self, name: str, expected: int) -> ProductSettings:
+        def operation(db: sqlite3.Connection) -> ProductSettings:
             if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
                 raise BackendError("update_frozen", status=503)
             row = db.execute("SELECT display_name,revision FROM product_settings WHERE id=1").fetchone()
@@ -813,7 +822,22 @@ class HostStore:
                 "INSERT INTO product_settings(id,display_name,revision) VALUES(1,?,?) "
                 "ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,revision=excluded.revision",
                 (name, revision))
-            return name, revision
+            return self._settings(db.execute("SELECT * FROM product_settings WHERE id=1").fetchone())
+        return await self.transaction(operation)
+
+    async def save_preferences(self, preferences: InterfacePreferences, expected: int) -> ProductSettings:
+        def operation(db: sqlite3.Connection) -> ProductSettings:
+            if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+                raise BackendError("update_frozen", status=503)
+            current = self._settings(db.execute("SELECT * FROM product_settings WHERE id=1").fetchone())
+            if current.preferences == preferences:
+                return current
+            if current.revision != expected:
+                raise BackendError("settings_conflict", status=409)
+            db.execute("INSERT INTO product_settings(id,display_name,revision,preferences) VALUES(1,?,?,?) "
+                       "ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,preferences=excluded.preferences",
+                       (current.display_name, current.revision + 1, preferences.model_dump_json()))
+            return self._settings(db.execute("SELECT * FROM product_settings WHERE id=1").fetchone())
         return await self.transaction(operation)
 
     async def save_feedback(self, feedback_id: str, session_id: str, text: str, key: str) -> tuple[str, str, str]:

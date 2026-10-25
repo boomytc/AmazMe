@@ -1940,6 +1940,7 @@ const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, stri
 };
 
 const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
+	display_name: { label: "Display name", description: "The name saved in your local profile." },
 	textFont: { label: "Text font", description: "Conversation and composer fonts, separated by commas. Empty uses the built-in fonts.", placeholder: "System fonts" },
 	codeFont: { label: "Code font", description: "Code blocks, file content and diffs. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
 	terminalFont: { label: "Terminal font", description: "Terminal command output. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
@@ -2048,6 +2049,7 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 };
 
 const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
+	display_name: { label: "显示名称", description: "保存在本机配置中的名称。" },
 	textFont: { label: "正文字体", description: "对话和输入框使用的字体，以逗号分隔；留空使用内置字体。", placeholder: "系统字体" },
 	codeFont: { label: "代码字体", description: "代码块、文件内容和差异使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
 	terminalFont: { label: "终端字体", description: "命令输出使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },

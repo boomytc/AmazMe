@@ -109,10 +109,14 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             assert listed_ids.count(chosen) == 1
             await _message(host, session, "hello", "你好")
             settings = await client.get("/api/v1/settings")
-            assert settings.json() == {"display_name": "", "revision": 0}
+            assert settings.json() == {"display_name": "", "revision": 0, "preferences": {
+                "appearance": "system", "locale": "auto", "showWelcome": True,
+                "textFont": "", "codeFont": "", "terminalFont": "",
+                "textSize": 15, "codeSize": 13, "terminalSize": 12,
+            }}
             saved = await client.post("/api/v1/settings", json={"display_name": "甲", "expected_revision": 0})
             stale = await client.post("/api/v1/settings", json={"display_name": "乙", "expected_revision": 0})
-            assert saved.json() == {"display_name": "甲", "revision": 1}
+            assert saved.json() == {**settings.json(), "display_name": "甲", "revision": 1}
             assert stale.status_code == 409 and stale.json()["code"] == "settings_conflict"
             assert (await client.get("/api/v1/settings")).json()["display_name"] == "甲"
             secret = await client.post("/api/v1/feedback", json={

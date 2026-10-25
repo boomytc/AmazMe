@@ -8,12 +8,14 @@ export interface PtyPresentation {
 	readonly output: string;
 	readonly outputSeq: number;
 	readonly inputEnabled: boolean;
+	readonly fontFamily?: string;
+	readonly fontSize?: number;
 }
 interface Xterm {
 	readonly cols: number;
 	readonly rows: number;
 	readonly element?: HTMLElement;
-	readonly options: { disableStdin: boolean };
+	readonly options: { disableStdin: boolean; fontFamily: string; fontSize: number };
 	open(element: HTMLElement): void;
 	write(text: string, complete: () => void): void;
 	reset(): void;
@@ -72,6 +74,8 @@ export function createPtySurface(report: { data(id: string, data: string): void;
 					terminal.onData(data => { if (current?.inputEnabled && token === generation) report.data(view.id, data); });
 				}
 				terminal.options.disableStdin = !view.inputEnabled;
+				terminal.options.fontFamily = view.fontFamily || "ui-monospace, monospace";
+				terminal.options.fontSize = view.fontSize ?? 12;
 				if (terminal.cols !== view.cols || terminal.rows !== view.rows) terminal.resize(view.cols, view.rows);
 				const delta = view.outputSeq - renderedSeq;
 				let chunk = "";

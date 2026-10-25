@@ -8,15 +8,15 @@ import { modelScopeModal } from "./model-scope.ts";
 import * as P from "./panels.ts";
 import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
 import { providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
-import { ApiError, isRecord } from "./python-api.ts";
+import { ApiError, isRecord, parseContract } from "./python-api.ts";
 import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, ImagePart, ModelCatalog, OAuthView, ProductSettings, ResourceCatalog, Session, SessionModel, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
+import type { AccountsView, Identity, ImagePart, InterfacePreferences, ModelCatalog, OAuthView, ProductSettings, ResourceCatalog, Session, SessionModel, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { pythonView } from "./python-view.ts";
 import { PendingWrites, newId } from "./python-writes.ts";
 import { settled } from "./python-stream.ts";
 import { TerminalInputQueue } from "./python-terminal.ts";
 import { followSystemTheme, applyTheme, resolveThemePreference } from "./theme.ts";
-import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, type Typography } from "./typography.ts";
+import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, FONT_SIZE_LIMITS, resolveTypography, type Typography } from "./typography.ts";
 import { attachmentRejection, attachments, type SubmitMode } from "./view.ts";
 
 const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
@@ -30,7 +30,7 @@ interface ActiveTerminal { readonly connection: ClientConnection; readonly id: s
 export class DesktopPage {
 	readonly client: PythonClient;
 	readonly renderer: PageRenderer;
-	private locale: Locale = resolveLocale(localStorage.getItem("amazme:locale") ?? "auto", navigator.languages);
+	private locale: Locale = resolveLocale("auto", navigator.languages);
 	private typography: Typography = { ...DEFAULT_TYPOGRAPHY };
 	private sessions: Session[] = [];
 	private workspaces: WorkspaceGrantView[] = [];
@@ -65,10 +65,12 @@ export class DesktopPage {
 	private navigationGeneration = 0;
 	private modalGeneration = 0;
 	private globalLoadGeneration = 0;
+	private selectionGeneration = 0;
 	private terminal?: ActiveTerminal;
 	private terminalTimer?: ReturnType<typeof setTimeout>;
 	private readonly terminalQueues = new Map<string, TerminalInputQueue>();
 	private terminalLoadGeneration = 0;
+	private settingsQueue = Promise.resolve();
 	private readonly commands: CommandLike[] = [
 		{ name: "new", description: "新建会话" }, { name: "model", description: "模型与连接" }, { name: "settings", description: "设置" },
 		{ name: "compact", description: "压缩上下文" }, { name: "fork", description: "创建分支" }, { name: "export", description: "导出会话" },
@@ -76,6 +78,8 @@ export class DesktopPage {
 	constructor(origin = location.origin) {
 		this.client = new PythonClient(origin);
 		const boot: unknown = Reflect.get(globalThis, "__AMAZME_BOOT__");
+		const preferences = parseContract("InterfacePreferences", isRecord(boot) ? boot.preferences ?? {} : {});
+		this.applyPreferences(preferences);
 		const app = isRecord(boot) && isRecord(boot.app) && typeof boot.app.name === "string" && typeof boot.app.version === "string" ? { name: boot.app.name, version: boot.app.version } : { name: "AmazMe", version: "" };
 		this.renderer = createRenderer(collectPageElements(), undefined, app);
 		this.client.onStatus = status => {
@@ -111,7 +115,7 @@ export class DesktopPage {
 		this.renderer.onShortcut = id => {
 			if (id === "session.new") run(() => this.createSession());
 			else if (id === "run.stop") run(() => this.cancel());
-			else if (id.startsWith("font.")) { this.typography = { ...this.typography, ...adjustedFontSizes(this.typography, id === "font.increase" ? "increase" : id === "font.decrease" ? "decrease" : "reset") }; this.render(); }
+			else if (id.startsWith("font.")) run(() => this.updatePreferences(preferences => ({ ...preferences, ...adjustedFontSizes(resolveTypography(preferences), id === "font.increase" ? "increase" : id === "font.decrease" ? "decrease" : "reset") })));
 			else if (id === "view.cycle") { this.dockOpen = !this.dockOpen; this.render(); }
 		};
 		const bridge: unknown = Reflect.get(globalThis, "amazmeDesktop");
@@ -124,7 +128,6 @@ export class DesktopPage {
 		};
 		}
 		followSystemTheme();
-		applyTheme(resolveThemePreference(localStorage.getItem("amazme:appearance") ?? undefined));
 		this.render();
 	}
 	private error(error: unknown): void {
@@ -178,16 +181,19 @@ export class DesktopPage {
 		]);
 		if (generation === this.globalLoadGeneration) {
 			this.sessions = sessions.sessions; this.workspaces = workspaces.workspaces; this.catalog = catalog; this.accounts = accounts; this.settings = settings;
+			this.applyPreferences(settings.preferences ?? {});
 		}
 	}
 	private async loadSession(connection: ClientConnection): Promise<void> {
+		const selectionGeneration = ++this.selectionGeneration;
 		const [selection, resources, usage] = await Promise.all([
 			this.client.call("GET /api/v1/session-models/{session_id}", { path: { session_id: connection.sessionId } }).catch(error => { if (error instanceof ApiError && error.code === "session_model_missing") return undefined; throw error; }),
 			this.client.call("GET /api/v1/sessions/{session}/resources", { path: { session: connection.sessionId } }),
 			this.client.call("GET /api/v1/sessions/{session_id}/usage", { path: { session_id: connection.sessionId } }),
 		]);
 		if (!connection.active()) return;
-		this.selection = selection; this.resources = resources; this.usage = usage;
+		if (selectionGeneration === this.selectionGeneration) this.selection = selection;
+		this.resources = resources; this.usage = usage;
 		if (this.dockOpen && this.dockTab === "terminal") await this.loadTerminal(connection);
 		this.render();
 		clearTimeout(this.healthTimer);
@@ -244,10 +250,14 @@ export class DesktopPage {
 			await this.command(command.name, command.args); this.draft.text = ""; this.renderer.setDraft(""); this.render(); return;
 		}
 		const connection = this.requireConnection(), ledger = this.ledger(connection), draft = this.draft;
+		const displayedModel = this.selection ?? this.catalog?.current;
 		const root = connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status));
 		const thinking = this.catalog?.models.find(item => item.provider === this.selection?.provider && item.model === this.selection.model)?.thinking_levels?.find(level => level === this.thinking);
 		const record = ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
-			request_id: id, text, images: draft.images.map(item => item.image), mode: this.mode === "steer" ? "steer" : "queue", ...(this.mode === "steer" ? { target_run_id: root?.run_id } : {}), ...(thinking ? { thinking } : {}),
+			request_id: id, text, images: draft.images.map(item => item.image), mode: this.mode === "steer" ? "steer" : "queue",
+			...(this.mode === "steer" ? { target_run_id: root?.run_id } : {
+				...(displayedModel ? { model_selection: { provider: displayedModel.provider, model: displayedModel.model } } : {}), ...(thinking ? { thinking } : {}),
+			}),
 		} }));
 		this.render();
 		try {
@@ -265,8 +275,9 @@ export class DesktopPage {
 	}
 	private async selectModel(provider: string, model: string): Promise<void> {
 		const connection = this.requireConnection();
+		const generation = ++this.selectionGeneration;
 		const selection = await this.client.call("PUT /api/v1/session-models/{session_id}", { path: { session_id: connection.sessionId }, body: { session_id: connection.sessionId, provider, model }, connection });
-		if (!connection.active()) return;
+		if (!connection.active() || generation !== this.selectionGeneration) return;
 		this.selection = selection; this.thinking = "off"; this.render();
 	}
 	private async attachFiles(files: readonly File[]): Promise<void> {
@@ -323,7 +334,7 @@ export class DesktopPage {
 		}
 		if (id === A.WELCOME_SESSION_ACTION) { await this.createSession(); return; }
 		if (id === A.WELCOME_SETTINGS_ACTION || id === A.MODEL_CONNECTIONS_ACTION) { this.currentPanel = P.SETTINGS_VIEW; this.modal = undefined; this.render(); return; }
-		if (id === A.WELCOME_DISMISS_ACTION) { localStorage.setItem("amazme:welcome-dismissed", "true"); this.render(); return; }
+		if (id === A.WELCOME_DISMISS_ACTION) { await this.setPreference("showWelcome", "false"); return; }
 		if (id === A.DOCK_TOGGLE_ACTION) { this.dockOpen = !this.dockOpen; this.render(); return; }
 		if (id === A.DOCK_TAB_ACTION) { this.dockTab = value; this.dockOpen = true; if (value === "files") await this.openWorkspace(); if (value === "terminal") await this.loadTerminal(this.requireConnection(), true); this.render(); return; }
 		if (id === A.WORKSPACE_OPEN_ACTION || id === A.WORKSPACE_READ_ACTION) { await this.openWorkspace(value, id === A.WORKSPACE_READ_ACTION); return; }
@@ -493,11 +504,47 @@ export class DesktopPage {
 		if (login.phase === "pending") this.oauthTimer = setTimeout(() => { void this.client.call("GET /api/v1/accounts/oauth/{login_id}", { path: { login_id: login.login_id } }).then(value => this.showOAuth(connection, value, generation)).catch(error => { if (connection.active() && generation === this.modalGeneration) this.error(error); }); }, 750);
 		else { const key = `amazme:oauth:${connection.identity.profile_id}:${login.provider}`; if (sessionStorage.getItem(key) === login.login_id && login.phase !== "unknown") sessionStorage.removeItem(key); void this.client.call("GET /api/v1/accounts").then(accounts => { if (connection.active()) { this.accounts = accounts; this.render(); } }); }
 	}
+	private applyPreferences(preferences: InterfacePreferences): void {
+		this.locale = resolveLocale(preferences.locale ?? "auto", navigator.languages);
+		this.typography = resolveTypography(preferences);
+		applyTheme(resolveThemePreference(preferences.appearance));
+	}
+	private updateSettings(update: (current: ProductSettings, identity: Identity) => Promise<ProductSettings>): Promise<void> {
+		const identity = this.client.identity;
+		if (!identity) return Promise.reject(new Error("请先连接后端"));
+		const task = this.settingsQueue.catch(() => {}).then(async () => {
+			const current = await this.client.call("GET /api/v1/settings");
+			const settings = await update(current, identity);
+			if (this.client.identity?.instance_id !== identity.instance_id) return;
+			this.settings = settings; this.applyPreferences(settings.preferences ?? {}); this.render();
+		});
+		this.settingsQueue = task;
+		return task;
+	}
+	private updatePreferences(update: (current: InterfacePreferences) => InterfacePreferences): Promise<void> {
+		return this.updateSettings((current, identity) => this.client.call("PUT /api/v1/settings/preferences", {
+			body: { preferences: parseContract("InterfacePreferences", update(current.preferences ?? {})), expected_revision: current.revision ?? 0 }, identity,
+		}));
+	}
 	private async setPreference(id: string, value: string): Promise<void> {
-		if (id === "locale") { localStorage.setItem("amazme:locale", value); this.locale = resolveLocale(value, navigator.languages); }
-		else if (id === "appearance") { localStorage.setItem("amazme:appearance", value); applyTheme(resolveThemePreference(value)); }
-		else if (id === "display_name" && this.settings) { this.settings = await this.client.call("POST /api/v1/settings", { body: { display_name: value, expected_revision: this.settings.revision ?? 0 } }); }
-		this.render();
+		if (id === "display_name") {
+			await this.updateSettings((current, identity) => this.client.call("POST /api/v1/settings", { body: { display_name: value, expected_revision: current.revision ?? 0 }, identity }));
+			return;
+		}
+		const typed = id === "showWelcome" ? value === "true" : FONT_SIZE_FIELDS.some(field => field === id) ? Number(value) : value;
+		await this.updatePreferences(current => parseContract("InterfacePreferences", { ...current, [id]: typed }));
+	}
+	private preferenceDescriptors(): P.SettingDescriptorLike[] {
+		const preferences = this.settings?.preferences ?? {};
+		const descriptor = { group: "interface", explicit: true };
+		return [
+			{ ...descriptor, id: "appearance", field: "appearance", kind: "enum", options: ["system", "light", "dark"], value: preferences.appearance ?? "system" },
+			{ ...descriptor, id: "locale", field: "locale", kind: "enum", options: ["auto", "zh", "en"], value: preferences.locale ?? "auto" },
+			...FONT_FAMILY_FIELDS.map(field => ({ ...descriptor, id: field, field, kind: "string" as const, value: preferences[field] ?? "" })),
+			...FONT_SIZE_FIELDS.map(field => ({ ...descriptor, id: field, field, kind: "number" as const, value: String(this.typography[field]), ...FONT_SIZE_LIMITS[field], step: 1 })),
+			{ ...descriptor, id: "showWelcome", field: "showWelcome", kind: "boolean", value: String(preferences.showWelcome ?? true) },
+			{ ...descriptor, id: "display_name", field: "display_name", kind: "string", value: this.settings?.display_name ?? "" },
+		];
 	}
 	private render(): void {
 		document.documentElement.lang = documentLanguage(this.locale);
@@ -505,13 +552,9 @@ export class DesktopPage {
 		const picker = pythonView({ locale: this.locale, typography: this.typography, sessions: this.sessions, workspaces: this.workspaces, connection, catalog: this.catalog, selection: this.selection, thinking: this.thinking, enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter, draft: this.draft.text, paletteSelection: this.paletteSelection, commands: this.commands, attachments: attachments(this.locale, this.draft.images),
 			panel: P.panelView({ locale: this.locale, current: this.currentPanel, modal: this.modal, modalPending: this.modalPending, notice: this.notice,
-				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: [
-					{ id: "appearance", field: "appearance", group: "appearance", kind: "enum", options: ["system", "light", "dark"], explicit: true, value: localStorage.getItem("amazme:appearance") ?? "system" },
-					{ id: "locale", field: "locale", group: "appearance", kind: "enum", options: ["auto", "zh", "en"], explicit: true, value: localStorage.getItem("amazme:locale") ?? "auto" },
-					{ id: "display_name", field: "display_name", group: "profile", kind: "string", explicit: true, value: this.settings?.display_name ?? "" },
-				] } },
+				settings: { hostModels: true, state: { paths: { global: "AmazMe" }, projectTrusted: true, errors: [], descriptors: this.preferenceDescriptors() } },
 				skills: { state: { directory: "", skills: this.resources?.skills.map(item => ({ name: item.name, description: item.description ?? "", filePath: item.path, scope: "user", disableModelInvocation: item.disable_model_invocation ?? false, editable: true })) ?? [], diagnostics: this.resources?.diagnostics.map(message => ({ message })) ?? [] } },
-			}), connections: this.connections(), mode: this.mode, usage: this.usage, welcomeDismissed: localStorage.getItem("amazme:welcome-dismissed") === "true", newSessionPending: this.newSessionPending, ready: this.ready });
+			}), connections: this.connections(), mode: this.mode, usage: this.usage, welcomeDismissed: this.settings?.preferences?.showWelcome === false, newSessionPending: this.newSessionPending, ready: this.ready });
 		const cwd = this.workspaces.find(item => item.name === session?.workspace)?.host_path ?? "";
 		let pendingError: string | undefined;
 		const pending = (() => {
@@ -524,7 +567,7 @@ export class DesktopPage {
 			dock: terminal && this.dockTab === "terminal" ? { ...dock, panel: { ...dock.panel, texts: [], notices: terminal.queue.paused ? [{ tone: "warning", text: "终端输入尚未确认；请重试原输入或核对后继续。" }] : dock.panel.notices, actions: [
 				{ id: "terminal:retry", label: "重试原输入", weight: "line", disabled: terminal.queue.busy || !terminal.queue.items.length },
 				{ id: "terminal:confirm", label: "核对后继续", weight: "text", disabled: terminal.queue.busy || !terminal.queue.items.length },
-			] }, pty: { id: terminal.id, cols: terminal.view.cols, rows: terminal.view.rows, output: terminal.view.output, outputSeq: terminal.view.output_seq ?? terminal.view.output.length, inputEnabled: connection?.ready === true && terminal.view.phase === "running" && !terminal.queue.paused } } : dock });
+			] }, pty: { id: terminal.id, cols: terminal.view.cols, rows: terminal.view.rows, output: terminal.view.output, outputSeq: terminal.view.output_seq ?? terminal.view.output.length, fontFamily: this.typography.terminalFont, fontSize: this.typography.terminalSize, inputEnabled: connection?.ready === true && terminal.view.phase === "running" && !terminal.queue.paused } } : dock });
 		if (pendingError) this.renderer.setConnection(pendingError, "error");
 	}
 	dispose(): void { clearTimeout(this.healthTimer); clearTimeout(this.oauthTimer); clearTimeout(this.terminalTimer); this.client.retire(); }

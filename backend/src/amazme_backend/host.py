@@ -112,6 +112,7 @@ from .contracts import (
     Identity,
     ImagePart,
     ImportResult,
+    InterfacePreferences,
     McpCall,
     McpCallEnvelope,
     McpCallRequest,
@@ -143,6 +144,7 @@ from .contracts import (
     PluginList,
     PluginReload,
     PluginView,
+    PreferencesUpdate,
     PreparedFileWrite,
     PrepareFileWrite,
     PrepareUpdate,
@@ -1112,13 +1114,15 @@ class Host:
 
     async def product_settings(self) -> ProductSettings:
         self._admit()
-        name, revision = await self.store.product_settings()
-        return ProductSettings(display_name=name, revision=revision)
+        return await self.store.product_settings()
 
     async def save_product_settings(self, value: SettingsUpdate) -> ProductSettings:
         self._admit()
-        name, revision = await self.store.save_product_settings(value.display_name.strip(), value.expected_revision)
-        return ProductSettings(display_name=name, revision=revision)
+        return await self.store.save_product_settings(value.display_name.strip(), value.expected_revision)
+
+    async def save_preferences(self, value: PreferencesUpdate) -> ProductSettings:
+        self._admit()
+        return await self.store.save_preferences(value.preferences, value.expected_revision)
 
     async def save_feedback(self, value: FeedbackWrite) -> FeedbackView:
         self._admit()
@@ -1189,7 +1193,7 @@ class Host:
     async def export_bundle(self) -> ExportBundle:
         self._admit()
         projects = await self.projects()
-        name, revision = await self.store.product_settings()
+        settings = await self.store.product_settings()
         feedback = [FeedbackView(feedback_id=feedback_id, session_id=session_id, text=text)
                     for feedback_id, session_id, text in await self.store.feedback_rows()]
         sessions: list[ExportSession] = []
@@ -1200,7 +1204,7 @@ class Host:
                 messages=[ExportMessage.model_validate({"request_id": request_id, "role": role, "content": content})
                           for request_id, role, content in messages if content]))
         bundle = ExportBundle(format="amazme-export/1", projects=projects.projects, sessions=sessions,
-                             feedback=feedback, settings=ProductSettings(display_name=name, revision=revision))
+                             feedback=feedback, settings=settings)
         if contains_secret(bundle_text(bundle), self._provider_secret()):
             raise BackendError("export_secret")
         return bundle.model_copy(update={"digest": bundle_digest(bundle)})
@@ -1221,8 +1225,11 @@ class Host:
             current = known_projects.get(project.project_id)
             if current is not None and current != project.name:
                 raise BackendError("import_conflict")
-        current_name, current_revision = await self.store.product_settings()
-        if bundle.settings.display_name and current_revision and current_name != bundle.settings.display_name:
+        current_settings = await self.store.product_settings()
+        if bundle.settings.display_name and current_settings.revision and current_settings.display_name != bundle.settings.display_name:
+            raise BackendError("import_conflict")
+        if (current_settings.revision and bundle.settings.preferences != InterfacePreferences()
+                and current_settings.preferences != bundle.settings.preferences):
             raise BackendError("import_conflict")
         known_feedback = {feedback_id: (session_id, text) for feedback_id, session_id, text in await self.store.feedback_rows()}
         for item in bundle.feedback:
@@ -1251,8 +1258,11 @@ class Host:
                 raise BackendError("import_conflict")
         for project in bundle.projects:
             await self.store.save_project(project.project_id, project.name)
-        if bundle.settings.display_name and current_revision == 0:
-            await self.store.save_product_settings(bundle.settings.display_name, 0)
+        if current_settings.revision == 0:
+            if bundle.settings.display_name:
+                current_settings = await self.store.save_product_settings(bundle.settings.display_name, 0)
+            if bundle.settings.preferences != InterfacePreferences():
+                current_settings = await self.store.save_preferences(bundle.settings.preferences, current_settings.revision)
         for item in bundle.feedback:
             key = content_digest(json.dumps({"session_id": item.session_id, "text": item.text},
                                             sort_keys=True, separators=(",", ":"), ensure_ascii=False))
@@ -3082,6 +3092,10 @@ def application(owner: Host) -> FastAPI:
     async def save_product_settings(value: SettingsUpdate) -> ProductSettings:
         return await owner.save_product_settings(value)
 
+    @app.put("/api/v1/settings/preferences")
+    async def save_preferences(value: PreferencesUpdate) -> ProductSettings:
+        return await owner.save_preferences(value)
+
     @app.post("/api/v1/feedback")
     async def save_feedback(value: FeedbackWrite) -> FeedbackView:
         return await owner.save_feedback(value)
@@ -3256,8 +3270,13 @@ def application(owner: Host) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     @app.get("/index.html", response_class=HTMLResponse)
-    def page(response: Response) -> str:
-        document, policy = boot_document(owner.identity(), owner.origin)
+    async def page(response: Response) -> str:
+        try:
+            preferences = (await owner.store.product_settings()).preferences
+        except BackendError:
+            # Storage failures must still leave the client able to display recovery diagnostics.
+            preferences = InterfacePreferences()
+        document, policy = boot_document(owner.identity(), owner.origin, preferences)
         response.headers["Content-Security-Policy"] = policy
         return document
 

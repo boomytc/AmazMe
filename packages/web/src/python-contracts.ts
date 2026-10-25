@@ -590,6 +590,18 @@ export type ImportResult = {
   "created": number;
 };
 
+export type InterfacePreferences = {
+  "appearance"?: "system" | "light" | "dark";
+  "locale"?: "auto" | "zh" | "en";
+  "showWelcome"?: boolean;
+  "textFont"?: string;
+  "codeFont"?: string;
+  "terminalFont"?: string;
+  "textSize"?: number;
+  "codeSize"?: number;
+  "terminalSize"?: number;
+};
+
 export type JsonValue = unknown;
 
 export type Login = {
@@ -786,6 +798,11 @@ export type PluginView = {
   "error"?: string;
 };
 
+export type PreferencesUpdate = {
+  "preferences": InterfacePreferences;
+  "expected_revision": number;
+};
+
 export type PrepareFileWrite = {
   "session_id": string;
   "worker_id": string;
@@ -830,6 +847,7 @@ export type ProcessLease = {
 export type ProductSettings = {
   "display_name"?: string;
   "revision"?: number;
+  "preferences"?: InterfacePreferences;
 };
 
 export type ProjectList = {
@@ -1423,6 +1441,7 @@ export interface ApiModels {
   Identity: Identity;
   ImagePart: ImagePart;
   ImportResult: ImportResult;
+  InterfacePreferences: InterfacePreferences;
   JsonValue: JsonValue;
   Login: Login;
   McpCall: McpCall;
@@ -1451,6 +1470,7 @@ export interface ApiModels {
   PluginResult: PluginResult;
   PluginTool: PluginTool;
   PluginView: PluginView;
+  PreferencesUpdate: PreferencesUpdate;
   PrepareFileWrite: PrepareFileWrite;
   PrepareUpdate: PrepareUpdate;
   PreparedFileWrite: PreparedFileWrite;
@@ -1722,6 +1742,7 @@ export interface HttpOperations {
   "POST /api/v1/projects": { response: ProjectView; path: Record<string, unknown>; query: Record<string, unknown>; body: ProjectWrite };
   "GET /api/v1/settings": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/settings": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: SettingsUpdate };
+  "PUT /api/v1/settings/preferences": { response: ProductSettings; path: Record<string, unknown>; query: Record<string, unknown>; body: PreferencesUpdate };
   "POST /api/v1/feedback": { response: FeedbackView; path: Record<string, unknown>; query: Record<string, unknown>; body: FeedbackWrite };
   "POST /api/v1/sessions/{session}/shares": { response: ShareView; path: {
   "session": string;
