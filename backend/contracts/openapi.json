@@ -7004,6 +7004,12 @@
             "minLength": 1,
             "pattern": "^[\\w.-]+$",
             "title": "Through Request Id"
+          },
+          "instructions": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Instructions",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -7038,6 +7044,11 @@
             "maxLength": 16000,
             "minLength": 1,
             "title": "Summary"
+          },
+          "instructions": {
+            "type": "string",
+            "title": "Instructions",
+            "default": ""
           }
         },
         "additionalProperties": false,
@@ -11841,6 +11852,16 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "compaction": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CompactSession"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "offset": {
             "type": "integer",

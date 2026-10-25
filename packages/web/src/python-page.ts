@@ -496,13 +496,17 @@ export class DesktopPage {
 		}
 		if (id === A.CONVERSATION_FORK_ACTION) { await this.fork(data); return; }
 		if (id === "write:retry-branch") { if (!data) throw new Error("缺少原分支编号"); await this.fork(this.requireConnection().sessionId, data); return; }
-		if (id === A.COMPACT_ACTION) { this.modal = P.compactModal(this.locale); this.render(); return; }
+		if (id === A.COMPACT_ACTION) { this.modal = { ...P.compactModal(this.locale), data: this.requireConnection().sessionId }; this.render(); return; }
 		if (id === A.COMPACT_MODAL) {
-			const connection = this.requireConnection(), ledger = this.ledger(connection);
-			const through = connection.snapshot?.requests.findLast(item => item.kind === "root" && settled.has(item.status));
-			if (!through) throw new Error("没有可压缩的已完成回合");
-			const record = ledger.prepare("compaction", "POST /api/v1/sessions/{session}/compactions", id => ({ path: { session: connection.sessionId }, body: { compaction_id: id, through_request_id: through.request_id } }));
-			await ledger.send("compaction", record, this.client, connection); if (connection.active()) { this.modal = undefined; this.render(); } return;
+			const connection = this.requireConnection(), ledger = this.ledger(connection), modal = this.modal;
+			if (action.kind !== "modal-submit" || modal?.id !== id || modal.data !== data || data !== connection.sessionId) return;
+			let record = ledger.read("compaction", "POST /api/v1/sessions/{session}/compactions");
+			if (!record) {
+				const through = connection.snapshot?.requests.findLast(item => item.kind === "root" && item.status === "succeeded");
+				if (!through) throw new Error("没有可压缩的成功回合");
+				record = ledger.prepare("compaction", "POST /api/v1/sessions/{session}/compactions", id => ({ path: { session: connection.sessionId }, body: { compaction_id: id, through_request_id: through.request_id, instructions: fields.instructions ?? "" } }));
+			}
+			await ledger.send("compaction", record, this.client, connection); if (connection.active() && this.modal === modal) { this.modal = undefined; this.render(); } return;
 		}
 		if (id === A.APPROVAL_APPROVE_ACTION || id === A.APPROVAL_DENY_ACTION) {
 			const connection = this.requireConnection(), ledger = this.ledger(connection);

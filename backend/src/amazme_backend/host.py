@@ -2559,16 +2559,18 @@ class Host:
         # Summarize only after this id is reserved. A failed summary does not replace or delete history.
         messages = [Message.model_validate_json(payload) for payload in payloads]
         self.profile.reload_provider()
-        if contains_secret("\n".join(message.content for message in messages), self._provider_secret()):
+        if contains_secret("\n".join(message.content for message in messages) + "\n" + value.instructions, self._provider_secret()):
             raise BackendError("compaction_secret")
         existing = await self._with_session(
-            session, lambda store: store.begin_compaction(value.compaction_id, value.through_request_id))
+            session, lambda store: store.begin_compaction(value.compaction_id, value.through_request_id, value.instructions))
         if existing is not None:
             return existing
         try:
-            configured = await self.accounts.configured(self.profile.config.provider)
+            choice = await self.store.session_model(session)
+            selected = select_model(self.profile.config.provider, choice, self.accounts.read().transports)
+            configured = await self.accounts.configured(selected)
             await self._account_write_guard()
-            summary = await summarize(configured, messages)
+            summary = await summarize(configured, messages, value.instructions)
         except BackendError:
             try:
                 await self._with_session(session, lambda store: store.release_compaction(value.compaction_id))
@@ -2580,7 +2582,7 @@ class Host:
             raise BackendError("compaction_secret")
         return await self._with_session(
             session, lambda store: store.commit_compaction(
-                value.compaction_id, value.through_request_id, summary, basis))
+                value.compaction_id, value.through_request_id, summary, basis, value.instructions))
 
     async def reader(self, session: str) -> ReadPeer:
         self._admit()

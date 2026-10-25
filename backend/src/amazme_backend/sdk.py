@@ -18,6 +18,8 @@ from .contracts import (
     CodeRun,
     CodeTools,
     CodeView,
+    Compaction,
+    CompactSession,
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
@@ -128,6 +130,11 @@ class Client:
             return ResourceCatalog.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/resources"))
         return ResourceCatalog.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/resources",
             json_body=options.model_dump(), headers=self._write()))
+
+    async def compact(self, session_id: str, workspace: str, attachment_id: str, value: CompactSession) -> Compaction:
+        await self._require_workspace(session_id, workspace)
+        return Compaction.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/compactions",
+            json_body=value.model_dump(), headers=self._write(attachment_id)))
 
     async def workspaces(self) -> WorkspaceList:
         return WorkspaceList.model_validate(await self._send("GET", "/api/v1/workspaces"))

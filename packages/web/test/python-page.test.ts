@@ -148,6 +148,35 @@ test("the original resource palette submits resource commands for Python expansi
  expect(requests[0].target_run_id).toBeUndefined();
 });
 
+test("the original compaction dialog pins its instructions and completed turn across retries and does not close a newer dialog", async () => {
+ const requests: Array<import("../src/python-contracts.ts").CompactSession> = [];
+ let finish: (response: Response) => void = () => { throw new Error("compaction retry not started"); };
+ const { page } = await startPage((path, options) => {
+  if (!path.endsWith("/compactions")) return undefined;
+  requests.push(parseContract("CompactSession", JSON.parse(String(options.body))));
+  if (requests.length === 1) return new Response(JSON.stringify({ code: "receipt_lost" }), { status: 503 });
+  return new Promise<Response>(resolve => { finish = resolve; });
+ });
+ const connection = page.client.connection;
+ if (!connection?.snapshot) throw new Error("session missing");
+ connection.snapshot = { ...connection.snapshot, requests: [{ request_id: "done", text: "task", answer: "answer", kind: "root", status: "succeeded" }, { request_id: "failed", text: "bad", kind: "root", status: "failed" }] };
+ page.client.onChange();
+ page.renderer.onPanelAction({ kind: "command", id: A.COMPACT_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.data).toBe("a"));
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.COMPACT_MODAL, data: "a", fields: { instructions: "保留文件路径" } });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.notice?.text).toContain("receipt_lost"));
+ connection.snapshot = { ...connection.snapshot, requests: [{ request_id: "new", text: "next", kind: "root", status: "succeeded" }] };
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.COMPACT_MODAL, data: "a", fields: { instructions: "新要求" } });
+ await vi.waitFor(() => expect(requests).toHaveLength(2));
+ expect(requests[0]).toMatchObject({ through_request_id: "done", instructions: "保留文件路径" });
+ expect(requests[1]).toEqual(requests[0]);
+ page.renderer.onPanelAction({ kind: "command", id: A.MODEL_SCOPE_ACTION, data: undefined });
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal?.id).toBe(A.MODEL_SCOPE_MODAL));
+ finish(new Response(JSON.stringify({ ...requests[0], basis: "basis", summary: "summary", message_count: 2 })));
+ await vi.waitFor(() => expect(sessionStorage.getItem("amazme:write:host:a:compaction")).toBeNull());
+ expect(page.renderer.view?.panel.modal?.id).toBe(A.MODEL_SCOPE_MODAL);
+});
+
 test("the original JSON model toggle persists the global scope and survives a fresh page", async () => {
  const response = (value: unknown) => new Response(JSON.stringify(value));
  let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });

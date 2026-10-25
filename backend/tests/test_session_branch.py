@@ -26,8 +26,10 @@ from amazme_backend.contracts import (
     Message,
     PrepareUpdate,
     ProcessLease,
+    ProviderConfig,
     Receipt,
     RenameSession,
+    SessionModel,
     Snapshot,
     Stream,
     Submit,
@@ -38,6 +40,7 @@ from amazme_backend.contracts import (
 from amazme_backend.host import Host, application
 from amazme_backend.host_store import HostStore
 from amazme_backend.providers import Completion, stream
+from amazme_backend.sdk import Client
 from amazme_backend.session_domain import (
     Action,
     CloseEpoch,
@@ -467,7 +470,7 @@ async def test_failed_summary_does_not_replace_history(owner: Host, monkeypatch:
     finally:
         await parent.db.close()
 
-    async def fail(_config: object, _messages: object) -> str:
+    async def fail(_config: object, _messages: object, _instructions: str) -> str:
         raise BackendError("model_failed")
 
     monkeypatch.setattr("amazme_backend.host.summarize", fail)
@@ -489,7 +492,7 @@ async def test_compaction_is_not_sent_twice(owner: Host, monkeypatch: pytest.Mon
     calls: list[str] = []
     failed = False
 
-    async def fake(_config: object, messages: list[Message]) -> str:
+    async def fake(_config: object, messages: list[Message], _instructions: str) -> str:
         nonlocal failed
         text = "\n".join(message.content for message in messages)
         if "失败" in text and not failed:
@@ -507,7 +510,8 @@ async def test_compaction_is_not_sent_twice(owner: Host, monkeypatch: pytest.Mon
     created = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
     again = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
     other = await owner.compact_session(PARENT, CompactSession(compaction_id="c2", through_request_id="r1"))
-    assert created == again == other and len(calls) == 1 and "alpha" in calls[0]
+    assert created == again and other == created.model_copy(update={"compaction_id": "c2"})
+    assert len(calls) == 1 and "alpha" in calls[0]
     parent = await parent_store(owner)
     try:
         await finish(parent, "失败", "r-fail", owner.build)
@@ -530,12 +534,68 @@ async def test_compaction_is_not_sent_twice(owner: Host, monkeypatch: pytest.Mon
     assert len(calls) == 2
 
 
+async def test_compaction_pins_instructions_to_the_id_and_uses_the_session_model(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str]] = []
+
+    async def fake(config: ProviderConfig, _messages: list[Message], instructions: str) -> str:
+        calls.append((config.model, instructions))
+        return "摘要：" + instructions
+
+    monkeypatch.setattr("amazme_backend.host.summarize", fake)
+    parent = await parent_store(owner)
+    try:
+        await finish(parent, "alpha", "r1", owner.build)
+    finally:
+        await parent.db.close()
+    owner.profile.save_provider(owner.profile.config.provider.model_copy(update={"model": "default"}))
+    await owner.store.save_session_model(SessionModel(session_id=PARENT, provider="faux", model="faux"))
+    original = CompactSession(compaction_id="focus", through_request_id="r1", instructions="保留文件和未完成事项")
+    created = await owner.compact_session(PARENT, original)
+    assert created.instructions == original.instructions and calls == [("faux", original.instructions)]
+    assert await owner.compact_session(PARENT, original) == created
+    with pytest.raises(BackendError, match="compaction_conflict"):
+        await owner.compact_session(PARENT, original.model_copy(update={"instructions": "替换要求"}))
+    second = await owner.compact_session(PARENT, original.model_copy(update={"compaction_id": "focus2", "instructions": "仅保留决定"}))
+    assert second.instructions == "仅保留决定" and len(calls) == 2
+    await owner.compact_session(PARENT, original)
+    parent = await parent_store(owner)
+    try:
+        assert await parent.active_summary() == second.summary
+    finally:
+        await parent.db.close()
+    reused = await owner.compact_session(PARENT, original.model_copy(update={"compaction_id": "focus3"}))
+    assert reused.compaction_id == "focus3" and reused.summary == created.summary and len(calls) == 2
+    sdk = Client(owner.origin, "web-only")
+    await sdk._http.aclose()
+    sdk._http = httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)), base_url=owner.origin)
+    async with sdk:
+        attachment = await sdk.attach(PARENT)
+        assert await sdk.compact(PARENT, "primary", attachment.attachment_id, original) == created
+        rpc = await sdk.rpc("session.compact", session_id=PARENT, workspace="primary", attachment_id=attachment.attachment_id,
+                            compaction=original.model_dump())
+        assert rpc["instructions"] == original.instructions and rpc["compaction_id"] == original.compaction_id
+        with pytest.raises(BackendError, match="workspace_mismatch"):
+            await sdk.compact(PARENT, "other", attachment.attachment_id, original)
+    assert len(calls) == 2
+    parent = await parent_store(owner)
+    try:
+        await parent.begin_compaction("held-focus", "r1", "未收到的要求")
+        with pytest.raises(BackendError, match="compaction_conflict"):
+            await parent.begin_compaction("held-focus", "r1", original.instructions)
+        with pytest.raises(BackendError, match="compaction_pending"):
+            await parent.begin_compaction("held-focus", "r1", "未收到的要求")
+        with pytest.raises(BackendError, match="compaction_conflict"):
+            await parent.commit_compaction("held-focus", "r1", "错误摘要", created.basis, "改变要求")
+    finally:
+        await parent.db.close()
+
+
 async def test_compaction_does_not_send_or_keep_the_provider_secret(
         owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
     owner.profile.save_provider(owner.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
     calls: list[str] = []
 
-    async def fake_summarize(_config: object, messages: list[Message]) -> str:
+    async def fake_summarize(_config: object, messages: list[Message], _instructions: str) -> str:
         text = "\n".join(message.content for message in messages)
         calls.append(text)
         if "回声" in text:
@@ -550,6 +610,9 @@ async def test_compaction_does_not_send_or_keep_the_provider_secret(
         await parent.db.close()
     created = await owner.compact_session(PARENT, CompactSession(compaction_id="c-clean", through_request_id="r-clean"))
     assert created.summary == "已压缩干净对话" and KEY not in calls[0]
+    with pytest.raises(BackendError, match="compaction_secret"):
+        await owner.compact_session(PARENT, CompactSession(compaction_id="c-instructions", through_request_id="r-clean", instructions=KEY))
+    assert len(calls) == 1
     parent = await parent_store(owner)
     try:
         assert (await parent.snapshot()).compaction == "已压缩干净对话"

@@ -174,15 +174,14 @@ class SettleComputerBody(Model):
 class BeginCompactionBody(Model):
     compaction_id: str
     through_request_id: str
+    instructions: str = ""
 
 
 class CompactionClaim(Model):
     compaction: Compaction | None = None
 
 
-class CompactBody(Model):
-    compaction_id: str
-    through_request_id: str
+class CompactBody(BeginCompactionBody):
     summary: str
     basis: str
 
@@ -272,14 +271,14 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
     if name == "begin_compaction":
         body = BeginCompactionBody.model_validate_json(payload)
         return _model(CompactionClaim(compaction=await store.begin_compaction(
-            body.compaction_id, body.through_request_id)))
+            body.compaction_id, body.through_request_id, body.instructions)))
     if name == "release_compaction":
         await store.release_compaction(BeginCompactionBody.model_validate_json(payload).compaction_id)
         return ""
     if name == "commit_compaction":
         body = CompactBody.model_validate_json(payload)
         return _model(await store.commit_compaction(
-            body.compaction_id, body.through_request_id, body.summary, body.basis))
+            body.compaction_id, body.through_request_id, body.summary, body.basis, body.instructions))
     if name == "import_transcript":
         body = TranscriptBody.model_validate_json(payload)
         await store.import_transcript([(item.request_id, item.role, item.content) for item in body.messages])
@@ -315,9 +314,9 @@ class SessionOps(Protocol):
     async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"], error: str, driver_x: int | None, driver_y: int | None, result: dict[str, JsonValue] | None = None,
                                      images: list[ImagePart] | None = None) -> ComputerActionView: ...
     async def finish_computer_cleanup(self, proof: str) -> str: ...
-    async def begin_compaction(self, compaction_id: str, through_request_id: str) -> Compaction | None: ...
+    async def begin_compaction(self, compaction_id: str, through_request_id: str, instructions: str = "") -> Compaction | None: ...
     async def release_compaction(self, compaction_id: str) -> None: ...
-    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str) -> Compaction: ...
+    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "") -> Compaction: ...
     async def import_transcript(self, messages: list[tuple[str, str, str]]) -> None: ...
 
 
@@ -423,18 +422,18 @@ class SessionRelay:
     async def finish_computer_cleanup(self, proof: str) -> str:
         return TextValue.model_validate_json(await self._call("finish_computer_cleanup", TextValue(value=proof))).value
 
-    async def begin_compaction(self, compaction_id: str, through_request_id: str) -> Compaction | None:
+    async def begin_compaction(self, compaction_id: str, through_request_id: str, instructions: str = "") -> Compaction | None:
         claim = CompactionClaim.model_validate_json(await self._call("begin_compaction", BeginCompactionBody(
-            compaction_id=compaction_id, through_request_id=through_request_id)))
+            compaction_id=compaction_id, through_request_id=through_request_id, instructions=instructions)))
         return claim.compaction
 
     async def release_compaction(self, compaction_id: str) -> None:
         await self._call("release_compaction", BeginCompactionBody(
             compaction_id=compaction_id, through_request_id=""))
 
-    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str) -> Compaction:
+    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "") -> Compaction:
         return Compaction.model_validate_json(await self._call("commit_compaction", CompactBody(
-            compaction_id=compaction_id, through_request_id=through_request_id, summary=summary, basis=basis)))
+            compaction_id=compaction_id, through_request_id=through_request_id, summary=summary, basis=basis, instructions=instructions)))
 
     async def import_transcript(self, messages: list[tuple[str, str, str]]) -> None:
         await self._call("import_transcript", TranscriptBody(messages=[

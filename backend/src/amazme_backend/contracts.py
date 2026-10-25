@@ -452,6 +452,7 @@ class RenameSession(Model):
 class CompactSession(Model):
     compaction_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
     through_request_id: str = Field(min_length=1, max_length=128, pattern=r"^[\w.-]+$")
+    instructions: str = Field(default="", max_length=4000)
 
 
 class Compaction(Model):
@@ -460,6 +461,7 @@ class Compaction(Model):
     basis: str
     message_count: int = Field(ge=1)
     summary: str = Field(min_length=1, max_length=16000)
+    instructions: str = ""
 
 
 class EventList(Model):

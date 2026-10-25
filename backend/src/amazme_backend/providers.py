@@ -406,12 +406,13 @@ def provider_messages(messages: list[Message], provider: str = "", config: Provi
     return result
 
 
-async def summarize(config: ProviderConfig, messages: list[Message]) -> str:
+async def summarize(config: ProviderConfig, messages: list[Message], instructions: str = "") -> str:
     """Ask the configured provider for a context summary. Callers commit it only if the basis still matches."""
     if not messages or not any(message.content for message in messages):
         raise BackendError("compaction_empty")
     source = "\n".join(f"{message.role}: {message.content}" for message in messages if message.content)
-    prompt = Message(role="user", content="压缩对话并保留决定与未完成事项：\n" + source[:12000])
+    prompt = Message(role="user", content="压缩对话并保留决定与未完成事项：\n" + source[:12000]
+                     + ("\n\n用户补充要求：\n" + instructions if instructions else ""))
     summary = ""
     async for item in stream(config, [prompt]):
         if isinstance(item, str):

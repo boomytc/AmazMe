@@ -1410,13 +1410,13 @@ class SessionStore:
 
     def _match_compaction(self, db: sqlite3.Connection, payloads: list[str]) -> Compaction | None:
         best: Compaction | None = None
-        for row in db.execute("SELECT payload FROM compactions"):
+        for row in db.execute("SELECT payload FROM compactions ORDER BY rowid"):
             record = Compaction.model_validate_json(row[0])
             if record.message_count > len(payloads):
                 continue
             if compaction_basis(payloads[:record.message_count]) != record.basis:
                 continue
-            if best is None or record.message_count > best.message_count:
+            if best is None or record.message_count >= best.message_count:
                 best = record
         return best
 
@@ -2074,34 +2074,41 @@ class SessionStore:
             return Park("frozen" if self._meta(db, "freeze_id") else "idle", wake)
         return await self._tx(operation)
 
-    async def begin_compaction(self, compaction_id: str, through_request_id: str) -> Compaction | None:
+    async def begin_compaction(self, compaction_id: str, through_request_id: str, instructions: str = "") -> Compaction | None:
         """Reserve one summary. A stored row is returned. An open claim is not sent again."""
         def operation(db: sqlite3.Connection, _c: Changes) -> Compaction | None:
             _payloads, basis = self._compaction_source(db, through_request_id)
+            claim_basis = compaction_basis([basis, instructions])
             stored = db.execute("SELECT payload FROM compactions WHERE id=?", (compaction_id,)).fetchone()
             if stored is not None:
                 previous = Compaction.model_validate_json(stored[0])
-                if previous.through_request_id != through_request_id or previous.basis != basis:
+                if previous.through_request_id != through_request_id or previous.basis != basis or previous.instructions != instructions:
                     raise BackendError("compaction_conflict")
                 return previous
+            own_claim = db.execute("SELECT through_request_id,basis FROM compaction_claims WHERE id=?", (compaction_id,)).fetchone()
+            if own_claim is not None and (str(own_claim["through_request_id"]) != through_request_id or str(own_claim["basis"]) != claim_basis):
+                raise BackendError("compaction_conflict")
             same = db.execute(
                 "SELECT payload FROM compactions WHERE basis=? "
-                "AND json_extract(payload,'$.through_request_id')=? ORDER BY rowid LIMIT 1",
-                (basis, through_request_id)).fetchone()
+                "AND json_extract(payload,'$.through_request_id')=? "
+                "AND coalesce(json_extract(payload,'$.instructions'),'')=? ORDER BY rowid LIMIT 1",
+                (basis, through_request_id, instructions)).fetchone()
             if same is not None:
-                return Compaction.model_validate_json(same[0])
+                reused = Compaction.model_validate_json(same[0]).model_copy(update={"compaction_id": compaction_id})
+                db.execute("INSERT INTO compactions(id,basis,payload) VALUES(?,?,?)", (compaction_id, basis, reused.model_dump_json()))
+                return reused
             claim = db.execute(
                 "SELECT id,basis FROM compaction_claims WHERE through_request_id=? "
                 "AND NOT EXISTS (SELECT 1 FROM compactions WHERE id=compaction_claims.id) "
                 "ORDER BY rowid LIMIT 1",
                 (through_request_id,)).fetchone()
             if claim is not None:
-                if str(claim["id"]) != compaction_id or str(claim["basis"]) != basis:
+                if str(claim["id"]) != compaction_id or str(claim["basis"]) != claim_basis:
                     raise BackendError("compaction_conflict")
-                raise BackendError("compaction_pending")
+                raise BackendError("compaction_pending", status=503)
             db.execute(
                 "INSERT INTO compaction_claims(id,through_request_id,basis) VALUES(?,?,?)",
-                (compaction_id, through_request_id, basis))
+                (compaction_id, through_request_id, claim_basis))
             return None
         return await self._tx(operation)
 
@@ -2124,7 +2131,7 @@ class SessionStore:
             db.execute("DELETE FROM compaction_claims WHERE id=?", (compaction_id,))
         await self._tx(operation)
 
-    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str) -> Compaction:
+    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "") -> Compaction:
         """Store a summary without deleting the messages it covers. A stale basis writes nothing."""
         def operation(db: sqlite3.Connection, c: Changes) -> Compaction:
             row = db.execute("SELECT payload FROM requests WHERE id=?", (through_request_id,)).fetchone()
@@ -2137,8 +2144,12 @@ class SessionStore:
             current = compaction_basis(payloads)
             if current != basis:
                 raise BackendError("compaction_expired")
+            claim = db.execute("SELECT through_request_id,basis FROM compaction_claims WHERE id=?", (compaction_id,)).fetchone()
+            if claim is not None and (str(claim["through_request_id"]) != through_request_id
+                                      or str(claim["basis"]) != compaction_basis([basis, instructions])):
+                raise BackendError("compaction_conflict")
             record = Compaction(compaction_id=compaction_id, through_request_id=through_request_id, basis=current,
-                                message_count=len(payloads), summary=summary)
+                                message_count=len(payloads), summary=summary, instructions=instructions)
             existing = db.execute("SELECT payload FROM compactions WHERE id=?", (compaction_id,)).fetchone()
             if existing:
                 previous = Compaction.model_validate_json(existing[0])

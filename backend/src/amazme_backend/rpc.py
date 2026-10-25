@@ -22,6 +22,8 @@ from .contracts import (
     CodeRun,
     CodeTools,
     CodeView,
+    Compaction,
+    CompactSession,
     ComputerActionRequest,
     ComputerActionView,
     ComputerCleanup,
@@ -89,6 +91,7 @@ from .workspace_files import FileContent, FileList
 
 
 class RpcParams(RunOptions):
+    compaction: CompactSession | None = None
     offset: int = Field(default=0, ge=0, le=9007199254740991)
     provider_configuration: ConfigureProvider | None = None
     mcp_config: McpConfigWrite | None = None
@@ -171,6 +174,8 @@ def rpc_error(identity: str, code: str) -> dict[str, object]:
 
 
 class RpcHost(Protocol):
+    async def compact_session(self, session: str, value: CompactSession) -> Compaction: ...
+
     async def code_tools(self, session_id: str) -> CodeTools: ...
 
     async def run_code(self, session_id: str, value: CodeRun) -> CodeView: ...
@@ -484,6 +489,10 @@ async def _dispatch(owner: RpcHost, method: str, params: RpcParams) -> Model:
         if not params.plugin_id or params.plugin_call is None:
             raise BackendError("plugin_binding_required")
         return await owner.call_plugin(session, params.plugin_id, params.plugin_call)
+    if method == "session.compact":
+        if params.compaction is None:
+            raise BackendError("compaction_required")
+        return await owner.compact_session(await _bound(owner, params), params.compaction)
     if method == "request.submit":
         if not params.request_id:
             raise BackendError("binding_required")

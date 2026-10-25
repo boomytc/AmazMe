@@ -202,6 +202,7 @@ export type CodeView = {
 export type CompactSession = {
   "compaction_id": string;
   "through_request_id": string;
+  "instructions"?: string;
 };
 
 export type Compaction = {
@@ -210,6 +211,7 @@ export type Compaction = {
   "basis": string;
   "message_count": number;
   "summary": string;
+  "instructions"?: string;
 };
 
 export type CompleteUpdate = {
@@ -1121,6 +1123,7 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "compaction"?: CompactSession | null;
   "offset"?: number;
   "provider_configuration"?: ConfigureProvider | null;
   "mcp_config"?: McpConfigWrite | null;

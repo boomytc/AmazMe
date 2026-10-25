@@ -3,7 +3,7 @@ import json
 import pytest
 
 from amazme_backend.contracts import BackendError, Message, ProviderConfig, ToolCall
-from amazme_backend.providers import Completion, provider_messages, stream, tool_definitions
+from amazme_backend.providers import Completion, provider_messages, stream, summarize, tool_definitions
 
 
 def test_plain_assistant_history_omits_empty_tool_calls() -> None:
@@ -40,6 +40,11 @@ async def test_faux_sequence_has_stable_context_bound_ids_and_usage() -> None:
     messages.extend([second.message, Message(role="tool", content="two", tool_call_id=second.message.tool_calls[0].id)])
     final = await completion(messages)
     assert not final.message.tool_calls and final.message.content == "two"
+
+
+async def test_summary_includes_the_custom_focus_after_the_conversation() -> None:
+    summary = await summarize(ProviderConfig(provider="faux"), [Message(role="user", content="原对话")], "保留文件位置")
+    assert "user: 原对话" in summary and "用户补充要求：\n保留文件位置" in summary
 
 
 async def test_faux_web_tools_stop_after_one_result() -> None:
