@@ -4,6 +4,8 @@
 
 旧产品线的移植记录保留在 Git 历史；当前行为以本仓源码和上述契约为准。
 
+QwenPaw 的最近核对基线为 `cee4c67e9a9a871c3730156ff81b3f8993fe97b0`。它提供增量参照，不替代本仓的 Python Host 与客户端职责。
+
 ## 2026-10-26 增量核对
 
 范围为 `be14d9732f98fcc33929cf103a92b96afaa6523e..d5b3de22d0e24a3e9c38a9410d3329b099717283`，共 55 个提交，含 1 个合并提交。目标取自本轮 fetch 后的 Pi `origin/main`。
@@ -73,3 +75,36 @@
 实现提交为 `3e0f84ca`（TUI）、`a69f848d`（模型与协议）、`7e283d78`（shell 取消）和 `8653b33f`（评测依赖）。
 
 本轮验证通过 TUI 全包、coding-agent 383 项（另跳过 1 项）、evals 32 项、后端定向回归 149 项、打包与工作区工程测试 42 项，以及逐包构建、Python wheel/sdist、Ruff、Pyright、TS 类型、契约生成和工作区检查。搜索与 shell 取消回归已确认旧实现失败；真实 shell 的退出、暂停失败回退和既有用户服务隔离均有运行证据。资源普查的受检范围无泄漏。没有发起真实模型调用，没有验证 Linux/Windows 的实际终端，没有发布或推送。
+
+## 2026-10-26 QwenPaw 增量核对
+
+来源为 [QwenPaw](https://github.com/agentscope-ai/QwenPaw)，范围是 `0db9a8e625e73917a0d113e255b3147134022db8..cee4c67e9a9a871c3730156ff81b3f8993fe97b0`，共 16 个提交。目标取自本轮 fetch 后的 `origin/main`。
+
+| QwenPaw 提交 | 处置 | 当前依据 |
+| --- | --- | --- |
+| `ce748971` | 部分吸收 | 工具参数进入呈现前限制原文长度、节点数和深度，格式化结果再次限长，复制保留完整原文。其他 React 控件、渠道、语音与移动端布局没有对应入口，不移植。 |
+| `fdf7e024` | 吸收 | 删除成功后立即使原连接失效、移除本地会话和 URL，再刷新目录。旧目录响应与迟到历史不能恢复已删除会话或重启轮询。 |
+| `d905bf24` | 不适用 | 发布分支同步主要涉及上游工作流、Docker、安装器与插件依赖下载。本仓不新增 workflows，不在插件加载时运行 pip，也不沿用该发布链。 |
+| `b24f729d` | 不适用 | 当前 `web_tools.py` 请求远端工具并接收正文，没有 html2text 依赖或本地 HTML 转 Markdown 入口。 |
+| `064d256e` | 不适用 | 组织 Hub 的模型代理、预算和恢复窗口不在当前产品内。模型 adapter 保留自身超时与错误契约。 |
+| `d9826425` | 不适用 | 当前消息媒体契约只有图片，不发送视频或音频，不增加无法触发的视频降级分支。 |
+| `ead6c69a` | 不适用 | Tauri sidecar 共用旋转日志句柄。当前 Electron 启动 Python，没有相同的 Python FileHandler 与 stdio 双重打开路径。 |
+| `a4501e76` | 不适用 | 上游 nightly 页面测试与选择器。本仓使用自己的 DOM 测试和 Python 浏览器验证器。 |
+| `86ef9dba` | 不适用 | PawApp sidecar 的测试探针，没有相同服务。 |
+| `d2ca7030` | 不适用 | 上游 advisor 与 TUI 测试的跨平台断言，没有相同测试夹具。 |
+| `6db1eaa8` | 不适用 | 上游决策模型 sips 预检测试，没有相同入口。 |
+| `33f04faf` | 不适用 | 组织 Hub 的模型策略表单与刷新覆盖，没有对应的治理页面。 |
+| `ffce7b1d` | 已覆盖适用部分 | 当前草稿按真实会话 ID 存入页面内存，提交回执按草稿对象和修订号清空。补验切换与迟到回执隔离；保留当前刷新后不恢复未发送草稿的设计。 |
+| `95aa68f6` | 不适用 | 当前侧栏没有固定高度的虚拟列表，不存在来源组标题高度估算。 |
+| `b501aca9` | 不适用 | 当前推理等级由菜单选择并随每次提交发送，没有滑块或独立的会话推理设置写队列。全局偏好已有串行保存与修订校验。 |
+| `cee4c67e` | 保留 | 当前多窗口共用 Electron 进程内的 Python Host，关闭与退出经生命周期协调，更新有安装锁。本轮不改成 Tauri 的独立 daemon 或多个独立桌面进程。 |
+
+删除链路的真实浏览器验证还发现受管 `writer.lock` 和 `worker.log` 未列入目录删除白名单，导致正常会话返回 `branch_cleanup_refused`。运行时文件创建与受管文件集合现在共用 `SessionRuntimeFile`，删除仍拒绝未知文件与额外目录并保留工作目录。不增加对 `artifacts` 等目录的递归清理。此修复补齐了上游删除行为在本仓的后端闭环。
+
+验证命令为 `npm run build --workspace @amazme/web`、`npm test --workspace @amazme/web`、`npm run typecheck --workspace @amazme/web`，以及 `backend/.venv/bin/python backend/tools/verify_session_page.py`。删除竞态、参数展示预算与写锁删除均确认旧实现失败。普通参数、非法 JSON、Unicode 截断、删除拒绝、刷新失败和跨会话迟到响应有定向回归。
+
+实现提交为 `50f238f6`（删除连接隔离）、`18bfb64a`（参数展示预算）和 `732f245c`（运行文件归属与真实页面验证）。本轮 Web 全包 228 项、后端定向 89 项测试通过，后端范围为 `test_client_management.py`、`test_session_lock.py`、`test_execution_p2.py`、`test_page_boot.py` 与 `test_session_branch.py`。Web 构建、TypeScript 类型检查、Ruff、Pyright、契约漂移和工作区检查通过。Python wheel 与 sdist 通过 `uv build --project backend --out-dir .artifacts/python-qwenpaw --offline` 完成。
+
+真实 Chrome 验证通过会话草稿切换、删除确认后挂起列表刷新、旧会话无迟到轮询或重连、刷新后恢复剩余会话草稿。删除 HTTP 返回 200，页面无 JavaScript 异常。报告与截图位于本机 `.artifacts/native/session-page-*/`，运行器按两份上限保留。结束后的资源普查在受检范围内无泄漏。
+
+旧 `backend/tools/verify_web.py` 仍使用已移除的 `#create` 等选择器，未作为本轮通过依据。新的定向验证器使用真实 Chrome、Python Host 和隔离的 faux profile，保留报告与截图，并在结束时核对资源退出；不依赖真实模型账号。此次没有验证 Linux/Windows，也没有发布或推送。
