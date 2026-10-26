@@ -10,9 +10,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from amazme_backend.contracts.execution import (
+    EditFile,
     ProcessLease,
     ToolObservation,
     ToolResult,
+    WriteFile,
 )
 from amazme_backend.contracts.ipc.supervisor import (
     RunTool,
@@ -27,7 +29,7 @@ from amazme_backend.execution.output import ARCHIVE_LIMIT, RETENTION_SECONDS
 from amazme_backend.execution.processes import ProcessReservation
 from amazme_backend.execution.state import tool_outcome
 from amazme_backend.shared.errors import BackendError
-from amazme_backend.workspaces.paths import PRIMARY, tool_path
+from amazme_backend.workspaces.paths import PRIMARY, client_path, tool_path
 
 if TYPE_CHECKING:
     from amazme_backend.execution.supervisor import Supervisor
@@ -100,6 +102,7 @@ class InvocationOperations:
                         raise BackendError("output_expired", status=410)
                     output_directory = str(source["directory"])
                 file = value.file
+                file_key = ""
                 if file is not None:
                     name, inner = tool_path(workspace, file.path)
                     if name == "grant" or not inner:
@@ -112,6 +115,9 @@ class InvocationOperations:
                             raise BackendError("workspace_not_found")
                         root = Path(location)
                     file = file.model_copy(update={"path": inner})
+                    file_key = client_path(name, inner)
+                    if isinstance(file, (WriteFile, EditFile)) and value.expected_root != str(root.resolve()):
+                        raise BackendError("file_preparation_mismatch")
                 instance = hashlib.sha256(value.call_id.encode()).hexdigest()[:32]
                 directory = self.owner.profile.path / "executions" / instance
                 log_expires = await self._reserve_output() if file is None and value.output_read is None else 0
@@ -133,6 +139,7 @@ class InvocationOperations:
                 await self.phase(value.call_id, "permit_intent")
                 await channel.permit(LocalPermit(call_id=value.call_id, cwd=str(root), command=value.command,
                     timeout_seconds=value.timeout_seconds, file=file, expected_digest=value.expected_digest,
+                    file_key=file_key,
                     output_read=value.output_read, output_directory=output_directory, log_expires=log_expires,
                     log_error="output_capacity" if not log_expires else ""))
                 await self._hit("permit_sent", value)

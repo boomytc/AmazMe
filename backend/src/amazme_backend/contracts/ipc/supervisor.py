@@ -8,6 +8,7 @@ from pydantic import Field
 from amazme_backend.contracts.code import CodeView
 from amazme_backend.contracts.execution import (
     Command,
+    EditFile,
     EffectResolution,
     Lease,
     OutputRead,
@@ -129,8 +130,9 @@ class RunTool(Lease, Command):
     call_id: str
     request_id: str = ""
     effect: Literal["read", "write"] = "write"
-    file: WriteFile | ReadFile | None = None
+    file: WriteFile | EditFile | ReadFile | None = None
     expected_digest: str | None = None
+    expected_root: str = ""
     output_read: OutputRead | None = None
 
 

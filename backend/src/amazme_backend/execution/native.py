@@ -16,7 +16,16 @@ from pathlib import Path
 import psutil
 from pydantic import Field
 
-from amazme_backend.contracts.execution import OutputRead, ProcessLease, ReadFile, ToolResult, WriteFile
+from amazme_backend.contracts.execution import (
+    EditFile,
+    FileAbsent,
+    FilePresent,
+    OutputRead,
+    ProcessLease,
+    ReadFile,
+    ToolResult,
+    WriteFile,
+)
 from amazme_backend.contracts.workspaces import FileWrite
 from amazme_backend.execution.output import RETENTION_SECONDS, OutputCapture, decode_prefix, read_output
 from amazme_backend.execution.processes import ProcessReservation, exited, retain_inherited
@@ -24,7 +33,7 @@ from amazme_backend.platform.ipc import child_command
 from amazme_backend.platform.private_files import private_write
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
-from amazme_backend.workspaces.files import read_file, write_file
+from amazme_backend.workspaces.files import edit_file, read_file, write_file
 
 LIMIT = 65536
 
@@ -52,7 +61,8 @@ class LocalPermit(Model):
     cwd: str
     command: str
     timeout_seconds: int = Field(ge=1, le=120)
-    file: WriteFile | ReadFile | None = None
+    file: WriteFile | EditFile | ReadFile | None = None
+    file_key: str = ""
     expected_digest: str | None = None
     output_read: OutputRead | None = None
     output_directory: str = ""
@@ -134,16 +144,22 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
             report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=page.model_dump_json(), stderr="")
         elif permit.file is not None:
             root = Path(permit.cwd)
-            if isinstance(permit.file, WriteFile):
+            observation_path = permit.file_key or permit.file.path
+            if isinstance(permit.file, (WriteFile, EditFile)):
                 if permit.expected_digest is None:
                     raise BackendError("file_write_unprepared")
-                changed = write_file(root, FileWrite(path=permit.file.path, content=permit.file.content,
-                                                     expected_digest=permit.expected_digest))
+                changed = (edit_file(root, permit.file, permit.expected_digest) if isinstance(permit.file, EditFile)
+                    else write_file(root, FileWrite(path=permit.file.path, content=permit.file.content,
+                                                   expected_digest=permit.expected_digest)))
                 output = json.dumps({"path": changed.path, "digest": changed.digest})
+                observation = FilePresent(path=observation_path, root=str(root.resolve()), digest=changed.digest)
             else:
-                content = read_file(root, permit.file.path)
-                output = content.content + ("\n[truncated]" if content.truncated else "")
-            report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=output, stderr="")
+                content = read_file(root, permit.file.path, permit.file.offset, permit.file.limit,
+                                    max_bytes=16 * 1024 * 1024)
+                output = content.model_dump_json()
+                observation = FilePresent(path=observation_path, root=str(root.resolve()), digest=content.digest)
+            report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=output, stderr="",
+                                       file_observation=observation)
         else:
             shell = pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
             child = subprocess.Popen([shell, "-c", permit.command], cwd=permit.cwd, env=tool_environment(),
@@ -219,8 +235,11 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
     except BaseException as error:
         report.reason = error.code if isinstance(error, BackendError) else type(error).__name__
         report.stopped = stop_tracked(list(tracked.values()))
-        if isinstance(error, BackendError):
-            report.result = ToolResult(call_id=permit.call_id, exit_code=1, stdout="", stderr=error.code)
+        if isinstance(error, BackendError) and error.code != "file_outcome_unknown":
+            absent = (FileAbsent(path=permit.file_key or permit.file.path, root=str(Path(permit.cwd).resolve()))
+                if isinstance(permit.file, ReadFile) and error.code == "workspace_missing" else None)
+            report.result = ToolResult(call_id=permit.call_id, exit_code=1, stdout="", stderr=error.code,
+                                       file_observation=absent)
     finally:
         if child:
             if child.stdout:

@@ -17,10 +17,13 @@ from amazme_backend.ai.types import Auth
 from amazme_backend.contracts.events import Snapshot
 from amazme_backend.contracts.execution import (
     Command,
+    EditFile,
+    FileObservation,
     Lease,
     OutputRead,
     ReadFile,
     Shell,
+    ToolResult,
     WriteFile,
 )
 from amazme_backend.contracts.identity import HostFence, HostReady, Identity
@@ -137,6 +140,8 @@ def command_for(call: ToolCall) -> Command:
         ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
         WriteFile.model_validate_json(call.arguments)
+    elif call.name == "edit_file":
+        EditFile.model_validate_json(call.arguments)
     elif call.name == "tool_output":
         OutputRead.model_validate_json(call.arguments)
     else:
@@ -488,9 +493,23 @@ class Worker:
         if (ready.profile_id != self.context.profile_id or ready.build_id != self.build
                 or ready.fingerprint != self.build or ready.role != "host" or ready.host_epoch != epoch):
             raise BackendError("stale_host_epoch")
-        write = WriteFile.model_validate_json(action.call.arguments)
+        write = (EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file"
+                 else WriteFile.model_validate_json(action.call.arguments))
+        name, inner = tool_path(self.context.workspace(), write.path)
+        path = client_path(name, inner)
+        observation: FileObservation | None = None
+        for message in reversed(await self.store.messages(action.request_id)):
+            if message.role != "tool":
+                continue
+            try:
+                result = ToolResult.model_validate_json(message.content)
+            except ValueError:
+                continue
+            if result.file_observation is not None and result.file_observation.path == path:
+                observation = result.file_observation
+                break
         request = PrepareFileWrite(**action.lease.model_dump(), host_epoch=epoch,
-                                   call_id=action.step_id, write=write)
+                                   call_id=action.step_id, write=write, observation=observation)
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
             response = await client.post(ready.url + "/control/file-writes/prepare", json=request.model_dump(),
                                          headers={"Authorization": "Bearer " + self.context.token})
@@ -498,8 +517,7 @@ class Worker:
             error = ErrorBody.model_validate_json(response.content)
             raise BackendError(error.code, status=response.status_code)
         prepared = PreparedFileWrite.model_validate_json(response.content)
-        name, inner = tool_path(self.context.workspace(), write.path)
-        if prepared.call_id != action.step_id or prepared.path != client_path(name, inner):
+        if not prepared.root or prepared.call_id != action.step_id or prepared.path != client_path(name, inner):
             raise BackendError("file_preparation_mismatch")
         return prepared
 
@@ -654,14 +672,22 @@ class Worker:
         if isinstance(action, PluginRetrieval):
             return await self._retrieve_plugin(action)
         if isinstance(action, ToolInvocation):
-            prepared = await self.prepare_file_write(action) if action.call.name == "write_file" else None
+            try:
+                prepared = await self.prepare_file_write(action) if action.call.name in {"write_file", "edit_file"} else None
+            except BackendError as error:
+                if error.code not in {"file_not_observed", "file_conflict", "file_observation_mismatch",
+                                       "workspace_missing", "file_not_text", "file_too_large", "checkpoint_unavailable"}:
+                    raise
+                return ToolReturned(action, ToolResult(call_id=action.step_id, exit_code=1, stdout="", stderr=error.code))
             command = command_for(action.call)
             file = (WriteFile.model_validate_json(action.call.arguments) if action.call.name == "write_file" else
+                    EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file" else
                     ReadFile.model_validate_json(action.call.arguments) if action.call.name == "read_file" else None)
             result = await self.supervisor.run_tool(RunTool(
                 **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
                 command=command.command, timeout_seconds=command.timeout_seconds, file=file,
                 expected_digest=prepared.expected_digest if prepared else None,
+                expected_root=prepared.root if prepared else "",
                 output_read=OutputRead.model_validate_json(action.call.arguments) if action.call.name == "tool_output" else None,
                 effect="read" if action.call.name in {"read_file", "tool_output"} else "write"))
             return ToolReturned(action, result)

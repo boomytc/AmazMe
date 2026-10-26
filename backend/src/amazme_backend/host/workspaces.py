@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Callable
 from pathlib import Path
 
-from amazme_backend.contracts.execution import SupervisorHealth
+from amazme_backend.contracts.execution import EditFile, FilePresent, SupervisorHealth
 from amazme_backend.contracts.ipc.host import PreparedFileWrite, PrepareFileWrite
 from amazme_backend.contracts.resources import ResourceCatalog, ResourceOptions
 from amazme_backend.contracts.skills import SkillDocument, SkillImport, SkillRemove, SkillWrite
@@ -293,9 +293,25 @@ class WorkspaceOperations:
         if target is None:
             raise BackendError("session_not_found", status=404)
         name, inner, root = await self._mapped_root(value.write.path, session_name=target.workspace)
-        previous = capture_text(root, inner)
+        try:
+            previous = capture_text(root, inner)
+        except BackendError as error:
+            if error.code == "checkpoint_unavailable":
+                raise BackendError("file_too_large") from error
+            raise
+        observation = value.observation
+        if observation is not None and (observation.path != client_path(name, inner)
+                                        or observation.root != str(root.resolve())):
+            raise BackendError("file_observation_mismatch")
+        if isinstance(value.write, EditFile) and not isinstance(observation, FilePresent):
+            raise BackendError("workspace_missing" if observation is not None else "file_not_observed")
+        if isinstance(observation, FilePresent):
+            if previous is None or previous[0] != observation.digest:
+                raise BackendError("file_conflict")
+        elif previous is not None:
+            raise BackendError("file_conflict" if observation is not None else "file_not_observed")
         return await self.lifecycle.store.prepare_file_write(
-            value.session_id, value.call_id, value.write, name, client_path(name, inner), previous
+            value.session_id, value.call_id, value.write, name, client_path(name, inner), previous, str(root.resolve())
         )
 
     async def list_checkpoints(self, workspace: str, path: str) -> CheckpointList:

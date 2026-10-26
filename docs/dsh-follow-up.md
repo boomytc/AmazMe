@@ -45,3 +45,15 @@
 - 最终定向测试：`test_output_retention.py test_native_output.py test_native_execution.py test_execution_p2.py test_run_options.py test_session_model.py` 共 89 项通过。Web 先构建再测试，24 文件 / 228 项通过。Pyright 0 错误；Ruff、架构检查（222 模块 / 5294 边 / 0 违规）、导入闭包、AI HTTP 替身探针与生成契约检查均通过。
 - 独立重读沿“输入 → scopes 意图 → runner 原始采集 → 有界预览 → 会话工具结果 → 新客户端 / 新 worker 回读 → 过期清理”核对。修正了工作区根归属校验、元数据失败反复落盘，以及两个流分别判断 UTF-8 预览结尾的问题。两个 changed gate 均通过；9 个新增或扩展测试声明全部保留（R=9，F/C/D=0），无删除。
 - 结束资源普查返回 0，`reclaimed=true`、`build_allowed=true`，只覆盖脚本声明的进程归属、VM/临时目录、package 保留数与磁盘 scope；不据此宣称系统没有其他资源。
+
+## 文件单元契约与证据
+
+- 模型 `read_file` 支持零起始字节 offset 和最多 32000 字节的页，返回 JSON 范围、next_offset、whole-file SHA-256、total_bytes 与 has_more。有效 UTF-8 不拆字符；模型文件上限 16 MiB。全文件流式验证 UTF-8 并计算摘要，检查读取期间的文件身份/时间戳变化；不把不同版本的窗口拼成一个摘要。
+- `edit_file` 是字面量替换，默认唯一匹配，replace_all 才允许多处替换。保留原始换行，不自动转换 CRLF。零匹配为 file_edit_not_found，多匹配为 file_edit_ambiguous；非文本为 file_not_text，越界页为 file_cursor，过大为 file_too_large，陈旧版本为 file_conflict。修改上限沿用现有 1 MiB 文件/备份边界。
+- FileObservation 是 present/absent 联合，未观察由 None 表达。真正的读取结果和成功写入结果携带路径、工作区根及版本，作为现有会话工具消息持久化。worker 只从当前请求实际可见的持久工具结果取版本；不增加内存版本表或第二份持久状态。压缩掉的观察不会被伪造恢复，缺少观察时只能创建不存在的文件。
+- 覆盖和 edit 必须用上述观察版本。Host 读取当前字节用于备份，并核对其摘要等于观察摘要；不会将此刻取出的摘要冒充观察版本。准备记录同时保存工作区根，Supervisor 在副作用前核对，拒绝授权根换绑后的旧准备。新建以原子 no-clobber 发布，不能覆盖并发创建者。
+- 写入复用文件路径校验、摘要和备份，改为相同目录中的私有临时文件完整写入/fsync 后原子发布。保留权限、所有者和扩展元数据；macOS 使用本机 SDK copyfile.h 确认的 fcopyfile ACL/XATTR 行为，真实文件验证元数据与内容保留。发布前失败保持原文件；发布后持久化未获确认则保持 unknown，不宣称没有发生副作用。保留现有人工 FileWrite 显式 expected_digest 契约。
+- 未读取已有文件覆盖：真实 Host 旧行为将 keep 改成 overwrite，回归测试在旧实现失败、修复后通过。持续 ENOSPC：从 `62755303` 加载旧 write_file 运行同一真实文件测试，已有/新建两行均失败；当前实现保持原文件或不存在状态。授权根回归测试在加 guard 前实际写入、未抛拒绝，补 guard 后通过。
+- 独立重读发现并修正了准备记录缺少工作区根的问题。检查覆盖输入 → 持久工具观察 → Host 备份/准备 → Supervisor 归属 → 原子写盘 → 新版本工具结果 → 后续写入/恢复。不存在新增执行循环或进程登记表。
+- simplify-code changed 仅将本单元清理表达式改为普通 if；原子写入和版本保护按功能修复交付。simplify-test changed 的 15 个新增或调整声明全部保留（R=15，F/C/D=0），包括旧审批/检查点/路径契约；未删除测试。旧的私有原地恢复 helper 随原地写入路径被原子发布替换，不以删除失败测试取得通过。
+- 最终定向：`test_workspace_files.py test_native_file_edit.py test_tool_checkpoints.py test_checkpoints.py test_native_execution.py test_native_output.py test_execution_p2.py test_output_retention.py test_session_model.py test_run_options.py`，120 项通过。Web 先构建再测试，24 文件 / 228 项通过；Pyright 0 错误，Ruff、架构（222 模块 / 5305 边 / 0 违规）、导入闭包、AI HTTP 替身探针与契约检查通过。无真实供应商调用。

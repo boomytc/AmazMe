@@ -8730,6 +8730,40 @@
         ],
         "title": "Decision"
       },
+      "EditFile": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "old_string": {
+            "type": "string",
+            "maxLength": 32000,
+            "minLength": 1,
+            "title": "Old String"
+          },
+          "new_string": {
+            "type": "string",
+            "maxLength": 32000,
+            "title": "New String"
+          },
+          "replace_all": {
+            "type": "boolean",
+            "title": "Replace All",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "old_string",
+          "new_string"
+        ],
+        "title": "EditFile"
+      },
       "EffectHold": {
         "properties": {
           "call_id": {
@@ -9155,6 +9189,31 @@
         ],
         "title": "FeedbackWrite"
       },
+      "FileAbsent": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "absent",
+            "title": "Kind",
+            "default": "absent"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "root": {
+            "type": "string",
+            "title": "Root"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "root"
+        ],
+        "title": "FileAbsent"
+      },
       "FileChange": {
         "properties": {
           "path": {
@@ -9201,6 +9260,26 @@
           "truncated": {
             "type": "boolean",
             "title": "Truncated",
+            "default": false
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset",
+            "default": 0
+          },
+          "next_offset": {
+            "type": "integer",
+            "title": "Next Offset",
+            "default": 0
+          },
+          "total_bytes": {
+            "type": "integer",
+            "title": "Total Bytes",
+            "default": 0
+          },
+          "has_more": {
+            "type": "boolean",
+            "title": "Has More",
             "default": false
           }
         },
@@ -9285,6 +9364,37 @@
           "entries"
         ],
         "title": "FileList"
+      },
+      "FilePresent": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "present",
+            "title": "Kind",
+            "default": "present"
+          },
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "root": {
+            "type": "string",
+            "title": "Root"
+          },
+          "digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "root",
+          "digest"
+        ],
+        "title": "FilePresent"
       },
       "FileWrite": {
         "properties": {
@@ -11510,7 +11620,40 @@
             "title": "Call Id"
           },
           "write": {
-            "$ref": "#/components/schemas/WriteFile"
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WriteFile"
+              },
+              {
+                "$ref": "#/components/schemas/EditFile"
+              }
+            ],
+            "title": "Write"
+          },
+          "observation": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/FilePresent"
+                  },
+                  {
+                    "$ref": "#/components/schemas/FileAbsent"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "absent": "#/components/schemas/FileAbsent",
+                    "present": "#/components/schemas/FilePresent"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation"
           }
         },
         "additionalProperties": false,
@@ -11571,6 +11714,11 @@
           "checkpoint_id": {
             "type": "string",
             "title": "Checkpoint Id",
+            "default": ""
+          },
+          "root": {
+            "type": "string",
+            "title": "Root",
             "default": ""
           }
         },
@@ -14624,7 +14772,7 @@
           },
           "name": {
             "type": "string",
-            "pattern": "^(shell|read_file|write_file|tool_output|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
+            "pattern": "^(shell|read_file|write_file|edit_file|tool_output|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
             "title": "Name"
           },
           "arguments": {

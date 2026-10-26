@@ -136,6 +136,21 @@ async def test_output_locator_uses_persisted_session_scope_and_quota(owner, monk
     assert quota.output.stdout.retained_bytes == 0
 
 
+async def test_file_preparation_cannot_be_reused_in_a_different_workspace_root(owner):
+    import hashlib
+
+    from amazme_backend.contracts.execution import WriteFile
+    info, _ = await worker(owner)
+    path = Path(owner.profile.config.workspace) / "guarded.txt"
+    path.write_text("keep")
+    value = (await call(owner, info, identity="wrong-root")).model_copy(update={
+        "file": WriteFile(path="guarded.txt", content="overwrite"),
+        "expected_digest": hashlib.sha256(b"keep").hexdigest(), "expected_root": str(path.parent / "old-root")})
+    with pytest.raises(BackendError, match="file_preparation_mismatch"):
+        await owner.invocations.run(value)
+    assert path.read_text() == "keep"
+
+
 async def test_resolution_cannot_waive_cleanup_or_change_scope(owner):
     info, _ = await worker(owner)
     value = await call(owner, info)

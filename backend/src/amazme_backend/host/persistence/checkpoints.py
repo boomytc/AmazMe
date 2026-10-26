@@ -1,7 +1,7 @@
 import hashlib
 import sqlite3
 
-from amazme_backend.contracts.execution import WriteFile
+from amazme_backend.contracts.execution import EditFile, WriteFile
 from amazme_backend.contracts.ipc.host import PreparedFileWrite
 from amazme_backend.host.keys import checkpoint_id
 from amazme_backend.host.persistence.owner import PersistenceOwner
@@ -42,7 +42,7 @@ async def save_checkpoint(
 
 
 async def file_write_preparation(
-    self: PersistenceOwner, session: str, call: str, write: WriteFile
+    self: PersistenceOwner, session: str, call: str, write: WriteFile | EditFile
 ) -> PreparedFileWrite | None:
     digest = hashlib.sha256(write.model_dump_json().encode()).hexdigest()
 
@@ -64,10 +64,11 @@ async def prepare_file_write(
     self: PersistenceOwner,
     session: str,
     call: str,
-    write: WriteFile,
+    write: WriteFile | EditFile,
     workspace: str,
     path: str,
     previous: tuple[str, str] | None,
+    root: str,
 ) -> PreparedFileWrite:
     request_digest = hashlib.sha256(write.model_dump_json().encode()).hexdigest()
 
@@ -86,7 +87,7 @@ async def prepare_file_write(
         cid = checkpoint_id(workspace, path, digest) if previous is not None else ""
         if cid:
             save_checkpoint_row(db, cid, workspace, path, digest, content)
-        prepared = PreparedFileWrite(call_id=call, path=path, expected_digest=digest, checkpoint_id=cid)
+        prepared = PreparedFileWrite(call_id=call, path=path, expected_digest=digest, checkpoint_id=cid, root=root)
         db.execute(
             "INSERT INTO file_write_preparations VALUES(?,?,?,?)",
             (session, call, request_digest, prepared.model_dump_json()),

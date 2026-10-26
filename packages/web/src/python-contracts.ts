@@ -448,6 +448,13 @@ export type Decision = {
   "error"?: string;
 };
 
+export type EditFile = {
+  "path": string;
+  "old_string": string;
+  "new_string": string;
+  "replace_all"?: boolean;
+};
+
 export type EffectHold = {
   "call_id": string;
   "session_id": string;
@@ -528,6 +535,12 @@ export type FeedbackWrite = {
   "text": string;
 };
 
+export type FileAbsent = {
+  "kind"?: "absent";
+  "path": string;
+  "root": string;
+};
+
 export type FileChange = {
   "path": string;
   "digest": string;
@@ -540,6 +553,10 @@ export type FileContent = {
   "digest": string;
   "content": string;
   "truncated"?: boolean;
+  "offset"?: number;
+  "next_offset"?: number;
+  "total_bytes"?: number;
+  "has_more"?: boolean;
 };
 
 export type FileEntry = {
@@ -556,6 +573,13 @@ export type FileList = {
   "offset"?: number;
   "limit"?: number;
   "total"?: number;
+};
+
+export type FilePresent = {
+  "kind"?: "present";
+  "path": string;
+  "root": string;
+  "digest": string;
 };
 
 export type FileWrite = {
@@ -976,7 +1000,8 @@ export type PrepareFileWrite = {
   "supervisor_id"?: string;
   "host_epoch": number;
   "call_id": string;
-  "write": WriteFile;
+  "write": WriteFile | EditFile;
+  "observation"?: FilePresent | FileAbsent | null;
 };
 
 export type PrepareUpdate = {
@@ -990,6 +1015,7 @@ export type PreparedFileWrite = {
   "path": string;
   "expected_digest": string;
   "checkpoint_id"?: string;
+  "root"?: string;
 };
 
 export type Preview = {
@@ -1760,6 +1786,7 @@ export interface ApiModels {
   CredentialUpdate: CredentialUpdate;
   CronRule: CronRule;
   Decision: Decision;
+  EditFile: EditFile;
   EffectHold: EffectHold;
   EffectResolution: EffectResolution;
   EpochHealth: EpochHealth;
@@ -1770,10 +1797,12 @@ export interface ApiModels {
   ExportSession: ExportSession;
   FeedbackView: FeedbackView;
   FeedbackWrite: FeedbackWrite;
+  FileAbsent: FileAbsent;
   FileChange: FileChange;
   FileContent: FileContent;
   FileEntry: FileEntry;
   FileList: FileList;
+  FilePresent: FilePresent;
   FileWrite: FileWrite;
   HTTPValidationError: HTTPValidationError;
   Health: Health;

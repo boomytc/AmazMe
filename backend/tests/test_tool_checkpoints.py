@@ -26,6 +26,7 @@ from amazme_backend.contracts import (
     WorkspaceGrantRequest,
     WriteFile,
 )
+from amazme_backend.contracts.execution import FilePresent
 from amazme_backend.execution.processes import ProcessReservation
 from amazme_backend.host.service import Host
 from amazme_backend.host.store import ServiceRecord
@@ -33,7 +34,7 @@ from amazme_backend.interfaces.http.application import application
 from amazme_backend.platform.private_files import private_write
 from amazme_backend.profiles.profile import Profile
 from amazme_backend.sessions.types import ToolInvocation
-from amazme_backend.workspaces.files import capture_text
+from amazme_backend.workspaces.files import capture_text, read_file
 
 
 @pytest.fixture
@@ -77,11 +78,16 @@ async def context(tmp_path):
             await host.lifecycle.store.db.close()
 
 
+def observed(request, root, key="note.txt"):
+    return request.model_copy(update={"observation": FilePresent(
+        path=key, root=str(root.resolve()), digest=read_file(root, "note.txt").digest)})
+
 
 
 async def test_prepare_is_private_durable_and_idempotent_before_any_write(context):
     host, root, request, _ = context
     (root / "note.txt").write_text("before\n")
+    request = observed(request, root)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
         denied = await client.post("/control/file-writes/prepare", json=request.model_dump(),
                                   headers={"Authorization": "Bearer web"})
@@ -114,6 +120,7 @@ async def test_prepare_and_worker_bind_a_relative_path_to_the_session_workspace(
     try:
         (root / "note.txt").write_text("primary\n")
         (grant / "note.txt").write_text("granted\n")
+        request = observed(request, grant, "grant/docs/note.txt")
         await host.workspaces.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
         await host.lifecycle.store.transaction(lambda db: db.execute(
             "UPDATE sessions SET title='host', workspace='docs' WHERE id='s'"))
@@ -178,13 +185,14 @@ async def test_prepare_and_worker_bind_a_relative_path_to_the_session_workspace(
 async def test_local_write_rejects_change_after_checkpoint_and_created_file_conflict(context):
     host, root, request, _ = context
     (root / "note.txt").write_text("before")
+    request = observed(request, root)
     prepared = await host.workspaces.prepare_tool_write(request)
     (root / "note.txt").write_text("someone else's edit")
     call = ToolCall(id="call", name="write_file", arguments=request.write.model_dump_json())
     result = run_file(root, call, prepared.expected_digest)
     assert result.returncode != 0 and "file_conflict" in result.stderr
     assert (root / "note.txt").read_text() == "someone else's edit"
-    new = request.model_copy(update={"call_id": "new", "write": WriteFile(path="new.txt", content="after")})
+    new = request.model_copy(update={"call_id": "new", "write": WriteFile(path="new.txt", content="after"), "observation": None})
     prepared_new = await host.workspaces.prepare_tool_write(new)
     assert prepared_new.expected_digest == prepared_new.checkpoint_id == ""
     (root / "new.txt").write_text("created meanwhile")
@@ -197,6 +205,7 @@ async def test_local_write_rejects_change_after_checkpoint_and_created_file_conf
 async def test_stale_or_frozen_ownership_never_creates_checkpoint(context, defect):
     host, root, request, health = context
     (root / "note.txt").write_text("keep")
+    request = observed(request, root)
     if defect == "host_epoch":
         request.host_epoch += 1
     elif defect == "worker":
@@ -222,6 +231,7 @@ async def test_stale_or_frozen_ownership_never_creates_checkpoint(context, defec
 async def test_checkpoint_storage_refusal_prevents_preparation(context):
     host, root, request, _ = context
     (root / "note.txt").write_text("keep")
+    request = observed(request, root)
     await host.lifecycle.store.transaction(lambda db: db.executemany("INSERT INTO file_checkpoints(id,workspace,path,digest,content) VALUES(?,?,?,?,?)",
         [(str(n), "primary", str(n), "digest", "text") for n in range(200)]))
     with pytest.raises(BackendError, match="checkpoint_capacity"):
@@ -279,6 +289,7 @@ async def test_full_checkpoint_can_preview_restore_and_become_latest_again(conte
     host, root, request, _ = context
     before = "界" * 20000 + "\n"
     (root / "note.txt").write_text(before)
+    request = observed(request, root)
     prepared = await host.workspaces.prepare_tool_write(request)
     result = run_file(root, ToolCall(id="call", name="write_file", arguments=request.write.model_dump_json()),
                      prepared.expected_digest)
@@ -303,6 +314,7 @@ async def test_preparation_and_backup_rollback_together_and_survive_reopen(conte
 
     host, root, request, _ = context
     (root / "note.txt").write_text("keep")
+    request = observed(request, root)
     await host.lifecycle.store.transaction(lambda db: db.execute("""
         CREATE TRIGGER refuse_preparation BEFORE INSERT ON file_write_preparations
         BEGIN SELECT RAISE(ABORT, 'injected write failure'); END
@@ -332,6 +344,7 @@ async def test_model_write_checkpoint_is_bound_to_granted_workspace(context, tmp
     (root / "note.txt").write_text("primary")
     await host.lifecycle.store.add_workspace_grant("docs", str(extra))
     request.write.path = "grant/docs/note.txt"
+    request = observed(request, extra, "grant/docs/note.txt")
     prepared = await host.workspaces.prepare_tool_write(request)
     checkpoint = await host.lifecycle.store.checkpoint(prepared.checkpoint_id)
     assert checkpoint[1:3] == ("docs", "grant/docs/note.txt")

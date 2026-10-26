@@ -11,6 +11,7 @@ from amazme_backend.contracts.computer import (
     ComputerMutation,
 )
 from amazme_backend.contracts.execution import (
+    EditFile,
     OutputRead,
     ReadFile,
     Shell,
@@ -28,7 +29,7 @@ from amazme_backend.shared.errors import BackendError
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | OutputRead | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | WriteFile | EditFile | OutputRead | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "tool_output":
@@ -42,6 +43,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
         return call.model_copy(update={"arguments": CodemodeInput.model_validate_json(call.arguments).model_dump_json()})
     elif call.name == "write_file":
         value = WriteFile.model_validate_json(call.arguments)
+    elif call.name == "edit_file":
+        value = EditFile.model_validate_json(call.arguments)
     elif call.name == "delegate_task":
         value = DelegateTasks.model_validate_json(call.arguments)
         if any(not task or len(task) > 16000 for task in value.tasks):
@@ -69,7 +72,7 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = ComputerGround.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
-    if isinstance(value, ReadFile):
+    if isinstance(value, (ReadFile, WriteFile, EditFile)):
         path = PurePosixPath(value.path)
         if path.is_absolute() or ".." in path.parts:
             raise BackendError("invalid_workspace_path")

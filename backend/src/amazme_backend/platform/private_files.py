@@ -1,10 +1,27 @@
 from __future__ import annotations
 
+import ctypes
 import fcntl
 import os
 import secrets
+import sys
 from pathlib import Path
 from typing import IO
+
+
+def copy_extended_metadata(source: int, destination: int) -> None:
+    if sys.platform == "darwin":
+        library = ctypes.CDLL(None, use_errno=True)
+        copy = library.fcopyfile
+        copy.argtypes = (ctypes.c_int, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32)
+        copy.restype = ctypes.c_int
+        # Darwin copyfile.h: COPYFILE_ACL | COPYFILE_XATTR, without content or timestamps.
+        if copy(source, destination, None, 5) != 0:
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code))
+    else:
+        for attribute in os.listxattr(source):
+            os.setxattr(destination, attribute, os.getxattr(source, attribute))
 
 
 def private_write(path: Path, text: str) -> None:

@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, JsonValue
 
-from amazme_backend.contracts.execution import Lease, WriteFile
+from amazme_backend.contracts.execution import EditFile, FileObservation, Lease, WriteFile
 from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.models import ImagePart, ToolCall
 from amazme_backend.contracts.sessions import Receipt
@@ -50,7 +50,8 @@ class CodeToolReceipt(Model):
 class PrepareFileWrite(Lease):
     host_epoch: int
     call_id: str = Field(min_length=1, max_length=128)
-    write: WriteFile
+    write: WriteFile | EditFile
+    observation: FileObservation | None = None
 
 
 class PreparedFileWrite(Model):
@@ -58,3 +59,4 @@ class PreparedFileWrite(Model):
     path: str
     expected_digest: str = Field(pattern=r"^(?:[a-f0-9]{64})?$")
     checkpoint_id: str = ""
+    root: str = ""

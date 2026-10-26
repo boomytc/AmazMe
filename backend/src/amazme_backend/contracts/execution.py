@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field
 
 from amazme_backend.contracts.identity import Identity
 from amazme_backend.contracts.mcp import McpView
+from amazme_backend.contracts.workspaces import EditFile as EditFile
 from amazme_backend.shared.model import Model
 
 
@@ -18,12 +19,33 @@ class Shell(Command):
     command: str = Field(min_length=1, max_length=16000)
 
 
-class ReadFile(Model):
+class FileTarget(Model):
     path: str = Field(min_length=1, max_length=1024)
 
 
-class WriteFile(ReadFile):
+class ReadFile(FileTarget):
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=16000, ge=4, le=32000)
+
+
+class WriteFile(FileTarget):
     content: str = Field(max_length=32000)
+
+
+class FilePresent(Model):
+    kind: Literal["present"] = "present"
+    path: str
+    root: str
+    digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class FileAbsent(Model):
+    kind: Literal["absent"] = "absent"
+    path: str
+    root: str
+
+
+FileObservation = Annotated[FilePresent | FileAbsent, Field(discriminator="kind")]
 
 
 class OutputRead(Model):
@@ -64,6 +86,7 @@ class ToolResult(Model):
     truncated: bool = False
     stop_reason: str = ""
     output: OutputArchive | None = None
+    file_observation: FileObservation | None = None
 
 
 class TerminalOpen(Model):

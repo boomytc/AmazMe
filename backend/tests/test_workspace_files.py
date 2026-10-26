@@ -2,17 +2,19 @@
 import hashlib
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import httpx
 import pytest
 
-from amazme_backend.profiles.profile import Profile
-from amazme_backend.platform.private_files import private_write
 from amazme_backend.contracts import BackendError, HostFence, PrepareUpdate, ProcessLease
+from amazme_backend.contracts.workspaces import FileWrite
 from amazme_backend.host.service import Host
 from amazme_backend.interfaces.http.application import application
-from amazme_backend.contracts.workspaces import FileWrite
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.profile import Profile
 from amazme_backend.workspaces.files import list_files, read_file, write_file
 
 
@@ -65,6 +67,52 @@ def test_browse_read_and_checked_write(tmp_path: Path) -> None:
         list_files(root, "gone")
     with pytest.raises(BackendError, match="workspace_missing"):
         read_file(root, "gone.txt")
+
+
+@pytest.mark.parametrize("existed", [False, True])
+def test_staging_failure_does_not_damage_original(tmp_path, monkeypatch, existed):
+    import errno
+    target = tmp_path / "note.txt"
+    if existed:
+        target.write_text("original")
+    expected = hashlib.sha256(b"original").hexdigest() if existed else ""
+    real_write = os.write
+    def disk_full(fd, data):
+        real_write(fd, b"half")
+        raise OSError(errno.ENOSPC, "full")
+    monkeypatch.setattr(os, "write", disk_full)
+    with pytest.raises(BackendError, match="workspace_no_space"):
+        write_file(tmp_path, FileWrite(path="note.txt", content="new content", expected_digest=expected))
+    assert target.read_text() == "original" if existed else not target.exists()
+    assert not list(tmp_path.glob(".amazme-write-*"))
+
+
+def test_atomic_create_refuses_a_racing_creator_and_preserves_file_metadata(tmp_path, monkeypatch):
+    target = tmp_path / "note"
+    real_link = os.link
+    def create_first(*args, **kwargs):
+        target.write_text("racing creator")
+        return real_link(*args, **kwargs)
+    with monkeypatch.context() as race:
+        race.setattr(os, "link", create_first)
+        with pytest.raises(BackendError, match="file_conflict"):
+            write_file(tmp_path, FileWrite(path="note", content="new"))
+    assert target.read_text() == "racing creator"
+    target.chmod(0o640)
+    attribute = "com.amazme.test" if sys.platform == "darwin" else "user.amazme"
+    if sys.platform == "darwin":
+        subprocess.run(["/usr/bin/xattr", "-w", attribute, "metadata", str(target)], check=True)
+    else:
+        os.setxattr(target, attribute, b"metadata")
+    before = target.stat()
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    write_file(tmp_path, FileWrite(path="note", content="changed", expected_digest=digest))
+    after = target.stat()
+    assert (after.st_mode, after.st_uid, after.st_gid) == (before.st_mode, before.st_uid, before.st_gid)
+    if sys.platform == "darwin":
+        assert subprocess.check_output(["/usr/bin/xattr", "-p", attribute, str(target)]).strip() == b"metadata"
+    else:
+        assert os.getxattr(target, attribute) == b"metadata"
 
 
 def test_hardlink_and_stale_digest_do_not_write(tmp_path: Path) -> None:

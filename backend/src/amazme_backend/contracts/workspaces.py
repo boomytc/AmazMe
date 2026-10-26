@@ -8,6 +8,13 @@ FILE_LIST_LIMIT = 200
 FILE_WRITE_LIMIT = 1_048_576
 
 
+class EditFile(Model):
+    path: str = Field(min_length=1, max_length=1024)
+    old_string: str = Field(min_length=1, max_length=32000)
+    new_string: str = Field(max_length=32000)
+    replace_all: bool = False
+
+
 class CheckpointCreate(Model):
     checkpoint_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     workspace: str = "primary"
@@ -82,6 +89,10 @@ class FileContent(Model):
     digest: str
     content: str
     truncated: bool = False
+    offset: int = 0
+    next_offset: int = 0
+    total_bytes: int = 0
+    has_more: bool = False
 
 class FileWrite(Model):
     path: str = Field(min_length=1, max_length=1024)
