@@ -32,7 +32,7 @@ afterEach(() => vi.unstubAllGlobals());
 function readyLine(): string {
 	return JSON.stringify({
 		url: "http://127.0.0.1:4310",
-		version: "0.1.0",
+		version: "9.8.7",
 		protocol: "amazme-http/1",
 		build_id: BUILD,
 		profile_id: "profile",

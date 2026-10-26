@@ -14,7 +14,7 @@
 		"typecheck": "tsc -p tsconfig.test.json"
 	},
 	"dependencies": {
-		"@amazme/web": "0.3.4",
+		"@amazme/web": "0.1.0",
 		"semver": "7.8.5"
 	},
 	"devDependencies": {

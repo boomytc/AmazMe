@@ -3,7 +3,6 @@ import json
 import os
 import stat
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -14,15 +13,6 @@ from amazme_backend.contracts import RunTool, Stream, ToolCall, WriteFile
 from amazme_backend.native_execution import LocalPermit
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-@pytest.mark.parametrize("tool", ["verify_p2.py", "measure_runtime.py", "verify_relocated_bundle.py"])
-def test_retired_vm_verifiers_refuse_before_creating_resources(tool, tmp_path):
-    result = subprocess.run([sys.executable, str(ROOT / "tools" / tool), "--help"],
-                            cwd=tmp_path, capture_output=True, text=True, timeout=10)
-    assert result.returncode != 0
-    assert "retired" in result.stderr.lower()
-    assert not list(tmp_path.iterdir())
 
 
 def test_generated_event_contracts_do_not_drift():

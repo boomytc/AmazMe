@@ -1,4 +1,4 @@
-# AmazMe Python 后端 0.1.0
+# AmazMe Python 后端
 
 AmazMe 按 [本机优先方案](../docs/python-backend-plan.md) 使用 Python shell、文件、PTY、MCP 操作用户真实环境。
 保留 Python 会话、模型、SQLite、审批及客户端，移除 VM 默认执行依赖。状态见 [验收台账](../docs/python-backend-completion.md)。
@@ -12,7 +12,7 @@ AmazMe 按 [本机优先方案](../docs/python-backend-plan.md) 使用 Python sh
 动态目录刷新及媒体回传已有定向检查；HTTP/OAuth 等其他 MCP 传输不属于当前 stdio 主路径。
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
-终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 可以装载这份页面；关闭窗口不停止后端，显式退出才停止它所启动的后端。`amazme-backend tui`、print/JSON CLI、`--mode rpc`、Python SDK 和默认 `amazme` 交互画面在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
+终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 装载这份页面；窗口关闭按桌面偏好处理，退出会停止它拥有的后端。`amazme-backend tui`、print/JSON CLI、`--mode rpc`、Python SDK 和默认 `amazme` 交互画面在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
 `amazme-backend client submit` 返回终态或待审批项，待审批退出码为 2，并给出原提案编号；退出释放本次 attachment。
 `client request --session ID --request-id ID` 查询原回执。`client decide` 必须单独给出「批准」或「拒绝」；请求审批还需 `--approval-id ID`，MCP 则指向原调用。
 重试只核对原提案，不能批准后续工具；已经结算的决定只返回原请求状态。提交文本里的「批准」不是决定。
@@ -57,5 +57,5 @@ backend/.venv/bin/python backend/tools/verify_screen.py
 
 用新隔离 profile 验收，不读取、迁移或删除用户历史库。禁止恢复 VM 链路、运行 prepare_runtime/bootstrap_resources，
 以及反复打包积累磁盘。普通开发先做源码验证，需要安装验证时仅保留一份本轮包。
-历史 VM 安装命令与报告保留在 Git 历史和 docs/python-backend-p2-handoff.md，不能用于当前本机验收。
+历史 VM 安装命令与报告保留在 Git 历史，不能用于当前本机验收。
 当前候选、提交和证据见 [完成台账](../docs/python-backend-completion.md)；执行约束见 [实施入口](../docs/python-backend-native-next.md)。

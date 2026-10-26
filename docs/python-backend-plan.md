@@ -9,7 +9,7 @@ AmazMe 是主要操作用户本机环境的桌面 AI 助手。Python 继续负�
 Web/Electron/TUI/CLI/RPC/SDK、SSH 远端、MCP、插件、Codemode、computer-use、记忆、工作流、
 搜索、项目、设置、产物、分享和新格式导入导出。各能力是否完成以运行证据为准。
 不承担旧 TS 接口、旧生态、历史数据兼容；不删除真实用户数据、未知资源或其他会话修改。
-版本从 0.1.0 开始，版本号、不可变 build_id、协议和存储格式分别校验。
+版本以根 package.json 与 backend/pyproject.toml 为准，版本号、不可变 build_id、协议和存储格式分别校验。
 
 ## 执行与进程职责
 
@@ -185,7 +185,7 @@ Web/Electron、SDK 和 `code.tools/run/cancel` RPC 共用此路径。脚本及 N
 阈值检查是预算守卫，不冒充文件系统硬配额；超过阈值停止新增工作并清理确认归属的本轮临时产物。
 不得执行发布、tag、推送、合并 main 或关闭整机；睡眠/断电证据不足保持未验收。
 
-历史证据入口：`python-backend-evidence.md`、`python-backend-p1-evidence.md`、`python-backend-p2-handoff.md`。
+迁移前的方案与证据只保留在 Git 历史，不作为当前开发输入。
 当前实施状态与新证据统一记录在 `python-backend-completion.md`。
 
 ## Python 模型配置与 SDK 消费者

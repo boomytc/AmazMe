@@ -10,7 +10,6 @@ dist-release/
 packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
-packages/ai/src/providers/.model-generation-*/
 *.cpuprofile
 
 # Environment
@@ -39,14 +38,11 @@ out.jsonl
 pi-*.html
 out.html
 packages/coding-agent/binaries/
-packages/env/bin/
-packages/env/daemon/target/
 todo.md
 plans/
 .amazme/hf-sessions/
 .amazme/hf-sessions-backup/
 collect.sh
-packages/agent/docs/extensions/pi-server-artifact/index.md
 
 # Preserve ignored local data from the retired issue tool.
 scripts/issues/data/

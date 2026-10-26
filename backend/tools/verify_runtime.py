@@ -195,9 +195,3 @@ if os.fork()==0:
 while time.monotonic()<end:time.sleep(.1)
 """
     return "python -I -c " + shlex.quote(code)
-
-
-
-if __name__ == "__main__":
-    from verify_p2 import main
-    main()

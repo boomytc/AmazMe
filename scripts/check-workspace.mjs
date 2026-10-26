@@ -121,6 +121,26 @@ export function checkDependencyVersions(repoRoot, packages = workspacePackages(r
 	return failures;
 }
 
+export function checkProductVersions(repoRoot, packages = workspacePackages(repoRoot)) {
+	const manifest = join(repoRoot, "package.json");
+	if (!existsSync(manifest)) return [];
+	const version = JSON.parse(readFileSync(manifest, "utf8")).version;
+	if (typeof version !== "string") return [];
+	const failures = [];
+	for (const [name, pkg] of packages) {
+		if (pkg.manifest.version !== version)
+			failures.push(`${name}: product version must match root ${version}, found ${pkg.manifest.version}`);
+	}
+	const backend = join(repoRoot, "backend/pyproject.toml");
+	if (existsSync(backend)) {
+		const project = readFileSync(backend, "utf8").split(/^\[project\]\s*$/m)[1]?.split(/^\[/m)[0];
+		const backendVersion = project?.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
+		if (backendVersion !== version)
+			failures.push(`backend/pyproject.toml: product version must match root ${version}, found ${backendVersion}`);
+	}
+	return failures;
+}
+
 const changelogSections = ["Breaking Changes", "Added", "Changed", "Fixed", "Removed"];
 
 /**
@@ -388,6 +408,7 @@ export function checkSourceContracts(repoRoot) {
 	const packages = workspacePackages(root);
 	const failures = [
 		...checkDependencyVersions(root, packages),
+		...checkProductVersions(root, packages),
 		...checkChangelogs(root),
 		...checkBuildConfigs(root),
 		...checkTempDirUsage(root),

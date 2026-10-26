@@ -9,6 +9,7 @@ import {
 	checkBuildConfigs,
 	checkChangelogs,
 	checkDependencyVersions,
+	checkProductVersions,
 	checkSourceContracts,
 	checkEntryContracts,
 	checkTempDirAllowlistFiles,
@@ -44,6 +45,19 @@ function packageFixture(root, name, source, metadata = {}) {
 	writeFileSync(join(directory, "src/index.ts"), source);
 	return directory;
 }
+
+test("product versions reject mixed desktop, client and backend release lines", () => {
+	const root = fixture();
+	writeFileSync(join(root, "package.json"), JSON.stringify({ version: "2.0.0" }));
+	packageFixture(root, "gui", "export {};", { version: "2.0.0" });
+	packageFixture(root, "web", "export {};", { version: "1.0.0" });
+	mkdirSync(join(root, "backend"));
+	writeFileSync(join(root, "backend/pyproject.toml"), '[project]\nversion = "1.0.0"\n');
+	assert.equal(checkProductVersions(root).length, 2);
+	packageFixture(root, "web", "export {};", { version: "2.0.0" });
+	writeFileSync(join(root, "backend/pyproject.toml"), '[project]\nversion = "2.0.0"\n');
+	assert.deepEqual(checkProductVersions(root), []);
+});
 
 test("dependency checks reject registry ranges in every direct section and exact mismatched workspace versions", () => {
 	const root = fixture();

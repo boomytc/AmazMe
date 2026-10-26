@@ -15,7 +15,7 @@ amazme doctor
 
 会话、SQLite、审批、执行归属、稳定调用 ID 和代际隔离由 Python 管理。离开客户端释放 attachment；它不等于取消工作。取消已受理与进程退出分开核对，未知副作用不自动重放。
 
-模型、原生 shell/文件/PTY、stdio MCP、Python 插件、Codemode、computer-use、SSH，以及项目、记忆、定时任务、工作流和产物共用 [现行契约](../../docs/python-backend-plan.md)。[SDK 与示例](docs/sdk.md) 使用真实 Python API。旧 TS API 与迁移前文档见 [历史说明](docs/history.md)。
+模型、原生 shell/文件/PTY、stdio MCP、Python 插件、Codemode、computer-use、SSH，以及项目、记忆、定时任务、工作流和产物共用 [现行契约](../../docs/python-backend-plan.md)。[SDK 与示例](docs/sdk.md) 使用真实 Python API。旧 TS API 与迁移前文档只保留在 Git 历史。
 
 ```bash
 npm run build --workspace @amazme/coding-agent

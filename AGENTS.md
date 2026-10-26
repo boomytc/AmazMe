@@ -1,6 +1,6 @@
 # 开发约定
 
-这个仓库的实现来自 Pi 的 packages。产品名、包作用域和命令是 AmazMe。依赖只向下。
+当前产品由 Python 后端与 TypeScript 客户端组成，行为移植依据来自 Pi。模块职责见 `backend/ARCHITECTURE.md`，客户端依赖见 `docs/python-backend-ts-deps.md`。产品名、包作用域和命令是 AmazMe。依赖只向下。
 
 ## 对话
 
@@ -13,7 +13,7 @@
 - 不要用 `any`，除非确实没有别的写法。
 - 相对导入带 `.ts` 扩展名，并遵守 `verbatimModuleSyntax`。类型用 `import type`。
 - 外部行为和参照设计以读到的源码为准。
-- 包名是 `@amazme/*`。`@amazme/agent` 对应原来的 `pi-agent-core`。
+- TypeScript 包名是 `@amazme/*`，业务执行与持久化由 Python 后端拥有。
 - OAuth 沿用 Pi 源码中的客户端 ID、回调配置和供应商请求身份，不随 AmazMe 产品重命名改写。
 - 界面只针对桌面端适配：窗口和浏览器视口按宽窗布局，不为手机、触屏、软键盘或安全区另做版式，也不加粗指针热区和触屏专用文案。桌面壳的最小窗口宽度与这个范围一致。
 
