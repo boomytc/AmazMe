@@ -308,12 +308,15 @@ export class DesktopPage {
 			this.pluginRuntime = loaded.plugins;
 		}
 		await this.loadHistory(connection, false);
+		if (!connection.active()) return;
 		if (this.dockOpen && this.dockTab === "terminal") await this.loadTerminal(connection);
+		if (!connection.active()) return;
 		this.render();
 		clearTimeout(this.healthTimer);
 		this.healthTimer = setTimeout(() => { void this.poll(connection); }, 3000);
 	}
 	private async poll(connection: ClientConnection): Promise<void> {
+		if (!connection.active()) return;
 		try {
 			const health = await this.client.call("GET /api/v1/health");
 			if (!connection.active()) return;
@@ -329,6 +332,16 @@ export class DesktopPage {
 		} catch (error) { if (connection.active()) this.error(error); }
 		finally { if (connection.active()) this.healthTimer = setTimeout(() => { void this.poll(connection); }, 3000); }
 	}
+	private clearSessionView(): void {
+		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined; this.feedback = undefined;
+		this.thinking = this.catalog?.current.thinking ?? "off";
+		this.pluginRuntime = []; this.pluginsGeneration++;
+		this.mcpConfiguration = undefined; this.mcpRuntime = undefined;
+		this.history = undefined; this.historyLatestRevision = 0n; this.historyStarted = false; this.historyGeneration++; this.historyLoading = false;
+		this.terminal = undefined; this.terminalLoadGeneration++; clearTimeout(this.terminalTimer);
+		this.modal = undefined; this.notice = undefined; this.currentPanel = P.CHAT_VIEW;
+		clearTimeout(this.oauthTimer); this.oauth = undefined;
+	}
 	private async selectSession(id: string): Promise<void> {
 		this.navigationGeneration++;
 		this.modalGeneration++;
@@ -340,15 +353,8 @@ export class DesktopPage {
 		const previous = this.client.connection;
 		if (previous) this.drafts.set(previous.sessionId, this.draft);
 		this.draft = this.drafts.get(id) ?? { text: "", images: [], revision: 0 };
-		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined; this.feedback = undefined;
 		this.enabledModels = this.sessionModelIds(id);
-		this.thinking = this.catalog?.current.thinking ?? "off";
-		this.pluginRuntime = []; this.pluginsGeneration++;
-		this.mcpConfiguration = undefined; this.mcpRuntime = undefined;
-		this.history = undefined; this.historyLatestRevision = 0n; this.historyStarted = false; this.historyGeneration++; this.historyLoading = false;
-		this.terminal = undefined; this.terminalLoadGeneration++; clearTimeout(this.terminalTimer);
-		this.modal = undefined; this.notice = undefined; this.currentPanel = P.CHAT_VIEW;
-		clearTimeout(this.oauthTimer); this.oauth = undefined;
+		this.clearSessionView();
 		const url = new URL(location.href);
 		url.searchParams.set("host", this.client.identity?.profile_id ?? ""); url.searchParams.set("workspace", session.workspace ?? "primary"); url.searchParams.set("session", id); url.searchParams.delete("new");
 		history.replaceState(null, "", url);
@@ -755,11 +761,22 @@ export class DesktopPage {
 			const identity = this.client.identity, modal = this.modal, navigation = this.navigationGeneration;
 			if (!identity || modal?.id !== id || modal.data !== data) return true;
 			await this.client.call("DELETE /api/v1/sessions/{session}", { path: { session: data }, identity });
+			if (!this.hostActive(identity)) return true;
+			this.globalLoadGeneration++;
+			this.sessions = this.sessions.filter(item => item.session_id !== data);
 			this.drafts.delete(data);
-			await this.loadGlobal();
+			const url = new URL(location.href);
+			const removedCurrent = this.client.connection?.sessionId === data || url.searchParams.get("session") === data;
+			if (removedCurrent) {
+				this.modalGeneration++;
+				this.client.retire(); clearTimeout(this.healthTimer); this.clearSessionView();
+				this.draft = { text: "", images: [], revision: 0 }; this.renderer.setDraft("");
+				url.searchParams.delete("session"); history.replaceState(null, "", url);
+			}
 			if (this.modal === modal) this.modal = undefined;
-			if (navigation === this.navigationGeneration && this.client.connection?.sessionId === data) {
-				this.client.retire(); this.draft = { text: "", images: [], revision: 0 }; this.renderer.setDraft("");
+			this.render();
+			await this.loadGlobal();
+			if (navigation === this.navigationGeneration && removedCurrent && !this.client.connection) {
 				const next = this.sessions.findLast(item => !item.archived && item.project_id === session?.project_id);
 				if (next) await this.selectSession(next.session_id);
 			}
@@ -1139,6 +1156,7 @@ export class DesktopPage {
 		terminal.view = view;
 	}
 	private async loadTerminal(connection: ClientConnection, open = false): Promise<void> {
+		if (!connection.active()) return;
 		const generation = ++this.terminalLoadGeneration;
 		const list = await this.client.call("GET /api/v1/sessions/{session_id}/terminals", { path: { session_id: connection.sessionId } });
 		if (!connection.active() || generation !== this.terminalLoadGeneration || this.dockTab !== "terminal") return;
@@ -1164,6 +1182,7 @@ export class DesktopPage {
 		this.render(); clearTimeout(this.terminalTimer); void this.pollTerminal(terminal);
 	}
 	private async pollTerminal(terminal: ActiveTerminal): Promise<void> {
+		if (!terminal.connection.active() || this.terminal !== terminal) return;
 		try {
 			const view = await this.client.call("POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/read", { path: { session_id: terminal.connection.sessionId, terminal_id: terminal.id }, connection: terminal.connection });
 			if (!terminal.connection.active() || this.terminal !== terminal) return;

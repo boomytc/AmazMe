@@ -11,7 +11,7 @@ import * as P from "../src/panels.ts";
 import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL } from "../src/model-connections.ts";
 
 let page: DesktopPage | undefined;
-afterEach(() => { page?.dispose(); page = undefined; sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+afterEach(() => { page?.dispose(); page = undefined; sessionStorage.clear(); vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 async function startPage(extra?: (path: string, options: RequestInit, query: URLSearchParams) => Response | undefined | Promise<Response | undefined>): Promise<{ page: DesktopPage; submitted: Submit[] }> {
  history.replaceState(null, "", "/");
@@ -86,6 +86,114 @@ test("a submission captures the displayed model, retries the same request, and p
  await vi.waitFor(() => expect(submitted).toHaveLength(2));
  expect(submitted[1]).toEqual(submitted[0]);
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
+});
+
+test("deleting the current session retires it before a pending list refresh and blocks stale selection", async () => {
+ let removed = false;
+ let finishRefresh: (value: Response) => void = () => { throw new Error("refresh not started"); };
+ const refreshing = vi.fn(() => new Promise<Response>(resolve => { finishRefresh = resolve; }));
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/sessions/a" && options.method === "DELETE") { removed = true; return new Response('{"removed":true}'); }
+  if (path === "/api/v1/sessions" && removed) return refreshing();
+  return undefined;
+ });
+ const original = page.client.connection;
+ if (!original) throw new Error("connection missing");
+ page.renderer.onDraftChange("deleted draft"); page.renderer.setDraft("deleted draft");
+ page.renderer.onPanelAction({ kind: "command", id: A.SESSION_REMOVE_ACTION, data: "a" });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.SESSION_REMOVE_MODAL, data: "a", fields: {} });
+ await vi.waitFor(() => expect(refreshing).toHaveBeenCalledOnce());
+ expect(original.active()).toBe(false);
+ expect(page.client.connection).toBeUndefined();
+ expect(new URLSearchParams(location.search).has("session")).toBe(false);
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("");
+ page.renderer.onSelect("a");
+ await vi.waitFor(() => expect(document.body.textContent).toContain("会话不存在"));
+ expect(page.client.connection).toBeUndefined();
+ finishRefresh(new Response('{"sessions":[]}'));
+ await vi.waitFor(() => expect(page.renderer.view?.panel.modal).toBeUndefined());
+});
+
+test("a failed refresh cannot revive a deleted session or its composer", async () => {
+ let removed = false;
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/sessions/a" && options.method === "DELETE") { removed = true; return new Response('{"removed":true}'); }
+  if (path === "/api/v1/sessions" && removed) return new Response('{"code":"refresh_failed"}', { status: 503 });
+  return undefined;
+ });
+ const original = page.client.connection;
+ page.renderer.onDraftChange("deleted draft"); page.renderer.setDraft("deleted draft");
+ page.renderer.onPanelAction({ kind: "command", id: A.SESSION_REMOVE_ACTION, data: "a" });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.SESSION_REMOVE_MODAL, data: "a", fields: {} });
+ await vi.waitFor(() => expect(removed).toBe(true));
+ await vi.waitFor(() => expect(page.client.connection).toBeUndefined());
+ expect(original?.active()).toBe(false);
+ expect(new URLSearchParams(location.search).has("session")).toBe(false);
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("");
+ expect(page.renderer.view?.roster.some(item => item.id === "a")).toBe(false);
+});
+
+test("a rejected deletion keeps the current connection and draft", async () => {
+ const { page } = await startPage((path, options) => path === "/api/v1/sessions/a" && options.method === "DELETE"
+  ? new Response('{"code":"session_busy"}', { status: 409 }) : undefined);
+ const original = page.client.connection;
+ page.renderer.onDraftChange("keep draft"); page.renderer.setDraft("keep draft");
+ page.renderer.onPanelAction({ kind: "command", id: A.SESSION_REMOVE_ACTION, data: "a" });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.SESSION_REMOVE_MODAL, data: "a", fields: {} });
+ await vi.waitFor(() => expect(document.body.textContent).toContain("session_busy"));
+ expect(page.client.connection).toBe(original);
+ expect(original?.active()).toBe(true);
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("keep draft");
+});
+
+test("history arriving after deletion cannot restart session polling", async () => {
+ let removed = false;
+ let finishHistory: (value: Response) => void = () => { throw new Error("history not started"); };
+ const reading = vi.fn(() => new Promise<Response>(resolve => { finishHistory = resolve; }));
+ const health = vi.fn(() => new Response("{}"));
+ const { page } = await startPage((path, options) => {
+  if (path.endsWith("/history")) return reading();
+  if (path === "/api/v1/health") return health();
+  if (path === "/api/v1/sessions/a" && options.method === "DELETE") { removed = true; return new Response('{"removed":true}'); }
+  if (path === "/api/v1/sessions" && removed) return new Response('{"sessions":[]}');
+  return undefined;
+ });
+ await vi.waitFor(() => expect(reading).toHaveBeenCalledOnce());
+ vi.useFakeTimers();
+ page.renderer.onPanelAction({ kind: "command", id: A.SESSION_REMOVE_ACTION, data: "a" });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.SESSION_REMOVE_MODAL, data: "a", fields: {} });
+ await vi.waitFor(() => expect(page.client.connection).toBeUndefined());
+ finishHistory(new Response('{"session_id":"a","requests":[],"events":[]}'));
+ await vi.advanceTimersByTimeAsync(4000);
+ expect(health).not.toHaveBeenCalled();
+});
+
+test("a late deletion does not retire another session or replace its draft", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let removed = false;
+ let finishDelete: (value: Response) => void = () => { throw new Error("delete not started"); };
+ const deleting = vi.fn(() => new Promise<Response>(resolve => { finishDelete = resolve; }));
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/sessions") return response({ sessions: [
+   ...(!removed ? [{ session_id: "a", title: "A", workspace: "primary" }] : []),
+   { session_id: "b", title: "B", workspace: "primary" },
+  ] });
+  if (path === "/api/v1/sessions/a" && options.method === "DELETE") return deleting();
+  if (path === "/api/v1/sessions/b/attachments") return response({ attachment_id: "attachment-b", session_id: "b", host_epoch: 1, build_id: "build" });
+  return undefined;
+ });
+ page.renderer.onPanelAction({ kind: "command", id: A.SESSION_REMOVE_ACTION, data: "a" });
+ page.renderer.onPanelAction({ kind: "modal-submit", id: A.SESSION_REMOVE_MODAL, data: "a", fields: {} });
+ await vi.waitFor(() => expect(deleting).toHaveBeenCalledOnce());
+ page.renderer.onSelect("b");
+ await vi.waitFor(() => expect(page.client.connection?.sessionId).toBe("b"));
+ const selected = page.client.connection;
+ page.renderer.onDraftChange("B draft"); page.renderer.setDraft("B draft");
+ removed = true; finishDelete(response({ removed: true }));
+ await vi.waitFor(() => expect(page.renderer.view?.roster.some(item => item.id === "a")).toBe(false));
+ expect(page.client.connection).toBe(selected);
+ expect(selected?.active()).toBe(true);
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("B draft");
 });
 
 test("permission menu selects, survives reload, and stays scoped to the original session", async () => {
