@@ -8,6 +8,8 @@ import pytest
 import test_native_mcp as fixtures
 import uvicorn
 from fastapi import FastAPI, Request, Response
+from mcp.shared.auth import OAuthMetadata
+from pydantic import ValidationError
 
 from amazme_backend.contracts import BackendError, McpHttpSettings, McpOAuthSettings, OpenMcp
 from amazme_backend.mcp_auth import McpAuth, TokenStore, callback_id_for
@@ -121,3 +123,13 @@ def test_http_rejects_remote_cleartext_credentials_and_non_loopback_callback():
         McpHttpSettings(url="http://remote.example/mcp", headers={"Authorization": "token"})
     with pytest.raises(ValueError):
         McpOAuthSettings(callbackUrl="http://remote.example/callback")
+
+
+@pytest.mark.parametrize('field', ['issuer', 'authorization_endpoint', 'token_endpoint', 'registration_endpoint'])
+@pytest.mark.parametrize('url', ['file:///tmp/authorize', 'custom://program/authorize', 'javascript:alert(1)',
+    'data:text/plain,hello', 'ftp://auth.example/authorize', 'vbscript:msgbox(1)'])
+def test_oauth_metadata_boundary_rejects_urls_that_could_launch_local_programs(field: str, url: str) -> None:
+    metadata = {'issuer': 'https://auth.example', 'authorization_endpoint': 'https://auth.example/authorize',
+        'token_endpoint': 'https://auth.example/token', 'response_types_supported': ['code'], field: url}
+    with pytest.raises(ValidationError):
+        OAuthMetadata.model_validate(metadata)

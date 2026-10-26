@@ -55,6 +55,18 @@ def test_google_uses_level_or_budget_with_original_model_off_fallback() -> None:
     assert body["generationConfig"] == {"maxOutputTokens":2048,"thinkingConfig":{"includeThoughts":True,"thinkingLevel":"HIGH"}}
 
 
+@pytest.mark.parametrize('provider,prefix', [('moonshotai', 'kimi-'), ('moonshotai-cn', 'kimi-'), ('kimi-coding', '')])
+@pytest.mark.parametrize('suffix', ['k3.1-pro', 'k3.1-pro-highspeed'])
+def test_kimi_k3_point_releases_use_effort_without_the_old_thinking_toggle(provider: str, prefix: str, suffix: str) -> None:
+    value = config(provider, prefix + suffix, 'max')
+    model, level = level_for(value)
+    assert model is not None and level == 'max'
+    assert model.cost['cacheWrite'] == 0
+    assert model.compat['requiresReasoningContentOnAssistantMessages'] is True
+    assert completions_thinking(value) == {'reasoning_effort': 'max'}
+    assert completions_thinking(config(provider, prefix + suffix, 'off')) == {'reasoning_effort': 'low'}
+
+
 async def test_reasoning_is_saved_on_accept_and_replay_cannot_change_it(tmp_path: Path) -> None:
     path, fence = tmp_path / "session.sqlite", HostFence(build_id="test-build", host_epoch=1)
     store = SessionStore(path, "session")
@@ -78,3 +90,39 @@ async def test_reasoning_is_saved_on_accept_and_replay_cannot_change_it(tmp_path
         assert provider_messages([], config=action.config)[0]["role"] == "system"
     finally:
         await store.db.close()
+
+
+@pytest.mark.parametrize('requested', ['off', 'max'])
+async def test_assistant_retains_requested_thinking_across_restart_and_next_turn(tmp_path: Path, requested: ThinkingLevel) -> None:
+    from test_session_branch import Driver
+
+    from amazme_backend.contracts import Message
+    from amazme_backend.providers import Completion
+    from amazme_backend.session_domain import ModelReturned
+
+    path, fence = tmp_path / 'session.sqlite', HostFence(build_id='thinking-history', host_epoch=1)
+    store = SessionStore(path, 'session', build=fence.build_id, config=ProviderConfig(provider='faux'))
+    await store.initialize()
+    await store.fence(fence)
+    try:
+        await store.accept(Submit(request_id='first', text='plan', thinking=requested), fence)
+        action = await Driver(store).until(ModelInvocation)
+        assert isinstance(action, ModelInvocation)
+        reply = Completion(response_id='reply', message=Message(role='assistant', content='done', thinking='low'))
+        await store.advance(ModelReturned(action, reply))
+        assert reply.message.thinking == 'low'
+    finally:
+        await store.db.close()
+
+    reopened = SessionStore(path, 'session', build=fence.build_id, config=ProviderConfig(provider='faux'), require_existing=True)
+    try:
+        await reopened.initialize()
+        await Driver(reopened).drain()
+        history = await reopened.messages('first')
+        assert [message.thinking for message in history if message.role == 'assistant'] == [requested]
+        await reopened.accept(Submit(request_id='next', text='continue', thinking='high'), fence)
+        following = await Driver(reopened).until(ModelInvocation)
+        assert isinstance(following, ModelInvocation) and following.config.thinking == 'high'
+        assert [message.thinking for message in following.messages if message.role == 'assistant'] == [requested]
+    finally:
+        await reopened.db.close()

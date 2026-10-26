@@ -11,6 +11,7 @@ import httpx
 from pydantic import JsonValue, TypeAdapter
 
 from .contracts import BackendError, Message, PluginOffer, ProviderConfig, ToolCall
+from .google_schema import const_as_enum
 from .mcp_session import McpOffer
 from .model_catalog import INDEX
 from .oauth import COPILOT_HEADERS
@@ -302,7 +303,7 @@ def google_body(config: ProviderConfig, messages: list[Message], offers: list[Mc
     body: Record = {'contents': converted, 'systemInstruction': {'parts': [{'text': text(RECORDS.validate_python(provider_messages([], config.provider, config))[0].get('content'))}]},
         'generationConfig': {'maxOutputTokens': config.max_tokens, **({'thinkingConfig':thinking} if thinking else {})},
         'tools': [{'functionDeclarations': [{'name': tool['name'], 'description': tool.get('description', ''),
-                   'parametersJsonSchema': tool['parameters']} for tool in tools(offers, config, plugins)]}]}
+                   'parametersJsonSchema': const_as_enum(tool['parameters'])} for tool in tools(offers, config, plugins)]}]}
     if not tools(offers, config, plugins):
         body.pop('tools')
     return body

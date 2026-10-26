@@ -296,6 +296,7 @@ class Message(Model):
     tool_calls: list[ToolCall] = Field(default_factory=lambda: list[ToolCall]())
     tool_call_id: str = ""
     provider_response_id: str = ""
+    thinking: ThinkingLevel | None = None
     # Opaque provider replay data. Ordinary usage and logs do not include this text.
     reasoning_signature: str = ""
     images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart](), max_length=IMAGE_MAX_COUNT)

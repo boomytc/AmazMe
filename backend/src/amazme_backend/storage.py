@@ -2164,7 +2164,9 @@ class SessionStore:
             c.emit("preview", request.request_id, preview=preview)
             return
         if isinstance(observation, ModelReturned):
-            completion = observation.completion
+            completion = observation.completion.model_copy(update={
+                "message": observation.completion.message.model_copy(update={"thinking": observation.invocation.config.thinking or "off"}),
+            })
             calls = completion.message.tool_calls
             if (completion.message.role != "assistant" or len(calls) > 16
                     or any(not call.id for call in calls) or len({call.id for call in calls}) != len(calls)):
