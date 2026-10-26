@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from pydantic import JsonValue
 
 from .accounts import AccountStore, ApiKeyCredential
-from .common import Peer, Profile, build_id, lock, unix_listener
+from .common import Peer, Profile, SessionRuntimeFile, build_id, lock, unix_listener
 from .contracts import (
     ApprovalEnvelope,
     BackendError,
@@ -831,7 +831,7 @@ def application(owner: Worker) -> FastAPI:
 async def serve(profile: Profile, session: str, instance: str, *, frozen: bool = False,
                 require_existing: bool = False, validation: bool = False) -> None:
     directory = profile.path / "sessions" / session
-    with lock(directory / "writer.lock"):
+    with lock(directory / SessionRuntimeFile.WRITER_LOCK):
         owner = Worker(profile, session, instance, frozen=frozen, require_existing=require_existing,
                        validation=validation)
         try:

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from test_management import _client, _host, _message
 
+from amazme_backend.common import lock
 from amazme_backend.contracts import ProcessLease
 from amazme_backend.storage import session_database
 
@@ -47,6 +48,9 @@ async def test_project_and_session_edits_reject_stale_writes_and_remove_only_own
             assert len(sessions) == 1 and sessions[0]["archived"] is True and sessions[0]["title"] == "新名"
             directory = session_database(tmp_path, session_id).parent
             assert directory.is_dir() and kept.read_text() == "用户工作目录"
+            with lock(directory / "writer.lock"):
+                pass
+            (directory / "worker.log").write_text("owned worker diagnostics")
             unknown = directory / "user-note.txt"
             unknown.write_text("unknown ownership")
             refused = await client.delete(f"/api/v1/sessions/{session_id}")

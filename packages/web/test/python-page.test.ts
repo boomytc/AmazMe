@@ -18,11 +18,12 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
  const html = readFileSync(resolve("src/page/index.html"), "utf8");
  document.body.innerHTML = html.slice(html.indexOf("<body>") + 6, html.lastIndexOf("</body>")).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
  const submitted: Submit[] = [];
- let selected = "shown";
+ const selected = new Map<string, string>();
  class Socket { close() {} send() {} }
  vi.stubGlobal("WebSocket", Socket);
  vi.stubGlobal("fetch", vi.fn(async (input: URL, options: RequestInit = {}) => {
   const path = new URL(input).pathname, method = options.method ?? "GET";
+  const session = path.match(/^\/api\/v1\/(?:sessions|session-models)\/([^/]+)/u)?.[1] ?? "a";
   const custom = await extra?.(path, options, new URL(input).searchParams);
   if (custom) return custom;
   const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
@@ -36,15 +37,16 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
   if (path === "/api/v1/settings") return response({ revision: 0 });
   if (path === "/api/v1/projects") return response({ projects: [] });
   if (path === "/api/v1/skills") return response({ context_files: [], skills: [], prompts: [], diagnostics: [] });
-  if (path.endsWith("/attachments")) return response({ attachment_id: "attachment", session_id: "a", host_epoch: 1, build_id: "build" });
-  if (path === "/api/v1/session-models/a") {
-   if (method === "PUT") selected = "different";
-   return selected === "shown" ? response({ code: "session_model_missing" }, 404) : response({ session_id: "a", provider: "faux", model: selected });
+  if (path.endsWith("/attachments")) return response({ attachment_id: `attachment-${session}`, session_id: session, host_epoch: 1, build_id: "build" });
+  if (path.startsWith("/api/v1/session-models/")) {
+   if (method === "PUT") selected.set(session, parseContract("SessionModel", JSON.parse(String(options.body))).model);
+   const model = selected.get(session);
+   return model ? response({ session_id: session, provider: "faux", model }) : response({ code: "session_model_missing" }, 404);
   }
   if (path.endsWith("/resources")) return response({ context_files: [], skills: [], prompts: [], diagnostics: [] });
-  if (path.endsWith("/usage")) return response({ session_id: "a" });
-  if (path.endsWith("/feedback")) return response({ session_id: "a", records: [] });
-  if (path.endsWith("/history")) return response({ session_id: "a", requests: [], events: [] });
+  if (path.endsWith("/usage")) return response({ session_id: session });
+  if (path.endsWith("/feedback")) return response({ session_id: session, records: [] });
+  if (path.endsWith("/history")) return response({ session_id: session, requests: [], events: [] });
   if (path.endsWith("/mcp-configuration")) return response({ revision: 0, workspace: "primary", path: "/profile/host.sqlite", servers: [] });
   if (path.endsWith("/mcp")) return response({ servers: [], calls: [] });
   if (path.endsWith("/submissions")) {
@@ -179,7 +181,6 @@ test("a late deletion does not retire another session or replace its draft", asy
    { session_id: "b", title: "B", workspace: "primary" },
   ] });
   if (path === "/api/v1/sessions/a" && options.method === "DELETE") return deleting();
-  if (path === "/api/v1/sessions/b/attachments") return response({ attachment_id: "attachment-b", session_id: "b", host_epoch: 1, build_id: "build" });
   return undefined;
  });
  page.renderer.onPanelAction({ kind: "command", id: A.SESSION_REMOVE_ACTION, data: "a" });
@@ -194,6 +195,40 @@ test("a late deletion does not retire another session or replace its draft", asy
  expect(page.client.connection).toBe(selected);
  expect(selected?.active()).toBe(true);
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("B draft");
+ expect(document.body.textContent).not.toContain("Unexpected request");
+});
+
+test("drafts stay with their session through switching and a late submission receipt", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let finishSubmit: (value: Response) => void = () => { throw new Error("submission not started"); };
+ const submitting = vi.fn(() => new Promise<Response>(resolve => { finishSubmit = resolve; }));
+ const { page } = await startPage((path) => {
+  if (path === "/api/v1/sessions") return response({ sessions: [
+   { session_id: "a", title: "A", workspace: "primary" }, { session_id: "b", title: "B", workspace: "primary" },
+  ] });
+  if (path.endsWith("/submissions")) return submitting();
+  return undefined;
+ });
+ const prompt = () => document.querySelector<HTMLTextAreaElement>("#prompt")?.value;
+ page.renderer.onDraftChange("A only"); page.renderer.setDraft("A only");
+ page.renderer.onSubmit("A only");
+ await vi.waitFor(() => expect(submitting).toHaveBeenCalledOnce());
+ const pendingKey = "amazme:write:host:a:submission";
+ const pending: unknown = JSON.parse(sessionStorage.getItem(pendingKey) ?? "null");
+ if (!pending || typeof pending !== "object" || !("id" in pending) || typeof pending.id !== "string") throw new Error("pending submission missing");
+ page.renderer.onSelect("b");
+ await vi.waitFor(() => expect(page.client.connection?.attachment?.session_id).toBe("b"));
+ expect(prompt()).toBe("");
+ page.renderer.onDraftChange("B only"); page.renderer.setDraft("B only");
+ finishSubmit(response({ request_id: pending.id, text: "A only", status: "queued" }));
+ await vi.waitFor(() => expect(sessionStorage.getItem(pendingKey)).toBeNull());
+ expect(prompt()).toBe("B only");
+ page.renderer.onSelect("a");
+ await vi.waitFor(() => expect(page.client.connection?.attachment?.session_id).toBe("a"));
+ expect(prompt()).toBe("");
+ page.renderer.onSelect("b");
+ await vi.waitFor(() => expect(page.client.connection?.attachment?.session_id).toBe("b"));
+ expect(prompt()).toBe("B only");
 });
 
 test("permission menu selects, survives reload, and stays scoped to the original session", async () => {

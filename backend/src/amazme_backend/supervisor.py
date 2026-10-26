@@ -26,7 +26,16 @@ from pydantic import TypeAdapter
 
 from . import mcp_management
 from .codemode_run import CodemodeOutcome, json_object, run_codemode
-from .common import Peer, Profile, build_id, child_command, lock, private_write, unix_listener
+from .common import (
+    Peer,
+    Profile,
+    SessionRuntimeFile,
+    build_id,
+    child_command,
+    lock,
+    private_write,
+    unix_listener,
+)
 from .contracts import (
     BackendError,
     CancelCode,
@@ -266,7 +275,7 @@ def retirement_proof(profile: Profile, worker: WorkerInfo) -> Generator[None]:
             raise BackendError("process_lease_identity_mismatch", status=503)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with lock(profile.path / "sessions" / worker.session_id / "writer.lock"):
+            with lock(profile.path / "sessions" / worker.session_id / SessionRuntimeFile.WRITER_LOCK):
                 yield
         except BlockingIOError as error:
             raise BackendError("worker_retirement_unproven", status=503) from error
@@ -610,7 +619,7 @@ class Supervisor:
             directory = self.profile.path / "sessions" / value.session_id
             directory.mkdir(mode=0o700, parents=True, exist_ok=True)
             try:
-                with lock(directory / "writer.lock"):
+                with lock(directory / SessionRuntimeFile.WRITER_LOCK):
                     pass
             except BlockingIOError as error:
                 raise BackendError("worker_still_owns_session", status=503) from error
@@ -625,7 +634,7 @@ class Supervisor:
                     (instance, value.session_id, worker.model_dump_json())), write=True)
                 self.heartbeats[instance] = time.monotonic()
                 await self.faults.hit("worker_reserved", session_id=value.session_id)
-                log_fd = os.open(directory / "worker.log", os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+                log_fd = os.open(directory / SessionRuntimeFile.WORKER_LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
                 try:
                     args = child_command("worker", "--profile", str(self.profile.path), "--session", value.session_id,
                                          "--instance", instance, "--lifetime-fd", str(reservation.fd))

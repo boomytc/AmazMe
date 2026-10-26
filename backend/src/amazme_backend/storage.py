@@ -16,7 +16,7 @@ from typing import IO, Literal
 from pydantic import JsonValue, TypeAdapter
 
 from .accounts import AccountStore
-from .common import Profile, lock
+from .common import Profile, SessionRuntimeFile, lock
 from .contracts import (
     Approval,
     ApprovalDecision,
@@ -113,7 +113,7 @@ def _public_code(value: str) -> str:
     return value if _PUBLIC_CODE.fullmatch(value) else "unlisted"
 _SESSION_ID = re.compile(r"^[a-f0-9]{32}$")
 _SESSION_FILES = frozenset({
-    "session.sqlite", "session.sqlite-wal", "session.sqlite-shm", "session.lock",
+    "session.sqlite", "session.sqlite-wal", "session.sqlite-shm", "session.lock", *SessionRuntimeFile,
 })
 
 

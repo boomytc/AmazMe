@@ -7,6 +7,7 @@ import secrets
 import socket
 import stat
 import sys
+from enum import StrEnum
 from pathlib import Path
 from typing import IO, Literal
 
@@ -14,6 +15,11 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from .contracts import BackendError, Identity, ProfileConfig, ProviderConfig
+
+
+class SessionRuntimeFile(StrEnum):
+    WRITER_LOCK = "writer.lock"
+    WORKER_LOG = "worker.log"
 
 
 def resource_root() -> Path:
