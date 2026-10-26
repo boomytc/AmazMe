@@ -103,13 +103,14 @@ npm run dev:web
 backend/.venv/bin/python -m amazme_backend serve --profile /absolute/profile
 ```
 
-保持该终端运行。在另一个终端取得配对码：
+保持该终端运行，直接用浏览器打开服务输出的本机 URL，无需配对。
+TUI、SDK 等客户端连接指定 Host 时，在另一个终端取得连接令牌：
 
 ```bash
 backend/.venv/bin/python -m amazme_backend pair --profile /absolute/profile
 ```
 
-然后用 Host 地址和配对码连接。以 Web 页面为例：
+然后用 Host 地址和令牌连接。以打印 Web 页面地址为例：
 
 ```bash
 node packages/coding-agent/dist/bundle/cli.js web --python-url http://127.0.0.1:PORT --python-token '配对码'

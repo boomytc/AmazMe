@@ -155,25 +155,6 @@ export function desktopPythonBootPlan(input: {
 	};
 }
 
-export function pairingCookie(pageUrl: string, webToken: string): {
-	readonly url: string;
-	readonly name: "amazme";
-	readonly value: string;
-	readonly httpOnly: true;
-	readonly secure: false;
-	readonly sameSite: "lax";
-	readonly path: "/";
-} {
-	const url = new URL(pageUrl);
-	if (url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== "") {
-		throw new Error("desktop pairing cookie URL must not carry the token");
-	}
-	if (webToken.length === 0 || url.href.includes(webToken)) {
-		throw new Error("desktop pairing token must stay out of the page URL");
-	}
-	return { url: url.origin, name: "amazme", value: webToken, httpOnly: true, secure: false, sameSite: "lax", path: "/" };
-}
-
 export function readControlToken(profile: string): string {
 	const token = readFileSync(join(profile, "control.token"), "utf8").trim();
 	if (!CONTROL_TOKEN.test(token)) throw new Error("desktop control token is missing");

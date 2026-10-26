@@ -247,18 +247,7 @@ export class DesktopPage {
 	}
 	async start(): Promise<void> {
 		await PendingWrites.restore(sessionStorage);
-		const token = new URLSearchParams(location.hash.slice(1)).get("token");
-		if (token) {
-			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) });
-			if (!response.ok) throw new ApiError(response.status, await response.json());
-			history.replaceState(null, "", location.pathname + location.search);
-		}
-		try { await this.client.bootstrap(); }
-		catch (error) {
-			if (!(error instanceof ApiError) || error.status !== 401) throw error;
-			this.modal = { id: "auth:pair", title: "连接 AmazMe", description: "输入本机启动器提供的配对令牌。", fields: [{ id: "token", label: "配对令牌", kind: "text", inputType: "password", value: "" }], submit: "连接" };
-			this.render(); return;
-		}
+		await this.client.bootstrap();
 		await this.loadGlobal();
 		this.ready = true;
 		const target = new URLSearchParams(location.search);
@@ -537,10 +526,6 @@ export class DesktopPage {
 			await this.loadHistory(this.requireConnection(), true, id === A.TRANSCRIPT_SEARCH_ACTION);
 			if (id === A.TRANSCRIPT_SEARCH_ACTION) this.renderer.refreshTranscriptSearch();
 			return;
-		}
-		if (id === "auth:pair") {
-			const response = await fetch("/auth", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: fields.token }) });
-			if (!response.ok) throw new ApiError(response.status, await response.json()); this.modal = undefined; await this.start(); return;
 		}
 		if (id === A.WELCOME_SESSION_ACTION) { await this.createSession(); return; }
 		if (id === A.WELCOME_SETTINGS_ACTION || id === A.MODEL_CONNECTIONS_ACTION) { this.currentPanel = P.SETTINGS_VIEW; this.modal = undefined; this.render(); return; }

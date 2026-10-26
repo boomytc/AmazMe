@@ -638,10 +638,6 @@ export type IntervalRule = {
 
 export type JsonValue = unknown;
 
-export type Login = {
-  "token": string;
-};
-
 export type McpCall = {
   "call_id": string;
   "server_id": string;
@@ -1782,7 +1778,6 @@ export interface ApiModels {
   InterfacePreferences: InterfacePreferences;
   IntervalRule: IntervalRule;
   JsonValue: JsonValue;
-  Login: Login;
   McpCall: McpCall;
   McpCallRequest: McpCallRequest;
   McpConfigPatch: McpConfigPatch;

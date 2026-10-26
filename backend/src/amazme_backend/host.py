@@ -20,7 +20,7 @@ import uvicorn
 from fastapi import FastAPI, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, JsonValue, SecretStr, TypeAdapter
+from pydantic import BaseModel, JsonValue, SecretStr, TypeAdapter
 
 from . import mcp_management, plugin_packages, schedules
 from .accounts import AccountDocument, AccountStore, AccountsView, ApiKeyCredential, select_model
@@ -296,10 +296,6 @@ from .workspace_map import (
     tool_path,
     validate_workspace,
 )
-
-
-class Login(Model):
-    token: str = Field(min_length=1, max_length=256)
 
 
 class ReadPeer(Peer):
@@ -3350,13 +3346,6 @@ def application(owner: Host) -> FastAPI:
             )
         return response
 
-    @app.post("/auth")
-    async def login(value: Login, request: Request, response: Response) -> dict[str, bool]:
-        if request.headers.get("origin") != owner.origin or not secrets.compare_digest(value.token, owner.web_token):
-            raise BackendError("invalid_pairing", status=403)
-        response.set_cookie("amazme", owner.web_token, httponly=True, samesite="strict", path="/")
-        return {"ok": True}
-
     @app.get("/api/v1/bootstrap")
     async def bootstrap() -> Identity:
         return owner.identity((await owner.health()).state)
@@ -4003,6 +3992,7 @@ def application(owner: Host) -> FastAPI:
             # Storage failures must still leave the client able to display recovery diagnostics.
             preferences = InterfacePreferences()
         document, policy = boot_document(owner.identity(), owner.origin, preferences)
+        response.set_cookie("amazme", owner.web_token, httponly=True, samesite="strict", path="/")
         response.headers["Content-Security-Policy"] = policy
         return document
 

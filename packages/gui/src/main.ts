@@ -36,7 +36,6 @@ import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
 import {
 	desktopPythonBootPlan,
 	initialPythonProvider,
-	pairingCookie,
 	parsePythonUpdateRecord,
 	pythonPrepareUpdateRequest,
 	pythonShutdownRequest,
@@ -625,15 +624,6 @@ async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<
 		if (isExternalUrl(url)) void shell.openExternal(url);
 		return { action: "deny" };
 	});
-	if (pythonWebToken.length > 0) {
-		const cookieUrl = new URL(addressed);
-		cookieUrl.search = "";
-		cookieUrl.hash = "";
-		const cookie = pairingCookie(cookieUrl.href, pythonWebToken);
-		await created.webContents.session.cookies.set(cookie);
-		const stored = await created.webContents.session.cookies.get({ url: cookie.url, name: "amazme" });
-		if (!stored.some((item) => item.value === pythonWebToken)) throw new Error("desktop pairing cookie was not stored");
-	}
 	try {
 		await created.loadURL(addressed);
 	} catch (error: unknown) {

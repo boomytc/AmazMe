@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 import httpx
+import pytest
 
 from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import BackendError, HostFence, ProcessLease
@@ -92,3 +93,45 @@ def test_missing_origin_is_rejected(tmp_path: Path) -> None:
         assert error.code == "boot_origin_invalid"
     else:
         raise AssertionError("empty origin was accepted")
+
+
+@pytest.mark.parametrize("page_path", ["/", "/index.html?new=1"])
+async def test_local_page_connects_without_manual_pairing(tmp_path: Path, page_path: str) -> None:
+    host = _host(tmp_path)
+    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+        instance_id="test-host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"),
+        device=1, inode=1))
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
+            assert (await client.get("/api/v1/sessions")).status_code == 401
+            response = await client.get(page_path)
+            assert response.status_code == 200
+            assert client.cookies.get("amazme") == host.web_token
+            assert "HttpOnly" in response.headers["set-cookie"]
+            assert "SameSite=strict" in response.headers["set-cookie"]
+            assert host.web_token not in response.text
+            assert (await client.get("/api/v1/sessions")).status_code == 200
+            headers = {"x-amazme-build": host.build, "x-amazme-epoch": str(host.fence.host_epoch)}
+            assert (await client.post("/api/v1/sessions", json={}, headers=headers)).status_code == 401
+            headers["origin"] = host.origin
+            assert (await client.post("/api/v1/sessions", json={}, headers=headers)).status_code == 201
+            assert (await client.get("/control/updates/current")).status_code == 401
+            client.cookies.clear()
+            assert (await client.get(page_path)).status_code == 200
+            assert (await client.get("/api/v1/sessions")).status_code == 200
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()
+
+
+@pytest.mark.parametrize("headers", [{"host": "other.example"}, {"origin": "https://other.example"}])
+async def test_foreign_page_request_does_not_receive_cookie(tmp_path: Path, headers: dict[str, str]) -> None:
+    host = _host(tmp_path)
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
+            response = await client.get("/", headers=headers)
+            assert response.status_code == 403
+            assert "set-cookie" not in response.headers
+    finally:
+        await host.supervisor.close()
+        await host.store.db.close()

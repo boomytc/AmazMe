@@ -27,8 +27,9 @@ backend/.venv/bin/python -m amazme_backend init --profile /absolute/new-profile 
 backend/.venv/bin/python -m amazme_backend serve --profile /absolute/new-profile
 ```
 
-`serve` 输出回环 URL。另一个终端运行 `pair --profile /absolute/new-profile` 取得配对码，
-在浏览器中配对。退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
+`serve` 输出回环 URL，浏览器直接打开即可，无需配对。页面自动设置本机连接 Cookie。
+TUI、SDK 等客户端的连接令牌用 `pair --profile /absolute/new-profile` 取得；
+退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
 默认修改操作需要审批。执行环境保留 PATH/HOME 等工具查找变量，不继承模型密钥和控制令牌。
 
 开发验证：

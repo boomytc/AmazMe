@@ -43,9 +43,6 @@ def main() -> None:
                 errors: list[str] = []
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(runtime.ready["url"])
-                page.get_by_label("输入本机配对码").fill((runtime.profile / "web.token").read_text())
-                page.get_by_role("button", name="连接", exact=True).click()
-                expect(page.locator("#login")).to_be_hidden()
                 page.locator("#create").click()
                 expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
                 page.locator("#plugins summary").click()

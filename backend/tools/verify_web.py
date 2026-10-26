@@ -24,9 +24,6 @@ def configure_approvals(runtime):
 
 def login(page, runtime):
     page.goto(runtime.ready["url"])
-    page.get_by_label("输入本机配对码").fill((runtime.profile / "web.token").read_text())
-    page.get_by_role("button", name="连接", exact=True).click()
-    expect(page.locator("#login")).to_be_hidden()
 
 
 def approve_and_finish(page, *, count=1, timeout=120000):

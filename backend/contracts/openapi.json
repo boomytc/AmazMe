@@ -5,48 +5,6 @@
     "version": "0.1.0"
   },
   "paths": {
-    "/auth": {
-      "post": {
-        "summary": "Login",
-        "operationId": "login_auth_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Login"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "boolean"
-                  },
-                  "type": "object",
-                  "title": "Response Login Auth Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/v1/bootstrap": {
       "get": {
         "summary": "Bootstrap",
@@ -9722,22 +9680,6 @@
         "title": "IntervalRule"
       },
       "JsonValue": {},
-      "Login": {
-        "properties": {
-          "token": {
-            "type": "string",
-            "maxLength": 256,
-            "minLength": 1,
-            "title": "Token"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "title": "Login"
-      },
       "McpCall": {
         "properties": {
           "call_id": {

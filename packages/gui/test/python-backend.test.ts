@@ -7,7 +7,6 @@ import { fakeHost } from "./fake-host.ts";
 import {
 	desktopPythonBootPlan,
 	initialPythonProvider,
-	pairingCookie,
 	parsePythonReadyLine,
 	parsePythonUpdateRecord,
 	pythonCompleteUpdateRequest,
@@ -209,12 +208,6 @@ describe("packaged python backend", () => {
 		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("身份不匹配");
 		await expect(settlePythonBackendUpdate(ready(), CONTROL, WEB)).rejects.toThrow("目标构建");
 		expect(fetcher.mock.calls.every(([, options]) => options.method === "GET")).toBe(true);
-	});
-
-	test("pairs with a cookie and does not put the token in the URL", () => {
-		const cookie = pairingCookie("http://127.0.0.1:4310/", WEB);
-		expect(cookie).toEqual({ url: "http://127.0.0.1:4310", name: "amazme", value: WEB, httpOnly: true, secure: false, sameSite: "lax", path: "/" });
-		expect(cookie.url).not.toContain(WEB);
 	});
 
 	test("reads the control token from the profile and prefers the packaged binary", () => {

@@ -3312,22 +3312,6 @@
       "title": "IntervalRule"
     },
     "JsonValue": {},
-    "Login": {
-      "properties": {
-        "token": {
-          "type": "string",
-          "maxLength": 256,
-          "minLength": 1,
-          "title": "Token"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "token"
-      ],
-      "title": "Login"
-    },
     "McpCall": {
       "properties": {
         "call_id": {
