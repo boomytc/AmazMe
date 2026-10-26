@@ -8,7 +8,7 @@
 
 需要 Python 3.13、uv 和 Node.js 22.19 或更新版本。除特别说明外，下面的命令都默认在仓库根目录执行，仓库目录也就是默认工作区。
 
-### 一键启动桌面（macOS/Linux）
+### 一键启动（macOS/Linux）
 
 首次使用或依赖变更后，先准备 Python 与 Node 依赖：
 
@@ -16,13 +16,15 @@
 ./start.sh --prepare
 ```
 
-日常启动：
+日常启动默认打开桌面：
 
 ```bash
-./start.sh
+./start.sh            # 桌面
+./start.sh web        # 浏览器页面
+./start.sh cli        # 交互终端
 ```
 
-准备命令只同步依赖，不打开桌面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。也可以直接运行 `npm run dev:desktop`，不需要先手动运行 `serve` 或设置后端路径。
+准备命令只同步依赖，不打开任何界面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。`web` 和 `cli` 之后的参数会原样转给对应入口，例如 `./start.sh cli --continue`。三种模式都会把 `AMAZME_PYTHON_BACKEND` 解析成绝对路径（默认仓库内的后端，已有覆盖时保留覆盖），不需要手动 `export`。也可以直接运行 `npm run dev:desktop`、`npm run dev:web` 或 `npm run dev:tui`。
 
 需要打开其他项目时，使用 `AMAZME_GUI_CWD=/absolute/project ./start.sh`，或用 `AMAZME_GUI_SESSION=会话ID` 指定已有会话。
 
@@ -45,7 +47,7 @@ npm run build:offline
 export AMAZME_PYTHON_BACKEND=backend/.venv/bin/amazme-backend
 ```
 
-`AMAZME_PYTHON_BACKEND` 用于终端和 Web 找到后端，桌面启动脚本会自动处理。继续在仓库根目录操作时可直接使用这个相对路径；离开仓库目录运行终端命令时，应改成对应入口的绝对路径。新开终端也需要重新设置该变量。
+`AMAZME_PYTHON_BACKEND` 用于终端和 Web 找到后端，`./start.sh` 的三种模式都会自动处理。继续在仓库根目录操作时可直接使用这个相对路径；离开仓库目录运行终端命令时，应改成对应入口的绝对路径。新开终端也需要重新设置该变量。
 
 构建使用仓库中的 Python 模型快照，不联网刷新；只有需要同步上游模型数据时，才显式指定 Pi 源码：
 
@@ -55,7 +57,9 @@ npm run sync:pi-models -- --source /absolute/pi/packages/ai/src/providers/data
 
 ### 交互终端与一次性命令
 
-直接使用构建后的 Node 入口：
+在仓库根目录运行时，`./start.sh cli` 直接从源码进入交互终端，参数会转给 CLI，例如 `./start.sh cli --print '说明当前项目的启动入口'`。
+
+也可以直接使用构建后的 Node 入口：
 
 ```bash
 node packages/coding-agent/dist/bundle/cli.js
@@ -94,10 +98,10 @@ amazme --continue
 在仓库根目录执行：
 
 ```bash
-npm run dev:web
+./start.sh web
 ```
 
-该命令构建 Web 依赖、启动或复用本机 Host，并输出窗口链接；在浏览器中打开终端给出的地址即可，默认以仓库目录作为工作区。需要其他项目时，可从该项目目录运行 CLI 的 `web`，此时 Node 和后端入口应使用绝对路径。
+等价于 `npm run dev:web`。该命令构建 Web 依赖、启动或复用本机 Host，并输出窗口链接；在浏览器中打开终端给出的地址即可，默认以仓库目录作为工作区。需要其他项目时，可从该项目目录运行 CLI 的 `web`，此时 Node 和后端入口应使用绝对路径。
 
 只需要 Host 根地址而不需要窗口链接时，使用 `server` 替代 `web`。关闭网页或释放客户端绑定不会取消已经接纳的工作。
 

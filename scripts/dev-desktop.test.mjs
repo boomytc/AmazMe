@@ -84,33 +84,57 @@ test("the build cache requires output and changes with source and installed depe
 	} finally { await rm(fixtureRoot, { recursive: true, force: true }); }
 });
 
-async function runStart(args) {
+async function runStart(args, { backend: override, expectFailure = false } = {}) {
 	const directory = await mkdtemp(join(tmpdir(), "amazme-desktop-start-"));
 	try {
 		const log = join(directory, "calls.log");
 		const bin = join(directory, "bin");
 		await mkdir(bin);
-		const recorder = `#!/usr/bin/env bash\nprintf '%s|%s|%s\\n' "$(basename "$0")" "$PWD" "$*" >> ${JSON.stringify(log)}\n`;
+		const backend = override ?? join(bin, "uv");
+		const recorder = `#!/usr/bin/env bash\nprintf '%s|%s|%s|%s\\n' "$(basename "$0")" "$PWD" "$*" "\${AMAZME_PYTHON_BACKEND:-}" >> ${JSON.stringify(log)}\n`;
 		for (const name of ["uv", "npm"]) {
 			const executable = join(bin, name);
 			await writeFile(executable, recorder);
 			await chmod(executable, 0o755);
 		}
 		const result = await new Promise(resolve => execFile(join(root, "start.sh"), args, {
-			cwd: directory, timeout: 10000, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, AMAZME_PYTHON_BACKEND: join(bin, "uv") },
+			cwd: directory, timeout: 10000, env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}`, AMAZME_PYTHON_BACKEND: backend },
 		}, (error, stdout, stderr) => resolve({ error, stdout, stderr })));
-		assert.equal(result.error, null, result.stderr);
-		return (await readFile(log, "utf8")).trim().split("\n");
+		if (!expectFailure) assert.equal(result.error, null, result.stderr);
+		return { result, calls: existsSync(log) ? (await readFile(log, "utf8")).trim().split("\n") : [], backend: backend.startsWith("/") ? backend : resolve(root, backend) };
 	} finally { await rm(directory, { recursive: true, force: true }); }
 }
 
 test("the root start script prepares dependencies without launching", { skip: process.platform === "win32" }, async () => {
-	assert.deepEqual(await runStart(["--prepare"]), [
-		`uv|${root}|sync --project backend --frozen`,
-		`npm|${root}|install --ignore-scripts`,
+	const { calls, backend } = await runStart(["--prepare"]);
+	assert.deepEqual(calls, [
+		`uv|${root}|sync --project backend --frozen|${backend}`,
+		`npm|${root}|install --ignore-scripts|${backend}`,
 	]);
 });
 
-test("the root start script launches from any directory without installing", { skip: process.platform === "win32" }, async () => {
-	assert.deepEqual(await runStart([]), [`npm|${root}|run dev:desktop`]);
+test("the root start script launches the desktop from any directory without installing", { skip: process.platform === "win32" }, async () => {
+	const { calls, backend } = await runStart([]);
+	assert.deepEqual(calls, [`npm|${root}|run dev:desktop|${backend}`]);
+});
+
+test("the root start script launches web and cli with an absolute repository backend", { skip: process.platform === "win32" }, async () => {
+	const web = await runStart(["web"]);
+	assert.deepEqual(web.calls, [`npm|${root}|run dev:web|${web.backend}`]);
+
+	const cli = await runStart(["cli", "--print", "hi there"]);
+	assert.deepEqual(cli.calls, [`npm|${root}|run dev:tui -- --print hi there|${cli.backend}`]);
+
+	const relative = await runStart(["cli"], { backend: "backend/.venv/bin/amazme-backend" });
+	assert.equal(relative.backend, repositoryBackend);
+	assert.deepEqual(relative.calls, [`npm|${root}|run dev:tui|${repositoryBackend}`]);
+});
+
+test("the root start script rejects an unknown mode or desktop arguments", { skip: process.platform === "win32" }, async () => {
+	for (const args of [["mobile"], ["desktop", "--print", "hi"]]) {
+		const { result, calls } = await runStart(args, { expectFailure: true });
+		assert.equal(result.error.code, 2);
+		assert.match(result.stderr, /用法：\.\/start\.sh \[desktop\|web\|cli\]/);
+		assert.deepEqual(calls, []);
+	}
 });
