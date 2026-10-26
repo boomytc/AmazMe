@@ -31,7 +31,7 @@ import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
 import { createDesktopUpdates } from "./desktop-updates.ts";
 import { markUpdatedDesktopHealthy } from "./update-helper.ts";
-import { mayStartInstalledApp } from "./update-launch.ts";
+import { mayStartInstalledApp, shouldStartDesktopUpdates } from "./update-launch.ts";
 import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
 import {
 	desktopPythonBootPlan,
@@ -275,7 +275,7 @@ async function refreshApplicationMenu(): Promise<void> {
 						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: "primary", fresh: true }));
 					},
 					settings: () => send("settings"),
-					updates: () => { void updates?.show(); },
+					...(updates === undefined ? {} : { updates: () => { void updates?.show(); } }),
 				}),
 			),
 		);
@@ -666,11 +666,11 @@ async function boot(): Promise<void> {
 	const missingPython = plan.entries.find((entry) => !existsSync(entry));
 	if (missingPython !== undefined) throw new Error(`desktop python backend is missing: ${missingPython}`);
 	for (const step of plan.preflight) {
-		const result = await execFileAsync(plan.executable, [...step.args], { cwd: plan.cwd, env: plan.env });
-		if (step.command === "pair") pythonWebToken = String(result.stdout).trim();
+		await execFileAsync(plan.executable, [...step.args], { cwd: plan.cwd, env: plan.env });
 	}
+	pythonWebToken = readFileSync(join(pythonProfile, "web.token"), "utf8").trim();
 	if (pythonWebToken.length === 0 || pythonWebToken === readControlToken(pythonProfile)) {
-		throw new Error("desktop python pairing did not return a web token");
+		throw new Error("desktop python web token is missing or matches the control token");
 	}
 	const launch = { executable: plan.executable, args: plan.serveArgs, cwd: plan.cwd, env: plan.env, entries: plan.entries };
 	const timeout = readinessTimeout();
@@ -695,7 +695,8 @@ async function boot(): Promise<void> {
 	if (usingPythonBackend) await settlePythonUpdate();
 	const namedSession = deepLinkSession?.trim();
 	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: "primary" } : { workspace: "primary", fresh: true }));
-	if (!SMOKE && !notices.quitting) {
+	const installedRelease = app.isPackaged && existsSync(join(process.resourcesPath, "release-manifest.json"));
+	if (!SMOKE && !notices.quitting && shouldStartDesktopUpdates(installedRelease, app.getVersion())) {
 		const target = dirname(dirname(dirname(process.execPath)));
 		if (process.argv.includes("--amazme-update-job")) {
 			const deadline = Date.now() + 30_000;

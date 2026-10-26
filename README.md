@@ -10,13 +10,21 @@
 
 ### 一键启动桌面（macOS/Linux）
 
+首次使用或依赖变更后，先准备 Python 与 Node 依赖：
+
+```bash
+./start.sh --prepare
+```
+
+日常启动：
+
 ```bash
 ./start.sh
 ```
 
-脚本会自动回到仓库根目录，检查 uv 和 npm，同步 Python 与 Node 依赖，构建桌面所需的 workspace，并使用仓库内的 Python 后端打开 Electron。可以重复执行，不需要先手动运行 `serve` 或设置后端路径。
+准备命令只同步依赖，不打开桌面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。也可以直接运行 `npm run dev:desktop`，不需要先手动运行 `serve` 或设置后端路径。
 
-依赖已经准备好时，可跳过依赖安装，直接运行 `npm run dev:desktop`；它同样会自动使用仓库后端。需要打开其他项目时，使用 `AMAZME_GUI_CWD=/absolute/project ./start.sh`，或用 `AMAZME_GUI_SESSION=会话ID` 指定已有会话。
+需要打开其他项目时，使用 `AMAZME_GUI_CWD=/absolute/project ./start.sh`，或用 `AMAZME_GUI_SESSION=会话ID` 指定已有会话。
 
 首次打开后，在「设置 → 模型与连接」中：
 

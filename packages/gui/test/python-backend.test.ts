@@ -86,7 +86,7 @@ describe("packaged python backend", () => {
 		expect(() => parsePythonReadyLine(JSON.stringify({ url: "http://127.0.0.1:4310/", build_id: "short", host_epoch: 1, role: "host", protocol: "amazme-http/1", profile_id: "p" }))).toThrow(/build_id/);
 	});
 
-	test("plans init, pair, and serve without node or the tokens", () => {
+	test("plans init only for a new profile and serve without a pairing subprocess or tokens", () => {
 		const plan = desktopPythonBootPlan({
 			executable: "/Apps/amazme-backend",
 			profile: "/Profiles/main",
@@ -96,9 +96,8 @@ describe("packaged python backend", () => {
 			cwd: "/Work",
 			env: { ELECTRON_RUN_AS_NODE: "1", AMAZME_PYTHON_BACKEND: "/Apps/amazme-backend", PATH: "/usr/bin" },
 		});
-		expect(plan.preflight.map((step) => step.command)).toEqual(["init", "pair"]);
+		expect(plan.preflight.map((step) => step.command)).toEqual(["init"]);
 		expect(plan.preflight[0]?.args).toEqual(["init", "--profile", "/Profiles/main", "--workspace", "/Work", "--provider-config", "/Profiles/faux-provider.json"]);
-		expect(plan.preflight[1]?.args).toEqual(["pair", "--profile", "/Profiles/main"]);
 		expect(plan.serveArgs).toEqual(["serve", "--profile", "/Profiles/main", "--port", "0"]);
 		expect(plan.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
 		expect(plan.env.AMAZME_PYTHON_BACKEND).toBeUndefined();
@@ -107,7 +106,7 @@ describe("packaged python backend", () => {
 		const again = desktopPythonBootPlan({ ...{
 			executable: plan.executable, profile: "/Profiles/main", workspace: "/Work", providerConfig: "/Profiles/faux-provider.json", cwd: "/Work", env: {},
 		}, profileExists: true });
-		expect(again.preflight.map((step) => step.command)).toEqual(["pair"]);
+		expect(again.preflight).toEqual([]);
 	});
 
 	test("closes a window without stopping, and explicit quit uses the control token", () => {

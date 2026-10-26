@@ -14,7 +14,7 @@ export interface PythonReady {
 }
 
 export interface PythonCommand {
-	readonly command: "init" | "pair" | "serve";
+	readonly command: "init" | "serve";
 	readonly args: readonly string[];
 }
 
@@ -144,7 +144,6 @@ export function desktopPythonBootPlan(input: {
 			args: ["init", "--profile", input.profile, "--workspace", input.workspace, "--provider-config", input.providerConfig],
 		});
 	}
-	preflight.push({ command: "pair", args: ["pair", "--profile", input.profile] });
 	return {
 		executable: input.executable,
 		cwd: input.cwd,

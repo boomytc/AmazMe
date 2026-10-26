@@ -1,4 +1,9 @@
+import { gte } from "semver";
 import { privateUpdateDirectory, processIsAlive, readUpdateLock, updateLockState } from "./update-lock.ts";
+
+export function shouldStartDesktopUpdates(installedRelease: boolean, version: string): boolean {
+	return installedRelease && gte(version, "1.0.0");
+}
 
 /** The installer creates this lock while the original app still owns Electron's singleton. */
 export function mayStartInstalledApp(target: string, version: string, args: readonly string[]): boolean {

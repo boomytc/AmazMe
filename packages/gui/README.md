@@ -18,7 +18,7 @@ macOS 启动时在 `~/Library/Caches/AmazMe/desktop` 中缓存独立的 `AmazMe.
 npm run dev:desktop
 ```
 
-该命令按 package manifest 计算并顺序构建 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖。AI 使用 `build:offline`，已有模型数据不会被刷新；缺数据时先显式运行 `npm run hydrate:model-data`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
+该命令按 package manifest 计算 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖；源码、资源、构建配置、构建脚本或已安装依赖变化时按序重建，未变化时复用现有 dist。AI 使用 `build:offline`，已有模型数据不会被刷新；缺数据时先显式运行 `npm run hydrate:model-data`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
 
 界面语言仍读取 `AMAZME_CODING_AGENT_DIR` 或 `~/.amazme/agent/settings.json`。桌面包自己解析这个路径，不加载旧宿主。
 
@@ -36,7 +36,7 @@ Electron 是窗口壳。正式安装包带上 Python 后端后才打开页面。
 
 ## 确认后更新
 
-签名安装默认每天检查稳定版，可在“软件更新”菜单手动检查、关闭自动检查或切换预览渠道。检查只获取清单，用户确认后才下载；下载显示进度并可取消。校验通过后仍需单独确认“安装并重启”，“稍后”不会在普通退出时偷偷替换应用。开发/ad-hoc 安装、只读 DMG、App Translocation 或不可写目录会停止自动安装，不请求管理员权限。
+只有 1.0.0 及以上的已打包版本才初始化更新模块；源码运行和 1.0.0 前的本地构建不启动更新检查，也不显示更新菜单。正式签名安装默认每天检查稳定版，可在“软件更新”菜单手动检查、关闭自动检查或切换预览渠道。检查只获取清单，用户确认后才下载；下载显示进度并可取消。校验通过后仍需单独确认“安装并重启”，“稍后”不会在普通退出时偷偷替换应用。开发/ad-hoc 安装、只读 DMG、App Translocation 或不可写目录会停止自动安装，不请求管理员权限。
 
 清单与 CLI/TUI 共用版本、URL 和 SHA256 合同。桌面额外要求精确版本的 macOS/架构/大小元数据；逐次重定向仅允许 GitHub HTTPS 与其 Release CDN。流式下载和落盘文件都核对 SHA256，挂载后及复制暂存后重新验证代码签名、Gatekeeper、bundle ID、真实版本和架构。发布者 Team ID 来自已验证的当前安装，不取自 manifest、下载内容或普通环境变量；DMG 必须有有效 staple，不要求 app 单独已有 staple。
 

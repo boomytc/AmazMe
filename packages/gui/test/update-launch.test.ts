@@ -1,8 +1,16 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { mayStartInstalledApp } from "../src/update-launch.ts";
+import { mayStartInstalledApp, shouldStartDesktopUpdates } from "../src/update-launch.ts";
 import { createTempDir } from "./temp-dir.ts";
+
+test("desktop updates start only for packaged releases at or above 1.0.0", () => {
+	expect(shouldStartDesktopUpdates(false, "1.0.0")).toBe(false);
+	expect(shouldStartDesktopUpdates(true, "0.9.0")).toBe(false);
+	expect(shouldStartDesktopUpdates(true, "1.0.0-rc.1")).toBe(false);
+	expect(shouldStartDesktopUpdates(true, "1.0.0")).toBe(true);
+	expect(shouldStartDesktopUpdates(true, "1.1.0")).toBe(true);
+});
 
 test("a lock held during signature verification blocks ordinary startup; only the live installer's exact job may launch", () => {
 	const directory = realpathSync(createTempDir("amazme-update-launch-"));
