@@ -12,6 +12,7 @@ from amazme_backend.native_execution import (
     LocalProcess,
     ProcessIdentity,
     reconcile,
+    stop_tracked,
     tool_environment,
 )
 from amazme_backend.processes import ProcessReservation
@@ -104,3 +105,67 @@ async def test_killed_runner_does_not_invent_a_stop_receipt(tmp_path):
     # A recorded identity which is still alive cannot be counted as stopped.
     (directory / "tracked.json").write_text(json.dumps([ProcessIdentity.capture(psutil.Process()).model_dump()]))
     assert not await reconcile(directory, process.lease, permitted=True)
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS stop-before-kill behavior')
+async def test_cancel_does_not_wake_a_waiting_shell_into_its_next_command(tmp_path, monkeypatch):
+    import signal
+    import subprocess
+    import time
+
+    marker = tmp_path / 'must-not-run'
+    child = subprocess.Popen(['/bin/sh', '-c', 'sleep 30; printf continued > must-not-run'],
+        cwd=tmp_path, env=tool_environment(), start_new_session=True,
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    tracked = [ProcessIdentity.capture(psutil.Process(child.pid))]
+    try:
+        for _ in range(100):
+            descendants = psutil.Process(child.pid).children()
+            if descendants:
+                tracked.extend(ProcessIdentity.capture(process) for process in descendants)
+                break
+            await asyncio.sleep(.01)
+        assert len(tracked) > 1
+        send_signal = psutil.Process.send_signal
+
+        def allow_shell_to_wake(process, sig):
+            send_signal(process, sig)
+            if process.pid != child.pid and sig in {signal.SIGTERM, signal.SIGKILL}:
+                # Give the real shell time to observe its child's exit before the next signal.
+                time.sleep(.1)
+
+        monkeypatch.setattr(psutil.Process, 'send_signal', allow_shell_to_wake)
+        assert stop_tracked(tracked)
+        child.wait(timeout=3)
+        assert not marker.exists()
+    finally:
+        for identity in reversed(tracked):
+            process = identity.live()
+            if process:
+                process.kill()
+        child.wait(timeout=3)
+
+
+@pytest.mark.skipif(sys.platform != 'darwin', reason='macOS stop-before-kill behavior')
+def test_cancel_still_kills_when_stopping_is_denied(monkeypatch):
+    import signal
+    import subprocess
+
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], env=tool_environment())
+    identity = ProcessIdentity.capture(psutil.Process(child.pid))
+    send_signal = psutil.Process.send_signal
+
+    def deny_stop(process, sig):
+        if sig == signal.SIGSTOP:
+            raise psutil.AccessDenied(process.pid)
+        send_signal(process, sig)
+
+    monkeypatch.setattr(psutil.Process, 'send_signal', deny_stop)
+    try:
+        assert stop_tracked([identity])
+        child.wait(timeout=3)
+        assert child.returncode == -signal.SIGKILL
+    finally:
+        if child.poll() is None:
+            child.kill()
+        child.wait(timeout=3)

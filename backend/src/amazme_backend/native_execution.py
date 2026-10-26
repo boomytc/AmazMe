@@ -69,7 +69,19 @@ def tool_environment() -> dict[str, str]:
 
 
 def stop_tracked(tracked: list[ProcessIdentity]) -> bool:
-    for sig, delay in ((signal.SIGTERM, 0.4), (signal.SIGKILL, 1.5)):
+    freeze = sys.platform == "darwin"
+    if freeze:
+        # Stop parents first so a child's exit cannot wake its shell into the next command.
+        # A failed stop must still reach SIGKILL, which also terminates stopped processes.
+        for identity in tracked:
+            try:
+                process = identity.live()
+                if process:
+                    process.send_signal(signal.SIGSTOP)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    signals = [(signal.SIGKILL, 1.5)] if freeze else [(signal.SIGTERM, 0.4), (signal.SIGKILL, 1.5)]
+    for sig, delay in signals:
         waiting: list[psutil.Process] = []
         for identity in reversed(tracked):
             try:
