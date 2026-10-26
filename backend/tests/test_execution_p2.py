@@ -15,6 +15,7 @@ import pytest_asyncio
 from amazme_backend.common import Profile, lock, private_write
 from amazme_backend.contracts import (
     BackendError,
+    Cleanup,
     EffectResolution,
     FreezeSupervisor,
     HostFence,
@@ -757,3 +758,60 @@ async def test_native_unknown_effect_is_scoped_and_readonly_diagnostics_remain_a
     diagnostic = await call(owner, first, identity="diagnostic", effect="read")
     assert (await owner.run_tool(diagnostic)).stdout == "ok\n"
     assert (await owner.lookup_tool(ToolLookup(**request(first).model_dump(), call_id="first"))).state == "unknown"
+
+
+async def test_task_activity_counts_real_registries_not_idle_services(owner):
+    assert not (await owner.task_activity()).active
+    await owner.db.call(lambda db: db.execute(
+        "INSERT INTO terminals(id,session,command,cols,rows,phase,workspace) VALUES(?,?,?,?,?,?,?)",
+        ("terminal", "a" * 32, "sh", 80, 24, "running", "primary")), write=True)
+    assert (await owner.task_activity()).active
+    await owner.db.call(lambda db: db.execute("UPDATE terminals SET phase='exited',clean=1 WHERE id='terminal'"), write=True)
+    assert not (await owner.task_activity()).active
+    job = asyncio.create_task(asyncio.sleep(30))
+    owner.jobs["job"] = job
+    try:
+        assert (await owner.task_activity()).active
+    finally:
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
+
+
+async def test_normal_shutdown_asks_workers_to_cancel_work(owner, monkeypatch):
+    info, _ = await worker(owner)
+    stopped = []
+
+    async def peer(worker_info, method="GET", path="/identity", body=None):
+        if path == "/stop":
+            stopped.append(body)
+        return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id,
+                        instance_id=worker_info.worker_id, pid=123, role="worker", host_epoch=owner.host_epoch,
+                        fingerprint=owner.build, state="ready")
+
+    owner._peer_identity = peer
+    owner._stop_codes = AsyncMock()
+    owner._close_services = AsyncMock()
+    owner._reconcile_scopes = AsyncMock()
+    owner._retire_worker = AsyncMock(return_value=Cleanup(
+        session_id=info.session_id, execution_epoch=info.execution_epoch, state="clean", resources=[]))
+    monkeypatch.setattr("amazme_backend.supervisor.wait_exited", AsyncMock())
+    await owner.shutdown(HostFence(build_id=owner.build, host_epoch=owner.host_epoch))
+    assert len(stopped) == 1 and stopped[0].reason == "shutdown"
+    assert owner._retire_worker.await_args.args[1] == "shutdown"
+
+
+async def test_clean_worker_exit_does_not_consume_restart_budget(owner):
+    info, reservation = await worker(owner)
+    owner.children[info.worker_id] = SimpleNamespace(returncode=0, wait=AsyncMock())
+    reservation.close()
+    assert not owner._unexpected_worker_exit(info)
+    await owner._retire_worker(info, "recovery", failed=owner._unexpected_worker_exit(info))
+    assert await owner.db.call(lambda db: db.execute("SELECT attempts FROM budgets WHERE session=?", (info.session_id,)).fetchone()) is None
+
+    failed, failed_reservation = await worker(owner)
+    owner.children[failed.worker_id] = SimpleNamespace(returncode=1, wait=AsyncMock())
+    failed_reservation.close()
+    assert owner._unexpected_worker_exit(failed)
+    await owner._retire_worker(failed, "recovery", failed=owner._unexpected_worker_exit(failed))
+    attempts = await owner.db.call(lambda db: db.execute("SELECT attempts FROM budgets WHERE session=?", (info.session_id,)).fetchone())
+    assert attempts is not None and attempts[0] == 1

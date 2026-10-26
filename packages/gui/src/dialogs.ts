@@ -73,17 +73,47 @@ export interface QuitDialogCopy {
 	readonly title: string;
 	readonly message: string;
 	readonly detail: string;
-	/** Index 0 stays in the app; index 1 stops the host and quits. */
 	readonly buttons: readonly [string, string];
 }
 
-/** Copy for the explicit quit path. Closing the window is the non-destructive alternative. */
+export interface CloseDialogCopy {
+	readonly title: string;
+	readonly message: string;
+	readonly detail: string;
+	readonly buttons: readonly [string, string, string];
+	readonly checkboxLabel: string;
+}
+
+export function closeDialogCopy(locale: Locale): CloseDialogCopy {
+	return {
+		title: translate(locale, "desktop.close.tasksTitle"),
+		message: translate(locale, "desktop.close.tasksTitle"),
+		detail: translate(locale, "desktop.close.tasksDetail"),
+		buttons: [
+			translate(locale, "desktop.close.background"),
+			translate(locale, "desktop.close.stopQuit"),
+			translate(locale, "desktop.dialog.cancel"),
+		],
+		checkboxLabel: translate(locale, "desktop.close.remember"),
+	};
+}
+
 export function quitDialogCopy(locale: Locale): QuitDialogCopy {
 	return {
-		title: translate(locale, "desktop.quit.title"),
-		message: translate(locale, "desktop.quit.message"),
+		title: translate(locale, "desktop.close.tasksTitle"),
+		message: translate(locale, "desktop.close.tasksTitle"),
 		detail: translate(locale, "desktop.quit.detail"),
-		buttons: [translate(locale, "desktop.dialog.cancel"), translate(locale, "desktop.dialog.quit")],
+		buttons: [translate(locale, "desktop.dialog.cancel"), translate(locale, "desktop.close.stopQuit")],
+	};
+}
+
+export function lifecycleErrorCopy(locale: Locale, kind: "activity" | "preferences" | "cleanup"): QuitDialogCopy {
+	const prefix = kind === "activity" ? "activity" : kind === "preferences" ? "preferences" : "cleanup";
+	return {
+		title: translate(locale, `desktop.lifecycle.${prefix}.title`),
+		message: translate(locale, `desktop.lifecycle.${prefix}.title`),
+		detail: translate(locale, `desktop.lifecycle.${prefix}.detail`),
+		buttons: [translate(locale, `desktop.lifecycle.${prefix}.retry`), translate(locale, "desktop.lifecycle.later")],
 	};
 }
 

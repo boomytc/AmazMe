@@ -55,11 +55,16 @@ export interface HostSupervisorOptions {
 	readonly onUnexpectedExit?: (detail: HostExitDetail) => void;
 }
 
+export interface HostShutdownOptions {
+	readonly request?: () => Promise<void>;
+	readonly force?: boolean;
+}
+
 export interface HostSupervisor {
 	/** Start once. Later calls join the same attempt. */
 	start(): Promise<string>;
-	/** Stop once. SIGTERM, then SIGKILL after the grace period. */
-	shutdown(): Promise<void>;
+	/** Stop once. A normal desktop quit may refuse escalation and surface a retryable timeout. */
+	shutdown(options?: HostShutdownOptions): Promise<void>;
 	/** Bounded tail of stdout and stderr. Still grows after the launch line, then drops the head. */
 	tail(): string;
 	/** Present after the packaged Python backend prints its readiness line. */
@@ -153,6 +158,7 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 	let exitResolve: (() => void) | undefined;
 	let ready = false;
 	let shuttingDown = false;
+	let processExited = false;
 	let output = "";
 	let readinessTimer: ReturnType<typeof setTimeout> | undefined;
 	const parser = createReadinessParser();
@@ -225,6 +231,7 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 				exitResolve?.();
 			});
 			spawned.onExit((code, signal) => {
+				processExited = true;
 				exitResolve?.();
 				if (ready) {
 					if (!shuttingDown) options.onUnexpectedExit?.({ code, signal, tail: output });
@@ -251,16 +258,18 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 		return startPromise;
 	};
 
-	const shutdown = (): Promise<void> => {
+	const shutdown = async (shutdownOptions: HostShutdownOptions = {}): Promise<void> => {
 		shutdownPromise ??= (async () => {
 			const spawned = child;
-			if (spawned === undefined) return;
+			if (spawned === undefined || processExited) return;
 			shuttingDown = true;
 			if (readinessTimer !== undefined) {
 				clearTimeout(readinessTimer);
 				readinessTimer = undefined;
 			}
-			spawned.kill("SIGTERM");
+			if (shutdownOptions.request !== undefined) await shutdownOptions.request();
+			else spawned.kill("SIGTERM");
+			if (processExited) return;
 			const closed = exited ?? Promise.resolve();
 			let timer: ReturnType<typeof setTimeout> | undefined;
 			const outcome = await Promise.race([
@@ -273,11 +282,17 @@ export function createHostSupervisor(options: HostSupervisorOptions): HostSuperv
 			]);
 			if (timer !== undefined) clearTimeout(timer);
 			if (outcome === "timeout") {
+				if (shutdownOptions.force === false) throw new Error(`desktop host shutdown timed out after ${String(shutdownTimeoutMs)}ms`);
 				spawned.kill("SIGKILL");
 				await closed;
 			}
 		})();
-		return shutdownPromise;
+		try {
+			await shutdownPromise;
+		} catch (error) {
+			shutdownPromise = undefined;
+			throw error;
+		}
 	};
 
 	return { start, shutdown, tail: () => output, pythonReady: () => parser.pythonReady() };

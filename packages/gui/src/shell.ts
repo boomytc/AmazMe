@@ -1,10 +1,7 @@
 /**
  * Which host and page failures are errors, and which are the app going away.
- *
- * Closing the window without a tray and a normal quit both stop the host. Those exits must
- * not open a dialog. The flag is set at the moment the user asks to leave — the window `close` event,
- * or the start of quit — which is before the child is killed and before the renderer is
- * torn down. A later exit or `render-process-gone` then sees the flag and stays quiet.
+ * Hiding a window does not set this flag. Only an actual quit or an unrecoverable host failure
+ * suppresses the renderer and child-exit diagnostics that follow teardown.
  */
 import { shouldPresentRenderFailure, type HostFailure, type RenderFailure } from "./dialogs.ts";
 import type { HostExitDetail } from "./host.ts";
@@ -22,8 +19,6 @@ export interface ShellPorts {
 }
 
 export interface ShellController {
-	/** The user asked the window to close. A host exit after this is expected. */
-	userClosedWindow(): void;
 	/** Normal quit: the quit path, or the dialog's quit button. A host exit after this is expected. */
 	applicationWillQuit(): void;
 	readonly quitting: boolean;
@@ -43,9 +38,6 @@ export function createShellController(ports: ShellPorts): ShellController {
 	};
 
 	return {
-		userClosedWindow() {
-			quitting = true;
-		},
 		applicationWillQuit() {
 			quitting = true;
 		},

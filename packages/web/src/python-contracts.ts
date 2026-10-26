@@ -623,6 +623,8 @@ export type InterfacePreferences = {
   "appearance"?: "system" | "light" | "dark";
   "locale"?: "auto" | "zh" | "en";
   "showWelcome"?: boolean;
+  "closeWindow"?: "background" | "quit";
+  "closeWindowPrompt"?: boolean;
   "textFont"?: string;
   "codeFont"?: string;
   "terminalFont"?: string;
@@ -1477,6 +1479,11 @@ export type SupervisorHealth = {
   "blocked"?: Array<string>;
 };
 
+export type TaskActivity = {
+  "active": boolean;
+  "tasks"?: number;
+};
+
 export type TerminalList = {
   "terminals": Array<TerminalView>;
 };
@@ -1875,6 +1882,7 @@ export interface ApiModels {
   Snapshot: Snapshot;
   Submit: Submit;
   SupervisorHealth: SupervisorHealth;
+  TaskActivity: TaskActivity;
   TerminalList: TerminalList;
   TerminalOpen: TerminalOpen;
   TerminalSize: TerminalSize;

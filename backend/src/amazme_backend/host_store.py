@@ -154,7 +154,7 @@ class HostStore:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS control(id INTEGER PRIMARY KEY,epoch INTEGER NOT NULL,
                   port INTEGER NOT NULL DEFAULT 0,freeze_id TEXT NOT NULL DEFAULT '',blocked TEXT NOT NULL DEFAULT '',
-                  execution_initialized INTEGER NOT NULL DEFAULT 0);
+                  execution_initialized INTEGER NOT NULL DEFAULT 0,quitting INTEGER NOT NULL DEFAULT 0);
                 INSERT OR IGNORE INTO control(id,epoch) VALUES(1,0);
                 CREATE TABLE IF NOT EXISTS hosts(epoch INTEGER PRIMARY KEY,instance TEXT UNIQUE NOT NULL,
                   build TEXT NOT NULL,lease TEXT NOT NULL);
@@ -241,9 +241,14 @@ class HostStore:
                                       "revision": "INTEGER NOT NULL DEFAULT 0", "removed": "INTEGER NOT NULL DEFAULT 0"}.items():
                 if name not in project_columns:
                     db.execute(f"ALTER TABLE projects ADD COLUMN {name} {declaration}")
+            if "quitting" not in {str(row[1]) for row in db.execute("PRAGMA table_info(control)")}:
+                db.execute("ALTER TABLE control ADD COLUMN quitting INTEGER NOT NULL DEFAULT 0")
         await self._call(create)
         def begin(db: sqlite3.Connection) -> int:
-            db.execute("UPDATE control SET epoch=epoch+1 WHERE id=1")
+            if db.execute("SELECT quitting FROM control WHERE id=1").fetchone()[0]:
+                db.execute("UPDATE deliveries SET state='rejected',error_code='host_stopping',error_status=503 "
+                           "WHERE state='pending'")
+            db.execute("UPDATE control SET epoch=epoch+1,quitting=0 WHERE id=1")
             epoch = int(db.execute("SELECT epoch FROM control WHERE id=1").fetchone()[0])
             db.execute("INSERT INTO hosts VALUES(?,?,?,?)", (epoch, instance, build, lease.model_dump_json()))
             return epoch
@@ -546,6 +551,8 @@ class HostStore:
                 if existing["digest"] != digest:
                     raise BackendError("request_conflict")
                 return self._delivery(existing)
+            if db.execute("SELECT quitting FROM control WHERE id=1").fetchone()[0]:
+                raise BackendError("host_stopping", status=503)
             row = db.execute("SELECT archived,branch_ready FROM sessions WHERE id=?", (session,)).fetchone()
             if row is None:
                 raise BackendError("session_not_found", status=404)
@@ -565,6 +572,13 @@ class HostStore:
             db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (time.time_ns() // 1_000_000, session))
             return self._delivery(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())
         return await self.transaction(operation)
+
+    async def begin_quit(self) -> None:
+        def operation(db: sqlite3.Connection) -> None:
+            db.execute("UPDATE control SET quitting=1 WHERE id=1")
+            db.execute("UPDATE deliveries SET state='rejected',error_code='host_stopping',error_status=503 "
+                       "WHERE state='pending'")
+        await self.transaction(operation)
 
     async def pin_delivery_provider(self, identity: str, provider: ProviderConfig,
                                     transports: dict[str, ProviderTransport] | None = None) -> Delivery:

@@ -8,7 +8,7 @@ macOS 启动时在 `~/Library/Caches/AmazMe/desktop` 中缓存独立的 `AmazMe.
 
 子进程跑包内的 `amazme-backend`，读到就绪行再 `loadURL`，窗口开 `contextIsolation`、`sandbox`、`nodeIntegration: false`。
 
-关闭主窗口默认只隐藏窗口，网页宿主和运行中的会话继续工作；托盘图标用 `assets/tray-icon.png` 恢复窗口，托盘菜单、应用菜单和 `Cmd/Ctrl+Q` 的退出共用一个确认框。托盘创建失败时退回原来的行为：关闭窗口即结束宿主。桌面壳负责窗口和宿主生命周期，运行依赖由发布流程提供。
+关闭主窗口默认只隐藏窗口，网页宿主和运行中的会话继续工作；Dock 或 `assets/tray-icon.png` 托盘恢复原窗口，不重复启动后端。设置的“关闭窗口时”也可改为退出应用，“有任务运行时询问”独立控制是否先确认，两项偏好沿用 Python 产品设置存储。活动关闭框可记住后台或退出选择；应用菜单、托盘菜单和 `Cmd/Ctrl+Q` 始终表达退出意图，使用独立的停止任务确认，不修改关闭偏好。窗口、菜单与快捷键由同一生命周期状态机协调，重复请求不会并发弹窗或清理。
 
 项目创建和编辑支持多个源文件夹。“添加文件夹”使用原生目录选择器，preload 只暴露这一项选择能力，主进程核对当前窗口、主页面和宿主地址后返回所选路径。项目保存、授权、会话执行目录与 Web 共用宿主服务。
 
@@ -24,13 +24,13 @@ npm run dev:desktop
 
 菜单和错误框优先使用当前页面的 `lang`，页面未就绪、已崩溃或语言读取超时时使用同一 profile 的全局 `locale` 设置（与 `SettingsManager.getLocalePreference` 一致，不读项目覆盖）；`auto` 才跟随系统。程序生成的英文错误留在有界详情中，摘要按错误类型、退出码和超时参数本地化。
 
-桌面拥有的 Python 后端在显式退出时停止。关掉窗口不取消共享后台工作。子进程没有父进程 stdin 管道。
+桌面拥有的 Python 后端在显式退出时先阻止新投递、取消活动工作，再按进程租约和注册信息回收 Supervisor、Worker、终端、插件、MCP、工具及 Computer Use 驱动。关闭窗口继续运行不会取消任务。活动状态来自 `/control/desktop/activity` 对现有会话、投递和监督状态的只读聚合，查询失败不按空闲处理。控制关闭完成后还等待 Host 自然退出；清理失败或超时会保留应用供重试，不自动强杀或宣称成功。子进程没有父进程 stdin 管道。
 
 壳的 typecheck 和构建解析 `@amazme/web/locale` 与 `@amazme/web/strings` 的 dist。单独启动这个包之前，Web 的 dist 要已经在。桌面运行时不再依赖 `@amazme/coding-agent`。
 
 需要 Node.js 22.19 或更新版本来构建窗口。业务宿主是包内的 Python 后端。项目目录可显式指定，设置 `AMAZME_GUI_CWD`。`AMAZME_GUI_SESSION` 用会话 id 打开指定会话，地址里同时写上宿主和工作区。
 
-`npm test` 检查 Python 启动合同、语言和错误合同；不含真实窗口 smoke。构建后用 `npm run test:smoke --workspace @amazme/gui` 验证没有 Python 后端时真实 Electron 进程会拒绝启动。smoke 使用临时目录，不读取用户凭据。
+`npm test` 检查 Python 启动合同、关闭/退出状态转换、竞态、偏好持久化、清理重试、语言和错误合同；不含真实窗口 smoke。构建后用 `npm run test:smoke --workspace @amazme/gui` 验证没有 Python 后端时真实 Electron 进程会拒绝启动。smoke 使用临时目录，不读取用户凭据。
 
 Electron 是窗口壳。正式安装包带上 Python 后端后才打开页面。更新辅助程序仍使用包内 Node。
 

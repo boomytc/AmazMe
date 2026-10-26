@@ -197,4 +197,55 @@ describe("host supervisor", () => {
 		await expect(supervisor.start()).resolves.toBe("http://127.0.0.1:4310/");
 		await supervisor.shutdown();
 	});
+
+	test("a graceful shutdown waits for natural exit without signaling the owned child", async () => {
+		const fake = fakeHost();
+		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
+		const starting = supervisor.start();
+		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		await starting;
+		const request = vi.fn(async () => { fake.emitExit(0, null); });
+		await supervisor.shutdown({ request, force: false });
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(fake.kills).toEqual([]);
+	});
+
+	test("a graceful timeout is retryable and never escalates without explicit force", async () => {
+		vi.useFakeTimers();
+		try {
+			const fake = fakeHost();
+			const supervisor = createHostSupervisor({ spawnHost: () => fake.child, shutdownTimeoutMs: 5_000 });
+			const starting = supervisor.start();
+			fake.emitStdout("Web: http://127.0.0.1:1/\n");
+			await starting;
+			const request = vi.fn(async () => {});
+			const stopped = supervisor.shutdown({ request, force: false });
+			const assertion = expect(stopped).rejects.toThrow(/shutdown timed out/);
+			await vi.advanceTimersByTimeAsync(5_000);
+			await assertion;
+			expect(fake.kills).toEqual([]);
+			fake.emitExit(0, null);
+			await supervisor.shutdown({ request, force: false });
+			expect(request).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	test("a failed graceful request can be retried and concurrent callers share it", async () => {
+		const fake = fakeHost();
+		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
+		const starting = supervisor.start();
+		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		await starting;
+		const request = vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockImplementation(async () => { fake.emitExit(0, null); });
+		const first = supervisor.shutdown({ request, force: false });
+		const concurrent = supervisor.shutdown({ request, force: false });
+		await expect(first).rejects.toThrow("unavailable");
+		await expect(concurrent).rejects.toThrow("unavailable");
+		expect(request).toHaveBeenCalledTimes(1);
+		expect(fake.kills).toEqual([]);
+		await supervisor.shutdown({ request, force: false });
+		expect(request).toHaveBeenCalledTimes(2);
+	});
 });

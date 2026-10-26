@@ -20,8 +20,6 @@ import {
 	requirePythonBackend,
 	resolvePythonBackend,
 	settlePythonBackendUpdate,
-	shouldStopSharedBackend,
-	windowCloseAction,
 	type PythonReady,
 } from "../src/python-backend.ts";
 import { createTempDir } from "./temp-dir.ts";
@@ -109,13 +107,7 @@ describe("packaged python backend", () => {
 		expect(again.preflight).toEqual([]);
 	});
 
-	test("closes a window without stopping, and explicit quit uses the control token", () => {
-		expect(shouldStopSharedBackend("window-closed")).toBe(false);
-		expect(shouldStopSharedBackend("explicit-quit")).toBe(true);
-		expect(windowCloseAction({ quitting: false, pythonBackend: true, tray: true })).toBe("hide");
-		expect(windowCloseAction({ quitting: false, pythonBackend: true, tray: false })).toBe("allow");
-		expect(windowCloseAction({ quitting: false, pythonBackend: false, tray: false })).toBe("quit");
-		expect(windowCloseAction({ quitting: true, pythonBackend: true, tray: true })).toBe("allow");
+	test("explicit quit uses the control token and the existing shutdown timeout", () => {
 		const request = pythonShutdownRequest(ready(), CONTROL, WEB);
 		expect(request.url).toBe("http://127.0.0.1:4310/control/shutdown");
 		expect(request.headers.Authorization).toBe(`Bearer ${CONTROL}`);

@@ -19,26 +19,6 @@ function recordingController() {
 }
 
 describe("quitting flag", () => {
-	test("closing the window does not dialog for the host exit or the renderer teardown that follows", async () => {
-		const { shell, hosts, renders } = recordingController();
-		const fake = fakeHost();
-		const supervisor = createHostSupervisor({
-			spawnHost: () => fake.child,
-			onUnexpectedExit: (detail) => {
-				shell.hostExited(detail);
-			},
-		});
-		const pending = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:1/\n");
-		await pending;
-		shell.userClosedWindow();
-		shell.renderProcessGone({ reason: "killed", exitCode: 0 });
-		fake.emitExit(null, "SIGTERM");
-		expect(shell.quitting).toBe(true);
-		expect(hosts).toEqual([]);
-		expect(renders).toEqual([]);
-	});
-
 	test("a normal application quit does not dialog for the host exit it causes", async () => {
 		const { shell, hosts, renders } = recordingController();
 		const fake = fakeHost();
@@ -64,12 +44,7 @@ describe("quitting flag", () => {
 		expect(renders).toEqual([]);
 	});
 
-	test("a startup failure during close or quit is not a dialog", () => {
-		const closed = recordingController();
-		closed.shell.userClosedWindow();
-		closed.shell.startupFailed({ kind: "spawn-error", message: "desktop host failed to spawn: missing", tail: "" });
-		expect(closed.hosts).toEqual([]);
-
+	test("a startup failure during quit is not a dialog", () => {
 		const quit = recordingController();
 		quit.shell.applicationWillQuit();
 		quit.shell.startupFailed({

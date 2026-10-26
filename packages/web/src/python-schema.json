@@ -3244,6 +3244,20 @@
           "title": "Showwelcome",
           "default": true
         },
+        "closeWindow": {
+          "type": "string",
+          "enum": [
+            "background",
+            "quit"
+          ],
+          "title": "Closewindow",
+          "default": "background"
+        },
+        "closeWindowPrompt": {
+          "type": "boolean",
+          "title": "Closewindowprompt",
+          "default": true
+        },
         "textFont": {
           "type": "string",
           "maxLength": 256,
@@ -7999,6 +8013,25 @@
         "epochs"
       ],
       "title": "SupervisorHealth"
+    },
+    "TaskActivity": {
+      "properties": {
+        "active": {
+          "type": "boolean",
+          "title": "Active"
+        },
+        "tasks": {
+          "type": "integer",
+          "title": "Tasks",
+          "default": 0
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "active"
+      ],
+      "title": "TaskActivity"
     },
     "TerminalList": {
       "properties": {

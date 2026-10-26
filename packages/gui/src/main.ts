@@ -19,8 +19,10 @@ import {
 	type MessageBoxOptions,
 } from "electron";
 import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "./locale.ts";
-import { hostFailureCopy, quitDialogCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
+import { closeDialogCopy, hostFailureCopy, lifecycleErrorCopy, quitDialogCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
 import { createHostSupervisor, spawnNodeChild, type HostStartupFailure, type HostSupervisor } from "./host.ts";
+import { PythonDesktopApi } from "./desktop-api.ts";
+import { createDesktopLifecycle, type DesktopLifecycle, type LifecycleError } from "./lifecycle.ts";
 import { hostWorkingDirectory } from "./launch.ts";
 import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
 import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
@@ -44,8 +46,7 @@ import {
 	requirePythonBackend,
 	resolvePythonBackend,
 	settlePythonBackendUpdate,
-	shouldStopSharedBackend,
-	windowCloseAction,
+	PYTHON_SHUTDOWN_TIMEOUT_MS,
 } from "./python-backend.ts";
 
 const execFileAsync = promisify(execFile);
@@ -78,9 +79,6 @@ const pageUrls = new Map<number, string>();
 const readiedWindows = new Set<number>();
 const windowPending = new Map<number, number>();
 let nextWindowPartition = 0;
-let shutdownPromise: Promise<void> | undefined;
-let quitReleased = false;
-let quitRequested = false;
 let showingDialog = false;
 let deferredHost: HostFailure | undefined;
 /** AMAZME_GUI_SESSION opens one conversation without changing the shared last-selection file. */
@@ -88,8 +86,9 @@ const deepLinkSession = process.env.AMAZME_GUI_SESSION;
 let startupFailure: HostStartupFailure | undefined;
 let folderPicker: Promise<readonly string[]> | undefined;
 let tray: Tray | undefined;
-let quitPrompt: Promise<boolean> | undefined;
 let notices: ShellController;
+let lifecycle: DesktopLifecycle<BrowserWindow>;
+let desktopApi: PythonDesktopApi;
 let updates: ReturnType<typeof createDesktopUpdates> | undefined;
 const desktopUpdateToken = randomBytes(32).toString("hex");
 let usingPythonBackend = false;
@@ -99,15 +98,15 @@ let pythonWebToken = "";
 async function stopPythonBackend(): Promise<void> {
 	const ready = host?.pythonReady();
 	if (!usingPythonBackend || ready === undefined || pythonProfile.length === 0 || pythonWebToken.length === 0) return;
-	try {
-		const request = pythonShutdownRequest(ready, readControlToken(pythonProfile), pythonWebToken);
-		const response = await fetch(request.url, {
-			method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(request.timeoutMs),
-		});
+	const request = pythonShutdownRequest(ready, readControlToken(pythonProfile), pythonWebToken);
+	const response = await fetch(request.url, {
+		method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(request.timeoutMs),
+	});
+	if (!response.ok) {
 		await response.body?.cancel();
-	} catch (error: unknown) {
-		console.error(`desktop python shutdown failed: ${error instanceof Error ? error.message : "request failed"}`);
+		throw new Error(`desktop python shutdown failed (${String(response.status)})`);
 	}
+	await response.body?.cancel();
 }
 
 function pythonUpdateFile(): string {
@@ -210,11 +209,8 @@ function readinessTimeout(): number | undefined {
 }
 
 function shutdownHost(): Promise<void> {
-	shutdownPromise ??= (async () => {
-		await stopPythonBackend();
-		await (host?.shutdown() ?? Promise.resolve());
-	})();
-	return shutdownPromise;
+	if (host === undefined) return Promise.resolve();
+	return host.shutdown({ ...(host.pythonReady() === undefined ? {} : { request: stopPythonBackend }), force: false });
 }
 
 async function currentLocale() {
@@ -360,51 +356,18 @@ async function ask(options: MessageBoxOptions): Promise<number> {
 }
 
 function requestQuit(): void {
-	notices.applicationWillQuit();
-	if (quitReleased || quitRequested) return;
-	quitRequested = true;
-	void shutdownHost().finally(() => {
-		void updates?.dispose().finally(() => { quitReleased = true; app.quit(); });
-		if (updates === undefined) { quitReleased = true; app.quit(); }
-	});
+	void lifecycle.quitImmediately();
 }
 
-/** The explicit quit path asks before it stops the host; a hidden window can be reopened. */
 async function requestUserQuit(): Promise<void> {
-	if (quitReleased || quitRequested || showingDialog) return;
-	quitPrompt ??= (async () => {
-		if (SMOKE) return true;
-		showWindow();
-		showingDialog = true;
-		try {
-			const locale = await currentLocale();
-			const copy = quitDialogCopy(locale);
-			return await ask({
-				type: "question",
-				title: copy.title,
-				message: copy.message,
-				detail: copy.detail,
-				buttons: [...copy.buttons],
-				defaultId: 0,
-				cancelId: 0,
-				noLink: true,
-			}) === 1;
-		} catch (error: unknown) {
-			console.error(`desktop quit dialog failed: ${error instanceof Error ? error.message : String(error)}`);
-			return false;
-		} finally {
-			showingDialog = false;
-		}
-	})().finally(() => { quitPrompt = undefined; });
-	const confirmed = await quitPrompt;
-	if (confirmed) {
-		requestQuit();
-		return;
-	}
-	// A host failure that arrived while the quit dialog was open still needs its own dialog.
+	await lifecycle.requestQuit();
+}
+
+function finishLifecycleDialog(): void {
+	showingDialog = false;
 	const failure = deferredHost;
 	deferredHost = undefined;
-	if (failure !== undefined) beginHostDialog(failure);
+	if (failure !== undefined && !notices.quitting) beginHostDialog(failure);
 }
 
 function logHostFailure(failure: HostFailure): void {
@@ -417,11 +380,11 @@ function logHostFailure(failure: HostFailure): void {
 
 /** The host is already unusable. Shut it down, then leave with a failure status. */
 function leaveAfterHostFailure(): void {
+	if (notices.quitting) return;
 	notices.applicationWillQuit();
-	if (quitReleased || quitRequested) return;
-	quitRequested = true;
-	void shutdownHost().finally(() => {
-		quitReleased = true;
+	void shutdownHost().catch((error: unknown) => {
+		console.error(`desktop failure cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+	}).finally(() => {
 		app.exit(1);
 	});
 }
@@ -486,6 +449,75 @@ function presentRenderFailure(failure: RenderFailure): void {
 }
 
 notices = createShellController({ presentHostFailure, presentRenderFailure });
+
+async function lifecycleBox(options: () => Promise<MessageBoxOptions>, cancelId: number, target?: BrowserWindow): Promise<{ readonly response: number; readonly checkboxChecked: boolean }> {
+	if (SMOKE) return { response: cancelId, checkboxChecked: false };
+	if (target !== undefined && !target.isDestroyed()) target.show();
+	else showWindow();
+	showingDialog = true;
+	try {
+		const requested = await options();
+		const parent = target !== undefined && !target.isDestroyed() ? target : liveWindow();
+		return parent === undefined ? await dialog.showMessageBox(requested) : await dialog.showMessageBox(parent, requested);
+	} catch (error: unknown) {
+		console.error(`desktop lifecycle dialog failed: ${error instanceof Error ? error.message : String(error)}`);
+		return { response: cancelId, checkboxChecked: false };
+	} finally {
+		finishLifecycleDialog();
+	}
+}
+
+desktopApi = new PythonDesktopApi(() => host?.pythonReady(), () => pythonProfile, () => pythonWebToken);
+lifecycle = createDesktopLifecycle<BrowserWindow>({
+	readPreferences: () => desktopApi.readPreferences(),
+	readActivity: () => desktopApi.activity(),
+	savePreferences: value => desktopApi.savePreferences(value),
+	confirmClose: async target => {
+		const result = await lifecycleBox(async () => {
+			const copy = closeDialogCopy(await currentLocale());
+			return {
+				type: "question", title: copy.title, message: copy.message, detail: copy.detail,
+				buttons: [...copy.buttons], defaultId: 0, cancelId: 2, noLink: true,
+				checkboxLabel: copy.checkboxLabel, checkboxChecked: false,
+			};
+		}, 2, target);
+		return {
+			choice: result.response === 0 ? "background" : result.response === 1 ? "quit" : "cancel",
+			remember: result.response !== 2 && result.checkboxChecked,
+		};
+	},
+	confirmQuit: async () => {
+		const result = await lifecycleBox(async () => {
+			const copy = quitDialogCopy(await currentLocale());
+			return {
+				type: "question", title: copy.title, message: copy.message, detail: copy.detail,
+				buttons: [...copy.buttons], defaultId: 0, cancelId: 0, noLink: true,
+			};
+		}, 0);
+		return result.response === 1;
+	},
+	reportError: async (kind: LifecycleError) => {
+		const result = await lifecycleBox(async () => {
+			const copy = lifecycleErrorCopy(await currentLocale(), kind);
+			return {
+				type: "warning", title: copy.title, message: copy.message, detail: copy.detail,
+				buttons: [...copy.buttons], defaultId: 0, cancelId: 1, noLink: true,
+			};
+		}, 1);
+		return result.response === 0;
+	},
+	hideWindow: target => {
+		if (target.isDestroyed()) return;
+		if (target.isFullScreen()) target.setFullScreen(false);
+		target.hide();
+	},
+	applicationWillQuit: () => notices.applicationWillQuit(),
+	cleanup: async () => {
+		await shutdownHost();
+		await updates?.dispose();
+	},
+	releaseQuit: () => app.quit(),
+});
 
 /**
  * The page title is the only signal. Electron still applies it. A rise from no pending approvals
@@ -583,15 +615,9 @@ async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<
 		void refreshApplicationMenu();
 	});
 	created.on("close", (event) => {
-		const action = windowCloseAction({ quitting: notices.quitting, pythonBackend: usingPythonBackend, tray: tray !== undefined });
-		if (action === "allow") return;
+		if (lifecycle.allowQuit()) return;
 		event.preventDefault();
-		if (action === "hide") {
-			if (created.isFullScreen()) created.setFullScreen(false);
-			created.hide();
-			return;
-		}
-		requestQuit();
+		void lifecycle.requestClose(created);
 	});
 	watchPendingApprovals(created);
 	let contextMenuRequest = 0;
@@ -640,7 +666,6 @@ async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<
 	if (process.env.AMAZME_GUI_SMOKE_HOLD === "1") return;
 	notices.applicationWillQuit();
 	await shutdownHost();
-	quitReleased = true;
 	app.exit(0);
 }
 
@@ -681,6 +706,7 @@ async function boot(): Promise<void> {
 			return child;
 		},
 		...(timeout === undefined ? {} : { readinessTimeoutMs: timeout }),
+		shutdownTimeoutMs: PYTHON_SHUTDOWN_TIMEOUT_MS,
 		log: (chunk) => {
 			process.stderr.write(chunk);
 		},
@@ -709,7 +735,7 @@ async function boot(): Promise<void> {
 		}
 		updates = createDesktopUpdates({ version: app.getVersion(), executable: process.execPath, userData: app.getPath("userData"), locale: currentLocale,
 			confirmQuit: async () => {
-				if (showingDialog || quitRequested || totalPendingApprovals() > 0) throw new Error("busy");
+				if (showingDialog || lifecycle.quitting || totalPendingApprovals() > 0) throw new Error("busy");
 				showingDialog = true; showWindow();
 				try {
 					const locale = await currentLocale();
@@ -753,13 +779,11 @@ async function initializeDesktop(): Promise<void> {
 		else showWindow();
 	});
 	app.on("window-all-closed", () => {
-		if (usingPythonBackend && !shouldStopSharedBackend("window-closed")) return;
-		if (tray === undefined || SMOKE) app.quit();
+		if (SMOKE) app.quit();
 	});
 	app.on("before-quit", (event: ElectronEvent) => {
-		if (quitReleased) return;
+		if (lifecycle.allowQuit()) return;
 		event.preventDefault();
-		if (quitRequested) return;
 		if (notices.quitting) {
 			requestQuit();
 			return;

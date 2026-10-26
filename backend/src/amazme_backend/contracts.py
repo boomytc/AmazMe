@@ -520,6 +520,8 @@ class InterfacePreferences(Model):
     appearance: Literal["system", "light", "dark"] = "system"
     locale: Literal["auto", "zh", "en"] = "auto"
     showWelcome: bool = True
+    closeWindow: Literal["background", "quit"] = "background"
+    closeWindowPrompt: bool = True
     textFont: str = Field(default="", max_length=256)
     codeFont: str = Field(default="", max_length=256)
     terminalFont: str = Field(default="", max_length=256)
@@ -1972,6 +1974,11 @@ class WorkerActivity(Model):
     runnable: bool
     next_wake_ms: int
     state: WorkerState
+
+
+class TaskActivity(Model):
+    active: bool
+    tasks: int = 0
 
 
 class FreezeSupervisor(HostFence):

@@ -88,6 +88,10 @@ export class DesktopPage {
 	private catalog?: ModelCatalog;
 	private accounts: AccountsView = { revision: 0, accounts: [] };
 	private settings?: ProductSettings;
+	private desktop = false;
+	private readonly refreshDesktopPreferences = (): void => {
+		if (this.ready) void this.updateSettings(async current => current).catch(() => {});
+	};
 	private globalModelIds: string[] | null = null;
 	private selection?: SessionModel;
 	private resources?: ResourceCatalog;
@@ -211,12 +215,14 @@ export class DesktopPage {
 		};
 		const bridge: unknown = Reflect.get(globalThis, "amazmeDesktop");
 		if (isRecord(bridge) && typeof bridge.pickDirectories === "function") {
-		const pick = bridge.pickDirectories.bind(bridge);
-		this.renderer.onPickDirectories = async () => {
-			const value: unknown = await pick();
-			if (!Array.isArray(value) || !value.every(item => typeof item === "string")) return undefined;
-			return value;
-		};
+			this.desktop = true;
+			window.addEventListener("focus", this.refreshDesktopPreferences);
+			const pick = bridge.pickDirectories.bind(bridge);
+			this.renderer.onPickDirectories = async () => {
+				const value: unknown = await pick();
+				if (!Array.isArray(value) || !value.every(item => typeof item === "string")) return undefined;
+				return value;
+			};
 		}
 		followSystemTheme();
 		this.render();
@@ -1387,12 +1393,13 @@ export class DesktopPage {
 			await this.updateSettings((current, identity) => this.client.call("POST /api/v1/settings", { body: { display_name: value, expected_revision: current.revision ?? 0 }, identity }));
 			return;
 		}
-		const typed = id === "showWelcome" ? value === "true" : FONT_SIZE_FIELDS.some(field => field === id) ? Number(value) : value;
+		const typed = id === "showWelcome" || id === "closeWindowPrompt" ? value === "true" : FONT_SIZE_FIELDS.some(field => field === id) ? Number(value) : value;
 		await this.updatePreferences(current => parseContract("InterfacePreferences", { ...current, [id]: typed }));
 	}
 	private preferenceDescriptors(): P.SettingDescriptorLike[] {
 		const preferences = this.settings?.preferences ?? {};
 		const descriptor = { group: "interface", explicit: true };
+		const desktopDescriptor = { group: "desktop", explicit: true };
 		return [
 			{ ...descriptor, id: "appearance", field: "appearance", kind: "enum", options: ["system", "light", "dark"], value: preferences.appearance ?? "system" },
 			{ ...descriptor, id: "locale", field: "locale", kind: "enum", options: ["auto", "zh", "en"], value: preferences.locale ?? "auto" },
@@ -1400,6 +1407,10 @@ export class DesktopPage {
 			...FONT_SIZE_FIELDS.map(field => ({ ...descriptor, id: field, field, kind: "number" as const, value: String(this.typography[field]), ...FONT_SIZE_LIMITS[field], step: 1 })),
 			{ ...descriptor, id: "showWelcome", field: "showWelcome", kind: "boolean", value: String(preferences.showWelcome ?? true) },
 			{ ...descriptor, id: "display_name", field: "display_name", kind: "string", value: this.settings?.display_name ?? "" },
+			...(this.desktop ? [
+				{ ...desktopDescriptor, id: "closeWindow", field: "closeWindow", kind: "enum" as const, options: ["background", "quit"], value: preferences.closeWindow ?? "background" },
+				{ ...desktopDescriptor, id: "closeWindowPrompt", field: "closeWindowPrompt", kind: "boolean" as const, value: String(preferences.closeWindowPrompt ?? true) },
+			] : []),
 		];
 	}
 	private render(): void {
@@ -1454,5 +1465,5 @@ export class DesktopPage {
 			] }, pty: { id: terminal.id, cols: terminal.view.cols, rows: terminal.view.rows, output: terminal.view.output, outputSeq: terminal.view.output_seq ?? terminal.view.output.length, fontFamily: this.typography.terminalFont, fontSize: this.typography.terminalSize, inputEnabled: connection?.ready === true && terminal.view.phase === "running" && !terminal.queue.paused } } : dock });
 		if (pendingError) this.renderer.setConnection(pendingError, "error");
 	}
-	dispose(): void { clearTimeout(this.healthTimer); clearTimeout(this.oauthTimer); clearTimeout(this.mcpLoginTimer); clearTimeout(this.terminalTimer); this.client.retire(); }
+	dispose(): void { window.removeEventListener("focus", this.refreshDesktopPreferences); clearTimeout(this.healthTimer); clearTimeout(this.oauthTimer); clearTimeout(this.mcpLoginTimer); clearTimeout(this.terminalTimer); this.client.retire(); }
 }

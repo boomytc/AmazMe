@@ -204,6 +204,7 @@ from .contracts import (
     Submit,
     SubmitRemote,
     SupervisorHealth,
+    TaskActivity,
     TerminalInput,
     TerminalList,
     TerminalOpen,
@@ -330,6 +331,7 @@ class Host:
         self.update_lock = asyncio.Lock()
         self.provider_lock = asyncio.Lock()
         self.provider_checks: set[str] = set()
+        self.compacting: set[str] = set()
         self.package_lock = asyncio.Lock()
         self.mcp_lock = asyncio.Lock()
         self.schedule_lock = asyncio.Lock()
@@ -2655,6 +2657,13 @@ class Host:
 
     async def compact_session(self, session: str, value: CompactSession) -> Compaction:
         self._admit()
+        self.compacting.add(value.compaction_id)
+        try:
+            return await self._compact_session(session, value)
+        finally:
+            self.compacting.discard(value.compaction_id)
+
+    async def _compact_session(self, session: str, value: CompactSession) -> Compaction:
         if await self.store.active_update():
             raise BackendError("update_frozen", status=503)
         if not await self.store.exists(session):
@@ -2975,6 +2984,27 @@ class Host:
                 or proof.execution_epoch != info.execution_epoch or proof.resources):
             raise BackendError("validation_probe_unproven", status=503)
 
+    async def task_activity(self) -> TaskActivity:
+        sessions = (await self.store.sessions()).sessions
+        tasks = len(await self.store.pending())
+        for session in sessions:
+            if not session.prepared:
+                tasks += 1
+            if session_database(self.profile.path, session.session_id).is_file():
+                activity = await self._read_session(session.session_id, lambda store: store.activity())
+                tasks += activity.pending
+        if self.attached:
+            supervised = await self.supervisor.call("GET", "/task-activity", TaskActivity)
+            tasks += supervised.tasks
+        else:
+            for service in await self.store.services():
+                if service.state != "stopped" and not exited(service.process_lease):
+                    raise BackendError("activity_unavailable", status=503)
+        tasks += len(self.provider_checks) + len(self.compacting)
+        tasks += len(self.computer_held) + len(self.mcp_signins.active)
+        tasks += sum(login.view.phase == "pending" for login in self.oauth_logins.values())
+        return TaskActivity(active=tasks > 0, tasks=tasks)
+
     async def health(self) -> Health:
         try:
             return await self._health()
@@ -3266,6 +3296,25 @@ class Host:
             await wait_exited(service.process_lease, 30)
             service.state = "stopped"
             await self.store.save_service(service)
+
+    async def shutdown(self) -> None:
+        self.closing = True
+        await self.store.begin_quit()
+        await self.stop_owned_supervisor()
+        # Workers have released their stores. Include queued work in sessions
+        # whose worker was already parked or retired before this quit.
+        for session in (await self.store.sessions()).sessions:
+            path = session_database(self.profile.path, session.session_id)
+            if not path.is_file():
+                continue
+            store = self._session_store(path, session.session_id, read_only=False)
+            try:
+                await store.initialize()
+                await store.fence(self.fence)
+                await store.stopping(self.fence)
+            finally:
+                await store.db.close()
+        self.stop.set()
 
     async def close(self) -> None:
         self.closing = True
@@ -3974,13 +4023,15 @@ def application(owner: Host) -> FastAPI:
     async def recover(value: Recovery) -> Health:
         return await owner.recover(value)
 
+    @app.get("/control/desktop/activity")
+    async def desktop_activity() -> TaskActivity:
+        return await owner.task_activity()
+
     @app.post("/control/shutdown")
     async def shutdown(value: HostFence) -> Identity:
         if value != owner.fence:
             raise BackendError("stale_host_epoch")
-        owner.closing = True
-        await owner.stop_owned_supervisor()
-        owner.stop.set()
+        await owner.shutdown()
         return owner.identity("stopping")
 
     @app.get("/", response_class=HTMLResponse)

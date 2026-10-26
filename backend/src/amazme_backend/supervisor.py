@@ -82,6 +82,7 @@ from .contracts import (
     StopWorker,
     SubmitRemote,
     SupervisorHealth,
+    TaskActivity,
     TerminalInput,
     TerminalList,
     TerminalQuery,
@@ -448,7 +449,7 @@ class Supervisor:
                     for worker in await self._workers():
                         if worker.state != "stopped":
                             try:
-                                await self._retire_worker(worker, "recovery", failed=True)
+                                await self._retire_worker(worker, "recovery", failed=self._unexpected_worker_exit(worker))
                             except BackendError:
                                 worker.state = "blocked"
                                 await self._save_worker(worker)
@@ -548,7 +549,7 @@ class Supervisor:
                     raise BackendError("process_exit_unproven", status=503)
                 if (worker.state not in {"starting", "ready", "frozen"}
                         or exited(worker.process_lease)):
-                    receipt = await self._retire_worker(worker, "recovery", failed=True)
+                    receipt = await self._retire_worker(worker, "recovery", failed=self._unexpected_worker_exit(worker))
                     if receipt.state != "clean" and not exited(worker.process_lease):
                         raise BackendError("execution_cleanup_pending", receipt.reason, 503)
                     continue
@@ -556,7 +557,7 @@ class Supervisor:
                 if ack.host_epoch != value.host_epoch:
                     raise BackendError("worker_fence_pending", status=503)
                 if ack.state in {"stopping", "blocked"}:
-                    receipt = await self._retire_worker(worker, "recovery", failed=True)
+                    receipt = await self._retire_worker(worker, "recovery", failed=self._unexpected_worker_exit(worker))
                     if receipt.state != "clean":
                         raise BackendError("execution_cleanup_pending", receipt.reason, 503)
                     continue
@@ -583,7 +584,7 @@ class Supervisor:
                 if worker.process_lease is None:
                     raise BackendError("process_exit_unproven", status=503)
                 if exited(worker.process_lease):
-                    receipt = await self._retire_worker(worker, "recovery", failed=True)
+                    receipt = await self._retire_worker(worker, "recovery", failed=self._unexpected_worker_exit(worker))
                     if receipt.state != "clean":
                         raise BackendError("execution_cleanup_pending", receipt.reason, 503)
                     continue
@@ -994,6 +995,10 @@ class Supervisor:
             await self.faults.hit("closed", session_id=session)
         return result
 
+    def _unexpected_worker_exit(self, worker: WorkerInfo) -> bool:
+        child = self.children.get(worker.worker_id)
+        return child is None or child.returncode != 0
+
     async def _retire_worker(self, worker: WorkerInfo, reason: Literal["shutdown", "recovery", "update"], *, failed: bool = False) -> Cleanup:
         worker = await self._worker(worker.worker_id)
         if worker.state == "stopped":
@@ -1102,6 +1107,18 @@ class Supervisor:
     async def health(self) -> SupervisorHealth:
         async with self.control:
             return await self._health()
+
+    async def task_activity(self) -> TaskActivity:
+        async with self.control:
+            jobs = sum(not task.done() for registry in (self.jobs, self.code_jobs, self.plugin_jobs)
+                       for task in registry.values())
+            row = await self.db.call(lambda db: db.execute(
+                "SELECT (SELECT count(*) FROM mcp_calls WHERE phase IN ('waiting_approval','running')),"
+                "(SELECT count(*) FROM terminals WHERE phase='running'),"
+                "(SELECT count(*) FROM scopes WHERE clean=0 AND phase IN ('registered','running'))").fetchone())
+            assert row is not None
+            tasks = jobs + sum(int(value or 0) for value in row)
+            return TaskActivity(active=tasks > 0, tasks=tasks)
 
     async def _health(self) -> SupervisorHealth:
         workers = await self._refresh_workers()
@@ -1258,7 +1275,7 @@ class Supervisor:
                         raise BackendError("worker_fence_pending", status=503)
                     await self._peer_identity(worker, "POST", "/stop", StopWorker(
                         **fence.model_dump(), session_id=worker.session_id, worker_id=worker.worker_id,
-                        execution_epoch=worker.execution_epoch, reason="update"))
+                        execution_epoch=worker.execution_epoch, reason="shutdown"))
                 except (httpx.TransportError, TimeoutError, BackendError):
                     pass
                 try:
@@ -1270,7 +1287,7 @@ class Supervisor:
                 current = await self._worker(worker.worker_id)
                 if current.state == "stopped":
                     continue
-                result = await self._retire_worker(current, "update")
+                result = await self._retire_worker(current, "shutdown")
                 if result.state != "clean":
                     raise BackendError("execution_cleanup_pending", result.reason, 503)
             await self._set_blocked("")
@@ -1332,7 +1349,7 @@ class Supervisor:
                         last = self.heartbeats.setdefault(worker.worker_id, time.monotonic())
                         if dead or time.monotonic() - last > 15:
                             try:
-                                await self._retire_worker(worker, "recovery", failed=True)
+                                await self._retire_worker(worker, "recovery", failed=self._unexpected_worker_exit(worker))
                             except Exception:
                                 worker = await self._worker(worker.worker_id)
                                 worker.state = "blocked"
@@ -2865,6 +2882,7 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     async def identity() -> Identity:
         return owner.identity()
 
+    app.get("/task-activity")(owner.task_activity)
     app.post("/takeover")(owner.takeover)
     app.post("/workers/ensure")(owner.ensure_worker)
     app.post("/workers/heartbeat")(owner.heartbeat)

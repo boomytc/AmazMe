@@ -45,17 +45,6 @@ export function requirePythonBackend(executable: string | undefined): string {
 	return executable;
 }
 
-export function shouldStopSharedBackend(reason: "window-closed" | "explicit-quit"): boolean {
-	return reason === "explicit-quit";
-}
-
-/** Closing a window must not stop a shared Python backend. A tray only hides that window. */
-export function windowCloseAction(input: { readonly quitting: boolean; readonly pythonBackend: boolean; readonly tray: boolean }): "allow" | "hide" | "quit" {
-	if (input.quitting) return "allow";
-	if (input.pythonBackend && !shouldStopSharedBackend("window-closed")) return input.tray ? "hide" : "allow";
-	return input.tray ? "hide" : "quit";
-}
-
 /** One stdout line from `amazme-backend serve`. Other lines are ignored. */
 export function parsePythonReadyLine(line: string): PythonReady | undefined {
 	const trimmed = line.replace(/\r$/u, "").trim();

@@ -146,6 +146,45 @@ test("a rejected composer draft remains editable and clears only after a success
  expect(submitted.map(request => request.text)).toEqual(["corrected draft"]);
 });
 
+test("desktop close preferences use the shared settings store and survive a fresh page", async () => {
+ vi.stubGlobal("amazmeDesktop", { pickDirectories: async () => [] });
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });
+ const api = (path: string, options: RequestInit) => {
+  if (path === "/api/v1/settings/preferences" && options.method === "PUT") {
+   const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+   expect(body.expected_revision).toBe(settings.revision);
+   settings = { ...settings, revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+  }
+  if (path === "/api/v1/settings" || path === "/api/v1/settings/preferences") return response(settings);
+  return undefined;
+ };
+ const first = await startPage(api);
+ first.page.renderer.onPanelAction({ kind: "open", panel: P.SETTINGS_VIEW });
+ const group = () => first.page.renderer.view?.panel.panel?.groups.find(item => item.id === "settings:desktop");
+ expect(group()?.rows.map(row => row.title)).toEqual(["When closing a window", "Ask when tasks are running"]);
+ expect(group()?.rows[0]?.controls?.[0]?.value).toBe("background");
+ expect(group()?.rows[1]?.controls?.[0]?.value).toBe("true");
+ first.page.renderer.onPanelAction({ kind: "control", id: P.SETTINGS_FIELD_ACTION, data: "closeWindow", value: "quit" });
+ await vi.waitFor(() => expect(settings.preferences?.closeWindow).toBe("quit"));
+ first.page.renderer.onPanelAction({ kind: "control", id: P.SETTINGS_FIELD_ACTION, data: "closeWindowPrompt", value: "false" });
+ await vi.waitFor(() => expect(settings.preferences?.closeWindowPrompt).toBe(false));
+ expect(settings.revision).toBe(2);
+ first.page.dispose();
+ const reopened = await startPage(api);
+ reopened.page.renderer.onPanelAction({ kind: "open", panel: P.SETTINGS_VIEW });
+ const restored = reopened.page.renderer.view?.panel.panel?.groups.find(item => item.id === "settings:desktop");
+ expect(restored?.rows[0]?.controls?.[0]?.value).toBe("quit");
+ expect(restored?.rows[1]?.controls?.[0]?.value).toBe("false");
+ settings = { ...settings, revision: 3, preferences: { ...settings.preferences, closeWindow: "background", closeWindowPrompt: true } };
+ window.dispatchEvent(new Event("focus"));
+ await vi.waitFor(() => {
+  const refreshed = reopened.page.renderer.view?.panel.panel?.groups.find(item => item.id === "settings:desktop");
+  expect(refreshed?.rows[0]?.controls?.[0]?.value).toBe("background");
+  expect(refreshed?.rows[1]?.controls?.[0]?.value).toBe("true");
+ });
+});
+
 test("a failed queued setting remains visible when a later setting saves successfully", async () => {
  let failName: (response: Response) => void = () => { throw new Error("save not started"); };
  let nameStarted = false;

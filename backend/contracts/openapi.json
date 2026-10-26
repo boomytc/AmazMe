@@ -6295,6 +6295,24 @@
         }
       }
     },
+    "/control/desktop/activity": {
+      "get": {
+        "summary": "Desktop Activity",
+        "operationId": "desktop_activity_control_desktop_activity_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskActivity"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/control/shutdown": {
       "post": {
         "summary": "Shutdown",
@@ -9610,6 +9628,20 @@
           "showWelcome": {
             "type": "boolean",
             "title": "Showwelcome",
+            "default": true
+          },
+          "closeWindow": {
+            "type": "string",
+            "enum": [
+              "background",
+              "quit"
+            ],
+            "title": "Closewindow",
+            "default": "background"
+          },
+          "closeWindowPrompt": {
+            "type": "boolean",
+            "title": "Closewindowprompt",
             "default": true
           },
           "textFont": {
@@ -14366,6 +14398,25 @@
           "epochs"
         ],
         "title": "SupervisorHealth"
+      },
+      "TaskActivity": {
+        "properties": {
+          "active": {
+            "type": "boolean",
+            "title": "Active"
+          },
+          "tasks": {
+            "type": "integer",
+            "title": "Tasks",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "active"
+        ],
+        "title": "TaskActivity"
       },
       "TerminalList": {
         "properties": {

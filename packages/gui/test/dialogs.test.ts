@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+	closeDialogCopy,
 	HOST_DIALOG_TAIL_LINES,
 	hostFailureCopy,
 	isIntentionalLoadAbort,
+	lifecycleErrorCopy,
 	quitDialogCopy,
 	renderDialogRecovery,
 	renderFailureCopy,
@@ -72,19 +74,29 @@ describe("render failure dialog", () => {
 	});
 });
 
-describe("quit dialog", () => {
-	test("keeps closing the window as the non-destructive cancel path", () => {
-		const copy = quitDialogCopy("en");
-		expect(copy.title).toBe("Quit AmazMe?");
-		expect(copy.message).toContain("web host");
-		expect(copy.detail).toContain("Close the window");
-		expect(copy.buttons).toEqual(["Cancel", "Quit"]);
+describe("task close and quit dialogs", () => {
+	test("close offers background first, stop-and-quit second, cancel last, and an unchecked-by-default remember label", () => {
+		const copy = closeDialogCopy("zh");
+		expect(copy.title).toBe("仍有任务正在运行");
+		expect(copy.detail).toBe("关闭窗口后，任务可以继续在后台运行。你也可以停止任务并退出 AmazMe。");
+		expect(copy.buttons).toEqual(["继续后台运行", "停止任务并退出", "取消"]);
+		expect(copy.checkboxLabel).toBe("记住我的选择");
 	});
 
-	test("uses the same Chinese catalog as the tray", () => {
+	test("explicit quit has no background or remember action", () => {
 		const copy = quitDialogCopy("zh");
-		expect(copy.buttons).toEqual(["取消", "退出"]);
-		expect(copy.detail).toContain("关闭窗口");
+		expect(copy.title).toBe("仍有任务正在运行");
+		expect(copy.buttons).toEqual(["取消", "停止任务并退出"]);
+		expect(copy.detail).toContain("取消不会改变");
+		expect(copy).not.toHaveProperty("checkboxLabel");
+	});
+
+	test("query and cleanup failures offer a retry without claiming success", () => {
+		expect(lifecycleErrorCopy("zh", "activity").buttons).toEqual(["重试", "稍后"]);
+		const cleanup = lifecycleErrorCopy("zh", "cleanup");
+		expect(cleanup.title).toBe("退出清理未完成");
+		expect(cleanup.detail).toContain("没有退出");
+		expect(cleanup.buttons).toEqual(["重试退出", "稍后"]);
 	});
 });
 

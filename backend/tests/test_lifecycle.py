@@ -17,6 +17,7 @@ from amazme_backend.contracts import (
     ProcessLease,
     Receipt,
     Submit,
+    TaskActivity,
     WorkerActivity,
 )
 from amazme_backend.host import Host, application
@@ -953,3 +954,85 @@ async def test_scheduled_delivery_captures_model_once_before_worker_dispatch(sto
     original = await store.pin_delivery_provider(delivery.delivery_id,ProviderConfig(provider="faux",model="faux"))
     assert original.provider == captured.provider
     assert captured.provider is not None and captured.provider.model == "deepseek-flash"
+
+
+async def test_quit_fence_rejects_racing_deliveries_and_never_resurrects_outbox(store, tmp_path, lease):
+    session = "a" * 32
+    await store.enqueue(session, "submit", "before-quit", Submit(request_id="before-quit", text="task"))
+    await store.begin_quit()
+    assert not await store.pending()
+    with pytest.raises(BackendError, match="host_stopping"):
+        await store.enqueue(session, "submit", "during-quit", Submit(request_id="during-quit", text="task"))
+    await store.db.close()
+    reopened = HostStore(tmp_path / "host.sqlite", require_existing=True)
+    try:
+        await reopened.initialize("after-quit", "a" * 64, lease)
+        assert not await reopened.pending()
+        await reopened.enqueue(session, "submit", "after-restart", Submit(request_id="after-restart", text="task"))
+        assert [delivery.delivery_id for delivery in await reopened.pending()]
+    finally:
+        await reopened.db.close()
+
+
+async def test_task_activity_uses_outbox_without_starting_an_idle_worker(owner):
+    owner.ensure_supervisor = AsyncMock()
+    assert (await owner.task_activity()) == TaskActivity(active=False, tasks=0)
+    await owner.store.enqueue("a" * 32, "submit", "queued", Submit(request_id="queued", text="task"))
+    assert (await owner.task_activity()).active
+    await owner.store.begin_quit()
+    assert not (await owner.task_activity()).active
+    owner.ensure_supervisor.assert_not_awaited()
+
+
+async def test_desktop_shutdown_cancels_durable_work_without_a_live_worker(owner):
+    from amazme_backend.storage import SessionStore
+
+    session = "a" * 32
+    path = owner.profile.path / "sessions" / session / "session.sqlite"
+    path.parent.mkdir(parents=True)
+    store = SessionStore(path, session, build=owner.build)
+    await store.initialize()
+    await store.fence(owner.fence)
+    await store.accept(Submit(request_id="parked", text="task"), owner.fence)
+    await store.db.close()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)),
+                                base_url=owner.origin,
+                                headers={"Authorization": "Bearer private-control"}) as client:
+        response = await client.post("/control/shutdown", json=owner.fence.model_dump())
+    assert response.status_code == 200
+    reopened = SessionStore(path, session, build=owner.build, require_existing=True)
+    try:
+        await reopened.initialize()
+        assert not (await reopened.activity()).pending
+    finally:
+        await reopened.db.close()
+
+
+async def test_task_activity_reads_existing_session_and_supervised_work(owner):
+    from amazme_backend.storage import SessionStore
+
+    session = "a" * 32
+    directory = owner.profile.path / "sessions" / session
+    directory.mkdir(parents=True)
+    store = SessionStore(directory / "session.sqlite", session, build=owner.build)
+    await store.initialize()
+    await store.fence(owner.fence)
+    await store.accept(Submit(request_id="running", text="task"), owner.fence)
+    await store.db.close()
+    try:
+        assert (await owner.task_activity()).active
+        reader = SessionStore(directory / "session.sqlite", session, build=owner.build, require_existing=True)
+        await reader.initialize()
+        await reader.cancel("running", owner.fence)
+        await reader.db.close()
+        assert not (await owner.task_activity()).active
+    finally:
+        await store.db.close()
+
+    owner.attached = "supervisor"
+    owner.supervisor = AsyncMock()
+    owner.supervisor.call.return_value = TaskActivity(active=True, tasks=2)
+    assert (await owner.task_activity()).tasks == 2
+    owner.supervisor.call.side_effect = httpx.ReadError("unavailable")
+    with pytest.raises(httpx.ReadError):
+        await owner.task_activity()
