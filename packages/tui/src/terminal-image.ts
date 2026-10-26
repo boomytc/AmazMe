@@ -94,8 +94,6 @@ function detectCapabilitiesFromEnvironment(tmuxForwardsHyperlink: () => boolean)
 		return { images: "kitty", trueColor: hasTrueColorHint, hyperlinks: true };
 	}
 
-	// Rex supports OSC 8 hyperlinks and only partially implements the Kitty graphics protocol
-	// (no Unicode placeholders), but enough to support AmazMe.
 	if (termProgram === "rex") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
@@ -376,15 +374,22 @@ export interface KittyImagePlacement {
 
 const kittyImageMetadata = new Map<number, RegisteredKittyImageMetadata>();
 let kittyTransmissionGeneration = 0;
+let maxKittyImageRows = 0;
 
 export function registerKittyImageMetadata(metadata: KittyImageMetadata): void {
 	kittyTransmissionGeneration += 1;
+	maxKittyImageRows = Math.max(maxKittyImageRows, metadata.rows);
 	kittyImageMetadata.delete(metadata.imageId);
 	kittyImageMetadata.set(metadata.imageId, { ...metadata, transmissionGeneration: kittyTransmissionGeneration });
 	if (kittyImageMetadata.size > 1000) {
 		const oldestImageId = kittyImageMetadata.keys().next().value;
 		if (oldestImageId !== undefined) kittyImageMetadata.delete(oldestImageId);
 	}
+}
+
+/** Upper bound on the row height of registered Kitty images. */
+export function getMaxKittyImageRows(): number {
+	return maxKittyImageRows;
 }
 
 function getRegisteredKittyImageMetadataFromControls(controls: string): RegisteredKittyImageMetadata | undefined {
