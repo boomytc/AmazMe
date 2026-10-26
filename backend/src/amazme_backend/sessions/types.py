@@ -31,6 +31,7 @@ class CodemodeInput(Model):
 
 
 class Run(Model):
+    started_at_ms: int | None = None
     loaded_mcp_tools: list[str] = Field(default_factory=lambda: list[str]())
     codemode_state: str = "{}"
     input_text: str | None = None
@@ -83,6 +84,7 @@ class ModelInvocation:
     generation: int
     messages: list[Message]
     config: ProviderConfig
+    started_at_ms: int | None = None
 
 
 @dataclass(frozen=True)

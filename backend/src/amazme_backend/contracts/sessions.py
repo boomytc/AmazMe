@@ -20,6 +20,7 @@ ApprovalPolicy = Literal["auto", "mutations", "all"]
 
 
 class RunOptions(Model):
+    time_zone: str = Field(default="", max_length=64, pattern=r"^(?:UTC|[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)+)?$")
     model_selection: ModelSelection | None = None
     approval_policy: ApprovalPolicy | None = None
     thinking: ThinkingLevel | None = None

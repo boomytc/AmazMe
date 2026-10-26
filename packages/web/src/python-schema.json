@@ -6356,6 +6356,13 @@
     },
     "RpcParams": {
       "properties": {
+        "time_zone": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(?:UTC|[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)+)?$",
+          "title": "Time Zone",
+          "default": ""
+        },
         "model_selection": {
           "anyOf": [
             {
@@ -7921,6 +7928,13 @@
     },
     "Submit": {
       "properties": {
+        "time_zone": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(?:UTC|[A-Za-z0-9_+-]+(?:/[A-Za-z0-9_+-]+)+)?$",
+          "title": "Time Zone",
+          "default": ""
+        },
         "model_selection": {
           "anyOf": [
             {

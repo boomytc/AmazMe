@@ -1216,6 +1216,7 @@ export type RpcCall = {
 };
 
 export type RpcParams = {
+  "time_zone"?: string;
   "model_selection"?: ModelSelection | null;
   "approval_policy"?: "auto" | "mutations" | "all" | null;
   "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
@@ -1473,6 +1474,7 @@ export type Snapshot = {
 };
 
 export type Submit = {
+  "time_zone"?: string;
   "model_selection"?: ModelSelection | null;
   "approval_policy"?: "auto" | "mutations" | "all" | null;
   "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;

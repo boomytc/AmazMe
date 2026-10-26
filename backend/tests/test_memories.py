@@ -48,7 +48,7 @@ async def test_model_call_injects_only_the_session_workspace(tmp_path: Path, mon
     captured: list[list[Message]] = []
     workers = []
 
-    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None, *, auth):
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None, *, auth, context=""):
         del config, offers
         captured.append(messages)
         yield Completion[Message](message=Message(role="assistant", content="ok"), response_id="faux")
@@ -111,7 +111,7 @@ async def test_provider_secret_is_not_stored_or_sent_as_memory(tmp_path: Path, m
     host.lifecycle.initialized = True
     captured: list[list[Message]] = []
 
-    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None, *, auth):
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None, *, auth, context=""):
         del config, offers
         captured.append(messages)
         yield Completion[Message](message=Message(role="assistant", content="ok"), response_id="faux")

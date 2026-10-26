@@ -17,9 +17,9 @@
 | 领域 / DSH 来源 | 实际行为与新旧区分 | AmazMe 所有者、决定与验收 |
 | --- | --- | --- |
 | 输出：固定终点 `packages/subprocess/subprocess-local/src/output.ts`、`packages/util/output-retention/src/index.ts`、`packages/shell/tool-bash/src/render.ts` | 源流保存与有界呈现分离；保存失败不能继续宣传完整 spill。这是 DSH 起点已有能力，非本轮领先提交新增 | 采用行为，由 `execution/native.py`、`execution/output.py` 与现有 scopes 拥有。原实现采集时只留每流 65536 字节。用真实命令、分段回读、中文和存储失败验证 |
-| 文件：固定终点 `packages/fs/tool-fs/src/{read,edit}.ts`、`packages/fs/fs-observation-policy/src/index.ts`、`packages/fs/fs-local/src/fsio.ts` | 分段读、唯一字面量替换、以实际观察版本做 CAS；区分未观察/不存在/存在。这些源码在起点与终点间无变化，属于补足既有能力 | 采用；复用 `workspaces/files.py`、Host 文件准备和持久会话。人工文件 API 保留显式 expected_digest 契约。实施及验收记录随文件单元补充 |
+| 文件：固定终点 `packages/fs/tool-fs/src/{read,edit}.ts`、`packages/fs/fs-observation-policy/src/index.ts`、`packages/fs/fs-local/src/fsio.ts` | 分段读、唯一字面量替换、以实际观察版本做 CAS；区分未观察/不存在/存在。这些源码在起点与终点间无变化，属于补足既有能力 | 采用；复用 `workspaces/files.py`、Host 文件准备和持久会话。人工文件 API 保留显式 expected_digest 契约。契约与证据见文件单元 |
 | 作业：`70eab5706e`、`ed645016cd`、`7854778639`，以及固定终点 `packages/jobs/{jobs-local,tool-jobs}`、`packages/shell/tool-bash` | 领先提交增加完成通知、避免通知无端消费日志游标、用户插话结束 job_output 等待；后台注册本身在起点已存在 | 采用；复用唯一 Supervisor、execution SQLite、持久投递。不会移植 DSH 内存 registry，也不会把前台执行超时改成自动无限后台。实施及真实超过 120 秒验证待作业单元补充 |
-| 时间：`22f8be30a1`、`2f30c684ac`、`1696816d2c`，固定终点 `packages/context/time-context/src/{index,request-zone}.ts` | 时间按请求装配，恢复浏览器时区先等待真实投影；领先范围包含恢复修复 | 采用产品语义，由 Python 请求装配拥有；客户端只报告时区。用受控时钟验证跨日、缺失时区与恢复；实施记录待时间单元补充 |
+| 时间：`22f8be30a1`、`2f30c684ac`、`1696816d2c`，固定终点 `packages/context/time-context/src/{index,request-zone}.ts` | 时间按请求装配，恢复浏览器时区先等待真实投影；领先范围包含恢复修复 | 采用产品语义，由 Python 请求装配拥有；客户端只报告时区。契约与受控时钟证据见时间单元 |
 | guard：固定终点 `packages/guard/timeout-policy/src/index.ts` | 超时传播取消并等待实际结算，不放弃未终结的 promise；该核心源码非领先范围新增 | 保留 AmazMe 原有真实退出核对及 unknown/cleanup 屏障；作业单元验证，不另加循环 |
 
 本轮不引入计划模式、ask_user、todo、自动标题、重复调用提醒、跨会话检索、goal、LSP、browser-use、worktree、ACP 或新的 OS 沙箱。现有审批、会话、工作流、工作区、计算机操作与排程路径保留各自职责；这些路径的存在不等于覆盖 DSH 同名功能。新交互与扩展需要独立需求和验收，均延期，不借本轮改写产品。DSH 的 TS 插件运行时、市场、Agent Teams、遥测扩展和第二套 run_code 不适用当前 Python 执行所有权。
@@ -57,3 +57,13 @@
 - 独立重读发现并修正了准备记录缺少工作区根的问题。检查覆盖输入 → 持久工具观察 → Host 备份/准备 → Supervisor 归属 → 原子写盘 → 新版本工具结果 → 后续写入/恢复。不存在新增执行循环或进程登记表。
 - simplify-code changed 仅将本单元清理表达式改为普通 if；原子写入和版本保护按功能修复交付。simplify-test changed 的 15 个新增或调整声明全部保留（R=15，F/C/D=0），包括旧审批/检查点/路径契约；未删除测试。旧的私有原地恢复 helper 随原地写入路径被原子发布替换，不以删除失败测试取得通过。
 - 最终定向：`test_workspace_files.py test_native_file_edit.py test_tool_checkpoints.py test_checkpoints.py test_native_execution.py test_native_output.py test_execution_p2.py test_output_retention.py test_session_model.py test_run_options.py`，120 项通过。Web 先构建再测试，24 文件 / 228 项通过；Pyright 0 错误，Ruff、架构（222 模块 / 5305 边 / 0 违规）、导入闭包、AI HTTP 替身探针与契约检查通过。无真实供应商调用。
+
+## 时间单元契约与证据
+
+- `RunOptions.time_zone` 接受 UTC 或 IANA Area/Location。Web/Electron 在原持久提交载荷中保存 Intl 报告的时区，重试及重载沿用原载荷。Python SDK 提供显式 time_zone；CLI 提供 --time-zone，CLI/TUI 默认从 TZ 或 /etc/localtime 的 zoneinfo 目标解析本机时区，无法确定时报告为空。
+- 日期不是会话创建时的常量。会话首次准备该请求的模型调用时，用现有会话时钟采样并把 started_at_ms 写入原 Run；模型装配层按客户端时区转换日期。缺失时区明确标记“用户时区不可用，UTC 为显示回退”，本地时间意图要求澄清；不冒充用户时区。无效地区在产品上下文装配中拒绝，发生在供应商认证/调用之前。
+- 同一请求的工具往返和恢复保持采样稳定，不按每个工具调用刷新系统前缀。新请求重新采样；新的用户插话在受理事务中刷新目标请求的采样，并采用新报告的时区。子任务继承父任务时区，在自身首次模型调用时采样。未报告新时区的插话保留已经明确知道的时区。
+- 独立重读覆盖 Web 提交台账 → HTTP/RPC/SDK/CLI/TUI → 会话运行记录 → 产品 prompt → 中立模型请求，以及插话、子任务与数据库重开。没有在中立 AI、会话创建或进程环境中固化日期，没有第二个时钟状态库。
+- 受控时钟覆盖上海/洛杉矶/缺失时区、跨日、新请求、工具往返后的数据库重开、用户插话与子任务继承。实际 SDK、CLI、TUI 通过真实 Host/worker 把三个指定时区持久写入会话；Web 现有丢回执后重试测试确认时区随原提交保留。
+- 基线模型/会话定向 53 项通过。最终 `test_time_context.py test_run_options.py test_provider_wire.py test_provider_history.py test_session_branch.py test_memories.py test_model_catalog.py` 共 82 项通过；`test_native_time_context.py test_client.py test_tui.py test_product_cli.py` 共 11 项通过。Web 先构建再测试，24 文件 / 228 项通过；Pyright、Ruff、架构（223 模块 / 5321 边 / 0 违规）、导入、AI HTTP 替身与生成契约检查通过。未调用真实供应商。
+- 两个 changed 审查完成；无额外纯重构候选。10 个新增或调整测试声明全部保留（R=10，F/C/D=0）。三个网络替身补充新可选参数，保留认证和记忆安全断言；没有通过删断言取得通过。

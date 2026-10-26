@@ -23,6 +23,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 from amazme_backend.contracts.execution import TerminalView
 from amazme_backend.contracts.mcp import McpCall
 from amazme_backend.contracts.sessions import Approval, Attachment, Receipt, Session
+from amazme_backend.interfaces.client_context import local_time_zone
 from amazme_backend.sdk.client import Client
 from amazme_backend.shared.errors import BackendError
 
@@ -242,7 +243,7 @@ async def _submit_text(client: Client, session: Session, attachment: Attachment,
     request_id = secrets.token_hex(8)
     await client.submit(
         session_id=session.session_id, workspace=workspace, attachment_id=attachment.attachment_id,
-        request_id=request_id, text=text)
+        request_id=request_id, text=text, time_zone=local_time_zone())
     receipt, approval = await client.await_user_decision(session_id=session.session_id, request_id=request_id)
     if approval is None:
         lines.append(_receipt_line(receipt))

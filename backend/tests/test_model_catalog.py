@@ -408,7 +408,7 @@ async def test_credential_revision_keeps_one_key_and_a_cleared_key_is_not_sent(o
     held = profile.config.provider
     seen: dict[str, str] = {}
 
-    async def fake_stream(config, _messages, _offers=None, _plugins=None, *, auth: Auth):
+    async def fake_stream(config, _messages, _offers=None, _plugins=None, *, auth: Auth, context=""):
         seen["key"] = auth.api_key.get_secret_value()
         if seen["key"]:
             raise BackendError("stop-before-network")

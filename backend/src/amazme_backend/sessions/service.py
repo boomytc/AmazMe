@@ -239,6 +239,11 @@ class SessionStore:
                 target = load_request(db, value.target_run_id)
                 if target.status in TERMINAL or target.decision or target.kind == "steer":
                     raise BackendError("steer_target_settled")
+                run = load_run(db, target.request_id)
+                run.started_at_ms = clock.now_ms()
+                if value.time_zone:
+                    run.config.time_zone = value.time_zone
+                save_run(db, run)
                 receipt = Receipt(request_id=value.request_id, run_id=target.run_id, parent_id=target.request_id,
                                   kind="steer", text=value.text, status="queued", accepted_revision=str(c.seq),
                                   revision=str(c.seq), image_count=len(value.images))

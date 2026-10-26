@@ -108,13 +108,16 @@ async def test_forbidden_batch_never_proposes_or_executes_any_tool(tmp_path: Pat
         await store.close()
 
 
-async def test_children_inherit_prompt_and_tool_scope(tmp_path: Path) -> None:
+async def test_children_inherit_prompt_and_tool_scope(tmp_path: Path, monkeypatch) -> None:
+    now = 1793000000000
+    monkeypatch.setattr('amazme_backend.sessions.persistence.clock.now_ms', lambda: now)
     store = await opened(tmp_path / 'session.sqlite')
     try:
-        await store.accept(Submit(request_id='root', text='delegate', system_prompt='parent prompt',
+        await store.accept(Submit(request_id='root', text='delegate', system_prompt='parent prompt', time_zone='Asia/Shanghai',
                                   allowed_tools=['delegate_task', 'read_file'], excluded_tools=['mcp_*'], approval_policy='mutations'), FENCE)
         model = await next_action(store)
         assert isinstance(model, ModelInvocation)
+        now += 1000
         await store.advance(ModelReturned(model, Completion(response_id='model', message=Message(role='assistant', content='', tool_calls=[
             ToolCall(id='child', name='delegate_task', arguments=json.dumps({'tasks':['read something']}))]))))
         child = await next_action(store)
@@ -122,6 +125,7 @@ async def test_children_inherit_prompt_and_tool_scope(tmp_path: Path) -> None:
         assert child.config.system_prompt == 'parent prompt'
         assert child.config.allowed_tools == ['delegate_task','read_file'] and child.config.excluded_tools == ['mcp_*']
         assert child.config.approval_policy == 'mutations'
+        assert child.config.time_zone == 'Asia/Shanghai' and child.started_at_ms == now
     finally:
         await store.close()
 

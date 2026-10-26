@@ -414,6 +414,7 @@ export class DesktopPage {
 		const steer = this.mode === "steer" && root?.run_id;
 		const record = previous ?? ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
 			request_id: id, text, images: draft.images.map(item => item.image), mode: steer ? "steer" : "queue",
+			time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 			...(steer ? { target_run_id: steer } : {
 				approval_policy: this.approvalPolicy,
 				...(displayedModel ? { model_selection: { provider: displayedModel.provider, model: displayedModel.model } } : {}), ...(thinking ? { thinking } : {}),

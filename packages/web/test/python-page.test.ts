@@ -80,6 +80,7 @@ test("a submission captures the displayed model, retries the same request, and p
  expect(prompt.value).toBe("original");
  expect(submitted[0].model_selection).toEqual({ provider: "faux", model: "shown" });
  expect(submitted[0].approval_policy).toBe("all");
+ expect(submitted[0].time_zone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
  page.renderer.onSelectPermission("auto");
  page.renderer.onSelectModel("faux", "different");
  await vi.waitFor(() => expect(page?.renderer.view?.model.label).toBe("Different"));

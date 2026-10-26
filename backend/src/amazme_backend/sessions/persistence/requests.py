@@ -67,6 +67,8 @@ def create_request(state: SessionContext, db: sqlite3.Connection, c: Changes, va
     save_prompt_images(db, value.request_id, value.images)
     # Store public provider configuration only. Credentials remain in Profile.
     config = selected_provider(inherited or accepted_config or state.config, value.model_selection, catalog=state.catalog)
+    if inherited is None or value.time_zone:
+        config.time_zone = value.time_zone
     if value.approval_policy is not None:
         config.approval_policy = value.approval_policy
     if value.thinking is not None:

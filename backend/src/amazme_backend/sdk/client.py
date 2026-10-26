@@ -372,9 +372,9 @@ class Client:
                      allowed_tools: list[str] | None = None, excluded_tools: list[str] | None = None,
                      resource_options: ResourceOptions | None = None, thinking: ThinkingLevel | None = None,
                      tool_call: ToolCall | None = None, model_selection: ModelSelection | None = None,
-                     approval_policy: ApprovalPolicy | None = None) -> Receipt:
+                     approval_policy: ApprovalPolicy | None = None, time_zone: str = "") -> Receipt:
         await self._require_workspace(session_id, workspace)
-        body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms,
+        body: dict[str, object] = {"request_id": request_id, "text": text, "not_before_ms": not_before_ms, "time_zone": time_zone,
                                    "system_prompt": system_prompt, "append_system_prompt": append_system_prompt, "thinking": thinking,
                                    "allowed_tools": allowed_tools, "excluded_tools": excluded_tools or [],
                                    "resource_options": (resource_options or ResourceOptions()).model_dump(),

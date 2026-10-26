@@ -18,6 +18,7 @@ from amazme_backend.contracts.management import ExportBundle
 from amazme_backend.contracts.models import UpdateModelSettings
 from amazme_backend.contracts.sessions import Approval, Receipt
 from amazme_backend.contracts.workspaces import WorkspaceGrantRequest
+from amazme_backend.interfaces.client_context import local_time_zone
 from amazme_backend.sdk.client import Client
 from amazme_backend.shared.errors import BackendError
 
@@ -49,6 +50,7 @@ def _parser() -> argparse.ArgumentParser:
     submit.add_argument("--workspace", required=True)
     submit.add_argument("--request-id", required=True)
     submit.add_argument("--text", required=True)
+    submit.add_argument("--time-zone")
     lookup = sub.add_parser("request")
     lookup.add_argument("--session", required=True)
     lookup.add_argument("--request-id", required=True)
@@ -311,7 +313,7 @@ async def _run(argv: list[str]) -> int:
                 try:
                     receipt = await client.submit(session_id=args.session, workspace=args.workspace,
                                                   attachment_id=attachment.attachment_id, request_id=args.request_id,
-                                                  text=args.text)
+                                                  text=args.text, time_zone=args.time_zone if args.time_zone is not None else local_time_zone())
                     receipt, approval = await client.await_user_decision(session_id=args.session, request_id=receipt.request_id)
                     _print_receipt(receipt,approval)
                     if approval is not None:

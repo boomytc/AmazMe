@@ -287,6 +287,9 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
             decide_request(db, c, steer, Decision(status="succeeded", answer="steering_applied"))
             settle_request(db, c, steer)
     ordinal = max((s.ordinal for s in steps), default=0) + 1
+    if run.started_at_ms is None:
+        run.started_at_ms = clock.now_ms()
+        save_run(db, run)
     step_id = digest(f"{state.session_id}:{request.request_id}:model:{ordinal}")
     step = Step(step_id=step_id, request_id=request.request_id, ordinal=ordinal, kind="model",
                 phase="intent", generation=request.generation)
@@ -296,7 +299,7 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
     c.emit("tool", request.request_id, event_step_text(step))
     c.hit("model_intent", request.request_id, step_id)
     return ModelInvocation(step_id, request.request_id, request.generation,
-                           load_messages(db, request.request_id), run.config)
+                           load_messages(db, request.request_id), run.config, run.started_at_ms)
 
 
 def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes, observation: Observation) -> None:

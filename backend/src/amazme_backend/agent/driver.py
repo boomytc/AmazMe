@@ -13,6 +13,7 @@ import httpx
 from pydantic import JsonValue
 
 from amazme_backend.agent.model import stream
+from amazme_backend.agent.prompting import clock_context
 from amazme_backend.ai.types import Auth
 from amazme_backend.contracts.events import Snapshot
 from amazme_backend.contracts.execution import (
@@ -639,8 +640,9 @@ class Worker:
             check = await self.store.workflow_check_text(action.request_id) if self.storage_ready else ""
             if self.context.contains_secret(check):
                 raise BackendError("workflow_secret")
+            context = clock_context(action.config.time_zone, action.started_at_ms)
             config, auth = await self.context.configured_model(action.config)
-            async for item in stream(config, messages, offers, plugins, auth=auth):
+            async for item in stream(config, messages, offers, plugins, auth=auth, context=context):
                 if not isinstance(item, str):
                     completion = item
                 else:

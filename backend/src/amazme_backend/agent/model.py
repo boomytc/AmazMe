@@ -27,20 +27,20 @@ def model_transport(config: ProviderConfig) -> RequestTransport:
 
 
 def model_request(config: ProviderConfig, messages: Sequence[Message], offers: Sequence[McpOffer] | None = None,
-                  plugins: Sequence[PluginOffer] | None = None, *, auth: Auth) -> ModelRequest:
+                  plugins: Sequence[PluginOffer] | None = None, *, auth: Auth, context: str = "") -> ModelRequest:
     spec = model_spec(config)
-    return ModelRequest(system_prompt=build_system_prompt(config),
+    return ModelRequest(system_prompt=build_system_prompt(config, context=context),
         messages=[ModelMessage.model_validate(message.model_dump()) for message in messages],
         tools=build_tools(offers, config, plugins), wire_names=wire_names(spec, auth))
 
 
 async def stream(config: ProviderConfig, messages: list[Message], offers: Sequence[McpOffer] | None = None,
-                 plugins: Sequence[PluginOffer] | None = None, *, auth: Auth) -> AsyncIterator[str | Completion[Message]]:
+                 plugins: Sequence[PluginOffer] | None = None, *, auth: Auth, context: str = "") -> AsyncIterator[str | Completion[Message]]:
     if config.provider == "faux":
         async for item in faux.stream(messages):
             yield item
         return
-    async for item in client.stream(model_spec(config), model_request(config, messages, offers, plugins, auth=auth),
+    async for item in client.stream(model_spec(config), model_request(config, messages, offers, plugins, auth=auth, context=context),
                                   auth, transport=model_transport(config)):
         if isinstance(item, str):
             yield item
