@@ -6,7 +6,14 @@ from typing import Literal
 from pydantic import Field
 
 from amazme_backend.contracts.code import CodeView
-from amazme_backend.contracts.execution import Command, EffectResolution, Lease, ReadFile, WriteFile
+from amazme_backend.contracts.execution import (
+    Command,
+    EffectResolution,
+    Lease,
+    OutputRead,
+    ReadFile,
+    WriteFile,
+)
 from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.mcp import McpCallRequest, McpDecision, McpLaunch
 from amazme_backend.contracts.plugins import PluginCallRequest, PluginDraft, PluginReload
@@ -124,6 +131,7 @@ class RunTool(Lease, Command):
     effect: Literal["read", "write"] = "write"
     file: WriteFile | ReadFile | None = None
     expected_digest: str | None = None
+    output_read: OutputRead | None = None
 
 
 class OpenPlugin(PluginDraft, HostFence):

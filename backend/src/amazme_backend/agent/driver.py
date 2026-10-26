@@ -18,6 +18,7 @@ from amazme_backend.contracts.events import Snapshot
 from amazme_backend.contracts.execution import (
     Command,
     Lease,
+    OutputRead,
     ReadFile,
     Shell,
     WriteFile,
@@ -136,6 +137,8 @@ def command_for(call: ToolCall) -> Command:
         ReadFile.model_validate_json(call.arguments)
     elif call.name == "write_file":
         WriteFile.model_validate_json(call.arguments)
+    elif call.name == "tool_output":
+        OutputRead.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
     return Command(command=call.name)
@@ -659,7 +662,8 @@ class Worker:
                 **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
                 command=command.command, timeout_seconds=command.timeout_seconds, file=file,
                 expected_digest=prepared.expected_digest if prepared else None,
-                effect="read" if action.call.name == "read_file" else "write"))
+                output_read=OutputRead.model_validate_json(action.call.arguments) if action.call.name == "tool_output" else None,
+                effect="read" if action.call.name in {"read_file", "tool_output"} else "write"))
             return ToolReturned(action, result)
         if isinstance(action, QueryTool):
             observed = await self.supervisor.lookup_tool(ToolLookup(**self.owner.model_dump(), call_id=action.step_id))

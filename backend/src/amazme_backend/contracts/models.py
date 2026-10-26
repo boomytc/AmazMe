@@ -13,7 +13,7 @@ ProviderApi = Literal["openai-completions", "openai-responses", "openai-codex-re
                       "anthropic-messages", "google-generative-ai"]
 
 
-TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$"
+TOOL_NAME_PATTERN = r"^(shell|read_file|write_file|tool_output|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$"
 
 
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]

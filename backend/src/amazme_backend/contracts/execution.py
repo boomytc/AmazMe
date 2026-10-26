@@ -26,6 +26,36 @@ class WriteFile(ReadFile):
     content: str = Field(max_length=32000)
 
 
+class OutputRead(Model):
+    locator: str = Field(min_length=1, max_length=128, pattern=r"^[\w.:-]+$")
+    stream: Literal["stdout", "stderr"] = "stdout"
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=16000, ge=4, le=32000)
+
+
+class StreamRetention(Model):
+    observed_bytes: int = 0
+    retained_bytes: int = 0
+    error: str = ""
+
+
+class OutputArchive(Model):
+    locator: str
+    expires_at: int
+    stdout: StreamRetention
+    stderr: StreamRetention
+    settled: bool = False
+
+
+class OutputPage(Model):
+    archive: OutputArchive
+    stream: Literal["stdout", "stderr"]
+    offset: int
+    next_offset: int
+    content: str
+    has_more: bool
+
+
 class ToolResult(Model):
     call_id: str
     exit_code: int
@@ -33,6 +63,7 @@ class ToolResult(Model):
     stderr: str
     truncated: bool = False
     stop_reason: str = ""
+    output: OutputArchive | None = None
 
 
 class TerminalOpen(Model):

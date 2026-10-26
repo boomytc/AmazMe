@@ -11,6 +11,7 @@ from amazme_backend.contracts.computer import (
     ComputerMutation,
 )
 from amazme_backend.contracts.execution import (
+    OutputRead,
     ReadFile,
     Shell,
     WriteFile,
@@ -27,9 +28,11 @@ from amazme_backend.shared.errors import BackendError
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | OutputRead | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
+    elif call.name == "tool_output":
+        value = OutputRead.model_validate_json(call.arguments)
     elif call.name == "tool_search":
         search = ToolSearchInput.model_validate_json(call.arguments)
         if not search.query.strip():

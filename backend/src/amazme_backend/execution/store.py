@@ -100,6 +100,7 @@ def initialize_schema(db: sqlite3.Connection) -> sqlite3.Row:
       COMMIT;
     """)
     for table, additions in {
+        "scopes":{"log_expires":"INTEGER NOT NULL DEFAULT 0", "log_workspace":"TEXT NOT NULL DEFAULT ''"},
         "plugins":{"session":"TEXT NOT NULL DEFAULT ''", "entry":"TEXT NOT NULL DEFAULT ''", "source_digest":"TEXT NOT NULL DEFAULT ''",
                    "tools":"TEXT NOT NULL DEFAULT '[]'", "load_id":"TEXT NOT NULL DEFAULT ''",
                    "phase":"TEXT NOT NULL DEFAULT 'disconnected'", "error":"TEXT NOT NULL DEFAULT ''",

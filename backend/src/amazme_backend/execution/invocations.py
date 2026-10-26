@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import sqlite3
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -22,6 +23,7 @@ from amazme_backend.execution.native import (
     LocalProcess,
     reconcile,
 )
+from amazme_backend.execution.output import ARCHIVE_LIMIT, RETENTION_SECONDS
 from amazme_backend.execution.processes import ProcessReservation
 from amazme_backend.execution.state import tool_outcome
 from amazme_backend.shared.errors import BackendError
@@ -44,6 +46,21 @@ class InvocationOperations:
     async def phase(self, call: str, phase: str) -> None:
         await self.owner.db.call(lambda db: db.execute(
             "UPDATE scopes SET phase=? WHERE id=? AND outcome='pending'", (phase, call)), write=True)
+
+    async def _reserve_output(self) -> int:
+        now = int(time.time())
+        expired = await self.owner.db.call(lambda db: db.execute(
+            "SELECT id,directory FROM scopes WHERE log_expires>0 AND log_expires<=? AND clean=1", (now,)).fetchall())
+        for row in expired:
+            for name in ("stdout.log", "stderr.log", "output.json"):
+                (Path(str(row["directory"])) / name).unlink(missing_ok=True)
+            for temporary in Path(str(row["directory"])).glob("output.json.*"):
+                temporary.unlink()
+            await self.owner.db.call(lambda db: db.execute(
+                "UPDATE scopes SET log_expires=0 WHERE id=?", (row["id"],)), write=True)
+        count = await self.owner.db.call(lambda db: int(db.execute(
+            "SELECT count(*) FROM scopes WHERE log_expires>0").fetchone()[0]))
+        return now + RETENTION_SECONDS if count < ARCHIVE_LIMIT else 0
 
     async def execute(self, value: RunTool) -> ToolResult:
         channel: LocalProcess | None = None
@@ -70,6 +87,18 @@ class InvocationOperations:
                 if location is None:
                     raise BackendError("workspace_not_found")
                 root = Path(location)
+                output_directory = ""
+                if value.output_read is not None:
+                    source = await self.scope(value.output_read.locator)
+                    if source is None:
+                        raise BackendError("output_not_found", status=404)
+                    if source["session"] != value.session_id:
+                        raise BackendError("output_scope_mismatch", status=403)
+                    if source["log_workspace"] != str(root.resolve()):
+                        raise BackendError("output_workspace_mismatch", status=403)
+                    if int(source["log_expires"]) <= int(time.time()):
+                        raise BackendError("output_expired", status=410)
+                    output_directory = str(source["directory"])
                 file = value.file
                 if file is not None:
                     name, inner = tool_path(workspace, file.path)
@@ -85,14 +114,15 @@ class InvocationOperations:
                     file = file.model_copy(update={"path": inner})
                 instance = hashlib.sha256(value.call_id.encode()).hexdigest()[:32]
                 directory = self.owner.profile.path / "executions" / instance
+                log_expires = await self._reserve_output() if file is None and value.output_read is None else 0
                 directory.mkdir(mode=0o700, parents=True, exist_ok=False)
                 with ProcessReservation(self.owner.profile.path, "execution", instance) as reservation:
                     await self.owner.db.call(lambda db: db.execute(
-                        "INSERT INTO scopes(id,session,epoch,worker,supervisor,build,request,directory,lease,digest,phase,effect) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,'registered',?)",
+                        "INSERT INTO scopes(id,session,epoch,worker,supervisor,build,request,directory,lease,digest,phase,effect,log_expires,log_workspace) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,'registered',?,?,?)",
                         (value.call_id, value.session_id, value.execution_epoch, value.worker_id, self.owner.instance,
                          self.owner.build, value.request_id, str(directory), reservation.lease.model_dump_json(), digest,
-                         value.effect)), write=True)
+                         value.effect, log_expires, str(root.resolve()))), write=True)
                     admitted = True
                     await self._hit("create_intent", value)
                     channel = await LocalProcess.start(self.owner.profile.path, instance, directory, reservation)
@@ -102,7 +132,9 @@ class InvocationOperations:
                 await self.owner.check_lease(value)
                 await self.phase(value.call_id, "permit_intent")
                 await channel.permit(LocalPermit(call_id=value.call_id, cwd=str(root), command=value.command,
-                    timeout_seconds=value.timeout_seconds, file=file, expected_digest=value.expected_digest))
+                    timeout_seconds=value.timeout_seconds, file=file, expected_digest=value.expected_digest,
+                    output_read=value.output_read, output_directory=output_directory, log_expires=log_expires,
+                    log_error="output_capacity" if not log_expires else ""))
                 await self._hit("permit_sent", value)
                 await self.phase(value.call_id, "permitted")
                 await self._hit("permitted", value)

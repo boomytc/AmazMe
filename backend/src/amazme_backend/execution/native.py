@@ -16,8 +16,9 @@ from pathlib import Path
 import psutil
 from pydantic import Field
 
-from amazme_backend.contracts.execution import ProcessLease, ReadFile, ToolResult, WriteFile
+from amazme_backend.contracts.execution import OutputRead, ProcessLease, ReadFile, ToolResult, WriteFile
 from amazme_backend.contracts.workspaces import FileWrite
+from amazme_backend.execution.output import RETENTION_SECONDS, OutputCapture, decode_prefix, read_output
 from amazme_backend.execution.processes import ProcessReservation, exited, retain_inherited
 from amazme_backend.platform.ipc import child_command
 from amazme_backend.platform.private_files import private_write
@@ -53,6 +54,10 @@ class LocalPermit(Model):
     timeout_seconds: int = Field(ge=1, le=120)
     file: WriteFile | ReadFile | None = None
     expected_digest: str | None = None
+    output_read: OutputRead | None = None
+    output_directory: str = ""
+    log_expires: int = Field(default_factory=lambda: int(time.time()) + RETENTION_SECONDS)
+    log_error: str = ""
 
 
 class LocalReport(Model):
@@ -124,7 +129,10 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
     child: subprocess.Popen[bytes] | None = None
     report = LocalReport(call_id=permit.call_id, stopped=True)
     try:
-        if permit.file is not None:
+        if permit.output_read is not None:
+            page = read_output(Path(permit.output_directory), permit.output_read)
+            report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=page.model_dump_json(), stderr="")
+        elif permit.file is not None:
             root = Path(permit.cwd)
             if isinstance(permit.file, WriteFile):
                 if permit.expected_digest is None:
@@ -145,6 +153,14 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
             assert child.stdout is not None and child.stderr is not None
             streams = {child.stdout.fileno(): bytearray(), child.stderr.fileno(): bytearray()}
             out_fd, err_fd = child.stdout.fileno(), child.stderr.fileno()
+            capture = OutputCapture(directory, permit.call_id, permit.log_expires, permit.log_error)
+            capture.publish()
+            def collect(fd: int, data: bytes) -> bool:
+                capture.append("stdout" if fd == out_fd else "stderr", data)
+                buffer = streams[fd]
+                omitted = len(buffer) + len(data) > LIMIT
+                buffer.extend(data[:max(0, LIMIT - len(buffer))])
+                return omitted
             for fd in streams:
                 os.set_blocking(fd, False)
             deadline = time.monotonic() + permit.timeout_seconds
@@ -175,9 +191,8 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
                 for fd in readable:
                     if fd in streams:
                         data = os.read(fd, 8192)
-                        buffer = streams[fd]
-                        truncated |= len(buffer) + len(data) > LIMIT
-                        buffer.extend(data[:max(0, LIMIT - len(buffer))])
+                        truncated |= collect(fd, data)
+                capture.publish()
                 if reason:
                     break
             report.tracked = list(tracked.values())
@@ -187,20 +202,20 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
             except subprocess.TimeoutExpired:
                 code = None
             # Descendants may retain pipes. Drain only available bytes, never wait for EOF.
-            for fd, buffer in streams.items():
+            for fd in streams:
                 drain_deadline = time.monotonic() + 0.2
                 while time.monotonic() < drain_deadline and select.select([fd], [], [], 0)[0]:
                     data = os.read(fd, 8192)
                     if not data:
                         break
-                    truncated |= len(buffer) + len(data) > LIMIT
-                    buffer.extend(data[:max(0, LIMIT - len(buffer))])
+                    truncated |= collect(fd, data)
+            capture.publish(settled=True)
             report.reason = reason
             if code is not None:
                 report.result = ToolResult(call_id=permit.call_id, exit_code=code,
-                    stdout=bytes(streams[out_fd]).decode(errors="replace"),
-                    stderr=bytes(streams[err_fd]).decode(errors="replace"), truncated=truncated,
-                    stop_reason=reason)
+                    stdout=decode_prefix(bytes(streams[out_fd]), final=capture.archive.stdout.observed_bytes <= LIMIT)[0],
+                    stderr=decode_prefix(bytes(streams[err_fd]), final=capture.archive.stderr.observed_bytes <= LIMIT)[0], truncated=truncated,
+                    stop_reason=reason, output=capture.archive)
     except BaseException as error:
         report.reason = error.code if isinstance(error, BackendError) else type(error).__name__
         report.stopped = stop_tracked(list(tracked.values()))

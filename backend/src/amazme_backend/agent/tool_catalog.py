@@ -10,7 +10,7 @@ from amazme_backend.contracts.computer import (
     ComputerLocate,
     ComputerMutation,
 )
-from amazme_backend.contracts.execution import ReadFile, Shell, WriteFile
+from amazme_backend.contracts.execution import OutputRead, ReadFile, Shell, WriteFile
 from amazme_backend.contracts.mcp import McpOffer
 from amazme_backend.contracts.plugins import PluginOffer
 from amazme_backend.contracts.sessions import DelegateTasks, RunOptions
@@ -29,6 +29,7 @@ _BUILTINS: tuple[tuple[str, str, type[Model]], ...] = (
     ("shell", "Execute a command with the local user shell in the selected project directory. This has the current user permissions, including network access. Commands may have side effects; never retry an unknown result.", Shell),
     ("read_file", "Read a relative UTF-8 workspace file.", ReadFile),
     ("write_file", "Write a relative UTF-8 workspace file.", WriteFile),
+    ("tool_output", "Read a retained shell output stream using its locator and byte offset. stdout/stderr have separate cursors; use next_offset for the next page. Reads are repeatable. Logs retain a bounded prefix for seven days; inspect archive errors and retained_bytes before claiming complete output.", OutputRead),
     ("delegate_task", "Delegate up to eight required independent tasks. Wait for their results before completing.", DelegateTasks),
     ("web_search", "Search through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", WebSearch),
     ("web_fetch", "Fetch one http(s) page through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", WebFetch),

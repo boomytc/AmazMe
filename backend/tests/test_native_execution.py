@@ -7,6 +7,7 @@ import sys
 import psutil
 import pytest
 
+from amazme_backend.contracts.execution import OutputRead
 from amazme_backend.execution.native import (
     LocalPermit,
     LocalProcess,
@@ -15,6 +16,7 @@ from amazme_backend.execution.native import (
     stop_tracked,
     tool_environment,
 )
+from amazme_backend.execution.output import read_output
 from amazme_backend.execution.processes import ProcessReservation
 
 
@@ -78,6 +80,16 @@ async def test_output_is_drained_but_bounded(tmp_path):
     try:
         report = await asyncio.wait_for(process.collect(), 10)
         assert report.result.truncated and len(report.result.stdout.encode()) == 65536
+        assert report.result.output.stdout.retained_bytes == 300000
+        chunks, offset = [], 0
+        while True:
+            page = read_output(process.directory, OutputRead(locator="call", offset=offset))
+            chunks.append(page.content)
+            offset = page.next_offset
+            if not page.has_more:
+                break
+        assert "".join(chunks).encode() == (b"line\n" * 60000)
+        assert read_output(process.directory, OutputRead(locator="call")).content == chunks[0]
     finally:
         await process.close()
 

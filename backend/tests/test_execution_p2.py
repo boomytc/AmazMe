@@ -106,6 +106,36 @@ async def no_peer(*_):
     raise httpx.ConnectError("not listening")
 
 
+async def test_output_locator_uses_persisted_session_scope_and_quota(owner, monkeypatch):
+    from amazme_backend.contracts.execution import OutputRead
+    info, _ = await worker(owner)
+    first = await call(owner, info, identity="retained")
+    result = await owner.invocations.run(first)
+    assert result.output.stdout.retained_bytes == 3
+    # A new operation reads the same bytes; neither a cursor nor the task map owns the log.
+    read = first.model_copy(update={"call_id": "read-log", "command": "tool_output", "effect": "read",
+        "output_read": OutputRead(locator="retained")})
+    page = await owner.invocations.run(read)
+    assert json.loads(page.stdout)["content"] == "ok\n"
+    await owner.cleanup(info.session_id, first)
+    replacement, _ = await worker(owner)
+    after_reload = (await call(owner, replacement, identity="reloaded", effect="read")).model_copy(
+        update={"output_read": OutputRead(locator="retained")})
+    assert json.loads((await owner.invocations.run(after_reload)).stdout)["content"] == "ok\n"
+    other, _ = await worker(owner, "b" * 32)
+    denied = (await call(owner, other, identity="denied", effect="read")).model_copy(
+        update={"output_read": OutputRead(locator="retained")})
+    with pytest.raises(BackendError, match="output_scope_mismatch"):
+        await owner.invocations.run(denied)
+    missing = after_reload.model_copy(update={"call_id": "missing", "output_read": OutputRead(locator="absent")})
+    with pytest.raises(BackendError, match="output_not_found"):
+        await owner.invocations.run(missing)
+    monkeypatch.setattr("amazme_backend.execution.invocations.ARCHIVE_LIMIT", 1)
+    quota = await owner.invocations.run(after_reload.model_copy(update={"call_id": "quota", "output_read": None}))
+    assert quota.stdout == "ok\n" and quota.output.stdout.error == "output_capacity"
+    assert quota.output.stdout.retained_bytes == 0
+
+
 async def test_resolution_cannot_waive_cleanup_or_change_scope(owner):
     info, _ = await worker(owner)
     value = await call(owner, info)
