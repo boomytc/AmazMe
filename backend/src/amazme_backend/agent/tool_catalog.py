@@ -10,7 +10,16 @@ from amazme_backend.contracts.computer import (
     ComputerLocate,
     ComputerMutation,
 )
-from amazme_backend.contracts.execution import EditFile, OutputRead, ReadFile, Shell, WriteFile
+from amazme_backend.contracts.execution import (
+    EditFile,
+    JobListInput,
+    JobOutputWait,
+    JobQuery,
+    OutputRead,
+    ReadFile,
+    Shell,
+    WriteFile,
+)
 from amazme_backend.contracts.mcp import McpOffer
 from amazme_backend.contracts.plugins import PluginOffer
 from amazme_backend.contracts.sessions import DelegateTasks, RunOptions
@@ -26,7 +35,10 @@ def _object_schema(schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
 
 
 _BUILTINS: tuple[tuple[str, str, type[Model]], ...] = (
-    ("shell", "Execute a command with the local user shell in the selected project directory. This has the current user permissions, including network access. Commands may have side effects; never retry an unknown result.", Shell),
+    ("shell", "Execute a command with local user permissions in the selected project. timeout_seconds is the execution deadline (default 30s, foreground maximum 120s). run_in_background returns a durable job receipt and permits explicit deadlines up to 86400s; set the deadline for long commands. Accepted is not finished. Jobs survive reply completion, turn cancellation and client disconnect; explicit job_kill, session closure or host shutdown stop them. At most four live jobs per session, sixteen per profile and eight starts per user input including automatic followups. Never retry unknown side effects.", Shell),
+    ("job_list", "List this session's background jobs, active first, at most 64 recent records. State and resource_clean report actual settlement, including unknown/cleanup_pending.", JobListInput),
+    ("job_output", "Read a retained background output page. Byte cursors are per stream, repeatable and never consumed by completion notices. Optional wait_seconds (0..30) waits for settlement; user input interrupts waiting without stopping the job. The command keeps its execution deadline. Inspect wait_reason, state and output retention errors.", JobOutputWait),
+    ("job_kill", "Idempotently request cancellation of a job in this session and check real exit. Accepted cancellation is not proof of exit; retry cleanup_pending. Unknown effects are never replayed.", JobQuery),
     ("read_file", "Read a UTF-8 workspace file page, with a whole-file digest and zero-based byte offset. Use next_offset to continue; at most 32000 bytes per page and 16 MiB per file. Read before overwriting or editing. A missing file is an explicit absence observation.", ReadFile),
     ("write_file", "Create a UTF-8 workspace file without overwriting a concurrent creation, or replace a file at the version you previously read. Existing unread or externally modified files are refused; read again on conflict.", WriteFile),
     ("edit_file", "Replace an exact literal string in a previously read UTF-8 file (up to 1 MiB). The default requires exactly one match; replace_all explicitly replaces every match. Preserves literal line endings. Refuses stale observations, missing files, zero matches and ambiguous matches.", EditFile),

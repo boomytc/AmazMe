@@ -8,6 +8,9 @@ from amazme_backend.contracts.code import CodeTools, CodeView
 from amazme_backend.contracts.execution import (
     Cleanup,
     EffectHold,
+    JobList,
+    JobOutputView,
+    JobView,
     Lease,
     SupervisorHealth,
     TerminalList,
@@ -24,6 +27,9 @@ from amazme_backend.contracts.ipc.supervisor import (
     ClosePlugin,
     CodeStatus,
     FreezeSupervisor,
+    JobOutputQuery,
+    JobReference,
+    JobSession,
     McpCallEnvelope,
     McpCallRef,
     McpDecisionEnvelope,
@@ -181,6 +187,21 @@ class SupervisorClient(Peer):
 
     async def lookup_tool(self, value: ToolLookup) -> ToolObservation:
         return await self.call("POST", "/tools/lookup", ToolObservation, value)
+
+    async def list_jobs(self, value: JobSession) -> JobList:
+        return await self.call("POST", "/jobs/list", JobList, value)
+
+    async def job_output(self, value: JobOutputQuery) -> JobOutputView:
+        return await self.call("POST", "/jobs/output", JobOutputView, value)
+
+    async def kill_job(self, value: JobReference) -> JobView:
+        return await self.call("POST", "/jobs/kill", JobView, value)
+
+    async def pending_job_notices(self, value: HostFence) -> JobList:
+        return await self.call("POST", "/jobs/notices", JobList, value)
+
+    async def acknowledge_job_notice(self, value: JobReference) -> JobView:
+        return await self.call("POST", "/jobs/notices/ack", JobView, value)
 
     async def resolve_effect(self, value: ResolveEffect) -> EffectHold:
         return await self.call("POST", "/effects/resolve", EffectHold, value)

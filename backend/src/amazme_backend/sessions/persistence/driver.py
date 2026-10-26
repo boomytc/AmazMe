@@ -6,7 +6,7 @@ import sqlite3
 
 from pydantic import TypeAdapter
 
-from amazme_backend.contracts.execution import EffectHold, EffectResolution
+from amazme_backend.contracts.execution import EffectHold, EffectResolution, Shell, ToolResult
 from amazme_backend.contracts.mcp import McpOffer
 from amazme_backend.contracts.models import ImagePart, Message, checked_images
 from amazme_backend.contracts.plugins import PluginToolCall
@@ -150,6 +150,14 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
             assert step.call is not None
             return WebRetrieval(step.step_id, request.request_id, request.generation, step.call)
         if step.kind == "tool" and step.phase == "intent":
+            if step.call is not None and step.call.name in {"job_list", "job_output", "job_kill"}:
+                if request.cancel_requested or request.decision:
+                    step.phase = "result"
+                    step.result = ToolResult(call_id=step.step_id, exit_code=1, stdout="", stderr="cancelled").model_dump_json()
+                    save_step(db, step)
+                    return Continue()
+                assert run.lease is not None
+                return ToolInvocation(step.step_id, request.request_id, request.generation, run.lease, step.call)
             return QueryTool(step.step_id, request.request_id, request.generation)
     if request.cancel_requested and not request.decision:
         for child in list_requests(db):
@@ -260,6 +268,18 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
                 save_run(db, run)
                 c.emit("cleanup", request.request_id, "epoch_open_intent")
                 return OpenEpoch(request.request_id)
+            if step.call.name == "shell" and Shell.model_validate_json(step.call.arguments).run_in_background:
+                anchor = run.background_anchor or request.request_id
+                used = db.execute("SELECT count(*) FROM steps WHERE json_extract(payload,'$.background_anchor')=?",
+                                  (anchor,)).fetchone()[0]
+                if used >= 8:
+                    step.result = ToolResult(call_id=step.step_id, exit_code=1, stdout="",
+                                             stderr="background_request_budget").model_dump_json()
+                    step.phase = "result"
+                    save_step(db, step)
+                    c.emit("tool", request.request_id, event_step_text(step))
+                    return Continue()
+                step.background_anchor = anchor
             consume_approval(db, c, step)
             step.phase, step.generation = "intent", request.generation
             save_step(db, step)

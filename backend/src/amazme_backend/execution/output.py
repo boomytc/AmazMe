@@ -72,14 +72,22 @@ class OutputCapture:
         self.last_publish = time.monotonic()
 
 
-def read_output(directory: Path, value: OutputRead) -> OutputPage:
+def read_archive(directory: Path, locator: str) -> OutputArchive:
     try:
         meta = directory / "output.json"
         if meta.is_symlink() or meta.stat().st_size > 8192:
             raise BackendError("output_unavailable")
         archive = OutputArchive.model_validate_json(meta.read_bytes())
-        if archive.locator != value.locator:
+        if archive.locator != locator:
             raise BackendError("output_unavailable")
+        return archive
+    except (OSError, ValueError) as error:
+        raise BackendError("output_unavailable", status=503) from error
+
+
+def read_output(directory: Path, value: OutputRead) -> OutputPage:
+    try:
+        archive = read_archive(directory, value.locator)
         if archive.expires_at <= int(time.time()):
             raise BackendError("output_expired", status=410)
         retained = archive.stdout if value.stream == "stdout" else archive.stderr

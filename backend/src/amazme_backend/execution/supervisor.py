@@ -118,7 +118,9 @@ class Supervisor:
                 await self._close_services(require_clean=False)
                 # Reconcile registered invocations before accepting work from a replacement owner.
                 try:
-                    if await self._unclean_epochs():
+                    remaining_jobs = await self.db.call(lambda db: bool(db.execute(
+                        "SELECT 1 FROM scopes WHERE background=1 AND clean=0 LIMIT 1").fetchone()))
+                    if await self._unclean_epochs() or remaining_jobs:
                         await self._reconcile_scopes("supervisor_restarted")
                     for worker in await self.workers():
                         if worker.state != "stopped":
@@ -468,6 +470,14 @@ class Supervisor:
         await self.db.call(lambda db: db.execute("UPDATE scopes SET outcome='unknown' WHERE outcome='pending'"), write=True)
         for row in await self._unclean_epochs():
             await self._cleanup_epoch(row)
+        await self._cleanup_background()
+
+    async def _cleanup_background(self, session: str = "") -> None:
+        rows = await self.db.call(lambda db: db.execute(
+            "SELECT * FROM scopes WHERE background=1 AND clean=0" + (" AND session=?" if session else ""),
+            (session,) if session else ()).fetchall())
+        for scope in rows:
+            await self.invocations.clean_scope(scope)
 
     async def cleanup(self, session: str, lease: Lease | None = None) -> Cleanup:
         async with self.control:
@@ -495,8 +505,8 @@ class Supervisor:
             return Cleanup.model_validate_json(str(row["receipt"]))
         await self.db.call(lambda db: db.execute("UPDATE epochs SET state='closing' WHERE session=? AND epoch=?",
                                                 (session, epoch)), write=True)
-        await self.invocations.cancel_all(session, epoch)
-        scopes = await self.db.call(lambda db: db.execute("SELECT * FROM scopes WHERE session=? AND epoch=?",
+        await self.invocations.cancel_all(session, epoch, include_background=False)
+        scopes = await self.db.call(lambda db: db.execute("SELECT * FROM scopes WHERE session=? AND epoch=? AND background=0",
                                                           (session, epoch)).fetchall())
         ids = [str(scope["id"]) for scope in scopes]
         reason = ""
@@ -595,6 +605,10 @@ class Supervisor:
                 result = await self._cleanup_epoch(epoch)
                 if result.state != "clean":
                     raise BackendError("execution_cleanup_pending", status=503)
+            await self.db.call(lambda db: db.execute(
+                "UPDATE scopes SET job_cancel=1 WHERE session=? AND background=1 AND clean=0", (value.session_id,)), write=True)
+            await self.invocations.cancel_all(value.session_id, background_only=True)
+            await self._cleanup_background(value.session_id)
             await self._close_services(value.session_id)
             return Cleanup(session_id=value.session_id, execution_epoch=0, state="clean", resources=[],
                            proof_id=secrets.token_hex(16))
@@ -633,7 +647,7 @@ class Supervisor:
             row = await self.db.call(lambda db: db.execute(
                 "SELECT (SELECT count(*) FROM mcp_calls WHERE phase IN ('waiting_approval','running')),"
                 "(SELECT count(*) FROM terminals WHERE phase='running'),"
-                "(SELECT count(*) FROM scopes WHERE clean=0 AND phase IN ('registered','running'))").fetchone())
+                "(SELECT count(*) FROM scopes WHERE clean=0 AND (background=1 OR phase IN ('registered','running')))").fetchone())
             assert row is not None
             tasks = jobs + sum(int(value or 0) for value in row)
             return TaskActivity(active=tasks > 0, tasks=tasks)
@@ -660,10 +674,12 @@ class Supervisor:
                 session_errors.setdefault(worker.session_id, []).append("worker_retirement_pending:" + worker.worker_id)
         scopes = await self.db.call(lambda db: db.execute(
             "SELECT s.*,e.state AS epoch_state FROM scopes s JOIN epochs e "
-            "ON s.session=e.session AND s.epoch=e.epoch ORDER BY s.rowid DESC LIMIT 200").fetchall())
+            "ON s.session=e.session AND s.epoch=e.epoch ORDER BY s.clean,s.rowid DESC LIMIT 200").fetchall())
         resources = [ExecutionResource.model_validate({
             "call_id": row["id"], "session_id": row["session"], "request_id": row["request"],
-            "outcome": row["outcome"], "state": resource_state(clean=bool(row["clean"]), epoch_state=str(row["epoch_state"]), phase=str(row["phase"])),
+            "outcome": row["outcome"], "state": resource_state(clean=bool(row["clean"]),
+                epoch_state=("blocked" if row["outcome"] == "unknown" else "open") if row["background"] else str(row["epoch_state"]),
+                phase=str(row["phase"])),
         }) for row in scopes]
         return SupervisorHealth(identity=self.identity(), registry_revision=revision, freeze_id=self.freeze_id,
             workers=workers, epochs=[EpochHealth(session_id=str(r["session"]), worker_id=str(r["worker"]),
@@ -706,6 +722,7 @@ class Supervisor:
                     with retirement_proof(self.profile, worker):
                         pass
             if (health.blocked or any(e.state != "clean" for e in health.epochs)
+                    or any(resource.state != "exited" for resource in health.resources)
                     or any(not terminal.clean for terminal in health.terminals)
                     or any(not server.clean for server in health.mcp_servers)
                     or any(w.state != "stopped" for w in health.workers)):

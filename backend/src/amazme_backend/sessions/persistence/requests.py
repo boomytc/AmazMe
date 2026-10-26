@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import Literal
 
 from amazme_backend.contracts.mcp import McpToolCall, mcp_alias
 from amazme_backend.contracts.models import Message, ToolCall
@@ -56,12 +57,16 @@ from amazme_backend.shared.errors import BackendError
 
 
 def create_request(state: SessionContext, db: sqlite3.Connection, c: Changes, value: Submit, *, parent_id: str = "",
-                 depth: int = 0, inherited: ProviderConfig | None = None, accepted_config: ProviderConfig | None = None) -> Receipt:
+                 depth: int = 0, inherited: ProviderConfig | None = None, accepted_config: ProviderConfig | None = None,
+                 input_origin: Literal["user", "job"] | None = None, background_anchor: str = "") -> Receipt:
+    parent_run = load_run(db, parent_id) if parent_id else None
+    origin = input_origin or (parent_run.input_origin if parent_run else "user")
+    anchor = background_anchor or (parent_run.background_anchor if parent_run else value.request_id)
     receipt = Receipt(request_id=value.request_id, run_id=value.request_id, text=value.text,
                       status="waiting_time" if value.not_before_ms > clock.now_ms() else "queued",
                       parent_id=parent_id, kind="child" if parent_id else "root",
                       accepted_revision=str(c.seq), revision=str(c.seq), not_before_ms=value.not_before_ms,
-                      image_count=len(value.images))
+                      image_count=len(value.images), input_origin=origin)
     db.execute("INSERT INTO requests(id,digest,payload) VALUES(?,?,?)",
                (value.request_id, digest(value.model_dump_json()), receipt.model_dump_json()))
     save_prompt_images(db, value.request_id, value.images)
@@ -108,7 +113,8 @@ def create_request(state: SessionContext, db: sqlite3.Connection, c: Changes, va
             direct = direct.model_copy(update={"arguments":args_mcp.model_dump_json()})
         if not config.tool_allowed(selected):
             raise BackendError("tool_not_allowed")
-    save_run(db, Run(request_id=value.request_id, config=config, depth=depth, direct_call=direct, input_text=expanded_text))
+    save_run(db, Run(request_id=value.request_id, config=config, depth=depth, direct_call=direct, input_text=expanded_text,
+                     input_origin=origin, background_anchor=anchor))
     c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
     c.hit("accepted", receipt.request_id)
     return receipt
@@ -210,7 +216,7 @@ def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, reques
     binding = approval_binding(state, db, request.request_id, step.call)
     policy = load_run(db, request.request_id).config.approval_policy or state.approval_policy
     required = policy == "all" or (
-        policy == "mutations" and step.call.name in {"shell", "write_file", "edit_file", "mcp_tool", "computer_act", "computer_ground", "plugin_tool"})
+        policy == "mutations" and step.call.name in {"shell", "write_file", "edit_file", "job_kill", "mcp_tool", "computer_act", "computer_ground", "plugin_tool"})
     if not required:
         return True
     approval: Approval | None = None

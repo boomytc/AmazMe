@@ -58,6 +58,17 @@ test("model journal records stay out of the transcript and applied tools stop an
  expect(blocks.find(block => block.kind === "tool")?.running).toBe(false);
 });
 
+test("background receipts remain accepted and system completions keep their origin across reload", () => {
+ const snapshot = empty();
+ const job = { job_id: "job-1", session_id: "a".repeat(32), request_id: "a", state: "running", outcome: "pending", resource_clean: false, cancel_requested: false, started_at_ms: 1, finished_at_ms: 0 };
+ snapshot.requests = [{ ...receipt("a"), status: "succeeded", answer: "accepted" }, { ...receipt("job-notice"), input_origin: "job", text: "Background completion" }];
+ snapshot.events = [{ seq: "1", kind: "tool", request_id: "a", text: JSON.stringify({ kind: "tool", phase: "applied", call: { id: "call", name: "shell", arguments: '{"command":"sleep 126","run_in_background":true}' }, result: JSON.stringify({ call_id: "call", exit_code: 0, stdout: JSON.stringify(job), stderr: "" }) }) }];
+ const project = () => transcriptBlocks("zh", snapshot);
+ expect(project().find(block => block.kind === "tool")?.result?.status).toBe("后台已受理");
+ expect(project().find(block => block.text === "Background completion")?.kind).toBe("notice");
+ expect(transcriptBlocks("zh", JSON.parse(JSON.stringify(snapshot)))).toEqual(project());
+});
+
 test.each([
  ["large", JSON.stringify({ payload: "x".repeat(120_000) })],
  ["deep", '['.repeat(5000) + '0' + ']'.repeat(5000)],

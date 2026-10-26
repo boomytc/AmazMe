@@ -13,13 +13,15 @@ import httpx
 from pydantic import JsonValue
 
 from amazme_backend.agent.model import stream
-from amazme_backend.agent.prompting import clock_context
+from amazme_backend.agent.prompting import clock_context, job_completion_text
 from amazme_backend.ai.types import Auth
 from amazme_backend.contracts.events import Snapshot
 from amazme_backend.contracts.execution import (
     Command,
     EditFile,
     FileObservation,
+    JobOutputWait,
+    JobQuery,
     Lease,
     OutputRead,
     ReadFile,
@@ -38,6 +40,9 @@ from amazme_backend.contracts.ipc.supervisor import (
     CancelCode,
     CancelPlugin,
     CodeStatus,
+    JobOutputQuery,
+    JobReference,
+    JobSession,
     McpCallEnvelope,
     McpCallRef,
     McpDecisionEnvelope,
@@ -54,6 +59,7 @@ from amazme_backend.contracts.ipc.worker import (
     ApprovalEnvelope,
     Cancel,
     FreezeWorker,
+    JobNoticeEnvelope,
     ResolutionEnvelope,
     Submission,
 )
@@ -262,6 +268,14 @@ class Worker:
         self._use_current_provider()
         self.last_demand = time.monotonic()
         receipt = await self.store.accept(value.value, value, accepted_config=value.provider)
+        self.quiescent.clear()
+        self.wake.set()
+        return receipt
+
+    async def receive_job_notice(self, value: JobNoticeEnvelope) -> Receipt:
+        self._business()
+        receipt = await self.store.accept_job_notice(value.value, job_completion_text(value.value), value)
+        self.last_demand = time.monotonic()
         self.quiescent.clear()
         self.wake.set()
         return receipt
@@ -599,6 +613,44 @@ class Worker:
             raise BackendError(error.code, status=response.status_code)
         return ComputerReturned(action, ComputerToolResult.model_validate_json(response.content))
 
+    async def _job_tool(self, action: ToolInvocation) -> ToolReturned:
+        fence = await self._mcp_fence()
+        context = JobSession(**fence.model_dump(), session_id=self.session)
+        try:
+            if action.call.name == "job_list":
+                result = await self.supervisor.list_jobs(context)
+                return ToolReturned(action, ToolResult(call_id=action.step_id, exit_code=0,
+                                                       stdout=result.model_dump_json(), stderr=""))
+            if action.call.name == "job_kill":
+                query = JobQuery.model_validate_json(action.call.arguments)
+                killed = await self.supervisor.kill_job(JobReference(**context.model_dump(), **query.model_dump()))
+                return ToolReturned(action, ToolResult(call_id=action.step_id, exit_code=0,
+                                                       stdout=killed.model_dump_json(), stderr=""))
+            arguments = JobOutputWait.model_validate_json(action.call.arguments)
+            query_output = JobOutputQuery(**context.model_dump(), **arguments.model_dump(exclude={"wait_seconds"}))
+            deadline = time.monotonic() + arguments.wait_seconds
+            while True:
+                # Clear before checking durable input: a simultaneous submission either appears in
+                # the query or wakes the wait. Completion events do not count as user input.
+                self.wake.clear()
+                interrupted = await self.store.waiting_user_input(action.request_id)
+                frozen = (await self.store.activity()).state in {"frozen", "stopping", "blocked"}
+                output = await self.supervisor.job_output(query_output)
+                if interrupted:
+                    output.wait_reason = "user_input"
+                elif output.job.outcome != "pending":
+                    output.wait_reason = "completed"
+                elif frozen or time.monotonic() >= deadline:
+                    output.wait_reason = "deadline"
+                else:
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(self.wake.wait(), min(0.2, max(0.001, deadline - time.monotonic())))
+                    continue
+                return ToolReturned(action, ToolResult(call_id=action.step_id, exit_code=1 if output.error else 0,
+                                                       stdout=output.model_dump_json(), stderr=output.error))
+        except BackendError as error:
+            return ToolReturned(action, ToolResult(call_id=action.step_id, exit_code=1, stdout="", stderr=error.code))
+
     async def perform(self, action: Action) -> Observation:
         if self.validation:
             raise BackendError("validation_worker")
@@ -674,6 +726,8 @@ class Worker:
         if isinstance(action, PluginRetrieval):
             return await self._retrieve_plugin(action)
         if isinstance(action, ToolInvocation):
+            if action.call.name in {"job_list", "job_output", "job_kill"}:
+                return await self._job_tool(action)
             try:
                 prepared = await self.prepare_file_write(action) if action.call.name in {"write_file", "edit_file"} else None
             except BackendError as error:
@@ -685,13 +739,19 @@ class Worker:
             file = (WriteFile.model_validate_json(action.call.arguments) if action.call.name == "write_file" else
                     EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file" else
                     ReadFile.model_validate_json(action.call.arguments) if action.call.name == "read_file" else None)
-            result = await self.supervisor.run_tool(RunTool(
-                **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
-                command=command.command, timeout_seconds=command.timeout_seconds, file=file,
-                expected_digest=prepared.expected_digest if prepared else None,
-                expected_root=prepared.root if prepared else "",
-                output_read=OutputRead.model_validate_json(action.call.arguments) if action.call.name == "tool_output" else None,
-                effect="read" if action.call.name in {"read_file", "tool_output"} else "write"))
+            try:
+                result = await self.supervisor.run_tool(RunTool(
+                    **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
+                    command=command.command, timeout_seconds=command.timeout_seconds,
+                    run_in_background=command.run_in_background, file=file,
+                    expected_digest=prepared.expected_digest if prepared else None,
+                    expected_root=prepared.root if prepared else "",
+                    output_read=OutputRead.model_validate_json(action.call.arguments) if action.call.name == "tool_output" else None,
+                    effect="read" if action.call.name in {"read_file", "tool_output"} else "write"))
+            except BackendError as error:
+                if error.code != "background_capacity":
+                    raise
+                result = ToolResult(call_id=action.step_id, exit_code=1, stdout="", stderr=error.code)
             return ToolReturned(action, result)
         if isinstance(action, QueryTool):
             observed = await self.supervisor.lookup_tool(ToolLookup(**self.owner.model_dump(), call_id=action.step_id))

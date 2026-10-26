@@ -207,7 +207,7 @@ async def set_archived(self: PersistenceOwner, session_id: str, archived: bool) 
         if archived:
             db.execute("UPDATE sessions SET wanted=0,next_check=0 WHERE id=?", (session_id,))
             db.execute(
-                "UPDATE deliveries SET state='rejected',error_code='session_archived',error_status=409 WHERE session=? AND kind='submit' AND state='pending'",
+                "UPDATE deliveries SET state='rejected',error_code='session_archived',error_status=409 WHERE session=? AND kind IN ('submit','job_notice') AND state='pending'",
                 (session_id,),
             )
         return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())

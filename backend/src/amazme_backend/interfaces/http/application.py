@@ -3,6 +3,7 @@ import contextlib
 import secrets
 import sqlite3
 from collections.abc import Awaitable, Callable
+from typing import Annotated, Literal
 from urllib.parse import quote
 
 import httpx
@@ -37,6 +38,11 @@ from amazme_backend.contracts.computer import (
 from amazme_backend.contracts.events import HistoryPage, Snapshot
 from amazme_backend.contracts.execution import (
     EffectResolution,
+    JobId,
+    JobList,
+    JobOutput,
+    JobOutputView,
+    JobView,
     TerminalList,
     TerminalOpen,
     TerminalSize,
@@ -451,6 +457,20 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/checkpoints/{checkpoint_id}/restore")
     async def restore_checkpoint(checkpoint_id: str, value: CheckpointRestore) -> FileChange:
         return await owner.workspaces.restore_checkpoint(checkpoint_id, value)
+
+    @app.get("/api/v1/sessions/{session_id}/jobs")
+    async def list_jobs(session_id: str) -> JobList:
+        return await owner.jobs.list(session_id)
+
+    @app.get("/api/v1/sessions/{session_id}/jobs/{job_id}/output")
+    async def job_output(session_id: str, job_id: JobId, stream: Literal["stdout", "stderr"] = "stdout",
+                         offset: Annotated[int, Query(ge=0)] = 0,
+                         limit: Annotated[int, Query(ge=4, le=32000)] = 16000) -> JobOutputView:
+        return await owner.jobs.output(session_id, JobOutput(job_id=job_id, stream=stream, offset=offset, limit=limit))
+
+    @app.post("/api/v1/sessions/{session_id}/jobs/{job_id}/kill")
+    async def kill_job(session_id: str, job_id: JobId) -> JobView:
+        return await owner.jobs.kill_job(session_id, job_id)
 
     @app.post("/api/v1/sessions/{session_id}/terminals")
     async def open_terminal(session_id: str, value: TerminalOpen) -> TerminalView:

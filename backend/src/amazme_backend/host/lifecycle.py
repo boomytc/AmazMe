@@ -202,6 +202,8 @@ class HostLifecycle:
             raise BackendError("execution_cleanup_pending", status=503)
         if any((not server.clean for server in health.mcp_servers)):
             raise BackendError("execution_cleanup_pending", status=503)
+        if any(resource.state != "exited" for resource in health.resources):
+            raise BackendError("execution_cleanup_pending", status=503)
         for epoch in health.epochs:
             cleanup = epoch.cleanup
             worker = workers.get(epoch.worker_id)

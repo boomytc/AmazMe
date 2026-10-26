@@ -279,6 +279,28 @@ async def _handle(client: Client, session: Session, attachment: Attachment, work
             return held, terminal_id, server_id
         await _decide_held(client, session, attachment, held, text == "批准", lines)
         return None, terminal_id, server_id
+    if text == "/jobs":
+        view = await client.list_jobs(session.session_id)
+        lines.extend(f"作业 {job.job_id} {job.state} 已退出:{job.resource_clean}" for job in view.jobs)
+        if view.truncated:
+            lines.append("仅显示最近 64 个作业")
+        return None, terminal_id, server_id
+    if text.startswith("/job-output "):
+        parts = text.split()
+        job_id, stream, offset = parts[1], parts[2] if len(parts) > 2 else "stdout", int(parts[3]) if len(parts) > 3 else 0
+        if stream not in {"stdout", "stderr"}:
+            raise BackendError("invalid_output_stream")
+        output = await client.job_output(session.session_id, job_id, stream="stderr" if stream == "stderr" else "stdout", offset=offset)
+        lines.append(f"作业 {job_id} {output.job.state} {output.error}")
+        if output.output:
+            lines.extend(output.output.content.splitlines())
+            lines.append(f"下一字节 {output.output.next_offset} 还有内容:{output.output.has_more}")
+        return None, terminal_id, server_id
+    if text.startswith("/job-kill "):
+        killed = await client.kill_job(session_id=session.session_id, attachment_id=attachment.attachment_id,
+                                       job_id=text.removeprefix("/job-kill ").strip())
+        lines.append(f"作业 {killed.job_id} {killed.state} 已退出:{killed.resource_clean}")
+        return None, terminal_id, server_id
     if text == "/pty-close":
         if not terminal_id:
             lines.append("尚无终端")

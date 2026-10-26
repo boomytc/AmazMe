@@ -34,6 +34,7 @@ from amazme_backend.contracts.ipc.worker import (
     FlagValue,
     FoundAction,
     IdBody,
+    JobNotice,
     MessageList,
     OpenWorkflowBody,
     PrepareBranchBody,
@@ -77,6 +78,7 @@ from amazme_backend.sessions.persistence.records import (
     append_message,
     check_fence,
     compaction_source,
+    context_requests,
     expire_approvals,
     list_requests,
     list_steps,
@@ -241,6 +243,7 @@ class SessionStore:
                     raise BackendError("steer_target_settled")
                 run = load_run(db, target.request_id)
                 run.started_at_ms = clock.now_ms()
+                run.input_origin, run.background_anchor = "user", value.request_id
                 if value.time_zone:
                     run.config.time_zone = value.time_zone
                 save_run(db, run)
@@ -261,6 +264,39 @@ class SessionStore:
                 settle_request(db, c, receipt)
             return receipt
         return await self._store.transact(operation)
+
+    async def accept_job_notice(self, value: JobNotice, text: str, fence: HostFence) -> Receipt:
+        def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
+            check_fence(self._state, db, fence)
+            if value.session_id != self.session_id:
+                raise BackendError("job_scope_mismatch")
+            old = db.execute("SELECT digest,payload FROM requests WHERE id=?", (value.request_id,)).fetchone()
+            key = digest(value.model_dump_json())
+            if old is not None:
+                if str(old[0]) != key or load_run(db, value.request_id).input_origin != "job":
+                    raise BackendError("request_conflict")
+                return Receipt.model_validate_json(str(old[1]))
+            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping") or metadata_value(db, "blocked"):
+                raise BackendError("worker_frozen")
+            if len(pending_request_ids(db)) >= PENDING_LIMIT:
+                raise BackendError("queue_full")
+            parent = load_run(db, value.parent_request_id)
+            receipt = create_request(self._state, db, c, Submit(request_id=value.request_id, text=text),
+                inherited=parent.config, input_origin="job", background_anchor=parent.background_anchor or parent.request_id)
+            db.execute("UPDATE requests SET digest=? WHERE id=?", (key, value.request_id))
+            return receipt
+        return await self._store.transact(operation)
+
+    async def waiting_user_input(self, request_id: str) -> bool:
+        def operation(db: sqlite3.Connection) -> bool:
+            ordinal, _ancestors = context_requests(db, request_id)
+            placeholders = ",".join("?" for _ in TERMINAL)
+            return bool(db.execute(
+                "SELECT 1 FROM requests q LEFT JOIN runs r ON r.request_id=q.id WHERE q.ordinal>? "
+                f"AND q.status NOT IN ({placeholders}) AND (q.kind='steer' OR "
+                "(q.kind='root' AND coalesce(json_extract(r.payload,'$.input_origin'),'user')='user')) LIMIT 1",
+                (ordinal, *TERMINAL)).fetchone())
+        return await self._store.database.call(operation)
 
     async def get(self, request_id: str) -> Receipt:
         def operation(db: sqlite3.Connection) -> Receipt:

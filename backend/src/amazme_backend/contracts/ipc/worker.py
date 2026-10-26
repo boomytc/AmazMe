@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import hashlib
 from typing import Literal
 
 from pydantic import Field, JsonValue
 
 from amazme_backend.contracts.computer import ComputerActionView, ComputerPolicy
-from amazme_backend.contracts.execution import EffectResolution
+from amazme_backend.contracts.execution import EffectResolution, JobId
 from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.models import ImagePart, Message, ToolCall
 from amazme_backend.contracts.profiles import ProviderConfig
@@ -24,6 +25,23 @@ class CodeChild(Model):
 class Submission(HostFence):
     value: Submit
     provider: ProviderConfig | None = None
+
+
+class JobNotice(Model):
+    job_id: JobId
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    parent_request_id: str = Field(min_length=1, max_length=128)
+    state: Literal["succeeded", "failed", "cancelled", "unknown"]
+    exit_code: int | None = None
+    stop_reason: str = ""
+
+    @property
+    def request_id(self) -> str:
+        return "job-" + hashlib.sha256(self.job_id.encode()).hexdigest()
+
+
+class JobNoticeEnvelope(HostFence):
+    value: JobNotice
 
 
 class Cancel(HostFence):

@@ -19,6 +19,7 @@ from amazme_backend.contracts import (
     TaskActivity,
     WorkerActivity,
 )
+from amazme_backend.contracts.execution import JobList
 from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.host.service import Host
 from amazme_backend.host.store import HostStore
@@ -265,6 +266,7 @@ async def test_nine_sessions_progress_while_first_eight_are_stalled(owner):
         await owner.lifecycle.store.create_session(session, CreateSession())
         await owner.lifecycle.store.enqueue(session, "submit", session, Submit(request_id=session, text="task"))
     owner.lifecycle.ensure_supervisor = AsyncMock()
+    owner.lifecycle.supervisor.pending_job_notices = AsyncMock(return_value=JobList(jobs=[]))
     blocked = asyncio.Event()
     done = asyncio.Event()
 

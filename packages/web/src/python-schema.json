@@ -3435,6 +3435,165 @@
       ],
       "title": "IntervalRule"
     },
+    "JobList": {
+      "properties": {
+        "jobs": {
+          "items": {
+            "$ref": "#/components/schemas/JobView"
+          },
+          "type": "array",
+          "title": "Jobs"
+        },
+        "truncated": {
+          "type": "boolean",
+          "title": "Truncated",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "jobs"
+      ],
+      "title": "JobList"
+    },
+    "JobOutputView": {
+      "properties": {
+        "job": {
+          "$ref": "#/components/schemas/JobView"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/OutputPage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        },
+        "wait_reason": {
+          "type": "string",
+          "enum": [
+            "",
+            "completed",
+            "deadline",
+            "user_input"
+          ],
+          "title": "Wait Reason",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "job"
+      ],
+      "title": "JobOutputView"
+    },
+    "JobView": {
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "title": "Job Id"
+        },
+        "session_id": {
+          "type": "string",
+          "title": "Session Id"
+        },
+        "request_id": {
+          "type": "string",
+          "title": "Request Id"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "starting",
+            "running",
+            "stopping",
+            "succeeded",
+            "failed",
+            "cancelled",
+            "unknown",
+            "cleanup_pending"
+          ],
+          "title": "State"
+        },
+        "outcome": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "completed",
+            "unknown"
+          ],
+          "title": "Outcome"
+        },
+        "resource_clean": {
+          "type": "boolean",
+          "title": "Resource Clean"
+        },
+        "cancel_requested": {
+          "type": "boolean",
+          "title": "Cancel Requested"
+        },
+        "started_at_ms": {
+          "type": "integer",
+          "title": "Started At Ms"
+        },
+        "finished_at_ms": {
+          "type": "integer",
+          "title": "Finished At Ms"
+        },
+        "exit_code": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Exit Code"
+        },
+        "stop_reason": {
+          "type": "string",
+          "title": "Stop Reason",
+          "default": ""
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/OutputArchive"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "job_id",
+        "session_id",
+        "request_id",
+        "state",
+        "outcome",
+        "resource_clean",
+        "cancel_requested",
+        "started_at_ms",
+        "finished_at_ms"
+      ],
+      "title": "JobView"
+    },
     "JsonValue": {},
     "McpCall": {
       "properties": {
@@ -4741,6 +4900,80 @@
       ],
       "title": "OnceRule"
     },
+    "OutputArchive": {
+      "properties": {
+        "locator": {
+          "type": "string",
+          "title": "Locator"
+        },
+        "expires_at": {
+          "type": "integer",
+          "title": "Expires At"
+        },
+        "stdout": {
+          "$ref": "#/components/schemas/StreamRetention"
+        },
+        "stderr": {
+          "$ref": "#/components/schemas/StreamRetention"
+        },
+        "settled": {
+          "type": "boolean",
+          "title": "Settled",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "locator",
+        "expires_at",
+        "stdout",
+        "stderr"
+      ],
+      "title": "OutputArchive"
+    },
+    "OutputPage": {
+      "properties": {
+        "archive": {
+          "$ref": "#/components/schemas/OutputArchive"
+        },
+        "stream": {
+          "type": "string",
+          "enum": [
+            "stdout",
+            "stderr"
+          ],
+          "title": "Stream"
+        },
+        "offset": {
+          "type": "integer",
+          "title": "Offset"
+        },
+        "next_offset": {
+          "type": "integer",
+          "title": "Next Offset"
+        },
+        "content": {
+          "type": "string",
+          "title": "Content"
+        },
+        "has_more": {
+          "type": "boolean",
+          "title": "Has More"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "archive",
+        "stream",
+        "offset",
+        "next_offset",
+        "content",
+        "has_more"
+      ],
+      "title": "OutputPage"
+    },
     "PluginCallRequest": {
       "properties": {
         "kind": {
@@ -5799,6 +6032,15 @@
           "title": "Kind",
           "type": "string"
         },
+        "input_origin": {
+          "default": "user",
+          "enum": [
+            "user",
+            "job"
+          ],
+          "title": "Input Origin",
+          "type": "string"
+        },
         "generation": {
           "default": 0,
           "title": "Generation",
@@ -6485,8 +6727,6 @@
         },
         "offset": {
           "type": "integer",
-          "maximum": 9007199254740991.0,
-          "minimum": 0.0,
           "title": "Offset",
           "default": 0
         },
@@ -6858,6 +7098,25 @@
           "type": "string",
           "title": "Terminal Id",
           "default": ""
+        },
+        "job_id": {
+          "type": "string",
+          "title": "Job Id",
+          "default": ""
+        },
+        "stream": {
+          "type": "string",
+          "enum": [
+            "stdout",
+            "stderr"
+          ],
+          "title": "Stream",
+          "default": "stdout"
+        },
+        "limit": {
+          "type": "integer",
+          "title": "Limit",
+          "default": 16000
         },
         "command": {
           "type": "string",
@@ -7926,6 +8185,28 @@
       "title": "Snapshot",
       "type": "object"
     },
+    "StreamRetention": {
+      "properties": {
+        "observed_bytes": {
+          "type": "integer",
+          "title": "Observed Bytes",
+          "default": 0
+        },
+        "retained_bytes": {
+          "type": "integer",
+          "title": "Retained Bytes",
+          "default": 0
+        },
+        "error": {
+          "type": "string",
+          "title": "Error",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "StreamRetention"
+    },
     "Submit": {
       "properties": {
         "time_zone": {
@@ -8401,7 +8682,7 @@
           "type": "string"
         },
         "name": {
-          "pattern": "^(shell|read_file|write_file|edit_file|tool_output|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
+          "pattern": "^(shell|read_file|write_file|edit_file|tool_output|job_list|job_output|job_kill|delegate_task|web_search|web_fetch|computer_observe|computer_act|computer_locate|computer_ground|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
           "title": "Name",
           "type": "string"
         },
@@ -9704,6 +9985,24 @@
       "body": {
         "$ref": "#/components/schemas/CheckpointRestore"
       }
+    },
+    "GET /api/v1/sessions/{session_id}/jobs": {
+      "response": {
+        "$ref": "#/components/schemas/JobList"
+      },
+      "body": null
+    },
+    "GET /api/v1/sessions/{session_id}/jobs/{job_id}/output": {
+      "response": {
+        "$ref": "#/components/schemas/JobOutputView"
+      },
+      "body": null
+    },
+    "POST /api/v1/sessions/{session_id}/jobs/{job_id}/kill": {
+      "response": {
+        "$ref": "#/components/schemas/JobView"
+      },
+      "body": null
     },
     "POST /api/v1/sessions/{session_id}/terminals": {
       "response": {

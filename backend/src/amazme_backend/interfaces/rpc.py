@@ -26,6 +26,7 @@ from amazme_backend.contracts.computer import (
     ComputerPolicy,
 )
 from amazme_backend.contracts.execution import (
+    JobOutput,
     TerminalOpen,
     TerminalSize,
     TerminalType,
@@ -129,6 +130,10 @@ class RpcParams(RunOptions):
     path: str = ""
     checkpoint_id: str = ""
     terminal_id: str = ""
+    job_id: str = ""
+    stream: Literal["stdout", "stderr"] = "stdout"
+    offset: int = 0
+    limit: int = 16000
     command: str = ""
     cwd: str = ""
     environment: dict[str, str] = Field(default_factory=dict)
@@ -397,6 +402,13 @@ async def _dispatch(owner: Host, method: str, params: RpcParams) -> Model:
         await _bound(owner, params)
         return await owner.workspaces.create_checkpoint(CheckpointCreate(
             checkpoint_id=params.checkpoint_id, workspace=session_workspace, path=params.path))
+    if method == "job.list":
+        return await owner.jobs.list(await _bound(owner, params))
+    if method == "job.output":
+        return await owner.jobs.output(await _bound(owner, params), JobOutput(
+            job_id=params.job_id, stream=params.stream, offset=params.offset, limit=params.limit))
+    if method == "job.kill":
+        return await owner.jobs.kill_job(await _bound(owner, params), params.job_id)
     if method == "terminal.list":
         return await owner.integrations.list_terminals(await _bound(owner, params))
     if method == "terminal.open":

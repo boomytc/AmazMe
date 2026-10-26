@@ -12,6 +12,9 @@ from amazme_backend.contracts.computer import (
 )
 from amazme_backend.contracts.execution import (
     EditFile,
+    JobListInput,
+    JobOutputWait,
+    JobQuery,
     OutputRead,
     ReadFile,
     Shell,
@@ -29,7 +32,13 @@ from amazme_backend.shared.errors import BackendError
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | WriteFile | EditFile | OutputRead | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | WriteFile | EditFile | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
+    elif call.name == "job_list":
+        value = JobListInput.model_validate_json(call.arguments)
+    elif call.name == "job_output":
+        value = JobOutputWait.model_validate_json(call.arguments)
+    elif call.name == "job_kill":
+        value = JobQuery.model_validate_json(call.arguments)
     elif call.name == "read_file":
         value = ReadFile.model_validate_json(call.arguments)
     elif call.name == "tool_output":

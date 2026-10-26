@@ -662,6 +662,33 @@ export type IntervalRule = {
   "every_minutes": number;
 };
 
+export type JobList = {
+  "jobs": Array<JobView>;
+  "truncated"?: boolean;
+};
+
+export type JobOutputView = {
+  "job": JobView;
+  "output"?: OutputPage | null;
+  "error"?: string;
+  "wait_reason"?: "" | "completed" | "deadline" | "user_input";
+};
+
+export type JobView = {
+  "job_id": string;
+  "session_id": string;
+  "request_id": string;
+  "state": "starting" | "running" | "stopping" | "succeeded" | "failed" | "cancelled" | "unknown" | "cleanup_pending";
+  "outcome": "pending" | "completed" | "unknown";
+  "resource_clean": boolean;
+  "cancel_requested": boolean;
+  "started_at_ms": number;
+  "finished_at_ms": number;
+  "exit_code"?: number | null;
+  "stop_reason"?: string;
+  "output"?: OutputArchive | null;
+};
+
 export type JsonValue = unknown;
 
 export type McpCall = {
@@ -900,6 +927,23 @@ export type OnceRule = {
   "time_zone": string;
 };
 
+export type OutputArchive = {
+  "locator": string;
+  "expires_at": number;
+  "stdout": StreamRetention;
+  "stderr": StreamRetention;
+  "settled"?: boolean;
+};
+
+export type OutputPage = {
+  "archive": OutputArchive;
+  "stream": "stdout" | "stderr";
+  "offset": number;
+  "next_offset": number;
+  "content": string;
+  "has_more": boolean;
+};
+
 export type PluginCallRequest = {
   "kind"?: "tool" | "command";
   "call_id": string;
@@ -1108,6 +1152,7 @@ export type Receipt = {
   "run_id"?: string;
   "parent_id"?: string;
   "kind"?: "root" | "child" | "steer";
+  "input_origin"?: "user" | "job";
   "generation"?: number;
   "cancel_requested"?: boolean;
   "decision"?: Decision | null;
@@ -1276,6 +1321,9 @@ export type RpcParams = {
   "path"?: string;
   "checkpoint_id"?: string;
   "terminal_id"?: string;
+  "job_id"?: string;
+  "stream"?: "stdout" | "stderr";
+  "limit"?: number;
   "command"?: string;
   "cwd"?: string;
   "environment"?: Record<string, string>;
@@ -1471,6 +1519,12 @@ export type Snapshot = {
   "next_wake_ms"?: number;
   "pending"?: number;
   "compaction"?: string;
+};
+
+export type StreamRetention = {
+  "observed_bytes"?: number;
+  "retained_bytes"?: number;
+  "error"?: string;
 };
 
 export type Submit = {
@@ -1815,6 +1869,9 @@ export interface ApiModels {
   ImportResult: ImportResult;
   InterfacePreferences: InterfacePreferences;
   IntervalRule: IntervalRule;
+  JobList: JobList;
+  JobOutputView: JobOutputView;
+  JobView: JobView;
   JsonValue: JsonValue;
   McpCall: McpCall;
   McpCallRequest: McpCallRequest;
@@ -1845,6 +1902,8 @@ export interface ApiModels {
   OAuthStart: OAuthStart;
   OAuthView: OAuthView;
   OnceRule: OnceRule;
+  OutputArchive: OutputArchive;
+  OutputPage: OutputPage;
   PluginCallRequest: PluginCallRequest;
   PluginCallView: PluginCallView;
   PluginDraft: PluginDraft;
@@ -1911,6 +1970,7 @@ export interface ApiModels {
   SkillRemove: SkillRemove;
   SkillWrite: SkillWrite;
   Snapshot: Snapshot;
+  StreamRetention: StreamRetention;
   Submit: Submit;
   SupervisorHealth: SupervisorHealth;
   TaskActivity: TaskActivity;
@@ -2084,6 +2144,21 @@ export interface HttpOperations {
   "POST /api/v1/checkpoints/{checkpoint_id}/restore": { response: FileChange; path: {
   "checkpoint_id": string;
 }; query: Record<string, unknown>; body: CheckpointRestore };
+  "GET /api/v1/sessions/{session_id}/jobs": { response: JobList; path: {
+  "session_id": string;
+}; query: Record<string, unknown>; body: undefined };
+  "GET /api/v1/sessions/{session_id}/jobs/{job_id}/output": { response: JobOutputView; path: {
+  "session_id": string;
+  "job_id": string;
+}; query: {
+  "stream"?: "stdout" | "stderr";
+  "offset"?: number;
+  "limit"?: number;
+}; body: undefined };
+  "POST /api/v1/sessions/{session_id}/jobs/{job_id}/kill": { response: JobView; path: {
+  "session_id": string;
+  "job_id": string;
+}; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/sessions/{session_id}/terminals": { response: TerminalView; path: {
   "session_id": string;
 }; query: Record<string, unknown>; body: TerminalOpen };

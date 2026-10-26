@@ -64,6 +64,7 @@ export type Receipt = {
   "run_id"?: string;
   "parent_id"?: string;
   "kind"?: "root" | "child" | "steer";
+  "input_origin"?: "user" | "job";
   "generation"?: number;
   "cancel_requested"?: boolean;
   "decision"?: Decision | null;

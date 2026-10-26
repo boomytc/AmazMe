@@ -90,6 +90,7 @@ class Receipt(Model):
     run_id: str = ""
     parent_id: str = ""
     kind: Literal["root", "child", "steer"] = "root"
+    input_origin: Literal["user", "job"] = "user"
     generation: int = 0
     cancel_requested: bool = False
     decision: Decision | None = None

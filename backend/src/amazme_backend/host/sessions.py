@@ -6,7 +6,6 @@ import hashlib
 import json
 import secrets
 import time
-from typing import Literal
 from urllib.parse import quote
 
 import httpx
@@ -24,6 +23,8 @@ from amazme_backend.contracts.ipc.worker import (
     ApprovalEnvelope,
     Cancel,
     CodeChild,
+    JobNotice,
+    JobNoticeEnvelope,
     ResolutionEnvelope,
     Submission,
 )
@@ -54,6 +55,7 @@ from amazme_backend.features.management.rules import contains_secret
 from amazme_backend.host.accounts import AccountOperations
 from amazme_backend.host.computer import ComputerOperations
 from amazme_backend.host.lifecycle import HostLifecycle
+from amazme_backend.host.records import DeliveryKind
 from amazme_backend.host.session_access import WorkerSessions
 from amazme_backend.host.store import Delivery
 from amazme_backend.platform.private_files import lock
@@ -577,7 +579,7 @@ class SessionOperations:
         return value
 
     async def deliver(
-        self, session: str, kind: Literal["submit", "cancel", "approval", "resolve"], key: str, value: Model
+        self, session: str, kind: DeliveryKind, key: str, value: Model
     ) -> Receipt:
         self.lifecycle.admit()
         self.lifecycle.profile.reload_provider()
@@ -629,6 +631,11 @@ class SessionOperations:
                     Receipt,
                     Submission(**self.lifecycle.fence.model_dump(), value=value, provider=delivery.provider),
                 )
+            elif delivery.kind == "job_notice":
+                notice = JobNotice.model_validate_json(delivery.payload)
+                expected_request = notice.request_id
+                receipt = await peer.call("POST", "/job-notices", Receipt,
+                    JobNoticeEnvelope(**self.lifecycle.fence.model_dump(), value=notice))
             elif delivery.kind == "cancel":
                 value = Cancel.model_validate_json(delivery.payload)
                 expected_request = value.request_id
@@ -662,6 +669,8 @@ class SessionOperations:
             result = await self.lifecycle.store.delivered(delivery.delivery_id, receipt)
             return result
         except BackendError as error:
+            if delivery.kind == "job_notice" and error.code == "queue_full":
+                raise
             if error.code in {
                 "request_conflict",
                 "queue_full",

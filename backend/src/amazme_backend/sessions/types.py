@@ -31,6 +31,8 @@ class CodemodeInput(Model):
 
 
 class Run(Model):
+    input_origin: Literal["user", "job"] = "user"
+    background_anchor: str = ""
     started_at_ms: int | None = None
     loaded_mcp_tools: list[str] = Field(default_factory=lambda: list[str]())
     codemode_state: str = "{}"
@@ -46,6 +48,7 @@ class Run(Model):
 
 
 class Step(Model):
+    background_anchor: str = ""
     step_id: str
     request_id: str
     ordinal: int

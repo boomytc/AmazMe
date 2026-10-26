@@ -6,7 +6,7 @@ import type { ApprovalPolicy } from "./permission-picker.ts";
 import type { ModelConnectionsLike } from "./model-connections.ts";
 import type { PanelView } from "./panels.ts";
 import { projectGroups } from "./projects.ts";
-import { isRecord } from "./python-api.ts";
+import { isRecord, parseContract } from "./python-api.ts";
 import type { ClientConnection } from "./python-client.ts";
 import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, TranscriptMessage, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
 import { requestStatus, seq, settled } from "./python-stream.ts";
@@ -24,7 +24,7 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 	for (const receipt of snapshot.requests) {
 		const rating = feedback?.session_id === snapshot.session_id ? feedback.records?.find(item => item.request_id === receipt.request_id) : undefined;
 		const controls = feedback?.session_id === snapshot.session_id && receipt.kind === "root" && receipt.status === "succeeded" && receipt.answer ? feedbackControls(locale, JSON.stringify([snapshot.session_id, receipt.request_id, rating?.rating ?? null, rating?.revision ?? 0]), rating?.rating ?? null) : undefined;
-		if (receipt.text || receipt.image_count) blocks.push({ id: `${receipt.request_id}:user`, kind: "user", title: locale === "zh" ? "你" : "You", text: receipt.text, tone: "plain", running: false,
+		if (receipt.text || receipt.image_count) blocks.push({ id: `${receipt.request_id}:user`, kind: receipt.input_origin === "job" ? "notice" : "user", title: receipt.input_origin === "job" ? (locale === "zh" ? "后台作业" : "Background job") : (locale === "zh" ? "你" : "You"), text: receipt.text, tone: "plain", running: false,
 			images: Array.from({ length: receipt.image_count ?? 0 }, (_, index) => ({ dataUrl: `/api/v1/sessions/${encodeURIComponent(snapshot.session_id)}/requests/${encodeURIComponent(receipt.request_id)}/images/${index}`, alt: `${locale === "zh" ? "图片" : "Image"} ${index + 1}` })) });
 		const tools = new Map<string, TranscriptBlock>();
 		for (const event of snapshot.events.filter(event => event.request_id === receipt.request_id && event.kind === "tool")) {
@@ -42,9 +42,19 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 			const phase = typeof value.phase === "string" ? value.phase : "";
 			const done = ["applied", "result", "observed", "succeeded", "completed", "failed", "unknown", "denied"].includes(phase);
 			const id = `${receipt.request_id}:tool:${call.id}`;
+			let backgroundAccepted = false;
+			if (done && call.name === "shell" && isRecord(argumentsView.args) && argumentsView.args.run_in_background === true) {
+				try {
+					const envelope: unknown = JSON.parse(result);
+					if (isRecord(envelope) && envelope.exit_code === 0 && typeof envelope.stdout === "string") {
+						parseContract("JobView", JSON.parse(envelope.stdout));
+						backgroundAccepted = true;
+					}
+				} catch { /* Other shell results retain their existing presentation. */ }
+			}
 			tools.set(String(call.id), { id, kind: "tool", title: String(call.name), toolName: String(call.name), text: result || error || (done ? phase : ""),
 				toolArgs: argumentsView.view,
-				...(done ? { result: toolResultView(locale, String(call.name), argumentsView.args, { content: [{ type: "text", text: result || error }], isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }) } : {}),
+				...(done ? { result: { ...toolResultView(locale, String(call.name), argumentsView.args, { content: [{ type: "text", text: result || error }], isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }), ...(backgroundAccepted ? { status: locale === "zh" ? "后台已受理" : "Background accepted" } : {}) } } : {}),
 				tone: error ? "error" : "plain", running: !done && !settled.has(receipt.status) });
 		}
 		const messages = new Map<string, TranscriptMessage>();

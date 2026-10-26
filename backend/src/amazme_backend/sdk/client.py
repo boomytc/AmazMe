@@ -32,7 +32,14 @@ from amazme_backend.contracts.computer import (
     ComputerPolicy,
 )
 from amazme_backend.contracts.events import Snapshot
-from amazme_backend.contracts.execution import TerminalList, TerminalView
+from amazme_backend.contracts.execution import (
+    JobList,
+    JobOutput,
+    JobOutputView,
+    JobView,
+    TerminalList,
+    TerminalView,
+)
 from amazme_backend.contracts.feedback import AnswerFeedback, AnswerFeedbackList, AnswerFeedbackWrite
 from amazme_backend.contracts.host import Health
 from amazme_backend.contracts.identity import Identity
@@ -468,6 +475,21 @@ class Client:
             json_body={"checkpoint_id": checkpoint_id, "workspace": workspace, "path": path},
             headers=self._write())
         return CheckpointView.model_validate(payload)
+
+    async def list_jobs(self, session_id: str) -> JobList:
+        return JobList.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/jobs"))
+
+    async def job_output(self, session_id: str, job_id: str, *, stream: Literal["stdout", "stderr"] = "stdout",
+                         offset: int = 0, limit: int = 16000) -> JobOutputView:
+        query = JobOutput(job_id=job_id, stream=stream, offset=offset, limit=limit)
+        payload = await self._send("GET", f"/api/v1/sessions/{session_id}/jobs/{quote(query.job_id, safe='')}/output"
+                                   f"?stream={query.stream}&offset={query.offset}&limit={query.limit}")
+        return JobOutputView.model_validate(payload)
+
+    async def kill_job(self, *, session_id: str, attachment_id: str, job_id: str) -> JobView:
+        payload = await self._send("POST", f"/api/v1/sessions/{session_id}/jobs/{quote(job_id, safe='')}/kill",
+                                   headers=self._write(attachment_id))
+        return JobView.model_validate(payload)
 
     async def list_terminals(self, session_id: str) -> TerminalList:
         payload = await self._send("GET", f"/api/v1/sessions/{session_id}/terminals")

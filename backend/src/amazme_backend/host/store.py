@@ -43,7 +43,7 @@ from amazme_backend.host.persistence import (
     workspaces,
 )
 from amazme_backend.host.persistence.database import HostDatabase as Database
-from amazme_backend.host.records import Delivery, ServiceRecord
+from amazme_backend.host.records import Delivery, DeliveryKind, ServiceRecord
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
 
@@ -189,7 +189,7 @@ class HostStore:
     async def enqueue(
         self,
         session: str,
-        kind: Literal["submit", "cancel", "approval", "resolve"],
+        kind: DeliveryKind,
         key: str,
         value: Model,
         *,

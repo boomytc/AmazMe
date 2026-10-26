@@ -11,6 +11,7 @@ from amazme_backend.contracts.ipc.worker import (
     ApprovalEnvelope,
     Cancel,
     FreezeWorker,
+    JobNoticeEnvelope,
     ResolutionEnvelope,
     SessionOp,
     SessionOpResult,
@@ -57,6 +58,10 @@ def application(owner: Worker) -> FastAPI:
     @app.post("/submissions", status_code=202)
     async def submit(value: Submission) -> Receipt:
         return await owner.submit(value)
+
+    @app.post("/job-notices", status_code=202)
+    async def job_notice(value: JobNoticeEnvelope) -> Receipt:
+        return await owner.receive_job_notice(value)
 
     @app.get("/requests/{request_id}")
     async def lookup(request_id: str) -> Receipt:

@@ -14,6 +14,7 @@ from amazme_backend.host.accounts import AccountOperations
 from amazme_backend.host.computer import ComputerOperations
 from amazme_backend.host.content import ContentOperations
 from amazme_backend.host.integrations import IntegrationOperations
+from amazme_backend.host.jobs import JobOperations
 from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.host.scheduling import Scheduling
 from amazme_backend.host.session_access import WorkerSessions
@@ -37,6 +38,7 @@ class Host:
         self.computer = ComputerOperations(self.access, self.accounts, self.lifecycle)
         self.sessions = SessionOperations(self.access, self.accounts, self.computer, self.lifecycle)
         self.workspaces = WorkspaceOperations(self.lifecycle)
+        self.jobs = JobOperations(self.lifecycle)
         self.content = ContentOperations(self.access, self.accounts, self.lifecycle, self.sessions)
         self.scheduling = Scheduling(self.access, self.accounts, self.lifecycle, self.sessions)
         self.updates = UpdateOperations(self.access, self.lifecycle)
@@ -76,6 +78,7 @@ class Host:
                     await self.scheduling.tick_schedules()
                     if await self.lifecycle.store.active_update() is None:
                         await self.lifecycle.ensure_supervisor()
+                        await self.jobs.deliver_completions()
                         sessions = {d.session_id for d in await self.lifecycle.store.pending()}
                         sessions.update(await self.lifecycle.store.due())
                         for session in sorted(sessions - tasks.keys()):

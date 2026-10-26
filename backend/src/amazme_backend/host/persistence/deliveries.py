@@ -2,17 +2,16 @@ import hashlib
 import json
 import sqlite3
 import time
-from typing import Literal
 
 from amazme_backend.accounts.configuration import ProviderTransport, select_model
 from amazme_backend.ai.catalog import SELECTION_INDEX
 from amazme_backend.contracts.execution import EffectResolution
-from amazme_backend.contracts.ipc.worker import Cancel
+from amazme_backend.contracts.ipc.worker import Cancel, JobNotice
 from amazme_backend.contracts.models import ModelSelection
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.sessions import ApprovalDecision, Receipt, Submit
 from amazme_backend.host.persistence.owner import PersistenceOwner
-from amazme_backend.host.records import Delivery
+from amazme_backend.host.records import Delivery, DeliveryKind
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
 
@@ -55,7 +54,8 @@ def delivery_row(row: sqlite3.Row) -> Delivery:
             "provider": ProviderConfig.model_validate_json(row["provider"]) if row["provider"] else None,
         }
     )
-    commands = {"submit": Submit, "cancel": Cancel, "approval": ApprovalDecision, "resolve": EffectResolution}
+    commands = {"submit": Submit, "cancel": Cancel, "approval": ApprovalDecision, "resolve": EffectResolution,
+                "job_notice": JobNotice}
     commands[value.kind].model_validate_json(value.payload)
     return value
 
@@ -63,7 +63,7 @@ def delivery_row(row: sqlite3.Row) -> Delivery:
 async def enqueue(
     self: PersistenceOwner,
     session: str,
-    kind: Literal["submit", "cancel", "approval", "resolve"],
+    kind: DeliveryKind,
     key: str,
     value: Model,
     *,
@@ -87,7 +87,7 @@ async def enqueue(
             raise BackendError("session_not_found", status=404)
         if not bool(row["branch_ready"]):
             raise BackendError("branch_preparation_pending")
-        if kind == "submit" and int(row[0]):
+        if kind in {"submit", "job_notice"} and int(row[0]):
             raise BackendError("session_archived")
         if (
             kind not in {"cancel", "resolve"}

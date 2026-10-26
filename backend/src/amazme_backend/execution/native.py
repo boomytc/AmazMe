@@ -60,7 +60,7 @@ class LocalPermit(Model):
     call_id: str
     cwd: str
     command: str
-    timeout_seconds: int = Field(ge=1, le=120)
+    timeout_seconds: int = Field(ge=1, le=86400)
     file: WriteFile | EditFile | ReadFile | None = None
     file_key: str = ""
     expected_digest: str | None = None

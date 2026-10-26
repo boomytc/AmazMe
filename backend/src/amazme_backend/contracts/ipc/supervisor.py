@@ -10,6 +10,8 @@ from amazme_backend.contracts.execution import (
     Command,
     EditFile,
     EffectResolution,
+    JobOutput,
+    JobQuery,
     Lease,
     OutputRead,
     ReadFile,
@@ -134,6 +136,18 @@ class RunTool(Lease, Command):
     expected_digest: str | None = None
     expected_root: str = ""
     output_read: OutputRead | None = None
+
+
+class JobSession(HostFence):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class JobReference(JobSession, JobQuery):
+    pass
+
+
+class JobOutputQuery(JobSession, JobOutput):
+    pass
 
 
 class OpenPlugin(PluginDraft, HostFence):

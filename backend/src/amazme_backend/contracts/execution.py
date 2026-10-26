@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import Field, StringConstraints, model_validator
 
 from amazme_backend.contracts.identity import Identity
 from amazme_backend.contracts.mcp import McpView
@@ -12,7 +12,14 @@ from amazme_backend.shared.model import Model
 
 class Command(Model):
     command: str = Field(min_length=1, max_length=196608)
-    timeout_seconds: int = Field(default=30, ge=1, le=120)
+    timeout_seconds: int = Field(default=30, ge=1, le=86400)
+    run_in_background: bool = False
+
+    @model_validator(mode="after")
+    def deadline_policy(self) -> Command:
+        if not self.run_in_background and self.timeout_seconds > 120:
+            raise ValueError("foreground execution timeout is at most 120 seconds; use explicit background execution")
+        return self
 
 
 class Shell(Command):
@@ -87,6 +94,60 @@ class ToolResult(Model):
     stop_reason: str = ""
     output: OutputArchive | None = None
     file_observation: FileObservation | None = None
+
+
+JobId = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")]
+
+
+class JobQuery(Model):
+    job_id: JobId
+
+
+class JobOutput(JobQuery):
+    stream: Literal["stdout", "stderr"] = "stdout"
+    offset: int = Field(default=0, ge=0)
+    limit: int = Field(default=16000, ge=4, le=32000)
+
+    def read_request(self) -> OutputRead:
+        return OutputRead(locator=self.job_id, stream=self.stream, offset=self.offset, limit=self.limit)
+
+
+class JobOutputWait(JobOutput):
+    wait_seconds: float = Field(default=0, ge=0, le=30)
+
+
+class JobListInput(Model):
+    pass
+
+
+JobState = Literal["starting", "running", "stopping", "succeeded", "failed", "cancelled", "unknown", "cleanup_pending"]
+
+
+class JobView(Model):
+    job_id: JobId
+    session_id: str
+    request_id: str
+    state: JobState
+    outcome: Literal["pending", "completed", "unknown"]
+    resource_clean: bool
+    cancel_requested: bool
+    started_at_ms: int
+    finished_at_ms: int
+    exit_code: int | None = None
+    stop_reason: str = ""
+    output: OutputArchive | None = None
+
+
+class JobList(Model):
+    jobs: list[JobView]
+    truncated: bool = False
+
+
+class JobOutputView(Model):
+    job: JobView
+    output: OutputPage | None = None
+    error: str = ""
+    wait_reason: Literal["", "completed", "deadline", "user_input"] = ""
 
 
 class TerminalOpen(Model):
