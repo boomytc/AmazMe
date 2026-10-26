@@ -12,7 +12,7 @@ import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Sessio
 import { requestStatus, seq, settled } from "./python-stream.ts";
 import { shortcuts } from "./shortcuts.ts";
 import { translate } from "./strings.ts";
-import { collapsedToolArgs, expandedToolArgs } from "./tool-args.ts";
+import { toolArguments } from "./tool-args.ts";
 import { toolResultView } from "./tool-results.ts";
 import type { Typography } from "./typography.ts";
 import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "./view.ts";
@@ -36,16 +36,15 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 				continue;
 			}
 			const call = value.call;
-			let args: unknown;
-			try { args = JSON.parse(String(call.arguments)); } catch { args = call.arguments; }
+			const argumentsView = toolArguments(locale, String(call.arguments));
 			const result = typeof value.result === "string" ? value.result : "";
 			const error = typeof value.error === "string" ? value.error : "";
 			const phase = typeof value.phase === "string" ? value.phase : "";
 			const done = ["applied", "result", "observed", "succeeded", "completed", "failed", "unknown", "denied"].includes(phase);
 			const id = `${receipt.request_id}:tool:${call.id}`;
 			tools.set(String(call.id), { id, kind: "tool", title: String(call.name), toolName: String(call.name), text: result || error || (done ? phase : ""),
-				toolArgs: { collapsed: collapsedToolArgs(args), expanded: expandedToolArgs(args), source: String(call.arguments) },
-				...(done ? { result: toolResultView(locale, String(call.name), args, { content: [{ type: "text", text: result || error }], isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }) } : {}),
+				toolArgs: argumentsView.view,
+				...(done ? { result: toolResultView(locale, String(call.name), argumentsView.args, { content: [{ type: "text", text: result || error }], isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }) } : {}),
 				tone: error ? "error" : "plain", running: !done && !settled.has(receipt.status) });
 		}
 		const messages = new Map<string, TranscriptMessage>();

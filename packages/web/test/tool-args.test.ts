@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { collapsedToolArgs, expandedToolArgs } from "../src/tool-args.ts";
+import { collapsedToolArgs, expandedToolArgs, toolArguments } from "../src/tool-args.ts";
 
 describe("tool args digest", () => {
 	test("is empty when there is nothing to show", () => {
@@ -29,5 +29,27 @@ describe("tool args digest", () => {
 		expect(expandedToolArgs({ meta: { a: 1 } })).toBe('meta: {\n    "a": 1\n  }');
 		expect(expandedToolArgs({ command: "a\tb\r\nc" })).toBe("command: a   b\n  c");
 		expect(collapsedToolArgs(["x"])).toBe('args=["x"]');
+	});
+
+	test("the bounded entry preserves ordinary JSON, empty arguments and malformed source", () => {
+		const source = '{"command":"ls","meta":{"a":1}}';
+		const result = toolArguments("en", source);
+		expect(result.args).toEqual({ command: "ls", meta: { a: 1 } });
+		expect(result.view).toEqual({ source, collapsed: 'command="ls" meta={"a":1}', expanded: 'command: ls\nmeta: {\n    "a": 1\n  }' });
+		expect(toolArguments("en", "{}").view.expanded).toBe("");
+		expect(toolArguments("en", "not JSON").view.expanded).toBe("args: not JSON");
+	});
+
+	test("formatting amplification is capped and truncation preserves a complete Unicode character", () => {
+		const source = JSON.stringify({ command: "\t".repeat(45_000) });
+		const result = toolArguments("en", source);
+		expect(source.length).toBeLessThan(100_000);
+		expect(result.view.expanded.length).toBeLessThan(100_200);
+		expect(result.view.expanded.endsWith("Copy parameters for the complete source.")).toBe(true);
+		expect(result.view.source).toBe(source);
+		const character = "\u{20000}";
+		const unicode = toolArguments("zh", "x" + character.repeat(60_000)).view.expanded.split("\n\n")[0];
+		expect(unicode.length).toBe(99_999);
+		expect(unicode.endsWith(character)).toBe(true);
 	});
 });

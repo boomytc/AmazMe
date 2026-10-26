@@ -58,6 +58,26 @@ test("model journal records stay out of the transcript and applied tools stop an
  expect(blocks.find(block => block.kind === "tool")?.running).toBe(false);
 });
 
+test.each([
+ ["large", JSON.stringify({ payload: "x".repeat(120_000) })],
+ ["deep", '['.repeat(5000) + '0' + ']'.repeat(5000)],
+ ["wide", JSON.stringify(Array.from({ length: 2500 }, () => 0))],
+])("%s tool arguments have bounded presentation while copying keeps the complete source", (_name, source) => {
+ const snapshot = empty();
+ snapshot.requests = [{ ...receipt("a"), status: "running" }];
+ snapshot.events = [{ seq: "1", kind: "tool", request_id: "a", text: JSON.stringify({
+  kind: "tool", phase: "running", call: { id: "call", name: "custom", arguments: source },
+ }) }];
+ const project = () => transcriptBlocks("zh", snapshot).find(block => block.kind === "tool");
+ expect(project).not.toThrow();
+ const args = project()?.toolArgs;
+ expect(args?.source).toBe(source);
+ expect(args?.collapsed.length).toBeLessThanOrEqual(100);
+ expect(args?.expanded.length).toBeLessThanOrEqual(100_200);
+ expect(args?.expanded).toContain("复制参数");
+ expect(transcriptBlocks("en", snapshot).find(block => block.kind === "tool")?.toolArgs?.expanded).toContain("Copy parameters");
+});
+
 test("committed intermediate messages remain in order through tool execution, reconnect and final receipt", () => {
  const before = empty();
  before.requests = [{ request_id: "a", text: "你好", status: "running", run_id: "a", generation: 1, revision: "0" }];
