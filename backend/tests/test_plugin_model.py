@@ -4,15 +4,15 @@ import json
 
 import pytest
 
-from amazme_backend.contracts import (
-    BackendError,
-    PluginOffer,
-    PluginTool,
-    PluginToolCall,
-    PluginView,
-    ToolCall,
-)
-from amazme_backend.session_domain import resolve_model_call
+from amazme_backend.agent.model import model_request, model_spec, model_transport
+from amazme_backend.agent.tool_catalog import build_tools
+from amazme_backend.ai.providers.anthropic import anthropic_body
+from amazme_backend.ai.providers.google import google_body
+from amazme_backend.ai.providers.responses import responses_body
+from amazme_backend.ai.types import Auth
+
+from amazme_backend.contracts import BackendError, PluginOffer, PluginTool, PluginToolCall, PluginView, ToolCall
+from amazme_backend.sessions.domain import resolve_model_call
 
 
 def offer() -> PluginOffer:
@@ -45,22 +45,21 @@ def test_only_the_bound_alias_supplies_execution_identity():
 
 def test_plugin_only_selection_reaches_all_provider_wire_formats():
     from amazme_backend.contracts import ProviderConfig
-    from amazme_backend.provider_wire import anthropic_body, google_body, responses_body
-    from amazme_backend.providers import tool_definitions
     config = ProviderConfig(provider='faux',allowed_tools=['plugin_*'])
     chosen = offer()
-    assert [tool['function']['name'] for tool in tool_definitions([],config,[chosen])] == [chosen.alias]
-    assert [tool['name'] for tool in responses_body(config,[],[],[chosen])['tools']] == [chosen.alias]
-    assert [tool['name'] for tool in anthropic_body(config,[],[],[chosen])[0]['tools']] == [chosen.alias]
-    assert [tool['name'] for tool in google_body(config,[],[],[chosen])['tools'][0]['functionDeclarations']] == [chosen.alias]
-    assert tool_definitions([],config.model_copy(update={'allowed_tools':[]}),[chosen]) == []
+    auth = Auth()
+    model, request = model_spec(config), model_request(config, [], [], [chosen], auth=auth)
+    assert [tool.name for tool in build_tools([],config,[chosen])] == [chosen.alias]
+    assert [tool['name'] for tool in responses_body(model,request)['tools']] == [chosen.alias]
+    assert [tool['name'] for tool in anthropic_body(model,request,auth,model_transport(config))[0]['tools']] == [chosen.alias]
+    assert [tool['name'] for tool in google_body(model,request)['tools'][0]['functionDeclarations']] == [chosen.alias]
+    assert build_tools([],config.model_copy(update={'allowed_tools':[]}),[chosen]) == []
 
 
 def test_google_projects_schema_consts_without_changing_literal_data_or_other_protocols():
     from copy import deepcopy
 
     from amazme_backend.contracts import ProviderConfig
-    from amazme_backend.provider_wire import anthropic_body, google_body, responses_body
 
     literal = {'const': 'literal', 'properties': {'const': 7}, '__proto__': {'const': 'data'}}
     schema = {
@@ -83,7 +82,9 @@ def test_google_projects_schema_consts_without_changing_literal_data_or_other_pr
     original = deepcopy(schema)
     chosen = offer().model_copy(update={'parameters': schema})
     config = ProviderConfig(provider='faux', allowed_tools=['plugin_*'])
-    declaration = google_body(config, [], [], [chosen])['tools'][0]['functionDeclarations'][0]
+    auth = Auth()
+    model, request = model_spec(config), model_request(config, [], [], [chosen], auth=auth)
+    declaration = google_body(model,request)['tools'][0]['functionDeclarations'][0]
     projected = declaration['parametersJsonSchema']
     assert projected['properties']['kind'] == {'type': 'string', 'enum': ['write']}
     assert projected['properties']['count'] == {'type': 'integer', 'enum': [0]}
@@ -96,6 +97,6 @@ def test_google_projects_schema_consts_without_changing_literal_data_or_other_pr
         assert projected['properties'][key] == original['properties'][key]
     for key in ['default', 'examples', 'enum', 'x-metadata']:
         assert projected[key] == original[key]
-    assert responses_body(config, [], [], [chosen])['tools'][0]['parameters'] == original
-    assert anthropic_body(config, [], [], [chosen])[0]['tools'][0]['input_schema'] == original
+    assert responses_body(model,request)['tools'][0]['parameters'] == original
+    assert anthropic_body(model,request,auth,model_transport(config))[0]['tools'][0]['input_schema'] == original
     assert chosen.parameters == original

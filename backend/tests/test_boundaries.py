@@ -1,16 +1,16 @@
-import ast
 import json
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 from native_file_fixture import run_file
 
-from amazme_backend.common import unix_listener
+from amazme_backend.platform.ipc import unix_listener
 from amazme_backend.contracts import RunTool, Stream, ToolCall, WriteFile
-from amazme_backend.native_execution import LocalPermit
+from amazme_backend.execution.native import LocalPermit
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -18,22 +18,35 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_generated_event_contracts_do_not_drift():
     schema = Stream.model_json_schema()
     assert json.loads((ROOT / "contracts/events.schema.json").read_text()) == schema
-    assert json.loads((ROOT / "src/amazme_backend/web/events.schema.json").read_text()) == schema
+    assert json.loads((ROOT / "src/amazme_backend/assets/web/events.schema.json").read_text()) == schema
 
 
-def test_business_modules_cannot_spawn_native_processes():
-    # Only the registered native execution module and service owners may spawn.
-    permitted = {"host.py", "supervisor.py", "native_execution.py", "native_services.py", "pty_gate.py", "mcp_gate.py", "codemode_run.py",
-                 "ssh.py", "remote_session.py", "remote_daemon.py", "computer_run.py", "transient.py"}
-    for path in (ROOT / "src/amazme_backend").glob("*.py"):
-        if path.name in permitted:
-            continue
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.Import):
-                assert all(alias.name != "subprocess" for alias in node.names), path
-            if isinstance(node, ast.Call):
-                name = node.func.attr if isinstance(node.func, ast.Attribute) else ""
-                assert name not in {"create_subprocess_exec", "create_subprocess_shell", "system", "fork", "popen", "execve"}, path
+@pytest.mark.parametrize("module", ["amazme_backend.sdk", "amazme_backend.contracts", "amazme_backend.plugin_api"])
+def test_public_imports_do_not_load_services_or_access_business_resources(module):
+    result = subprocess.run([sys.executable, "-B", str(ROOT / "tools/verify_imports.py"), "--probe", module],
+                            text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["business_operations"] == []
+
+
+def test_public_import_probe_rejects_io_even_when_importer_catches_the_audit_error(tmp_path):
+    package = tmp_path / "amazme_backend"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "sdk.py").write_text(
+        'try:\n    open("/tmp/amazme-forbidden-import.json")\nexcept RuntimeError:\n    pass\n')
+    code = ('import runpy,sys; sys.path.insert(0,sys.argv[1]); '
+            'runpy.run_path(sys.argv[2],run_name="probe_module")["probe"]("amazme_backend.sdk")')
+    result = subprocess.run([sys.executable, "-B", "-c", code, str(tmp_path), str(ROOT / "tools/verify_imports.py")],
+                            capture_output=True, text=True)
+    assert result.returncode != 0
+    assert "public import attempted forbidden business I/O" in result.stderr
+
+
+def test_backend_obeys_recursive_architecture_and_process_rules():
+    result = subprocess.run([sys.executable, str(ROOT / "tools/check_architecture.py")],
+                            capture_output=True, text=True, timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_private_listener_is_owner_only(tmp_path):
@@ -96,20 +109,13 @@ def test_local_file_tool_does_not_follow_links_out_of_the_workspace(tmp_path: Pa
     assert saved.returncode == 0 and (root / "note.txt").read_text() == "beta\n"
 
 
-def test_fixed_native_owners_cannot_reexec_or_unlock_lifetime_descriptors():
-    forbidden = {"fork", "forkpty", "execv", "execve", "execl", "execvp", "execvpe", "posix_spawn", "posix_spawnp"}
-    for path in (ROOT / "src/amazme_backend").glob("*.py"):
-        if path.name in {"gate.py", "pty_gate.py", "mcp_gate.py"}:
-            continue
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                name = node.func.attr if isinstance(node.func, ast.Attribute) else ""
-                assert name not in forbidden, (path, name)
-            if isinstance(node, ast.Attribute):
-                assert node.attr != "LOCK_UN", path
-        if path.name == "processes.py":
-            retain = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "retain_inherited")
-            for node in ast.walk(retain):
-                if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
-                    assert node.func.attr not in {"close", "fdopen", "dup2", "closerange", "close_range"}
+
+
+def test_public_contract_declarations_remain_available_by_name():
+    from amazme_backend import contracts
+    from amazme_backend.contracts.plugins import PluginReply
+
+    expected = json.loads((ROOT / "contracts/public-exports.json").read_text())["exports"]
+    assert expected
+    assert [name for name in expected if not hasattr(contracts, name)] == []
+    assert contracts.PluginReply is PluginReply

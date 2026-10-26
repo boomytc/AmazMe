@@ -5,12 +5,13 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import cast
 
 import pytest
 from fastapi import WebSocket, WebSocketDisconnect
 
-from amazme_backend import streams
+import amazme_backend.interfaces.http.streams as streams
 from amazme_backend.contracts import (
     Attachment,
     BackendError,
@@ -22,8 +23,9 @@ from amazme_backend.contracts import (
     Stream,
     Submit,
 )
-from amazme_backend.host import Host
-from amazme_backend.storage import PENDING_LIMIT, SessionStore
+from amazme_backend.host.service import Host
+from amazme_backend.sessions.policy.limits import PENDING_LIMIT
+from amazme_backend.sessions.service import SessionStore
 
 
 class Socket:
@@ -65,10 +67,12 @@ class Socket:
 
 class Owner:
     def __init__(self):
-        self.build = "build"
-        self.fence = HostFence(host_epoch=1, build_id=self.build)
-        self.closing = False
-        self.attachments = {"binding": Attachment(attachment_id="binding", session_id="session", host_epoch=1, build_id="build")}
+        self.lifecycle = SimpleNamespace(build="build", fence=HostFence(host_epoch=1, build_id="build"), closing=False)
+        self.sessions = SimpleNamespace(
+            attachments={"binding": Attachment(attachment_id="binding", session_id="session", host_epoch=1, build_id="build")},
+            check_attachment=self.check_attachment,
+        )
+        self.access = SimpleNamespace(reader=self.reader)
         self.snapshot = Snapshot(session_id="session", stream_id="stream", seq="0", state="ready", requests=[], events=[])
         self.replay = Replay(stream_id="stream", seq="0", batches=[])
         self.calls = []
@@ -76,8 +80,8 @@ class Owner:
 
     def check_attachment(self, identity, session):
         self.checks += 1
-        value = self.attachments.get(identity)
-        if not value or (value.session_id, value.build_id, value.host_epoch) != (session, self.build, self.fence.host_epoch):
+        value = self.sessions.attachments.get(identity)
+        if not value or (value.session_id, value.build_id, value.host_epoch) != (session, self.lifecycle.build, self.lifecycle.fence.host_epoch):
             raise BackendError("stale_client_binding")
         return value
 
@@ -139,11 +143,11 @@ async def test_no_hello_no_worker_and_no_registry_leak():
 async def test_hello_fails_before_worker(case):
     owner, socket = Owner(), Socket()
     if case == "build":
-        owner.build = "other"
+        owner.lifecycle.build = "other"
     elif case == "binding":
-        owner.attachments.clear()
+        owner.sessions.attachments.clear()
     elif case == "epoch":
-        owner.fence.host_epoch = 2
+        owner.lifecycle.fence.host_epoch = 2
     if case == "malformed":
         await socket.input.put("not-json")
     elif case == "oversized":
@@ -251,11 +255,11 @@ async def test_binding_is_revalidated_after_ack(case):
     task = start(owner, socket)
     frame = await socket.frame()
     if case == "epoch":
-        owner.fence.host_epoch += 1
+        owner.lifecycle.fence.host_epoch += 1
     elif case == "detach":
-        owner.attachments.clear()
+        owner.sessions.attachments.clear()
     else:
-        owner.closing = True
+        owner.lifecycle.closing = True
     await socket.ack(frame)
     await task
     assert socket.code == 1008 and socket.output.empty()
@@ -269,7 +273,7 @@ async def test_slow_and_oversized_streams_end_with_bounded_work(case, monkeypatc
     if case == "peer":
         async def blocked(*args, **kwargs):
             await asyncio.Event().wait()
-        owner.reader = blocked
+        owner.access.reader = blocked
     await socket.hello()
     await asyncio.wait_for(start(owner, socket), 0.5)
     assert socket.code == (1009 if case == "bytes" else 1013)
@@ -314,7 +318,7 @@ async def test_cancel_replay_preserves_existing_result_and_cleanup(tmp_path, com
     from test_session_p2 import FENCE, SESSION, Driver, submit
 
     from amazme_backend.contracts import ToolObservation
-    from amazme_backend.session_domain import Failed, QueryTool, ToolInvocation, ToolObserved
+    from amazme_backend.sessions.types import Failed, QueryTool, ToolInvocation, ToolObserved
 
     store = SessionStore(tmp_path / "session.sqlite", SESSION, approval_policy="auto", instance="worker")
     await store.initialize()
@@ -341,15 +345,16 @@ async def test_cancel_replay_preserves_existing_result_and_cleanup(tmp_path, com
         assert actual.pending == before.pending
         assert actual.effects == before.effects
     finally:
-        await store.db.close()
+        await store.close()
 
 
 @pytest.mark.parametrize("surface", ["snapshot", "replay"])
 async def test_nested_children_cannot_evict_root_answer_or_unsettled_work(tmp_path, surface):
     from test_session_p2 import FENCE, SESSION, Driver, submit
 
-    from amazme_backend.session_domain import ModelInvocation, Park
-    from amazme_backend.storage import SNAPSHOT_MAX_BYTES, now_ms
+    from amazme_backend.sessions.persistence.clock import now_ms
+    from amazme_backend.sessions.policy.limits import SNAPSHOT_MAX_BYTES
+    from amazme_backend.sessions.types import ModelInvocation, Park
 
     store = SessionStore(tmp_path / "session.sqlite", SESSION, approval_policy="auto", instance="worker")
     await store.initialize()
@@ -387,17 +392,17 @@ async def test_nested_children_cannot_evict_root_answer_or_unsettled_work(tmp_pa
         assert len([r for r in actual.requests if r.kind == "child"]) <= 20
         assert len(actual.model_dump_json().encode()) <= SNAPSHOT_MAX_BYTES
     finally:
-        await store.db.close()
+        await store.close()
 
 
 @pytest.mark.parametrize("surface", ["snapshot", "replay"])
 async def test_child_history_byte_budget_keeps_unsettled_approval(tmp_path, surface):
     from test_session_p2 import FENCE, SESSION, Driver, submit
 
+    from amazme_backend.ai.types import Completion
     from amazme_backend.contracts import Message
-    from amazme_backend.providers import Completion
-    from amazme_backend.session_domain import ModelInvocation, ModelReturned, Park
-    from amazme_backend.storage import SNAPSHOT_CHILD_BYTES
+    from amazme_backend.sessions.policy.limits import SNAPSHOT_CHILD_BYTES
+    from amazme_backend.sessions.types import ModelInvocation, ModelReturned, Park
 
     store = SessionStore(tmp_path / "session.sqlite", SESSION, approval_policy="mutations", instance="worker")
     await store.initialize()
@@ -415,7 +420,7 @@ async def test_child_history_byte_budget_keeps_unsettled_approval(tmp_path, surf
             if isinstance(action, ModelInvocation) and action.messages[0].content.startswith("leaf-"):
                 if action.messages[0].content == "leaf-6":
                     before = await store.snapshot()
-                await store.advance(ModelReturned(action, Completion(
+                await store.advance(ModelReturned(action, Completion[Message](
                     message=Message(role="assistant", content="界" * 20000), response_id=action.step_id)))
             else:
                 await driver.respond(action)
@@ -432,7 +437,7 @@ async def test_child_history_byte_budget_keeps_unsettled_approval(tmp_path, surf
         assert any(r.request_id == root.children[-1] and r.status == "waiting_approval" for r in actual.requests)
         assert actual.pending == 2 and actual.approvals[-1].state == "pending"
     finally:
-        await store.db.close()
+        await store.close()
 
 
 def test_browser_transaction_reducer_uses_real_schema():
@@ -513,7 +518,7 @@ async def test_maximum_unicode_pending_and_terminal_history_fit_transport(tmp_pa
         owner.snapshot = await store.snapshot()
         assert len(owner.snapshot.requests) == PENDING_LIMIT + 20
         serialized = Stream(snapshot=owner.snapshot, stream_id=owner.snapshot.stream_id,
-                            binding_id="binding", build_id=owner.build).model_dump_json().encode()
+                            binding_id="binding", build_id=owner.lifecycle.build).model_dump_json().encode()
         assert len(serialized) > 8 * 1024 * 1024
         assert len(serialized) < streams.MAX_FRAME_BYTES
         monkeypatch.setattr(streams, "ACK_TIMEOUT", 2)
@@ -524,7 +529,7 @@ async def test_maximum_unicode_pending_and_terminal_history_fit_transport(tmp_pa
         await socket.ack(frame)
         await stop(task, socket)
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_store_replay_window_matches_stream_batch_limit(tmp_path):
@@ -540,4 +545,4 @@ async def test_store_replay_window_matches_stream_batch_limit(tmp_path):
         assert len(replay.batches) == streams.MAX_BATCHES
         assert streams.valid_replay(replay, snapshot.stream_id, 0)
     finally:
-        await store.db.close()
+        await store.close()

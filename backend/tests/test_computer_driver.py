@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.computer_run import APP, PIN, ComputerDriver
+from amazme_backend.execution.computer.driver import APP, PIN, ComputerDriver
 from amazme_backend.contracts import BackendError
 
 PNG = base64.b64encode(bytes.fromhex(

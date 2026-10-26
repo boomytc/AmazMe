@@ -12,7 +12,7 @@ from mcp.shared.auth import OAuthMetadata
 from pydantic import ValidationError
 
 from amazme_backend.contracts import BackendError, McpHttpSettings, McpOAuthSettings, OpenMcp
-from amazme_backend.mcp_auth import McpAuth, TokenStore, callback_id_for
+from amazme_backend.execution.mcp.auth import McpAuth, TokenStore, callback_id_for
 
 terminal_owner = fixtures.terminal_owner
 
@@ -49,8 +49,8 @@ async def test_http_gate_preserves_approval_result_and_original_id(terminal_owne
                 break
             await asyncio.sleep(.01)
         url = f"http://127.0.0.1:{listener.getsockname()[1]}/mcp"
-        opened = await owner.open_mcp(OpenMcp(**fixtures.query(owner).model_dump(), command=url,
-                                            http=McpHttpSettings(url=url)))
+        opened = await owner.mcp.open(OpenMcp(**fixtures.query(owner).model_dump(), command=url,
+                                             http=McpHttpSettings(url=url)))
         assert opened.phase == "ready" and opened.tools[0].name == "demo.echo"
         call = await fixtures.proposal(owner)
         assert call.phase == "waiting_approval" and not calls
@@ -58,7 +58,7 @@ async def test_http_gate_preserves_approval_result_and_original_id(terminal_owne
         result = await fixtures.completed(owner, call.call_id)
         assert result.result == "中文🙂" and len(calls) == 1
         assert (await fixtures.proposal(owner)).phase == "done" and len(calls) == 1
-        assert (await owner.cancel_mcp(fixtures.query(owner))).clean
+        assert (await owner.mcp.cancel(fixtures.query(owner))).clean
     finally:
         server.should_exit = True
         await asyncio.wait_for(task, 10)

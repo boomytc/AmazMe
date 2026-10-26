@@ -15,22 +15,11 @@ from typing import Literal
 from pydantic import Field, JsonValue, SecretStr, TypeAdapter
 from verify_runtime import Runtime
 
-from amazme_backend.accounts import AccountStore
-from amazme_backend.common import private_write
-from amazme_backend.contracts import (
-    BackendError,
-    CredentialUpdate,
-    Message,
-    Model,
-    PluginDraft,
-    PluginToolCall,
-    ProfileConfig,
-    ProviderConfig,
-    UpdateModelSettings,
-    plugin_alias,
-)
-from amazme_backend.model_catalog import INDEX
-from amazme_backend.oauth import OAuthCredential
+from amazme_backend.accounts.store import AccountStore
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.contracts import BackendError, CredentialUpdate, Message, Model, PluginDraft, PluginToolCall, ProfileConfig, ProviderConfig, UpdateModelSettings, plugin_alias
+from amazme_backend.ai.catalog import INDEX
+from amazme_backend.accounts.oauth.flow import OAuthCredential
 from amazme_backend.sdk import Client
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -205,7 +194,7 @@ async def run(value: EvalInput, runtime: Runtime) -> dict[str, JsonValue]:
         except (Exception,asyncio.CancelledError) as error:
             errors.append(error.code if isinstance(error,BackendError) else 'eval_cancelled' if isinstance(error,asyncio.CancelledError) else 'eval_failed')
         # This verifier owns the profile. Read the full committed history, not the bounded UI snapshot.
-        from amazme_backend.storage import session_database
+        from amazme_backend.profiles.layout import session_database
         with sqlite3.connect(session_database(runtime.profile,session.session_id).as_uri() + '?mode=ro',uri=True) as db:
             rows = db.execute('SELECT m.payload FROM messages m JOIN requests r ON r.id=m.request_id ORDER BY r.ordinal,m.ordinal').fetchall()
         events = transcript([Message.model_validate_json(row[0]) for row in rows])

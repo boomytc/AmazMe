@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
-from amazme_backend.accounts import AccountDocument, AccountStore, ProviderTransport
+from amazme_backend.accounts.store import AccountDocument, AccountStore, ProviderTransport
 from amazme_backend.contracts import BackendError, Message, PluginToolCall, ToolCall
-from amazme_backend.oauth import OAuthCredential
+from amazme_backend.accounts.oauth.flow import OAuthCredential
 
 TOOLS = Path(__file__).parents[1] / 'tools'
 spec = importlib.util.spec_from_file_location('native_eval_runner',TOOLS / 'run_eval.py')

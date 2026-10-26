@@ -5,12 +5,25 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from session_test_support import session_database_owner, session_state
 
+from amazme_backend.agent.model import model_request, model_spec, model_transport
+from amazme_backend.agent.tool_catalog import build_tools
+from amazme_backend.ai.providers.anthropic import anthropic_body
+from amazme_backend.ai.providers.completions import provider_messages
+from amazme_backend.ai.providers.google import google_body
+from amazme_backend.ai.providers.responses import responses_body
+from amazme_backend.ai.types import Auth
 from amazme_backend.contracts import BackendError, HostFence, Message, ProviderConfig, Submit, ToolCall
-from amazme_backend.provider_wire import anthropic_body, google_body, responses_body
-from amazme_backend.providers import Completion, provider_messages, tool_definitions
-from amazme_backend.session_domain import Continue, ModelInvocation, ModelReturned, OpenEpoch, Park
-from amazme_backend.storage import SessionStore
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.sessions.types import (
+    Completion,
+    Continue,
+    ModelInvocation,
+    ModelReturned,
+    OpenEpoch,
+    Park,
+)
 
 FENCE = HostFence(host_epoch=1, build_id='test-build')
 
@@ -33,25 +46,26 @@ async def opened(path: Path):
 def test_prompt_and_disabled_tools_reach_every_wire_protocol() -> None:
     config = ProviderConfig(provider='faux', system_prompt='Only this.', append_system_prompt='And this.', allowed_tools=[])
     expected = 'Only this.\n\nAnd this.'
-    assert provider_messages([], config=config)[0]['content'] == expected
-    assert tool_definitions(None, config) == []
+    assert provider_messages(model_spec(config), model_request(config, [], auth=Auth()))[0]['content'] == expected
+    assert build_tools(None, config) == []
     for api in ('openai-responses', 'openai-codex-responses'):
-        body = responses_body(config.model_copy(update={'api':api}), [], None)
+        selected = config.model_copy(update={'api':api})
+        body = responses_body(model_spec(selected), model_request(selected, [], auth=Auth()))
         assert body['instructions'] == expected and 'tools' not in body and 'tool_choice' not in body
-    body, _ = anthropic_body(config, [], None)
+    body, _ = anthropic_body(model_spec(config), model_request(config, [], auth=Auth()), Auth(), model_transport(config))
     assert body['system'] == expected and 'tools' not in body
-    body = google_body(config, [], None)
+    body = google_body(model_spec(config), model_request(config, [], auth=Auth()))
     assert body['systemInstruction'] == {'parts':[{'text':expected}]} and 'tools' not in body
-    assert 'You are AmazMe' in str(provider_messages([])[0]['content'])
+    assert 'You are AmazMe' in str(provider_messages(model_spec(ProviderConfig(provider='faux')), model_request(ProviderConfig(provider='faux'), [], auth=Auth()))[0]['content'])
 
 
 def test_tool_patterns_and_exclusions_share_the_wire_selection() -> None:
     config = ProviderConfig(provider='faux', allowed_tools=['*'], excluded_tools=['write_*', 'computer_*'])
-    names = [item['function']['name'] for item in tool_definitions(None, config)]
+    names = [item.name for item in build_tools(None, config)]
     assert 'read_file' in names and 'write_file' not in names and 'computer_act' not in names
     assert config.tool_allowed('mcp_' + 'a'*20)
     config.allowed_tools = ['mcp_*']
-    assert tool_definitions(None, config) == [] and not config.tool_allowed('shell')
+    assert build_tools(None, config) == [] and not config.tool_allowed('shell')
 
 
 async def test_options_survive_restart_and_same_id_cannot_change_them(tmp_path: Path) -> None:
@@ -59,7 +73,7 @@ async def test_options_survive_restart_and_same_id_cannot_change_them(tmp_path: 
     value = Submit(request_id='root', text='hello', system_prompt='Keep this', append_system_prompt='tail', allowed_tools=[])
     store = await opened(path)
     await store.accept(value, FENCE)
-    await store.db.close()
+    await store.close()
     store = await opened(path)
     try:
         assert (await store.accept(value, FENCE)).request_id == 'root'
@@ -72,7 +86,7 @@ async def test_options_survive_restart_and_same_id_cannot_change_them(tmp_path: 
         assert model.config.system_prompt == 'Keep this' and model.config.append_system_prompt == 'tail'
         assert model.config.allowed_tools == []
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_forbidden_batch_never_proposes_or_executes_any_tool(tmp_path: Path) -> None:
@@ -88,10 +102,10 @@ async def test_forbidden_batch_never_proposes_or_executes_any_tool(tmp_path: Pat
         receipt = await store.get('root')
         assert receipt.status == 'failed' and receipt.error == 'tool_not_allowed'
         assert (await store.snapshot()).approvals == []
-        with sqlite3.connect(store.db.path) as db:
+        with sqlite3.connect(session_database_owner(store).path) as db:
             assert db.execute("SELECT count(*) FROM steps WHERE json_extract(payload,'$.kind')='tool'").fetchone()[0] == 0
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_children_inherit_prompt_and_tool_scope(tmp_path: Path) -> None:
@@ -109,7 +123,7 @@ async def test_children_inherit_prompt_and_tool_scope(tmp_path: Path) -> None:
         assert child.config.allowed_tools == ['delegate_task','read_file'] and child.config.excluded_tools == ['mcp_*']
         assert child.config.approval_policy == 'mutations'
     finally:
-        await store.db.close()
+        await store.close()
 
 
 @pytest.mark.parametrize('policy,tool,requires_approval', [
@@ -124,9 +138,9 @@ async def test_permission_choice_survives_restart_and_controls_the_tool_gate(tmp
                    tool_call=ToolCall(id='call', name=tool, arguments=json.dumps(
                        {'path':'test.txt'} if tool == 'read_file' else {'command':'printf ok'})))
     await store.accept(value, FENCE)
-    await store.db.close()
+    await store.close()
     store = await opened(path)
-    store.approval_policy = 'all' if policy == 'auto' else 'auto'
+    session_state(store).approval_policy = 'all' if policy == 'auto' else 'auto'
     try:
         assert (await store.accept(value, FENCE)).request_id == 'permission'
         with pytest.raises(BackendError, match='request_conflict'):
@@ -142,7 +156,7 @@ async def test_permission_choice_survives_restart_and_controls_the_tool_gate(tmp
             assert isinstance(action, OpenEpoch)
             assert (await store.snapshot()).approvals == []
     finally:
-        await store.db.close()
+        await store.close()
 
 
 @pytest.mark.parametrize('policy', ['all', 'mutations', 'auto'])
@@ -152,7 +166,9 @@ async def test_sdk_and_rpc_preserve_run_options(policy) -> None:
     import httpx
 
     from amazme_backend.contracts import Receipt, Session, SessionList
-    from amazme_backend.rpc import RpcHost, RpcParams, _dispatch
+    from amazme_backend.host.service import Host
+    from amazme_backend.host.sessions import SessionOperations
+    from amazme_backend.interfaces.rpc import RpcParams, _dispatch
     from amazme_backend.sdk import Client
 
     options = {'system_prompt':'pinned', 'append_system_prompt':'tail', 'allowed_tools':[], 'excluded_tools':['mcp_*'],
@@ -175,12 +191,13 @@ async def test_sdk_and_rpc_preserve_run_options(policy) -> None:
                             request_id='original', text='hello', **options)
     finally:
         await client._http.aclose()
-    owner = Mock(spec=RpcHost)
-    owner.sessions = AsyncMock(return_value=SessionList(sessions=[Session(session_id='session', title='test')]))
-    owner.deliver = AsyncMock(return_value=receipt)
+    owner = Mock(spec=Host)
+    owner.sessions = Mock(spec=SessionOperations)
+    owner.sessions.sessions = AsyncMock(return_value=SessionList(sessions=[Session(session_id='session', title='test')]))
+    owner.sessions.deliver = AsyncMock(return_value=receipt)
     await _dispatch(owner, 'request.submit', RpcParams(session_id='session', workspace='primary',
                     attachment_id='binding', request_id='original', text='hello', **options))
-    assert owner.deliver.call_args.args[3] == sent[0]
+    assert owner.sessions.deliver.call_args.args[3] == sent[0]
     assert sent[0].model_dump(include=set(options)) == options
 
 
@@ -192,9 +209,9 @@ async def test_structured_user_tool_uses_the_same_approval_and_result_without_a_
         PluginToolCall,
         plugin_alias,
     )
-    from amazme_backend.session_domain import PluginRetrieval, PluginReturned
+    from amazme_backend.sessions.types import PluginRetrieval, PluginReturned
     store = await opened(tmp_path / 'session.sqlite')
-    store.approval_policy = 'mutations'
+    session_state(store).approval_policy = 'mutations'
     payload = PluginToolCall(plugin_id='a'*32,call_id='e'*32,workspace='primary',fingerprint='f'*64,
                              load_id='load',name='hello',schema_digest='f'*64,arguments={'name':'Bob'})
     original = Submit(request_id='structured',text='Script call hello',allowed_tools=[plugin_alias('a'*32,'hello')],tool_call=ToolCall(id='caller-id',name='plugin_tool',arguments=payload.model_dump_json()))
@@ -219,7 +236,7 @@ async def test_structured_user_tool_uses_the_same_approval_and_result_without_a_
         assert await store.accept(original,FENCE)==receipt
         messages = (await store.snapshot()).requests
         assert len(messages)==1
-        with sqlite3.connect(store.db.path) as db:
+        with sqlite3.connect(session_database_owner(store).path) as db:
             assert db.execute("SELECT count(*) FROM steps WHERE json_extract(payload,'$.kind')='model'").fetchone()[0]==0
     finally:
-        await store.db.close()
+        await store.close()

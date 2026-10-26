@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from amazme_backend.supervisor import ensure_resolution_schema
+from amazme_backend.execution.store import ensure_resolution_schema
 
 
 def test_current_native_receipts_survive_the_atomic_schema_change():

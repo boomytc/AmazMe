@@ -36,6 +36,7 @@ def _env(agent: Path) -> dict[str, str]:
     env["AMAZME_CODING_AGENT_DIR"] = str(agent)
     for name in ("AMAZME_PYTHON_URL", "AMAZME_PYTHON_TOKEN", "AMAZME_PYTHON_SESSION", "AMAZME_PYTHON_BACKEND"):
         env.pop(name, None)
+    env["AMAZME_PYTHON_BACKEND"] = str(ROOT / "backend/.venv/bin/amazme-backend")
     return env
 
 
@@ -45,7 +46,7 @@ def _invoke(agent: Path, url: str, token: str, method: str, params: dict[str, ob
         [NODE, str(CLI), "--mode", "rpc", "--python-url", url, "--python-token", token, "--workspace", "primary"],
         cwd=ROOT, env=_env(agent), input=payload + "\n", capture_output=True, text=True, timeout=90, check=False)
     lines = [line for line in proc.stdout.splitlines() if line.startswith("{")]
-    assert proc.returncode == 0 and lines, f"{proc.returncode}\n{proc.stderr[-800]}\n{proc.stdout[-400]}"
+    assert proc.returncode == 0 and lines, f"{proc.returncode}\n{proc.stderr[-800:]}\n{proc.stdout[-400:]}"
     loaded = json.loads(lines[-1])
     assert isinstance(loaded, dict)
     assert token not in proc.stdout and token not in proc.stderr
@@ -222,7 +223,7 @@ def main() -> None:
             assert (runtime.workspace / "mcp-effect.txt").read_text() == "x"
             checks.append("MCP stayed pending until an explicit decision, a refusal had no effect, and one approval wrote once")
 
-            other = call("session.create", title="另一个")
+            other = _ok(_invoke(agent, url, token, "session.create", {"workspace": "primary", "title": "另一个"}))
             other_id = str(other["session_id"])
             assert other_id != session
             other_attachment = str(call("session.attach", session_id=other_id)["attachment_id"])

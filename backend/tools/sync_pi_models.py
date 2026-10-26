@@ -28,7 +28,7 @@ def main() -> None:
                     'maxTokens', 'cost', 'compat', 'headers', 'input', 'reasoning', 'thinkingLevelMap'] if key in value})
     if not models:
         raise SystemExit('No hydrated Pi chat model catalog found')
-    target = Path(__file__).resolve().parents[1] / 'src/amazme_backend/model_catalog.json'
+    target = Path(__file__).resolve().parents[1] / 'src/amazme_backend/assets/model_catalog.json'
     target.write_text(json.dumps(models, ensure_ascii=False, separators=(',', ':')) + '\n')
     target.with_name('classifier_catalog.json').write_text(json.dumps(classifiers, ensure_ascii=False, separators=(',', ':')) + '\n')
     print(f'{len(models)} Pi chat models written to {target}')

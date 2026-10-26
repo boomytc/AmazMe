@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from amazme_backend.contracts import BackendError, HostFence, Submit
-from amazme_backend.storage import SessionStore
+from amazme_backend.sessions.store import SessionStore
 
 FENCE = HostFence(host_epoch=1, build_id="test-build")
 SESSION = "a" * 32

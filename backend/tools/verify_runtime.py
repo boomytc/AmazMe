@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 
-from amazme_backend.common import private_write
+from amazme_backend.platform.private_files import private_write
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -135,7 +135,7 @@ class Runtime:
 
     def clear_owned_credentials(self):
         """Only the profile created by this Runtime may lose copied test credentials."""
-        from amazme_backend.accounts import AccountDocument, AccountStore
+        from amazme_backend.accounts.store import AccountDocument, AccountStore
 
         identity = self.profile.stat()
         if self.profile.is_symlink() or (identity.st_dev, identity.st_ino) != self._profile_identity:
@@ -160,7 +160,7 @@ class Runtime:
         try:
             self.stop()
             from amazme_backend.contracts import ProcessLease
-            from amazme_backend.processes import exited
+            from amazme_backend.execution.processes import exited
             for path in (self.profile / "processes").glob("*.lock"):
                 assert exited(ProcessLease.model_validate_json(path.read_bytes())), path.name
         finally:

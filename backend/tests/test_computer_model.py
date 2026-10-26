@@ -5,28 +5,16 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.contracts import (
-    ApprovalDecision,
-    BackendError,
-    ComputerToolRequest,
-    ComputerToolResult,
-    HostFence,
-    ImagePart,
-    Message,
-    Submit,
-    ToolCall,
-)
-from amazme_backend.provider_wire import anthropic_body, google_body, responses_body
-from amazme_backend.providers import Completion, provider_messages, tool_definitions
-from amazme_backend.session_domain import (
-    ComputerRetrieval,
-    ComputerReturned,
-    Failed,
-    ModelInvocation,
-    ModelReturned,
-    Park,
-)
-from amazme_backend.storage import SessionStore
+from amazme_backend.contracts import ApprovalDecision, BackendError, ComputerToolRequest, ComputerToolResult, HostFence, ImagePart, Message, Submit, ToolCall
+from amazme_backend.ai.providers.anthropic import anthropic_body
+from amazme_backend.ai.providers.google import google_body
+from amazme_backend.ai.providers.responses import responses_body
+from amazme_backend.ai.providers.completions import provider_messages
+from amazme_backend.agent.model import ProductCompletion as Completion, model_request, model_spec, model_transport
+from amazme_backend.agent.tool_catalog import build_tools
+from amazme_backend.ai.types import Auth, ModelMessage
+from amazme_backend.sessions.types import ComputerRetrieval, ComputerReturned, Failed, ModelInvocation, ModelReturned, Park
+from amazme_backend.sessions.service import SessionStore
 
 FENCE = HostFence(host_epoch=1, build_id='test-build')
 PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
@@ -67,7 +55,7 @@ async def test_desktop_mutation_waits_for_bound_approval_and_denial_sends_nothin
         assert not isinstance(await advance(store), ComputerRetrieval)
         assert (await store.get('root')).error == 'approval_denied'
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_observation_image_reaches_next_model_without_event_base64(tmp_path: Path) -> None:
@@ -91,7 +79,7 @@ async def test_observation_image_reaches_next_model_without_event_base64(tmp_pat
         with pytest.raises(BackendError, match='computer_intent_mismatch'):
             await store.check_computer_intent(request)
     finally:
-        await store.db.close()
+        await store.close()
 
 
 @pytest.mark.parametrize('transport_failure', [False, True])
@@ -105,7 +93,7 @@ async def test_unknown_click_is_terminal_and_not_automatically_replayed(tmp_path
         assert not isinstance(await advance(store), ComputerRetrieval)
         assert (await store.get('root')).status == 'unknown'
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_cancelled_desktop_intent_settles_without_dispatch(tmp_path: Path) -> None:
@@ -117,7 +105,7 @@ async def test_cancelled_desktop_intent_settles_without_dispatch(tmp_path: Path)
         assert not isinstance(await advance(store), ComputerRetrieval)
         assert (await store.get('root')).status == 'cancelled'
     finally:
-        await store.db.close()
+        await store.close()
 
 
 def test_all_model_wire_paths_include_tool_images() -> None:
@@ -125,21 +113,23 @@ def test_all_model_wire_paths_include_tool_images() -> None:
     messages = [Message(role='tool', content='capture frame', tool_call_id='call',
                         images=[ImagePart(media_type='image/png', data_base64=PNG)])]
     config = ProviderConfig(provider='openai', model='custom', base_url='https://api.example/v1')
-    bodies = [provider_messages(messages), responses_body(config, messages, None),
-              anthropic_body(config, messages, None)[0], google_body(config, messages, None)]
+    auth = Auth()
+    model, request = model_spec(config), model_request(config, messages, auth=auth)
+    bodies = [provider_messages(model, request), responses_body(model, request),
+              anthropic_body(model, request, auth, model_transport(config))[0], google_body(model, request)]
     assert all(PNG in json.dumps(body) for body in bodies)
-    names = {item['function']['name'] for item in tool_definitions()}
+    names = {tool.name for tool in build_tools()}
     assert {'computer_observe', 'computer_act'} <= names
 
 
 def test_tool_images_follow_the_entire_parallel_tool_batch() -> None:
-    from amazme_backend.providers import tool_image_messages
+    from amazme_backend.ai.providers.history import tool_image_messages
     messages = [Message(role='assistant', content='', tool_calls=[
         ToolCall(id='first', name='computer_observe', arguments='{}'),
         ToolCall(id='second', name='read_file', arguments='{"path":"file"}')]),
         Message(role='tool', content='frame', tool_call_id='first', images=[ImagePart(media_type='image/png', data_base64=PNG)]),
         Message(role='tool', content='file', tool_call_id='second')]
-    expanded = tool_image_messages(messages)
+    expanded = tool_image_messages([ModelMessage.model_validate(message.model_dump()) for message in messages])
     assert [message.role for message in expanded] == ['assistant', 'tool', 'tool', 'user']
     assert expanded[-1].images[0].data_base64 == PNG
 
@@ -148,33 +138,27 @@ async def test_host_computer_dispatch_requires_live_owner_and_the_exact_session_
     from helpers.computer_probe import start_driver
     from test_computer_use import _host, _stop
 
-    from amazme_backend.contracts import (
-        ComputerPolicy,
-        CreateSession,
-        ProcessLease,
-        ServiceInfo,
-        SupervisorHealth,
-        WorkerInfo,
-    )
-    from amazme_backend.session_ops import SessionOpResult, run_session_op
-    from amazme_backend.storage import session_database
+    from amazme_backend.contracts import ComputerPolicy, CreateSession, ProcessLease, ServiceInfo, SupervisorHealth, WorkerInfo
+    from amazme_backend.sessions.service import run_session_op
+    from amazme_backend.contracts.ipc.worker import SessionOpResult
+    from amazme_backend.profiles.layout import session_database
     host = _host(tmp_path, 'granted')
     lease = ProcessLease(instance_id='supervisor', role='supervisor', profile_path=str(tmp_path),
                          path=str(tmp_path / 'lease'), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session('a' * 32, CreateSession(title='model desktop'))
-    await host.store.save_service(ServiceInfo(instance_id='supervisor', build_id=host.build, process_lease=lease, state='running'))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    await host.lifecycle.store.create_session('a' * 32, CreateSession(title='model desktop'))
+    await host.lifecycle.store.save_service(ServiceInfo(instance_id='supervisor', build_id=host.lifecycle.build, process_lease=lease, state='running'))
     directory = session_database(tmp_path, 'a' * 32)
     directory.parent.mkdir(parents=True)
-    store = SessionStore(directory, 'a' * 32, build=host.build, instance='worker')
+    store = SessionStore(directory, 'a' * 32, build=host.lifecycle.build, instance='worker')
     await store.initialize()
-    await store.fence(host.fence)
+    await store.fence(host.lifecycle.fence)
     await store.save_computer_policy(ComputerPolicy(enabled=True))
-    action = await propose(store, 'computer_observe', {}, host.fence)
+    action = await propose(store, 'computer_observe', {}, host.lifecycle.fence)
     assert isinstance(action, ComputerRetrieval)
-    health = SupervisorHealth(identity=host.profile.identity('supervisor', host.build, role='supervisor', host_epoch=host.fence.host_epoch),
+    health = SupervisorHealth(identity=host.lifecycle.profile.identity('supervisor', host.lifecycle.build, role='supervisor', host_epoch=host.lifecycle.fence.host_epoch),
         registry_revision='1', workers=[WorkerInfo(session_id='a' * 32, worker_id='worker', pid=100, socket='unused',
-            build_id=host.build, fingerprint=host.build, host_epoch=host.fence.host_epoch,
+            build_id=host.lifecycle.build, fingerprint=host.lifecycle.build, host_epoch=host.lifecycle.fence.host_epoch,
             state='ready', process_lease=lease)], epochs=[])
 
     async def supervisor(*args):
@@ -188,26 +172,26 @@ async def test_host_computer_dispatch_requires_live_owner_and_the_exact_session_
     async def worker(*args):
         return WorkerPeer()
 
-    monkeypatch.setattr(host.supervisor, 'call', supervisor)
-    monkeypatch.setattr(host, 'worker', worker)
-    monkeypatch.setattr('amazme_backend.host.exited', lambda _: False)
-    monkeypatch.setattr('amazme_backend.host.start_driver', lambda directory: start_driver(directory, 'granted'))
-    request = ComputerToolRequest(**host.fence.model_dump(), session_id='a' * 32, worker_id='worker',
+    monkeypatch.setattr(host.lifecycle.supervisor, 'call', supervisor)
+    monkeypatch.setattr(host.access, 'worker', worker)
+    monkeypatch.setattr('amazme_backend.host.computer.exited', lambda _: False)
+    monkeypatch.setattr('amazme_backend.host.computer.start_driver', lambda directory: start_driver(directory, 'granted'))
+    request = ComputerToolRequest(**host.lifecycle.fence.model_dump(), session_id='a' * 32, worker_id='worker',
         step_id=action.step_id, request_id=action.request_id, generation=action.generation, call=action.call)
     try:
         with pytest.raises(BackendError, match='worker_identity_mismatch'):
-            await host.computer_model_tool(request.model_copy(update={'worker_id': 'other'}))
-        assert host.computer_drivers == {}
+            await host.computer.computer_model_tool(request.model_copy(update={'worker_id': 'other'}))
+        assert host.computer.computer_drivers == {}
         with pytest.raises(BackendError, match='computer_intent_mismatch'):
-            await host.computer_model_tool(request.model_copy(update={'generation': action.generation + 1}))
-        assert host.computer_drivers == {}
-        result = await host.computer_model_tool(request)
+            await host.computer.computer_model_tool(request.model_copy(update={'generation': action.generation + 1}))
+        assert host.computer.computer_drivers == {}
+        result = await host.computer.computer_model_tool(request)
         assert result.phase == 'done' and json.loads(result.result)['permitted']
-        await store.cancel('root', host.fence)
+        await store.cancel('root', host.lifecycle.fence)
         with pytest.raises(BackendError, match='computer_intent_mismatch'):
-            await host.computer_model_tool(request)
+            await host.computer.computer_model_tool(request)
     finally:
-        await store.db.close()
+        await store.close()
         await _stop(host)
 
 
@@ -233,4 +217,4 @@ async def test_grounding_tools_share_the_original_approval_and_generation_gate(t
         with pytest.raises(BackendError,match='computer_intent_mismatch'):
             await store.check_computer_intent(request.model_copy(update={'generation':action.generation+1}))
     finally:
-        await store.db.close()
+        await store.close()

@@ -14,7 +14,7 @@ from amazme_backend.contracts import (
     PluginPackageAdd,
     PluginPackageRemove,
 )
-from amazme_backend.plugin_packages import plugin_identity
+from amazme_backend.features.plugins.packages import plugin_identity
 from amazme_backend.sdk import Client
 
 
@@ -69,9 +69,9 @@ async def test_package_configuration_loads_for_both_sessions_then_removes_only_i
 
 
 async def test_package_removal_barrier_and_revision_survive_store_reopen(tmp_path: Path) -> None:
-    from amazme_backend import plugin_packages
+    import amazme_backend.host.persistence.plugins as plugin_packages
     from amazme_backend.contracts import ProcessLease
-    from amazme_backend.host_store import HostStore
+    from amazme_backend.host.store import HostStore
 
     path = tmp_path / "host.sqlite"
     store = HostStore(path)

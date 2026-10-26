@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 from verify_runtime import ROOT, Runtime, until
 
-from amazme_backend.common import private_write
+from amazme_backend.platform.private_files import private_write
 
 MARKER = "marker-7f3a"
 ARGUMENTS = {"text": MARKER, "numbers": [4, 5]}

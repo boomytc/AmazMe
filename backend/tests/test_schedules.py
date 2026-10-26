@@ -7,8 +7,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from amazme_backend import schedules
-from amazme_backend.common import Profile, private_write
+import amazme_backend.features.schedules.policy as schedules
 from amazme_backend.contracts import (
     BackendError,
     CreateSession,
@@ -23,10 +22,14 @@ from amazme_backend.contracts import (
     ScheduleNow,
     Submit,
 )
-from amazme_backend.host import Host, application
-from amazme_backend.host_store import HostStore
+from amazme_backend.host.service import Host
+from amazme_backend.host.store import HostStore
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.profiles.profile import Profile
 from amazme_backend.sdk import Client
-from amazme_backend.storage import SessionStore, session_database
+from amazme_backend.sessions.service import SessionStore
 
 SESSION = "a" * 32
 OTHER = "b" * 32
@@ -71,25 +74,27 @@ async def host(tmp_path: Path):
     private_write(tmp_path / "control.token", "control")
     private_write(tmp_path / "web.token", "web")
     owner = Host(Profile(tmp_path))
-    owner.fence = HostFence(host_epoch=1, build_id=owner.build)
+    owner.lifecycle.fence = HostFence(host_epoch=1, build_id=owner.lifecycle.build)
     owner.origin = "http://127.0.0.1:12345"
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"), device=1, inode=1)
-    owner.fence.host_epoch = await owner.store.initialize(owner.instance, owner.build, lease)
-    await owner.store.create_session(SESSION, CreateSession(title="计划"))
-    await owner.store.create_session(OTHER, CreateSession(title="另一会话"))
-    yield owner
-    await owner.supervisor.close()
-    await owner.store.db.close()
+    owner.lifecycle.fence.host_epoch = await owner.lifecycle.store.initialize(owner.lifecycle.instance, owner.lifecycle.build, lease)
+    owner.lifecycle.initialized = True
+    await owner.lifecycle.store.create_session(SESSION, CreateSession(title="计划"))
+    await owner.lifecycle.store.create_session(OTHER, CreateSession(title="另一会话"))
+    try:
+        yield owner
+    finally:
+        await owner.close()
 
 
 async def delivery_count(host: Host) -> int:
-    return await host.store.transaction(lambda db: int(db.execute("SELECT count(*) FROM deliveries WHERE kind='submit'").fetchone()[0]))
+    return await host.lifecycle.store.transaction(lambda db: int(db.execute("SELECT count(*) FROM deliveries WHERE kind='submit'").fetchone()[0]))
 
 
 async def test_schedules_api_idempotent_edits_pause_future_rules_and_authenticated_listing(host: Host) -> None:
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
         assert (await client.get("/api/v1/schedules")).status_code == 401
-        client.headers.update({"Authorization": "Bearer web", "x-amazme-build": host.build, "x-amazme-epoch": str(host.fence.host_epoch)})
+        client.headers.update({"Authorization": "Bearer web", "x-amazme-build": host.lifecycle.build, "x-amazme-epoch": str(host.lifecycle.fence.host_epoch)})
         payload = {"schedule_id": PLAN, "session_id": SESSION, "text": "定期检查", "rule": {"kind": "interval", "every_minutes": 15}}
         first = await client.post("/api/v1/schedules", json=payload)
         assert first.status_code == 200
@@ -104,7 +109,7 @@ async def test_schedules_api_idempotent_edits_pause_future_rules_and_authenticat
         state = (await client.get("/api/v1/schedules")).json()
         assert len(state["schedules"]) == 1 and state["schedules"][0]["text"] == "调整检查"
         assert (await client.post("/api/v1/schedules", json={**payload, "schedule_id": "d" * 32, "rule": {"kind": "once", "at": "2020-01-01T09:00", "time_zone": "UTC"}})).status_code == 409
-        await host.store.transaction(lambda db: db.execute("UPDATE control SET freeze_id='update' WHERE id=1"))
+        await host.lifecycle.store.transaction(lambda db: db.execute("UPDATE control SET freeze_id='update' WHERE id=1"))
         assert (await client.post(f"/api/v1/schedules/{PLAN}/run", json={"operation_id": "f" * 32, "expected_generation": 2})).status_code == 503
         assert await delivery_count(host) == 0
 
@@ -112,17 +117,17 @@ async def test_schedules_api_idempotent_edits_pause_future_rules_and_authenticat
 async def test_due_claim_and_model_snapshot_survive_restart_without_replay(host: Host) -> None:
     now = epoch("2026-01-01T00:00Z")
     value = ScheduleInput(schedule_id=PLAN, session_id=SESSION, text="检查", rule=IntervalRule(kind="interval", every_minutes=1))
-    await host.store.transaction(lambda db: schedules.save(db, value, now, ()))
+    await host.lifecycle.store.save_schedule(value, now, ())
     due = now + 10 * 60000 + 123
-    record = await host.store.transaction(lambda db: schedules.claim(db, PLAN, due, host.profile.config.provider, ()))
+    record = await host.lifecycle.store.claim_schedule(PLAN, due, host.lifecycle.profile.config.provider, ())
     assert record.pending and record.pending.scheduled_for == now + 10 * 60000
     original = record.pending.request_id
     assert await delivery_count(host) == 1
-    delivery = (await host.store.pending())[0]
+    delivery = (await host.lifecycle.store.pending())[0]
     assert delivery.provider is not None and delivery.provider.provider == "faux"
-    await host.store.db.close()
-    host.store = HostStore(host.profile.path / "host.sqlite", require_existing=True)
-    again = await host.store.transaction(lambda db: schedules.claim(db, PLAN, due + 60000, host.profile.config.provider, ()))
+    await host.lifecycle.store.db.close()
+    host.lifecycle.store = HostStore(host.lifecycle.profile.path / "host.sqlite", require_existing=True)
+    again = await host.lifecycle.store.claim_schedule(PLAN, due + 60000, host.lifecycle.profile.config.provider, ())
     assert again.pending and again.pending.request_id == original
     assert await delivery_count(host) == 1
 
@@ -131,25 +136,25 @@ async def test_missed_busy_secret_and_missing_target_never_enqueue(host: Host) -
     now = epoch("2026-01-01T00:00Z")
     for digit, options, reason in [("c", {"missed": "skip", "grace_minutes": 0}, "missed"), ("d", {"busy": "skip"}, "busy")]:
         value = ScheduleInput.model_validate({"schedule_id": digit * 32, "session_id": SESSION, "text": "检查", "rule": {"kind": "interval", "every_minutes": 1}, **options})
-        await host.store.transaction(lambda db: schedules.save(db, value, now, ()))
-        result = await host.store.transaction(lambda db: schedules.claim(db, digit * 32, now + 60001, host.profile.config.provider, (), busy=True))
+        await host.lifecycle.store.save_schedule(value, now, ())
+        result = await host.lifecycle.store.claim_schedule(digit * 32, now + 60001, host.lifecycle.profile.config.provider, (), busy=True)
         assert result.history[-1].detail == reason and result.pending is None
     value = ScheduleInput(schedule_id="e" * 32, session_id=OTHER, text="检查", rule=IntervalRule(kind="interval", every_minutes=1))
-    await host.store.transaction(lambda db: schedules.save(db, value, now, ()))
-    await host.store.set_archived(OTHER, True)
-    result = await host.store.transaction(lambda db: schedules.claim(db, "e" * 32, now + 60001, host.profile.config.provider, ()))
+    await host.lifecycle.store.save_schedule(value, now, ())
+    await host.lifecycle.store.set_archived(OTHER, True)
+    result = await host.lifecycle.store.claim_schedule("e" * 32, now + 60001, host.lifecycle.profile.config.provider, ())
     assert not result.enabled and result.history[-1].detail == "target_missing"
     with pytest.raises(BackendError, match="schedule_text"):
-        await host.store.transaction(lambda db: schedules.save(db, value.model_copy(update={"schedule_id": "f" * 32, "text": "secret-token"}), now, ("secret-token",)))
+        await host.lifecycle.store.save_schedule(value.model_copy(update={"schedule_id": "f" * 32, "text": "secret-token"}), now, ("secret-token",))
     assert await delivery_count(host) == 0
 
 
 async def test_cancel_waits_for_final_receipt_and_remove_pauses_before_cleanup(host: Host, monkeypatch: pytest.MonkeyPatch) -> None:
-    record = await host.save_schedule(ScheduleInput(schedule_id=PLAN, session_id=SESSION, text="检查", rule=IntervalRule(kind="interval", every_minutes=1)))
-    running = await host.run_schedule(PLAN, ScheduleNow(operation_id="e" * 32, expected_generation=1))
+    record = await host.scheduling.save_schedule(ScheduleInput(schedule_id=PLAN, session_id=SESSION, text="检查", rule=IntervalRule(kind="interval", every_minutes=1)))
+    running = await host.scheduling.run_schedule(PLAN, ScheduleNow(operation_id="e" * 32, expected_generation=1))
     assert running.pending
     request = running.pending.request_id
-    path = session_database(host.profile.path, SESSION)
+    path = session_database(host.lifecycle.profile.path, SESSION)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.touch()
     current = [Receipt(request_id=request, text="检查", status="running", cancel_requested=True)]
@@ -174,64 +179,65 @@ async def test_cancel_waits_for_final_receipt_and_remove_pauses_before_cleanup(h
         cancelled.append(key)
         return current[0]
 
-    monkeypatch.setattr(host, "_read_session", read)
-    monkeypatch.setattr(host, "deliver", deliver)
+    monkeypatch.setattr(host.access, 'read', read)
+    monkeypatch.setattr(host.sessions, 'deliver', deliver)
     with pytest.raises(BackendError, match="schedule_run_changed"):
-        await host.control_schedule(PLAN, ScheduleControl(expected_generation=1, request_id="0" * 32), "cancel")
+        await host.scheduling.control_schedule(PLAN, ScheduleControl(expected_generation=1, request_id="0" * 32), "cancel")
     with pytest.raises(BackendError, match="schedule_cleanup_pending"):
-        await host.control_schedule(PLAN, ScheduleControl(expected_generation=1, request_id=request), "remove")
-    waiting = (await host.list_schedules()).schedules[0]
+        await host.scheduling.control_schedule(PLAN, ScheduleControl(expected_generation=1, request_id=request), "remove")
+    waiting = (await host.scheduling.list_schedules()).schedules[0]
     assert waiting.pending and waiting.pending.cancel_reason == "cancelled" and not waiting.enabled
     assert cancelled == [request]
     current[0] = current[0].model_copy(update={"status": "unknown"})
-    await host.tick_schedules(force=True)
-    assert (await host.list_schedules()).schedules[0].pending
+    await host.scheduling.tick_schedules(force=True)
+    assert (await host.scheduling.list_schedules()).schedules[0].pending
     assert await delivery_count(host) == 1
     proved[0] = True
-    await host.tick_schedules(force=True)
-    settled = (await host.list_schedules()).schedules[0]
+    await host.scheduling.tick_schedules(force=True)
+    settled = (await host.scheduling.list_schedules()).schedules[0]
     assert settled.pending is None and settled.history[-1].status == "unanswered"
     assert settled.history[-1].detail == "unknown_reconciled"
     assert not settled.enabled
-    assert (await host.run_schedule(PLAN, ScheduleNow(operation_id="e" * 32, expected_generation=1))).pending is None
+    assert (await host.scheduling.run_schedule(PLAN, ScheduleNow(operation_id="e" * 32, expected_generation=1))).pending is None
     assert await delivery_count(host) == 1
-    await host.control_schedule(PLAN, ScheduleControl(expected_generation=1), "remove")
-    await host.control_schedule(PLAN, ScheduleControl(expected_generation=1), "remove")
-    assert not (await host.list_schedules()).schedules
+    await host.scheduling.control_schedule(PLAN, ScheduleControl(expected_generation=1), "remove")
+    await host.scheduling.control_schedule(PLAN, ScheduleControl(expected_generation=1), "remove")
+    assert not (await host.scheduling.list_schedules()).schedules
     with pytest.raises(BackendError, match="schedule_removed"):
-        await host.save_schedule(ScheduleInput.model_validate(record.model_dump(include=set(ScheduleInput.model_fields))))
+        await host.scheduling.save_schedule(ScheduleInput.model_validate(record.model_dump(include=set(ScheduleInput.model_fields))))
 
 
 async def test_deadline_cancels_before_unaccepted_submission(host: Host, monkeypatch: pytest.MonkeyPatch) -> None:
-    await host.save_schedule(ScheduleInput(schedule_id=PLAN, session_id=SESSION, text="never start", rule=IntervalRule(kind="interval", every_minutes=1)))
-    record = await host.run_schedule(PLAN, ScheduleNow(operation_id="e" * 32, expected_generation=1))
+    await host.scheduling.save_schedule(ScheduleInput(schedule_id=PLAN, session_id=SESSION, text="never start", rule=IntervalRule(kind="interval", every_minutes=1)))
+    record = await host.scheduling.run_schedule(PLAN, ScheduleNow(operation_id="e" * 32, expected_generation=1))
     assert record.pending
     request = record.pending.request_id
-    path = session_database(host.profile.path, SESSION)
+    path = session_database(host.lifecycle.profile.path, SESSION)
     path.parent.mkdir(parents=True, exist_ok=True)
-    store = SessionStore(path, SESSION, build=host.build, config=host.profile.config.provider)
+    store = SessionStore(path, SESSION, build=host.lifecycle.build, config=host.lifecycle.profile.config.provider)
     dispatched: list[str] = []
 
     async def dispatch(delivery):
         dispatched.append(delivery.kind)
-        receipt = await store.cancel(request, host.fence) if delivery.kind == "cancel" else await store.accept(Submit.model_validate_json(delivery.payload), host.fence)
-        return await host.store.delivered(delivery.delivery_id, receipt)
+        receipt = await store.cancel(request, host.lifecycle.fence) if delivery.kind == "cancel" else await store.accept(Submit.model_validate_json(delivery.payload), host.lifecycle.fence)
+        return await host.lifecycle.store.delivered(delivery.delivery_id, receipt)
 
-    monkeypatch.setattr(host, "_dispatch", dispatch)
+    monkeypatch.setattr(host.sessions, 'dispatch', dispatch)
     try:
         await store.initialize()
-        await store.fence(host.fence)
-        finished = await host._reconcile_schedule(record, record.pending.deadline_at)
+        await store.fence(host.lifecycle.fence)
+        monkeypatch.setattr("amazme_backend.host.scheduling.time.time_ns", lambda: record.pending.deadline_at * 1000000)
+        finished = (await host.scheduling.tick_schedules(force=True)).schedules[0]
         assert finished.pending is None and finished.history[-1].status == "timed_out"
         assert dispatched == ["cancel"]
-        for pending in await host.store.pending(SESSION):
+        for pending in await host.lifecycle.store.pending(SESSION):
             await dispatch(pending)
         assert (await store.get(request)).status == "cancelled"
         assert (await store.get(request)).error == "cancelled_before_acceptance"
         activity = await store.activity()
         assert activity.pending == 0 and not activity.runnable
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_sdk_and_rpc_use_the_same_schedule_and_run_ids(host: Host) -> None:

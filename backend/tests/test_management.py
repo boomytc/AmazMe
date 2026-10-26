@@ -1,12 +1,14 @@
 """Projects, settings, feedback, shares, and new-format import do not touch old data or secrets."""
 
+import asyncio
 import json
 import shutil
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 
-from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
     ExportBundle,
     ExportMessage,
@@ -18,11 +20,11 @@ from amazme_backend.contracts import (
     ProjectView,
     Submit,
 )
-from amazme_backend.host import Host, application
-from amazme_backend.manage import bundle_digest
-from amazme_backend.providers import Completion, stream
-from amazme_backend.session_domain import ModelInvocation, ModelReturned
-from amazme_backend.storage import SessionStore, session_database
+from amazme_backend.features.management.rules import bundle_digest
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.profile import Profile
 
 SESSION = "a" * 32
 PROJECT = "b" * 32
@@ -40,43 +42,54 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     return host
 
 
-async def _message(host: Host, session: str, request_id: str, text: str) -> None:
-    path = session_database(host.profile.path, session)
-    path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    store = SessionStore(path, session, build=host.build)
-    await store.initialize()
+@asynccontextmanager
+async def _initialized_host(tmp_path: Path) -> AsyncIterator[Host]:
+    host = _host(tmp_path)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
     try:
-        await store.accept(Submit(request_id=request_id, text=text), HostFence(host_epoch=0, build_id=host.build))
-        for _ in range(8):
-            if any(content == text for _request, _role, content in await store.transcript()):
-                return
-            action = await store.advance()
-            if isinstance(action, ModelInvocation):
-                async for item in stream(action.config, action.messages):
-                    if isinstance(item, Completion):
-                        await store.advance(ModelReturned(action, item))
+        host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(
+            host.lifecycle.instance, host.lifecycle.build, lease
+        )
+        host.lifecycle.initialized = True
+        yield host
     finally:
-        await store.db.close()
+        child = host.lifecycle.child
+        await host.close()
+        if child is not None:
+            await asyncio.wait_for(child.wait(), timeout=5)
+
+
+async def _message(host: Host, session: str, request_id: str, text: str) -> None:
+    await host.access.operate(
+        session, lambda store: store.import_transcript([(request_id, "user", text)])
+    )
+
+
+async def _append_message(host: Host, session: str, request_id: str, text: str) -> None:
+    await host.sessions.deliver(session, "submit", request_id, Submit(request_id=request_id, text=text))
+    for _ in range(200):
+        messages = await host.access.read(session, lambda store: store.transcript())
+        if (request_id, "user", text) in messages:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("worker did not persist the submitted message")
 
 
 def _client(host: Host) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-        "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-        "x-amazme-epoch": str(host.fence.host_epoch),
+        "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+        "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
     })
 
 
 async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp_path: Path) -> None:
-    host = _host(tmp_path)
-    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
-                         path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    try:
+    async with _initialized_host(tmp_path) as host:
         async with _client(host) as client:
             project = await client.post("/api/v1/projects", json={"project_id": PROJECT, "name": "演示"})
             again = await client.post("/api/v1/projects", json={"project_id": PROJECT, "name": "演示"})
@@ -108,6 +121,7 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             settings = await client.get("/api/v1/settings")
             assert settings.json() == {"display_name": "", "revision": 0, "preferences": {
                 "appearance": "system", "locale": "auto", "showWelcome": True,
+                "closeWindow": "background", "closeWindowPrompt": True,
                 "enabledModels": None,
                 "textFont": "", "codeFont": "", "terminalFont": "",
                 "textSize": 15, "codeSize": 13, "terminalSize": 12,
@@ -153,16 +167,21 @@ async def test_management_export_hides_secrets_and_import_does_not_overwrite(tmp
             tampered = exported.json()
             tampered["digest"] = "0" * 64
             assert (await client.post("/api/v1/import", json=tampered)).json()["code"] == "import_digest"
-            await _message(host, session, "secret-note", KEY)
+            historical_secret = "sk-test-credential-after-history"
+            await _append_message(host, session, "secret-note", historical_secret)
+            accounts = await client.get("/api/v1/accounts")
+            assert accounts.status_code == 200
+            credential = await client.post("/api/v1/models/credential", json={
+                "expected_revision": accounts.json()["revision"], "api_key": historical_secret,
+            })
+            assert credential.status_code == 200 and historical_secret not in credential.text
             hidden = await client.get("/api/v1/export")
             assert hidden.status_code == 409 and hidden.json()["code"] == "export_secret" and KEY not in hidden.text
+            assert historical_secret not in hidden.text
             stored = await client.get(f"/api/v1/sessions/{session}/shares/{SHARE}")
             assert stored.json()["messages"] == [{"request_id": "hello", "role": "user", "content": "你好"}]
             blocked = await client.post(f"/api/v1/sessions/{session}/shares", json={"share_id": SHARE})
             assert blocked.status_code == 409 and blocked.json()["code"] == "share_conflict"
-    finally:
-        await host.supervisor.close()
-        await host.store.db.close()
 
 
 def _sealed(bundle: ExportBundle) -> dict[str, object]:
@@ -170,16 +189,12 @@ def _sealed(bundle: ExportBundle) -> dict[str, object]:
 
 
 async def test_import_checks_every_workspace_before_writing(tmp_path: Path) -> None:
-    host = _host(tmp_path)
-    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
-                         path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
     grant = tmp_path.parent / f"import-{tmp_path.name}"
     grant.mkdir()
     project_id = "f" * 32
     first, second, orphan = "1" * 32, "2" * 32, "3" * 32
     try:
-        async with _client(host) as client:
+        async with _initialized_host(tmp_path) as host, _client(host) as client:
             missing_project = _sealed(ExportBundle(
                 format="amazme-export/1",
                 sessions=[ExportSession(
@@ -219,17 +234,11 @@ async def test_import_checks_every_workspace_before_writing(tmp_path: Path) -> N
             assert not (await client.get(f"/api/v1/sessions/{first}/search", params={"q": "乙"})).json()["hits"]
     finally:
         shutil.rmtree(grant, ignore_errors=True)
-        await host.supervisor.close()
-        await host.store.db.close()
 
 
 async def test_import_rejects_feedback_for_an_unknown_session_before_writing(tmp_path: Path) -> None:
-    host = _host(tmp_path)
-    lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
-                         path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
     session_id, project_id, feedback_id = "4" * 32, "5" * 32, "6" * 32
-    try:
+    async with _initialized_host(tmp_path) as host:
         async with _client(host) as client:
             refused_body = _sealed(ExportBundle(
                 format="amazme-export/1",
@@ -264,6 +273,3 @@ async def test_import_rejects_feedback_for_an_unknown_session_before_writing(tmp
             assert again["feedback"] == [{"feedback_id": feedback_id, "session_id": session_id, "text": "跟着会话"}]
             assert again["settings"]["display_name"] == "已导入"
             assert any(item["session_id"] == session_id for item in again["sessions"])
-    finally:
-        await host.supervisor.close()
-        await host.store.db.close()

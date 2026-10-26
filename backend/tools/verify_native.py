@@ -70,6 +70,19 @@ def main():
             assert marker.read_text() == "x"
             report["checks"].append("native shell: approval before effect, stale approval rejected, retry did not repeat effect")
 
+            branch_id = "b" * 32
+            branch = post(f"/api/v1/sessions/{session}/branches",
+                          {"branch_id": branch_id, "request_id": "shell", "title": "Branch verification"}, 201)
+            assert branch["session_id"] == branch_id and branch["prepared"]
+            assert post(f"/api/v1/sessions/{session}/branches",
+                        {"branch_id": branch_id, "request_id": "shell", "title": "Branch verification"}, 201) == branch
+            accepted = api.post(f"/api/v1/sessions/{branch_id}/submissions", headers=runtime.attach(branch_id),
+                                json={"request_id": "after-branch", "text": "branch remains writable"})
+            assert accepted.status_code == 202, accepted.text
+            assert runtime.complete(branch_id, "after-branch")["status"] == "succeeded"
+            assert marker.read_text() == "x"
+            report["checks"].append("metadata branch: same ID reuses copy; retired validation owner leaves business session writable")
+
             file = runtime.workspace / "note.txt"
             file.write_text("before\n")
             submit("file", '/write {"path":"note.txt","content":"after\\n"}')

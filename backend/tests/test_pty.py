@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 
 from amazme_backend.contracts import BackendError
-from amazme_backend.pty_gate import EXIT, OUTPUT, WINDOW
-from amazme_backend.pty_session import SCROLLBACK, PtyClient, utf16_tail, utf16_units
+from amazme_backend.execution.pty.gate import EXIT, OUTPUT, WINDOW
+from amazme_backend.execution.pty.client import SCROLLBACK, PtyClient, utf16_tail, utf16_units
 
-GATE = Path(__file__).parents[1] / "src/amazme_backend/pty_gate.py"
+GATE = Path(__file__).parents[1] / "src/amazme_backend/execution/pty/gate.py"
 SOURCE = GATE.read_text()
 
 

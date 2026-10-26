@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from amazme_backend.faults import Faults
+from amazme_backend.diagnostics.faults import Faults
 
 
 @pytest.mark.asyncio
@@ -44,7 +44,7 @@ async def test_real_worker_sql_transaction_kill_rolls_back_acceptance(tmp_path):
     import pytest
 
     from amazme_backend.contracts import BackendError, HostFence, Submit
-    from amazme_backend.storage import SessionStore
+    from amazme_backend.sessions.service import SessionStore
 
     faults = tmp_path / "faults"
     faults.mkdir()
@@ -52,15 +52,15 @@ async def test_real_worker_sql_transaction_kill_rolls_back_acceptance(tmp_path):
         '{"nonce":"aaaaaaaaaaaaaaaa","match":{"request_id":"commit-crash"}}')
     script = '''import asyncio,sys
 from pathlib import Path
-from amazme_backend.storage import SessionStore
-from amazme_backend.faults import Faults
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.diagnostics.faults import Faults
 from amazme_backend.contracts import HostFence,Submit
 async def run():
  p=Path(sys.argv[1])
  store=SessionStore(p/'session.sqlite','s',build='build',faults=Faults(p,'worker','sql-test',enabled=True))
  await store.initialize()
  await store.accept(Submit(request_id='commit-crash',text='one'),HostFence(host_epoch=0,build_id='build'))
- await store.db.close()
+ await store.close()
 asyncio.run(run())
 '''
     child = subprocess.Popen([sys.executable, "-c", script, str(tmp_path)])
@@ -86,7 +86,7 @@ asyncio.run(run())
             assert len(replay.batches) == 1
             assert [event.kind for event in replay.batches[0].events] == ["accepted"]
         finally:
-            await store.db.close()
+            await store.close()
     finally:
         if child.poll() is None:
             child.kill()

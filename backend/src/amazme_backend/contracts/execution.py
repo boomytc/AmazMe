@@ -1,0 +1,180 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import Field
+
+from amazme_backend.contracts.identity import Identity
+from amazme_backend.contracts.mcp import McpView
+from amazme_backend.shared.model import Model
+
+
+class Command(Model):
+    command: str = Field(min_length=1, max_length=196608)
+    timeout_seconds: int = Field(default=30, ge=1, le=120)
+
+
+class Shell(Command):
+    command: str = Field(min_length=1, max_length=16000)
+
+
+class ReadFile(Model):
+    path: str = Field(min_length=1, max_length=1024)
+
+
+class WriteFile(ReadFile):
+    content: str = Field(max_length=32000)
+
+
+class ToolResult(Model):
+    call_id: str
+    exit_code: int
+    stdout: str
+    stderr: str
+    truncated: bool = False
+    stop_reason: str = ""
+
+
+class TerminalOpen(Model):
+    terminal_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    command: str = Field(min_length=1, max_length=16000)
+    cols: int = Field(default=80, ge=1, le=200)
+    rows: int = Field(default=24, ge=1, le=80)
+    workspace: str = ""
+
+
+class TerminalType(Model):
+    input_id: str = Field(min_length=1, max_length=64)
+    data: str = Field(max_length=4000)
+
+
+class TerminalSize(Model):
+    cols: int = Field(ge=1, le=200)
+    rows: int = Field(ge=1, le=80)
+
+
+class TerminalView(Model):
+    terminal_id: str
+    session_id: str = ""
+    cols: int
+    rows: int
+    queued: int
+    written: int
+    exit_code: int | None = None
+    output: str
+    output_seq: int = 0
+    phase: Literal["running", "exited", "unknown"]
+    clean: bool = False
+    workspace: str = "primary"
+    input_id: str = ""
+    input_status: Literal["", "accepted", "unknown"] = ""
+
+
+class TerminalList(Model):
+    terminals: list[TerminalView]
+
+
+class Lease(Model):
+    session_id: str
+    worker_id: str
+    execution_epoch: int
+    build_id: str
+    supervisor_id: str = ""
+
+
+class Cleanup(Model):
+    session_id: str
+    execution_epoch: int
+    state: Literal["clean", "blocked"]
+    resources: list[str]
+    reason: str = ""
+    proof_id: str = ""
+    observation: Literal["registered_processes"] = "registered_processes"
+
+
+class WorkerInfo(Model):
+    session_id: str
+    worker_id: str
+    pid: int
+    socket: str
+    build_id: str
+    process_lease: ProcessLease | None = None
+    state: Literal["starting", "ready", "frozen", "stopping", "stopped", "blocked", "unknown"] = "starting"
+    execution_epoch: int = 0
+    fingerprint: str = ""
+    plugin_fingerprint: str = ""
+    purpose: Literal["business", "validation"] = "business"
+    host_epoch: int = 0
+    storage_ready: bool = False
+
+
+class ProcessLease(Model):
+    instance_id: str
+    role: Literal["host", "worker", "supervisor", "execution"]
+    profile_path: str
+    path: str
+    device: int
+    inode: int
+
+
+class EffectHold(Model):
+    call_id: str
+    session_id: str
+    request_id: str = ""
+    reason: str
+    resource_clean: bool
+    reconciled: bool = False
+
+
+class EffectResolution(Model):
+    resolution_id: str = Field(min_length=1, max_length=128)
+    call_id: str
+    outcome: Literal["applied", "not_applied"]
+    evidence: str = Field(min_length=1, max_length=4000)
+
+
+class ToolObservation(Model):
+    call_id: str
+    state: Literal["not_found", "pending", "completed", "unknown"]
+    result: ToolResult | None = None
+    resource_clean: bool = False
+
+
+class EpochHealth(Model):
+    session_id: str
+    worker_id: str
+    execution_epoch: int
+    state: str
+    cleanup: Cleanup | None = None
+
+
+class ExecutionResource(Model):
+    call_id: str
+    session_id: str
+    request_id: str
+    state: Literal["registered", "running", "stopping", "exited", "stop_unconfirmed"]
+    outcome: Literal["pending", "completed", "unknown"]
+    observation: Literal["registered_processes"] = "registered_processes"
+
+
+class SupervisorHealth(Model):
+    mcp_servers: list[McpView] = Field(default_factory=lambda: list[McpView]())
+    terminals: list[TerminalView] = Field(default_factory=lambda: list[TerminalView]())
+    identity: Identity
+    registry_revision: str
+    freeze_id: str = ""
+    workers: list[WorkerInfo]
+    epochs: list[EpochHealth]
+    effects: list[EffectHold] = Field(default_factory=lambda: list[EffectHold]())
+    execution: Literal["native"] = "native"
+    resources: list[ExecutionResource] = Field(default_factory=lambda: list[ExecutionResource]())
+    session_errors: dict[str, list[str]] = Field(default_factory=lambda: dict[str, list[str]]())
+    blocked: list[str] = Field(default_factory=lambda: list[str]())
+
+
+class ServiceInfo(Model):
+    instance_id: str
+    build_id: str
+    process_lease: ProcessLease
+    state: Literal["starting", "running", "stopping", "stopped", "unknown"]
+    pid: int = 0

@@ -7,16 +7,8 @@ import pytest
 from test_classifiers import image
 from test_computer_use import SESSION, _client, _host, _open, _stop
 
-from amazme_backend.classifiers import BoolAnswer, ChoiceAnswer, ClassifierResult
-from amazme_backend.contracts import (
-    BackendError,
-    ComputerGroundRequest,
-    ComputerInspect,
-    ComputerPolicy,
-    ComputerWindow,
-    HostFence,
-    ProcessLease,
-)
+from amazme_backend.ai.classification.types import BoolAnswer, ChoiceAnswer, ClassifierResult
+from amazme_backend.contracts import BackendError, ComputerGroundRequest, ComputerInspect, ComputerPolicy, ComputerWindow, HostFence, ProcessLease
 
 
 class Driver:
@@ -44,12 +36,13 @@ async def native(tmp_path,monkeypatch):
     driver = Driver()
     async def start(directory):
         return driver
-    monkeypatch.setattr(owner,'_computer_start',start)
+    monkeypatch.setattr(owner.computer,'_computer_start',start)
     lease = ProcessLease(instance_id='host',role='host',profile_path=str(tmp_path),path=str(tmp_path / 'lease'),device=1,inode=1)
-    owner.fence = HostFence(host_epoch=await owner.store.initialize(owner.instance,owner.build,lease),build_id=owner.build)
+    owner.lifecycle.fence = HostFence(host_epoch=await owner.lifecycle.store.initialize(owner.lifecycle.instance,owner.lifecycle.build,lease),build_id=owner.lifecycle.build)
+    owner.lifecycle.initialized = True
     async with _client(owner) as client:
         await _open(owner,client,SESSION)
-        await owner.save_computer_policy(SESSION,ComputerPolicy(enabled=True))
+        await owner.computer.save_computer_policy(SESSION,ComputerPolicy(enabled=True))
         try:
             yield owner,driver,client
         finally:
@@ -74,7 +67,7 @@ async def test_grounding_selects_assesses_then_verifies_without_repeating(native
         else:
             assert not driver.actions and context.assets
         return ClassifierResult(provider='typesafe',model='jev',answers=answers)
-    monkeypatch.setattr(owner,'_computer_classifier',lambda policy:classify)
+    monkeypatch.setattr(owner.computer,'_computer_classifier',lambda policy:classify)
     request = ComputerGroundRequest(action_id='stable',target=ComputerWindow(pid=123,window_id=4),goal='Continue',verification='Success is visible')
     response = await client.post(f'/api/v1/sessions/{SESSION}/computer/ground',json=request.model_dump())
     assert response.status_code == 200, response.text
@@ -94,16 +87,16 @@ async def test_cancel_during_classification_retires_driver_and_keeps_unknown_id(
     async def classify(context):
         started.set()
         await asyncio.Event().wait()
-    monkeypatch.setattr(owner,'_computer_classifier',lambda policy:classify)
+    monkeypatch.setattr(owner.computer,'_computer_classifier',lambda policy:classify)
     request = ComputerGroundRequest(action_id='cancelled',target=ComputerWindow(pid=123,window_id=4),goal='Continue',verification='Success')
-    task = asyncio.create_task(owner.computer_ground(SESSION,request))
+    task = asyncio.create_task(owner.computer.computer_ground(SESSION,request))
     await asyncio.wait_for(started.wait(),5)
     with pytest.raises(BackendError,match='computer_busy'):
-        await owner.computer_observe(SESSION,ComputerInspect())
+        await owner.computer.computer_observe(SESSION,ComputerInspect())
     task.cancel()
     await asyncio.gather(task,return_exceptions=True)
-    assert not driver.alive and not driver.actions and not owner.computer_held
-    again = await owner.computer_ground(SESSION,request)
+    assert not driver.alive and not driver.actions and not owner.computer.computer_held
+    again = await owner.computer.computer_ground(SESSION,request)
     assert again.phase == 'unknown' and not driver.actions
 
 
@@ -113,7 +106,7 @@ async def test_repeated_waiter_cancellation_keeps_ownership_until_driver_exit(na
     from amazme_backend.contracts import ComputerActionRequest, ComputerClick, ComputerElement
 
     owner,driver,_client = native
-    observed = await owner.computer_observe(SESSION,ComputerInspect(action='window',target=ComputerWindow(pid=123,window_id=4)))
+    observed = await owner.computer.computer_observe(SESSION,ComputerInspect(action='window',target=ComputerWindow(pid=123,window_id=4)))
     started,allow_result,stopping,allow_exit = (threading.Event() for _ in range(4))
     request = driver.request
     def held(payload):
@@ -130,10 +123,10 @@ async def test_repeated_waiter_cancellation_keeps_ownership_until_driver_exit(na
     monkeypatch.setattr(driver,'stop',stop)
     async def permit(*args):
         return {'status':'allowed','calls':[]}
-    monkeypatch.setattr(owner,'_computer_risk',permit)
+    monkeypatch.setattr(owner.computer,'_computer_risk',permit)
     value = ComputerActionRequest(action_id='held',capture_id=observed.capture.capture_id,target=observed.capture.target,
         action=ComputerClick(action='click',point=ComputerElement(element_token='snapshot:1')))
-    task = asyncio.create_task(owner.computer_action(SESSION,value))
+    task = asyncio.create_task(owner.computer.computer_action(SESSION,value))
     try:
         assert await asyncio.to_thread(started.wait,2)
         task.cancel()
@@ -141,11 +134,11 @@ async def test_repeated_waiter_cancellation_keeps_ownership_until_driver_exit(na
         assert await asyncio.to_thread(stopping.wait,2)
         task.cancel()
         await asyncio.sleep(.01)
-        assert not task.done() and SESSION in owner.computer_held and driver.alive
+        assert not task.done() and SESSION in owner.computer.computer_held and driver.alive
         allow_exit.set()
         await asyncio.gather(task,return_exceptions=True)
-        assert not driver.alive and not owner.computer_held
-        assert (await owner.computer_action(SESSION,value)).phase == 'unknown'
+        assert not driver.alive and not owner.computer.computer_held
+        assert (await owner.computer.computer_action(SESSION,value)).phase == 'unknown'
         assert len(driver.actions) == 1
     finally:
         allow_result.set()
@@ -159,11 +152,11 @@ async def test_timeout_returns_the_original_unknown_receipt_without_another_mode
     async def classify(context):
         calls.append(context)
         await asyncio.Event().wait()
-    monkeypatch.setattr(owner,'_computer_classifier',lambda policy:classify)
-    await owner.save_computer_policy(SESSION,ComputerPolicy(enabled=True,timeout_ms=100))
+    monkeypatch.setattr(owner.computer,'_computer_classifier',lambda policy:classify)
+    await owner.computer.save_computer_policy(SESSION,ComputerPolicy(enabled=True,timeout_ms=100))
     value = ComputerGroundRequest(action_id='timed',target=ComputerWindow(pid=123,window_id=4),goal='Continue',verification='Success')
-    result = await owner.computer_ground(SESSION,value)
+    result = await owner.computer.computer_ground(SESSION,value)
     assert result.phase == 'unknown' and result.error == 'computer_timeout'
-    assert not driver.alive and not driver.actions and not owner.computer_held
-    assert await owner.computer_ground(SESSION,value) == result
+    assert not driver.alive and not driver.actions and not owner.computer.computer_held
+    assert await owner.computer.computer_ground(SESSION,value) == result
     assert len(calls) == 1

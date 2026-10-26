@@ -10,17 +10,13 @@ import httpx
 import pytest
 from helpers.computer_probe import start_driver as start_probe
 
-from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import (
-    BackendError,
-    ComputerActionRequest,
-    ComputerPolicy,
-    CreateSession,
-    HostFence,
-    ProcessLease,
-)
-from amazme_backend.host import Host, application
-from amazme_backend.storage import session_database
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.contracts import BackendError, ComputerActionRequest, ComputerPolicy, CreateSession, HostFence, ProcessLease
+from amazme_backend.host.service import Host
+from amazme_backend.host.computer import ComputerOperations
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.profiles.layout import session_database
 
 SESSION = "a" * 32
 OTHER = "b" * 32
@@ -33,8 +29,8 @@ def fixed_probe(monkeypatch: pytest.MonkeyPatch) -> None:
     # These tests exercise driver transport, permissions and ownership. Semantic gates have their own tests.
     async def permit(*args):
         return {"status":"allowed","calls":[]}
-    monkeypatch.setattr(Host,"_computer_risk",permit)
-    monkeypatch.setattr("amazme_backend.host.start_driver", lambda directory:
+    monkeypatch.setattr(ComputerOperations,"_computer_risk",permit)
+    monkeypatch.setattr("amazme_backend.host.computer.start_driver", lambda directory:
                         start_probe(directory, SCENARIOS[directory.parents[1]]))
 
 
@@ -46,36 +42,35 @@ def _host(tmp_path: Path, scenario: Literal["unconfigured", "denied", "granted",
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     SCENARIOS[tmp_path] = scenario
     return host
 
 
 def _actions(host: Host, session: str) -> list[dict[str, object]]:
-    path = session_database(host.profile.path, session).parent / "computer-actions.jsonl"
+    path = session_database(host.lifecycle.profile.path, session).parent / "computer-actions.jsonl"
     if not path.exists():
         return []
     return [json.loads(line) for line in path.read_text().splitlines() if line]
 
 
 async def _stop(host: Host) -> None:
-    for driver in list(host.computer_drivers.values()):
+    for driver in list(host.computer.computer_drivers.values()):
         await asyncio.to_thread(driver.stop)
-    host.computer_drivers.clear()
-    await host.supervisor.close()
-    await host.store.db.close()
+    host.computer.computer_drivers.clear()
+    await host.close()
 
 
 def _client(host: Host) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-        "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-        "x-amazme-epoch": str(host.fence.host_epoch),
+        "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+        "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
     })
 
 
 async def _open(host: Host, client: httpx.AsyncClient, session: str) -> None:
-    await host.store.create_session(session, CreateSession(title="桌面"))
+    await host.lifecycle.store.create_session(session, CreateSession(title="桌面"))
     attached = await client.post(f"/api/v1/sessions/{session}/attachments")
     assert attached.status_code == 201
     client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
@@ -85,7 +80,8 @@ async def test_missing_permission_sends_no_click_and_pixels_follow_the_driver(tm
     host = _host(tmp_path, "denied")
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
     try:
         async with _client(host) as client:
             await _open(host, client, SESSION)
@@ -133,7 +129,8 @@ async def test_dropped_action_stays_unknown_until_cleanup_proof(tmp_path: Path) 
     host = _host(tmp_path, "drop")
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
     try:
         async with _client(host) as client:
             await _open(host, client, SESSION)
@@ -167,7 +164,8 @@ async def test_a_second_action_does_not_start_while_the_first_is_unanswered(tmp_
     host = _host(tmp_path, "hold")
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
     try:
         async with _client(host) as client:
             await _open(host, client, SESSION)
@@ -177,17 +175,17 @@ async def test_a_second_action_does_not_start_while_the_first_is_unanswered(tmp_
             first = asyncio.create_task(client.post(f"/api/v1/sessions/{SESSION}/computer/actions", json={
                 "action_id": "first", "capture_id": capture, "delivery_mode": "foreground", "action": {"action": "click", "point": {"x": 1, "y": 4}}}))
             for _ in range(50):
-                if SESSION in host.computer_held:
+                if SESSION in host.computer.computer_held:
                     break
                 await asyncio.sleep(0.01)
-            assert SESSION in host.computer_held
+            assert SESSION in host.computer.computer_held
             second = await client.post(f"/api/v1/sessions/{SESSION}/computer/actions", json={
                 "action_id": "second", "capture_id": capture, "delivery_mode": "foreground", "action": {"action": "click", "point": {"x": 1, "y": 4}}})
             assert second.status_code == 409 and second.json()["code"] == "computer_busy"
             done = await first
             assert done.status_code == 200 and done.json()["driver_x"] == 8
             assert len(_actions(host, SESSION)) == 1
-            await host.store.create_session(OTHER, CreateSession(title="过期"))
+            await host.lifecycle.store.create_session(OTHER, CreateSession(title="过期"))
             SCENARIOS[tmp_path] = "plain"
             attached = await client.post(f"/api/v1/sessions/{OTHER}/attachments")
             client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
@@ -220,8 +218,8 @@ async def test_cancelled_start_waits_and_reclaims_the_returned_driver(tmp_path: 
         drivers.append(driver)
         return driver
 
-    monkeypatch.setattr('amazme_backend.host.start_driver', delayed)
-    pending = asyncio.create_task(host._computer_start(tmp_path / 'desk'))
+    monkeypatch.setattr('amazme_backend.host.computer.start_driver', delayed)
+    pending = asyncio.create_task(host.computer._computer_start(tmp_path / 'desk'))
     await asyncio.sleep(0.01)
     pending.cancel()
     try:
@@ -233,18 +231,19 @@ async def test_cancelled_start_waits_and_reclaims_the_returned_driver(tmp_path: 
 
 
 async def test_sdk_and_rpc_use_the_same_bound_computer_action_ledger(tmp_path: Path) -> None:
-    from amazme_backend.rpc import RpcCall, RpcParams, handle_rpc
+    from amazme_backend.interfaces.rpc import RpcCall, RpcParams, handle_rpc
     from amazme_backend.sdk import Client
     host = _host(tmp_path, 'granted')
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id='host', role='host', profile_path=str(tmp_path), path=str(tmp_path / 'lease'), device=1, inode=1))
+    host.lifecycle.initialized = True
     client = Client(host.origin, 'web-only')
     await client._http.aclose()
     client._http = httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin)
     try:
         await client.bootstrap()
-        await host.store.create_session(SESSION, CreateSession(title='desktop'))
-        binding = await host.attach_session(SESSION)
+        await host.lifecycle.store.create_session(SESSION, CreateSession(title='desktop'))
+        binding = await host.sessions.attach_session(SESSION)
         await client.configure_computer(SESSION, binding.attachment_id, ComputerPolicy(enabled=True))
         view = await client.observe_computer(SESSION, binding.attachment_id)
         assert view.capture is not None
@@ -258,7 +257,7 @@ async def test_sdk_and_rpc_use_the_same_bound_computer_action_ledger(tmp_path: P
             session_id=SESSION, workspace='primary', attachment_id=binding.attachment_id, computer_action=action)))
         assert rpc['result']['phase'] == 'done' and len(_actions(host, SESSION)) == 1
         await client.configure_computer(SESSION, binding.attachment_id, ComputerPolicy(enabled=False))
-        assert SESSION not in host.computer_drivers
+        assert SESSION not in host.computer.computer_drivers
         assert (await client.act_computer(SESSION, binding.attachment_id, action)).phase == 'done'
         assert len(_actions(host, SESSION)) == 1
     finally:

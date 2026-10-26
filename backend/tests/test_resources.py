@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.accounts.store import AccountStore
 from amazme_backend.contracts import (
     BackendError,
     CreateSession,
@@ -13,10 +13,18 @@ from amazme_backend.contracts import (
     ResourceOptions,
     Submit,
 )
-from amazme_backend.host_store import HostStore
-from amazme_backend.resources import FILE_LIMIT, load_resources, parse_command_args, substitute_args
-from amazme_backend.session_domain import Continue, ModelInvocation
-from amazme_backend.storage import SessionStore, session_database
+from amazme_backend.features.resources.service import (
+    FILE_LIMIT,
+    load_resources,
+    parse_command_args,
+    substitute_args,
+)
+from amazme_backend.host.store import HostStore
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.sessions.types import Continue, ModelInvocation
 
 
 def put(path: Path, content: str) -> Path:
@@ -137,7 +145,16 @@ async def test_acceptance_pins_context_and_expansion_across_retry_and_restart(tm
     await host.initialize("host", "test-build", lease)
     await host.create_session(identity, CreateSession())
     session_database(profile_path, identity).parent.mkdir(parents=True)
-    store = SessionStore(session_database(profile_path, identity), identity, profile=profile, approval_policy="auto")
+    def expand(text: str, options: ResourceOptions) -> tuple[str, str]:
+        resources = load_resources(workspace, agent, options)
+        return resources.expand(text), resources.system_context()
+
+    def secrets() -> tuple[str, ...]:
+        return (*AccountStore(profile.account_path).secrets(), profile.token,
+                profile.config.provider.api_key.get_secret_value())
+
+    store = SessionStore(session_database(profile_path, identity), identity,
+                         expand_resources=expand, secret_source=secrets, approval_policy="auto")
     fence = HostFence(host_epoch=1, build_id="test-build")
     try:
         await store.initialize()
@@ -147,8 +164,8 @@ async def test_acceptance_pins_context_and_expansion_across_retry_and_restart(tm
         context.write_text("changed context")
         template.write_text("changed $1")
         assert await store.accept(value, fence) == first
-        await store.db.close()
-        store = SessionStore(session_database(profile_path, identity), identity, profile=profile, require_existing=True)
+        await store.close()
+        store = SessionStore(session_database(profile_path, identity), identity, expand_resources=expand, secret_source=secrets, require_existing=True)
         await store.initialize()
         for _ in range(20):
             action = await store.advance()
@@ -165,6 +182,6 @@ async def test_acceptance_pins_context_and_expansion_across_retry_and_restart(tm
         with pytest.raises(BackendError, match="request_conflict"):
             await store.accept(value.model_copy(update={"resource_options":ResourceOptions(no_skills=True)}), fence)
     finally:
-        await store.db.close()
+        await store.close()
         await host.db.close()
         profile.ipc.rmdir()

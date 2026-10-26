@@ -7,16 +7,16 @@ from pathlib import Path
 import httpx
 import pytest
 
-from amazme_backend import client_cmd
+import amazme_backend.interfaces.cli as client_cmd
 from amazme_backend.contracts import ProcessLease
-from amazme_backend.host import application
+from amazme_backend.interfaces.http.application import application
 from amazme_backend.sdk import Client
 
 
 async def test_product_cli_accounts_models_and_export_share_the_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     from test_management import _host
     host = _host(tmp_path)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id='host', role='host', profile_path=str(tmp_path), path=str(tmp_path / 'lease'), device=1, inode=1))
 
     def client(url, token):
@@ -31,7 +31,7 @@ async def test_product_cli_accounts_models_and_export_share_the_host(tmp_path: P
         monkeypatch.setattr('sys.stdin', io.StringIO('cli-private-key\n'))
         assert await client_cmd._run([*base,'auth','login','--provider','openrouter','--method','api-key']) == 0
         assert 'cli-private-key' not in capsys.readouterr().out
-        assert host.accounts.read().credentials['openrouter'].key.get_secret_value() == 'cli-private-key'
+        assert host.accounts.accounts.read().credentials['openrouter'].key.get_secret_value() == 'cli-private-key'
         assert await client_cmd._run([*base,'models','--search','openrouter']) == 0
         catalog = json.loads(capsys.readouterr().out)
         assert catalog['models'] and all(item['provider'] == 'openrouter' for item in catalog['models'])
@@ -50,14 +50,14 @@ async def test_product_cli_accounts_models_and_export_share_the_host(tmp_path: P
         assert json.loads(capsys.readouterr().out)['format'] == 'amazme-export/1'
         assert await client_cmd._run([*base,'auth','logout','--provider','openrouter']) == 0
         capsys.readouterr()
-        assert 'openrouter' not in host.accounts.read().credentials
+        assert 'openrouter' not in host.accounts.accounts.read().credentials
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_oauth_cli_keeps_original_identity_after_unknown_response(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
-    from amazme_backend.accounts import AccountsView
+    from amazme_backend.contracts.accounts import AccountsView
     from amazme_backend.contracts import BackendError
     seen = []
 

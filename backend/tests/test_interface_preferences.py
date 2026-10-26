@@ -7,19 +7,19 @@ import httpx
 import pytest
 
 from amazme_backend.contracts import InterfacePreferences, ProcessLease
-from amazme_backend.host import application
-from amazme_backend.host_store import HostStore
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.host.store import HostStore
 
 
 async def test_preferences_persist_reject_stale_edits_and_boot_before_the_theme(tmp_path: Path) -> None:
     from test_management import _host
 
     host = _host(tmp_path)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id="test-host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"),
         device=1, inode=1))
-    headers = {"Authorization": "Bearer web-only", "x-amazme-build": host.build,
-               "x-amazme-epoch": str(host.fence.host_epoch)}
+    headers = {"Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+               "x-amazme-epoch": str(host.lifecycle.fence.host_epoch)}
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)),
                                     base_url=host.origin, headers=headers) as client:
@@ -47,8 +47,8 @@ async def test_preferences_persist_reject_stale_edits_and_boot_before_the_theme(
             exported = (await client.get("/api/v1/export")).json()
             assert exported["settings"]["preferences"] == view["preferences"]
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
     reopened = HostStore(tmp_path / "host.sqlite", require_existing=True)
     try:

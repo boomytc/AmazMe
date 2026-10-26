@@ -4,20 +4,55 @@ import json
 import shutil
 import sqlite3
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 import pytest
 import pytest_asyncio
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
+from session_test_support import session_database_owner, session_state
 
-from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import AnswerFeedbackWrite, BackendError, BranchSession, Cleanup, CompactSession, ComputerPolicy, CreateSession, HostFence, Lease, Message, PrepareUpdate, ProcessLease, ProviderConfig, RenameSession, SessionModel, Submit, ToolResult, WebPolicy, WorkspaceGrantRequest
-from amazme_backend.host import Host, application
-from amazme_backend.host_store import HostStore
-from amazme_backend.providers import Completion, stream
+from amazme_backend.agent.model import stream
+from amazme_backend.ai.types import Auth
+from amazme_backend.bootstrap.worker import create_worker
+from amazme_backend.contracts import (
+    AnswerFeedbackWrite,
+    BackendError,
+    BranchSession,
+    Cleanup,
+    CompactSession,
+    ComputerPolicy,
+    CreateSession,
+    HostFence,
+    Lease,
+    Message,
+    PrepareUpdate,
+    ProcessLease,
+    ProviderConfig,
+    RenameSession,
+    ServiceInfo,
+    SessionModel,
+    Submit,
+    SupervisorHealth,
+    ToolResult,
+    WebPolicy,
+    WorkspaceGrantRequest,
+)
+from amazme_backend.contracts.ipc.supervisor import TerminalSession
+from amazme_backend.contracts.ipc.worker import SessionOp, SessionOpResult
+from amazme_backend.host.service import Host
+from amazme_backend.host.session_access import WorkerSessions
+from amazme_backend.host.store import HostStore
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.ipc import Peer
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.profiles.profile import Profile
 from amazme_backend.sdk import Client
-from amazme_backend.session_domain import (
+from amazme_backend.sessions.client import SessionRelay
+from amazme_backend.sessions.service import SessionStore, compaction_basis, run_session_op
+from amazme_backend.sessions.types import (
     Action,
     CloseEpoch,
     Continue,
@@ -30,11 +65,52 @@ from amazme_backend.session_domain import (
     ToolInvocation,
     ToolReturned,
 )
-from amazme_backend.storage import SessionStore, compaction_basis, session_database
-from amazme_backend.worker import Worker
 
 PARENT = "a" * 32
 KEY = "sk-test-not-real"
+
+
+class SessionOpPeer(Peer):
+    """Run typed worker operations with one test writer and no business driver."""
+
+    def __init__(self, access: WorkerSessions, session: str):
+        self.lifecycle = access.lifecycle
+        self.session = session
+
+    async def call[T: BaseModel](
+        self, method: str, path: str, response: type[T], body: BaseModel | None = None,
+    ) -> T:
+        assert method == "POST" and path == "/session-ops" and response is SessionOpResult
+        assert isinstance(body, SessionOp)
+        operation = SessionOp.model_validate_json(body.model_dump_json())
+        database = session_database(self.lifecycle.profile.path, self.session)
+        database.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        store = SessionStore(database, self.session, build=self.lifecycle.build,
+                             config=self.lifecycle.profile.config.provider,
+                             approval_policy=self.lifecycle.profile.config.approval_policy)
+        try:
+            await store.initialize()
+            payload = await run_session_op(store, operation.name, operation.payload)
+            return response.model_validate_json(SessionOpResult(payload=payload).model_dump_json())
+        finally:
+            await store.close()
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def session_ipc(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def worker(access: WorkerSessions, session: str) -> Peer:
+        return SessionOpPeer(access, session)
+
+    @asynccontextmanager
+    async def maintenance(access: WorkerSessions, session: str, *,
+                          closing: bool = False, allow_business: bool = False) -> AsyncIterator[SessionRelay]:
+        yield SessionRelay(SessionOpPeer(access, session))
+
+    monkeypatch.setattr(WorkerSessions, "worker", worker)
+    monkeypatch.setattr(WorkerSessions, "maintenance", maintenance)
 
 
 class Driver:
@@ -53,13 +129,13 @@ class Driver:
     async def respond(self, action: Action) -> None:
         if isinstance(action, ModelInvocation):
             self.models.append(action)
-            async for item in stream(action.config, action.messages):
-                if isinstance(item, Completion):
+            async for item in stream(action.config, action.messages, auth=Auth(api_key=action.config.api_key, auth_type=action.config.auth_type)):
+                if not isinstance(item, str):
                     await self.store.advance(ModelReturned(action, item))
         elif isinstance(action, OpenEpoch):
             self.epoch += 1
             await self.store.advance(EpochOpened(action.request_id, Lease(
-                session_id=self.store.session_id, worker_id=self.store.instance, build_id=self.store.build,
+                session_id=self.store.session_id, worker_id=session_state(self.store).instance, build_id=session_state(self.store).build,
                 supervisor_id="supervisor", execution_epoch=self.epoch)))
         elif isinstance(action, ToolInvocation):
             await self.store.advance(ToolReturned(action, ToolResult(
@@ -90,7 +166,7 @@ def fence_for(build: str) -> HostFence:
 
 
 async def message_payloads(store: SessionStore) -> list[str]:
-    return await store.db.call(lambda db: [
+    return await session_database_owner(store).call(lambda db: [
         str(row[0]) for row in db.execute("SELECT payload FROM messages ORDER BY rowid")])
 
 
@@ -112,25 +188,51 @@ async def owner(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lease: ProcessL
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
-    monkeypatch.setattr("amazme_backend.host.build_id", lambda: "a" * 64)
+    monkeypatch.setattr("amazme_backend.host.lifecycle.build_id", lambda: "a" * 64)
     value = Host(Profile(tmp_path))
-    value.fence = fence_for(value.build)
-    value.fence.host_epoch = await value.store.initialize(value.instance, value.build, lease)
+    value.lifecycle.fence = fence_for(value.lifecycle.build)
+    value.lifecycle.fence.host_epoch = await value.lifecycle.store.initialize(value.lifecycle.instance, value.lifecycle.build, lease)
     value.origin = "http://127.0.0.1:12345"
-    await value.store.create_session(PARENT, CreateSession(title="原会话"))
+    await value.lifecycle.store.create_session(PARENT, CreateSession(title="原会话"))
+    supervisor_id = "test-supervisor"
+    await value.lifecycle.store.save_service(ServiceInfo(
+        instance_id=supervisor_id, build_id=value.lifecycle.build, state="running",
+        process_lease=lease.model_copy(update={"instance_id": supervisor_id, "role": "supervisor"})))
+
+    async def ensure_supervisor(*, for_shutdown: bool = False) -> None:
+        assert not for_shutdown
+
+    async def supervisor_call[T: BaseModel](
+        method: str, path: str, response: type[T], body: BaseModel | None = None,
+    ) -> T:
+        if method == "GET" and path == "/health" and response is SupervisorHealth:
+            health = SupervisorHealth(
+                identity=value.lifecycle.profile.identity(
+                    supervisor_id, value.lifecycle.build, role="supervisor",
+                    host_epoch=value.lifecycle.fence.host_epoch),
+                registry_revision="1", workers=[], epochs=[])
+            return response.model_validate_json(health.model_dump_json())
+        assert method == "POST" and path == "/sessions/retire" and response is Cleanup
+        assert isinstance(body, TerminalSession)
+        proof = Cleanup(session_id=body.session_id, execution_epoch=0,
+                        state="clean", resources=[], proof_id="test-retired")
+        return response.model_validate_json(proof.model_dump_json())
+
+    monkeypatch.setattr(value.lifecycle, "ensure_supervisor", ensure_supervisor)
+    monkeypatch.setattr(value.lifecycle.supervisor, "call", supervisor_call)
     try:
         yield value
     finally:
-        await value.supervisor.close()
-        await value.store.db.close()
+        await value.lifecycle.supervisor.close()
+        await value.lifecycle.store.db.close()
 
 
 async def parent_store(owner: Host) -> SessionStore:
-    path = session_database(owner.profile.path, PARENT)
+    path = session_database(owner.lifecycle.profile.path, PARENT)
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    store = SessionStore(path, PARENT, build=owner.build, approval_policy="auto", instance="parent-worker")
+    store = SessionStore(path, PARENT, build=owner.lifecycle.build, approval_policy="auto", instance="parent-worker")
     await store.initialize()
-    await store.fence(fence_for(owner.build))
+    await store.fence(fence_for(owner.lifecycle.build))
     return store
 
 
@@ -142,17 +244,17 @@ def test_session_database_rejects_escape(tmp_path: Path) -> None:
 async def test_branch_keeps_parent_history_and_drops_later_turns(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
-        await finish(parent, "beta", "r2", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
+        await finish(parent, "beta", "r2", owner.lifecycle.build)
         preserved = await message_payloads(parent)
-        created = await owner.branch_session(PARENT, BranchSession(request_id="r1"))
+        created = await owner.sessions.branch_session(PARENT, BranchSession(request_id="r1"))
         assert created.parent_id == PARENT and created.fork_request_id == "r1"
         assert created.title == "分支：原会话"
-        child = SessionStore(session_database(owner.profile.path, created.session_id), created.session_id,
-                             build=owner.build, approval_policy="auto", instance="child-worker",
+        child = SessionStore(session_database(owner.lifecycle.profile.path, created.session_id), created.session_id,
+                             build=owner.lifecycle.build, approval_policy="auto", instance="child-worker",
                              require_existing=True)
         await child.initialize()
-        await child.fence(fence_for(owner.build))
+        await child.fence(fence_for(owner.lifecycle.build))
         try:
             assert [item.request_id for item in (await child.snapshot()).requests] == ["r1"]
             copied = (await child.snapshot()).requests[0]
@@ -161,22 +263,22 @@ async def test_branch_keeps_parent_history_and_drops_later_turns(owner: Host) ->
             assert all(event.receipt is None or event.receipt.revision == batch.revision
                        for batch in replay.batches for event in batch.events)
             assert "beta" not in "".join(message.content for message in await child.messages("r1"))
-            assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM effects").fetchone()[0]) == 0
-            assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM approvals").fetchone()[0]) == 0
+            assert await session_database_owner(child).call(lambda db: db.execute("SELECT count(*) FROM effects").fetchone()[0]) == 0
+            assert await session_database_owner(child).call(lambda db: db.execute("SELECT count(*) FROM approvals").fetchone()[0]) == 0
             await child.recover(initial_cleanup=Cleanup(
                 session_id=created.session_id, execution_epoch=1, state="clean", resources=[], proof_id="proof"))
             assert (await Driver(child).drain()).reason == "idle"
-            await child.accept(Submit(request_id="gamma", text="gamma"), fence_for(owner.build))
+            await child.accept(Submit(request_id="gamma", text="gamma"), fence_for(owner.lifecycle.build))
             action = await Driver(child).until(ModelInvocation)
             assert isinstance(action, ModelInvocation)
             context = "\n".join(message.content for message in action.messages)
             assert "alpha" in context and "gamma" in context and "beta" not in context
             with pytest.raises(BackendError, match="request_conflict"):
-                await child.accept(Submit(request_id="r1", text="rewritten"), fence_for(owner.build))
-            replayed = await child.accept(Submit(request_id="r1", text="alpha"), fence_for(owner.build))
+                await child.accept(Submit(request_id="r1", text="rewritten"), fence_for(owner.lifecycle.build))
+            replayed = await child.accept(Submit(request_id="r1", text="alpha"), fence_for(owner.lifecycle.build))
             assert replayed.status == "succeeded"
             assert await message_payloads(parent) == preserved
-            await parent.accept(Submit(request_id="delta", text="delta"), fence_for(owner.build))
+            await parent.accept(Submit(request_id="delta", text="delta"), fence_for(owner.lifecycle.build))
             follow = await Driver(parent).until(ModelInvocation)
             assert isinstance(follow, ModelInvocation)
             parent_context = "\n".join(message.content for message in follow.messages)
@@ -184,20 +286,20 @@ async def test_branch_keeps_parent_history_and_drops_later_turns(owner: Host) ->
             assert any(item.request_id == "r2" and item.status == "succeeded"
                        for item in (await parent.snapshot()).requests)
         finally:
-            await child.db.close()
+            await child.close()
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_branch_keeps_session_switches_and_leaves_calls_behind(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
         await parent.save_web_policy(WebPolicy(enabled=True, base_url="https://user:secret@tools.example/v1"))
-        before = [item.session_id for item in (await owner.sessions()).sessions]
+        before = [item.session_id for item in (await owner.sessions.sessions()).sessions]
         with pytest.raises(BackendError, match="web_address"):
-            await owner.branch_session(PARENT, BranchSession(request_id="r1"))
-        assert [item.session_id for item in (await owner.sessions()).sessions] == before
+            await owner.sessions.branch_session(PARENT, BranchSession(request_id="r1"))
+        assert [item.session_id for item in (await owner.sessions.sessions()).sessions] == before
         web = WebPolicy(
             enabled=True, base_url="https://tools.example/v1", count=3,
             send_original_question=False, timeout_ms=5000)
@@ -206,51 +308,51 @@ async def test_branch_keeps_session_switches_and_leaves_calls_behind(owner: Host
         await parent.save_computer_policy(computer)
         await parent.begin_web_call("paid", "search", "query")
         await parent.note_computer_exit(7)
-        created = await owner.branch_session(PARENT, BranchSession(request_id="r1"))
-        child = SessionStore(session_database(owner.profile.path, created.session_id), created.session_id,
-                             build=owner.build, approval_policy="auto", instance="child-worker",
+        created = await owner.sessions.branch_session(PARENT, BranchSession(request_id="r1"))
+        child = SessionStore(session_database(owner.lifecycle.profile.path, created.session_id), created.session_id,
+                             build=owner.lifecycle.build, approval_policy="auto", instance="child-worker",
                              require_existing=True)
         await child.initialize()
         try:
             assert await child.web_policy() == web
             assert await child.computer_policy() == computer
-            assert await child.db.call(lambda db: db.execute("SELECT count(*) FROM web_calls").fetchone()[0]) == 0
+            assert await session_database_owner(child).call(lambda db: db.execute("SELECT count(*) FROM web_calls").fetchone()[0]) == 0
             assert await child.computer_runtime() == (False, None, "")
             await child.save_web_policy(WebPolicy())
             assert await parent.web_policy() == web
             assert (await parent.computer_runtime())[:2] == (True, 7)
         finally:
-            await child.db.close()
+            await child.close()
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_unsettled_branch_does_not_create_a_session(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await parent.accept(Submit(request_id="open", text="still running"), fence_for(owner.build))
-        before = [item.session_id for item in (await owner.sessions()).sessions]
+        await parent.accept(Submit(request_id="open", text="still running"), fence_for(owner.lifecycle.build))
+        before = [item.session_id for item in (await owner.sessions.sessions()).sessions]
         with pytest.raises(BackendError, match="branch_point_unsettled"):
-            await owner.branch_session(PARENT, BranchSession(request_id="open"))
+            await owner.sessions.branch_session(PARENT, BranchSession(request_id="open"))
         with pytest.raises(BackendError, match="branch_point_missing"):
-            await owner.branch_session(PARENT, BranchSession(request_id="missing"))
-        assert [item.session_id for item in (await owner.sessions()).sessions] == before
+            await owner.sessions.branch_session(PARENT, BranchSession(request_id="missing"))
+        assert [item.session_id for item in (await owner.sessions.sessions()).sessions] == before
         assert (await parent.get("open")).status == "queued"
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_frozen_update_rejects_a_branch(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
-        await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build="b" * 64), owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
+        await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build="b" * 64), owner.lifecycle.build)
         with pytest.raises(BackendError, match="update_frozen"):
-            await owner.branch_session(PARENT, BranchSession(request_id="r1"))
-        assert [item.session_id for item in (await owner.sessions()).sessions] == [PARENT]
+            await owner.sessions.branch_session(PARENT, BranchSession(request_id="r1"))
+        assert [item.session_id for item in (await owner.sessions.sessions()).sessions] == [PARENT]
         assert (await parent.get("r1")).status == "succeeded"
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_failed_branch_keeps_the_parent_project_and_refuses_a_missing_workspace(
@@ -260,23 +362,23 @@ async def test_failed_branch_keeps_the_parent_project_and_refuses_a_missing_work
     grant.mkdir()
     docs = None
     try:
-        await finish(parent, "alpha", "r1", owner.build)
-        await owner.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
-        created = await owner.create_session(CreateSession(title="授予", workspace="docs"))
-        path = session_database(owner.profile.path, created.session_id)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
+        await owner.workspaces.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
+        created = await owner.sessions.create_session(CreateSession(title="授予", workspace="docs"))
+        path = session_database(owner.lifecycle.profile.path, created.session_id)
         path.parent.mkdir(parents=True, mode=0o700)
-        docs = SessionStore(path, created.session_id, build=owner.build, approval_policy="auto", instance="docs-worker")
+        docs = SessionStore(path, created.session_id, build=owner.lifecycle.build, approval_policy="auto", instance="docs-worker")
         await docs.initialize()
-        await docs.fence(fence_for(owner.build))
-        await finish(docs, "docs", "r1", owner.build)
-        await owner.remove_workspace("docs")
+        await docs.fence(fence_for(owner.lifecycle.build))
+        await finish(docs, "docs", "r1", owner.lifecycle.build)
+        await owner.workspaces.remove_workspace("docs")
         with pytest.raises(BackendError, match="workspace_not_found"):
-            await owner.branch_session(created.session_id, BranchSession(request_id="r1"))
-        assert {item.session_id for item in (await owner.sessions()).sessions} == {PARENT, created.session_id}
+            await owner.sessions.branch_session(created.session_id, BranchSession(request_id="r1"))
+        assert {item.session_id for item in (await owner.sessions.sessions()).sessions} == {PARENT, created.session_id}
 
         project = "b" * 32
-        await owner.store.save_project(project, "项目", ["primary"])
-        await owner.store.transaction(lambda db: db.execute(
+        await owner.lifecycle.store.save_project(project, "项目", ["primary"])
+        await owner.lifecycle.store.transaction(lambda db: db.execute(
             "INSERT INTO project_sessions(session,project) VALUES(?,?)", (PARENT, project)))
 
         async def fail(self: SessionStore, parent_path: Path, request_id: str) -> None:
@@ -284,17 +386,17 @@ async def test_failed_branch_keeps_the_parent_project_and_refuses_a_missing_work
 
         monkeypatch.setattr(SessionStore, "import_settled_root", fail)
         with pytest.raises(BackendError, match="storage_failure"):
-            await owner.branch_session(PARENT, BranchSession(request_id="r1"))
-        assert {item.session_id for item in (await owner.sessions()).sessions} == {PARENT, created.session_id}
-        links = await owner.store.db.call(lambda db: [
+            await owner.sessions.branch_session(PARENT, BranchSession(request_id="r1"))
+        assert {item.session_id for item in (await owner.sessions.sessions()).sessions} == {PARENT, created.session_id}
+        links = await owner.lifecycle.store.db.call(lambda db: [
             str(row[0]) for row in db.execute("SELECT session FROM project_sessions")])
         assert links == [PARENT]
-        assert {item.name for item in (owner.profile.path / "sessions").iterdir()} == {PARENT, created.session_id}
+        assert {item.name for item in (owner.lifecycle.profile.path / "sessions").iterdir()} == {PARENT, created.session_id}
         assert "alpha" in "".join(await message_payloads(parent))
     finally:
         if docs is not None:
-            await docs.db.close()
-        await parent.db.close()
+            await docs.close()
+        await parent.close()
         shutil.rmtree(grant, ignore_errors=True)
 
 
@@ -330,13 +432,13 @@ async def test_branch_columns_keep_existing_session_rows(tmp_path: Path, lease: 
 async def test_branch_route_returns_the_child_session(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
     finally:
-        await parent.db.close()
+        await parent.close()
     app = application(owner)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=owner.origin,
-                                  headers={"Authorization": "Bearer web-only", "x-amazme-build": owner.build,
-                                           "x-amazme-epoch": str(owner.fence.host_epoch)}) as client:
+                                  headers={"Authorization": "Bearer web-only", "x-amazme-build": owner.lifecycle.build,
+                                           "x-amazme-epoch": str(owner.lifecycle.fence.host_epoch)}) as client:
         attached = await client.post(f"/api/v1/sessions/{PARENT}/attachments")
         assert attached.status_code == 201
         client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
@@ -353,81 +455,81 @@ async def test_branch_route_returns_the_child_session(owner: Host) -> None:
 async def test_archive_keeps_history_and_refuses_new_work(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
-        await parent.accept(Submit(request_id="queued", text="not started"), fence_for(owner.build))
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
+        await parent.accept(Submit(request_id="queued", text="not started"), fence_for(owner.lifecycle.build))
         preserved = await message_payloads(parent)
-        await parent.db.close()
-        archived = await owner.archive_session(PARENT, True)
+        await parent.close()
+        archived = await owner.sessions.archive_session(PARENT, True)
         parent = await parent_store(owner)
         assert archived.archived is True
         assert await message_payloads(parent) == preserved
         assert (await parent.get("r1")).status == "succeeded" and (await parent.get("r1")).text == "alpha"
         assert (await parent.get("queued")).status == "cancelled"
-        await parent.db.close()
-        assert (await owner.archive_session(PARENT, True)).archived is True
+        await parent.close()
+        assert (await owner.sessions.archive_session(PARENT, True)).archived is True
         with pytest.raises(BackendError, match="session_archived"):
-            await owner.store.enqueue(PARENT, "submit", "fresh", Submit(request_id="fresh", text="later"))
+            await owner.lifecycle.store.enqueue(PARENT, "submit", "fresh", Submit(request_id="fresh", text="later"))
         with pytest.raises(BackendError, match="session_archived"):
-            await owner.branch_session(PARENT, BranchSession(request_id="r1"))
-        await owner.store.demand(PARENT)
-        assert PARENT not in await owner.store.due()
-        assert (await owner.archive_session(PARENT, False)).archived is False
+            await owner.sessions.branch_session(PARENT, BranchSession(request_id="r1"))
+        await owner.lifecycle.store.demand(PARENT)
+        assert PARENT not in await owner.lifecycle.store.due()
+        assert (await owner.sessions.archive_session(PARENT, False)).archived is False
         parent = await parent_store(owner)
-        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
+        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.lifecycle.build))
         action = await Driver(parent).until(ModelInvocation)
         assert isinstance(action, ModelInvocation)
         context = "\n".join(message.content for message in action.messages)
         assert "alpha" in context and "later" in context
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_archive_route_rejects_work_and_keeps_the_turn(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
     finally:
-        await parent.db.close()
-    pending = await owner.store.enqueue(PARENT, "submit", "queued", Submit(request_id="queued", text="wait"))
+        await parent.close()
+    pending = await owner.lifecycle.store.enqueue(PARENT, "submit", "queued", Submit(request_id="queued", text="wait"))
     app = application(owner)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=owner.origin,
-                                  headers={"Authorization": "Bearer web-only", "x-amazme-build": owner.build,
-                                           "x-amazme-epoch": str(owner.fence.host_epoch)}) as client:
+                                  headers={"Authorization": "Bearer web-only", "x-amazme-build": owner.lifecycle.build,
+                                           "x-amazme-epoch": str(owner.lifecycle.fence.host_epoch)}) as client:
         attached = await client.post(f"/api/v1/sessions/{PARENT}/attachments")
         client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
         response = await client.post(f"/api/v1/sessions/{PARENT}/archive", json={"archived": True})
         assert response.status_code == 200 and response.json()["archived"] is True
         listed = await client.get("/api/v1/sessions")
         assert any(item["session_id"] == PARENT and item["archived"] is True for item in listed.json()["sessions"])
-    assert pending.delivery_id not in {item.delivery_id for item in await owner.store.pending(PARENT)}
-    reopened = SessionStore(session_database(owner.profile.path, PARENT), PARENT, build=owner.build,
+    assert pending.delivery_id not in {item.delivery_id for item in await owner.lifecycle.store.pending(PARENT)}
+    reopened = SessionStore(session_database(owner.lifecycle.profile.path, PARENT), PARENT, build=owner.lifecycle.build,
                             require_existing=True)
     await reopened.initialize()
     try:
         assert (await reopened.get("r1")).answer
     finally:
-        await reopened.db.close()
+        await reopened.close()
 
 
 async def test_compaction_replaces_context_and_keeps_original_messages(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
         original = await message_payloads(parent)
-        await parent.db.close()
-        created = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+        await parent.close()
+        created = await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
         parent = await parent_store(owner)
         assert created.summary and await message_payloads(parent) == original
         assert (await parent.snapshot()).compaction == created.summary
-        await parent.db.close()
-        again = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+        await parent.close()
+        again = await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
         parent = await parent_store(owner)
         assert again == created
         stale = compaction_basis(["not-the-history"])
         with pytest.raises(BackendError, match="compaction_expired"):
             await parent.commit_compaction("c2", "r1", "过期摘要", stale)
         assert await message_payloads(parent) == original
-        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
+        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.lifecycle.build))
         action = await Driver(parent).until(ModelInvocation)
         assert isinstance(action, ModelInvocation)
         assert action.messages[0].content == created.summary
@@ -435,40 +537,40 @@ async def test_compaction_replaces_context_and_keeps_original_messages(owner: Ho
         assert not any(message.role == "assistant" for message in action.messages)
         assert any(message.role == "assistant" for message in await parent.messages("r1"))
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_failed_summary_does_not_replace_history(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
         original = await message_payloads(parent)
     finally:
-        await parent.db.close()
+        await parent.close()
 
-    async def fail(_config: object, _messages: object, _instructions: str) -> str:
+    async def fail(_config: object, _messages: object, _instructions: str, *, auth: Auth) -> str:
         raise BackendError("model_failed")
 
-    monkeypatch.setattr("amazme_backend.host.summarize", fail)
+    monkeypatch.setattr("amazme_backend.host.sessions.summarize", fail)
     with pytest.raises(BackendError, match="model_failed"):
-        await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r1"))
+        await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r1"))
     parent = await parent_store(owner)
     try:
         assert await message_payloads(parent) == original
         assert (await parent.snapshot()).compaction == ""
-        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.build))
+        await parent.accept(Submit(request_id="later", text="later"), fence_for(owner.lifecycle.build))
         action = await Driver(parent).until(ModelInvocation)
         assert isinstance(action, ModelInvocation)
         assert any(message.role == "assistant" and "alpha" in message.content for message in action.messages)
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_compaction_is_not_sent_twice(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[str] = []
     failed = False
 
-    async def fake(_config: object, messages: list[Message], _instructions: str) -> str:
+    async def fake(_config: object, messages: list[Message], _instructions: str, *, auth: Auth) -> str:
         nonlocal failed
         text = "\n".join(message.content for message in messages)
         if "失败" in text and not failed:
@@ -477,69 +579,69 @@ async def test_compaction_is_not_sent_twice(owner: Host, monkeypatch: pytest.Mon
         calls.append(text)
         return "已压缩一次"
 
-    monkeypatch.setattr("amazme_backend.host.summarize", fake)
+    monkeypatch.setattr("amazme_backend.host.sessions.summarize", fake)
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
     finally:
-        await parent.db.close()
-    created = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
-    again = await owner.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
-    other = await owner.compact_session(PARENT, CompactSession(compaction_id="c2", through_request_id="r1"))
+        await parent.close()
+    created = await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+    again = await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c1", through_request_id="r1"))
+    other = await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c2", through_request_id="r1"))
     assert created == again and other == created.model_copy(update={"compaction_id": "c2"})
     assert len(calls) == 1 and "alpha" in calls[0]
     parent = await parent_store(owner)
     try:
-        await finish(parent, "失败", "r-fail", owner.build)
+        await finish(parent, "失败", "r-fail", owner.lifecycle.build)
     finally:
-        await parent.db.close()
+        await parent.close()
     with pytest.raises(BackendError, match="model_failed"):
-        await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r-fail"))
-    retried = await owner.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r-fail"))
+        await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r-fail"))
+    retried = await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-fail", through_request_id="r-fail"))
     assert retried.summary == "已压缩一次" and len(calls) == 2
     parent = await parent_store(owner)
     try:
-        await finish(parent, "停住", "r-held", owner.build)
+        await finish(parent, "停住", "r-held", owner.lifecycle.build)
         await parent.begin_compaction("c-held", "r-held")
     finally:
-        await parent.db.close()
+        await parent.close()
     with pytest.raises(BackendError, match="compaction_pending"):
-        await owner.compact_session(PARENT, CompactSession(compaction_id="c-held", through_request_id="r-held"))
+        await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-held", through_request_id="r-held"))
     with pytest.raises(BackendError, match="compaction_conflict"):
-        await owner.compact_session(PARENT, CompactSession(compaction_id="c-new", through_request_id="r-held"))
+        await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-new", through_request_id="r-held"))
     assert len(calls) == 2
 
 
 async def test_compaction_pins_instructions_to_the_id_and_uses_the_session_model(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[tuple[str, str]] = []
 
-    async def fake(config: ProviderConfig, _messages: list[Message], instructions: str) -> str:
+    async def fake(config: ProviderConfig, _messages: list[Message], instructions: str, *, auth: Auth) -> str:
         calls.append((config.model, instructions))
         return "摘要：" + instructions
 
-    monkeypatch.setattr("amazme_backend.host.summarize", fake)
+    monkeypatch.setattr("amazme_backend.host.sessions.summarize", fake)
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
     finally:
-        await parent.db.close()
-    owner.profile.save_provider(owner.profile.config.provider.model_copy(update={"model": "default"}))
-    await owner.store.save_session_model(SessionModel(session_id=PARENT, provider="faux", model="faux"))
+        await parent.close()
+    owner.lifecycle.profile.save_provider(owner.lifecycle.profile.config.provider.model_copy(update={"model": "default"}))
+    await owner.lifecycle.store.save_session_model(SessionModel(session_id=PARENT, provider="faux", model="faux"))
     original = CompactSession(compaction_id="focus", through_request_id="r1", instructions="保留文件和未完成事项")
-    created = await owner.compact_session(PARENT, original)
+    created = await owner.sessions.compact_session(PARENT, original)
     assert created.instructions == original.instructions and calls == [("faux", original.instructions)]
-    assert await owner.compact_session(PARENT, original) == created
+    assert await owner.sessions.compact_session(PARENT, original) == created
     with pytest.raises(BackendError, match="compaction_conflict"):
-        await owner.compact_session(PARENT, original.model_copy(update={"instructions": "替换要求"}))
-    second = await owner.compact_session(PARENT, original.model_copy(update={"compaction_id": "focus2", "instructions": "仅保留决定"}))
+        await owner.sessions.compact_session(PARENT, original.model_copy(update={"instructions": "替换要求"}))
+    second = await owner.sessions.compact_session(PARENT, original.model_copy(update={"compaction_id": "focus2", "instructions": "仅保留决定"}))
     assert second.instructions == "仅保留决定" and len(calls) == 2
-    await owner.compact_session(PARENT, original)
+    await owner.sessions.compact_session(PARENT, original)
     parent = await parent_store(owner)
     try:
         assert await parent.active_summary() == second.summary
     finally:
-        await parent.db.close()
-    reused = await owner.compact_session(PARENT, original.model_copy(update={"compaction_id": "focus3"}))
+        await parent.close()
+    reused = await owner.sessions.compact_session(PARENT, original.model_copy(update={"compaction_id": "focus3"}))
     assert reused.compaction_id == "focus3" and reused.summary == created.summary and len(calls) == 2
     sdk = Client(owner.origin, "web-only")
     await sdk._http.aclose()
@@ -563,25 +665,25 @@ async def test_compaction_pins_instructions_to_the_id_and_uses_the_session_model
         with pytest.raises(BackendError, match="compaction_conflict"):
             await parent.commit_compaction("held-focus", "r1", "错误摘要", created.basis, "改变要求")
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 async def test_answer_feedback_retries_retracts_and_restores_without_overwriting_newer_votes(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "answer me", "r-vote", owner.build)
+        await finish(parent, "answer me", "r-vote", owner.lifecycle.build)
     finally:
-        await parent.db.close()
+        await parent.close()
     original = AnswerFeedbackWrite(operation_id="1" * 32, request_id="r-vote", rating="up", expected_revision=0)
-    first = await owner.save_answer_feedback(PARENT, original)
-    second = await owner.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "2" * 32, "rating": "down", "expected_revision": 1}))
+    first = await owner.content.save_answer_feedback(PARENT, original)
+    second = await owner.content.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "2" * 32, "rating": "down", "expected_revision": 1}))
     assert first.revision == 1 and second.revision == 2
-    assert await owner.save_answer_feedback(PARENT, original) == first
-    assert (await owner.answer_feedback(PARENT)).records == [second]
+    assert await owner.content.save_answer_feedback(PARENT, original) == first
+    assert (await owner.content.answer_feedback(PARENT)).records == [second]
     with pytest.raises(BackendError, match="feedback_conflict"):
-        await owner.save_answer_feedback(PARENT, original.model_copy(update={"rating": "down"}))
+        await owner.content.save_answer_feedback(PARENT, original.model_copy(update={"rating": "down"}))
     with pytest.raises(BackendError, match="feedback_revision_conflict"):
-        await owner.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "3" * 32}))
+        await owner.content.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "3" * 32}))
     sdk = Client(owner.origin, "web-only")
     await sdk._http.aclose()
     sdk._http = httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)), base_url=owner.origin)
@@ -595,79 +697,79 @@ async def test_answer_feedback_retries_retracts_and_restores_without_overwriting
         assert rpc["revision"] == 3 and rpc["rating"] is None
         with pytest.raises(BackendError, match="workspace_mismatch"):
             await sdk.save_answer_feedback(PARENT, "other", attachment.attachment_id, clear)
-    exported = await owner.export_bundle()
+    exported = await owner.content.export_bundle()
     assert exported.answer_feedback == [cleared]
-    destination = owner.profile.path / "imported-votes"
+    destination = owner.lifecycle.profile.path / "imported-votes"
     destination.mkdir()
     private_write(destination / "config.json", json.dumps({"profile_id": "imported", "workspace": str(destination), "resources": "unused", "provider": {"provider": "faux"}}))
     private_write(destination / "control.token", "imported-control")
     private_write(destination / "web.token", "imported-web")
     target = Host(Profile(destination))
-    target.fence = fence_for(target.build)
+    target.lifecycle.fence = fence_for(target.lifecycle.build)
     lease = ProcessLease(instance_id="import-host", role="host", profile_path=str(destination), path=str(destination / "lease"), device=1, inode=1)
-    target.fence.host_epoch = await target.store.initialize(target.instance, target.build, lease)
+    target.lifecycle.fence.host_epoch = await target.lifecycle.store.initialize(target.lifecycle.instance, target.lifecycle.build, lease)
     try:
-        await target.import_bundle(exported)
-        assert (await target.answer_feedback(PARENT)).records == [cleared]
-        assert await target.save_answer_feedback(PARENT, clear) == cleared
-        updated = await target.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "5" * 32, "expected_revision": 3}))
+        await target.content.import_bundle(exported)
+        assert (await target.content.answer_feedback(PARENT)).records == [cleared]
+        assert await target.content.save_answer_feedback(PARENT, clear) == cleared
+        updated = await target.content.save_answer_feedback(PARENT, original.model_copy(update={"operation_id": "5" * 32, "expected_revision": 3}))
         assert updated.revision == 4
         with pytest.raises(BackendError, match="import_conflict"):
-            await target.import_bundle(exported)
-        assert (await target.answer_feedback(PARENT)).records == [updated]
+            await target.content.import_bundle(exported)
+        assert (await target.content.answer_feedback(PARENT)).records == [updated]
     finally:
-        await target.supervisor.close()
-        await target.store.db.close()
+        await target.lifecycle.supervisor.close()
+        await target.lifecycle.store.db.close()
 
 
 async def test_compaction_does_not_send_or_keep_the_provider_secret(
         owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
-    owner.profile.save_provider(owner.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
+    owner.lifecycle.profile.save_provider(owner.lifecycle.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
     calls: list[str] = []
 
-    async def fake_summarize(_config: object, messages: list[Message], _instructions: str) -> str:
+    async def fake_summarize(_config: object, messages: list[Message], _instructions: str, *, auth: Auth) -> str:
         text = "\n".join(message.content for message in messages)
         calls.append(text)
         if "回声" in text:
             return f"回声摘要 {KEY}"
         return "已压缩干净对话"
 
-    monkeypatch.setattr("amazme_backend.host.summarize", fake_summarize)
+    monkeypatch.setattr("amazme_backend.host.sessions.summarize", fake_summarize)
     parent = await parent_store(owner)
     try:
-        await finish(parent, "干净", "r-clean", owner.build)
+        await finish(parent, "干净", "r-clean", owner.lifecycle.build)
     finally:
-        await parent.db.close()
-    created = await owner.compact_session(PARENT, CompactSession(compaction_id="c-clean", through_request_id="r-clean"))
+        await parent.close()
+    created = await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-clean", through_request_id="r-clean"))
     assert created.summary == "已压缩干净对话" and KEY not in calls[0]
     with pytest.raises(BackendError, match="compaction_secret"):
-        await owner.compact_session(PARENT, CompactSession(compaction_id="c-instructions", through_request_id="r-clean", instructions=KEY))
+        await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-instructions", through_request_id="r-clean", instructions=KEY))
     assert len(calls) == 1
     parent = await parent_store(owner)
     try:
         assert (await parent.snapshot()).compaction == "已压缩干净对话"
-        await finish(parent, "回声", "r-echo", owner.build)
+        await finish(parent, "回声", "r-echo", owner.lifecycle.build)
         echo_payloads = await message_payloads(parent)
     finally:
-        await parent.db.close()
+        await parent.close()
     before_echo = len(calls)
     with pytest.raises(BackendError, match="compaction_secret") as echoed:
-        await owner.compact_session(PARENT, CompactSession(compaction_id="c-echo", through_request_id="r-echo"))
+        await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-echo", through_request_id="r-echo"))
     assert KEY not in str(echoed.value) and len(calls) == before_echo + 1
     with pytest.raises(BackendError, match="compaction_pending"):
-        await owner.compact_session(PARENT, CompactSession(compaction_id="c-echo", through_request_id="r-echo"))
+        await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-echo", through_request_id="r-echo"))
     assert len(calls) == before_echo + 1
     parent = await parent_store(owner)
     try:
         assert await message_payloads(parent) == echo_payloads
-        await finish(parent, "普通", "r-plain", owner.build)
+        await finish(parent, "普通", "r-plain", owner.lifecycle.build)
         stored = f"旧摘要 {KEY}"
         await parent.commit_compaction(
             "c-stored", "r-plain", stored, compaction_basis(await parent.message_payloads("r-plain")))
         assert (await parent.snapshot()).compaction == stored
     finally:
-        await parent.db.close()
-    worker = Worker(owner.profile, PARENT, "worker-compact")
+        await parent.close()
+    worker = create_worker(owner.lifecycle.profile, PARENT, "worker-compact")
     await worker.store.initialize()
     worker.storage_ready = True
     try:
@@ -676,19 +778,20 @@ async def test_compaction_does_not_send_or_keep_the_provider_secret(
             Message(role="user", content=f"我说 {KEY}"),
         ])
     finally:
-        await worker.store.db.close()
+        await worker.store.close()
+        await worker.supervisor.close()
     assert [item.content for item in prepared] == [f"我说 {KEY}"]
     parent = await parent_store(owner)
     try:
-        await finish(parent, f"对话 {KEY}", "r-secret", owner.build)
+        await finish(parent, f"对话 {KEY}", "r-secret", owner.lifecycle.build)
         secret_payloads = await message_payloads(parent)
     finally:
-        await parent.db.close()
+        await parent.close()
     sent = len(calls)
     app = application(owner)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=owner.origin, headers={
-        "Authorization": "Bearer web-only", "x-amazme-build": owner.build,
-        "x-amazme-epoch": str(owner.fence.host_epoch),
+        "Authorization": "Bearer web-only", "x-amazme-build": owner.lifecycle.build,
+        "x-amazme-epoch": str(owner.lifecycle.fence.host_epoch),
     }) as client:
         attached = await client.post(f"/api/v1/sessions/{PARENT}/attachments")
         assert attached.status_code == 201
@@ -701,25 +804,25 @@ async def test_compaction_does_not_send_or_keep_the_provider_secret(
     parent = await parent_store(owner)
     try:
         assert await message_payloads(parent) == secret_payloads
-        saved = await parent.db.call(lambda db: [str(row[0]) for row in db.execute("SELECT payload FROM compactions")])
+        saved = await session_database_owner(parent).call(lambda db: [str(row[0]) for row in db.execute("SELECT payload FROM compactions")])
     finally:
-        await parent.db.close()
+        await parent.close()
     assert any(stored in item for item in saved) and not any(f"回声摘要 {KEY}" in item for item in saved)
 
 
 async def test_archived_session_cannot_compact(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
         original = await message_payloads(parent)
-        await parent.db.close()
-        await owner.archive_session(PARENT, True)
+        await parent.close()
+        await owner.sessions.archive_session(PARENT, True)
         parent = await parent_store(owner)
         with pytest.raises(BackendError, match="session_archived"):
-            await owner.compact_session(PARENT, CompactSession(compaction_id="c-arch", through_request_id="r1"))
+            await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-arch", through_request_id="r1"))
         assert await message_payloads(parent) == original
     finally:
-        await parent.db.close()
+        await parent.close()
 
 
 
@@ -733,16 +836,16 @@ async def test_archived_session_cannot_compact(owner: Host) -> None:
 async def test_search_reads_only_this_sessions_durable_text(owner: Host) -> None:
     parent = await parent_store(owner)
     other_id = "b" * 32
-    await owner.store.create_session(other_id, CreateSession(title="另一会话"))
-    other_path = session_database(owner.profile.path, other_id)
+    await owner.lifecycle.store.create_session(other_id, CreateSession(title="另一会话"))
+    other_path = session_database(owner.lifecycle.profile.path, other_id)
     other_path.parent.mkdir(parents=True, mode=0o700)
-    other = SessionStore(other_path, other_id, build=owner.build, approval_policy="auto", instance="other-worker")
+    other = SessionStore(other_path, other_id, build=owner.lifecycle.build, approval_policy="auto", instance="other-worker")
     await other.initialize()
-    await other.fence(fence_for(owner.build))
+    await other.fence(fence_for(owner.lifecycle.build))
     try:
-        await finish(parent, "alpha token", "r1", owner.build)
-        await parent.accept(Submit(request_id="r2", text="Straße"), fence_for(owner.build))
-        await other.accept(Submit(request_id="g1", text="gamma only"), fence_for(owner.build))
+        await finish(parent, "alpha token", "r1", owner.lifecycle.build)
+        await parent.accept(Submit(request_id="r2", text="Straße"), fence_for(owner.lifecycle.build))
+        await other.accept(Submit(request_id="g1", text="gamma only"), fence_for(owner.lifecycle.build))
         found = await parent.search("ALPHA")
         assert found and all(hit.request_id == "r1" for hit in found)
         assert any("alpha token" in hit.excerpt for hit in found)
@@ -753,74 +856,74 @@ async def test_search_reads_only_this_sessions_durable_text(owner: Host) -> None
         assert any("gamma only" in hit.excerpt for hit in await other.search("gamma"))
         with pytest.raises(BackendError, match="search_query"):
             await parent.search("   ")
-        await parent.db.close()
-        await owner.archive_session(PARENT, True)
+        await parent.close()
+        await owner.sessions.archive_session(PARENT, True)
         parent = await parent_store(owner)
         assert any("alpha token" in hit.excerpt for hit in await parent.search("alpha"))
-        listed = await owner.search_session(PARENT, "alpha")
+        listed = await owner.sessions.search_session(PARENT, "alpha")
         assert any("alpha token" in hit.excerpt for hit in listed.hits)
-        assert (await owner.search_session(other_id, "alpha")).hits == []
+        assert (await owner.sessions.search_session(other_id, "alpha")).hits == []
     finally:
-        await parent.db.close()
-        await other.db.close()
+        await parent.close()
+        await other.close()
 
 
 
 
 async def test_branch_copies_model_without_sharing_later_changes(owner: Host) -> None:
     from amazme_backend.contracts import SessionModel
-    await owner.store.save_session_model(SessionModel(session_id=PARENT, provider="deepseek", model="deepseek-flash"))
+    await owner.lifecycle.store.save_session_model(SessionModel(session_id=PARENT, provider="deepseek", model="deepseek-flash"))
     child = "b" * 32
-    await owner.store.create_branch(child, PARENT, "settled", "分支")
-    copied = await owner.store.session_model(child)
+    await owner.lifecycle.store.create_branch(child, PARENT, "settled", "分支")
+    copied = await owner.lifecycle.store.session_model(child)
     assert copied is not None and copied.model == "deepseek-flash"
-    await owner.store.save_session_model(SessionModel(session_id=PARENT, provider="faux", model="faux"))
-    assert await owner.store.session_model(child) == copied
-    await owner.store.discard_unopened_branch(child)
-    assert await owner.store.session_model(child) is None
+    await owner.lifecycle.store.save_session_model(SessionModel(session_id=PARENT, provider="faux", model="faux"))
+    assert await owner.lifecycle.store.session_model(child) == copied
+    await owner.lifecycle.store.discard_unopened_branch(child)
+    assert await owner.lifecycle.store.session_model(child) is None
 
 
 async def test_branch_retry_keeps_its_id_after_parent_and_child_changes(owner: Host) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
     finally:
-        await parent.db.close()
+        await parent.close()
     request = BranchSession(branch_id="c" * 32, request_id="r1")
-    first = await owner.branch_session(PARENT, request)
-    await owner.rename_session(first.session_id, RenameSession(title="手动分支名称", expected_title=first.title))
-    child = SessionStore(session_database(owner.profile.path, first.session_id), first.session_id,
-                         build=owner.build, approval_policy="auto")
+    first = await owner.sessions.branch_session(PARENT, request)
+    await owner.sessions.rename_session(first.session_id, RenameSession(title="手动分支名称", expected_title=first.title))
+    child = SessionStore(session_database(owner.lifecycle.profile.path, first.session_id), first.session_id,
+                         build=owner.lifecycle.build, approval_policy="auto")
     await child.initialize()
-    await child.fence(fence_for(owner.build))
+    await child.fence(fence_for(owner.lifecycle.build))
     try:
-        await finish(child, "branch-only", "r2", owner.build)
+        await finish(child, "branch-only", "r2", owner.lifecycle.build)
         before = await message_payloads(child)
         await child.save_web_policy(WebPolicy(enabled=True))
     finally:
-        await child.db.close()
-    await owner.archive_session(PARENT, True)
-    retried = await owner.branch_session(PARENT, request)
+        await child.close()
+    await owner.sessions.archive_session(PARENT, True)
+    retried = await owner.sessions.branch_session(PARENT, request)
     assert retried.session_id == first.session_id and retried.title == "手动分支名称" and retried.prepared
-    check = SessionStore(session_database(owner.profile.path, first.session_id), first.session_id,
-                         build=owner.build, read_only=True, require_existing=True)
+    check = SessionStore(session_database(owner.lifecycle.profile.path, first.session_id), first.session_id,
+                         build=owner.lifecycle.build, read_only=True, require_existing=True)
     await check.initialize()
     try:
         assert await message_payloads(check) == before
         assert (await check.web_policy()).enabled is True
     finally:
-        await check.db.close()
-    assert len((await owner.sessions()).sessions) == 2
+        await check.close()
+    assert len((await owner.sessions.sessions()).sessions) == 2
     with pytest.raises(BackendError, match="branch_conflict"):
-        await owner.branch_session(PARENT, request.model_copy(update={"title": "changed payload"}))
+        await owner.sessions.branch_session(PARENT, request.model_copy(update={"title": "changed payload"}))
 
 
 async def test_interrupted_branch_is_not_attachable_and_explicit_retry_finishes_the_same_copy(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
     parent = await parent_store(owner)
     try:
-        await finish(parent, "alpha", "r1", owner.build)
+        await finish(parent, "alpha", "r1", owner.lifecycle.build)
     finally:
-        await parent.db.close()
+        await parent.close()
     request = BranchSession(branch_id="e" * 32, request_id="r1")
     original = SessionStore.save_web_policy
     interrupted = False
@@ -834,16 +937,16 @@ async def test_interrupted_branch_is_not_attachable_and_explicit_retry_finishes_
 
     monkeypatch.setattr(SessionStore, "save_web_policy", save)
     with pytest.raises(asyncio.CancelledError):
-        await owner.branch_session(PARENT, request)
-    partial = await owner.store.session(request.branch_id)
+        await owner.sessions.branch_session(PARENT, request)
+    partial = await owner.lifecycle.store.session(request.branch_id)
     assert partial is not None and not partial.prepared
     with pytest.raises(BackendError, match="branch_preparation_pending"):
-        await owner.attach_session(request.branch_id)
+        await owner.sessions.attach_session(request.branch_id)
     with pytest.raises(BackendError, match="branch_preparation_pending"):
-        await owner.store.enqueue(request.branch_id, "submit", "early", Submit(request_id="early", text="must wait"))
-    recovered = await owner.branch_session(PARENT, request)
+        await owner.lifecycle.store.enqueue(request.branch_id, "submit", "early", Submit(request_id="early", text="must wait"))
+    recovered = await owner.sessions.branch_session(PARENT, request)
     assert recovered.prepared and recovered.session_id == request.branch_id
-    assert len((await owner.sessions()).sessions) == 2
-    attached = await owner.attach_session(request.branch_id)
+    assert len((await owner.sessions.sessions()).sessions) == 2
+    attached = await owner.sessions.attach_session(request.branch_id)
     assert attached.session_id == request.branch_id
-    owner.release_attachment(request.branch_id, attached.attachment_id)
+    owner.sessions.release_attachment(request.branch_id, attached.attachment_id)

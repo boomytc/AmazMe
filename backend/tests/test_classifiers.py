@@ -2,15 +2,20 @@
 
 import base64
 import io
-from unittest.mock import AsyncMock, Mock
+import json
+import runpy
+import sys
+from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 from PIL import Image
 from pydantic import SecretStr
 
-from amazme_backend.accounts import AccountDocument, AccountStore, ApiKeyCredential
-from amazme_backend.classifiers import (
-    INDEX,
+from amazme_backend.ai.classification.catalog import INDEX
+from amazme_backend.ai.classification.client import classify
+from amazme_backend.ai.classification.system_one import wire_request
+from amazme_backend.ai.classification.types import (
     BoolAnswer,
     BoolQuestion,
     Box,
@@ -19,12 +24,11 @@ from amazme_backend.classifiers import (
     ChoiceAnswer,
     ClassifierContext,
     ClassifierResult,
-    classify,
-    wire_request,
 )
-from amazme_backend.computer_candidates import blocked_risks, extract_candidates
-from amazme_backend.computer_grounding import closed_choice, locate, risks_accepted
+from amazme_backend.ai.types import Auth
 from amazme_backend.contracts import ComputerCaptureView, ComputerPolicy, ComputerRect, ImagePart
+from amazme_backend.execution.computer.candidates import blocked_risks, extract_candidates
+from amazme_backend.execution.computer.grounding import closed_choice, locate, risks_accepted
 
 
 def image(width=800,height=600):
@@ -42,7 +46,7 @@ def box_result():
 def test_wire_keeps_named_assets_structured_questions_and_pi_image_opt_in():
     context = ClassifierContext(state={'observation':{'picture':'shot'}},assets={'shot':ImagePart(media_type='image/png',data_base64=base64.b64encode(image()).decode())},
         questions={'present':BoolQuestion(instructions={'question':'Visible?'}),'target':BoxQuestion(instructions='The target in observation.picture')})
-    body,headers = wire_request(INDEX[('typesafe','jev-1.14.0')],context)
+    body,headers = wire_request(INDEX[('typesafe','jev-latest')],context)
     assert body['questions']['present']['type'] == 'noul'
     assert body['state'] == context.state and body['assets']['shot']['format'] == 'png'
     assert headers['TypeSafe-Danger-Zone-Images'] == 'true'
@@ -51,9 +55,7 @@ def test_wire_keeps_named_assets_structured_questions_and_pi_image_opt_in():
 
 async def test_classifier_auth_stays_in_request_and_errors_never_echo_key(monkeypatch):
     secret = 'private-classifier-key'
-    accounts = Mock(spec=AccountStore)
-    accounts.read.return_value = AccountDocument()
-    accounts.resolve = AsyncMock(return_value=ApiKeyCredential(key=SecretStr(secret)))
+    resolve_auth = AsyncMock(return_value=Auth(api_key=SecretStr(secret)))
     requests = []
     def respond(request):
         requests.append(request)
@@ -62,14 +64,54 @@ async def test_classifier_auth_stays_in_request_and_errors_never_echo_key(monkey
             return httpx.Response(200,json={'answers':{'yes':{'type':'noul','noul':.99}},'usage':{'input_tokens':12}})
         return httpx.Response(400,json={'message':secret})
     factory = httpx.AsyncClient
-    monkeypatch.setattr('amazme_backend.classifiers.httpx.AsyncClient',lambda **kwargs:factory(**kwargs,transport=httpx.MockTransport(respond)))
+    monkeypatch.setattr('amazme_backend.ai.classification.client.httpx.AsyncClient',lambda **kwargs:factory(**kwargs,transport=httpx.MockTransport(respond)))
     context = ClassifierContext(state={'text':'test'},questions={'yes':BoolQuestion(instructions='Is it visible?')})
-    good = await classify(accounts,'typesafe','jev-1.14.0',context)
+    good = await classify('typesafe','jev-latest',context,auth=resolve_auth)
     assert good.stop_reason == 'stop' and good.answers['yes'].probability == .99
     assert good.usage['input_tokens'] == 12
-    bad = await classify(accounts,'typesafe','jev-1.14.0',context)
+    bad = await classify('typesafe','jev-latest',context,auth=resolve_auth)
     assert bad.stop_reason == 'error' and secret not in bad.model_dump_json()
     assert len(requests) == 2
+    assert resolve_auth.await_count == 2
+
+
+async def test_sdk_image_example_resolves_account_and_runs_the_crop_pipeline(tmp_path, monkeypatch, capsys):
+    profile = tmp_path / 'profile'
+    profile.mkdir()
+    secret = 'example-classifier-key'
+    (profile / 'accounts.json').write_text(json.dumps({
+        'format': 1, 'credentials': {'typesafe': {'type': 'api_key', 'key': secret}},
+        'transports': {'typesafe': {'headers': {'X-Example': 'fixture'}}},
+    }))
+    picture = tmp_path / 'picture.png'
+    picture.write_bytes(image())
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        assert request.headers['Authorization'] == 'Bearer ' + secret
+        assert request.headers['X-Example'] == 'fixture'
+        assert request.headers['TypeSafe-Danger-Zone-Images'] == 'true'
+        body = json.loads(request.content)
+        assert body['model'] == 'jev-latest' and body['assets']
+        assert set(body['questions']) == {'present', 'target'}
+        return httpx.Response(200, json={'answers': {
+            'present': {'type': 'noul', 'noul': .99},
+            'target': {'type': 'box', 'box': {'left': .25, 'top': .25, 'right': .75, 'bottom': .75},
+                       'confidence': .95},
+        }})
+
+    factory = httpx.AsyncClient
+    monkeypatch.setattr('amazme_backend.ai.classification.client.httpx.AsyncClient',
+                        lambda **kwargs: factory(**kwargs, transport=httpx.MockTransport(respond)))
+    example = Path(__file__).resolve().parents[2] / 'packages/coding-agent/examples/sdk/locate-image.py'
+    monkeypatch.setattr(sys, 'argv', [str(example), str(profile), str(picture), 'Continue'])
+    await runpy.run_path(str(example))['main']()
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result['status'] == 'located' and result['box'] == [280, 210, 520, 390]
+    assert (result['x'], result['y']) == (400, 300) and len(requests) == 2
+    assert 'crop' not in result and secret not in output
 
 
 def test_candidates_omit_risks_chrome_ambiguity_and_keep_identity_across_snapshots():

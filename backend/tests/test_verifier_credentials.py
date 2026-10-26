@@ -9,7 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from amazme_backend.accounts import AccountStore
+from amazme_backend.accounts.store import AccountStore
 
 SOURCE = Path(__file__).parents[1] / 'tools/verify_runtime.py'
 spec = importlib.util.spec_from_file_location('native_verify_runtime', SOURCE)

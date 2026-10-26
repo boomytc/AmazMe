@@ -7,8 +7,12 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from pydantic import BaseModel
+from session_test_support import session_database_owner, session_state
 
-from amazme_backend.common import Peer, Profile
+from amazme_backend.agent.driver import Worker
+from amazme_backend.agent.model import stream
+from amazme_backend.ai.types import Auth
+from amazme_backend.bootstrap.worker import create_worker
 from amazme_backend.contracts import (
     ApprovalDecision,
     BackendError,
@@ -32,10 +36,14 @@ from amazme_backend.contracts import (
     ToolResult,
     WorkerRequest,
 )
-from amazme_backend.providers import Completion, stream
-from amazme_backend.session_domain import (
+from amazme_backend.execution.client import SupervisorClient
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.sessions.persistence.clock import now_ms
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.sessions.types import (
     Action,
     CloseEpoch,
+    Completion,
     Continue,
     EffectResolved,
     EpochClosed,
@@ -52,8 +60,6 @@ from amazme_backend.session_domain import (
     ToolObserved,
     ToolReturned,
 )
-from amazme_backend.storage import SessionStore, now_ms
-from amazme_backend.worker import Worker
 
 FENCE = HostFence(host_epoch=1, build_id="test-build")
 SESSION = "a" * 32
@@ -76,13 +82,13 @@ class Driver:
     async def respond(self, action: Action) -> None:
         if isinstance(action, ModelInvocation):
             self.models.append(action)
-            async for item in stream(action.config, action.messages):
-                if isinstance(item, Completion):
+            async for item in stream(action.config, action.messages, auth=Auth(api_key=action.config.api_key, auth_type=action.config.auth_type)):
+                if not isinstance(item, str):
                     await self.store.advance(ModelReturned(action, item))
         elif isinstance(action, OpenEpoch):
             self.epoch += 1
             await self.store.advance(EpochOpened(action.request_id, Lease(
-                session_id=self.store.session_id, worker_id=self.store.instance, build_id=self.store.build,
+                session_id=self.store.session_id, worker_id=session_state(self.store).instance, build_id=session_state(self.store).build,
                 supervisor_id="supervisor", execution_epoch=self.epoch)))
         elif isinstance(action, ToolInvocation):
             self.tools.append(action)
@@ -117,7 +123,7 @@ async def store(tmp_path: Path) -> AsyncIterator[SessionStore]:
     try:
         yield value
     finally:
-        await value.db.close()
+        await value.close()
 
 
 async def submit(store: SessionStore, text: str = "/shell echo ok", request_id: str = "root") -> None:
@@ -125,7 +131,7 @@ async def submit(store: SessionStore, text: str = "/shell echo ok", request_id: 
 
 
 async def test_approval_releases_epoch_and_consumes_once(store: SessionStore) -> None:
-    store.approval_policy = "mutations"
+    session_state(store).approval_policy = "mutations"
     await submit(store)
     driver = Driver(store)
     assert (await driver.drain()).reason == "approval" and driver.epoch == 0
@@ -141,7 +147,7 @@ async def test_approval_releases_epoch_and_consumes_once(store: SessionStore) ->
 
 
 async def test_steer_expires_approval_and_denial_never_executes(store: SessionStore) -> None:
-    store.approval_policy = "all"
+    session_state(store).approval_policy = "all"
     await submit(store)
     driver = Driver(store)
     await driver.drain()
@@ -270,8 +276,8 @@ async def test_effect_resolution_rejects_second_id_without_pending_work(store: S
     assert not isinstance(attempts[0], BaseException)
     assert isinstance(attempts[1], BackendError) and attempts[1].code == "resolution_conflict"
     assert await store.snapshot() == before
-    await store.db.close()
-    reopened = SessionStore(store.db.path, SESSION, instance="replacement", require_existing=True)
+    await store.close()
+    reopened = SessionStore(session_database_owner(store).path, SESSION, instance="replacement", require_existing=True)
     await reopened.initialize()
     try:
         assert await reopened.resolve(first, FENCE) == await reopened.get("root")
@@ -284,7 +290,7 @@ async def test_effect_resolution_rejects_second_id_without_pending_work(store: S
             assert isinstance(action, ReconcileEffect) and action.resolution == first
         assert (await reopened.activity()).state == "ready"
     finally:
-        await reopened.db.close()
+        await reopened.close()
 
 
 async def test_frozen_resolution_does_not_block_cancellation_settlement(store: SessionStore) -> None:
@@ -381,7 +387,7 @@ async def test_depth_limit_fails_required_ancestors(store: SessionStore) -> None
 
 
 async def test_freeze_preserves_queued_approval_children_and_stop(store: SessionStore) -> None:
-    store.approval_policy = "mutations"
+    session_state(store).approval_policy = "mutations"
     await submit(store, '/delegate ["/shell echo child"]')
     await submit(store, "queued", "later")
     driver = Driver(store)
@@ -393,7 +399,7 @@ async def test_freeze_preserves_queued_approval_children_and_stop(store: Session
     assert frozen.pending == before.pending == 3
     assert [r.status for r in frozen.requests] == [r.status for r in before.requests]
     await store.stopping(FENCE, cancel_work=False)
-    store.instance = "replacement"
+    session_state(store).instance = "replacement"
     await store.recover(frozen=True)
     assert (await store.snapshot()).state == "frozen"
     with pytest.raises(BackendError, match="freeze_conflict"):
@@ -455,7 +461,7 @@ async def test_invalid_arguments_fail_before_epoch(store: SessionStore) -> None:
     assert (await store.get("root")).error == "invalid_workspace_path" and driver.epoch == 0
 
 
-class FakeSupervisor(Peer):
+class FakeSupervisor(SupervisorClient):
     def __init__(self) -> None:
         self.calls: list[tuple[str, BaseModel | None]] = []
         self.epoch = 0
@@ -497,11 +503,11 @@ def make_worker(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, validation: 
         db.execute("INSERT INTO sessions(id,workspace) VALUES(?, 'primary')", (SESSION,))
     (tmp_path / "sessions" / SESSION).mkdir(parents=True)
     supervisor = FakeSupervisor()
-    monkeypatch.setattr("amazme_backend.worker.build_id", lambda: FENCE.build_id)
+    monkeypatch.setattr("amazme_backend.bootstrap.worker.build_id", lambda: FENCE.build_id)
     def peer(_path: Path, _token: str) -> FakeSupervisor:
         return supervisor
-    monkeypatch.setattr("amazme_backend.worker.Peer", peer)
-    return Worker(profile, SESSION, "worker", frozen=validation, validation=validation), supervisor
+    monkeypatch.setattr("amazme_backend.bootstrap.worker.SupervisorClient", peer)
+    return create_worker(profile, SESSION, "worker", frozen=validation, validation=validation), supervisor
 
 
 async def test_storage_ready_ack_precedes_failed_initial_probe(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -520,7 +526,7 @@ async def test_storage_ready_ack_precedes_failed_initial_probe(tmp_path: Path, m
 
 async def test_validation_thaw_never_runs_business_cancel_is_metadata_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     owner, supervisor = make_worker(tmp_path, monkeypatch, validation=True)
-    monkeypatch.setattr("amazme_backend.worker.stream", lambda *_: pytest.fail("validation called the model"))
+    monkeypatch.setattr("amazme_backend.agent.driver.stream", lambda *_: pytest.fail("validation called the model"))
     await owner.initialize()
     try:
         await owner.store.thaw(FENCE, "startup")
@@ -620,7 +626,7 @@ async def test_snapshot_view_budget_preserves_all_receipts_and_signals_truncatio
     await Driver(store).drain()
     for i in range(25):
         await submit(store, "queued", f"q{i}")
-    monkeypatch.setattr("amazme_backend.storage.SNAPSHOT_VIEW_BYTES", 320)
+    monkeypatch.setattr("amazme_backend.sessions.service.SNAPSHOT_VIEW_BYTES", 320)
     snapshot = await store.snapshot()
     assert len(snapshot.requests) == 26 and snapshot.pending == 25
     assert any(e.text == "snapshot_view_truncated" for e in snapshot.events)
@@ -630,7 +636,7 @@ async def test_snapshot_view_budget_preserves_all_receipts_and_signals_truncatio
 async def test_snapshot_fact_limit_is_explicit_not_partial_success(store: SessionStore,
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     await submit(store)
-    monkeypatch.setattr("amazme_backend.storage.SNAPSHOT_MAX_BYTES", 100)
+    monkeypatch.setattr("amazme_backend.sessions.service.SNAPSHOT_MAX_BYTES", 100)
     with pytest.raises(BackendError, match="snapshot_fact_limit"):
         await store.snapshot()
     assert (await store.get("root")).status == "queued"
@@ -645,11 +651,11 @@ async def test_shutdown_drains_driver_even_if_storage_fails(tmp_path: Path, monk
         await gate.wait()
 
     owner.loop_task = asyncio.create_task(waiting())
-    owner.store.db.failure = "injected storage loss"
+    session_database_owner(owner.store).failure = "injected storage loss"
     try:
         with pytest.raises(BackendError):
             await owner.shutdown()
-        assert owner.loop_task.done() and owner.store.db.closed and supervisor.closed
+        assert owner.loop_task.done() and session_database_owner(owner.store).closed and supervisor.closed
     finally:
         owner.loop_task.cancel()
         await asyncio.gather(owner.loop_task, return_exceptions=True)
@@ -676,11 +682,11 @@ async def test_driver_observation_failure_closes_admission(tmp_path: Path, monke
         await owner.submit(Submission(**FENCE.model_dump(), value=Submit(request_id="no", text="no")))
     with pytest.raises(BackendError, match="invalid_tool_calls"):
         await owner.shutdown()
-    assert supervisor.closed and owner.store.db.closed
+    assert supervisor.closed and session_database_owner(owner.store).closed
 
 
 async def test_approval_revalidates_after_build_change(store: SessionStore) -> None:
-    store.approval_policy = "mutations"
+    session_state(store).approval_policy = "mutations"
     await submit(store)
     driver = Driver(store)
     await driver.drain()
@@ -688,7 +694,7 @@ async def test_approval_revalidates_after_build_change(store: SessionStore) -> N
     decision = ApprovalDecision(decision_id="approved", approval_id=old.approval_id,
         expected_revision=old.revision, proposal_digest=old.proposal_digest, approve=True)
     await store.approve(decision, FENCE)
-    store.build = "next-build"
+    session_state(store).build = "next-build"
     await store.recover()
     await driver.drain()
     approvals = (await store.snapshot()).approvals
@@ -697,7 +703,7 @@ async def test_approval_revalidates_after_build_change(store: SessionStore) -> N
 
 
 async def test_snapshot_real_view_limit_with_large_unicode_history(store: SessionStore) -> None:
-    from amazme_backend.storage import SNAPSHOT_MAX_BYTES, SNAPSHOT_VIEW_BYTES
+    from amazme_backend.sessions.policy.limits import SNAPSHOT_MAX_BYTES, SNAPSHOT_VIEW_BYTES
 
     driver = Driver(store)
     for index in range(12):
@@ -725,7 +731,7 @@ async def test_snapshot_limits_reconciled_effect_history_and_drops_stale_preview
             db.execute("INSERT INTO effects VALUES(?,?)", (hold.call_id, hold.model_dump_json()))
         preview = Preview(request_id="missing", run_id="missing", generation=0, preview_seq="1", text="stale")
         db.execute("INSERT INTO previews VALUES(?,?)", (preview.request_id, preview.model_dump_json()))
-    await store.db.call(history)
+    await session_database_owner(store).call(history)
     snapshot = await store.snapshot()
     assert len(snapshot.effects) == 21 and snapshot.effects[0].call_id == "call-0"
     assert not snapshot.previews
@@ -733,7 +739,7 @@ async def test_snapshot_limits_reconciled_effect_history_and_drops_stale_preview
 
 @pytest.mark.parametrize("change", ["revision", "digest", "policy"])
 async def test_approval_rejects_stale_parameters_and_policy(store: SessionStore, change: str) -> None:
-    store.approval_policy = "mutations"
+    session_state(store).approval_policy = "mutations"
     await submit(store)
     driver = Driver(store)
     await driver.drain()
@@ -742,7 +748,7 @@ async def test_approval_rejects_stale_parameters_and_policy(store: SessionStore,
         expected_revision="0" if change == "revision" else approval.revision,
         proposal_digest="wrong" if change == "digest" else approval.proposal_digest, approve=True)
     if change == "policy":
-        store.approval_policy = "all"
+        session_state(store).approval_policy = "all"
     with pytest.raises(BackendError, match="stale_approval"):
         await store.approve(decision, FENCE)
     assert not driver.tools and driver.epoch == 0

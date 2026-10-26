@@ -9,7 +9,10 @@ import httpx
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.agent.model import ProductCompletion as Completion
+from amazme_backend.agent.model import model_request, model_spec, stream
+from amazme_backend.ai.providers.completions import provider_messages
+from amazme_backend.ai.types import Auth
 from amazme_backend.contracts import (
     IMAGE_MAX_COUNT,
     BackendError,
@@ -21,11 +24,14 @@ from amazme_backend.contracts import (
     Submit,
     checked_images,
 )
-from amazme_backend.host import Host, application
-from amazme_backend.providers import Completion, provider_messages, stream
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.profiles.profile import Profile
 from amazme_backend.sdk import Client
-from amazme_backend.session_domain import ModelInvocation, ModelReturned
-from amazme_backend.storage import SessionStore, session_database
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.sessions.types import ModelInvocation, ModelReturned
 
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
@@ -42,15 +48,15 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     return host
 
 
 def _client(host: Host) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-        "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-        "x-amazme-epoch": str(host.fence.host_epoch),
+        "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+        "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
     })
 
 
@@ -59,9 +65,9 @@ async def _open(host: Host) -> tuple[str, SessionStore]:
         created = await client.post("/api/v1/sessions", json={"title": "图片"})
         assert created.status_code == 201
         session = created.json()["session_id"]
-    path = session_database(host.profile.path, session)
+    path = session_database(host.lifecycle.profile.path, session)
     path.parent.mkdir(parents=True, mode=0o700)
-    store = SessionStore(path, session, build=host.build)
+    store = SessionStore(path, session, build=host.lifecycle.build)
     await store.initialize()
     return session, store
 
@@ -97,24 +103,24 @@ async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
     try:
         session, store = await _open(host)
         try:
             receipt = await store.accept(
                 Submit(request_id="img", text=text, images=[image]),
-                HostFence(host_epoch=0, build_id=host.build))
+                HostFence(host_epoch=0, build_id=host.lifecycle.build))
             assert receipt.image_count == 1
             again = await store.accept(
                 Submit(request_id="img", text=text, images=[image]),
-                HostFence(host_epoch=0, build_id=host.build))
+                HostFence(host_epoch=0, build_id=host.lifecycle.build))
             assert again.image_count == 1 and again.revision == receipt.revision
             action: ModelInvocation | None = None
             for _ in range(8):
                 step = await store.advance()
                 if isinstance(step, ModelInvocation):
                     action = step
-                    async for item in stream(step.config, step.messages):
+                    async for item in stream(step.config, step.messages, auth=Auth()):
                         if isinstance(item, Completion):
                             await store.advance(ModelReturned(step, item))
                     break
@@ -123,7 +129,8 @@ async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_
             user = next(item for item in stored if item.role == "user" and item.images)
             assert user.images == [image]
             assert user.content == text
-            replay = provider_messages([user], "deepseek")
+            replay_config = ProviderConfig(provider='deepseek')
+            replay = provider_messages(model_spec(replay_config), model_request(replay_config, [user], auth=Auth()))
             sent = next(item for item in replay if item["role"] == "user")
             expected: list[dict[str, object]] = [{"type":"text", "text":text}] if text else []
             expected.append({"type":"image_url", "image_url":{"url":f"data:image/png;base64,{PNG}"}})
@@ -136,7 +143,7 @@ async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_
             assert report["input_tokens"] == len(text)
             assert PNG not in json.dumps(report)
             await store.accept(Submit(request_id="again", text="再看"),
-                               HostFence(host_epoch=0, build_id=host.build))
+                               HostFence(host_epoch=0, build_id=host.lifecycle.build))
             follow = None
             for _ in range(8):
                 step = await store.advance()
@@ -148,35 +155,35 @@ async def test_prompt_image_is_stored_sent_and_kept_out_of_usage_and_events(tmp_
             config = ProviderConfig(
                 provider="deepseek", model="deepseek-flash", base_url=f"http://127.0.0.1:{port}/v1",
                 api_key=SecretStr("test-key"))
-            async for item in stream(config, [user]):
+            async for item in stream(config, [user], auth=Auth(api_key=config.api_key)):
                 if isinstance(item, Completion):
                     assert item.message.content == "看到了"
             request = json.loads(seen["body"])
             content = next(item["content"] for item in request["messages"] if item["role"] == "user")
             assert content == expected
         finally:
-            await store.db.close()
+            await store.close()
     finally:
         server.close()
         await server.wait_closed()
-        await host.store.db.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_a_different_image_for_the_same_request_keeps_the_first(tmp_path: Path) -> None:
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
     try:
         _session, store = await _open(host)
         try:
             first = _image()
             await store.accept(Submit(request_id="img", text="看图", images=[first]),
-                               HostFence(host_epoch=0, build_id=host.build))
+                               HostFence(host_epoch=0, build_id=host.lifecycle.build))
             other = _image(base64.b64encode(b"second-image").decode())
             with pytest.raises(BackendError) as failure:
                 await store.accept(Submit(request_id="img", text="看图", images=[other]),
-                                   HostFence(host_epoch=0, build_id=host.build))
+                                   HostFence(host_epoch=0, build_id=host.lifecycle.build))
             assert failure.value.code == "request_conflict"
             for _ in range(8):
                 await store.advance()
@@ -185,9 +192,9 @@ async def test_a_different_image_for_the_same_request_keeps_the_first(tmp_path: 
                     break
             assert stored[0].images == [first]
         finally:
-            await store.db.close()
+            await store.close()
     finally:
-        await host.store.db.close()
+        await host.lifecycle.store.db.close()
 
 
 def test_invalid_or_oversized_images_are_rejected_before_storage() -> None:

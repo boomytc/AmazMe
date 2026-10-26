@@ -6,15 +6,16 @@ from pathlib import Path
 import pytest
 from test_management import _client, _host, _message
 
-from amazme_backend.common import lock
+from amazme_backend.platform.private_files import lock
 from amazme_backend.contracts import ProcessLease
-from amazme_backend.storage import session_database
+from amazme_backend.profiles.layout import session_database
 
 
 async def test_project_and_session_edits_reject_stale_writes_and_remove_only_owned_history(tmp_path: Path) -> None:
     host = _host(tmp_path)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id="host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"), device=1, inode=1))
+    host.lifecycle.initialized = True
     project_id, session_id = "1" * 32, "2" * 32
     kept = tmp_path / "primary" / "kept.txt"
     kept.write_text("用户工作目录")
@@ -65,13 +66,15 @@ async def test_project_and_session_edits_reject_stale_writes_and_remove_only_own
             assert replayed_create.status_code == 409 and replayed_create.json()["code"] == "session_removed"
             assert (await client.get("/api/v1/sessions")).json()["sessions"] == []
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        child = host.lifecycle.child
+        await host.close()
+        if child is not None:
+            await asyncio.wait_for(child.wait(), 5)
 
 
 async def test_removal_refuses_a_session_directory_symlink(tmp_path: Path) -> None:
     from amazme_backend.contracts import BackendError
-    from amazme_backend.storage import remove_session_directory
+    from amazme_backend.sessions.maintenance import remove_session_directory
 
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -88,10 +91,11 @@ async def test_restore_waits_for_archive_cleanup_before_reopening_the_session(tm
     from amazme_backend.contracts import CreateSession
 
     host = _host(tmp_path)
-    await host.store.initialize(host.instance, host.build, ProcessLease(
+    await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id="host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"), device=1, inode=1))
+    host.lifecycle.initialized = True
     session = "3" * 32
-    await host.store.create_session(session, CreateSession())
+    await host.lifecycle.store.create_session(session, CreateSession())
     entered, finish = asyncio.Event(), asyncio.Event()
 
     async def cleanup(_session: str) -> None:
@@ -99,20 +103,22 @@ async def test_restore_waits_for_archive_cleanup_before_reopening_the_session(tm
             entered.set()
             await finish.wait()
 
-    monkeypatch.setattr(host, "_retire_session_resources", cleanup)
-    archiving = asyncio.create_task(host.archive_session(session, True))
+    monkeypatch.setattr(host.sessions, 'retire_session_resources', cleanup)
+    archiving = asyncio.create_task(host.sessions.archive_session(session, True))
     await entered.wait()
-    restoring = asyncio.create_task(host.archive_session(session, False))
+    restoring = asyncio.create_task(host.sessions.archive_session(session, False))
     try:
         await asyncio.sleep(.01)
         assert not restoring.done()
-        assert (await host.sessions()).sessions[0].archived is True
+        assert (await host.sessions.sessions()).sessions[0].archived is True
         finish.set()
         await archiving
         assert (await restoring).archived is False
-        assert (await host.sessions()).sessions[0].archived is False
+        assert (await host.sessions.sessions()).sessions[0].archived is False
     finally:
         finish.set()
         await asyncio.gather(archiving, restoring, return_exceptions=True)
-        await host.supervisor.close()
-        await host.store.db.close()
+        child = host.lifecycle.child
+        await host.close()
+        if child is not None:
+            await asyncio.wait_for(child.wait(), 5)

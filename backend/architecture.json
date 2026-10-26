@@ -1,0 +1,1120 @@
+{
+  "schema_version": 1,
+  "package": "amazme_backend",
+  "source_root": "src/amazme_backend",
+  "domains": {
+    "metadata": {
+      "modules": [
+        "amazme_backend",
+        "amazme_backend.features"
+      ],
+      "prefixes": [],
+      "public": [],
+      "imports": []
+    },
+    "shared": {
+      "prefixes": [
+        "amazme_backend.shared"
+      ],
+      "public": [
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ],
+      "imports": []
+    },
+    "platform": {
+      "prefixes": [
+        "amazme_backend.platform"
+      ],
+      "public": [
+        "amazme_backend.platform.identity",
+        "amazme_backend.platform.ipc",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.platform.resource_manifest",
+        "amazme_backend.platform.resources"
+      ],
+      "imports": [
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "contracts": {
+      "prefixes": [
+        "amazme_backend.contracts"
+      ],
+      "public": [
+        "amazme_backend.contracts",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workflows",
+        "amazme_backend.contracts.workspaces"
+      ],
+      "imports": [
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "profiles": {
+      "prefixes": [
+        "amazme_backend.profiles"
+      ],
+      "public": [
+        "amazme_backend.profiles.configuration",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile"
+      ],
+      "imports": [
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.platform.identity",
+        "amazme_backend.platform.ipc",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.platform.resources",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "ai": {
+      "prefixes": [
+        "amazme_backend.ai"
+      ],
+      "public": [
+        "amazme_backend.ai.catalog",
+        "amazme_backend.ai.classification.catalog",
+        "amazme_backend.ai.classification.client",
+        "amazme_backend.ai.classification.types",
+        "amazme_backend.ai.client",
+        "amazme_backend.ai.pricing",
+        "amazme_backend.ai.reasoning",
+        "amazme_backend.ai.selection",
+        "amazme_backend.ai.types"
+      ],
+      "imports": [
+        "amazme_backend.contracts.models",
+        "amazme_backend.platform.resources",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "accounts": {
+      "prefixes": [
+        "amazme_backend.accounts"
+      ],
+      "public": [
+        "amazme_backend.accounts",
+        "amazme_backend.accounts.configuration",
+        "amazme_backend.accounts.oauth",
+        "amazme_backend.accounts.oauth.flow",
+        "amazme_backend.accounts.store"
+      ],
+      "imports": [
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.platform.resources",
+        "amazme_backend.profiles.configuration",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "sessions": {
+      "prefixes": [
+        "amazme_backend.sessions"
+      ],
+      "public": [
+        "amazme_backend.sessions.client",
+        "amazme_backend.sessions.domain",
+        "amazme_backend.sessions.maintenance",
+        "amazme_backend.sessions.service",
+        "amazme_backend.sessions.types"
+      ],
+      "imports": [
+        "amazme_backend.ai.pricing",
+        "amazme_backend.ai.reasoning",
+        "amazme_backend.ai.types",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workflows",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.diagnostics.faults",
+        "amazme_backend.features.management.rules",
+        "amazme_backend.features.tools.search",
+        "amazme_backend.platform.identity",
+        "amazme_backend.platform.ipc",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.profiles.configuration",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "agent": {
+      "prefixes": [
+        "amazme_backend.agent"
+      ],
+      "public": [
+        "amazme_backend.agent.driver",
+        "amazme_backend.agent.model",
+        "amazme_backend.agent.tool_catalog"
+      ],
+      "imports": [
+        "amazme_backend.ai.catalog",
+        "amazme_backend.ai.client",
+        "amazme_backend.ai.pricing",
+        "amazme_backend.ai.reasoning",
+        "amazme_backend.ai.selection",
+        "amazme_backend.ai.types",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.diagnostics.faults",
+        "amazme_backend.execution.client",
+        "amazme_backend.features.memories.policy",
+        "amazme_backend.features.resources.service",
+        "amazme_backend.features.tools.search",
+        "amazme_backend.sessions.client",
+        "amazme_backend.sessions.service",
+        "amazme_backend.sessions.types",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model",
+        "amazme_backend.workspaces.paths"
+      ]
+    },
+    "execution": {
+      "prefixes": [
+        "amazme_backend.execution"
+      ],
+      "public": [
+        "amazme_backend.execution.client",
+        "amazme_backend.execution.computer.candidates",
+        "amazme_backend.execution.computer.driver",
+        "amazme_backend.execution.computer.geometry",
+        "amazme_backend.execution.computer.grounding",
+        "amazme_backend.execution.dependencies",
+        "amazme_backend.execution.mcp.auth",
+        "amazme_backend.execution.mcp.configuration",
+        "amazme_backend.execution.mcp.gate",
+        "amazme_backend.execution.mcp.http",
+        "amazme_backend.execution.native",
+        "amazme_backend.execution.plugins.client",
+        "amazme_backend.execution.plugins.gate",
+        "amazme_backend.execution.processes",
+        "amazme_backend.execution.pty.gate",
+        "amazme_backend.execution.remote.client",
+        "amazme_backend.execution.remote.ssh",
+        "amazme_backend.execution.services",
+        "amazme_backend.execution.supervisor",
+        "amazme_backend.execution.web.client"
+      ],
+      "imports": [
+        "amazme_backend.ai.classification.client",
+        "amazme_backend.ai.classification.types",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.diagnostics.faults",
+        "amazme_backend.platform.identity",
+        "amazme_backend.platform.ipc",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.platform.resources",
+        "amazme_backend.plugin_api",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model",
+        "amazme_backend.workspaces.files",
+        "amazme_backend.workspaces.grants",
+        "amazme_backend.workspaces.paths"
+      ]
+    },
+    "workspaces": {
+      "prefixes": [
+        "amazme_backend.workspaces"
+      ],
+      "public": [
+        "amazme_backend.workspaces.files",
+        "amazme_backend.workspaces.grants",
+        "amazme_backend.workspaces.paths"
+      ],
+      "imports": [
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "features.artifacts": {
+      "prefixes": [
+        "amazme_backend.features.artifacts"
+      ],
+      "public": [
+        "amazme_backend.features.artifacts.service"
+      ],
+      "imports": [
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "features.memories": {
+      "prefixes": [
+        "amazme_backend.features.memories"
+      ],
+      "public": [
+        "amazme_backend.features.memories.policy"
+      ],
+      "imports": [
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model",
+        "amazme_backend.workspaces.grants"
+      ]
+    },
+    "features.schedules": {
+      "prefixes": [
+        "amazme_backend.features.schedules"
+      ],
+      "public": [
+        "amazme_backend.features.schedules.policy"
+      ],
+      "imports": [
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "features.resources": {
+      "prefixes": [
+        "amazme_backend.features.resources"
+      ],
+      "public": [
+        "amazme_backend.features.resources.service"
+      ],
+      "imports": [
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "features.skills": {
+      "prefixes": [
+        "amazme_backend.features.skills"
+      ],
+      "public": [
+        "amazme_backend.features.skills.service"
+      ],
+      "imports": [
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.features.resources.service",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model",
+        "amazme_backend.workspaces.grants",
+        "amazme_backend.workspaces.paths"
+      ]
+    },
+    "features.plugins": {
+      "prefixes": [
+        "amazme_backend.features.plugins"
+      ],
+      "public": [
+        "amazme_backend.features.plugins.packages"
+      ],
+      "imports": [
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "features.tools": {
+      "prefixes": [
+        "amazme_backend.features.tools"
+      ],
+      "public": [
+        "amazme_backend.features.tools.search"
+      ],
+      "imports": [
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "features.management": {
+      "prefixes": [
+        "amazme_backend.features.management"
+      ],
+      "public": [
+        "amazme_backend.features.management.rules"
+      ],
+      "imports": [
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.workflows",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "host": {
+      "prefixes": [
+        "amazme_backend.host"
+      ],
+      "public": [
+        "amazme_backend.host.queries",
+        "amazme_backend.host.service"
+      ],
+      "imports": [
+        "amazme_backend.accounts.configuration",
+        "amazme_backend.accounts.oauth",
+        "amazme_backend.accounts.oauth.flow",
+        "amazme_backend.accounts.store",
+        "amazme_backend.agent.model",
+        "amazme_backend.ai.catalog",
+        "amazme_backend.ai.classification.catalog",
+        "amazme_backend.ai.classification.client",
+        "amazme_backend.ai.classification.types",
+        "amazme_backend.ai.selection",
+        "amazme_backend.ai.types",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workflows",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.diagnostics.faults",
+        "amazme_backend.execution.client",
+        "amazme_backend.execution.computer.candidates",
+        "amazme_backend.execution.computer.driver",
+        "amazme_backend.execution.computer.geometry",
+        "amazme_backend.execution.computer.grounding",
+        "amazme_backend.execution.mcp.auth",
+        "amazme_backend.execution.mcp.configuration",
+        "amazme_backend.execution.plugins.client",
+        "amazme_backend.execution.processes",
+        "amazme_backend.execution.remote.client",
+        "amazme_backend.execution.remote.ssh",
+        "amazme_backend.execution.web.client",
+        "amazme_backend.features.artifacts.service",
+        "amazme_backend.features.management.rules",
+        "amazme_backend.features.memories.policy",
+        "amazme_backend.features.plugins.packages",
+        "amazme_backend.features.resources.service",
+        "amazme_backend.features.schedules.policy",
+        "amazme_backend.features.skills.service",
+        "amazme_backend.features.tools.search",
+        "amazme_backend.platform.identity",
+        "amazme_backend.platform.ipc",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.platform.resources",
+        "amazme_backend.profiles.configuration",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile",
+        "amazme_backend.sessions.client",
+        "amazme_backend.sessions.maintenance",
+        "amazme_backend.sessions.service",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model",
+        "amazme_backend.workspaces.files",
+        "amazme_backend.workspaces.grants",
+        "amazme_backend.workspaces.paths"
+      ]
+    },
+    "interfaces": {
+      "prefixes": [
+        "amazme_backend.interfaces"
+      ],
+      "public": [
+        "amazme_backend.interfaces.cli",
+        "amazme_backend.interfaces.client_outbox",
+        "amazme_backend.interfaces.http.application",
+        "amazme_backend.interfaces.rpc",
+        "amazme_backend.interfaces.supervisor",
+        "amazme_backend.interfaces.tui",
+        "amazme_backend.interfaces.web.boot",
+        "amazme_backend.interfaces.worker"
+      ],
+      "imports": [
+        "amazme_backend.agent.driver",
+        "amazme_backend.ai.classification.types",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workflows",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.execution.client",
+        "amazme_backend.execution.supervisor",
+        "amazme_backend.host.service",
+        "amazme_backend.platform.ipc",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.platform.resources",
+        "amazme_backend.sdk",
+        "amazme_backend.sdk.client",
+        "amazme_backend.sessions.service",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "sdk": {
+      "prefixes": [
+        "amazme_backend.sdk"
+      ],
+      "public": [
+        "amazme_backend.sdk",
+        "amazme_backend.sdk.client"
+      ],
+      "imports": [
+        "amazme_backend.contracts",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workflows",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "bootstrap": {
+      "modules": [
+        "amazme_backend.__main__"
+      ],
+      "prefixes": [
+        "amazme_backend.bootstrap"
+      ],
+      "public": [],
+      "imports": [
+        "amazme_backend.accounts.configuration",
+        "amazme_backend.accounts.store",
+        "amazme_backend.agent.driver",
+        "amazme_backend.agent.model",
+        "amazme_backend.agent.tool_catalog",
+        "amazme_backend.ai.catalog",
+        "amazme_backend.ai.client",
+        "amazme_backend.ai.types",
+        "amazme_backend.contracts.accounts",
+        "amazme_backend.contracts.artifacts",
+        "amazme_backend.contracts.code",
+        "amazme_backend.contracts.computer",
+        "amazme_backend.contracts.events",
+        "amazme_backend.contracts.execution",
+        "amazme_backend.contracts.feedback",
+        "amazme_backend.contracts.host",
+        "amazme_backend.contracts.identity",
+        "amazme_backend.contracts.ipc.host",
+        "amazme_backend.contracts.ipc.supervisor",
+        "amazme_backend.contracts.ipc.worker",
+        "amazme_backend.contracts.management",
+        "amazme_backend.contracts.mcp",
+        "amazme_backend.contracts.memories",
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.contracts.profiles",
+        "amazme_backend.contracts.projects",
+        "amazme_backend.contracts.remote",
+        "amazme_backend.contracts.resources",
+        "amazme_backend.contracts.schedules",
+        "amazme_backend.contracts.sessions",
+        "amazme_backend.contracts.settings",
+        "amazme_backend.contracts.sharing",
+        "amazme_backend.contracts.skills",
+        "amazme_backend.contracts.tools",
+        "amazme_backend.contracts.web",
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.diagnostics.faults",
+        "amazme_backend.execution.client",
+        "amazme_backend.execution.dependencies",
+        "amazme_backend.execution.mcp.gate",
+        "amazme_backend.execution.mcp.http",
+        "amazme_backend.execution.native",
+        "amazme_backend.execution.plugins.gate",
+        "amazme_backend.execution.processes",
+        "amazme_backend.execution.pty.gate",
+        "amazme_backend.execution.services",
+        "amazme_backend.execution.supervisor",
+        "amazme_backend.execution.web.client",
+        "amazme_backend.features.management.rules",
+        "amazme_backend.features.memories.policy",
+        "amazme_backend.features.resources.service",
+        "amazme_backend.host.queries",
+        "amazme_backend.host.service",
+        "amazme_backend.interfaces.cli",
+        "amazme_backend.interfaces.client_outbox",
+        "amazme_backend.interfaces.http.application",
+        "amazme_backend.interfaces.supervisor",
+        "amazme_backend.interfaces.tui",
+        "amazme_backend.interfaces.worker",
+        "amazme_backend.platform.identity",
+        "amazme_backend.platform.ipc",
+        "amazme_backend.platform.private_files",
+        "amazme_backend.platform.resources",
+        "amazme_backend.profiles.configuration",
+        "amazme_backend.profiles.layout",
+        "amazme_backend.profiles.profile",
+        "amazme_backend.sessions.domain",
+        "amazme_backend.sessions.service",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model",
+        "amazme_backend.workspaces.paths"
+      ]
+    },
+    "diagnostics": {
+      "prefixes": [
+        "amazme_backend.diagnostics"
+      ],
+      "public": [
+        "amazme_backend.diagnostics.faults"
+      ],
+      "imports": [
+        "amazme_backend.platform.private_files",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    },
+    "plugin_api": {
+      "modules": [
+        "amazme_backend.plugin_api"
+      ],
+      "prefixes": [],
+      "public": [
+        "amazme_backend.plugin_api"
+      ],
+      "imports": [
+        "amazme_backend.contracts.models",
+        "amazme_backend.contracts.plugins",
+        "amazme_backend.shared.errors",
+        "amazme_backend.shared.model"
+      ]
+    }
+  },
+  "pure_closures": [
+    {
+      "name": "contracts",
+      "roots": {
+        "prefixes": [
+          "amazme_backend.contracts"
+        ]
+      },
+      "allowed": {
+        "modules": [
+          "amazme_backend"
+        ],
+        "prefixes": [
+          "amazme_backend.shared",
+          "amazme_backend.contracts"
+        ]
+      },
+      "forbidden_external": [
+        "sqlite3",
+        "subprocess",
+        "multiprocessing",
+        "socket",
+        "httpx",
+        "fastapi",
+        "uvicorn",
+        "websockets",
+        "openai",
+        "psutil",
+        "mcp"
+      ],
+      "forbid_io": true
+    },
+    {
+      "name": "ai-types",
+      "roots": {
+        "modules": [
+          "amazme_backend.ai.types"
+        ]
+      },
+      "allowed": {
+        "modules": [
+          "amazme_backend",
+          "amazme_backend.ai"
+        ],
+        "prefixes": [
+          "amazme_backend.shared",
+          "amazme_backend.contracts",
+          "amazme_backend.ai.types"
+        ]
+      },
+      "forbidden_external": [
+        "sqlite3",
+        "subprocess",
+        "multiprocessing",
+        "socket",
+        "httpx",
+        "fastapi",
+        "uvicorn",
+        "websockets",
+        "openai",
+        "psutil",
+        "mcp"
+      ],
+      "forbid_io": true
+    },
+    {
+      "name": "session-decisions",
+      "roots": {
+        "modules": [
+          "amazme_backend.sessions.types",
+          "amazme_backend.sessions.domain"
+        ],
+        "prefixes": [
+          "amazme_backend.sessions.policy"
+        ]
+      },
+      "allowed": {
+        "modules": [
+          "amazme_backend",
+          "amazme_backend.sessions",
+          "amazme_backend.ai",
+          "amazme_backend.ai.types"
+        ],
+        "prefixes": [
+          "amazme_backend.shared",
+          "amazme_backend.contracts",
+          "amazme_backend.sessions.types",
+          "amazme_backend.sessions.domain",
+          "amazme_backend.sessions.policy"
+        ]
+      },
+      "forbidden_external": [
+        "sqlite3",
+        "subprocess",
+        "multiprocessing",
+        "socket",
+        "httpx",
+        "fastapi",
+        "uvicorn",
+        "websockets",
+        "openai",
+        "psutil",
+        "mcp"
+      ],
+      "forbid_io": true
+    },
+    {
+      "name": "sdk",
+      "roots": {
+        "prefixes": [
+          "amazme_backend.sdk"
+        ]
+      },
+      "allowed": {
+        "modules": [
+          "amazme_backend"
+        ],
+        "prefixes": [
+          "amazme_backend.shared",
+          "amazme_backend.contracts",
+          "amazme_backend.sdk"
+        ]
+      },
+      "forbidden_external": [
+        "sqlite3",
+        "subprocess",
+        "multiprocessing",
+        "fastapi",
+        "uvicorn",
+        "openai",
+        "psutil",
+        "mcp"
+      ]
+    },
+    {
+      "name": "plugin-api",
+      "roots": {
+        "modules": [
+          "amazme_backend.plugin_api"
+        ]
+      },
+      "allowed": {
+        "modules": [
+          "amazme_backend"
+        ],
+        "prefixes": [
+          "amazme_backend.shared",
+          "amazme_backend.contracts",
+          "amazme_backend.plugin_api"
+        ]
+      },
+      "forbidden_external": [
+        "sqlite3",
+        "subprocess",
+        "multiprocessing",
+        "socket",
+        "httpx",
+        "fastapi",
+        "uvicorn",
+        "websockets",
+        "openai",
+        "psutil",
+        "mcp"
+      ]
+    }
+  ],
+  "process_rules": {
+    "spawn_apis": [
+      "subprocess.Popen",
+      "subprocess.run",
+      "subprocess.call",
+      "subprocess.check_call",
+      "subprocess.check_output",
+      "asyncio.create_subprocess_exec",
+      "asyncio.create_subprocess_shell",
+      "asyncio.subprocess.create_subprocess_exec",
+      "asyncio.subprocess.create_subprocess_shell",
+      "os.system",
+      "os.popen",
+      "pty.spawn",
+      "multiprocessing.Process",
+      "multiprocessing.Pool",
+      "concurrent.futures.ProcessPoolExecutor"
+    ],
+    "reexec_apis": [
+      "os.fork",
+      "os.forkpty",
+      "pty.fork",
+      "os.execv",
+      "os.execve",
+      "os.execl",
+      "os.execle",
+      "os.execlp",
+      "os.execlpe",
+      "os.execvp",
+      "os.execvpe",
+      "os.posix_spawn",
+      "os.posix_spawnp"
+    ],
+    "lifecycle_apis": [
+      "os.kill",
+      "os.killpg",
+      "signal.pthread_kill",
+      "psutil.wait_procs"
+    ],
+    "lifecycle_methods": [
+      "kill",
+      "terminate",
+      "send_signal"
+    ],
+    "forbidden_values": [
+      "fcntl.LOCK_UN"
+    ],
+    "owners": {
+      "amazme_backend.host.lifecycle": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.supervisor": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.native": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.services": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.codemode.runtime": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.pty.gate": [
+        "lifecycle"
+      ],
+      "amazme_backend.execution.mcp.gate": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.remote.ssh": [
+        "spawn"
+      ],
+      "amazme_backend.execution.remote.client": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.remote.daemon": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.execution.computer.driver": [
+        "spawn",
+        "lifecycle"
+      ],
+      "amazme_backend.bootstrap.transient": [
+        "spawn",
+        "lifecycle"
+      ]
+    },
+    "scoped_apis": [
+      {
+        "module": "amazme_backend.execution.pty.gate",
+        "scope": "_child",
+        "apis": [
+          "os.execve"
+        ]
+      },
+      {
+        "module": "amazme_backend.execution.pty.gate",
+        "scope": "main.handle",
+        "apis": [
+          "os.fork"
+        ]
+      }
+    ],
+    "lifetime_guards": [
+      {
+        "module": "amazme_backend.execution.processes",
+        "scope": "retain_inherited",
+        "parameter": "fd",
+        "forbidden_apis": [
+          "os.close",
+          "os.fdopen",
+          "os.dup2",
+          "os.closerange",
+          "os.close_range",
+          "builtins.open"
+        ],
+        "forbidden_methods": [
+          "close"
+        ]
+      }
+    ]
+  },
+  "dynamic_loaders": [
+    {
+      "module": "amazme_backend.execution.plugins.gate",
+      "scope": "run",
+      "kind": "external-plugin",
+      "apis": [
+        "importlib.util.spec_from_file_location",
+        "importlib.util.module_from_spec",
+        "builtins.compile",
+        "builtins.exec"
+      ],
+      "reason": "Execute the pinned bytes after source digest and context validation; this grants no internal import exemption."
+    }
+  ],
+  "standalone_scripts": [
+    "amazme_backend.execution.remote.daemon"
+  ],
+  "embedded_sources": [
+    {
+      "module": "amazme_backend.execution.remote.client",
+      "symbol": "_DEPLOY",
+      "stdlib_only": true
+    }
+  ]
+}

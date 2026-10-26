@@ -16,7 +16,7 @@ from typing import cast
 
 from amazme_backend.contracts import Attachment, BackendError, Session, TerminalView
 from amazme_backend.sdk import Client
-from amazme_backend.tui import _handle, _PtyPending
+from amazme_backend.interfaces.tui import _handle, _PtyPending
 
 TOKEN_FILE = "web.token"
 MARKER = re.compile(r"会话:([a-f0-9]{32}) 绑定:([a-f0-9]{32}) 工作区:primary")

@@ -665,6 +665,16 @@ export async function checkEntryContracts(repoRoot) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
 	const failures = [...checkSourceContracts(process.cwd()), ...checkTempDirAllowlistFiles(process.cwd())];
+	try {
+		const output = execFileSync(
+			join(process.cwd(), "backend/.venv/bin/python"),
+			[join(process.cwd(), "backend/tools/check_architecture.py")],
+			{ cwd: process.cwd(), encoding: "utf8", maxBuffer: 16 * 1024 * 1024 },
+		);
+		console.log(output.trim());
+	} catch (error) {
+		failures.push(error.stdout?.trim() || error.message);
+	}
 	const entries = await checkEntryContracts(process.cwd());
 	for (const measurement of entries.measurements) console.log(measurement);
 	for (const failure of [...failures, ...entries.failures]) console.error(failure);

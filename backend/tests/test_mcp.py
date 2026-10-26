@@ -10,10 +10,9 @@ import tempfile
 import time
 from pathlib import Path
 
-
-from amazme_backend.common import child_command
-from amazme_backend.mcp_session import McpClient
-from amazme_backend.processes import ProcessReservation
+from amazme_backend.execution.mcp.client import McpClient
+from amazme_backend.execution.processes import ProcessReservation
+from amazme_backend.platform.ipc import child_command
 
 ECHO = """
 import json, sys

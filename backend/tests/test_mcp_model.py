@@ -6,7 +6,10 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.agent.model import model_request, stream
+from amazme_backend.ai.providers.completions import tool_parameters
+from amazme_backend.ai.types import Auth
+from amazme_backend.bootstrap.supervisor import create_supervisor
 from amazme_backend.contracts import (
     ApprovalDecision,
     BackendError,
@@ -16,24 +19,28 @@ from amazme_backend.contracts import (
     McpDecision,
     McpSession,
     McpTool,
+    ProviderConfig,
     Submit,
 )
-from amazme_backend.mcp_session import McpOffer, catalog_payload, mcp_alias, mcp_digest, schema_digest
-from amazme_backend.providers import Completion, stream, tool_definitions
-from amazme_backend.session_domain import (
+from amazme_backend.contracts.mcp import McpOffer, catalog_payload, mcp_alias, schema_digest
+from amazme_backend.execution.mcp.client import mcp_digest
+from amazme_backend.execution.mcp.operations import (
+    MCP_IDENTITY_LIMIT,
+    MCP_TERMINAL_WINDOW,
+    MCP_UNRESOLVED_LIMIT,
+)
+from amazme_backend.execution.supervisor import Supervisor
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.sessions.types import (
+    Completion,
     Failed,
     McpRetrieval,
     McpReturned,
     ModelInvocation,
     ModelReturned,
     Park,
-)
-from amazme_backend.storage import SessionStore
-from amazme_backend.supervisor import (
-    MCP_IDENTITY_LIMIT,
-    MCP_TERMINAL_WINDOW,
-    MCP_UNRESOLVED_LIMIT,
-    Supervisor,
 )
 
 FENCE = HostFence(host_epoch=1, build_id="test-build")
@@ -51,8 +58,8 @@ def offer(name: str = "echo", schema: dict | None = None) -> McpOffer:
                     name=name, description="回声", input_schema=body, schema_digest=schema_digest(body))
 
 
-async def opened(tmp_path: Path) -> SessionStore:
-    store = SessionStore(tmp_path / "session.sqlite", SESSION, approval_policy="mutations", instance="worker")
+async def opened(tmp_path: Path, *, approval_policy: str = "mutations") -> SessionStore:
+    store = SessionStore(tmp_path / "session.sqlite", SESSION, approval_policy=approval_policy, instance="worker")
     await store.initialize()
     await store.fence(FENCE)
     return store
@@ -67,7 +74,7 @@ async def next_action(store: SessionStore):
 
 
 async def completion_of(action: ModelInvocation) -> Completion:
-    found = [item async for item in stream(action.config, action.messages) if isinstance(item, Completion)]
+    found = [item async for item in stream(action.config, action.messages, auth=Auth()) if isinstance(item, Completion)]
     assert len(found) == 1
     return found[0]
 
@@ -84,7 +91,8 @@ async def propose(store: SessionStore, chosen: McpOffer, arguments: dict | None 
 
 def test_provider_catalog_keeps_json_types_and_hides_approval() -> None:
     chosen = offer()
-    tools = tool_definitions([chosen])
+    request = model_request(ProviderConfig(provider="deepseek"), [], [chosen], auth=Auth())
+    tools = tool_parameters(request)
     names = [tool["function"]["name"] for tool in tools]
     assert chosen.alias in names
     assert not any("approval" in name or "decision" in name for name in names)
@@ -115,7 +123,7 @@ async def test_approval_binds_identity_and_denial_never_reaches_a_call(tmp_path:
         receipt = await store.get("root")
         assert receipt.status == "failed" and receipt.error == "approval_denied"
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_snapshot_cannot_be_replaced_after_it_is_saved(tmp_path: Path) -> None:
@@ -132,12 +140,11 @@ async def test_snapshot_cannot_be_replaced_after_it_is_saved(tmp_path: Path) -> 
         with pytest.raises(BackendError, match="mcp_catalog_conflict"):
             await store.bind_model_tools(action.step_id, action.generation, catalog_payload([offer(name="other")]))
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_result_returns_to_the_next_model_turn_and_unknown_is_not_resent(tmp_path: Path) -> None:
-    store = await opened(tmp_path)
-    store.approval_policy = "auto"
+    store = await opened(tmp_path, approval_policy="auto")
     chosen = offer()
     try:
         action = await propose(store, chosen)
@@ -155,12 +162,11 @@ async def test_result_returns_to_the_next_model_turn_and_unknown_is_not_resent(t
         await next_action(store)
         assert (await store.get("root")).status == "succeeded"
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_late_result_stays_visible_when_the_request_was_cancelled(tmp_path: Path) -> None:
-    store = await opened(tmp_path)
-    store.approval_policy = "auto"
+    store = await opened(tmp_path, approval_policy="auto")
     chosen = offer()
     try:
         action = await propose(store, chosen)
@@ -178,12 +184,11 @@ async def test_late_result_stays_visible_when_the_request_was_cancelled(tmp_path
         assert "late" in tool.content
         assert not isinstance(await next_action(store), ModelInvocation)
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_unknown_cancel_and_interrupt_keep_the_same_call(tmp_path: Path) -> None:
-    store = await opened(tmp_path)
-    store.approval_policy = "auto"
+    store = await opened(tmp_path, approval_policy="auto")
     try:
         first = await propose(store, offer())
         assert isinstance(first, McpRetrieval)
@@ -224,12 +229,11 @@ async def test_unknown_cancel_and_interrupt_keep_the_same_call(tmp_path: Path) -
                 McpRetrieval(live.step_id, live.request_id, live.generation + 1, live.call), "done", result="no"))
         assert (await store.get("again")).status == "running"
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_alias_outside_the_snapshot_is_rejected(tmp_path: Path) -> None:
-    store = await opened(tmp_path)
-    store.approval_policy = "auto"
+    store = await opened(tmp_path, approval_policy="auto")
     try:
         missing = offer(name="other")
         prompt = "/mcp " + json.dumps({"alias": missing.alias, "arguments": {"text": "no"}}, ensure_ascii=False)
@@ -242,7 +246,7 @@ async def test_alias_outside_the_snapshot_is_rejected(tmp_path: Path) -> None:
         receipt = await store.get("root")
         assert receipt.status == "failed" and receipt.error == "mcp_tool_unknown"
     finally:
-        await store.db.close()
+        await store.close()
 
 
 class FakeGate:
@@ -279,7 +283,7 @@ async def supervisor(tmp_path: Path) -> Supervisor:
     with sqlite3.connect(tmp_path / "host.sqlite") as db:
         db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0)")
         db.executemany("INSERT INTO sessions(id,workspace) VALUES(?,'primary')", [(SESSION,), (OTHER,)])
-    owner = Supervisor(Profile(tmp_path), "mcp-supervisor")
+    owner = create_supervisor(Profile(tmp_path), "mcp-supervisor")
     await owner.initialize()
     if owner.monitor_task:
         owner.monitor_task.cancel()
@@ -311,11 +315,11 @@ async def test_schema_change_conflicts_without_a_send_and_one_decision_sends_onc
             "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase,schema_digest,origin) "
             "VALUES(?,?,?,?,?,'waiting_approval',?,'model')",
             ("d" * 32, SERVER, "echo", json.dumps({"text": "hi"}), digest, pinned)), write=True)
-        owner.mcp_clients[SERVER] = gate  # type: ignore[assignment]
+        owner.mcp.clients[SERVER] = gate  # type: ignore[assignment]
         decision = McpDecision(decision_id="e" * 32, approve=True, digest=digest)
-        refused = await owner.decide_mcp_call(SESSION, SERVER, "d" * 32, decision, fence(owner))
+        refused = await owner.mcp.decide_call(SESSION, SERVER, "d" * 32, decision, fence(owner))
         assert refused.phase == "conflict" and gate.calls == []
-        again = await owner.decide_mcp_call(SESSION, SERVER, "d" * 32, decision, fence(owner))
+        again = await owner.mcp.decide_call(SESSION, SERVER, "d" * 32, decision, fence(owner))
         assert again.phase == "conflict" and gate.calls == []
 
         matched = schema_digest({"type": "object", "properties": {"text": {"type": "integer"}}})
@@ -323,9 +327,9 @@ async def test_schema_change_conflicts_without_a_send_and_one_decision_sends_onc
             "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase,schema_digest,origin) "
             "VALUES(?,?,?,?,?,'waiting_approval',?,'model')",
             ("f" * 32, SERVER, "echo", json.dumps({"text": "hi"}), digest, matched)), write=True)
-        sent = await owner.decide_mcp_call(SESSION, SERVER, "f" * 32, decision, fence(owner))
+        sent = await owner.mcp.decide_call(SESSION, SERVER, "f" * 32, decision, fence(owner))
         assert sent.phase == "running" and gate.calls == [("f" * 32, "echo", {"text": "hi"})]
-        repeated = await owner.decide_mcp_call(SESSION, SERVER, "f" * 32, decision, fence(owner))
+        repeated = await owner.mcp.decide_call(SESSION, SERVER, "f" * 32, decision, fence(owner))
         assert repeated.phase == "running" and len(gate.calls) == 1
     finally:
         await owner.close()
@@ -333,29 +337,29 @@ async def test_schema_change_conflicts_without_a_send_and_one_decision_sends_onc
 
 async def test_history_does_not_hide_unresolved_calls_or_get_deleted(tmp_path: Path, monkeypatch) -> None:
     owner = await supervisor(tmp_path)
-    monkeypatch.setattr("amazme_backend.supervisor.MCP_TERMINAL_WINDOW", 1)
-    monkeypatch.setattr("amazme_backend.supervisor.MCP_IDENTITY_LIMIT", 100)
-    monkeypatch.setattr("amazme_backend.supervisor.MCP_UNRESOLVED_LIMIT", 1)
+    monkeypatch.setattr("amazme_backend.execution.mcp.operations.MCP_TERMINAL_WINDOW", 1)
+    monkeypatch.setattr("amazme_backend.execution.mcp.operations.MCP_IDENTITY_LIMIT", 100)
+    monkeypatch.setattr("amazme_backend.execution.mcp.operations.MCP_UNRESOLVED_LIMIT", 1)
     try:
         await ready_server(owner, SERVER, SESSION, SCHEMA)
         await owner.db.call(lambda db: db.executemany(
             "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase) VALUES(?,?,?,?,?,?)",
             [(f"{index:032x}", SERVER, "echo", "{}", "ab" * 32, "unknown" if index == 0 else "done")
              for index in range(3)]), write=True)
-        listed = await owner.mcp_state(McpSession(host_epoch=owner.host_epoch, build_id=owner.build, session_id=SESSION))
+        listed = await owner.mcp.state(McpSession(host_epoch=owner.host_epoch, build_id=owner.build, session_id=SESSION))
         identifiers = {call.call_id for call in listed.calls}
         assert f"{0:032x}" in identifiers
         assert len([call for call in listed.calls if call.phase == "done"]) == 1
         kept = await owner.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_calls").fetchone()[0])
         with pytest.raises(BackendError, match="mcp_call_capacity"):
-            await owner.request_mcp_call(SESSION, SERVER, McpCallRequest(
+            await owner.mcp.request_call(SESSION, SERVER, McpCallRequest(
                 call_id="9" * 32, name="echo", arguments={"text": "more"}), fence(owner))
         assert await owner.db.call(lambda db: db.execute("SELECT count(*) FROM mcp_calls").fetchone()[0]) == kept
         other = FakeGate()
         await ready_server(owner, OTHER, "d" * 32, SCHEMA)
-        owner.mcp_clients[OTHER] = other  # type: ignore[assignment]
+        owner.mcp.clients[OTHER] = other  # type: ignore[assignment]
         with pytest.raises(BackendError, match="mcp_call_not_found"):
-            await owner.cancel_mcp_call(McpCallRef(
+            await owner.mcp.cancel_call(McpCallRef(
                 **fence(owner).model_dump(), session_id=SESSION, server_id=OTHER, call_id=f"{0:032x}"))
         assert other.service_cancelled is False and other.cancelled == []
     finally:
@@ -372,9 +376,9 @@ async def test_cancel_one_call_leaves_another_session_service_running(tmp_path: 
         await owner.db.call(lambda db: db.execute(
             "INSERT INTO mcp_calls(id,server,name,arguments,digest,phase,origin) VALUES(?,?,?,?,?,'running','model')",
             ("1" * 32, SERVER, "echo", "{}", digest)), write=True)
-        owner.mcp_clients[SERVER] = first  # type: ignore[assignment]
-        owner.mcp_clients[OTHER] = second  # type: ignore[assignment]
-        cancelled = await owner.cancel_mcp_call(McpCallRef(
+        owner.mcp.clients[SERVER] = first  # type: ignore[assignment]
+        owner.mcp.clients[OTHER] = second  # type: ignore[assignment]
+        cancelled = await owner.mcp.cancel_call(McpCallRef(
             **fence(owner).model_dump(), session_id=SESSION, server_id=SERVER, call_id="1" * 32))
         assert cancelled.phase == "unknown"
         assert first.cancelled == ["1" * 32] and first.service_cancelled is False and first.calls == []

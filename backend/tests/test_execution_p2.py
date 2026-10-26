@@ -12,7 +12,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from amazme_backend.common import Profile, lock, private_write
+from amazme_backend.bootstrap.supervisor import create_supervisor
 from amazme_backend.contracts import (
     BackendError,
     Cleanup,
@@ -32,8 +32,11 @@ from amazme_backend.contracts import (
     WorkerRequest,
     WorkerSpec,
 )
-from amazme_backend.processes import ProcessReservation, exited
-from amazme_backend.supervisor import ExecutionDB, Supervisor, retirement_proof
+from amazme_backend.execution.processes import ProcessReservation, exited
+from amazme_backend.execution.retirement import retirement_proof
+from amazme_backend.execution.store import ExecutionDB
+from amazme_backend.platform.private_files import lock, private_write
+from amazme_backend.profiles.profile import Profile
 
 
 @pytest.fixture
@@ -41,13 +44,13 @@ def profile(tmp_path, monkeypatch):
     private_write(tmp_path / "config.json", json.dumps({"format": 2, "profile_id": "native-test",
         "workspace": str(tmp_path), "resources": "unused", "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "test-token")
-    monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
+    monkeypatch.setattr("amazme_backend.execution.supervisor.build_id", lambda: "build-one")
     return Profile(tmp_path)
 
 
 @pytest_asyncio.fixture
 async def owner(profile):
-    owner = Supervisor(profile, "supervisor-one")
+    owner = create_supervisor(profile, "supervisor-one")
     await owner.initialize()
     owner.monitor_task.cancel()
     await asyncio.gather(owner.monitor_task, return_exceptions=True)
@@ -55,7 +58,7 @@ async def owner(profile):
     try:
         yield owner
     finally:
-        await owner._cancel_jobs()
+        await owner.invocations.cancel_all()
         for reservation in owner.reservations:
             reservation.close()
         await owner.close()
@@ -111,7 +114,7 @@ async def test_resolution_cannot_waive_cleanup_or_change_scope(owner):
             raise RuntimeError()
     owner.faults.hit = crash
     with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
+        await owner.invocations.run(value)
     resolution = EffectResolution(resolution_id="r", call_id=value.call_id, outcome="not_applied", evidence="checked")
     with pytest.raises(BackendError, match="execution_cleanup_pending"):
         await owner.resolve_effect(ResolveEffect(**request(info).model_dump(), resolution=resolution))
@@ -156,25 +159,25 @@ async def test_process_exit_and_writer_release_are_both_required(owner):
 async def test_unknown_old_worker_never_overwritten(owner, monkeypatch):
     info, _ = await worker(owner)
     info.state = "unknown"
-    await owner._save_worker(info)
+    await owner.save_worker(info)
     spawn = AsyncMock()
-    monkeypatch.setattr("amazme_backend.supervisor.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
     with pytest.raises(BackendError, match="worker_retirement_pending"):
         await owner.ensure_worker(WorkerSpec(session_id=info.session_id, build_id=owner.build, host_epoch=0))
-    assert [w.worker_id for w in await owner._workers()] == [info.worker_id]
+    assert [w.worker_id for w in await owner.workers()] == [info.worker_id]
     spawn.assert_not_called()
 
 
 async def test_spawn_registration_precedes_native_spawn_and_parent_only_closes_copy(owner, monkeypatch):
     child_fds = []
     async def spawn(*args, **kwargs):
-        workers = await owner._workers()
+        workers = await owner.workers()
         assert len(workers) == 1 and workers[0].pid == 0
         assert workers[0].process_lease is not None and not exited(workers[0].process_lease)
         assert "--lifetime-fd" in args and "--frozen" in args
         child_fds.append(os.dup(kwargs["pass_fds"][0]))
         return SimpleNamespace(pid=1234, returncode=None, wait=AsyncMock())
-    monkeypatch.setattr("amazme_backend.supervisor.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
     try:
         value = WorkerSpec(session_id="a" * 32, build_id=owner.build, host_epoch=0, frozen=True)
         workers = await asyncio.gather(*(owner.ensure_worker(value) for _ in range(8)))
@@ -196,7 +199,7 @@ async def test_takeover_requires_every_live_worker_ack(owner):
             raise httpx.ConnectError("paused")
         return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id, instance_id=info.worker_id,
                         pid=1, role="worker", host_epoch=7, fingerprint=owner.build)
-    owner._peer_identity = peer
+    owner.peer_identity = peer
     fence = HostFence(build_id=owner.build, host_epoch=7)
     with pytest.raises(BackendError) as error:
         await owner.takeover(fence)
@@ -216,17 +219,17 @@ async def test_freeze_blocks_a_new_shell_and_returns_the_finished_one(owner):
                         instance_id=worker.worker_id, pid=123, role="worker", host_epoch=owner.host_epoch,
                         fingerprint=owner.build, state="ready")
 
-    owner._peer_identity = ready
+    owner.peer_identity = ready
     done = await call(owner, info, identity="done")
-    assert (await owner.run_tool(done)).stdout == "ok\n"
+    assert (await owner.invocations.run(done)).stdout == "ok\n"
     epoch = await owner.open_epoch(request(info))
     await owner.freeze(FreezeSupervisor(build_id=owner.build, host_epoch=owner.host_epoch, freeze_id="hold"))
     blocked = RunTool(**epoch.model_dump(), call_id="during", request_id="request",
                       command="printf z > frozen-shell.txt", effect="write")
     with pytest.raises(BackendError, match="supervisor_frozen"):
-        await owner.run_tool(blocked)
+        await owner.invocations.run(blocked)
     assert not (owner.profile.path / "frozen-shell.txt").exists()
-    assert (await owner.run_tool(done)).stdout == "ok\n"
+    assert (await owner.invocations.run(done)).stdout == "ok\n"
 
 
 async def test_freeze_returns_finished_code_and_plugin_calls(owner):
@@ -249,14 +252,14 @@ async def test_freeze_returns_finished_code_and_plugin_calls(owner):
         "INSERT INTO plugin_calls(id,plugin,session,text,phase,result) VALUES(?,?,?,?,'done',?)",
         (call_id, plugin_id, session, request.intent_payload(),result.model_dump_json())), write=True)
     await owner.freeze(FreezeSupervisor(**fence, freeze_id="hold"))
-    code = await owner.run_code(OpenCode(**fence, session_id=session, run_id=run_id, source="1+2"))
+    code = await owner.code.run(OpenCode(**fence, session_id=session, run_id=run_id, source="1+2"))
     assert code.phase == "success" and code.value == "3"
-    plugin = await owner.call_plugin(request)
+    plugin = await owner.plugins.call(request)
     assert plugin.phase == "done" and plugin.result == result
     with pytest.raises(BackendError, match="supervisor_frozen"):
-        await owner.run_code(OpenCode(**fence, session_id=session, run_id="e" * 32, source="1"))
+        await owner.code.run(OpenCode(**fence, session_id=session, run_id="e" * 32, source="1"))
     with pytest.raises(BackendError, match="supervisor_frozen"):
-        await owner.call_plugin(PluginCallEnvelope(
+        await owner.plugins.call(PluginCallEnvelope(
             **fence, session_id=session, plugin_id=plugin_id, call_id="f" * 32, name="hello", arguments={"name":"new"}))
     assert await owner.db.call(lambda db: db.execute("SELECT count(*) FROM code_runs").fetchone()[0]) == 1
     assert await owner.db.call(lambda db: db.execute("SELECT count(*) FROM plugin_calls").fetchone()[0]) == 1
@@ -268,7 +271,7 @@ async def test_frozen_validation_cannot_execute_tools_and_revision_is_checked(ow
     info, reservation = await worker(owner, purpose="validation")
     value = await call(owner, info)
     with pytest.raises(BackendError, match="validation_tools_forbidden"):
-        await owner.run_tool(value)
+        await owner.invocations.run(value)
     with pytest.raises(BackendError, match="registry_revision_mismatch"):
         await owner.thaw(freeze.model_copy(update={"expected_revision": frozen.registry_revision}))
     reservation.close()
@@ -281,13 +284,13 @@ async def test_frozen_validation_cannot_execute_tools_and_revision_is_checked(ow
 async def test_historical_lookup_by_replacement_never_replays(owner):
     info, reservation = await worker(owner)
     value = await call(owner, info)
-    result = await owner.run_tool(value)
+    result = await owner.invocations.run(value)
     reservation.close()
-    await owner._retire_worker(info, "recovery")
+    await owner.retire_worker(info, "recovery")
     replacement, _ = await worker(owner)
-    observation = await owner.lookup_tool(ToolLookup(**request(replacement).model_dump(), call_id=value.call_id))
+    observation = await owner.invocations.lookup(ToolLookup(**request(replacement).model_dump(), call_id=value.call_id))
     assert observation.result == result and observation.resource_clean
-    assert len(await owner._workers()) == 2
+    assert len(await owner.workers()) == 2
 
 
 async def test_source_build_stop_uses_recorded_worker_build(owner):
@@ -300,8 +303,8 @@ async def test_source_build_stop_uses_recorded_worker_build(owner):
         return Identity(build_id=info.build_id, profile_id=owner.profile.config.profile_id,
                         instance_id=info.worker_id, pid=1, role="worker", host_epoch=owner.host_epoch,
                         fingerprint=info.build_id)
-    owner._peer_identity = peer
-    assert (await owner._retire_worker(info, "update")).state == "clean"
+    owner.peer_identity = peer
+    assert (await owner.retire_worker(info, "update")).state == "clean"
     assert received == [("/fence", "source-build"), ("/stop", "source-build")]
 
 
@@ -361,16 +364,16 @@ async def test_storage_ack_is_monotonic_and_inherited_on_replacement(owner, monk
     info, reservation = await worker(owner)
     await owner.heartbeat(request(info).model_copy(update={"storage_ready": True}))
     stale = info.model_copy(update={"state": "frozen"})
-    await owner._save_worker(stale)
-    assert (await owner._worker(info.worker_id)).storage_ready
+    await owner.save_worker(stale)
+    assert (await owner.worker(info.worker_id)).storage_ready
     reservation.close()
-    await owner._retire_worker(info, "recovery")
+    await owner.retire_worker(info, "recovery")
     child_fds = []
     async def spawn(*args, **kwargs):
         assert "--require-existing-store" in args
         child_fds.append(os.dup(kwargs["pass_fds"][0]))
         return SimpleNamespace(pid=99, returncode=None, wait=AsyncMock())
-    monkeypatch.setattr("amazme_backend.supervisor.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
     try:
         await owner.ensure_worker(WorkerSpec(build_id=owner.build, host_epoch=0, session_id=info.session_id))
     finally:
@@ -390,7 +393,7 @@ async def test_freeze_survives_restart_and_normal_shutdown_does_not_invent_updat
     await owner.freeze(frozen)
     await owner.shutdown(HostFence(build_id=owner.build, host_epoch=0))
     await owner.db.close()
-    successor = Supervisor(owner.profile, "supervisor-two", require_existing=True)
+    successor = create_supervisor(owner.profile, "supervisor-two", require_existing=True)
     try:
         await successor.initialize()
         assert successor.freeze_id == "update"
@@ -407,7 +410,7 @@ async def test_freeze_survives_restart_and_normal_shutdown_does_not_invent_updat
 
 async def test_readiness_cannot_hide_disconnected_registered_worker(owner):
     info, _ = await worker(owner)
-    owner._peer_identity = no_peer
+    owner.peer_identity = no_peer
     health = await owner.health()
     assert health.workers[0].worker_id == info.worker_id
     assert health.workers[0].state == "unknown"
@@ -424,7 +427,7 @@ async def test_validation_spawn_heartbeat_empty_epoch_and_stop_during_freeze(own
         assert "--validation" in args and "--frozen" in args
         descriptors.append(os.dup(kwargs["pass_fds"][0]))
         return SimpleNamespace(pid=123, returncode=None, wait=AsyncMock())
-    monkeypatch.setattr("amazme_backend.supervisor.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
     try:
         spec = WorkerSpec(build_id=owner.build, host_epoch=0, session_id="a" * 32, purpose="validation")
         info = await owner.ensure_worker(spec)
@@ -446,8 +449,8 @@ async def test_validation_spawn_heartbeat_empty_epoch_and_stop_during_freeze(own
 async def test_only_business_failure_consumes_automatic_restart_budget(owner, purpose, expected):
     info, reservation = await worker(owner, purpose=purpose)
     reservation.close()
-    assert (await owner._retire_worker(info, "recovery", failed=True)).state == "clean"
-    assert (await owner._retire_worker(info, "recovery", failed=True)).state == "clean"
+    assert (await owner.retire_worker(info, "recovery", failed=True)).state == "clean"
+    assert (await owner.retire_worker(info, "recovery", failed=True)).state == "clean"
     attempts = await owner.db.call(lambda db: db.execute("SELECT COALESCE(SUM(attempts),0) FROM budgets").fetchone()[0])
     assert attempts == expected
 
@@ -480,10 +483,10 @@ async def test_ensure_inspects_every_instance_even_after_a_ready_one(owner):
     first, _ = await worker(owner)
     second, _ = await worker(owner)
     second.state = "unknown"
-    await owner._save_worker(second)
+    await owner.save_worker(second)
     with pytest.raises(BackendError, match="worker_retirement_pending"):
         await owner.ensure_worker(WorkerSpec(build_id=owner.build, host_epoch=0, session_id=first.session_id))
-    assert len(await owner._workers()) == 2
+    assert len(await owner.workers()) == 2
 
 
 async def test_spawn_lost_pid_ack_keeps_inherited_lease_registered(owner, monkeypatch):
@@ -491,12 +494,12 @@ async def test_spawn_lost_pid_ack_keeps_inherited_lease_registered(owner, monkey
     async def spawn(*_args, **kwargs):
         child_fds.append(os.dup(kwargs["pass_fds"][0]))
         raise asyncio.CancelledError()
-    monkeypatch.setattr("amazme_backend.supervisor.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
     spec = WorkerSpec(build_id=owner.build, host_epoch=0, session_id="a" * 32)
     try:
         with pytest.raises(asyncio.CancelledError):
             await owner.ensure_worker(spec)
-        original = (await owner._workers())[0]
+        original = (await owner.workers())[0]
         assert original.pid == 0 and not exited(original.process_lease)
         assert (await owner.ensure_worker(spec)).worker_id == original.worker_id
         assert len(child_fds) == 1
@@ -508,7 +511,7 @@ async def test_spawn_lost_pid_ack_keeps_inherited_lease_registered(owner, monkey
 async def test_takeover_cannot_adopt_a_stopping_worker(owner):
     info, reservation = await worker(owner)
     info.state = "stopping"
-    await owner._save_worker(info)
+    await owner.save_worker(info)
     paths = []
     async def peer(current, _method, path, body):
         paths.append(path)
@@ -517,16 +520,16 @@ async def test_takeover_cannot_adopt_a_stopping_worker(owner):
         return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id,
                         instance_id=current.worker_id, pid=1, role="worker", host_epoch=body.host_epoch,
                         fingerprint=owner.build)
-    owner._peer_identity = peer
+    owner.peer_identity = peer
     assert (await owner.takeover(HostFence(build_id=owner.build, host_epoch=8))).host_epoch == 8
     assert paths == ["/fence", "/stop"]
-    assert (await owner._worker(info.worker_id)).state == "stopped"
+    assert (await owner.worker(info.worker_id)).state == "stopped"
 
 
 async def test_thaw_ack_is_idempotent_with_historical_registry_and_restart(owner):
     info, reservation = await worker(owner, build="old-build")
     reservation.close()
-    await owner._retire_worker(info, "update")
+    await owner.retire_worker(info, "update")
     freeze = FreezeSupervisor(build_id=owner.build, host_epoch=0, freeze_id="update")
     health = await owner.freeze(freeze)
     release = freeze.model_copy(update={"expected_revision": health.registry_revision})
@@ -534,7 +537,7 @@ async def test_thaw_ack_is_idempotent_with_historical_registry_and_restart(owner
     assert not (await owner.thaw(release)).freeze_id
     assert len((await owner.health()).workers) == 1
     await owner.db.close()
-    successor = Supervisor(owner.profile, "supervisor-two")
+    successor = create_supervisor(owner.profile, "supervisor-two")
     try:
         await successor.initialize()
         assert not (await successor.thaw(release)).freeze_id
@@ -551,7 +554,7 @@ async def test_thaw_refuses_even_frozen_live_business_worker(owner):
     async def peer(*_args):
         return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id,
                         instance_id=info.worker_id, pid=1, role="worker", state="frozen", fingerprint=owner.build)
-    owner._peer_identity = peer
+    owner.peer_identity = peer
     freeze = FreezeSupervisor(build_id=owner.build, host_epoch=0, freeze_id="update")
     await owner.freeze(freeze)
     with pytest.raises(BackendError, match="update_health_unproven"):
@@ -587,7 +590,7 @@ async def test_lost_worker_stop_ack_still_requires_lease_exit(owner):
         return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id,
                         instance_id=current.worker_id, pid=1, role="worker", host_epoch=body.host_epoch,
                         fingerprint=owner.build)
-    owner._peer_identity = peer
+    owner.peer_identity = peer
     stop = StopWorker(build_id=owner.build, host_epoch=0, session_id=info.session_id, worker_id=info.worker_id)
     result = await owner.stop_worker(stop)
     assert result.state == "clean" and exited(info.process_lease)
@@ -613,9 +616,9 @@ async def test_birth_reservations_count_toward_capacity(owner, monkeypatch):
     for i in range(8):
         info, _ = await worker(owner, f"{i:032x}")
         info.state = "starting"
-        await owner._save_worker(info)
+        await owner.save_worker(info)
     spawn = AsyncMock()
-    monkeypatch.setattr("amazme_backend.supervisor.asyncio.create_subprocess_exec", spawn)
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
     with pytest.raises(BackendError, match="worker_capacity"):
         await owner.ensure_worker(WorkerSpec(build_id=owner.build, host_epoch=0, session_id="f" * 32))
     spawn.assert_not_called()
@@ -624,7 +627,7 @@ async def test_birth_reservations_count_toward_capacity(owner, monkeypatch):
 async def test_full_health_remains_readable_after_write_storage_failure(owner):
     info, _ = await worker(owner)
     owner.db.failed = "SQLITE_FULL"
-    owner._peer_identity = no_peer
+    owner.peer_identity = no_peer
     health = await owner.health()
     assert "SQLITE_FULL" in health.blocked
     assert health.workers[0].worker_id == info.worker_id and health.workers[0].state == "unknown"
@@ -634,21 +637,21 @@ async def test_full_health_remains_readable_after_write_storage_failure(owner):
 async def test_takeover_ack_does_not_promote_recovering_worker_to_ready(owner):
     info, _ = await worker(owner)
     info.state = "starting"
-    await owner._save_worker(info)
+    await owner.save_worker(info)
     async def peer(*_args):
         return Identity(build_id=owner.build, profile_id=owner.profile.config.profile_id,
                         instance_id=info.worker_id, pid=1, role="worker", state="recovering",
                         host_epoch=5, fingerprint=owner.build)
-    owner._peer_identity = peer
+    owner.peer_identity = peer
     await owner.takeover(HostFence(build_id=owner.build, host_epoch=5))
-    assert (await owner._worker(info.worker_id)).state == "starting"
+    assert (await owner.worker(info.worker_id)).state == "starting"
 
 
 async def test_full_health_keeps_mismatched_registered_peer_visible(owner):
     info, _ = await worker(owner)
     async def mismatch(*_args):
         raise BackendError("worker_identity_mismatch")
-    owner._peer_identity = mismatch
+    owner.peer_identity = mismatch
     health = await owner.health()
     assert health.workers[0].worker_id == info.worker_id and health.workers[0].state == "unknown"
     assert health.session_errors[info.session_id] == ["worker_retirement_pending:" + info.worker_id]
@@ -663,10 +666,10 @@ async def test_validation_worker_cannot_resolve_business_effects(owner):
             raise RuntimeError("outcome lost")
     owner.faults.hit = lost
     with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
+        await owner.invocations.run(value)
     owner.faults.hit = AsyncMock()
     reservation.close()
-    await owner._retire_worker(info, "update")
+    await owner.retire_worker(info, "update")
     validator, _ = await worker(owner, purpose="validation")
     resolution = EffectResolution(resolution_id="validation-resolution", call_id=value.call_id,
                                   outcome="applied", evidence="not authorized business work")
@@ -690,8 +693,8 @@ async def test_shutdown_releases_control_before_waiting_for_a_worker(owner, monk
             owner.reservations.remove(reservation)
             reservation.close()
 
-    monkeypatch.setattr(owner, "_peer_identity", peer)
-    monkeypatch.setattr("amazme_backend.supervisor.wait_exited", wait)
+    monkeypatch.setattr(owner, "peer_identity", peer)
+    monkeypatch.setattr("amazme_backend.execution.supervisor.wait_exited", wait)
     result = await owner.shutdown(HostFence(build_id=owner.build, host_epoch=owner.host_epoch))
     assert observed and observed[0] is False
     assert result.role == "supervisor" and result.state != "blocked"
@@ -711,7 +714,7 @@ async def test_native_fault_windows_preserve_call_identity_and_never_repeat(owne
 
     owner.faults.hit = fail
     with pytest.raises(RuntimeError, match="injected"):
-        await owner.run_tool(value)
+        await owner.invocations.run(value)
     content = once.read_text() if once.exists() else ""
     if point in {"create_intent", "registered", "before_permit"}:
         assert content == ""
@@ -721,12 +724,12 @@ async def test_native_fault_windows_preserve_call_identity_and_never_repeat(owne
         return None
 
     owner.faults.hit = no_fault
-    observed = await owner.lookup_tool(ToolLookup(**request(info).model_dump(), call_id=value.call_id))
+    observed = await owner.invocations.lookup(ToolLookup(**request(info).model_dump(), call_id=value.call_id))
     if observed.state == "completed":
-        assert (await owner.run_tool(value)).stdout == observed.result.stdout
+        assert (await owner.invocations.run(value)).stdout == observed.result.stdout
     else:
         with pytest.raises(BackendError, match="tool_outcome_unknown"):
-            await owner.run_tool(value)
+            await owner.invocations.run(value)
     proof = await owner.cleanup(info.session_id)
     assert proof.state == "clean" and proof.observation == "registered_processes"
     assert (once.read_text() if once.exists() else "") == content
@@ -743,7 +746,7 @@ async def test_native_unknown_effect_is_scoped_and_readonly_diagnostics_remain_a
 
     owner.faults.hit = fail
     with pytest.raises(RuntimeError):
-        await owner.run_tool(value)
+        await owner.invocations.run(value)
 
     async def no_fault(*_, **__):
         return None
@@ -752,12 +755,12 @@ async def test_native_unknown_effect_is_scoped_and_readonly_diagnostics_remain_a
     await owner.cleanup(first.session_id)
     blocked = await call(owner, first, identity="blocked")
     with pytest.raises(BackendError, match="unknown_effect_conflict"):
-        await owner.run_tool(blocked)
+        await owner.invocations.run(blocked)
     other = await call(owner, second, identity="other")
-    assert (await owner.run_tool(other)).stdout == "ok\n"
+    assert (await owner.invocations.run(other)).stdout == "ok\n"
     diagnostic = await call(owner, first, identity="diagnostic", effect="read")
-    assert (await owner.run_tool(diagnostic)).stdout == "ok\n"
-    assert (await owner.lookup_tool(ToolLookup(**request(first).model_dump(), call_id="first"))).state == "unknown"
+    assert (await owner.invocations.run(diagnostic)).stdout == "ok\n"
+    assert (await owner.invocations.lookup(ToolLookup(**request(first).model_dump(), call_id="first"))).state == "unknown"
 
 
 async def test_task_activity_counts_real_registries_not_idle_services(owner):
@@ -769,7 +772,7 @@ async def test_task_activity_counts_real_registries_not_idle_services(owner):
     await owner.db.call(lambda db: db.execute("UPDATE terminals SET phase='exited',clean=1 WHERE id='terminal'"), write=True)
     assert not (await owner.task_activity()).active
     job = asyncio.create_task(asyncio.sleep(30))
-    owner.jobs["job"] = job
+    owner.invocations.jobs["job"] = job
     try:
         assert (await owner.task_activity()).active
     finally:
@@ -788,16 +791,16 @@ async def test_normal_shutdown_asks_workers_to_cancel_work(owner, monkeypatch):
                         instance_id=worker_info.worker_id, pid=123, role="worker", host_epoch=owner.host_epoch,
                         fingerprint=owner.build, state="ready")
 
-    owner._peer_identity = peer
-    owner._stop_codes = AsyncMock()
+    owner.peer_identity = peer
+    owner.code.stop_all = AsyncMock()
     owner._close_services = AsyncMock()
     owner._reconcile_scopes = AsyncMock()
-    owner._retire_worker = AsyncMock(return_value=Cleanup(
+    owner.retire_worker = AsyncMock(return_value=Cleanup(
         session_id=info.session_id, execution_epoch=info.execution_epoch, state="clean", resources=[]))
-    monkeypatch.setattr("amazme_backend.supervisor.wait_exited", AsyncMock())
+    monkeypatch.setattr("amazme_backend.execution.supervisor.wait_exited", AsyncMock())
     await owner.shutdown(HostFence(build_id=owner.build, host_epoch=owner.host_epoch))
     assert len(stopped) == 1 and stopped[0].reason == "shutdown"
-    assert owner._retire_worker.await_args.args[1] == "shutdown"
+    assert owner.retire_worker.await_args.args[1] == "shutdown"
 
 
 async def test_clean_worker_exit_does_not_consume_restart_budget(owner):
@@ -805,13 +808,61 @@ async def test_clean_worker_exit_does_not_consume_restart_budget(owner):
     owner.children[info.worker_id] = SimpleNamespace(returncode=0, wait=AsyncMock())
     reservation.close()
     assert not owner._unexpected_worker_exit(info)
-    await owner._retire_worker(info, "recovery", failed=owner._unexpected_worker_exit(info))
+    await owner.retire_worker(info, "recovery", failed=owner._unexpected_worker_exit(info))
     assert await owner.db.call(lambda db: db.execute("SELECT attempts FROM budgets WHERE session=?", (info.session_id,)).fetchone()) is None
 
     failed, failed_reservation = await worker(owner)
     owner.children[failed.worker_id] = SimpleNamespace(returncode=1, wait=AsyncMock())
     failed_reservation.close()
     assert owner._unexpected_worker_exit(failed)
-    await owner._retire_worker(failed, "recovery", failed=owner._unexpected_worker_exit(failed))
+    await owner.retire_worker(failed, "recovery", failed=owner._unexpected_worker_exit(failed))
     attempts = await owner.db.call(lambda db: db.execute("SELECT attempts FROM budgets WHERE session=?", (info.session_id,)).fetchone())
     assert attempts is not None and attempts[0] == 1
+
+
+async def test_metadata_validation_owner_does_not_persist_an_update_freeze(owner, monkeypatch):
+    descriptors = []
+
+    async def spawn(*args, **kwargs):
+        assert "--validation" in args
+        assert "--frozen" not in args
+        descriptors.append(os.dup(kwargs["pass_fds"][0]))
+        return SimpleNamespace(pid=123, returncode=None, wait=AsyncMock())
+
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
+    try:
+        await owner.ensure_worker(WorkerSpec(build_id=owner.build, host_epoch=0,
+                                            session_id="a" * 32, purpose="validation"))
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+
+
+@pytest.mark.parametrize("prior_purpose,pending,requires_store", [
+    ("validation", True, False),
+    ("validation", False, True),
+    ("business", True, True),
+])
+async def test_branch_reconstruction_keeps_existing_business_storage_required(
+        owner, monkeypatch, prior_purpose, pending, requires_store):
+    from dataclasses import replace
+
+    info, reservation = await worker(owner, purpose=prior_purpose)
+    await owner.heartbeat(request(info).model_copy(update={"storage_ready": True}))
+    reservation.close()
+    assert (await owner.retire_worker(info, "recovery")).state == "clean"
+    owner.queries = replace(owner.queries, branch_pending=lambda _session: pending)
+    descriptors = []
+
+    async def spawn(*args, **kwargs):
+        assert ("--require-existing-store" in args) is requires_store
+        descriptors.append(os.dup(kwargs["pass_fds"][0]))
+        return SimpleNamespace(pid=123, returncode=None, wait=AsyncMock())
+
+    monkeypatch.setattr("amazme_backend.execution.supervisor.asyncio.create_subprocess_exec", spawn)
+    try:
+        await owner.ensure_worker(WorkerSpec(build_id=owner.build, host_epoch=0,
+                                            session_id=info.session_id, purpose="validation"))
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)

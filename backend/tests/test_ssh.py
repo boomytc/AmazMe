@@ -10,8 +10,8 @@ from pathlib import Path
 import pytest
 
 from amazme_backend.contracts import BackendError, SshTarget
-from amazme_backend.remote_session import RemoteClient, daemon_identity
-from amazme_backend.ssh import accept_host_key, host_key, scan_host_key, ssh_arguments
+from amazme_backend.execution.remote.client import RemoteClient, daemon_identity
+from amazme_backend.execution.remote.ssh import accept_host_key, host_key, scan_host_key, ssh_arguments
 
 
 def test_ssh_arguments_follow_pi_route_and_do_not_forward(tmp_path: Path) -> None:
@@ -53,14 +53,14 @@ def test_scan_uses_pi_ssh_route_without_accepting_the_key(tmp_path: Path, monkey
         assert not (tmp_path / 'known_hosts').exists()
         path.write_text(alias + ' ssh-ed25519 a2V5\n')
         raise BackendError('ssh_authentication_failed')
-    monkeypatch.setattr('amazme_backend.ssh.run_ssh', run)
+    monkeypatch.setattr('amazme_backend.execution.remote.ssh.run_ssh', run)
     scanned = scan_host_key(SshTarget(host='remote'), 'alias')
     assert scanned[0][0] == 'alias ssh-ed25519 a2V5'
     assert not (tmp_path / 'known_hosts').exists()
 
 
 def test_python_daemon_over_stdio_runs_once_and_never_replays_an_unknown(tmp_path: Path) -> None:
-    daemon = Path(__file__).parents[1] / 'src/amazme_backend/remote_daemon.py'
+    daemon = Path(__file__).parents[1] / 'src/amazme_backend/execution/remote/daemon.py'
     state = tmp_path / 'remote'
     state.mkdir()
 
@@ -110,7 +110,7 @@ def test_ssh_connect_deploys_and_verifies_the_daemon_before_start(tmp_path: Path
     remote_home = tmp_path / 'remote home'
     remote_home.mkdir()
     env = {'PATH': str(tools) + os.pathsep + os.environ.get('PATH', ''), 'HOME': str(remote_home)}
-    monkeypatch.setattr('amazme_backend.ssh.tool_environment', lambda: env)
+    monkeypatch.setattr('amazme_backend.execution.remote.ssh.tool_environment', lambda: env)
     rid = 'a' * 32
     key = 'amazme-remote-' + rid + ' ssh-ed25519 a2V5'
     client = RemoteClient.connect(SshTarget(host='remote-alias'), tmp_path / 'local', key, rid)
@@ -123,19 +123,20 @@ def test_ssh_connect_deploys_and_verifies_the_daemon_before_start(tmp_path: Path
 
 
 async def test_supervisor_close_reaps_its_ssh_transport_even_with_failed_storage(tmp_path: Path) -> None:
-    from amazme_backend.common import Profile, private_write
-    from amazme_backend.supervisor import Supervisor
+    from amazme_backend.bootstrap.supervisor import create_supervisor
+    from amazme_backend.platform.private_files import private_write
+    from amazme_backend.profiles.profile import Profile
     private_write(tmp_path / "config.json", json.dumps({
         "format": 2, "profile_id": "ssh", "workspace": str(tmp_path), "resources": "unused",
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "test")
-    owner = Supervisor(Profile(tmp_path), "ssh-owner")
+    owner = create_supervisor(Profile(tmp_path), "ssh-owner")
     await owner.initialize()
     process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
                                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     client = RemoteClient(process)
-    owner.remote_clients["a" * 32] = client
+    owner.remote.clients["a" * 32] = client
     owner.db.failed = True
     await owner.close()
     assert process.poll() is not None
-    assert not owner.remote_clients
+    assert not owner.remote.clients

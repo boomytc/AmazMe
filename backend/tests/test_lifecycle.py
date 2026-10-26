@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 
-from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import (
     Attachment,
     BackendError,
@@ -20,8 +19,12 @@ from amazme_backend.contracts import (
     TaskActivity,
     WorkerActivity,
 )
-from amazme_backend.host import Host, application
-from amazme_backend.host_store import HostStore
+from amazme_backend.host.lifecycle import HostLifecycle
+from amazme_backend.host.service import Host
+from amazme_backend.host.store import HostStore
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.profile import Profile
 
 
 @pytest.fixture
@@ -111,33 +114,38 @@ async def owner(tmp_path, monkeypatch, lease):
                   "resources": "unused", "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
-    monkeypatch.setattr("amazme_backend.host.build_id", lambda: "a" * 64)
+    monkeypatch.setattr("amazme_backend.host.lifecycle.build_id", lambda: "a" * 64)
     value = Host(Profile(tmp_path))
-    value.fence = HostFence(host_epoch=await value.store.initialize(value.instance, value.build, lease), build_id=value.build)
+    value.lifecycle.fence = HostFence(host_epoch=await value.lifecycle.store.initialize(value.lifecycle.instance, value.lifecycle.build, lease), build_id=value.lifecycle.build)
+    value.lifecycle.initialized = True
+    value.lifecycle._spawn_supervisor = AsyncMock(side_effect=AssertionError("unit fixture cannot start a supervisor"))
     value.origin = "http://127.0.0.1:12345"
-    await value.store.create_session("a" * 32, CreateSession())
+    await value.lifecycle.store.create_session("a" * 32, CreateSession())
     try:
         yield value
     finally:
-        await value.supervisor.close()
-        await value.store.db.close()
+        if value.lifecycle.storage_failed:
+            with pytest.raises(BackendError, match="storage_blocked"):
+                await value.close()
+        elif not value.lifecycle.store.db.closed:
+            await value.close()
 
 
 async def test_unknown_session_read_never_spawns_worker(owner):
-    owner.ensure_supervisor = AsyncMock()
+    owner.lifecycle.ensure_supervisor = AsyncMock()
     with pytest.raises(BackendError, match="session_not_found"):
-        await owner.worker("b" * 32, maintenance=True)
-    owner.ensure_supervisor.assert_not_awaited()
+        await owner.access.worker("b" * 32, maintenance=True)
+    owner.lifecycle.ensure_supervisor.assert_not_awaited()
 
 
 async def test_http_fence_attachment_and_private_update_capability(owner):
-    owner.deliver = AsyncMock(return_value=Receipt(request_id="r", text="hello", status="queued"))
+    owner.sessions.deliver = AsyncMock(return_value=Receipt(request_id="r", text="hello", status="queued"))
     app = application(owner)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=owner.origin,
             headers={"Authorization": "Bearer web-only"}) as client:
         path = "/api/v1/sessions/" + "a" * 32 + "/submissions"
         assert (await client.post(path, json={"request_id": "r", "text": "hello"})).status_code == 409
-        client.headers.update({"x-amazme-build": owner.build, "x-amazme-epoch": str(owner.fence.host_epoch)})
+        client.headers.update({"x-amazme-build": owner.lifecycle.build, "x-amazme-epoch": str(owner.lifecycle.fence.host_epoch)})
         assert (await client.post(path, json={"request_id": "r", "text": "hello"})).status_code == 409
         attached = await client.post("/api/v1/sessions/" + "a" * 32 + "/attachments")
         assert attached.status_code == 201
@@ -148,28 +156,28 @@ async def test_http_fence_attachment_and_private_update_capability(owner):
         assert (await client.post("/control/updates/complete", json=CompleteUpdate(update_id="u", expected_revision="1").model_dump())).status_code == 401
         await client.delete("/api/v1/sessions/" + "a" * 32 + "/attachments/" + attachment.attachment_id)
         assert (await client.post(path, json={"request_id": "r", "text": "hello"})).status_code == 409
-    assert owner.deliver.await_count == 1
+    assert owner.sessions.deliver.await_count == 1
 
 
 async def test_host_database_failure_closes_every_admission(owner, monkeypatch):
-    await owner.store.db.call(lambda db: db.execute("DROP TABLE sessions"))
+    await owner.lifecycle.store.db.call(lambda db: db.execute("DROP TABLE sessions"))
     with pytest.raises(BackendError) as failure:
-        await owner.sessions()
+        await owner.sessions.sessions()
     assert failure.value.code == "storage_failure"
-    assert owner.storage_failed
-    owner.ensure_supervisor = AsyncMock()
+    assert owner.lifecycle.storage_failed
+    owner.lifecycle.ensure_supervisor = AsyncMock()
     for action in (
-        lambda: owner.create_session(CreateSession()),
-        lambda: owner.worker("a" * 32),
-        lambda: owner.deliver("a" * 32, "submit", "r", Submit(request_id="r", text="task")),
-        lambda: owner.prepare_update(PrepareUpdate(update_id="u", target_build=owner.build)),
-        lambda: owner.resume_update("u"),
-        lambda: owner.complete_update(CompleteUpdate(update_id="u", expected_revision="1")),
+        lambda: owner.sessions.create_session(CreateSession()),
+        lambda: owner.access.worker("a" * 32),
+        lambda: owner.sessions.deliver("a" * 32, "submit", "r", Submit(request_id="r", text="task")),
+        lambda: owner.updates.prepare_update(PrepareUpdate(update_id="u", target_build=owner.lifecycle.build)),
+        lambda: owner.updates.resume_update("u"),
+        lambda: owner.updates.complete_update(CompleteUpdate(update_id="u", expected_revision="1")),
     ):
         with pytest.raises(BackendError, match="storage_blocked"):
             await action()
-    owner.ensure_supervisor.assert_not_awaited()
-    assert (await owner.health()).errors == ["storage_failed"]
+    owner.lifecycle.ensure_supervisor.assert_not_awaited()
+    assert (await owner.lifecycle.health()).errors == ["storage_failed"]
 
 
 async def test_host_store_missing_table_is_not_recreated(store, tmp_path, lease):
@@ -189,10 +197,10 @@ async def test_host_store_missing_table_is_not_recreated(store, tmp_path, lease)
 
 
 async def test_dispatch_lost_ack_retries_worker_acceptance_without_duplication(owner):
-    from amazme_backend.storage import SessionStore
-    worker_store = SessionStore(owner.profile.path / "session.sqlite", "a" * 32, build=owner.build)
+    from amazme_backend.sessions.service import SessionStore
+    worker_store = SessionStore(owner.lifecycle.profile.path / "session.sqlite", "a" * 32, build=owner.lifecycle.build)
     await worker_store.initialize()
-    await worker_store.fence(owner.fence)
+    await worker_store.fence(owner.lifecycle.fence)
     calls = 0
 
     async def call(method, path, response, body=None):
@@ -206,34 +214,34 @@ async def test_dispatch_lost_ack_retries_worker_acceptance_without_duplication(o
 
     peer = AsyncMock()
     peer.call.side_effect = call
-    owner.worker = AsyncMock(return_value=peer)
+    owner.access.worker = AsyncMock(return_value=peer)
     value = Submit(request_id="stable", text="hello")
     try:
         with pytest.raises(httpx.ReadError):
-            await owner.deliver("a" * 32, "submit", "stable", value)
-        assert len(await owner.store.pending()) == 1
+            await owner.sessions.deliver("a" * 32, "submit", "stable", value)
+        assert len(await owner.lifecycle.store.pending()) == 1
         first = await worker_store.get("stable")
-        retried = await owner.deliver("a" * 32, "submit", "stable", value)
+        retried = await owner.sessions.deliver("a" * 32, "submit", "stable", value)
         assert retried.accepted_revision == first.accepted_revision
         assert len((await worker_store.snapshot()).requests) == 1
-        assert not await owner.store.pending()
+        assert not await owner.lifecycle.store.pending()
     finally:
-        await worker_store.db.close()
+        await worker_store.close()
 
 
 @pytest.mark.parametrize("failure", ["worker_identity_conflict", "execution_cleanup_pending", "storage_failure", "stale_host_epoch"])
 async def test_runtime_failure_never_permanently_rejects_outbox(owner, failure):
-    owner.worker = AsyncMock(side_effect=BackendError(failure))
+    owner.access.worker = AsyncMock(side_effect=BackendError(failure))
     value = Submit(request_id="retry", text="task")
     with pytest.raises(BackendError, match=failure):
-        await owner.deliver("a" * 32, "submit", "retry", value)
-    assert (await owner.store.pending())[0].state == "pending"
+        await owner.sessions.deliver("a" * 32, "submit", "retry", value)
+    assert (await owner.lifecycle.store.pending())[0].state == "pending"
     peer = AsyncMock()
     peer.call.side_effect = BackendError(failure)
-    owner.worker = AsyncMock(return_value=peer)
+    owner.access.worker = AsyncMock(return_value=peer)
     with pytest.raises(BackendError, match=failure):
-        await owner.deliver("a" * 32, "submit", "retry", value)
-    assert (await owner.store.pending())[0].state == "pending"
+        await owner.sessions.deliver("a" * 32, "submit", "retry", value)
+    assert (await owner.lifecycle.store.pending())[0].state == "pending"
 
 
 async def test_acceptance_ack_does_not_depend_on_activity_rpc(owner):
@@ -246,17 +254,17 @@ async def test_acceptance_ack_does_not_depend_on_activity_rpc(owner):
         return receipt
 
     peer.call.side_effect = call
-    owner.worker = AsyncMock(return_value=peer)
-    assert await owner.deliver("a" * 32, "submit", "accepted", Submit(request_id="accepted", text="task")) == receipt
-    assert not await owner.store.pending()
+    owner.access.worker = AsyncMock(return_value=peer)
+    assert await owner.sessions.deliver("a" * 32, "submit", "accepted", Submit(request_id="accepted", text="task")) == receipt
+    assert not await owner.lifecycle.store.pending()
 
 
 async def test_nine_sessions_progress_while_first_eight_are_stalled(owner):
     sessions = [f"{i:032x}" for i in range(9)]
     for session in sessions:
-        await owner.store.create_session(session, CreateSession())
-        await owner.store.enqueue(session, "submit", session, Submit(request_id=session, text="task"))
-    owner.ensure_supervisor = AsyncMock()
+        await owner.lifecycle.store.create_session(session, CreateSession())
+        await owner.lifecycle.store.enqueue(session, "submit", session, Submit(request_id=session, text="task"))
+    owner.lifecycle.ensure_supervisor = AsyncMock()
     blocked = asyncio.Event()
     done = asyncio.Event()
 
@@ -267,8 +275,8 @@ async def test_nine_sessions_progress_while_first_eight_are_stalled(owner):
             done.set()
         return delivery
 
-    owner._dispatch = dispatch
-    owner.worker = AsyncMock(side_effect=BackendError("worker_unavailable"))
+    owner.sessions.dispatch = dispatch
+    owner.access.worker = AsyncMock(side_effect=BackendError("worker_unavailable"))
     task = asyncio.create_task(owner.dispatcher())
     try:
         await asyncio.wait_for(done.wait(), 2)
@@ -289,43 +297,48 @@ class UpdateRuntime:
         self.freeze_id = ""
         self.revision = 0
         self.service = None
-        self.epoch = owner.fence.host_epoch
+        self.epoch = owner.lifecycle.fence.host_epoch
         self.drop_retire = False
         self.lose_thaw = False
         self.epochs = []
         self.blocked = []
-        monkeypatch.setattr("amazme_backend.host.exited", lambda lease: lease.instance_id not in self.alive)
-        monkeypatch.setattr("amazme_backend.host.wait_exited", self.wait_exited)
-        monkeypatch.setattr("amazme_backend.host.wait_peer", self.wait_peer)
-        monkeypatch.setattr("amazme_backend.host.Peer", self.peer)
-        owner._spawn_supervisor = self.spawn
-        owner._await_service = self.await_service
-        owner.supervisor = self
+        for module in ("lifecycle", "session_access", "updates", "sessions", "service"):
+            monkeypatch.setattr(f"amazme_backend.host.{module}.exited", lambda lease: lease.instance_id not in self.alive)
+        for module in ("lifecycle", "session_access", "updates"):
+            monkeypatch.setattr(f"amazme_backend.host.{module}.wait_exited", self.wait_exited)
+        for module in ("session_access", "updates"):
+            monkeypatch.setattr(f"amazme_backend.host.{module}.wait_peer", self.wait_peer)
+            monkeypatch.setattr(f"amazme_backend.host.{module}.Peer", self.peer)
+        monkeypatch.setattr("amazme_backend.host.lifecycle.SupervisorClient", self.peer)
+        owner.lifecycle._spawn_supervisor = self.spawn
+        owner.lifecycle._await_service = self.await_service
+        owner.lifecycle.supervisor = self
 
     def lease(self, role, instance):
-        return ProcessLease(instance_id=instance, role=role, profile_path=str(self.owner.profile.path),
-                            path=str(self.owner.profile.path / instance), device=1, inode=len(instance))
+        return ProcessLease(instance_id=instance, role=role, profile_path=str(self.owner.lifecycle.profile.path),
+                            path=str(self.owner.lifecycle.profile.path / instance), device=1, inode=len(instance))
 
     async def install(self, build, state="running", alive=True):
-        from amazme_backend.host_store import ServiceRecord
-        self.service = ServiceRecord(instance_id="svc" + str(len(await self.owner.store.services())),
-            build_id=build, process_lease=self.lease("supervisor", "svc" + str(len(await self.owner.store.services()))), state=state)
-        await self.owner.store.save_service(self.service)
+        from amazme_backend.host.store import ServiceRecord
+        service = ServiceRecord(instance_id="svc" + str(len(await self.owner.lifecycle.store.services())),
+            build_id=build, process_lease=self.lease("supervisor", "svc" + str(len(await self.owner.lifecycle.store.services()))), state=state)
+        await self.owner.lifecycle.store.save_service(service)
+        self.service = service
         if alive:
             self.alive.add(self.service.instance_id)
         return self.service
 
     async def spawn(self):
-        self.owner.supervisor = self
-        self.calls.append(("spawn", self.owner.build))
-        return await self.install(self.owner.build, "starting")
+        self.owner.lifecycle.supervisor = self
+        self.calls.append(("spawn", self.owner.lifecycle.build))
+        return await self.install(self.owner.lifecycle.build, "starting")
 
     def identity(self):
         from amazme_backend.contracts import Identity
         # A per-session restart budget is reported in the blocked list. It does not by itself
         # mean the supervisor lost its VM or fence, matching Supervisor.identity.
         execution_blocked = any(not str(item).startswith("worker_restart_budget_exhausted:") for item in self.blocked)
-        return Identity(profile_id=self.owner.profile.config.profile_id, instance_id=self.service.instance_id,
+        return Identity(profile_id=self.owner.lifecycle.profile.config.profile_id, instance_id=self.service.instance_id,
                         build_id=self.service.build_id, fingerprint=self.service.build_id, pid=1,
                         role="supervisor", host_epoch=self.epoch,
                         state="blocked" if execution_blocked else "frozen" if self.freeze_id else "ready")
@@ -379,7 +392,7 @@ class UpdateRuntime:
         async def call(method, path, response, body=None):
             self.calls.append((worker.worker_id, path))
             if path == "/identity":
-                return Identity(profile_id=self.owner.profile.config.profile_id, instance_id=worker.worker_id,
+                return Identity(profile_id=self.owner.lifecycle.profile.config.profile_id, instance_id=worker.worker_id,
                     build_id=worker.build_id, fingerprint=worker.build_id, pid=1, role="worker", host_epoch=self.epoch)
             if path == "/freeze":
                 worker.state = "frozen"
@@ -433,6 +446,12 @@ class UpdateRuntime:
             if self.drop_retire:
                 health.workers = []
             return health
+        if path == "/shutdown":
+            for worker in self.workers.values():
+                worker.state = "stopped"
+                self.alive.discard(worker.worker_id)
+            self.alive.discard(self.service.instance_id)
+            return self.identity()
         if path == "/thaw":
             assert all(w.state == "stopped" for w in self.workers.values())
             self.freeze_id = ""
@@ -444,7 +463,7 @@ class UpdateRuntime:
 
 @pytest.fixture
 async def runtime(owner, monkeypatch):
-    await owner.supervisor.close()
+    await owner.lifecycle.supervisor.close()
     return UpdateRuntime(owner, monkeypatch)
 
 
@@ -453,46 +472,46 @@ async def test_old_service_replacement_always_creates_update_freeze(owner, runti
     await runtime.install("b" * 64, alive=alive)
     if alive:
         runtime.add_worker("a" * 32, build="b" * 64)
-    await owner.ensure_supervisor()
-    active = await owner.store.active_update()
-    assert active and active.target_build == owner.build and active.source_build == "b" * 64
+    await owner.lifecycle.ensure_supervisor()
+    active = await owner.lifecycle.store.active_update()
+    assert active and active.target_build == owner.lifecycle.build and active.source_build == "b" * 64
     assert runtime.freeze_id == active.update_id
-    assert len(await owner.store.services()) == 2
+    assert len(await owner.lifecycle.store.services()) == 2
     with pytest.raises(BackendError, match="update_frozen"):
-        await owner.worker("a" * 32)
+        await owner.access.worker("a" * 32)
 
 
 async def test_stopping_service_is_retired_without_business_takeover(owner, runtime):
-    old = await runtime.install(owner.build, state="stopping")
-    await owner.ensure_supervisor()
+    old = await runtime.install(owner.lifecycle.build, state="stopping")
+    await owner.lifecycle.ensure_supervisor()
     assert old.instance_id not in runtime.alive
     assert runtime.calls.index(("supervisor", "/retire")) < runtime.calls.index(("supervisor", "/takeover"))
-    assert (await owner.store.services())[0].state == "stopped"
-    assert await owner.store.active_update()
+    assert (await owner.lifecycle.store.services())[0].state == "stopped"
+    assert await owner.lifecycle.store.active_update()
 
 
 async def test_stopped_but_live_service_blocks_replacement(owner, runtime):
-    await runtime.install(owner.build, state="stopped", alive=True)
+    await runtime.install(owner.lifecycle.build, state="stopped", alive=True)
     with pytest.raises(BackendError, match="supervisor_exit_unproven"):
-        await owner.ensure_supervisor()
+        await owner.lifecycle.ensure_supervisor()
     assert not runtime.calls
 
 
 async def test_service_registry_cannot_overwrite_identity_or_resurrect(owner, runtime):
-    service = await runtime.install(owner.build, state="stopping")
+    service = await runtime.install(owner.lifecycle.build, state="stopping")
     with pytest.raises(BackendError, match="supervisor_retirement_pending"):
-        await owner.store.save_service(service.model_copy(update={"state": "running"}))
+        await owner.lifecycle.store.save_service(service.model_copy(update={"state": "running"}))
     with pytest.raises(BackendError, match="supervisor_identity_mismatch"):
-        await owner.store.save_service(service.model_copy(update={"build_id": "b" * 64}))
+        await owner.lifecycle.store.save_service(service.model_copy(update={"build_id": "b" * 64}))
     with pytest.raises(BackendError, match="supervisor_registry_conflict"):
-        await runtime.install(owner.build)
+        await runtime.install(owner.lifecycle.build)
 
 
 async def test_prepare_freezes_and_stops_each_session_before_retire(owner, runtime):
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     one = runtime.add_worker("a" * 32)
-    await owner.store.create_session("b" * 32, CreateSession())
-    prepared = await owner.prepare_update(PrepareUpdate(update_id="upgrade", target_build="b" * 64))
+    await owner.lifecycle.store.create_session("b" * 32, CreateSession())
+    prepared = await owner.updates.prepare_update(PrepareUpdate(update_id="upgrade", target_build="b" * 64))
     assert prepared.phase == "prepared" and not prepared.activated
     assert len(prepared.roster) == 2
     assert runtime.calls.index((one.worker_id, "/freeze")) < runtime.calls.index(("supervisor", "/workers/stop"))
@@ -500,7 +519,7 @@ async def test_prepare_freezes_and_stops_each_session_before_retire(owner, runti
     assert {w.session_id for w in prepared.roster} == {"a" * 32, "b" * 32}
     assert runtime.calls[-1] == ("supervisor", "/retire")
     with pytest.raises(BackendError, match="update_prepared"):
-        await owner.ensure_supervisor()
+        await owner.lifecycle.ensure_supervisor()
 
 
 async def test_retire_receipt_cannot_drop_participant(owner, runtime):
@@ -508,25 +527,25 @@ async def test_retire_receipt_cannot_drop_participant(owner, runtime):
     worker = runtime.add_worker("a" * 32)
     runtime.drop_retire = True
     with pytest.raises(BackendError) as failure:
-        await owner.ensure_supervisor()
+        await owner.lifecycle.ensure_supervisor()
     assert failure.value.code == "participant_missing"
-    active = await owner.store.active_update()
+    active = await owner.lifecycle.store.active_update()
     assert [w.worker_id for w in active.roster] == [worker.worker_id]
     assert not active.activated
-    assert (await owner.store.services())[0].state == "stopping"
+    assert (await owner.lifecycle.store.services())[0].state == "stopping"
     assert not any(call[0] == "spawn" for call in runtime.calls)
 
 
 @pytest.mark.parametrize("phase", ["freezing", "retiring", "prepared", "validating", "completed"])
 async def test_target_replays_every_phase_without_implicit_activation(owner, runtime, phase):
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     source = runtime.add_worker("a" * 32, build="b" * 64, state="stopped")
-    active = await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.build), "b" * 64)
+    active = await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build), "b" * 64)
     active.roster, active.phase = [source], phase
-    await owner.store.save_update(active)
+    await owner.lifecycle.store.save_update(active)
     # An orphan from an interrupted validation must be retired, never used as a probe.
     business = runtime.add_worker("a" * 32)
-    resumed = await owner.resume_update("upgrade")
+    resumed = await owner.updates.resume_update("upgrade")
     assert not resumed.activated
     assert runtime.freeze_id == "upgrade"
     assert resumed.phase == ("completed" if phase == "completed" else "validating")
@@ -534,55 +553,55 @@ async def test_target_replays_every_phase_without_implicit_activation(owner, run
     assert business.worker_id not in {w.worker_id for w in [resumed.validation]}
     assert all(w.state == "stopped" for w in resumed.roster)
     assert not any(call[1] == "/thaw" for call in runtime.calls)
-    completed = await owner.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=resumed.revision))
-    assert completed.activated and await owner.store.active_update() is None
+    completed = await owner.updates.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=resumed.revision))
+    assert completed.activated and await owner.lifecycle.store.active_update() is None
     assert not runtime.freeze_id
     previous_calls = len(runtime.calls)
-    assert (await owner.complete_update(CompleteUpdate(update_id="upgrade", expected_revision="old"))).activated
+    assert (await owner.updates.complete_update(CompleteUpdate(update_id="upgrade", expected_revision="old"))).activated
     assert len(runtime.calls) == previous_calls
 
 
 async def test_lost_thaw_ack_refreezes_revalidates_then_activates(owner, runtime):
-    await runtime.install(owner.build)
-    await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.build), "b" * 64)
-    record = await owner.resume_update("upgrade")
+    await runtime.install(owner.lifecycle.build)
+    await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build), "b" * 64)
+    record = await owner.updates.resume_update("upgrade")
     runtime.lose_thaw = True
     with pytest.raises(httpx.ReadError):
-        await owner.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=record.revision))
-    active = await owner.store.active_update()
+        await owner.updates.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=record.revision))
+    active = await owner.lifecycle.store.active_update()
     assert active.phase == "completed" and not active.activated
     assert runtime.freeze_id == ""
     cut = len(runtime.calls)
-    resumed = await owner.resume_update("upgrade")
+    resumed = await owner.updates.resume_update("upgrade")
     assert runtime.freeze_id == "upgrade" and not resumed.activated
     calls = runtime.calls[cut:]
     assert calls.index(("supervisor", "/freeze")) < calls.index(("supervisor", "/workers/ensure"))
-    assert (await owner.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=resumed.revision))).activated
+    assert (await owner.updates.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=resumed.revision))).activated
 
 
 async def test_update_roster_never_shrinks_or_changes_lifetime_identity(owner, runtime):
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     worker = runtime.add_worker("a" * 32, state="stopped")
-    active = await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.build), "b" * 64)
-    active = await owner.store.source_roster(active.update_id, [worker])
+    active = await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build), "b" * 64)
+    active = await owner.lifecycle.store.source_roster(active.update_id, [worker])
     with pytest.raises(BackendError) as failure:
-        await owner.store.source_roster(active.update_id, [])
+        await owner.lifecycle.store.source_roster(active.update_id, [])
     assert failure.value.code == "participant_missing"
     changed = worker.model_copy(update={"process_lease": runtime.lease("worker", "different")})
     with pytest.raises(BackendError) as failure:
-        await owner.store.source_roster(active.update_id, [changed])
+        await owner.lifecycle.store.source_roster(active.update_id, [changed])
     assert failure.value.code == "participant_identity_mismatch"
-    assert (await owner.store.update(active.update_id)).roster == [worker]
+    assert (await owner.lifecycle.store.update(active.update_id)).roster == [worker]
 
 
 @pytest.mark.parametrize("problem", ["missing_worker", "live_worker", "unclean_epoch", "missing_cleanup", "blocked"])
 async def test_target_health_failure_retains_freeze(owner, runtime, problem):
     from amazme_backend.contracts import EpochHealth
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     worker = runtime.add_worker("a" * 32, build="b" * 64, state="stopped")
-    active = await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.build), "b" * 64)
+    active = await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build), "b" * 64)
     active.roster, active.phase = [worker], "prepared"
-    await owner.store.save_update(active)
+    await owner.lifecycle.store.save_update(active)
     if problem == "missing_worker":
         runtime.workers.clear()
     elif problem == "live_worker":
@@ -593,8 +612,8 @@ async def test_target_health_failure_retains_freeze(owner, runtime, problem):
     else:
         runtime.blocked.append("cleanup_blocked")
     with pytest.raises(BackendError):
-        await owner.resume_update("upgrade")
-    assert not (await owner.store.active_update()).activated
+        await owner.updates.resume_update("upgrade")
+    assert not (await owner.lifecycle.store.active_update()).activated
     assert not any(call[1] == "/thaw" for call in runtime.calls)
 
 
@@ -609,35 +628,35 @@ def test_update_cleanup_distinguishes_restart_budget_from_unclean_resources(erro
         build_id="a" * 64, pid=1, state="frozen"), registry_revision="1", workers=[], epochs=[],
         session_errors={"a" * 32: errors})
     if errors == ["worker_restart_budget_exhausted"]:
-        Host._verify_clean(health)
+        HostLifecycle.verify_clean(health)
     else:
         with pytest.raises(BackendError, match="update_health_blocked"):
-            Host._verify_clean(health)
+            HostLifecycle.verify_clean(health)
 
 
 async def test_blocked_session_diagnostics_reuse_verified_owner_without_mutations(owner, runtime):
     from amazme_backend.contracts import Cancel, Snapshot
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     worker = runtime.add_worker("a" * 32, state="blocked")
     runtime.blocked = ["cleanup_blocked"]
-    reader = await owner.reader(worker.session_id)
+    reader = await owner.access.reader(worker.session_id)
     assert (await reader.call("GET", "/snapshot", Snapshot)).session_id == worker.session_id
     assert not any(path in {"/takeover", "/workers/ensure", "/freeze"} for _, path in runtime.calls)
     with pytest.raises(BackendError, match="read_only_peer"):
-        await reader.call("POST", "/requests/r/cancel", Receipt, Cancel(**owner.fence.model_dump(), request_id="r"))
+        await reader.call("POST", "/requests/r/cancel", Receipt, Cancel(**owner.lifecycle.fence.model_dump(), request_id="r"))
     with pytest.raises(BackendError, match="execution_blocked"):
-        await owner.deliver(worker.session_id, "cancel", "r", Cancel(host_epoch=0, build_id="", request_id="r"))
+        await owner.sessions.deliver(worker.session_id, "cancel", "r", Cancel(host_epoch=0, build_id="", request_id="r"))
     assert not any(path.endswith("/cancel") for _, path in runtime.calls)
-    assert len(await owner.store.pending()) == 1
+    assert len(await owner.lifecycle.store.pending()) == 1
     # The unchanged stream API also receives only the read capability.
-    stream_peer = await owner.worker(worker.session_id, maintenance=True)
+    stream_peer = await owner.access.worker(worker.session_id, maintenance=True)
     with pytest.raises(BackendError, match="read_only_peer"):
         await stream_peer.call("POST", "/anything", Receipt)
 
 
 @pytest.mark.parametrize("mismatch", ["build", "epoch", "fingerprint", "exited", "stopping", "peer_epoch"])
 async def test_diagnostic_owner_requires_current_identity_and_lifetime(owner, runtime, mismatch):
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     worker = runtime.add_worker("a" * 32)
     runtime.blocked = ["cleanup_blocked"]
     if mismatch == "build":
@@ -657,84 +676,85 @@ async def test_diagnostic_owner_requires_current_identity_and_lifetime(owner, ru
         runtime.wait_peer = stale_peer
         # The fake protocol method is patched globally, as production calls wait_peer directly.
         from unittest.mock import patch
-        with patch("amazme_backend.host.wait_peer", stale_peer):
+        with patch("amazme_backend.host.session_access.wait_peer", stale_peer):
             with pytest.raises(BackendError, match="worker_identity_mismatch"):
-                await owner.reader(worker.session_id)
+                await owner.access.reader(worker.session_id)
         return
     with pytest.raises(BackendError, match="worker_identity_mismatch"):
-        await owner.reader(worker.session_id)
+        await owner.access.reader(worker.session_id)
     assert not any(path == "/workers/ensure" for _, path in runtime.calls)
 
 
 async def test_blocked_profile_without_owner_does_not_spawn_diagnostic_worker(owner, runtime):
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     runtime.blocked = ["cleanup_blocked"]
     with pytest.raises(BackendError, match="diagnostic_worker_unavailable"):
-        await owner.reader("a" * 32)
+        await owner.access.reader("a" * 32)
     assert not any(path == "/workers/ensure" for _, path in runtime.calls)
 
 
 async def test_exhausted_session_budget_is_reported_without_spawning(owner, runtime):
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     runtime.blocked = ["worker_restart_budget_exhausted:" + "a" * 32]
     with pytest.raises(BackendError, match="worker_restart_budget_exhausted"):
-        await owner.reader("a" * 32)
+        await owner.access.reader("a" * 32)
     assert not any(path == "/workers/ensure" for _, path in runtime.calls)
 
 
 async def test_old_page_cannot_detach_current_binding(owner):
     app = application(owner)
-    headers = {"Authorization": "Bearer web-only", "x-amazme-build": owner.build,
-               "x-amazme-epoch": str(owner.fence.host_epoch)}
+    headers = {"Authorization": "Bearer web-only", "x-amazme-build": owner.lifecycle.build,
+               "x-amazme-epoch": str(owner.lifecycle.fence.host_epoch)}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=owner.origin, headers=headers) as client:
         path = "/api/v1/sessions/" + "a" * 32 + "/attachments"
         attachment = (await client.post(path)).json()["attachment_id"]
         assert (await client.delete(path + "/" + attachment)).status_code == 409
-        assert attachment in owner.attachments
+        assert attachment in owner.sessions.attachments
         client.headers["x-amazme-attachment"] = attachment
         client.headers["x-amazme-epoch"] = "0"
         assert (await client.delete(path + "/" + attachment)).status_code == 409
-        assert attachment in owner.attachments
+        assert attachment in owner.sessions.attachments
 
 
 async def test_validation_cancel_work_settles_started_run_only_after_cleanup_proof(owner, monkeypatch):
+    from amazme_backend.bootstrap.worker import create_worker
     from amazme_backend.contracts import Cleanup, FreezeWorker, Identity, Lease
-    from amazme_backend.session_domain import Continue, ModelInvocation
-    from amazme_backend.storage import SessionStore
-    from amazme_backend.worker import Worker
+    from amazme_backend.execution.client import SupervisorClient
+    from amazme_backend.sessions.service import SessionStore
+    from amazme_backend.sessions.types import Continue, ModelInvocation
 
     session = "a" * 32
-    directory = owner.profile.path / "sessions" / session
+    directory = owner.lifecycle.profile.path / "sessions" / session
     directory.mkdir(parents=True)
-    source = SessionStore(directory / "session.sqlite", session, build=owner.build)
+    source = SessionStore(directory / "session.sqlite", session, build=owner.lifecycle.build)
     await source.initialize()
-    await source.fence(owner.fence)
-    await source.accept(Submit(request_id="started", text="task"), owner.fence)
+    await source.fence(owner.lifecycle.fence)
+    await source.accept(Submit(request_id="started", text="task"), owner.lifecycle.fence)
     for _ in range(5):
         action = await source.advance()
         if not isinstance(action, Continue):
             break
     assert isinstance(action, ModelInvocation)  # Persisted intent only; no model is invoked.
-    await source.accept(Submit(request_id="queued", text="later"), owner.fence)
-    await source.db.close()
+    await source.accept(Submit(request_id="queued", text="later"), owner.lifecycle.fence)
+    await source.close()
 
-    monkeypatch.setattr("amazme_backend.worker.build_id", lambda: owner.build)
-    worker = Worker(owner.profile, session, "validation", frozen=True, validation=True, require_existing=True)
+    monkeypatch.setattr("amazme_backend.bootstrap.worker.build_id", lambda: owner.lifecycle.build)
+    worker = create_worker(owner.lifecycle.profile, session, "validation", frozen=True, validation=True, require_existing=True)
     await worker.supervisor.close()
-    worker.supervisor = AsyncMock()
+    worker.supervisor = SupervisorClient(owner.lifecycle.profile.socket("supervisor"), owner.lifecycle.profile.token)
     async def private_call(method, path, response, value):
         if path == "/workers/heartbeat":
-            return Identity(profile_id=owner.profile.config.profile_id, instance_id="sup",
-                build_id=owner.build, fingerprint=owner.build, role="supervisor", host_epoch=owner.fence.host_epoch, pid=1)
+            return Identity(profile_id=owner.lifecycle.profile.config.profile_id, instance_id="sup",
+                build_id=owner.lifecycle.build, fingerprint=owner.lifecycle.build, role="supervisor", host_epoch=owner.lifecycle.fence.host_epoch, pid=1)
         if path == "/epochs/open":
             return Lease(session_id=session, worker_id="validation", execution_epoch=1,
-                         supervisor_id="sup", build_id=owner.build)
+                         supervisor_id="sup", build_id=owner.lifecycle.build)
         assert path == "/epochs/close"
         return Cleanup(session_id=session, execution_epoch=value.execution_epoch, state="clean", resources=[], proof_id="verified")
-    worker.supervisor.call.side_effect = private_call
+    worker.supervisor.call = AsyncMock(side_effect=private_call)
     try:
         await worker.initialize()
-        freeze = FreezeWorker(**owner.fence.model_dump(), freeze_id="upgrade", cancel_work=True)
+        freeze = FreezeWorker(**owner.lifecycle.fence.model_dump(), freeze_id="upgrade", cancel_work=True)
         snapshot = await worker.freeze(freeze)
         receipts = {r.request_id: r for r in snapshot.requests}
         assert receipts["queued"].status == "cancelled"
@@ -743,10 +763,10 @@ async def test_validation_cancel_work_settles_started_run_only_after_cleanup_pro
         assert worker.loop_task is None and worker.run_task is None
         assert all(call.args[1] in {"/workers/heartbeat", "/epochs/open", "/epochs/close"}
                    for call in worker.supervisor.call.await_args_list)
-        record = await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.build,
+        record = await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build,
                                                               cancel_work=True), "b" * 64)
-        owner._verify_frozen(snapshot, session, record)
-        assert not (await owner.store.active_update()).activated
+        owner.lifecycle.verify_frozen(snapshot, session, record)
+        assert not (await owner.lifecycle.store.active_update()).activated
         # Clearing metadata freeze alone must not execute the deferred cancellation or any model/tool work.
         await worker.thaw(freeze)
         assert worker.loop_task is None
@@ -757,71 +777,66 @@ async def test_validation_cancel_work_settles_started_run_only_after_cleanup_pro
 
 @pytest.mark.parametrize("phase", ["freezing", "retiring", "prepared", "validating", "completed"])
 async def test_host_restart_preserves_each_update_barrier(owner, runtime, phase):
-    await runtime.install(owner.build)
+    await runtime.install(owner.lifecycle.build)
     source = runtime.add_worker("a" * 32, build="b" * 64, state="stopped")
-    active = await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.build), "b" * 64)
+    active = await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build), "b" * 64)
     active.roster, active.phase = [source], phase
-    await owner.store.save_update(active)
-    await owner.store.db.close()
-    private_write(owner.profile.path / "initialized", "2\n")
-    replacement = Host(owner.profile, "replacement", runtime.lease("host", "replacement"))
-    await replacement.supervisor.close()
+    await owner.lifecycle.store.save_update(active)
+    await owner.lifecycle.store.db.close()
+    private_write(owner.lifecycle.profile.path / "initialized", "2\n")
+    owner.lifecycle.initialized = False
+    replacement = Host(owner.lifecycle.profile, "replacement", runtime.lease("host", "replacement"))
+    await replacement.lifecycle.supervisor.close()
     runtime.owner = replacement
-    replacement.supervisor = runtime
-    replacement._spawn_supervisor = runtime.spawn
-    replacement._await_service = runtime.await_service
+    replacement.lifecycle.supervisor = runtime
+    replacement.lifecycle._spawn_supervisor = runtime.spawn
+    replacement.lifecycle._await_service = runtime.await_service
     try:
         await replacement.initialize()
-        assert replacement.fence.host_epoch == owner.fence.host_epoch + 1
-        restored = await replacement.store.active_update()
+        assert replacement.lifecycle.fence.host_epoch == owner.lifecycle.fence.host_epoch + 1
+        restored = await replacement.lifecycle.store.active_update()
         assert restored.phase == phase and not restored.activated
         assert restored.roster[0].worker_id == source.worker_id
         assert runtime.freeze_id == "upgrade"
         assert not any(path == "/thaw" for _, path in runtime.calls)
-        validated = await replacement.resume_update("upgrade")
+        validated = await replacement.updates.resume_update("upgrade")
         assert not validated.activated
         assert all(w.state == "stopped" for w in validated.roster)
     finally:
-        replacement.stop.set()
-        if replacement.background:
-            replacement.background.cancel()
-            await asyncio.gather(replacement.background, return_exceptions=True)
-        for _, peer in replacement.worker_peers.values():
-            await peer.close()
-        await replacement.store.db.close()
+        await replacement.close()
 
 
 async def test_fully_activated_restart_is_not_a_pending_update(owner, runtime):
-    await runtime.install(owner.build)
-    await owner.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.build), "b" * 64)
-    validated = await owner.resume_update("upgrade")
-    await owner.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=validated.revision))
+    await runtime.install(owner.lifecycle.build)
+    await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build), "b" * 64)
+    validated = await owner.updates.resume_update("upgrade")
+    await owner.updates.complete_update(CompleteUpdate(update_id="upgrade", expected_revision=validated.revision))
     cut = len(runtime.calls)
-    owner.attached = ""  # Force the same-build reconnect path after activation.
-    await owner.ensure_supervisor()
-    assert await owner.store.active_update() is None
+    owner.lifecycle.attached = ""  # Force the same-build reconnect path after activation.
+    await owner.lifecycle.ensure_supervisor()
+    assert await owner.lifecycle.store.active_update() is None
     assert not any(path == "/freeze" for _, path in runtime.calls[cut:])
 
 
 async def test_wrong_request_ack_keeps_outbox_pending(owner):
     peer = AsyncMock()
     peer.call.return_value = Receipt(request_id="other", text="task", status="queued")
-    owner.worker = AsyncMock(return_value=peer)
+    owner.access.worker = AsyncMock(return_value=peer)
     with pytest.raises(BackendError, match="receipt_identity_mismatch"):
-        await owner.deliver("a" * 32, "submit", "stable", Submit(request_id="stable", text="task"))
-    assert (await owner.store.pending())[0].state == "pending"
+        await owner.sessions.deliver("a" * 32, "submit", "stable", Submit(request_id="stable", text="task"))
+    assert (await owner.lifecycle.store.pending())[0].state == "pending"
 
 
 async def test_corrupt_outbox_payload_closes_admission_before_worker_access(owner):
-    await owner.store.enqueue("a" * 32, "submit", "stable", Submit(request_id="stable", text="task"))
-    await owner.store.db.call(lambda db: db.execute("UPDATE deliveries SET payload='{}'"))
+    await owner.lifecycle.store.enqueue("a" * 32, "submit", "stable", Submit(request_id="stable", text="task"))
+    await owner.lifecycle.store.db.call(lambda db: db.execute("UPDATE deliveries SET payload='{}'"))
     with pytest.raises(BackendError, match="storage_failure"):
-        await owner.store.pending()
-    assert owner.storage_failed
-    owner.ensure_supervisor = AsyncMock()
+        await owner.lifecycle.store.pending()
+    assert owner.lifecycle.storage_failed
+    owner.lifecycle.ensure_supervisor = AsyncMock()
     with pytest.raises(BackendError, match="storage_blocked"):
-        await owner.worker("a" * 32)
-    owner.ensure_supervisor.assert_not_awaited()
+        await owner.access.worker("a" * 32)
+    owner.lifecycle.ensure_supervisor.assert_not_awaited()
 
 
 async def test_shutdown_waits_for_inflight_service_registration(owner, runtime):
@@ -842,10 +857,10 @@ async def test_shutdown_waits_for_inflight_service_registration(owner, runtime):
             return runtime.identity()
         return await real_call(method, path, response, body)
 
-    owner._spawn_supervisor = spawn
+    owner.lifecycle._spawn_supervisor = spawn
     runtime.call = call
-    owner.initialized = True
-    ensure = asyncio.create_task(owner.ensure_supervisor())
+    owner.lifecycle.initialized = True
+    ensure = asyncio.create_task(owner.lifecycle.ensure_supervisor())
     await entered.wait()
     closing = asyncio.create_task(owner.close())
     try:
@@ -862,8 +877,8 @@ async def test_shutdown_waits_for_inflight_service_registration(owner, runtime):
 
 @pytest.mark.parametrize("defect", ["missing", "foreign_session", "nonempty"])
 async def test_update_never_activates_without_exact_empty_probe_receipt(owner, runtime, defect):
-    await runtime.install(owner.build)
-    record = await owner.store.begin_update(PrepareUpdate(update_id="probe", target_build=owner.build), "b" * 64)
+    await runtime.install(owner.lifecycle.build)
+    record = await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="probe", target_build=owner.lifecycle.build), "b" * 64)
     original = runtime.health
 
     def damaged_health():
@@ -882,28 +897,28 @@ async def test_update_never_activates_without_exact_empty_probe_receipt(owner, r
 
     runtime.health = damaged_health
     with pytest.raises(BackendError, match="validation_probe"):
-        await owner.complete_update(CompleteUpdate(update_id=record.update_id, expected_revision=record.revision))
-    assert not (await owner.store.active_update()).activated
+        await owner.updates.complete_update(CompleteUpdate(update_id=record.update_id, expected_revision=record.revision))
+    assert not (await owner.lifecycle.store.active_update()).activated
     assert not any(path == "/thaw" for _, path in runtime.calls)
 
 
 async def test_one_session_budget_does_not_block_profile_health(owner, runtime):
-    await runtime.install(owner.build)
-    owner.attached = runtime.service.instance_id
+    await runtime.install(owner.lifecycle.build)
+    owner.lifecycle.attached = runtime.service.instance_id
     runtime.blocked = ["worker_restart_budget_exhausted:" + "a" * 32]
-    health = await owner.health()
+    health = await owner.lifecycle.health()
     assert health.state == "ready" and health.errors == []
     assert health.supervisor.session_errors["a" * 32] == ["worker_restart_budget_exhausted"]
 
 
 async def test_session_recency_is_persisted_and_retries_do_not_move_it(store, tmp_path, lease, monkeypatch):
     first, second = "a" * 32, "b" * 32
-    monkeypatch.setattr("amazme_backend.host_store.time.time_ns", lambda: 200_000_000)
+    monkeypatch.setattr("amazme_backend.host.persistence.sessions.time.time_ns", lambda: 200_000_000)
     await store.create_session(second, CreateSession(title="second", workspace="docs"))
-    monkeypatch.setattr("amazme_backend.host_store.time.time_ns", lambda: 300_000_000)
+    monkeypatch.setattr("amazme_backend.host.persistence.sessions.time.time_ns", lambda: 300_000_000)
     submitted = Submit(request_id="stable-activity", text="later")
     await store.enqueue(first, "submit", submitted.request_id, submitted)
-    monkeypatch.setattr("amazme_backend.host_store.time.time_ns", lambda: 400_000_000)
+    monkeypatch.setattr("amazme_backend.host.persistence.sessions.time.time_ns", lambda: 400_000_000)
     await store.enqueue(first, "submit", submitted.request_id, submitted)
     sessions = (await store.sessions()).sessions
     # The fixture's first session was created with real wall time; its new activity
@@ -921,7 +936,9 @@ async def test_session_recency_is_persisted_and_retries_do_not_move_it(store, tm
 
 
 async def test_delivery_pins_session_model_without_credentials_and_same_id_reuses_original(store):
-    from amazme_backend.contracts import ModelSelection, ProviderConfig, SecretStr, SessionModel
+    from pydantic import SecretStr
+
+    from amazme_backend.contracts import ModelSelection, ProviderConfig, SessionModel
 
     session = "a" * 32
     config = ProviderConfig(provider="faux",model="faux",api_key=SecretStr("private-key"))
@@ -975,64 +992,77 @@ async def test_quit_fence_rejects_racing_deliveries_and_never_resurrects_outbox(
 
 
 async def test_task_activity_uses_outbox_without_starting_an_idle_worker(owner):
-    owner.ensure_supervisor = AsyncMock()
+    owner.lifecycle.ensure_supervisor = AsyncMock()
     assert (await owner.task_activity()) == TaskActivity(active=False, tasks=0)
-    await owner.store.enqueue("a" * 32, "submit", "queued", Submit(request_id="queued", text="task"))
+    await owner.lifecycle.store.enqueue("a" * 32, "submit", "queued", Submit(request_id="queued", text="task"))
     assert (await owner.task_activity()).active
-    await owner.store.begin_quit()
+    await owner.lifecycle.store.begin_quit()
     assert not (await owner.task_activity()).active
-    owner.ensure_supervisor.assert_not_awaited()
+    owner.lifecycle.ensure_supervisor.assert_not_awaited()
 
 
-async def test_desktop_shutdown_cancels_durable_work_without_a_live_worker(owner):
-    from amazme_backend.storage import SessionStore
+async def test_desktop_shutdown_cancels_durable_work_without_a_live_worker(tmp_path):
+    from amazme_backend.execution.processes import ProcessReservation
+    from amazme_backend.profiles.layout import session_database
+    from amazme_backend.sessions.service import SessionStore, read_session
 
-    session = "a" * 32
-    path = owner.profile.path / "sessions" / session / "session.sqlite"
-    path.parent.mkdir(parents=True)
-    store = SessionStore(path, session, build=owner.build)
-    await store.initialize()
-    await store.fence(owner.fence)
-    await store.accept(Submit(request_id="parked", text="task"), owner.fence)
-    await store.db.close()
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)),
-                                base_url=owner.origin,
-                                headers={"Authorization": "Bearer private-control"}) as client:
-        response = await client.post("/control/shutdown", json=owner.fence.model_dump())
-    assert response.status_code == 200
-    reopened = SessionStore(path, session, build=owner.build, require_existing=True)
-    try:
-        await reopened.initialize()
-        assert not (await reopened.activity()).pending
-    finally:
-        await reopened.db.close()
+    private_write(tmp_path / "config.json", json.dumps({"profile_id": "shutdown", "workspace": str(tmp_path),
+                  "resources": "unused", "provider": {"provider": "faux"}}))
+    private_write(tmp_path / "control.token", "private-control")
+    private_write(tmp_path / "web.token", "web-only")
+    with ProcessReservation(tmp_path, "host", "shutdown-host") as reservation:
+        owner = Host(Profile(tmp_path), "shutdown-host", reservation.lease)
+        owner.origin = "http://127.0.0.1:12345"
+        try:
+            # Initialize the lifecycle without a dispatcher so the queued root stays unstarted.
+            await owner.lifecycle.initialize()
+            session = "a" * 32
+            await owner.sessions.create_session(CreateSession(session_id=session))
+            path = session_database(tmp_path, session)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            store = SessionStore(path, session, build=owner.lifecycle.build)
+            try:
+                await store.initialize()
+                await store.fence(owner.lifecycle.fence)
+                await store.accept(Submit(request_id="parked", text="task"), owner.lifecycle.fence)
+            finally:
+                await store.close()
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(owner)),
+                                        base_url=owner.origin,
+                                        headers={"Authorization": "Bearer private-control"}) as client:
+                response = await client.post("/control/shutdown", json=owner.lifecycle.fence.model_dump())
+            assert response.status_code == 200
+            async with read_session(path, session, build=owner.lifecycle.build) as reopened:
+                assert not (await reopened.activity()).pending
+        finally:
+            await owner.close()
 
 
 async def test_task_activity_reads_existing_session_and_supervised_work(owner):
-    from amazme_backend.storage import SessionStore
+    from amazme_backend.sessions.service import SessionStore
 
     session = "a" * 32
-    directory = owner.profile.path / "sessions" / session
+    directory = owner.lifecycle.profile.path / "sessions" / session
     directory.mkdir(parents=True)
-    store = SessionStore(directory / "session.sqlite", session, build=owner.build)
+    store = SessionStore(directory / "session.sqlite", session, build=owner.lifecycle.build)
     await store.initialize()
-    await store.fence(owner.fence)
-    await store.accept(Submit(request_id="running", text="task"), owner.fence)
-    await store.db.close()
+    await store.fence(owner.lifecycle.fence)
+    await store.accept(Submit(request_id="running", text="task"), owner.lifecycle.fence)
+    await store.close()
     try:
         assert (await owner.task_activity()).active
-        reader = SessionStore(directory / "session.sqlite", session, build=owner.build, require_existing=True)
+        reader = SessionStore(directory / "session.sqlite", session, build=owner.lifecycle.build, require_existing=True)
         await reader.initialize()
-        await reader.cancel("running", owner.fence)
-        await reader.db.close()
+        await reader.cancel("running", owner.lifecycle.fence)
+        await reader.close()
         assert not (await owner.task_activity()).active
     finally:
-        await store.db.close()
+        await store.close()
 
-    owner.attached = "supervisor"
-    owner.supervisor = AsyncMock()
-    owner.supervisor.call.return_value = TaskActivity(active=True, tasks=2)
+    owner.lifecycle.attached = "supervisor"
+    owner.lifecycle.supervisor = AsyncMock()
+    owner.lifecycle.supervisor.call.return_value = TaskActivity(active=True, tasks=2)
     assert (await owner.task_activity()).tasks == 2
-    owner.supervisor.call.side_effect = httpx.ReadError("unavailable")
+    owner.lifecycle.supervisor.call.side_effect = httpx.ReadError("unavailable")
     with pytest.raises(httpx.ReadError):
         await owner.task_activity()

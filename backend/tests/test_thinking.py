@@ -3,17 +3,30 @@ from pathlib import Path
 
 import pytest
 
+from amazme_backend.agent.model import ProductCompletion, model_request, model_spec
+from amazme_backend.agent.prompting import build_system_prompt
+from amazme_backend.ai.catalog import INDEX
+from amazme_backend.ai.providers.anthropic import anthropic_body
+from amazme_backend.ai.providers.completions import provider_messages
+from amazme_backend.ai.providers.google import google_body
+from amazme_backend.ai.providers.responses import responses_body
+from amazme_backend.ai.reasoning import completions_thinking, level_for
+from amazme_backend.ai.types import Auth, ModelRequest, ModelSpec, RequestTransport
 from amazme_backend.contracts import BackendError, HostFence, ProviderConfig, Submit, ThinkingLevel
-from amazme_backend.model_catalog import INDEX
-from amazme_backend.provider_wire import anthropic_body, google_body, responses_body
-from amazme_backend.providers import provider_messages
-from amazme_backend.session_domain import Continue, ModelInvocation
-from amazme_backend.storage import SessionStore
-from amazme_backend.thinking import completions_thinking, level_for
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.sessions.types import Continue, ModelInvocation, ModelReturned, Park
 
 
-def config(provider: str, model: str, thinking: ThinkingLevel = "off") -> ProviderConfig:
-    return ProviderConfig(provider=provider, model=model, thinking=thinking)
+def config(provider: str, model: str, thinking: ThinkingLevel = "off") -> ModelSpec:
+    return ModelSpec(provider=provider, model=model, thinking=thinking, base_url='https://provider.example/v1')
+
+
+async def next_action(store: SessionStore):
+    for _ in range(30):
+        action = await store.advance()
+        if not isinstance(action, Continue):
+            return action
+    pytest.fail('No observable session action')
 
 
 def test_reasoning_is_clamped_to_pi_supported_levels_and_mapped_once() -> None:
@@ -30,28 +43,28 @@ def test_reasoning_is_clamped_to_pi_supported_levels_and_mapped_once() -> None:
 def test_responses_use_same_model_mapping_and_keep_encrypted_history() -> None:
     for api in ("openai-responses", "openai-codex-responses"):
         value = config("openai", "gpt-5", "max").model_copy(update={"api":api})
-        body = responses_body(value, [], None)
+        body = responses_body(value, ModelRequest(messages=[]))
         assert body["reasoning"] == {"effort":"high", "summary":"auto"}
         assert body["include"] == ["reasoning.encrypted_content"]
 
 
 def test_anthropic_budget_preserves_answer_room_and_adaptive_models_use_effort() -> None:
     value = config("anthropic", "claude-haiku-4-5", "high")
-    body, _ = anthropic_body(value, [], None)
+    body, _ = anthropic_body(value, ModelRequest(messages=[]), Auth(), RequestTransport())
     assert body["max_tokens"] == 2048 + 16384
     assert body["thinking"] == {"type":"enabled", "budget_tokens":16384, "display":"summarized"}
-    adaptive, _ = anthropic_body(config("anthropic", "claude-fable-5", "max"), [], None)
+    adaptive, _ = anthropic_body(config("anthropic", "claude-fable-5", "max"), ModelRequest(messages=[]), Auth(), RequestTransport())
     assert adaptive["thinking"] == {"type":"adaptive", "display":"summarized"}
     assert adaptive["output_config"] == {"effort":"max"}
-    disabled, _ = anthropic_body(config("anthropic", "claude-haiku-4-5"), [], None)
+    disabled, _ = anthropic_body(config("anthropic", "claude-haiku-4-5"), ModelRequest(messages=[]), Auth(), RequestTransport())
     assert disabled["thinking"] == {"type":"disabled"}
 
 
 def test_google_uses_level_or_budget_with_original_model_off_fallback() -> None:
-    budget = google_body(config("google", "gemini-2.5-pro", "high"), [], None)
+    budget = google_body(config("google", "gemini-2.5-pro", "high"), ModelRequest(messages=[]))
     assert budget["generationConfig"] == {"maxOutputTokens":2048,"thinkingConfig":{"includeThoughts":True,"thinkingBudget":32768}}
     candidate = next(model for model in INDEX.values() if model.provider == "google" and "gemini-3" in model.id and "pro" in model.id)
-    body = google_body(config(candidate.provider, candidate.id, "high"), [], None)
+    body = google_body(config(candidate.provider, candidate.id, "high"), ModelRequest(messages=[]))
     assert body["generationConfig"] == {"maxOutputTokens":2048,"thinkingConfig":{"includeThoughts":True,"thinkingLevel":"HIGH"}}
 
 
@@ -78,7 +91,7 @@ async def test_reasoning_is_saved_on_accept_and_replay_cannot_change_it(tmp_path
         assert await store.accept(value, fence) == receipt
         with pytest.raises(BackendError, match="request_conflict"):
             await store.accept(value.model_copy(update={"thinking":"off"}), fence)
-        await store.db.close()
+        await store.close()
         store = SessionStore(path, "session", require_existing=True)
         await store.initialize()
         for _ in range(12):
@@ -87,18 +100,17 @@ async def test_reasoning_is_saved_on_accept_and_replay_cannot_change_it(tmp_path
                 break
         assert isinstance(action, ModelInvocation)
         assert action.config.thinking == "max"
-        assert provider_messages([], config=action.config)[0]["role"] == "system"
+        assert build_system_prompt(action.config).startswith('You are AmazMe.')
+        wire = provider_messages(model_spec(action.config), model_request(action.config, action.messages, auth=Auth()))
+        assert wire[0]['role'] == 'system'
+        assert wire[0]['content'] == build_system_prompt(action.config)
     finally:
-        await store.db.close()
+        await store.close()
 
 
 @pytest.mark.parametrize('requested', ['off', 'max'])
 async def test_assistant_retains_requested_thinking_across_restart_and_next_turn(tmp_path: Path, requested: ThinkingLevel) -> None:
-    from test_session_branch import Driver
-
     from amazme_backend.contracts import Message
-    from amazme_backend.providers import Completion
-    from amazme_backend.session_domain import ModelReturned
 
     path, fence = tmp_path / 'session.sqlite', HostFence(build_id='thinking-history', host_epoch=1)
     store = SessionStore(path, 'session', build=fence.build_id, config=ProviderConfig(provider='faux'))
@@ -106,23 +118,23 @@ async def test_assistant_retains_requested_thinking_across_restart_and_next_turn
     await store.fence(fence)
     try:
         await store.accept(Submit(request_id='first', text='plan', thinking=requested), fence)
-        action = await Driver(store).until(ModelInvocation)
+        action = await next_action(store)
         assert isinstance(action, ModelInvocation)
-        reply = Completion(response_id='reply', message=Message(role='assistant', content='done', thinking='low'))
+        reply = ProductCompletion(response_id='reply', message=Message(role='assistant', content='done', thinking='low'))
         await store.advance(ModelReturned(action, reply))
         assert reply.message.thinking == 'low'
     finally:
-        await store.db.close()
+        await store.close()
 
     reopened = SessionStore(path, 'session', build=fence.build_id, config=ProviderConfig(provider='faux'), require_existing=True)
     try:
         await reopened.initialize()
-        await Driver(reopened).drain()
+        assert isinstance(await next_action(reopened), Park)
         history = await reopened.messages('first')
         assert [message.thinking for message in history if message.role == 'assistant'] == [requested]
         await reopened.accept(Submit(request_id='next', text='continue', thinking='high'), fence)
-        following = await Driver(reopened).until(ModelInvocation)
+        following = await next_action(reopened)
         assert isinstance(following, ModelInvocation) and following.config.thinking == 'high'
         assert [message.thinking for message in following.messages if message.role == 'assistant'] == [requested]
     finally:
-        await reopened.db.close()
+        await reopened.close()

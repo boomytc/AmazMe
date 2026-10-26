@@ -9,10 +9,12 @@ from pathlib import Path
 import httpx
 import pytest
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.platform.private_files import private_write
 from amazme_backend.contracts import BackendError, HostFence, ProcessLease
-from amazme_backend.host import Host, application
-from amazme_backend.page_boot import boot_page, boot_script
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.interfaces.web.boot import boot_page, boot_script
 
 
 def _host(tmp_path: Path) -> Host:
@@ -24,7 +26,7 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "c" * 64)
     private_write(tmp_path / "web.token", "w" * 48)
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:4310"
     return host
 
@@ -37,10 +39,10 @@ def test_script_escapes_markup() -> None:
 
 async def test_served_page_names_this_host(tmp_path: Path) -> None:
     host = _host(tmp_path)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id="test-host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"),
         device=1, inode=1))
-    identity = host.identity()
+    identity = host.lifecycle.identity()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin) as client:
         response = await client.get("/")
         again = await client.get("/index.html")
@@ -80,15 +82,15 @@ async def test_served_page_names_this_host(tmp_path: Path) -> None:
     assert sheet.status_code == 200 and ".app-rail" in sheet.text
     assert "sha256-" not in script_file.headers["content-security-policy"]
     assert "unsafe-inline" not in script_file.headers["content-security-policy"]
-    await host.supervisor.close()
-    await host.store.db.close()
+    await host.lifecycle.supervisor.close()
+    await host.lifecycle.store.db.close()
 
 
 def test_missing_origin_is_rejected(tmp_path: Path) -> None:
     host = _host(tmp_path)
     host.origin = ""
     try:
-        boot_page(host.identity(), host.origin)
+        boot_page(host.lifecycle.identity(), host.origin)
     except BackendError as error:
         assert error.code == "boot_origin_invalid"
     else:
@@ -98,7 +100,7 @@ def test_missing_origin_is_rejected(tmp_path: Path) -> None:
 @pytest.mark.parametrize("page_path", ["/", "/index.html?new=1"])
 async def test_local_page_connects_without_manual_pairing(tmp_path: Path, page_path: str) -> None:
     host = _host(tmp_path)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id="test-host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"),
         device=1, inode=1))
     try:
@@ -111,7 +113,7 @@ async def test_local_page_connects_without_manual_pairing(tmp_path: Path, page_p
             assert "SameSite=strict" in response.headers["set-cookie"]
             assert host.web_token not in response.text
             assert (await client.get("/api/v1/sessions")).status_code == 200
-            headers = {"x-amazme-build": host.build, "x-amazme-epoch": str(host.fence.host_epoch)}
+            headers = {"x-amazme-build": host.lifecycle.build, "x-amazme-epoch": str(host.lifecycle.fence.host_epoch)}
             assert (await client.post("/api/v1/sessions", json={}, headers=headers)).status_code == 401
             headers["origin"] = host.origin
             assert (await client.post("/api/v1/sessions", json={}, headers=headers)).status_code == 201
@@ -120,8 +122,8 @@ async def test_local_page_connects_without_manual_pairing(tmp_path: Path, page_p
             assert (await client.get(page_path)).status_code == 200
             assert (await client.get("/api/v1/sessions")).status_code == 200
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 @pytest.mark.parametrize("headers", [{"host": "other.example"}, {"origin": "https://other.example"}])
@@ -133,5 +135,5 @@ async def test_foreign_page_request_does_not_receive_cookie(tmp_path: Path, head
             assert response.status_code == 403
             assert "set-cookie" not in response.headers
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()

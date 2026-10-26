@@ -5,9 +5,11 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from session_test_support import session_database_owner
 
 from amazme_backend.contracts import BackendError, HostFence, Submit
-from amazme_backend.storage import Database, SessionStore
+from amazme_backend.sessions.persistence.database import Database
+from amazme_backend.sessions.service import SessionStore
 
 FENCE = HostFence(host_epoch=1, build_id="test-build")
 
@@ -20,7 +22,7 @@ async def store(tmp_path: Path) -> AsyncIterator[SessionStore]:
     try:
         yield value
     finally:
-        await value.db.close()
+        await value.close()
 
 
 async def test_concurrent_acceptance_is_one_durable_receipt(store: SessionStore) -> None:
@@ -33,22 +35,22 @@ async def test_concurrent_acceptance_is_one_durable_receipt(store: SessionStore)
     assert len(snapshot.requests) == 1
     replay = await store.events(int(receipts[0].accepted_revision) - 1)
     assert len(replay.batches) == 1 and len(replay.batches[0].events) == 1
-    await store.db.close()
-    reopened = SessionStore(store.db.path, "session", require_existing=True)
+    await store.close()
+    reopened = SessionStore(session_database_owner(store).path, "session", require_existing=True)
     await reopened.initialize()
     try:
         assert await reopened.accept(value, FENCE) == receipts[0]
         assert (await reopened.snapshot()).stream_id == snapshot.stream_id
     finally:
-        await reopened.db.close()
+        await reopened.close()
 
 
 async def test_tombstone_survives_restart_and_unrelated_queue(store: SessionStore) -> None:
     cancelled = await store.cancel("late", FENCE)
     assert await store.cancel("late", FENCE) == cancelled
     assert (await store.snapshot()).requests == [cancelled]
-    await store.db.close()
-    reopened = SessionStore(store.db.path, "session", require_existing=True)
+    await store.close()
+    reopened = SessionStore(session_database_owner(store).path, "session", require_existing=True)
     await reopened.initialize()
     try:
         await reopened.accept(Submit(request_id="other", text="continue"), FENCE)
@@ -56,7 +58,7 @@ async def test_tombstone_survives_restart_and_unrelated_queue(store: SessionStor
         assert receipt.status == "cancelled" and receipt.cancel_requested
         assert (await reopened.get("other")).status == "queued"
     finally:
-        await reopened.db.close()
+        await reopened.close()
 
 
 async def test_host_fence_is_monotonic_and_checked_inside_acceptance(store: SessionStore) -> None:
@@ -120,13 +122,13 @@ async def test_require_existing_never_recreates_missing_state(tmp_path: Path, ki
             await value.initialize()
         assert {p.name: (p.read_bytes(), p.stat().st_mtime_ns) for p in tmp_path.iterdir()} == before
     finally:
-        await value.db.close()
+        await value.close()
 
 
 @pytest.mark.parametrize("mutation", ["unlink", "replace", "truncate"])
 async def test_open_database_identity_loss_latches_admission(store: SessionStore, mutation: str) -> None:
     await store.accept(Submit(request_id="kept", text="original"), FENCE)
-    path = store.db.path
+    path = session_database_owner(store).path
     if mutation == "unlink":
         path.unlink()
     elif mutation == "truncate":
@@ -150,15 +152,15 @@ async def test_sqlite_full_rolls_back_receipt_and_batch_and_latches(store: Sessi
     def restrict(db: sqlite3.Connection) -> None:
         count = int(db.execute("PRAGMA page_count").fetchone()[0])
         db.execute(f"PRAGMA max_page_count={count}")
-    await store.db.call(restrict)
+    await session_database_owner(store).call(restrict)
     with pytest.raises(BackendError) as caught:
         await store.accept(Submit(request_id="full", text="x" * 16000), FENCE)
     assert caught.value.code == "storage_failure" and "full" in caught.value.message
     with pytest.raises(BackendError) as blocked:
         await store.accept(Submit(request_id="no-retry", text="small"), FENCE)
     assert blocked.value.code == "storage_blocked"
-    await store.db.close()
-    reopened = SessionStore(store.db.path, "session", require_existing=True)
+    await store.close()
+    reopened = SessionStore(session_database_owner(store).path, "session", require_existing=True)
     await reopened.initialize()
     try:
         restored = await reopened.snapshot()
@@ -166,7 +168,7 @@ async def test_sqlite_full_rolls_back_receipt_and_batch_and_latches(store: Sessi
         with pytest.raises(BackendError, match="request_not_found"):
             await reopened.get("full")
     finally:
-        await reopened.db.close()
+        await reopened.close()
 
 
 async def test_full_snapshot_and_complete_batch_replay(store: SessionStore) -> None:
@@ -225,29 +227,29 @@ async def test_valid_wal_preflight_reads_committed_pages(tmp_path: Path) -> None
         with pytest.raises(BackendError, match="session_locked"):
             await writer.initialize()
     finally:
-        await writer.db.close()
-        await reader.db.close()
-        await first.db.close()
+        await writer.close()
+        await reader.close()
+        await first.close()
     follower = SessionStore(path, "session", require_existing=True)
     try:
         await follower.initialize()
         assert (await follower.get("wal")).text == "committed"
     finally:
-        await follower.db.close()
+        await follower.close()
 
 
 async def test_logical_corruption_is_rejected_before_writable_open(store: SessionStore) -> None:
     await store.accept(Submit(request_id="bad", text="input"), FENCE)
-    await store.db.call(lambda db: db.execute("UPDATE runs SET payload='{}'"))
-    await store.db.close()
-    before = store.db.path.read_bytes(), store.db.path.stat().st_mtime_ns
-    reopened = SessionStore(store.db.path, "session", require_existing=True)
+    await session_database_owner(store).call(lambda db: db.execute("UPDATE runs SET payload='{}'"))
+    await store.close()
+    before = session_database_owner(store).path.read_bytes(), session_database_owner(store).path.stat().st_mtime_ns
+    reopened = SessionStore(session_database_owner(store).path, "session", require_existing=True)
     try:
         with pytest.raises(BackendError, match="storage_corrupt"):
             await reopened.initialize()
-        assert (store.db.path.read_bytes(), store.db.path.stat().st_mtime_ns) == before
+        assert (session_database_owner(store).path.read_bytes(), session_database_owner(store).path.stat().st_mtime_ns) == before
     finally:
-        await reopened.db.close()
+        await reopened.close()
 
 
 @pytest.mark.parametrize("accept_first", [False,True])

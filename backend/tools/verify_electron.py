@@ -213,19 +213,31 @@ def session_of(page) -> str:
 
 
 @contextmanager
-def http_mcp_fixture(marker):
+def http_mcp_fixture(marker, *, bearer_token=""):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
             pass
 
+        def authorized(self):
+            if bearer_token and self.headers.get("Authorization") != "Bearer " + bearer_token:
+                self.send_error(401, "Bearer token required")
+                return False
+            return True
+
         def do_GET(self):
+            if not self.authorized():
+                return
             self.send_error(405)
 
         def do_DELETE(self):
+            if not self.authorized():
+                return
             self.send_response(204)
             self.end_headers()
 
         def do_POST(self):
+            if not self.authorized():
+                return
             value = json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0"))))
             method, identity = value.get("method"), value.get("id")
             if identity is None:
@@ -413,6 +425,24 @@ def main() -> None:
                     assert alive(runtime.host_pid) and not errors, errors
                     report["page_errors"] = errors
                     report["checks"].append("two windows keep independent sessions; closing both windows preserves accepted work and the backend")
+                    # Smoke mode declines the busy-quit consent dialog. End these owned
+                    # fixtures explicitly before checking the idle application's real quit path.
+                    cancelled = client.post(f"/api/v1/sessions/{session}/requests/{request_id}/cancel",
+                        headers={**fence, "x-amazme-attachment": binding})
+                    cancelled.raise_for_status()
+                    until(lambda: client.get(f"/api/v1/sessions/{session}/requests/{request_id}").json(),
+                          lambda value: value["status"] == "cancelled", timeout=30)
+                    terminals = client.get(f"/api/v1/sessions/{session}/terminals").json()["terminals"]
+                    for terminal in terminals:
+                        if terminal["phase"] == "running":
+                            closed = client.post(f'/api/v1/sessions/{session}/terminals/{terminal["terminal_id"]}/close',
+                                headers={**fence, "x-amazme-attachment": binding})
+                            closed.raise_for_status()
+                            assert closed.json()["clean"]
+                    control = (runtime.root / "python-profile/control.token").read_text().strip()
+                    until(lambda: client.get("/control/desktop/activity", headers={"Authorization": "Bearer " + control}).json(),
+                          lambda value: value["active"] is False, timeout=30)
+                    report["checks"].append("explicit fixture cancellation settled the waiting request and closed its PTY before idle quit")
             runtime.quit()
             assert not alive(runtime.host_pid) and alive(decoy.pid)
             report["checks"].append("explicit quit stops only its owned backend")

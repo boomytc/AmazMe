@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.client_outbox import OutboxCommand, PendingInput, execute
-from amazme_backend.common import lock
+from amazme_backend.interfaces.client_outbox import OutboxCommand, PendingInput, execute
+from amazme_backend.platform.private_files import lock
 
 
 def test_profile_scope_reservation_and_exact_ack(tmp_path: Path) -> None:

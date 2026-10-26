@@ -14,12 +14,14 @@ import httpx
 import pytest
 from runtime_cleanup import stop_and_destroy
 
-from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import BackendError, CreateSession, HostFence, ProcessLease, Submit, WebPolicy
-from amazme_backend.host import Host
+from amazme_backend.host.service import Host
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.profiles.profile import Profile
 from amazme_backend.sdk import Client
-from amazme_backend.session_ops import run_session_op
-from amazme_backend.storage import SessionStore, remove_session_directory, session_database
+from amazme_backend.sessions.maintenance import remove_session_directory
+from amazme_backend.sessions.service import SessionStore, run_session_op
 
 SID = "ab" * 16
 FENCE = HostFence(host_epoch=0, build_id="test-build")
@@ -33,7 +35,7 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:9"
     return host
 
@@ -58,16 +60,16 @@ async def test_second_writer_is_refused_until_the_owner_closes(tmp_path: Path) -
             assert caught.value.code == "session_locked"
             assert await reader.search("独占锁")
         finally:
-            await blocked.db.close()
+            await blocked.close()
     finally:
-        await reader.db.close()
-        await owner.db.close()
+        await reader.close()
+        await owner.close()
     follower = SessionStore(path, SID, build="test-build", require_existing=True)
     try:
         await follower.initialize()
         assert await follower.get("one")
     finally:
-        await follower.db.close()
+        await follower.close()
     remove_session_directory(path.parent)
     assert not path.parent.exists()
 
@@ -88,7 +90,7 @@ async def test_bad_database_does_not_create_the_lock(tmp_path: Path) -> None:
         assert not path.with_name("session.lock").exists()
         assert (path.read_bytes(), path.stat().st_mtime_ns) == before
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_symlink_lock_is_refused_before_create(tmp_path: Path) -> None:
@@ -101,7 +103,7 @@ async def test_symlink_lock_is_refused_before_create(tmp_path: Path) -> None:
         assert caught.value.code == "session_lock_refused"
         assert not path.exists()
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_owner_operation_is_visible_to_a_reader(tmp_path: Path) -> None:
@@ -117,32 +119,32 @@ async def test_owner_operation_is_visible_to_a_reader(tmp_path: Path) -> None:
             await reader.initialize()
             assert (await reader.web_policy()).count == 4
         finally:
-            await reader.db.close()
+            await reader.close()
     finally:
-        await owner.db.close()
+        await owner.close()
 
 
 async def test_host_usage_reads_under_the_writer_lock(tmp_path: Path) -> None:
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    created = await host.create_session(CreateSession(title="锁"))
-    path = session_database(host.profile.path, created.session_id)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    created = await host.sessions.create_session(CreateSession(title="锁"))
+    path = session_database(host.lifecycle.profile.path, created.session_id)
     path.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
-    owner = SessionStore(path, created.session_id, build=host.build)
+    owner = SessionStore(path, created.session_id, build=host.lifecycle.build)
     await owner.initialize()
     try:
         await owner.accept(Submit(request_id="one", text="宿主仍可读"),
-                           HostFence(host_epoch=0, build_id=host.build))
-        report = await host.session_usage(created.session_id)
+                           HostFence(host_epoch=0, build_id=host.lifecycle.build))
+        report = await host.sessions.session_usage(created.session_id)
         assert report.session_id == created.session_id
         assert report.model_calls == 0
-        found = await host.search_session(created.session_id, "宿主仍可读")
+        found = await host.sessions.search_session(created.session_id, "宿主仍可读")
         assert found.hits
     finally:
-        await owner.db.close()
-        await host.store.db.close()
+        await owner.close()
+        await host.lifecycle.store.db.close()
 
 
 def _serve(tmp_path: Path) -> tuple[subprocess.Popen[bytes], str, Path]:
@@ -235,7 +237,7 @@ async def test_live_worker_keeps_the_lock_and_accepts_the_host_write(tmp_path: P
                     await outsider.initialize()
                 assert caught.value.code == "session_locked"
             finally:
-                await outsider.db.close()
+                await outsider.close()
             identity = httpx.get(url + "/api/v1/bootstrap", headers={"Authorization": "Bearer " + token}, timeout=10)
             assert identity.status_code == 200, identity.text
             body = identity.json()
@@ -262,7 +264,7 @@ async def test_live_worker_keeps_the_lock_and_accepts_the_host_write(tmp_path: P
                 await reader.initialize()
                 assert (await reader.web_policy()).count == 4
             finally:
-                await reader.db.close()
+                await reader.close()
     finally:
         _stop(proc, profile)
 

@@ -11,42 +11,16 @@ from pathlib import Path
 import httpx
 import pytest
 
-from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import (
-    BackendError,
-    CodeRun,
-    CodeView,
-    CreateSession,
-    HostFence,
-    McpCallRequest,
-    McpDecision,
-    McpOpen,
-    OpenMcp,
-    OpenTerminal,
-    PluginCallRequest,
-    PluginCallView,
-    ProcessLease,
-    ReadFile,
-    RemoteOpen,
-    RemoteRun,
-    RunTool,
-    SupervisorHealth,
-    TerminalInput,
-    TerminalOpen,
-    TerminalQuery,
-    TerminalType,
-    UpdateRecord,
-    WorkerInfo,
-    WorkerRequest,
-    WorkspaceGrantRequest,
-    WorkspaceSelect,
-    WriteFile,
-)
-from amazme_backend.host import Host, application
-from amazme_backend.processes import ProcessReservation
-from amazme_backend.rpc import RpcCall, RpcParams, handle_rpc
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.contracts import BackendError, CodeRun, CodeView, CreateSession, HostFence, McpCallRequest, McpDecision, McpOpen, OpenMcp, OpenTerminal, PluginCallRequest, PluginCallView, ProcessLease, ReadFile, RemoteOpen, RemoteRun, RunTool, SupervisorHealth, TerminalInput, TerminalOpen, TerminalQuery, TerminalType, UpdateRecord, WorkerInfo, WorkerRequest, WorkspaceGrantRequest, WorkspaceSelect, WriteFile
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.execution.processes import ProcessReservation
+from amazme_backend.interfaces.rpc import RpcCall, RpcParams, handle_rpc
 from amazme_backend.sdk import Client
-from amazme_backend.supervisor import Supervisor
+from amazme_backend.execution.supervisor import Supervisor
+from amazme_backend.bootstrap.supervisor import create_supervisor
 
 SESSION = "b" * 32
 
@@ -59,20 +33,21 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     return host
 
 
 async def _ready(host: Host) -> None:
-    lease = ProcessLease(instance_id="host", role="host", profile_path=str(host.profile.path),
-                         path=str(host.profile.path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    lease = ProcessLease(instance_id="host", role="host", profile_path=str(host.lifecycle.profile.path),
+                         path=str(host.lifecycle.profile.path / "lease"), device=1, inode=1)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
 
 
 def _client(host: Host) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-        "Authorization": "Bearer web-only", "x-amazme-build": host.build, "x-amazme-epoch": str(host.fence.host_epoch),
+        "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build, "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
     })
 
 
@@ -109,8 +84,7 @@ async def test_grant_maps_the_same_absolute_path_for_files_and_tools(tmp_path: P
         assert (other / "note.txt").read_text() == "changed\n"
     finally:
         shutil.rmtree(other, ignore_errors=True)
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.close()
 
 
 async def test_grant_rejects_home_symlink_profile_and_socket(tmp_path: Path) -> None:
@@ -122,15 +96,14 @@ async def test_grant_rejects_home_symlink_profile_and_socket(tmp_path: Path) -> 
     socket_dir.mkdir()
     try:
         async with _client(host) as client:
-            for path in (Path.home(), host.profile.path, linked, socket_dir):
+            for path in (Path.home(), host.lifecycle.profile.path, linked, socket_dir):
                 rejected = await client.post("/api/v1/workspaces", json={"name": "docs", "host_path": str(path)})
                 assert rejected.status_code == 409
                 assert rejected.json()["code"] in {"workspace_grant_forbidden", "workspace_symlink"}
             again = await client.get("/api/v1/workspaces")
             assert [item["name"] for item in again.json()["workspaces"]] == ["primary"]
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.close()
 
 
 async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,19 +116,19 @@ async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_
         calls.append(path)
         raise AssertionError(path)
 
-    monkeypatch.setattr(host.supervisor, "call", blocked)
+    monkeypatch.setattr(host.lifecycle.supervisor, "call", blocked)
     remote = RemoteOpen(remote_id="a" * 32, host="remote-a", host_key="k" * 16)
     refused = [
-        lambda: host.open_terminal(missing, TerminalOpen(terminal_id="f" * 32, command="sh", workspace="primary")),
-        lambda: host.open_mcp(missing, McpOpen(server_id="a" * 32, command="python3 demo.py")),
-        lambda: host.run_code(missing, CodeRun(run_id="b" * 32, source="1")),
-        lambda: host.call_plugin(missing, "c" * 32, PluginCallRequest(call_id="d" * 32, name="hello", arguments={"name":"hi"})),
-        lambda: host.open_remote(missing, remote),
-        lambda: host.submit_remote(missing, RemoteRun(**remote.model_dump(), call_id="1" * 32, command="echo")),
-        lambda: host.request_mcp(missing, "a" * 32, McpCallRequest(call_id="2" * 32, name="echo")),
-        lambda: host.decide_mcp(missing, "a" * 32, "2" * 32, McpDecision(
+        lambda: host.integrations.open_terminal(missing, TerminalOpen(terminal_id="f" * 32, command="sh", workspace="primary")),
+        lambda: host.integrations.open_mcp(missing, McpOpen(server_id="a" * 32, command="python3 demo.py")),
+        lambda: host.integrations.run_code(missing, CodeRun(run_id="b" * 32, source="1")),
+        lambda: host.integrations.call_plugin(missing, "c" * 32, PluginCallRequest(call_id="d" * 32, name="hello", arguments={"name":"hi"})),
+        lambda: host.integrations.open_remote(missing, remote),
+        lambda: host.integrations.submit_remote(missing, RemoteRun(**remote.model_dump(), call_id="1" * 32, command="echo")),
+        lambda: host.integrations.request_mcp(missing, "a" * 32, McpCallRequest(call_id="2" * 32, name="echo")),
+        lambda: host.integrations.decide_mcp(missing, "a" * 32, "2" * 32, McpDecision(
             decision_id="once", approve=True, digest="ab" * 32)),
-        lambda: host.type_terminal(missing, "f" * 32, TerminalType(input_id="typed", data="pwd\n")),
+        lambda: host.integrations.type_terminal(missing, "f" * 32, TerminalType(input_id="typed", data="pwd\n")),
     ]
     try:
         for attempt in refused:
@@ -165,26 +138,25 @@ async def test_missing_session_does_not_start_work_in_the_primary_directory(tmp_
         assert not (tmp_path / "executions").exists()
         assert not (tmp_path / "plugin-work").exists()
         present = "a" * 32
-        await host.store.create_session(present, CreateSession(title="在", workspace="primary"))
+        await host.lifecycle.store.create_session(present, CreateSession(title="在", workspace="primary"))
 
         async def reached(_method: str, path: str, _model: object, _body: object) -> object:
             calls.append(path)
             raise BackendError("stopped_after_check")
 
-        monkeypatch.setattr(host.supervisor, "call", reached)
+        monkeypatch.setattr(host.lifecycle.supervisor, "call", reached)
         with pytest.raises(BackendError, match="stopped_after_check"):
-            await host.open_terminal(present, TerminalOpen(terminal_id="f" * 32, command="sh"))
+            await host.integrations.open_terminal(present, TerminalOpen(terminal_id="f" * 32, command="sh"))
         assert calls == ["/pty/open"]
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.close()
 
 
 async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     host = _host(tmp_path)
     await _ready(host)
     session = "a" * 32
-    await host.store.create_session(session, CreateSession(title="冻结", workspace="primary"))
+    await host.lifecycle.store.create_session(session, CreateSession(title="冻结", workspace="primary"))
     update = UpdateRecord(update_id="upd-1", source_build="a" * 64, target_build="b" * 64,
                           phase="freezing", revision="1", cancel_work=False)
     calls: list[str] = []
@@ -195,7 +167,7 @@ async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, mo
     async def supervisor(method: str, path: str, _model: object, body: object = None) -> object:
         calls.append(path)
         if path == "/health":
-            return SupervisorHealth(identity=host.identity(), registry_revision="1", freeze_id=update.update_id,
+            return SupervisorHealth(identity=host.lifecycle.identity(), registry_revision="1", freeze_id=update.update_id,
                                     workers=[], epochs=[])
         if path == "/code/run" and getattr(body, "run_id") == "b" * 32:
             return CodeView(run_id="b" * 32, phase="success", value="3")
@@ -203,33 +175,33 @@ async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, mo
             return PluginCallView.model_validate({"call_id":"d" * 32, "phase":"done", "result":{"content":[{"type":"text","text":"ok"}]}})
         raise BackendError("supervisor_frozen", status=503)
 
-    monkeypatch.setattr(host.store, "active_update", active)
-    monkeypatch.setattr(host.supervisor, "call", supervisor)
+    monkeypatch.setattr(host.lifecycle.store, "active_update", active)
+    monkeypatch.setattr(host.lifecycle.supervisor, "call", supervisor)
     try:
-        code = await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
-        plugin = await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="d" * 32, name="hello", arguments={"name":"hi"}))
+        code = await host.integrations.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
+        plugin = await host.integrations.call_plugin(session, "c" * 32, PluginCallRequest(call_id="d" * 32, name="hello", arguments={"name":"hi"}))
         assert code.value == "3" and plugin.result.content[0]["text"] == "ok"
         with pytest.raises(BackendError, match="update_frozen"):
-            await host.run_code(session, CodeRun(run_id="e" * 32, source="9"))
+            await host.integrations.run_code(session, CodeRun(run_id="e" * 32, source="9"))
         with pytest.raises(BackendError, match="update_frozen"):
-            await host.call_plugin(session, "c" * 32, PluginCallRequest(call_id="f" * 32, name="hello", arguments={"name":"no"}))
+            await host.integrations.call_plugin(session, "c" * 32, PluginCallRequest(call_id="f" * 32, name="hello", arguments={"name":"no"}))
         assert calls == ["/health", "/code/run", "/health", "/plugins/call", "/health", "/code/run", "/health", "/plugins/call"]
 
         async def unmatched() -> UpdateRecord:
             return update.model_copy(update={"update_id": "other"})
 
-        monkeypatch.setattr(host.store, "active_update", unmatched)
+        monkeypatch.setattr(host.lifecycle.store, "active_update", unmatched)
         with pytest.raises(BackendError, match="update_frozen"):
-            await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
+            await host.integrations.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
         assert calls[-1] == "/health" and "/code/run" not in calls[8:]
 
         async def retired(_method: str, path: str, _model: object, _body: object = None) -> object:
             calls.append(path)
             raise httpx.TransportError("supervisor socket closed")
 
-        monkeypatch.setattr(host.supervisor, "call", retired)
+        monkeypatch.setattr(host.lifecycle.supervisor, "call", retired)
         with pytest.raises(BackendError, match="update_prepared"):
-            await host.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
+            await host.integrations.run_code(session, CodeRun(run_id="b" * 32, source="1+2"))
         assert calls[-1] == "/health"
         async with _client(host) as client:
             attached = await client.post(f"/api/v1/sessions/{session}/attachments")
@@ -241,8 +213,7 @@ async def test_update_freeze_returns_finished_code_and_plugin(tmp_path: Path, mo
             )
             assert blocked.status_code == 503 and blocked.json()["code"] == "update_prepared"
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.close()
 
 
 async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path: Path) -> None:
@@ -254,7 +225,7 @@ async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path:
     private_write(tmp_path / "control.token", "test-token")
     session = "e" * 32
     terminal = "f" * 32
-    owner = Supervisor(Profile(tmp_path), "missing-row")
+    owner = create_supervisor(Profile(tmp_path), "missing-row")
     await owner.initialize()
     database = sqlite3.connect(tmp_path / "host.sqlite")
     try:
@@ -266,15 +237,15 @@ async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path:
     try:
         fence = {"build_id": owner.build, "host_epoch": owner.host_epoch, "session_id": session}
         with pytest.raises(BackendError, match="session_not_found"):
-            await owner.open_terminal(OpenTerminal(
+            await owner.pty.open(OpenTerminal(
                 **fence, terminal_id=terminal, command="printf z > leaked.txt"))
         named = "d" * 32
         with pytest.raises(BackendError, match="session_not_found"):
-            await owner.open_terminal(OpenTerminal(
+            await owner.pty.open(OpenTerminal(
                 **fence, terminal_id=named, command="printf z > leaked.txt", workspace="primary"))
         server = "c" * 32
         with pytest.raises(BackendError, match="session_not_found"):
-            await owner.open_mcp(OpenMcp(
+            await owner.mcp.open(OpenMcp(
                 **fence, server_id=server, command="python3 demo.py", workspace="primary"))
         for suffix in (terminal, named):
             instance = hashlib.sha256(("terminal:" + suffix).encode()).hexdigest()[:32]
@@ -292,7 +263,7 @@ async def test_supervisor_refuses_a_missing_session_row_before_primary(tmp_path:
             (worker_id, session, info.model_dump_json())), write=True)
         epoch = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=worker_id, build_id=owner.build))
         with pytest.raises(BackendError, match="session_not_found"):
-            await owner.run_tool(RunTool(
+            await owner.invocations.run(RunTool(
                 **epoch.model_dump(), call_id="missing-shell", request_id="request",
                 command="printf z > leaked.txt", effect="write"))
         assert not (primary / "leaked.txt").exists()
@@ -314,7 +285,7 @@ async def test_unreadable_workspace_does_not_start_shell_terminal_or_mcp(tmp_pat
             "format": 2, "profile_id": name, "workspace": str(primary), "resources": "unused",
             "provider": {"provider": "faux"}}))
         private_write(root / "control.token", "test-token")
-        owner = Supervisor(Profile(root), name)
+        owner = create_supervisor(Profile(root), name)
         await owner.initialize()
         owners.append(owner)
         return owner, primary
@@ -324,10 +295,10 @@ async def test_unreadable_workspace_does_not_start_shell_terminal_or_mcp(tmp_pat
         terminal = os.urandom(16).hex()
         server = os.urandom(16).hex()
         with pytest.raises(BackendError, match=code):
-            await owner.open_terminal(OpenTerminal(
+            await owner.pty.open(OpenTerminal(
                 **fence, terminal_id=terminal, command="printf z > leaked.txt", workspace="primary"))
         with pytest.raises(BackendError, match=code):
-            await owner.open_mcp(OpenMcp(
+            await owner.mcp.open(OpenMcp(
                 **fence, server_id=server, command="python3 demo.py", workspace="primary"))
         worker_id = os.urandom(16).hex()
         reservation = ProcessReservation(owner.profile.path, "worker", worker_id)
@@ -341,7 +312,7 @@ async def test_unreadable_workspace_does_not_start_shell_terminal_or_mcp(tmp_pat
                 (worker_id, session, info.model_dump_json())), write=True)
             epoch = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=worker_id, build_id=owner.build))
             with pytest.raises(BackendError, match=code):
-                await owner.run_tool(RunTool(
+                await owner.invocations.run(RunTool(
                     **epoch.model_dump(), call_id="unreadable-shell", request_id="request",
                     command="printf z > leaked.txt", effect="write"))
         finally:
@@ -383,19 +354,19 @@ async def test_unreadable_workspace_does_not_start_shell_terminal_or_mcp(tmp_pat
             connection.close()
         fence = {"build_id": present.build, "host_epoch": present.host_epoch, "session_id": session}
         terminal = "f" * 32
-        opened = await present.open_terminal(OpenTerminal(
+        opened = await present.pty.open(OpenTerminal(
             **fence, terminal_id=terminal, command="sh", workspace="primary"))
         assert opened.workspace == "primary" and opened.phase == "running"
         (present.profile.path / "host.sqlite").unlink()
         query = TerminalQuery(**fence, terminal_id=terminal)
-        assert (await present.read_terminal(query)).phase == "running"
-        closed = await present.close_terminal(query)
+        assert (await present.pty.read(query)).phase == "running"
+        closed = await present.pty.close(query)
         assert closed.phase == "exited" and closed.clean
         with pytest.raises(BackendError, match="workspace_unresolved"):
-            await present.open_terminal(OpenTerminal(
+            await present.pty.open(OpenTerminal(
                 **fence, terminal_id="a" * 32, command="printf z > after.txt", workspace="primary"))
         assert not (primary / "after.txt").exists()
-        assert (await present.read_terminal(query)).phase == "exited"
+        assert (await present.pty.read(query)).phase == "exited"
     finally:
         for owner in owners:
             await owner.close()
@@ -426,7 +397,7 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
     private_write(tmp_path / "control.token", "test-token")
     session = "c" * 32
     _seed_host(tmp_path, session, grant)
-    owner = Supervisor(Profile(tmp_path), "grant-supervisor")
+    owner = create_supervisor(Profile(tmp_path), "grant-supervisor")
     await owner.initialize()
     reservation: ProcessReservation | None = None
     try:
@@ -440,7 +411,7 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
             "INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
             (instance, session, info.model_dump_json())), write=True)
         epoch = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=instance, build_id=owner.build))
-        result = await owner.run_tool(RunTool(
+        result = await owner.invocations.run(RunTool(
             **epoch.model_dump(), call_id="grant-shell", request_id="request",
             command="pwd; printf y > granted.txt", effect="write"))
         assert result.exit_code == 0 and str(grant) in result.stdout
@@ -456,17 +427,17 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
             database.commit()
         finally:
             database.close()
-        written = await owner.run_tool(RunTool(
+        written = await owner.invocations.run(RunTool(
             **epoch.model_dump(), call_id="grant-write", request_id="request", command="write_file",
             effect="write", file=WriteFile(path="from-tool.txt", content="tool\n"), expected_digest=""))
         assert written.exit_code == 0, written.stderr
         assert (grant / "from-tool.txt").read_text() == "tool\n"
         assert not (primary / "from-tool.txt").exists()
-        read = await owner.run_tool(RunTool(
+        read = await owner.invocations.run(RunTool(
             **epoch.model_dump(), call_id="grant-read", request_id="request", command="read_file",
             effect="read", file=ReadFile(path="from-grant.txt")))
         assert read.exit_code == 0 and read.stdout == "grant-only\n"
-        explicit = await owner.run_tool(RunTool(
+        explicit = await owner.invocations.run(RunTool(
             **epoch.model_dump(), call_id="other-write", request_id="request", command="write_file",
             effect="write", file=WriteFile(path="grant/other/explicit.txt", content="other\n"), expected_digest=""))
         assert explicit.exit_code == 0, explicit.stderr
@@ -475,21 +446,21 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
         assert not (primary / "explicit.txt").exists()
 
         terminal = "d" * 32
-        opened = await owner.open_terminal(OpenTerminal(
+        opened = await owner.pty.open(OpenTerminal(
             build_id=owner.build, host_epoch=owner.host_epoch, session_id=session, terminal_id=terminal, command="sh"))
         assert opened.workspace == "docs" and opened.phase == "running"
         query = TerminalQuery(build_id=owner.build, host_epoch=owner.host_epoch, session_id=session, terminal_id=terminal)
-        await owner.write_terminal(TerminalInput(**query.model_dump(), input_id="pwd", data="pwd; printf t > from-terminal.txt\n"))
+        await owner.pty.write(TerminalInput(**query.model_dump(), input_id="pwd", data="pwd; printf t > from-terminal.txt\n"))
         view = opened
         for _ in range(40):
-            view = await owner.read_terminal(query)
+            view = await owner.pty.read(query)
             if str(grant) in view.output and (grant / "from-terminal.txt").exists():
                 break
             await asyncio.sleep(0.05)
         assert str(grant) in view.output
         assert (grant / "from-terminal.txt").read_text() == "t"
         assert not (primary / "from-terminal.txt").exists()
-        closed = await owner.close_terminal(query)
+        closed = await owner.pty.close(query)
         assert closed.phase == "exited" and closed.clean
 
         database = sqlite3.connect(tmp_path / "host.sqlite")
@@ -500,7 +471,7 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
             database.close()
         fresh = await owner.open_epoch(WorkerRequest(session_id=session, worker_id=instance, build_id=owner.build))
         with pytest.raises(BackendError, match="workspace_not_found"):
-            await owner.run_tool(RunTool(
+            await owner.invocations.run(RunTool(
                 **fresh.model_dump(), call_id="after-revoke", request_id="request",
                 command="printf z > after.txt", effect="write"))
         assert (grant / "granted.txt").read_text() == "y"
@@ -512,7 +483,7 @@ async def test_session_shell_and_terminal_run_in_the_granted_directory(tmp_path:
 
 
 def test_tool_path_uses_the_session_workspace_unless_the_grant_is_explicit() -> None:
-    from amazme_backend.workspace_map import tool_path
+    from amazme_backend.workspaces.paths import tool_path
     assert tool_path("docs", "note.txt") == ("docs", "note.txt")
     assert tool_path("docs", "dir/note.txt") == ("docs", "dir/note.txt")
     assert tool_path("docs", "grant/other/note.txt") == ("other", "note.txt")
@@ -520,7 +491,7 @@ def test_tool_path_uses_the_session_workspace_unless_the_grant_is_explicit() -> 
 
 
 def test_terminal_gate_uses_native_cwd_and_rejects_relative_path() -> None:
-    from amazme_backend.pty_gate import _allowed_cwd
+    from amazme_backend.execution.pty.gate import _allowed_cwd
     assert _allowed_cwd("/tmp") == "/tmp"
     with pytest.raises(SystemExit):
         _allowed_cwd("relative/path")
@@ -540,29 +511,29 @@ async def test_select_launch_directory_is_stable_and_never_replaces_existing_gra
     alias = tmp_path / "alias"
     alias.symlink_to(launch, target_is_directory=True)
     try:
-        assert (await host.select_workspace(WorkspaceSelect(host_path=str(profile / "primary")))).primary
-        selected = await asyncio.gather(*(host.select_workspace(WorkspaceSelect(host_path=str(launch))) for _ in range(8)))
+        assert (await host.workspaces.select_workspace(WorkspaceSelect(host_path=str(profile / "primary")))).primary
+        selected = await asyncio.gather(*(host.workspaces.select_workspace(WorkspaceSelect(host_path=str(launch))) for _ in range(8)))
         assert len({item.name for item in selected}) == 1
         chosen = selected[0]
         assert chosen.host_path == str(launch.resolve())
-        assert await host.select_workspace(WorkspaceSelect(host_path=str(alias))) == chosen
+        assert await host.workspaces.select_workspace(WorkspaceSelect(host_path=str(alias))) == chosen
         for index in range(7):
             folder = tmp_path / f"other-{index}"
             folder.mkdir()
-            await host.add_workspace(WorkspaceGrantRequest(name=f"other-{index}", host_path=str(folder)))
+            await host.workspaces.add_workspace(WorkspaceGrantRequest(name=f"other-{index}", host_path=str(folder)))
         # Capacity must not turn an identical retry into an error.
-        assert await host.add_workspace(WorkspaceGrantRequest(name=chosen.name, host_path=str(launch))) == chosen
-        assert await host.select_workspace(WorkspaceSelect(host_path=str(launch))) == chosen
-        assert (await host.select_workspace(WorkspaceSelect(host_path=str(launch), name="primary"))).primary
+        assert await host.workspaces.add_workspace(WorkspaceGrantRequest(name=chosen.name, host_path=str(launch))) == chosen
+        assert await host.workspaces.select_workspace(WorkspaceSelect(host_path=str(launch))) == chosen
+        assert (await host.workspaces.select_workspace(WorkspaceSelect(host_path=str(launch), name="primary"))).primary
         missing = tmp_path / "ninth"
         missing.mkdir()
         with pytest.raises(BackendError, match="workspace_capacity"):
-            await host.select_workspace(WorkspaceSelect(host_path=str(missing)))
-        assert len((await host.workspaces()).workspaces) == 9  # primary plus eight grants
+            await host.workspaces.select_workspace(WorkspaceSelect(host_path=str(missing)))
+        assert len((await host.workspaces.workspaces()).workspaces) == 9  # primary plus eight grants
         with pytest.raises(BackendError, match="workspace_not_found"):
-            await host.select_workspace(WorkspaceSelect(host_path=str(launch), name="absent"))
+            await host.workspaces.select_workspace(WorkspaceSelect(host_path=str(launch), name="absent"))
     finally:
-        await host.store.db.close()
+        await host.close()
 
 
 async def test_workspace_selection_is_shared_by_sdk_rpc_and_stable_session_creation(tmp_path: Path) -> None:
@@ -575,7 +546,7 @@ async def test_workspace_selection_is_shared_by_sdk_rpc_and_stable_session_creat
     client = Client(host.origin, "web-only")
     await client._http.aclose()
     client._http = httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin)
-    client.build_id, client.host_epoch = host.build, host.fence.host_epoch
+    client.build_id, client.host_epoch = host.lifecycle.build, host.lifecycle.fence.host_epoch
     try:
         chosen = await client.select_workspace(str(launch))
         rpc = await handle_rpc(host, RpcCall(id="select", method="workspace.select", params=RpcParams(path=str(launch))))
@@ -596,7 +567,7 @@ async def test_workspace_selection_is_shared_by_sdk_rpc_and_stable_session_creat
         assert rpc_page["result"] == page.model_dump()
         instructions = launch / "AGENTS.md"
         instructions.write_text("project instructions")
-        host.profile.config.user_resources = str(tmp_path / "agent")
+        host.lifecycle.profile.config.user_resources = str(tmp_path / "agent")
         resources = await client.resources(SESSION)
         assert resources.context_files[-1] == str(instructions)
         listed = await handle_rpc(host, RpcCall(id="resources", method="resource.list", params=RpcParams(
@@ -604,4 +575,4 @@ async def test_workspace_selection_is_shared_by_sdk_rpc_and_stable_session_creat
         assert listed["result"] == resources.model_dump()
     finally:
         await client._http.aclose()
-        await host.store.db.close()
+        await host.close()

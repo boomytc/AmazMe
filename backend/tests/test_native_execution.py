@@ -7,7 +7,7 @@ import sys
 import psutil
 import pytest
 
-from amazme_backend.native_execution import (
+from amazme_backend.execution.native import (
     LocalPermit,
     LocalProcess,
     ProcessIdentity,
@@ -15,7 +15,7 @@ from amazme_backend.native_execution import (
     stop_tracked,
     tool_environment,
 )
-from amazme_backend.processes import ProcessReservation
+from amazme_backend.execution.processes import ProcessReservation
 
 
 async def launch(tmp_path, command, timeout=5):

@@ -11,7 +11,7 @@ from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel
 
-from .contracts import PluginResult, PluginTool
+from amazme_backend.contracts.plugins import PluginResult, PluginTool
 
 __all__ = ["ExtensionAPI", "ExtensionContext", "PluginResult", "ToolDefinition"]
 

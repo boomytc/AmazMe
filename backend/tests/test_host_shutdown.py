@@ -10,10 +10,12 @@ from pathlib import Path
 
 import httpx
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.platform.private_files import private_write
 from amazme_backend.contracts import HostFence, ProcessLease, ServiceInfo
-from amazme_backend.host import Host, application
-from amazme_backend.processes import ProcessReservation, exited
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.execution.processes import ProcessReservation, exited
 
 
 def _profile(tmp_path: Path) -> None:
@@ -32,10 +34,10 @@ async def test_shutdown_response_waits_for_supervisor_exit(tmp_path: Path) -> No
     child: subprocess.Popen[bytes] | None = None
     server: asyncio.Server | None = None
     try:
-        with ProcessReservation(tmp_path, "host", host.instance) as host_lease:
-            epoch = await host.store.initialize(host.instance, host.build, host_lease.lease)
-        host.fence = HostFence(host_epoch=epoch, build_id=host.build)
-        host.initialized = True
+        with ProcessReservation(tmp_path, "host", host.lifecycle.instance) as host_lease:
+            epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, host_lease.lease)
+        host.lifecycle.fence = HostFence(host_epoch=epoch, build_id=host.lifecycle.build)
+        host.lifecycle.initialized = True
         host.origin = "http://127.0.0.1:4310"
         instance = "supervisor-1"
         with ProcessReservation(tmp_path, "supervisor", instance) as reservation:
@@ -47,20 +49,20 @@ async def test_shutdown_response_waits_for_supervisor_exit(tmp_path: Path) -> No
             lease = reservation.lease
         assert not exited(lease)
         await _record(host, instance, lease, child.pid)
-        identity = host.profile.identity(instance, host.build, role="supervisor", host_epoch=epoch)
+        identity = host.lifecycle.profile.identity(instance, host.lifecycle.build, role="supervisor", host_epoch=epoch)
         started, release = asyncio.Event(), asyncio.Event()
-        server = await _serve(host.profile.socket("supervisor"), identity.model_dump_json(), child, started, release)
+        server = await _serve(host.lifecycle.profile.socket("supervisor"), identity.model_dump_json(), child, started, release)
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=application(host)), base_url=host.origin,
         ) as client:
             pending = asyncio.create_task(client.post(
                 "/control/shutdown",
-                headers={"Authorization": "Bearer " + host.profile.token},
-                json={"host_epoch": epoch, "build_id": host.build},
+                headers={"Authorization": "Bearer " + host.lifecycle.profile.token},
+                json={"host_epoch": epoch, "build_id": host.lifecycle.build},
             ))
             await asyncio.wait_for(started.wait(), 5)
             assert not pending.done()
-            stopping = await host.store.service()
+            stopping = await host.lifecycle.store.service()
             assert stopping is not None and stopping.state == "stopping"
             release.set()
             response = await asyncio.wait_for(pending, 10)
@@ -68,8 +70,8 @@ async def test_shutdown_response_waits_for_supervisor_exit(tmp_path: Path) -> No
         assert response.json()["state"] == "stopping"
         assert child.poll() is not None
         assert exited(lease)
-        assert await host.store.service() is None
-        assert [item.state for item in await host.store.services()] == ["stopped"]
+        assert await host.lifecycle.store.service() is None
+        assert [item.state for item in await host.lifecycle.store.services()] == ["stopped"]
     finally:
         if server is not None:
             server.close()
@@ -81,8 +83,8 @@ async def test_shutdown_response_waits_for_supervisor_exit(tmp_path: Path) -> No
 
 
 async def _record(host: Host, instance: str, lease: ProcessLease, pid: int) -> ServiceInfo:
-    record = ServiceInfo(instance_id=instance, build_id=host.build, process_lease=lease, state="running", pid=pid)
-    await host.store.save_service(record)
+    record = ServiceInfo(instance_id=instance, build_id=host.lifecycle.build, process_lease=lease, state="running", pid=pid)
+    await host.lifecycle.store.save_service(record)
     return record
 
 

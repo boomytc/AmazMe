@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.common import frozen_identity, rewrite_frozen_manifest, source_identity_files
+from amazme_backend.platform.identity import frozen_identity, rewrite_frozen_manifest, source_identity_files
 from amazme_backend.contracts import BackendError
 
 TOOL = Path(__file__).resolve().parents[1] / "tools" / "package_backend.py"
@@ -22,8 +22,10 @@ def load_packager() -> object:
 
 
 def test_source_identity_includes_helper_and_plugin_bytes() -> None:
-    names = {path.name for path in source_identity_files()}
-    assert {"codemode_helper.mjs", "plugin_gate.py", "mcp_gate.py", "model_catalog.json"} <= names
+    root = Path(__file__).parents[1] / "src/amazme_backend"
+    names = {path.relative_to(root).as_posix() for path in source_identity_files() if path.is_relative_to(root)}
+    assert {"execution/codemode/helper.mjs", "execution/plugins/gate.py", "execution/mcp/gate.py",
+            "assets/model_catalog.json", "platform/resources.py", "sdk/client.py"} <= names
 
 
 def test_package_identity_requires_helpers_without_vm_tools() -> None:
@@ -34,13 +36,21 @@ def test_package_identity_requires_helpers_without_vm_tools() -> None:
     assert not any("lima" in name or "docker" in name for name in required)
     assert missing_identity({name: "abc" for name in required}) == []
     nested = {
-        "_internal/amazme_backend/codemode_helper.mjs": "abc",
-        "_internal/amazme_backend/plugin_gate.py": "abc",
-        "_internal/amazme_backend/model_catalog.json": "abc",
-        "_internal/amazme_backend/classifier_catalog.json": "abc",
-        "_internal/amazme_backend/node_modules/quickjs-wasi/quickjs.wasm": "abc",
+        "_internal/amazme_backend/execution/codemode/helper.mjs": "abc",
+        "_internal/amazme_backend/execution/plugins/gate.py": "abc",
+        "_internal/amazme_backend/execution/pty/gate.py": "abc",
+        "_internal/amazme_backend/execution/mcp/gate.py": "abc",
+        "_internal/amazme_backend/execution/remote/daemon.py": "abc",
+        "_internal/amazme_backend/assets/model_catalog.json": "abc",
+        "_internal/amazme_backend/assets/classifier_catalog.json": "abc",
+        "_internal/amazme_backend/assets/web/events.schema.json": "abc",
+        "_internal/amazme_backend/assets/web/xterm-terminal.js": "abc",
+        "_internal/amazme_backend/assets/web/xterm.css": "abc",
+        "_internal/amazme_backend/assets/web/client/index.html": "abc",
+        "_internal/amazme_backend/assets/web/client/page.js": "abc",
+        "_internal/amazme_backend/execution/codemode/node_modules/quickjs-wasi/quickjs.wasm": "abc",
         "runtime/node/bin/node": "abc",
-        "_internal/amazme_backend/node_modules/@amazme/codemode/dist/index.js": "abc",
+        "_internal/amazme_backend/execution/codemode/node_modules/@amazme/codemode/dist/index.js": "abc",
     }
     assert missing_identity(nested) == []
 

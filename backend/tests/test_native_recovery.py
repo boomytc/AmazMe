@@ -11,7 +11,7 @@ import pytest
 from test_client import _serve, _stop
 
 from amazme_backend.contracts import ProcessLease
-from amazme_backend.processes import exited
+from amazme_backend.execution.processes import exited
 
 
 async def poll(operation, predicate, timeout=30):

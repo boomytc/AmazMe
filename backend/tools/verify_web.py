@@ -9,9 +9,9 @@ from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 from resource_census import apply_cleanup, raise_pending, release_named_slot
-from verify_runtime import ROOT, Runtime
+from verify_runtime import ROOT, Runtime, until
 
-from amazme_backend.common import private_write
+from amazme_backend.platform.private_files import private_write
 
 
 def configure_approvals(runtime):
@@ -28,12 +28,12 @@ def login(page, runtime):
 
 def approve_and_finish(page, *, count=1, timeout=120000):
     for _ in range(count):
-        approval = page.locator("#approvals article").first
+        approval = page.locator("#approvals .approval-card").first
         expect(approval).to_be_visible(timeout=timeout)
         identity = approval.get_attribute("data-approval-id")
-        approval.get_by_role("button", name="批准", exact=True).click()
-        expect(page.locator(f'#approvals article[data-approval-id="{identity}"]')).to_have_count(0, timeout=timeout)
-    expect(page.locator("#conversation .status").last).to_contain_text("已完成", timeout=timeout)
+        approval.locator('[data-action="approval:approve"]').click()
+        expect(page.locator(f'#approvals .approval-card[data-approval-id="{identity}"]')).to_have_count(0, timeout=timeout)
+    expect(page.locator("#stop")).to_be_hidden(timeout=timeout)
 
 
 def observe(page):
@@ -109,44 +109,60 @@ def main():
                 page = context.new_page()
                 errors, sent, received, counts, writes = observe(page)
                 login(page, runtime)
-                page.locator("#create").click()
-                expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
+                expect(page.locator("#new-chat")).to_be_enabled(timeout=30000)
+                page.locator("#new-chat").click()
+                page.wait_for_url("**?**session=**", timeout=30000)
+                session = page.url.split("session=")[1].split("&")[0]
+                expect(page.locator("#connection-status")).to_have_attribute("data-state", "connected", timeout=30000)
+                if not args.provider_config:
+                    page.locator("#prompt").fill("Web 本机回合核对")
+                    page.locator("#primary").click()
+                    expect(page.locator("#transcript .turn-response").last).to_contain_text("已收到：Web 本机回合核对", timeout=30000)
+                    report["checks"].append("composer submission and streamed faux answer")
                 prompt = "/shell printf 'AMAZME_NATIVE_OK\\n' > real-proof.txt; cat real-proof.txt"
                 if args.provider_config:
                     prompt = "只调用一次 shell 执行：printf 'AMAZME_NATIVE_OK\\n' > real-proof.txt; cat real-proof.txt。报告实际内容。"
-                page.locator("#prompt").fill(prompt)
-                page.locator("#send").click()
-                expect(page.locator("#approvals article")).to_have_count(1, timeout=120000)
+                    page.locator("#prompt").fill(prompt)
+                    page.locator("#primary").click()
+                else:
+                    # Faux control commands are fixture inputs, outside the page's slash command catalogue.
+                    response = runtime.client.post(f"/api/v1/sessions/{session}/submissions",
+                        headers=runtime.attach(session), json={"request_id": "browser-shell", "text": prompt})
+                    assert response.status_code == 202, response.text
+                expect(page.locator("#approvals .approval-card")).to_have_count(1, timeout=120000)
                 assert not (runtime.workspace / "real-proof.txt").exists()
                 page.reload()
-                expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
-                expect(page.locator("#approvals article")).to_have_count(1)
-                expect(page.locator("#conversation .status").last).to_contain_text("等待审批")
+                expect(page.locator("#connection-status")).to_have_attribute("data-state", "connected", timeout=30000)
+                expect(page.locator("#approvals .approval-card")).to_have_count(1)
+                expect(page.locator("#approval-status")).to_contain_text("审批")
                 approve_and_finish(page)
                 assert (runtime.workspace / "real-proof.txt").read_text() == "AMAZME_NATIVE_OK\n"
-                expect(page.locator("#conversation .answer").last).to_contain_text("AMAZME_NATIVE_OK")
+                expect(page.locator("#transcript .turn-response").last).to_contain_text("AMAZME_NATIVE_OK")
                 report["checks"].append("approval survived reload; shell effect occurred only after approval")
                 if not args.provider_config:
-                    page.locator("#prompt").fill('/delegate ["/shell printf one > child-one.txt", "/shell printf two > child-two.txt"]')
-                    page.locator("#send").click()
+                    response = runtime.client.post(f"/api/v1/sessions/{session}/submissions",
+                        headers=runtime.attach(session), json={"request_id": "browser-join", "text":
+                            '/delegate ["/shell printf one > child-one.txt", "/shell printf two > child-two.txt"]'})
+                    assert response.status_code == 202, response.text
                     # Child approval order follows the real durable driver; approve only visible proposals.
                     for _ in range(2):
-                        approval = page.locator("#approvals article").first
+                        approval = page.locator("#approvals .approval-card").first
                         expect(approval).to_be_visible(timeout=120000)
                         approval_id = approval.get_attribute("data-approval-id")
-                        approval.get_by_role("button", name="批准", exact=True).click()
-                        expect(page.locator(f'#approvals article[data-approval-id="{approval_id}"]')).to_have_count(0, timeout=120000)
-                    expect(page.locator("#conversation .status").filter(has_text="已完成")).to_have_count(4, timeout=120000)
+                        approval.locator('[data-action="approval:approve"]').click()
+                        expect(page.locator(f'#approvals .approval-card[data-approval-id="{approval_id}"]')).to_have_count(0, timeout=120000)
+                    snapshot = until(lambda: runtime.client.get(f"/api/v1/sessions/{session}/snapshot").json(),
+                        lambda value: len(value["requests"]) == 5 and all(row["status"] == "succeeded" for row in value["requests"]), timeout=120)
+                    assert sum(row["kind"] == "child" for row in snapshot["requests"]) == 2
                     assert (runtime.workspace / "child-one.txt").read_text() == "one"
                     assert (runtime.workspace / "child-two.txt").read_text() == "two"
-                    expect(page.locator(".children")).to_contain_text("已完成")
+                    expect(page.locator(f'#transcript .turn-response[data-block-id^="browser-join:"]')).to_contain_text("succeeded", timeout=30000)
                     report["checks"].append("independent children and required join reached the page")
                 page.reload()
-                expect(page.locator("#connection")).to_have_text("已连接", timeout=30000)
-                expect(page.locator("#tools")).to_contain_text("real-proof.txt")
+                expect(page.locator("#connection-status")).to_have_attribute("data-state", "connected", timeout=30000)
+                expect(page.locator("#transcript")).to_contain_text("real-proof.txt")
                 assert_protocol(sent, received, writes, runtime.ready["build_id"])
                 assert not errors, errors
-                page.locator("#tool-records").evaluate("node => node.open = true")
                 page.screenshot(path=str(root / "web.png"), full_page=True)
                 report.update(browser=browser.version, websocket_event_counts=dict(counts), page_errors=errors,
                               ack_count=sum(frame.get("kind") == "ack" for frame in sent), screenshot=str(root / "web.png"))

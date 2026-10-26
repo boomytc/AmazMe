@@ -8,22 +8,18 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.accounts import AccountDocument, AccountStore, ApiKeyCredential
-from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import (
-    BackendError,
-    CredentialUpdate,
-    HostFence,
-    ProcessLease,
-    SecretStr,
-    Submit,
-)
-from amazme_backend.host import Host
-from amazme_backend.host_store import HostStore
-from amazme_backend.processes import ProcessReservation
-from amazme_backend.session_domain import Continue, ModelInvocation
-from amazme_backend.storage import SessionStore, session_database
-from amazme_backend.transient import create_profile, reclaim, settled, verify_owned
+from amazme_backend.accounts.store import AccountDocument, AccountStore, ApiKeyCredential
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.platform.private_files import private_write
+from pydantic import SecretStr
+from amazme_backend.contracts import BackendError, CredentialUpdate, HostFence, ProcessLease, Submit
+from amazme_backend.host.service import Host
+from amazme_backend.host.store import HostStore
+from amazme_backend.execution.processes import ProcessReservation
+from amazme_backend.sessions.types import Continue, ModelInvocation
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.bootstrap.transient import create_profile, reclaim, settled, verify_owned
 
 
 def source_profile(tmp_path: Path) -> Profile:
@@ -80,17 +76,17 @@ async def test_account_updates_from_transient_use_original_revision_and_lock(tmp
     profile, identity = create_profile(source, Path(source.config.workspace))
     host = Host(profile)
     try:
-        lease = ProcessLease(instance_id=host.instance, role="host", profile_path=str(profile.path), path="lease", device=1, inode=1)
-        host.fence = HostFence(host_epoch=await host.store.initialize(host.instance, host.build, lease), build_id=host.build)
-        revision = host.accounts.read().revision
-        await host.update_account("deepseek", CredentialUpdate(expected_revision=revision, api_key=SecretStr("new-source-key")))
+        lease = ProcessLease(instance_id=host.lifecycle.instance, role="host", profile_path=str(profile.path), path="lease", device=1, inode=1)
+        host.lifecycle.fence = HostFence(host_epoch=await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease), build_id=host.lifecycle.build)
+        revision = host.accounts.accounts.read().revision
+        await host.accounts.update_account("deepseek", CredentialUpdate(expected_revision=revision, api_key=SecretStr("new-source-key")))
         saved = AccountStore(source.path).read().credentials["deepseek"]
         assert isinstance(saved, ApiKeyCredential)
         assert saved.key.get_secret_value() == "new-source-key"
         assert not (profile.path / "accounts.json").exists()
     finally:
-        await host.store.db.close()
-        await host.supervisor.close()
+        await host.lifecycle.store.db.close()
+        await host.lifecycle.supervisor.close()
         assert reclaim(profile, identity)
         source.ipc.rmdir()
 
@@ -169,7 +165,7 @@ async def test_unknown_outcome_retains_ledger_and_replaced_authority_is_rejected
         assert isinstance(action, ModelInvocation)
         # A persisted intent without a model response is an unknown operation;
         # this fixture invokes no model and performs no user side effect.
-        await store.db.close()
+        await store.close()
         assert reclaim(profile, identity) is False
         assert database.is_file()
         replacement = profile.config.model_copy(update={"account_profile":str(profile.path)})
@@ -177,7 +173,7 @@ async def test_unknown_outcome_retains_ledger_and_replaced_authority_is_rejected
         with pytest.raises(BackendError, match="profile_identity_mismatch"):
             profile.reload_provider()
     finally:
-        await store.db.close()
+        await store.close()
         verify_owned(profile, identity)
         shutil.rmtree(profile.path)
         profile.ipc.rmdir()
@@ -212,7 +208,7 @@ async def test_pending_host_delivery_keeps_the_original_request_ledger(tmp_path:
 
 
 def test_persistent_session_directory_links_original_vault_and_never_overwrites(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from amazme_backend.__main__ import main
+    from amazme_backend.bootstrap.commands import main
 
     source = source_profile(tmp_path)
     destination = tmp_path / "history" / "python-host"

@@ -2,8 +2,9 @@
 import json
 
 from amazme_backend.contracts import CodeChild, CodeStatus, CodeView, HostFence, Submit, ToolCall
-from amazme_backend.session_domain import CodeRetrieval, CodeReturned, Continue
-from amazme_backend.storage import SessionStore, read_settled_root
+from amazme_backend.sessions.maintenance import read_settled_root
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.sessions.types import CodeRetrieval, CodeReturned, Continue
 
 
 async def action(store):
@@ -36,7 +37,7 @@ async def test_model_script_keeps_original_identity_state_and_child_approval(tmp
         assert len(snapshot.approvals) == 1 and snapshot.approvals[0].request_id == "child"
         assert not (tmp_path / "once.txt").exists()
     finally:
-        await store.db.close()
+        await store.close()
 
 
 async def test_script_state_is_part_of_the_selected_branch_point(tmp_path):
@@ -61,4 +62,4 @@ async def test_script_state_is_part_of_the_selected_branch_point(tmp_path):
         copied = read_settled_root(path, "r1")
         assert json.loads(json.loads(copied[3])["codemode_state"]) == {"k": 1}
     finally:
-        await store.db.close()
+        await store.close()

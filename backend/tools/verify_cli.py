@@ -35,6 +35,7 @@ def _env(agent: Path) -> dict[str, str]:
     env["AMAZME_CODING_AGENT_DIR"] = str(agent)
     for name in ("AMAZME_PYTHON_URL", "AMAZME_PYTHON_TOKEN", "AMAZME_PYTHON_SESSION", "AMAZME_PYTHON_BACKEND"):
         env.pop(name, None)
+    env["AMAZME_PYTHON_BACKEND"] = str(ROOT / "backend/.venv/bin/amazme-backend")
     return env
 
 
@@ -45,7 +46,7 @@ def _cli(agent: Path, url: str, token: str, *args: str) -> subprocess.CompletedP
 
 
 def _expect(proc: subprocess.CompletedProcess[str], code: int) -> subprocess.CompletedProcess[str]:
-    assert proc.returncode == code, f"{proc.returncode}\n{proc.stderr[-1200]}\n{proc.stdout[-600]}"
+    assert proc.returncode == code, f"{proc.returncode}\n{proc.stderr[-1200:]}\n{proc.stdout[-600:]}"
     return proc
 
 
@@ -80,6 +81,11 @@ def main() -> None:
             url = str(runtime.ready["url"])
             report["identity"] = {"build_id": runtime.ready["build_id"], "url": url, "host_pid": runtime.process.pid}
             agent = root / "agent"
+
+            printed = _expect(_cli(agent, url, token, "--print", "CLI_TEXT_PROBE"), 0)
+            assert "已收到：CLI_TEXT_PROBE" in printed.stdout and token not in printed.stdout
+            assert token not in printed.stderr
+            checks.append("text print mode completed a faux model request through the same Python Host")
 
             refused = _expect(_cli(agent, url, token, "--decision", "不要", "/shell printf y > cli-shell.txt"), 1)
             assert "invalid_decision" in refused.stderr

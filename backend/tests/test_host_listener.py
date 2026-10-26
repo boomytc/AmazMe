@@ -2,7 +2,7 @@ import socket
 
 import pytest
 
-from amazme_backend.host import loopback_listener
+from amazme_backend.bootstrap.host import loopback_listener
 
 
 def test_host_reclaims_persisted_port_after_connection_closed():

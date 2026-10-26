@@ -6,37 +6,20 @@ from pathlib import Path
 import httpx
 import pytest
 
-from amazme_backend.common import Profile, private_write
-from amazme_backend.contracts import (
-    BackendError,
-    CreateSession,
-    HostFence,
-    Message,
-    ProcessLease,
-    ProviderConfig,
-    Submit,
-    ToolCall,
-    WebFetch,
-    WebPolicy,
-    WebSearch,
-)
-from amazme_backend.host import Host, application
-from amazme_backend.providers import Completion, stream
-from amazme_backend.session_domain import (
-    CloseEpoch,
-    Continue,
-    ModelInvocation,
-    ModelReturned,
-    OpenEpoch,
-    Park,
-    QueryTool,
-    ToolInvocation,
-    WebRetrieval,
-    WebReturned,
-)
-from amazme_backend.storage import SessionStore, session_database
-from amazme_backend.web_tools import dispatch_web
-from amazme_backend.worker import Worker, command_for
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.contracts import BackendError, CreateSession, HostFence, Message, ProcessLease, ProviderConfig, Submit, ToolCall, WebFetch, WebPolicy, WebSearch
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.agent.model import ProductCompletion as Completion, stream
+from amazme_backend.sessions.types import CloseEpoch, Continue, ModelInvocation, ModelReturned, OpenEpoch, Park, QueryTool, ToolInvocation, WebRetrieval, WebReturned
+from amazme_backend.sessions.service import SessionStore
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.execution.web.client import dispatch_web
+from amazme_backend.agent.driver import Worker, command_for
+from amazme_backend.bootstrap.worker import create_worker
+from amazme_backend.ai.types import Auth
+from session_test_support import session_database_owner
 
 SESSION = "a" * 32
 KEY = "sk-test-not-real"
@@ -55,7 +38,7 @@ def _host(tmp_path: Path, *, provider: str = "deepseek") -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     return host
 
@@ -91,23 +74,24 @@ async def _ready(host: Host, client: httpx.AsyncClient) -> None:
 async def test_web_call_does_not_forward_chat_secrets_or_replay_unknown(tmp_path: Path) -> None:
     host = _host(tmp_path)
     seen: list[httpx.Request] = []
-    host.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
+    host.sessions.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="网页"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="网页"))
     path = session_database(tmp_path, SESSION)
     path.parent.mkdir(parents=True, mode=0o700)
-    seeded = SessionStore(path, SESSION, build=host.build)
+    seeded = SessionStore(path, SESSION, build=host.lifecycle.build)
     await seeded.initialize()
     try:
-        await seeded.accept(Submit(request_id="root", text="用户原话"), HostFence(host_epoch=0, build_id=host.build))
+        await seeded.accept(Submit(request_id="root", text="用户原话"), HostFence(host_epoch=0, build_id=host.lifecycle.build))
     finally:
-        await seeded.db.close()
+        await seeded.close()
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-            "x-amazme-epoch": str(host.fence.host_epoch),
+            "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+            "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
         }) as client:
             attached = await client.post(f"/api/v1/sessions/{SESSION}/attachments")
             assert attached.status_code == 201
@@ -174,7 +158,8 @@ async def test_web_call_does_not_forward_chat_secrets_or_replay_unknown(tmp_path
                 "call_id": "nested", "kind": "fetch", "url": "https://user:pass@example.com/a"})
             assert nested.status_code == 409 and nested.json()["code"] == "web_address"
             assert len(seen) == 5
-        reopened = SessionStore(path, SESSION, build=host.build, require_existing=True)
+        await host.lifecycle.stop_owned_supervisor()
+        reopened = SessionStore(path, SESSION, build=host.lifecycle.build, require_existing=True)
         await reopened.initialize()
         try:
             restored, send = await reopened.begin_web_call(
@@ -183,33 +168,33 @@ async def test_web_call_does_not_forward_chat_secrets_or_replay_unknown(tmp_path
                     sort_keys=True, separators=(",", ":"), ensure_ascii=False))
             assert send is False and restored.phase == "unknown" and restored.error == "web_transport"
         finally:
-            await reopened.db.close()
+            await reopened.close()
     finally:
-        await host.web_client.aclose()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.sessions.web_client.aclose()
+        await host.close()
 
 
 async def test_web_outbound_omits_the_provider_secret(tmp_path: Path) -> None:
     host = _host(tmp_path)
     seen: list[httpx.Request] = []
-    host.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
+    host.sessions.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="网页"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="网页"))
     path = session_database(tmp_path, SESSION)
     path.parent.mkdir(parents=True, mode=0o700)
-    seeded = SessionStore(path, SESSION, build=host.build)
+    seeded = SessionStore(path, SESSION, build=host.lifecycle.build)
     await seeded.initialize()
     try:
-        await seeded.accept(Submit(request_id="root", text=f"原话 {KEY}"), HostFence(host_epoch=0, build_id=host.build))
+        await seeded.accept(Submit(request_id="root", text=f"原话 {KEY}"), HostFence(host_epoch=0, build_id=host.lifecycle.build))
     finally:
-        await seeded.db.close()
+        await seeded.close()
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-            "x-amazme-epoch": str(host.fence.host_epoch),
+            "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+            "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
         }) as client:
             await _ready(host, client)
             query = await client.post(f"/api/v1/sessions/{SESSION}/web/calls", json={
@@ -225,32 +210,33 @@ async def test_web_outbound_omits_the_provider_secret(tmp_path: Path) -> None:
             assert clean.status_code == 200 and clean.json()["phase"] == "done"
             body = json.loads(seen[0].content)
             assert "ori_question" not in body and KEY.encode() not in seen[0].content
-        stored = SessionStore(path, SESSION, build=host.build, require_existing=True)
+        await host.lifecycle.stop_owned_supervisor()
+        stored = SessionStore(path, SESSION, build=host.lifecycle.build, require_existing=True)
         await stored.initialize()
         try:
-            reserved = await stored.db.call(lambda db: db.execute(
+            reserved = await session_database_owner(stored).call(lambda db: db.execute(
                 "SELECT id FROM web_calls WHERE id IN ('secret-query','secret-fetch')").fetchall())
             assert reserved == []
         finally:
-            await stored.db.close()
+            await stored.close()
     finally:
-        await host.web_client.aclose()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.sessions.web_client.aclose()
+        await host.close()
 
 
 async def test_web_call_without_a_deepseek_key_sends_nothing(tmp_path: Path) -> None:
     host = _host(tmp_path, provider="faux")
     seen: list[httpx.Request] = []
-    host.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
+    host.sessions.web_client = httpx.AsyncClient(transport=_handler(seen), follow_redirects=False)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="无钥匙"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="无钥匙"))
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-            "x-amazme-epoch": str(host.fence.host_epoch),
+            "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+            "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
         }) as client:
             attached = await client.post(f"/api/v1/sessions/{SESSION}/attachments")
             client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
@@ -261,9 +247,8 @@ async def test_web_call_without_a_deepseek_key_sends_nothing(tmp_path: Path) -> 
             assert missing.status_code == 409 and missing.json()["code"] == "web_credential_missing"
             assert seen == [] and KEY not in missing.text
     finally:
-        await host.web_client.aclose()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.sessions.web_client.aclose()
+        await host.close()
 
 
 
@@ -282,7 +267,7 @@ def _model_transport(seen: list[httpx.Request]) -> httpx.MockTransport:
 
 async def _complete(messages: list[Message]) -> Completion:
     found: Completion | None = None
-    async for item in stream(ProviderConfig(provider="faux"), messages):
+    async for item in stream(ProviderConfig(provider="faux"), messages, auth=Auth()):
         if isinstance(item, Completion):
             found = item
     assert found is not None
@@ -323,9 +308,10 @@ async def test_model_web_tool_stays_out_of_the_vm_and_does_not_replay(tmp_path: 
     (tmp_path / "sessions" / SESSION).mkdir(parents=True)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="网页工具"))
-    worker = Worker(host.profile, SESSION, "worker-web")
+    await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="网页工具"))
+    worker = create_worker(host.lifecycle.profile, SESSION, "worker-web")
     await worker.store.initialize()
     fence = HostFence(host_epoch=1, build_id=worker.build)
     await worker.store.fence(fence)
@@ -337,7 +323,7 @@ async def test_model_web_tool_stays_out_of_the_vm_and_does_not_replay(tmp_path: 
         assert seen == []
         off = next(item for item in (await worker.store.snapshot()).requests if item.request_id == "off")
         assert off.status == "failed" and off.error == "web_disabled"
-        calls = await worker.store.db.call(lambda db: db.execute("SELECT COUNT(*) FROM web_calls").fetchone()[0])
+        calls = await session_database_owner(worker.store).call(lambda db: db.execute("SELECT COUNT(*) FROM web_calls").fetchone()[0])
         assert calls == 0
         await worker.store.save_web_policy(WebPolicy(
             enabled=True, base_url="https://tools.example/v1/tools", send_original_question=True))
@@ -374,18 +360,17 @@ async def test_model_web_tool_stays_out_of_the_vm_and_does_not_replay(tmp_path: 
         assert len(seen) == 3
         lost = next(item for item in (await worker.store.snapshot()).requests if item.request_id == "lost")
         assert lost.status == "unknown" and lost.error == "web_transport"
-        payloads = await worker.store.db.call(
+        payloads = await session_database_owner(worker.store).call(
             lambda db: [json.loads(row[0]) for row in db.execute("SELECT payload FROM web_calls")])
         assert any(item["phase"] == "unknown" and item["error"] == "web_transport" for item in payloads)
         assert all(KEY not in json.dumps(item) for item in payloads)
-        runs = await worker.store.db.call(lambda db: [row[0] for row in db.execute("SELECT payload FROM runs")])
+        runs = await session_database_owner(worker.store).call(lambda db: [row[0] for row in db.execute("SELECT payload FROM runs")])
         assert all("supervisor_id" not in row for row in runs)
     finally:
         await worker.web_client.aclose()
-        await worker.store.db.close()
+        await worker.store.close()
         await worker.supervisor.close()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.close()
 
 
 async def test_model_web_tool_without_a_key_does_not_reserve_a_call(tmp_path: Path) -> None:
@@ -393,9 +378,10 @@ async def test_model_web_tool_without_a_key_does_not_reserve_a_call(tmp_path: Pa
     (tmp_path / "sessions" / SESSION).mkdir(parents=True)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="网页工具"))
-    worker = Worker(host.profile, SESSION, "worker-web")
+    await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    host.lifecycle.initialized = True
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="网页工具"))
+    worker = create_worker(host.lifecycle.profile, SESSION, "worker-web")
     await worker.store.initialize()
     fence = HostFence(host_epoch=1, build_id=worker.build)
     await worker.store.fence(fence)
@@ -408,14 +394,13 @@ async def test_model_web_tool_without_a_key_does_not_reserve_a_call(tmp_path: Pa
         assert seen == []
         receipt = next(item for item in (await worker.store.snapshot()).requests if item.request_id == "none")
         assert receipt.status == "failed" and receipt.error == "web_credential_missing"
-        calls = await worker.store.db.call(lambda db: db.execute("SELECT COUNT(*) FROM web_calls").fetchone()[0])
+        calls = await session_database_owner(worker.store).call(lambda db: db.execute("SELECT COUNT(*) FROM web_calls").fetchone()[0])
         assert calls == 0
     finally:
         await worker.web_client.aclose()
-        await worker.store.db.close()
+        await worker.store.close()
         await worker.supervisor.close()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.close()
 
 
 def test_web_tools_are_not_container_commands() -> None:
@@ -435,7 +420,7 @@ async def test_dispatch_opens_a_client_without_the_chat_proxy(monkeypatch: pytes
         opened.append(dict(kwargs))
         return real(transport=transport, follow_redirects=bool(kwargs.get("follow_redirects", False)))
 
-    monkeypatch.setattr("amazme_backend.web_tools.httpx.AsyncClient", factory)
+    monkeypatch.setattr("amazme_backend.execution.web.client.httpx.AsyncClient", factory)
     outcome, status, _raw = await dispatch_web(
         "https://tools.example/v1/tools/search", {"query": "q", "count": 1, "need_content": False},
         KEY, WebPolicy(enabled=True, base_url="https://tools.example/v1/tools", max_response_bytes=1000), None)

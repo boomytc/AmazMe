@@ -86,6 +86,12 @@ ASC_KEY_PATH=~/path/to/AuthKey_<Key ID>.p8
 
 打包安装依赖时，npm 缓存写在 `Contents/Resources/app/.npm-cache`，签名前必须删掉：公证会解开其中的 tarball，里面未签名的 esbuild 和原生模块会使整包 Invalid。签名只覆盖直接可见的 Mach-O，app 内不应再带任何含二进制的压缩包。
 
+## 本机冻结后端
+
+先构建 `@amazme/codemode` 和 `@amazme/web`，再运行 `backend/.venv/bin/python backend/tools/package_backend.py`。这个入口只生成本机使用的 PyInstaller onedir，不提交公证或生成 DMG。它收集全部 Python 子包，并从 `platform/resource_manifest.py` 取得模型、分类、gate、远端 daemon、Codemode helper 和页面资源路径。资源定位和 `build.json` 身份检查共用这份描述。
+
+构建输出记录产物绝对路径和 `build_id`。对该路径运行 `backend/tools/verify_frozen_clients.py` 和 `backend/tools/verify_frozen_resources.py`，两者都接受 `--executable <本轮产物中的 amazme-backend>` 与 `--report <产物外的报告路径>`。前者验证 SDK、CLI、RPC 与 TUI；后者检查完整 manifest、实际 PTY、带认证的本地 HTTP MCP、插件 gate、Node 与 QuickJS helper、目录快照和页面资源。两份报告的 `build_id` 必须与本轮构建记录一致。`latest-bundle` 只用于定位，旧产物或旧报告不能证明当前源码已通过。
+
 ## 独立预览包
 
 `scripts/package-desktop.mjs` 生成可移动的 macOS 预览应用：宿主、运行时闭包和固定版本的官方 Node 一起放进 `AmazMe.app`，启动脚本只引用 `Contents/Resources` 内的路径。用官方 Node 压缩包，不要用 Homebrew 的 Node——后者链接共享的 `libnode`，复制单个二进制会在移动后启动失败；脚本会用 `otool` 拒绝这种二进制。

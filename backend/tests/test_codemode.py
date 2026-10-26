@@ -12,11 +12,12 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.codemode_run import CodemodeOutcome, bundled_node, run_codemode
-from amazme_backend.codemode_run import run_codemode as run_native_codemode
-from amazme_backend.common import Profile, private_write
+from amazme_backend.bootstrap.supervisor import create_supervisor
 from amazme_backend.contracts import BackendError, CancelCode, OpenCode
-from amazme_backend.supervisor import Supervisor
+from amazme_backend.execution.codemode.runtime import CodemodeOutcome, bundled_node, run_codemode
+from amazme_backend.execution.codemode.runtime import run_codemode as run_native_codemode
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.profile import Profile
 
 OFFICIAL_NODE = Path.home() / "Library/Caches/amazme-release/node-v22.23.3-darwin-arm64/bin/node"
 
@@ -46,10 +47,10 @@ def bundled_runtime(codemode_resources: Path, tmp_path: Path, monkeypatch: pytes
     def invoke(source,state,**kwargs):
         return run_native_codemode(source,state,profile=profile,run_id=secrets.token_hex(16),**kwargs)
     monkeypatch.setattr(sys.modules[__name__],"run_codemode",invoke)
-    monkeypatch.setattr("amazme_backend.codemode_run.resource_root", lambda: codemode_resources)
+    monkeypatch.setattr("amazme_backend.execution.codemode.runtime.resource_root", lambda: codemode_resources)
     yield
     from amazme_backend.contracts import ProcessLease
-    from amazme_backend.processes import exited
+    from amazme_backend.execution.processes import exited
     for path in (profile / "processes").glob("*.lock"):
         assert exited(ProcessLease.model_validate_json(path.read_bytes())), path
 
@@ -72,7 +73,7 @@ def test_symlink_outside_the_bundle_is_rejected(tmp_path: Path, monkeypatch: pyt
     dest = root / "node" / "bin"
     dest.mkdir(parents=True)
     (dest / "node").symlink_to("/bin/echo")
-    monkeypatch.setattr("amazme_backend.codemode_run.resource_root", lambda: root)
+    monkeypatch.setattr("amazme_backend.execution.codemode.runtime.resource_root", lambda: root)
     with pytest.raises(BackendError, match="codemode_runtime_missing"):
         bundled_node(root)
 
@@ -121,34 +122,34 @@ async def test_supervisor_commits_only_success_and_does_not_rerun(tmp_path: Path
         "format": 2, "profile_id": "code", "workspace": str(tmp_path), "resources": str(codemode_resources),
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
-    monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
+    monkeypatch.setattr("amazme_backend.execution.supervisor.build_id", lambda: "build-one")
     with sqlite3.connect(tmp_path / "host.sqlite") as db:
         db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT, archived INTEGER NOT NULL DEFAULT 0)")
         db.execute("INSERT INTO sessions(id,workspace) VALUES(?,?)",("a"*32,"primary"))
-    owner = Supervisor(Profile(tmp_path), "supervisor-code")
+    owner = create_supervisor(Profile(tmp_path), "supervisor-code")
     await owner.initialize()
     owner.monitor_task.cancel()
     try:
         success = OpenCode(host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32,
                            run_id="b" * 32, source='store("k", 2); return 1;')
-        first = await owner.run_code(success)
+        first = await owner.code.run(success)
         assert first.phase == "success" and json.loads(first.state) == {"k": 2} and json.loads(first.value) == 1
-        failed = await owner.run_code(OpenCode(
+        failed = await owner.code.run(OpenCode(
             host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32, run_id="c" * 32,
             source='store("k", 9); throw new Error("nope");'))
         assert failed.phase == "failed" and failed.state == ""
         saved = await owner.db.call(lambda db: db.execute("SELECT document FROM code_state WHERE session=?", ("a" * 32,)).fetchone())
         assert saved is not None and json.loads(str(saved["document"])) == {"k": 2}
-        monkeypatch.setattr("amazme_backend.supervisor.run_codemode", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reran")))
-        again = await owner.run_code(success)
+        monkeypatch.setattr("amazme_backend.execution.codemode.operations.run_codemode", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reran")))
+        again = await owner.code.run(success)
         assert again.phase == "success" and json.loads(again.value) == 1
         with pytest.raises(BackendError, match="codemode_conflict"):
-            await owner.run_code(OpenCode(host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32,
+            await owner.code.run(OpenCode(host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32,
                                           run_id="b" * 32, source="return 2;"))
         unknown_source = "return 3;"
         monkeypatch.setattr(
-            "amazme_backend.supervisor.run_codemode", lambda *args, **kwargs: CodemodeOutcome("unknown"))
-        unknown = await owner.run_code(OpenCode(
+            "amazme_backend.execution.codemode.operations.run_codemode", lambda *args, **kwargs: CodemodeOutcome("unknown"))
+        unknown = await owner.code.run(OpenCode(
             host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32, run_id="d" * 32,
             source=unknown_source))
         assert unknown.phase == "unknown" and unknown.state == ""
@@ -156,14 +157,14 @@ async def test_supervisor_commits_only_success_and_does_not_rerun(tmp_path: Path
             "SELECT document FROM code_state WHERE session=?", ("a" * 32,)).fetchone())
         assert kept is not None and json.loads(str(kept["document"])) == {"k": 2}
         monkeypatch.setattr(
-            "amazme_backend.supervisor.run_codemode",
+            "amazme_backend.execution.codemode.operations.run_codemode",
             lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("reran unknown")))
-        repeated = await owner.run_code(OpenCode(
+        repeated = await owner.code.run(OpenCode(
             host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32, run_id="d" * 32,
             source=unknown_source))
         assert repeated.phase == "unknown"
         with pytest.raises(BackendError, match="execution_cleanup_pending"):
-            await owner.run_code(OpenCode(
+            await owner.code.run(OpenCode(
                 host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32, run_id="e" * 32,
                 source="return 4;"))
     finally:
@@ -175,16 +176,16 @@ async def test_supervisor_cancel_does_not_commit(tmp_path: Path, monkeypatch: py
         "format": 2, "profile_id": "code", "workspace": str(tmp_path), "resources": str(codemode_resources),
         "provider": {"provider": "faux"}}))
     private_write(tmp_path / "control.token", "token")
-    monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
+    monkeypatch.setattr("amazme_backend.execution.supervisor.build_id", lambda: "build-one")
     with sqlite3.connect(tmp_path / "host.sqlite") as db:
         db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT, archived INTEGER NOT NULL DEFAULT 0)")
         db.execute("INSERT INTO sessions(id,workspace) VALUES(?,?)",("a"*32,"primary"))
-    owner = Supervisor(Profile(tmp_path), "supervisor-cancel")
+    owner = create_supervisor(Profile(tmp_path), "supervisor-cancel")
     await owner.initialize()
     owner.monitor_task.cancel()
     run_id = "f" * 32
     try:
-        task = asyncio.create_task(owner.run_code(OpenCode(
+        task = asyncio.create_task(owner.code.run(OpenCode(
             host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32, run_id=run_id,
             source='while (true) {} store("k", 4); return 1;')))
         for _ in range(50):
@@ -192,7 +193,7 @@ async def test_supervisor_cancel_does_not_commit(tmp_path: Path, monkeypatch: py
             if row is not None:
                 break
             await asyncio.sleep(0.02)
-        view = await owner.cancel_code(CancelCode(
+        view = await owner.code.cancel(CancelCode(
             host_epoch=owner.host_epoch, build_id=owner.build, session_id="a" * 32, run_id=run_id))
         finished = await task
         assert finished.phase == "cancelled" and finished.state == ""
@@ -291,48 +292,48 @@ async def test_live_script_uses_python_approval_and_stable_child_receipts(tmp_pa
 
 async def test_supervisor_owns_script_after_waiter_cancels_and_close_stops_it(tmp_path, monkeypatch, codemode_resources):
     from amazme_backend.contracts import ProcessLease
-    from amazme_backend.processes import exited
+    from amazme_backend.execution.processes import exited
 
     private_write(tmp_path / 'config.json',json.dumps({'format':2,'profile_id':'code','workspace':str(tmp_path),
         'resources':str(codemode_resources),'provider':{'provider':'faux'}}))
     private_write(tmp_path / 'control.token','token')
-    monkeypatch.setattr('amazme_backend.supervisor.build_id',lambda:'build-one')
+    monkeypatch.setattr('amazme_backend.execution.supervisor.build_id',lambda:'build-one')
     with sqlite3.connect(tmp_path / 'host.sqlite') as db:
         db.execute('CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT, archived INTEGER NOT NULL DEFAULT 0)')
         db.executemany('INSERT INTO sessions(id,workspace) VALUES(?,?)',[('a'*32,'primary'),('b'*32,'primary')])
-    owner = Supervisor(Profile(tmp_path),'code-ownership')
+    owner = create_supervisor(Profile(tmp_path),'code-ownership')
     await owner.initialize()
     owner.monitor_task.cancel()
     value = OpenCode(host_epoch=owner.host_epoch,build_id=owner.build,session_id='a'*32,run_id='1'*32,source='while(true){}')
-    waiter = asyncio.create_task(owner.run_code(value))
+    waiter = asyncio.create_task(owner.code.run(value))
     try:
         for _ in range(100):
-            if value.run_id in owner.code_jobs and (tmp_path / 'processes' / ('execution-code-'+value.run_id+'.lock')).exists():
+            if value.run_id in owner.code.jobs and (tmp_path / 'processes' / ('execution-code-'+value.run_id+'.lock')).exists():
                 break
             await asyncio.sleep(.01)
-        job = owner.code_jobs[value.run_id]
+        job = owner.code.jobs[value.run_id]
         waiter.cancel()
         await asyncio.gather(waiter,return_exceptions=True)
         assert not job.done()
-        assert (await owner.run_code(value)).phase == 'unknown'
+        assert (await owner.code.run(value)).phase == 'unknown'
         with pytest.raises(BackendError,match='codemode_conflict'):
-            await owner.cancel_code(CancelCode(host_epoch=owner.host_epoch,build_id=owner.build,session_id='b'*32,run_id=value.run_id))
-        assert not owner.code_cancels[value.run_id].is_set()
-        await owner._stop_codes()
+            await owner.code.cancel(CancelCode(host_epoch=owner.host_epoch,build_id=owner.build,session_id='b'*32,run_id=value.run_id))
+        assert not owner.code.cancels[value.run_id].is_set()
+        await owner.code.stop_all()
         assert (await job).phase == 'cancelled'
         # Fault injection: the script service exited, but its result receipt was lost.
         await owner.db.call(lambda db: db.execute("UPDATE code_runs SET phase='unknown' WHERE id=?",(value.run_id,)),write=True)
         await owner.db.call(lambda db: db.execute("UPDATE code_results SET document=? WHERE id=?",
             (json.dumps({'run_id':value.run_id,'phase':'unknown'}),value.run_id)),write=True)
-        retired = await owner.cancel_code(CancelCode(host_epoch=owner.host_epoch,build_id=owner.build,session_id='a'*32,run_id=value.run_id))
+        retired = await owner.code.cancel(CancelCode(host_epoch=owner.host_epoch,build_id=owner.build,session_id='a'*32,run_id=value.run_id))
         assert retired.phase == 'unknown' and retired.clean and retired.cancel_requested
-        assert (await owner.run_code(value)).phase == 'unknown'
+        assert (await owner.code.run(value)).phase == 'unknown'
         early = CancelCode(host_epoch=owner.host_epoch,build_id=owner.build,session_id='a'*32,run_id='2'*32)
-        cancelled_before_start = await owner.cancel_code(early)
+        cancelled_before_start = await owner.code.cancel(early)
         assert cancelled_before_start.phase == 'cancelled' and cancelled_before_start.clean and cancelled_before_start.cancel_requested
         with pytest.raises(BackendError,match='codemode_conflict'):
-            await owner.run_code(value.model_copy(update={'session_id':'b'*32,'run_id':early.run_id}))
-        stopped = await owner.run_code(value.model_copy(update={'run_id':early.run_id,'source':'store("ran",true);'}))
+            await owner.code.run(value.model_copy(update={'session_id':'b'*32,'run_id':early.run_id}))
+        stopped = await owner.code.run(value.model_copy(update={'run_id':early.run_id,'source':'store("ran",true);'}))
         assert stopped.phase == 'cancelled'
         assert not (tmp_path / 'executions' / ('code-'+early.run_id)).exists()
         for path in (tmp_path / 'processes').glob('*.lock'):

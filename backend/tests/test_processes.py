@@ -5,7 +5,7 @@ import sys
 import pytest
 
 from amazme_backend.contracts import BackendError
-from amazme_backend.processes import ProcessReservation, exited
+from amazme_backend.execution.processes import ProcessReservation, exited
 
 
 def test_child_keeps_lease_until_kernel_exit_and_replaced_inode_never_proves_exit(tmp_path):
@@ -13,7 +13,7 @@ def test_child_keeps_lease_until_kernel_exit_and_replaced_inode_never_proves_exi
     lease = reservation.lease
     code = """import json,os,sys
 from pathlib import Path
-from amazme_backend.processes import retain_inherited
+from amazme_backend.execution.processes import retain_inherited
 retain_inherited(int(sys.argv[1]),Path(sys.argv[2]),'worker','instance')
 print(json.dumps({'ready':True}),flush=True)
 sys.stdin.readline()
@@ -47,10 +47,10 @@ def test_parent_sigkill_before_child_registration_does_not_release_birth_lease(t
 
     parent_code = '''import subprocess,sys,time
 from pathlib import Path
-from amazme_backend.processes import ProcessReservation
+from amazme_backend.execution.processes import ProcessReservation
 root=Path(sys.argv[1])
 r=ProcessReservation(root,"worker","birth")
-child_code="import sys,time; from pathlib import Path; from amazme_backend.processes import retain_inherited; retain_inherited(int(sys.argv[1]),Path(sys.argv[2]),'worker','birth'); print('ready',flush=True); time.sleep(2)"
+child_code="import sys,time; from pathlib import Path; from amazme_backend.execution.processes import retain_inherited; retain_inherited(int(sys.argv[1]),Path(sys.argv[2]),'worker','birth'); print('ready',flush=True); time.sleep(2)"
 p=subprocess.Popen([sys.executable,"-c",child_code,str(r.fd),str(root)],pass_fds=(r.fd,),stdout=subprocess.PIPE,text=True)
 assert p.stdout.readline().strip()=="ready"
 print(r.lease.model_dump_json(),flush=True)

@@ -9,9 +9,11 @@ from pathlib import Path
 
 import pytest
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.bootstrap.supervisor import create_supervisor
 from amazme_backend.contracts import BackendError, OpenRemote, RemoteCallRequest
-from amazme_backend.supervisor import Supervisor
+from amazme_backend.execution.supervisor import Supervisor
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.profile import Profile
 
 DAEMON = Path(__file__).parent / "helpers/remote_probe.py"
 PIN = "correct-host-key"
@@ -44,10 +46,10 @@ async def supervisor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Supervi
     with sqlite3.connect(tmp_path / "host.sqlite") as db:
         db.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY,workspace TEXT NOT NULL,archived INTEGER NOT NULL DEFAULT 0)")
         db.execute("INSERT INTO sessions(id,workspace) VALUES(?,'primary')", ("a" * 32,))
-    monkeypatch.setattr("amazme_backend.supervisor.build_id", lambda: "build-one")
+    monkeypatch.setattr("amazme_backend.execution.supervisor.build_id", lambda: "build-one")
     from helpers.remote_probe_client import RemoteClient as ProbeClient
-    monkeypatch.setattr("amazme_backend.supervisor.RemoteClient.connect", lambda target, *args: ProbeClient.connect(target.host))
-    owner = Supervisor(Profile(tmp_path), "supervisor-remote")
+    monkeypatch.setattr("amazme_backend.execution.remote.operations.RemoteClient.connect", lambda target, *args: ProbeClient.connect(target.host))
+    owner = create_supervisor(Profile(tmp_path), "supervisor-remote")
     await owner.initialize()
     owner.monitor_task.cancel()
     return owner
@@ -64,8 +66,8 @@ async def test_wrong_daemon_identity_sends_no_work(tmp_path: Path, monkeypatch: 
     owner = await supervisor(tmp_path, monkeypatch)
     try:
         with pytest.raises(BackendError, match="remote_identity_mismatch"):
-            await owner.open_remote(opener(owner, endpoint).model_copy(update={"daemon_id": "0" * 64}))
-        view = await owner._remote_row("b" * 32)
+            await owner.remote.open(opener(owner, endpoint).model_copy(update={"daemon_id": "0" * 64}))
+        view = await owner.remote._remote_row("b" * 32)
         assert view is not None and view["phase"] == "blocked"
         assert not (tmp_path / "daemon" / "effects.txt").exists()
     finally:
@@ -79,23 +81,23 @@ async def test_disconnect_keeps_the_daemon_and_does_not_replay(tmp_path: Path, m
     owner = await supervisor(tmp_path, monkeypatch)
     opened = opener(owner, endpoint)
     try:
-        assert (await owner.open_remote(opened)).phase == "connected"
-        first = await owner.submit_remote(opened, RemoteCallRequest(call_id="c" * 32, command="drop"))
+        assert (await owner.remote.open(opened)).phase == "connected"
+        first = await owner.remote.submit(opened, RemoteCallRequest(call_id="c" * 32, command="drop"))
         assert first.phase == "unknown"
         assert (state / "effects.txt").read_text() == "drop\n"
         assert process.poll() is None
-        remote = await owner._remote_row("b" * 32)
+        remote = await owner.remote._remote_row("b" * 32)
         assert remote is not None and remote["phase"] == "disconnected"
         with pytest.raises(BackendError, match="remote_unreachable"):
-            await owner.submit_remote(opened, RemoteCallRequest(call_id="c" * 32, command="drop"))
+            await owner.remote.submit(opened, RemoteCallRequest(call_id="c" * 32, command="drop"))
         assert (state / "effects.txt").read_text() == "drop\n"
-        again = await owner.reconnect_remote(opened)
+        again = await owner.remote.reconnect(opened)
         assert again.phase == "connected"
         stored = await owner.db.call(lambda db: db.execute("SELECT phase,result FROM remote_calls WHERE id=?", ("c" * 32,)).fetchone())
         assert stored is not None and stored["phase"] == "done" and stored["result"] == "ran:drop"
         assert (state / "effects.txt").read_text() == "drop\n"
         with pytest.raises(BackendError, match="remote_call_conflict"):
-            await owner.submit_remote(opened, RemoteCallRequest(call_id="c" * 32, command="other"))
+            await owner.remote.submit(opened, RemoteCallRequest(call_id="c" * 32, command="other"))
         assert (state / "effects.txt").read_text() == "drop\n"
     finally:
         stop(process)
@@ -108,18 +110,18 @@ async def test_generation_change_blocks_without_marking_the_call_stopped(tmp_pat
     owner = await supervisor(tmp_path, monkeypatch)
     opened = opener(owner, endpoint)
     try:
-        await owner.open_remote(opened)
-        await owner.submit_remote(opened, RemoteCallRequest(call_id="c" * 32, command="drop"))
+        await owner.remote.open(opened)
+        await owner.remote.submit(opened, RemoteCallRequest(call_id="c" * 32, command="drop"))
         (state / "generation").write_text("2")
         with pytest.raises(BackendError, match="remote_identity_mismatch"):
-            await owner.reconnect_remote(opened)
-        remote = await owner._remote_row("b" * 32)
+            await owner.remote.reconnect(opened)
+        remote = await owner.remote._remote_row("b" * 32)
         call = await owner.db.call(lambda db: db.execute("SELECT phase FROM remote_calls WHERE id=?", ("c" * 32,)).fetchone())
         assert remote is not None and remote["phase"] == "blocked"
         assert call is not None and call["phase"] == "unknown"
         assert (state / "effects.txt").read_text() == "drop\n"
         with pytest.raises(BackendError, match="remote_unreachable"):
-            await owner.submit_remote(opened, RemoteCallRequest(call_id="d" * 32, command="next"))
+            await owner.remote.submit(opened, RemoteCallRequest(call_id="d" * 32, command="next"))
         assert (state / "effects.txt").read_text() == "drop\n"
     finally:
         stop(process)

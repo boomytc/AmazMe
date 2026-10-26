@@ -244,7 +244,7 @@ async function main() {
 		const bundle = join(appDirectory, "Contents", "Resources", "amazme-backend");
 		if (!existsSync(join(bundle, "build.json"))) return;
 		const python = join(repoRoot, "backend/.venv/bin/python");
-		execFileSync(python, ["-c", "import sys; from pathlib import Path; from amazme_backend.common import rewrite_frozen_manifest; print(rewrite_frozen_manifest(Path(sys.argv[1])))", bundle], {
+		execFileSync(python, ["-c", "import sys; from pathlib import Path; from amazme_backend.platform.identity import rewrite_frozen_manifest; print(rewrite_frozen_manifest(Path(sys.argv[1])))", bundle], {
 			cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "inherit", "inherit"],
 		});
 	});

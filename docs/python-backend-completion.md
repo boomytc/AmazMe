@@ -15,9 +15,13 @@
 | 范围 | 入口 |
 | --- | --- |
 | 后端行为与契约 | `backend/tests/`、`backend/tools/export_contracts.py --check` |
+| Python 模块边界与公开入口 | `backend/tools/check_architecture.py`、`backend/tools/verify_imports.py` |
+| 中立模型请求与协议 | `backend/tools/verify_ai_boundary.py`；调用方提供 prompt、工具和认证，本地 HTTP 替身 |
 | 客户端 | 对应 workspace 的 build、test、typecheck |
 | 桌面 smoke | `npm run test:smoke --workspace @amazme/gui` |
 | 本机执行与窗口 | `backend/tools/verify_native.py`、`backend/tools/verify_electron.py` |
+| Web 页面与重连 | `backend/tools/verify_web.py`；faux 工具输入由公开 HTTP 注入，页面负责真实审批和回执展示 |
+| 同一冻结后端与迁移资源 | `backend/tools/verify_frozen_clients.py`、`backend/tools/verify_frozen_resources.py`；显式传入本轮构建的 executable 和报告路径 |
 | 资源归属与残留 | `backend/tools/resource_census.py` |
 | 构建与依赖规则 | `npm run check:workspace`、`npm run test:engineering` |
 

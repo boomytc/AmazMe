@@ -11,18 +11,16 @@ import sys
 import tempfile
 from pathlib import Path
 
+from amazme_backend.platform.resource_manifest import (
+    CLIENT_DIRECTORY,
+    NODE_MODULES_DIRECTORY,
+    REQUIRED_IDENTITY,
+    RESOURCE_PATHS,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 REPO = ROOT.parent
 OFFICIAL_NODE = Path.home() / "Library/Caches/amazme-release/node-v22.23.3-darwin-arm64/bin/node"
-REQUIRED_IDENTITY = (
-    "runtime/node/bin/node",
-    "codemode_helper.mjs",
-    "plugin_gate.py",
-    "model_catalog.json",
-    "classifier_catalog.json",
-    "quickjs-wasi/quickjs.wasm",
-    "@amazme/codemode/dist/index.js",
-)
 
 
 def official_node() -> Path:
@@ -53,16 +51,17 @@ def install_codemode_runtime(bundle: Path) -> None:
     node_dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(official_node(), node_dest)
     node_dest.chmod(0o755)
-    helper = bundle / "_internal" / "amazme_backend" / "codemode_helper.mjs"
-    plugin = bundle / "_internal" / "amazme_backend" / "plugin_gate.py"
+    package_root = bundle / "_internal" / "amazme_backend"
+    helper = package_root / RESOURCE_PATHS["codemode_helper"]
+    plugin = package_root / RESOURCE_PATHS["plugin_gate"]
     if not helper.is_file() or not plugin.is_file():
         raise SystemExit("packaged helper or plugin gate is missing")
-    modules = helper.parent / "node_modules" / "quickjs-wasi"
+    modules = package_root / NODE_MODULES_DIRECTORY / "quickjs-wasi"
     shutil.copytree(REPO / "node_modules" / "quickjs-wasi", modules, symlinks=False)
     package = REPO / "packages/codemode"
     if not (package / "dist/index.js").is_file():
         raise SystemExit("build @amazme/codemode before packaging the backend")
-    target = helper.parent / "node_modules/@amazme/codemode"
+    target = package_root / NODE_MODULES_DIRECTORY / "@amazme/codemode"
     target.mkdir(parents=True)
     shutil.copy2(package / "package.json", target / "package.json")
     shutil.copytree(package / "dist", target / "dist", symlinks=False)
@@ -77,7 +76,7 @@ def main() -> None:
     from resource_budget import ResourceBudget, require_budget
     from resource_census import PACKAGE_SLOTS, admit, collect, live_processes, record, retire_unused_packages
 
-    from amazme_backend.common import lock
+    from amazme_backend.platform.private_files import lock
 
     official_node()  # Fail before allocating a build tree when the required helper is absent.
     lock_path = REPO / ".artifacts/native-package.lock"
@@ -123,15 +122,12 @@ def build_once(parent: Path) -> None:
             sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--name", "amazme-backend",
             "--distpath", str(output / "dist"), "--workpath", str(output / "build"), "--specpath", str(output),
             "--paths", str(ROOT / "src"),
-            "--add-data", str(ROOT / "src/amazme_backend/web") + ":amazme_backend/web",
-            "--add-data", str(client) + ":amazme_backend/web/client",
+            "--collect-submodules", "amazme_backend",
+            "--add-data", str(client) + ":amazme_backend/" + CLIENT_DIRECTORY,
             *[
                 item
-                for name in (
-                    "pty_gate.py", "mcp_gate.py", "plugin_gate.py",
-                    "remote_daemon.py", "codemode_helper.mjs", "model_catalog.json", "classifier_catalog.json",
-                )
-                for item in ("--add-data", f"{ROOT / 'src/amazme_backend' / name}:amazme_backend")
+                for name in RESOURCE_PATHS.values()
+                for item in ("--add-data", f"{ROOT / 'src/amazme_backend' / name}:amazme_backend/{Path(name).parent if Path(name).suffix else name}")
             ],
             str(entry),
         ], check=True, stdout=log, stderr=subprocess.STDOUT, timeout=300)

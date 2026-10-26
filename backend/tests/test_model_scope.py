@@ -1,5 +1,6 @@
+from amazme_backend.ai.catalog import SELECTION_INDEX
+from amazme_backend.ai.selection import resolve_scope
 from amazme_backend.contracts import CatalogModel, ModelScopeRequest
-from amazme_backend.model_scope import resolve_scope
 
 
 def catalog() -> list[CatalogModel]:
@@ -33,12 +34,12 @@ async def test_explicit_request_model_is_pinned_across_retries_and_restart(tmp_p
     import pytest
 
     from amazme_backend.contracts import BackendError, HostFence, ModelSelection, ProviderConfig, Submit
-    from amazme_backend.session_domain import Continue, ModelInvocation
-    from amazme_backend.storage import SessionStore
+    from amazme_backend.sessions.service import SessionStore
+    from amazme_backend.sessions.types import Continue, ModelInvocation
 
     fence = HostFence(host_epoch=1, build_id="model-snapshot")
     path = tmp_path / "session.sqlite"
-    store = SessionStore(path, "session", build=fence.build_id, config=ProviderConfig(provider="faux",model="faux"))
+    store = SessionStore(path, "session", build=fence.build_id, config=ProviderConfig(provider="faux",model="faux"), model_catalog=SELECTION_INDEX)
     await store.initialize()
     await store.fence(fence)
     original = Submit(request_id="original",text="task",model_selection=ModelSelection(provider="deepseek",model="deepseek-flash"))
@@ -49,8 +50,8 @@ async def test_explicit_request_model_is_pinned_across_retries_and_restart(tmp_p
         with pytest.raises(BackendError,match="request_conflict"):
             await store.accept(original.model_copy(update={"model_selection":ModelSelection(provider="faux",model="faux")}),fence)
     finally:
-        await store.db.close()
-    reopened = SessionStore(path,"session",build=fence.build_id,config=ProviderConfig(provider="faux",model="faux"),require_existing=True)
+        await store.close()
+    reopened = SessionStore(path,"session",build=fence.build_id,config=ProviderConfig(provider="faux",model="faux"),require_existing=True, model_catalog=SELECTION_INDEX)
     try:
         await reopened.initialize()
         for _ in range(30):
@@ -64,4 +65,4 @@ async def test_explicit_request_model_is_pinned_across_retries_and_restart(tmp_p
         else:
             pytest.fail("No model invocation")
     finally:
-        await reopened.db.close()
+        await reopened.close()

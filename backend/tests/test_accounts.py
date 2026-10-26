@@ -10,10 +10,11 @@ import httpx
 import pytest
 from pydantic import SecretStr
 
-from amazme_backend.accounts import AccountStore, ApiKeyCredential
-from amazme_backend.common import private_write
+from amazme_backend.accounts.store import AccountStore, ApiKeyCredential
+from amazme_backend.platform.private_files import private_write
 from amazme_backend.contracts import BackendError, ProviderConfig
-from amazme_backend.oauth import BROWSER, DEVICE, Login, OAuthCredential, OAuthStart, OAuthView
+from amazme_backend.accounts.oauth.flow import BROWSER, DEVICE, Login, OAuthCredential
+from amazme_backend.contracts.accounts import OAuthStart, OAuthView
 
 
 def store(path: Path) -> AccountStore:
@@ -48,7 +49,7 @@ async def test_ambiguous_refresh_is_not_replayed_and_cannot_erase_newer_credenti
     async def fail(client, provider, credential):
         attempted.append(provider)
         raise BackendError('oauth_request_failed')
-    monkeypatch.setattr('amazme_backend.accounts.refresh', fail)
+    monkeypatch.setattr('amazme_backend.accounts.store.refresh', fail)
     with pytest.raises(BackendError, match='oauth_request_failed'):
         await accounts.resolve('xai')
     with pytest.raises(BackendError, match='oauth_login_required'):
@@ -70,7 +71,7 @@ async def test_parallel_refreshes_share_the_persisted_winner(tmp_path: Path, mon
         await asyncio.sleep(0.01)
         return OAuthCredential(access=SecretStr('new'), refresh=SecretStr('rotated'),
                                expires=int(time.time() * 1000) + 100000)
-    monkeypatch.setattr('amazme_backend.accounts.refresh', renew)
+    monkeypatch.setattr('amazme_backend.accounts.store.refresh', renew)
     one, two = await asyncio.gather(accounts.resolve('xai'), AccountStore(tmp_path).resolve('xai'))
     assert one == two and attempts == ['xai']
     assert accounts.view().revision == 2
@@ -141,15 +142,15 @@ def test_pi_callback_and_client_ids_remain_exact() -> None:
 
 
 async def test_host_oauth_same_id_and_cancel_do_not_repeat_the_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from amazme_backend.common import Profile
+    from amazme_backend.profiles.profile import Profile
     from amazme_backend.contracts import HostFence, ProcessLease
-    from amazme_backend.host import Host
+    from amazme_backend.host.service import Host
     store(tmp_path)
     private_write(tmp_path / 'control.token', 'control')
     private_write(tmp_path / 'web.token', 'web')
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
-    host.fence.host_epoch = await host.store.initialize('host', host.build, ProcessLease(
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize('host', host.lifecycle.build, ProcessLease(
         instance_id='host', role='host', profile_path=str(tmp_path), path=str(tmp_path / 'lease'), device=1, inode=1))
     calls = []
     started = asyncio.Event()
@@ -161,42 +162,43 @@ async def test_host_oauth_same_id_and_cancel_do_not_repeat_the_flow(tmp_path: Pa
     monkeypatch.setattr(Login, 'begin_browser', begin)
     request = OAuthStart(login_id='a' * 32, provider='openrouter', expected_revision=0)
     try:
-        first, second = await asyncio.gather(host.start_oauth(request), host.start_oauth(request))
+        first, second = await asyncio.gather(host.accounts.start_oauth(request), host.accounts.start_oauth(request))
         await started.wait()
         assert first == second and calls == [request.login_id]
         with pytest.raises(BackendError, match='oauth_login_conflict'):
-            await host.start_oauth(request.model_copy(update={'provider': 'anthropic'}))
-        assert (await host.cancel_oauth(request.login_id)).phase == 'cancelled'
-        assert (await host.start_oauth(request)).phase == 'cancelled'
-        assert host.accounts.read().logins[request.login_id].view.phase == 'cancelled'
+            await host.accounts.start_oauth(request.model_copy(update={'provider': 'anthropic'}))
+        assert (await host.accounts.cancel_oauth(request.login_id)).phase == 'cancelled'
+        assert (await host.accounts.start_oauth(request)).phase == 'cancelled'
+        assert host.accounts.accounts.read().logins[request.login_id].view.phase == 'cancelled'
         assert calls == [request.login_id]
         # A recorded pending login from a lost Host is explicitly unknown, not restarted.
         prior = request.model_copy(update={'login_id': 'b' * 32})
-        await host.accounts.reserve_login(prior, OAuthView(login_id=prior.login_id, provider='openrouter', phase='pending'), host._account_write_guard)
-        assert (await host.start_oauth(prior)).phase == 'unknown'
-        assert host.oauth_view(prior.login_id).phase == 'unknown'
+        await host.accounts.accounts.reserve_login(prior, OAuthView(login_id=prior.login_id, provider='openrouter', phase='pending'), host.accounts.write_guard)
+        assert (await host.accounts.start_oauth(prior)).phase == 'unknown'
+        assert host.accounts.oauth_view(prior.login_id).phase == 'unknown'
         assert calls == [request.login_id]
-        assert (await host.cancel_oauth(prior.login_id)).phase == 'cancelled'
+        assert (await host.accounts.cancel_oauth(prior.login_id)).phase == 'cancelled'
     finally:
-        for login in host.oauth_logins.values():
+        for login in host.accounts.oauth_logins.values():
             await login.cancel()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_host_accounts_rpc_and_sdk_share_one_private_credential_store(tmp_path: Path) -> None:
-    from amazme_backend.common import Profile
+    from amazme_backend.profiles.profile import Profile
     from amazme_backend.contracts import CredentialUpdate, HostFence, ProcessLease, UpdateModelSettings
-    from amazme_backend.host import Host, application
-    from amazme_backend.rpc import RpcCall, RpcParams, handle_rpc
+    from amazme_backend.host.service import Host
+    from amazme_backend.interfaces.http.application import application
+    from amazme_backend.interfaces.rpc import RpcCall, RpcParams, handle_rpc
     from amazme_backend.sdk import Client
     store(tmp_path)
     private_write(tmp_path / 'control.token', 'control')
     private_write(tmp_path / 'web.token', 'web')
     host = Host(Profile(tmp_path))
     host.origin = 'http://127.0.0.1:12345'
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
-    host.fence.host_epoch = await host.store.initialize('host', host.build, ProcessLease(
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize('host', host.lifecycle.build, ProcessLease(
         instance_id='host', role='host', profile_path=str(tmp_path), path=str(tmp_path / 'lease'), device=1, inode=1))
     client = Client(host.origin, 'web')
     await client._http.aclose()
@@ -210,7 +212,7 @@ async def test_host_accounts_rpc_and_sdk_share_one_private_credential_store(tmp_
         model = await client.update_model(UpdateModelSettings(provider='openrouter', model='custom/chat',
             api='openai-completions', base_url='https://openrouter.ai/api/v1'))
         assert model.key_configured and model.provider == 'openrouter'
-        assert host.profile.config.provider.api_key.get_secret_value() == ''
+        assert host.lifecycle.profile.config.provider.api_key.get_secret_value() == ''
         result = await handle_rpc(host, RpcCall(id='list', method='account.list'))
         assert 'router-secret' not in json.dumps(result)
         assert result['result']['revision'] == 1
@@ -218,23 +220,23 @@ async def test_host_accounts_rpc_and_sdk_share_one_private_credential_store(tmp_
             provider='openrouter', credential=CredentialUpdate(expected_revision=1, clear=True))))
         assert 'error' not in result
         assert (await client.models()).current.key_configured is False
-        assert 'router-secret' not in host.accounts.secrets()
-        assert 'legacy-secret' in host.accounts.secrets()
+        assert 'router-secret' not in host.accounts.accounts.secrets()
+        assert 'legacy-secret' in host.accounts.accounts.secrets()
         with pytest.raises(BackendError, match='credential_conflict'):
             await client.update_account('openrouter', CredentialUpdate(expected_revision=1, api_key=SecretStr('stale')))
     finally:
         await client._http.aclose()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_xai_device_polling_and_refresh_keep_original_client_and_rotation(monkeypatch: pytest.MonkeyPatch) -> None:
-    from amazme_backend.oauth import refresh
+    from amazme_backend.accounts.oauth.flow import refresh
     delays = []
 
     async def sleep(delay: float) -> None:
         delays.append(delay)
-    monkeypatch.setattr('amazme_backend.oauth.asyncio.sleep', sleep)
+    monkeypatch.setattr('amazme_backend.accounts.oauth.flow.asyncio.sleep', sleep)
     seen = []
     polls = 0
 

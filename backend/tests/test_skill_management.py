@@ -13,8 +13,8 @@ def manifest(name: str, body: str = "instructions") -> str:
 
 async def test_skills_create_edit_import_and_remove_use_the_resource_loader_and_cas(tmp_path: Path) -> None:
     host = _host(tmp_path)
-    host.profile.config.user_resources = str(tmp_path / "agent")
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.profile.config.user_resources = str(tmp_path / "agent")
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id="host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"), device=1, inode=1))
     source = tmp_path / "source"
     source.mkdir()
@@ -59,14 +59,14 @@ async def test_skills_create_edit_import_and_remove_use_the_resource_loader_and_
                 assert removed.status_code == 200 and removed.json()["removed"] is True
             assert (source / "SKILL.md").read_text() == manifest("imported")
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_project_and_symlinked_skills_are_read_only(tmp_path: Path) -> None:
     host = _host(tmp_path)
-    host.profile.config.user_resources = str(tmp_path / "agent")
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, ProcessLease(
+    host.lifecycle.profile.config.user_resources = str(tmp_path / "agent")
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, ProcessLease(
         instance_id="host", role="host", profile_path=str(tmp_path), path=str(tmp_path / "lease"), device=1, inode=1))
     project = tmp_path / "primary" / ".amazme" / "skills" / "project"
     project.mkdir(parents=True)
@@ -88,5 +88,5 @@ async def test_project_and_symlinked_skills_are_read_only(tmp_path: Path) -> Non
             escaped = await client.post("/api/v1/skills", json={"name": "../project", "content": original})
             assert escaped.status_code == 422
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()

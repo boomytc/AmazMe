@@ -20,8 +20,8 @@ from amazme_backend.contracts import (
     McpView,
     WorkspaceGrantRequest,
 )
-from amazme_backend.mcp_management import Configured, exposure, launch
-from amazme_backend.mcp_session import offers_from_views
+from amazme_backend.contracts.mcp import exposure, offers_from_views
+from amazme_backend.host.persistence.mcp import Configured, launch
 from amazme_backend.sdk import Client
 
 
@@ -52,9 +52,9 @@ def test_configuration_references_and_exposure_follow_original_rules(monkeypatch
 
 
 async def test_configuration_revisions_overrides_and_receipts_survive_reopen(tmp_path: Path) -> None:
-    from amazme_backend import mcp_management
+    import amazme_backend.host.persistence.mcp as mcp_management
     from amazme_backend.contracts import ProcessLease
-    from amazme_backend.host_store import HostStore
+    from amazme_backend.host.store import HostStore
 
     path = tmp_path / "host.sqlite"
     store = HostStore(path)

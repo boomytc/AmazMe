@@ -14,7 +14,7 @@ from amazme_backend.contracts import (
     McpSession,
     OpenMcp,
 )
-from amazme_backend.mcp_session import schema_digest
+from amazme_backend.contracts.mcp import schema_digest
 
 terminal_owner = fixtures.terminal_owner
 
@@ -54,11 +54,11 @@ async def open_server(owner):
     script.write_text(SERVER)
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} calls.txt"
     value = OpenMcp(**query(owner).model_dump(), command=command, workspace="primary")
-    return value, await owner.open_mcp(value)
+    return value, await owner.mcp.open(value)
 
 
 async def state(owner):
-    return await owner.mcp_state(McpSession(**fence(owner).model_dump(), session_id="a" * 32))
+    return await owner.mcp.state(McpSession(**fence(owner).model_dump(), session_id="a" * 32))
 
 
 async def test_mcp_launch_pins_explicit_environment_and_working_directory_without_publishing_values(terminal_owner):
@@ -69,12 +69,12 @@ async def test_mcp_launch_pins_explicit_environment_and_working_directory_withou
     (owner.profile.path / "nested").mkdir()
     value = OpenMcp(**query(owner).model_dump(), command=f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} calls.txt",
                     cwd="nested", environment={"LOCAL_MCP_TOKEN": "explicit-token", "LOCAL_MCP_SECOND": "ok"})
-    opened = await owner.open_mcp(value)
+    opened = await owner.mcp.open(value)
     assert "explicit-token" not in opened.model_dump_json()
-    assert await owner.open_mcp(value.model_copy(update={"workspace": "primary", "environment": dict(reversed(list(value.environment.items())))})) == opened
+    assert await owner.mcp.open(value.model_copy(update={"workspace": "primary", "environment": dict(reversed(list(value.environment.items())))})) == opened
     for changes in ({"cwd": "."}, {"environment": {"LOCAL_MCP_TOKEN": "changed"}}):
         with pytest.raises(BackendError, match="mcp_server_conflict"):
-            await owner.open_mcp(value.model_copy(update=changes))
+            await owner.mcp.open(value.model_copy(update=changes))
     call = await proposal(owner)
     await approve(owner, call)
     result = await completed(owner, call.call_id)
@@ -93,7 +93,7 @@ async def test_mcp_progress_resets_request_timeout_and_timeout_never_replays(ter
                 if args.get('progress'):
                     print(json.dumps({'jsonrpc':'2.0','method':'notifications/progress','params':{'progressToken':message['params']['_meta']['progressToken'],'progress':count}}),flush=True)"""))
     value = OpenMcp(**query(owner).model_dump(), command=f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} calls.txt", timeout_seconds=1)
-    await owner.open_mcp(value)
+    await owner.mcp.open(value)
     progressing = await proposal(owner, name="demo.slow", arguments={"progress": True})
     await approve(owner, progressing)
     assert (await completed(owner, progressing.call_id)).phase == "done"
@@ -111,13 +111,13 @@ async def test_mcp_progress_resets_request_timeout_and_timeout_never_replays(ter
 
 
 async def proposal(owner, identity="e" * 32, name="demo.echo", arguments=None):
-    return await owner.request_mcp_call("a" * 32, "d" * 32,
+    return await owner.mcp.request_call("a" * 32, "d" * 32,
         McpCallRequest(call_id=identity, name=name, arguments=arguments or {}), fence(owner))
 
 
 async def approve(owner, call, **updates):
     decision = McpDecision(decision_id="approve-" + call.call_id, approve=True, digest=call.digest).model_copy(update=updates)
-    return await owner.decide_mcp_call("a" * 32, "d" * 32, call.call_id, decision, fence(owner))
+    return await owner.mcp.decide_call("a" * 32, "d" * 32, call.call_id, decision, fence(owner))
 
 
 async def completed(owner, identity):
@@ -136,7 +136,7 @@ async def test_native_mcp_catalog_approval_json_result_and_retry(terminal_owner,
     assert server.phase == "ready" and server.protocol_version == "2025-11-25"
     assert [t.name for t in server.tools] == ["demo.echo", "demo.slow", "demo.fail"]
     assert server.tools[0].input_schema == {"type": "object"}
-    assert (await owner.open_mcp(value)).server_id == server.server_id
+    assert (await owner.mcp.open(value)).server_id == server.server_id
     args = {"nested": [True, None, 3, {"text": "中文"}]}
     call = await proposal(owner, arguments=args)
     assert call.phase == "waiting_approval" and call.arguments == args
@@ -155,10 +155,10 @@ async def test_native_mcp_catalog_approval_json_result_and_retry(terminal_owner,
     await owner.cleanup("a" * 32)
     assert (await state(owner)).servers[0].phase == "ready"
     with pytest.raises(BackendError, match="mcp_not_found"):
-        await owner.cancel_mcp(query(owner).model_copy(update={"session_id": "f" * 32}))
+        await owner.mcp.cancel(query(owner).model_copy(update={"session_id": "f" * 32}))
     with pytest.raises(BackendError, match="stale_host_epoch"):
-        await owner.cancel_mcp(query(owner).model_copy(update={"host_epoch": 99}))
-    closed = await owner.cancel_mcp(query(owner))
+        await owner.mcp.cancel(query(owner).model_copy(update={"host_epoch": 99}))
+    closed = await owner.mcp.cancel(query(owner))
     assert closed.clean and closed.phase == "exited"
 
 
@@ -178,10 +178,10 @@ async def test_mcp_stop_keeps_inflight_effect_unknown_and_never_replays(terminal
     value, _ = await open_server(owner)
     call = await proposal(owner, name="demo.slow", arguments={"seconds": 60})
     assert (await approve(owner, call)).phase == "running"
-    closed = await owner.cancel_mcp(query(owner))
+    closed = await owner.mcp.cancel(query(owner))
     assert closed.clean and closed.phase == "exited"
     assert (await approve(owner, call)).phase == "unknown"
-    assert (await owner.open_mcp(value)).phase == "exited"
+    assert (await owner.mcp.open(value)).phase == "exited"
     assert (owner.profile.path / "calls.txt").read_text() == "x"
 
 
@@ -191,7 +191,7 @@ async def test_mcp_denial_and_storage_failure_do_not_leak_service(terminal_owner
     call = await proposal(owner)
     assert (await approve(owner, call, approve=False)).phase == "denied"
     assert not (owner.profile.path / "calls.txt").exists()
-    process = owner.mcp_processes["d" * 32]
+    process = owner.mcp.processes["d" * 32]
     owner.db.path.unlink()
     with pytest.raises(BackendError):
         await owner.health()
@@ -239,14 +239,14 @@ async def open_refresh(owner, mode):
     marker = owner.profile.path / "calls.txt"
     command = f"{shlex.quote(sys.executable)} {shlex.quote(str(script))} {shlex.quote(str(marker))} {mode}"
     value = OpenMcp(**query(owner).model_dump(), command=command, workspace="primary")
-    return marker, await owner.open_mcp(value)
+    return marker, await owner.mcp.open(value)
 
 
 async def test_mcp_list_changed_replaces_catalog_without_replaying(terminal_owner):
     owner = terminal_owner
     marker, server = await open_refresh(owner, "refresh")
     assert [tool.name for tool in server.tools] == ["demo.echo"]
-    call = await owner.request_mcp_call("a" * 32, "d" * 32, McpCallRequest(
+    call = await owner.mcp.request_call("a" * 32, "d" * 32, McpCallRequest(
         call_id="e" * 32, name="demo.echo", schema_digest=schema_digest({"type": "object"})), fence(owner))
     current = server
     for _ in range(50):
@@ -270,7 +270,7 @@ async def test_mcp_failed_refresh_keeps_the_last_catalog(terminal_owner):
     owner = terminal_owner
     marker, server = await open_refresh(owner, "fail")
     assert [tool.name for tool in server.tools] == ["demo.echo"]
-    call = await owner.request_mcp_call("a" * 32, "d" * 32, McpCallRequest(
+    call = await owner.mcp.request_call("a" * 32, "d" * 32, McpCallRequest(
         call_id="e" * 32, name="demo.echo", schema_digest=schema_digest({"type": "object"})), fence(owner))
     note = owner.profile.path / "calls.txt.note"
     for _ in range(50):
@@ -290,7 +290,7 @@ async def test_mcp_failed_refresh_keeps_the_last_catalog(terminal_owner):
     assert not marker.exists()
     listed = (await state(owner)).servers[0]
     assert listed.phase == "ready" and [tool.name for tool in listed.tools] == ["demo.echo"]
-    assert owner.mcp_processes["d" * 32].process.returncode is None
+    assert owner.mcp.processes["d" * 32].process.returncode is None
 
 
 async def test_mcp_refresh_after_a_call_does_not_replay_it(terminal_owner):

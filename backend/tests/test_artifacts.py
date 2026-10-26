@@ -1,5 +1,6 @@
 """A session artifact is stored once, read back from disk, and not replaced by a conflicting retry."""
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -7,12 +8,14 @@ from pathlib import Path
 
 import httpx
 
-from amazme_backend.artifacts import ArtifactView
-from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import HostFence, ProcessLease, Session
-from amazme_backend.host import Host, application
+from amazme_backend.contracts.artifacts import ArtifactView
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.profiles.profile import Profile
 from amazme_backend.sdk import Client
-from amazme_backend.storage import session_database
 
 KEY = "sk-test-not-real"
 BODY = b"hello artifact"
@@ -26,15 +29,15 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     return host
 
 
 def _client(host: Host) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-        "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-        "x-amazme-epoch": str(host.fence.host_epoch),
+        "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+        "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
     })
 
 
@@ -49,8 +52,11 @@ async def test_artifact_is_stored_once_and_a_conflict_keeps_the_original(tmp_pat
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
     try:
+        host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(
+            host.lifecycle.instance, host.lifecycle.build, lease
+        )
+        host.lifecycle.initialized = True
         async with _client(host) as client:
             missing = await client.get("/api/v1/sessions/" + "e" * 32 + "/artifacts")
             assert missing.status_code == 404 and missing.json()["code"] == "session_not_found"
@@ -84,7 +90,7 @@ async def test_artifact_is_stored_once_and_a_conflict_keeps_the_original(tmp_pat
             assert fetched.status_code == 200
             assert base64.b64decode(fetched.json()["data_base64"]) == BODY
             assert KEY not in fetched.text
-            binary = session_database(host.profile.path, session).parent / "artifacts" / "note1.bin"
+            binary = session_database(host.lifecycle.profile.path, session).parent / "artifacts" / "note1.bin"
             assert binary.read_bytes() == BODY
             assert list(binary.parent.glob("*.bin")) == [binary]
             other = tmp_path / "other.txt"
@@ -96,7 +102,10 @@ async def test_artifact_is_stored_once_and_a_conflict_keeps_the_original(tmp_pat
             assert refused.status_code == 409 and refused.json()["code"] == "artifact_refused"
             assert "secret-neighbor" not in refused.text
     finally:
-        await host.store.db.close()
+        child = host.lifecycle.child
+        await host.close()
+        if child is not None:
+            await asyncio.wait_for(child.wait(), timeout=5)
 
 
 async def test_sdk_put_artifact_sends_the_bytes() -> None:

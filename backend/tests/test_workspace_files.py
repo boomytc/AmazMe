@@ -7,10 +7,13 @@ from pathlib import Path
 import httpx
 import pytest
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.platform.private_files import private_write
 from amazme_backend.contracts import BackendError, HostFence, PrepareUpdate, ProcessLease
-from amazme_backend.host import Host, application
-from amazme_backend.workspace_files import FileWrite, list_files, read_file, write_file
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.contracts.workspaces import FileWrite
+from amazme_backend.workspaces.files import list_files, read_file, write_file
 
 
 def test_browse_read_and_checked_write(tmp_path: Path) -> None:
@@ -114,14 +117,14 @@ async def owner(tmp_path: Path):
     value = Host(Profile(tmp_path))
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    value.fence = HostFence(host_epoch=1, build_id=value.build)
-    value.fence.host_epoch = await value.store.initialize(value.instance, value.build, lease)
+    value.lifecycle.fence = HostFence(host_epoch=1, build_id=value.lifecycle.build)
+    value.lifecycle.fence.host_epoch = await value.lifecycle.store.initialize(value.lifecycle.instance, value.lifecycle.build, lease)
     value.origin = "http://127.0.0.1:12345"
     try:
         yield value
     finally:
-        await value.supervisor.close()
-        await value.store.db.close()
+        await value.lifecycle.supervisor.close()
+        await value.lifecycle.store.db.close()
 
 
 async def test_file_route_reads_and_writes_the_granted_workspace(owner: Host) -> None:
@@ -132,7 +135,7 @@ async def test_file_route_reads_and_writes_the_granted_workspace(owner: Host) ->
         assert listed.status_code == 200
         assert any(item["name"] == "note.txt" for item in listed.json()["entries"])
         for index in range(205):
-            (Path(owner.profile.config.workspace) / f"z{index:03}.txt").touch()
+            (Path(owner.lifecycle.profile.config.workspace) / f"z{index:03}.txt").touch()
         second = await client.get("/api/v1/files", params={"offset": 200})
         assert second.status_code == 200
         assert second.json()["offset"] == second.json()["limit"] == 200 and second.json()["total"] == 206
@@ -140,12 +143,12 @@ async def test_file_route_reads_and_writes_the_granted_workspace(owner: Host) ->
         assert (await client.get("/api/v1/files", params={"offset": -1})).status_code == 422
         content = await client.get("/api/v1/files/content", params={"path": "note.txt"})
         assert content.json()["content"] == "alpha\n"
-        client.headers.update({"x-amazme-build": owner.build, "x-amazme-epoch": str(owner.fence.host_epoch)})
+        client.headers.update({"x-amazme-build": owner.lifecycle.build, "x-amazme-epoch": str(owner.lifecycle.fence.host_epoch)})
         saved = await client.post("/api/v1/files/content", json={
             "path": "note.txt", "content": "beta\n", "expected_digest": content.json()["digest"]})
         assert saved.status_code == 200 and "beta" in saved.json()["diff"]
-        await owner.store.begin_update(PrepareUpdate(update_id="freeze-files", target_build="ab" * 32), owner.build)
+        await owner.lifecycle.store.begin_update(PrepareUpdate(update_id="freeze-files", target_build="ab" * 32), owner.lifecycle.build)
         blocked = await client.post("/api/v1/files/content", json={
             "path": "note.txt", "content": "gamma\n", "expected_digest": saved.json()["digest"]})
         assert blocked.status_code == 503 and blocked.json()["code"] == "update_frozen"
-    assert (Path(owner.profile.config.workspace) / "note.txt").read_text() == "beta\n"
+    assert (Path(owner.lifecycle.profile.config.workspace) / "note.txt").read_text() == "beta\n"

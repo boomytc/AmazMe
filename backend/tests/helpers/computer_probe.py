@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from amazme_backend.contracts import BackendError
-from amazme_backend.native_execution import tool_environment
+from amazme_backend.execution.native import tool_environment
 
 Scenario = Literal["unconfigured", "denied", "granted", "plain", "hold", "drop"]
 SOURCE = Path(__file__).with_name("computer_probe_driver.py").read_text()

@@ -2,10 +2,10 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from amazme_backend.common import child_command
+from amazme_backend.platform.ipc import child_command
 from amazme_backend.contracts import ReadFile, ToolCall, WriteFile
-from amazme_backend.native_execution import LocalPermit, read_report
-from amazme_backend.processes import ProcessReservation
+from amazme_backend.execution.native import LocalPermit, read_report
+from amazme_backend.execution.processes import ProcessReservation
 
 
 def run_file(root: Path, call: ToolCall, digest: str | None) -> subprocess.CompletedProcess[str]:

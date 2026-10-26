@@ -5,9 +5,11 @@ from pathlib import Path
 
 import httpx
 
-from amazme_backend.common import Profile, private_write
 from amazme_backend.contracts import HostFence, ProcessLease
-from amazme_backend.host import Host, application
+from amazme_backend.host.service import Host
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.profile import Profile
 
 
 def _host(tmp_path: Path) -> Host:
@@ -18,7 +20,7 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     return host
 
@@ -30,11 +32,11 @@ async def test_checkpoint_preview_does_not_write_and_restore_is_selective(tmp_pa
     (root / "other.txt").write_text("leave\n")
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
     try:
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-            "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-            "x-amazme-epoch": str(host.fence.host_epoch),
+            "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+            "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
         }) as client:
             current = await client.get("/api/v1/files/content", params={"path": "note.txt"})
             saved = await client.post("/api/v1/checkpoints", json={
@@ -65,5 +67,5 @@ async def test_checkpoint_preview_does_not_write_and_restore_is_selective(tmp_pa
             listed = await client.get("/api/v1/checkpoints", params={"workspace": "primary", "path": "note.txt"})
             assert any(item["digest"] == beta.json()["digest"] for item in listed.json()["checkpoints"])
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()

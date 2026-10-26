@@ -3,13 +3,19 @@
 import json
 import shutil
 import sqlite3
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
 import pytest
-from pydantic import SecretStr
+from pydantic import BaseModel, SecretStr
+from session_test_support import session_database_owner, session_state
 
-from amazme_backend.common import Profile, private_write
+from amazme_backend.agent.driver import Worker
+from amazme_backend.agent.model import stream
+from amazme_backend.ai.types import Auth
+from amazme_backend.bootstrap.worker import create_worker
 from amazme_backend.contracts import (
     BackendError,
     Cleanup,
@@ -23,11 +29,22 @@ from amazme_backend.contracts import (
     ToolResult,
     WorkspaceGrantRequest,
 )
-from amazme_backend.host import Host, application
-from amazme_backend.providers import Completion, stream
-from amazme_backend.session_domain import (
+from amazme_backend.contracts.ipc.worker import SessionOp, SessionOpResult
+from amazme_backend.host.service import Host
+from amazme_backend.host.session_access import WorkerSessions
+from amazme_backend.interfaces.http.application import application
+from amazme_backend.platform.ipc import Peer
+from amazme_backend.platform.private_files import private_write
+from amazme_backend.profiles.layout import session_database
+from amazme_backend.profiles.profile import Profile
+from amazme_backend.sessions.client import SessionRelay
+from amazme_backend.sessions.persistence.records import load_run
+from amazme_backend.sessions.policy.projection import correction_text
+from amazme_backend.sessions.service import SessionStore, run_session_op
+from amazme_backend.sessions.types import (
     Action,
     CloseEpoch,
+    Completion,
     Continue,
     EpochClosed,
     EpochOpened,
@@ -39,13 +56,54 @@ from amazme_backend.session_domain import (
     ToolInvocation,
     ToolReturned,
 )
-from amazme_backend.storage import SessionStore, correction_text, session_database
-from amazme_backend.worker import Worker
 
 SESSION = "a" * 32
 SECRET = "父会话秘密"
 CHECK = "只检查这一句"
 KEY = "sk-test-not-real"
+
+
+class SessionOpPeer(Peer):
+    """Keep child execution under Driver while HTTP uses the typed worker protocol."""
+
+    def __init__(self, access: WorkerSessions, session: str):
+        self.lifecycle = access.lifecycle
+        self.session = session
+
+    async def call[T: BaseModel](
+        self, method: str, path: str, response: type[T], body: BaseModel | None = None,
+    ) -> T:
+        assert method == "POST" and path == "/session-ops" and response is SessionOpResult
+        assert isinstance(body, SessionOp)
+        operation = SessionOp.model_validate_json(body.model_dump_json())
+        database = session_database(self.lifecycle.profile.path, self.session)
+        database.parent.mkdir(parents=True, mode=0o700, exist_ok=True)
+        store = SessionStore(database, self.session, build=self.lifecycle.build,
+                             config=self.lifecycle.profile.config.provider,
+                             approval_policy=self.lifecycle.profile.config.approval_policy)
+        try:
+            await store.initialize()
+            payload = await run_session_op(store, operation.name, operation.payload)
+            return response.model_validate_json(SessionOpResult(payload=payload).model_dump_json())
+        finally:
+            await store.close()
+
+    async def close(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def session_ipc(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def worker(access: WorkerSessions, session: str) -> Peer:
+        return SessionOpPeer(access, session)
+
+    @asynccontextmanager
+    async def maintenance(access: WorkerSessions, session: str, *,
+                          closing: bool = False, allow_business: bool = False) -> AsyncIterator[SessionRelay]:
+        yield SessionRelay(SessionOpPeer(access, session))
+
+    monkeypatch.setattr(WorkerSessions, "worker", worker)
+    monkeypatch.setattr(WorkerSessions, "maintenance", maintenance)
 
 
 def _host(tmp_path: Path) -> Host:
@@ -56,7 +114,7 @@ def _host(tmp_path: Path) -> Host:
     private_write(tmp_path / "control.token", "private-control")
     private_write(tmp_path / "web.token", "web-only")
     host = Host(Profile(tmp_path))
-    host.fence = HostFence(host_epoch=1, build_id=host.build)
+    host.lifecycle.fence = HostFence(host_epoch=1, build_id=host.lifecycle.build)
     host.origin = "http://127.0.0.1:12345"
     return host
 
@@ -77,13 +135,13 @@ class Driver:
     async def respond(self, action: Action) -> None:
         if isinstance(action, ModelInvocation):
             self.models.append(action)
-            async for item in stream(action.config, action.messages):
-                if isinstance(item, Completion):
+            async for item in stream(action.config, action.messages, auth=Auth(api_key=action.config.api_key, auth_type=action.config.auth_type)):
+                if not isinstance(item, str):
                     await self.store.advance(ModelReturned(action, item))
         elif isinstance(action, OpenEpoch):
             self.epoch += 1
             await self.store.advance(EpochOpened(action.request_id, Lease(
-                session_id=self.store.session_id, worker_id=self.store.instance, build_id=self.store.build,
+                session_id=self.store.session_id, worker_id=session_state(self.store).instance, build_id=session_state(self.store).build,
                 supervisor_id="supervisor", execution_epoch=self.epoch)))
         elif isinstance(action, ToolInvocation):
             await self.store.advance(ToolReturned(action, ToolResult(
@@ -110,21 +168,21 @@ class Driver:
 
 
 async def _seed(host: Host) -> None:
-    path = session_database(host.profile.path, SESSION)
+    path = session_database(host.lifecycle.profile.path, SESSION)
     path.parent.mkdir(parents=True, mode=0o700)
-    store = SessionStore(path, SESSION, build=host.build, approval_policy="auto")
+    store = SessionStore(path, SESSION, build=host.lifecycle.build, approval_policy="auto")
     await store.initialize()
     try:
-        await store.accept(Submit(request_id="secret", text=SECRET), HostFence(host_epoch=0, build_id=host.build))
+        await store.accept(Submit(request_id="secret", text=SECRET), HostFence(host_epoch=0, build_id=host.lifecycle.build))
         assert (await Driver(store).drain()).reason == "idle"
     finally:
-        await store.db.close()
+        await store.close()
 
 
 def _client(host: Host) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=httpx.ASGITransport(app=application(host)), base_url=host.origin, headers={
-        "Authorization": "Bearer web-only", "x-amazme-build": host.build,
-        "x-amazme-epoch": str(host.fence.host_epoch),
+        "Authorization": "Bearer web-only", "x-amazme-build": host.lifecycle.build,
+        "x-amazme-epoch": str(host.lifecycle.fence.host_epoch),
     })
 
 
@@ -142,8 +200,8 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="工作流"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="工作流"))
     await _seed(host)
     workflow_id = "c" * 32
     try:
@@ -160,7 +218,7 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
             check_hits = await client.get(f"/api/v1/sessions/{SESSION}/search", params={"q": CHECK})
             assert {hit["request_id"] for hit in secret_hits.json()["hits"]} == {"secret"}
             assert {hit["request_id"] for hit in check_hits.json()["hits"]} == {check_id}
-            store = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.build,
+            store = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.lifecycle.build,
                                  approval_policy="auto", require_existing=True)
             await store.initialize()
             try:
@@ -175,7 +233,7 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
                 assert len(driver.models) == 1
                 assert await store.messages(view["parent_id"]) == []
             finally:
-                await store.db.close()
+                await store.close()
             again = await client.post(f"/api/v1/sessions/{SESSION}/workflows", json=_open_body(workflow_id))
             assert again.status_code == 200
             assert again.json()["children"][0]["request_id"] == check_id
@@ -194,7 +252,7 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
             assert repeated.status_code == 200
             assert [item["request_id"] for item in repeated.json()["children"]] == [
                 item["request_id"] for item in corrected["children"]]
-            store = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.build,
+            store = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.lifecycle.build,
                                  approval_policy="auto", require_existing=True)
             await store.initialize()
             try:
@@ -207,7 +265,7 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
                 await driver.respond(action)
                 await driver.drain()
             finally:
-                await store.db.close()
+                await store.close()
             exhausted = await client.post(f"/api/v1/sessions/{SESSION}/workflows/{workflow_id}/verdicts",
                                           json={"verdict_id": "fail-2", "passed": False})
             assert exhausted.status_code == 200
@@ -225,7 +283,7 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
                 f"/api/v1/sessions/{SESSION}/workflows", json=_open_body("b" * 32, "通过检查"))
             assert passed_open.status_code == 200
             passed_child = passed_open.json()["children"][0]["request_id"]
-            store = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.build,
+            store = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.lifecycle.build,
                                  approval_policy="auto", require_existing=True)
             await store.initialize()
             try:
@@ -236,13 +294,13 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
                 await driver.respond(action)
                 await driver.drain()
             finally:
-                await store.db.close()
+                await store.close()
             passed = await client.post(f"/api/v1/sessions/{SESSION}/workflows/{'b' * 32}/verdicts",
                                        json={"verdict_id": "ok", "passed": True})
             assert passed.status_code == 200
             assert passed.json()["stage"] == "passed" and passed.json()["parent_status"] == "succeeded"
             assert [item["role"] for item in passed.json()["children"]] == ["check"]
-        reopened = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.build, require_existing=True)
+        reopened = SessionStore(session_database(tmp_path, SESSION), SESSION, build=host.lifecycle.build, require_existing=True)
         await reopened.initialize()
         try:
             restored = await reopened.resume_workflow(workflow_id)
@@ -253,18 +311,18 @@ async def test_workflow_isolates_child_context_and_stops_corrections(tmp_path: P
             assert (await reopened.resume_workflow(workflow_id)).children == restored.children
             assert len((await reopened.snapshot()).requests) == before
         finally:
-            await reopened.db.close()
+            await reopened.close()
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_workflow_cancel_parent_cancels_children_only(tmp_path: Path) -> None:
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="取消"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="取消"))
     try:
         async with _client(host) as client:
             await _attach(client)
@@ -293,7 +351,7 @@ async def test_workflow_cancel_parent_cancels_children_only(tmp_path: Path) -> N
             assert len(listed.json()["children"]) == 1
             third = await client.post(f"/api/v1/sessions/{SESSION}/workflows", json=_open_body("f" * 32, "检查丙"))
             assert third.status_code == 200
-            await host.archive_session(SESSION, True)
+            await host.sessions.archive_session(SESSION, True)
             archived = await client.get(f"/api/v1/sessions/{SESSION}/workflows/{'f' * 32}")
             assert archived.status_code == 200
             assert archived.json()["stage"] == "cancelled"
@@ -302,16 +360,16 @@ async def test_workflow_cancel_parent_cancels_children_only(tmp_path: Path) -> N
             refused = await client.post(f"/api/v1/sessions/{SESSION}/workflows", json=_open_body("1" * 32, "检查丁"))
             assert refused.status_code == 409 and refused.json()["code"] == "session_archived"
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_workflow_rejects_conflicts_and_a_second_open_correction(tmp_path: Path) -> None:
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="冲突"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="冲突"))
     try:
         async with _client(host) as client:
             await _attach(client)
@@ -349,17 +407,17 @@ async def test_workflow_rejects_conflicts_and_a_second_open_correction(tmp_path:
             assert none.json()["stage"] == "exhausted" and none.json()["attempts"] == 0
             assert [item["role"] for item in none.json()["children"]] == ["check"]
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_workflow_check_does_not_store_the_provider_secret(tmp_path: Path) -> None:
     host = _host(tmp_path)
-    host.profile.save_provider(host.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
+    host.lifecycle.profile.save_provider(host.lifecycle.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    created = await host.create_session(CreateSession(title="检查"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    created = await host.sessions.create_session(CreateSession(title="检查"))
     try:
         async with _client(host) as client:
             await _attach_session(client, created.session_id)
@@ -378,21 +436,21 @@ async def test_workflow_check_does_not_store_the_provider_secret(tmp_path: Path)
             listed = await client.get(f"/api/v1/sessions/{created.session_id}/workflows/{'b' * 32}")
             assert listed.json()["check"] == "只检查这一句"
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     host = _host(tmp_path)
-    host.profile.save_provider(host.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
+    host.lifecycle.profile.save_provider(host.lifecycle.profile.config.provider.model_copy(update={"api_key": SecretStr(KEY)}))
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
-    await host.store.create_session(SESSION, CreateSession(title="检查"))
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
+    await host.lifecycle.store.create_session(SESSION, CreateSession(title="检查"))
     captured: list[list[Message]] = []
 
-    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None):
+    async def fake_stream(config: ProviderConfig, messages: list[Message], offers=None, plugins=None, *, auth: Auth):
         del config, offers
         captured.append(messages)
         yield Completion(message=Message(role="assistant", content="ok"), response_id="faux")
@@ -401,14 +459,14 @@ async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
         del self, request_id
         return []
 
-    monkeypatch.setattr("amazme_backend.worker.stream", fake_stream)
+    monkeypatch.setattr("amazme_backend.agent.driver.stream", fake_stream)
     monkeypatch.setattr(Worker, "_mcp_offers", empty_offers)
     monkeypatch.setattr(Worker, "_plugin_offers", empty_offers)
     session_database(tmp_path, SESSION).parent.mkdir(parents=True, mode=0o700)
-    worker = Worker(host.profile, SESSION, "worker-flow")
+    worker = create_worker(host.lifecycle.profile, SESSION, "worker-flow")
     await worker.store.initialize()
     worker.storage_ready = True
-    fence = HostFence(host_epoch=0, build_id=worker.store.build)
+    fence = HostFence(host_epoch=0, build_id=session_state(worker.store).build)
     try:
         with pytest.raises(BackendError, match="resource_secret"):
             await worker.store.accept(Submit(request_id="typed", text=f"我说 {KEY}"), fence)
@@ -430,9 +488,10 @@ async def test_queued_workflow_check_is_not_sent_with_the_provider_secret(
         receipt = await worker.store.get(view.children[0].request_id)
         assert receipt.error == "workflow_secret" and KEY not in receipt.error
     finally:
-        await worker.store.db.close()
-        await host.supervisor.close()
-        await host.store.db.close()
+        await worker.store.close()
+        await worker.supervisor.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
 
 
 async def _next_model(worker: Worker) -> ModelInvocation:
@@ -479,15 +538,15 @@ async def test_removed_grant_does_not_open_a_workflow_or_correction(tmp_path: Pa
     host = _host(tmp_path)
     lease = ProcessLease(instance_id="host", role="host", profile_path=str(tmp_path),
                          path=str(tmp_path / "lease"), device=1, inode=1)
-    host.fence.host_epoch = await host.store.initialize(host.instance, host.build, lease)
+    host.lifecycle.fence.host_epoch = await host.lifecycle.store.initialize(host.lifecycle.instance, host.lifecycle.build, lease)
     grant = tmp_path.parent / f"flow-{tmp_path.name}"
     grant.mkdir()
     (grant / "kept.txt").write_text("stay", encoding="utf-8")
     try:
-        await host.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
-        docs = await host.create_session(CreateSession(title="授予", workspace="docs"))
-        untouched = await host.create_session(CreateSession(title="未打开", workspace="docs"))
-        home = await host.create_session(CreateSession(title="主目录"))
+        await host.workspaces.add_workspace(WorkspaceGrantRequest(name="docs", host_path=str(grant)))
+        docs = await host.sessions.create_session(CreateSession(title="授予", workspace="docs"))
+        untouched = await host.sessions.create_session(CreateSession(title="未打开", workspace="docs"))
+        home = await host.sessions.create_session(CreateSession(title="主目录"))
         async with _client(host) as client:
             await _attach_session(client, docs.session_id)
             opened = await client.post(
@@ -498,16 +557,16 @@ async def test_removed_grant_does_not_open_a_workflow_or_correction(tmp_path: Pa
                 json={"verdict_id": "fail-1", "passed": False})
             assert failed.status_code == 200 and len(failed.json()["children"]) == 2
             store = SessionStore(session_database(tmp_path, docs.session_id), docs.session_id,
-                                 build=host.build, approval_policy="auto", require_existing=True)
+                                 build=host.lifecycle.build, approval_policy="auto", require_existing=True)
             await store.initialize()
             try:
                 assert (await Driver(store).drain()).reason == "children"
             finally:
-                await store.db.close()
+                await store.close()
             settle = await client.post(
                 f"/api/v1/sessions/{docs.session_id}/workflows", json=_open_body("b" * 32, "收尾", 1))
             assert settle.status_code == 200
-            await host.remove_workspace("docs")
+            await host.workspaces.remove_workspace("docs")
             await _attach_session(client, untouched.session_id)
             refused = await client.post(
                 f"/api/v1/sessions/{untouched.session_id}/workflows", json=_open_body("c" * 32, "不要"))
@@ -543,8 +602,8 @@ async def test_removed_grant_does_not_open_a_workflow_or_correction(tmp_path: Pa
             assert primary.status_code == 200 and len(primary.json()["children"]) == 1
         assert (grant / "kept.txt").read_text(encoding="utf-8") == "stay"
     finally:
-        await host.supervisor.close()
-        await host.store.db.close()
+        await host.lifecycle.supervisor.close()
+        await host.lifecycle.store.db.close()
         shutil.rmtree(grant, ignore_errors=True)
 
 
@@ -557,7 +616,7 @@ async def test_workflow_children_keep_the_accepted_provider(tmp_path: Path) -> N
     try:
         view = await store.open_workflow("a" * 32, "检查", 2, accepted_config=chosen)
         async def captured() -> list[ProviderConfig]:
-            return await store.db.call(lambda db: [store._run(db, request_id).config
+            return await session_database_owner(store).call(lambda db: [load_run(db, request_id).config
                 for request_id in [view.parent_id, *(child.request_id for child in view.children)]])
         assert await captured() == [chosen, chosen]
         # A correction opened after the profile default changes inherits the original run.
@@ -568,4 +627,4 @@ async def test_workflow_children_keep_the_accepted_provider(tmp_path: Path) -> N
         assert replay.workflow_id == view.workflow_id
         assert await captured() == [chosen, chosen, chosen]
     finally:
-        await store.db.close()
+        await store.close()

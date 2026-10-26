@@ -335,7 +335,7 @@ async def test_client_decide_records_one_shell_and_mcp_effect(tmp_path: Path) ->
 async def test_cli_retry_of_consumed_proposal_cannot_approve_the_next_tool(capsys) -> None:
     from types import SimpleNamespace
 
-    from amazme_backend.client_cmd import _apply_decision
+    from amazme_backend.interfaces.cli import _apply_decision
     from amazme_backend.contracts import Approval, Receipt, ToolCall
 
     receipt = Receipt(request_id="original",text="task",status="waiting_approval")
