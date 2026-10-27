@@ -4,9 +4,9 @@
 
 import type { Keybinding, KeybindingsManager, KeyId } from "@amazme/tui";
 import { getKeybindings } from "@amazme/tui";
-import type { KeyTextFormatOptions } from "../../../core/keybinding-labels.ts";
-import { formatKeyText } from "../../../core/keybinding-labels.ts";
-import { getClipboardPasteKeys, KEYBINDINGS } from "../../../core/keybindings.ts";
+import type { KeyTextFormatOptions } from "../keybindings/labels.ts";
+import { formatKeyText } from "../keybindings/labels.ts";
+import { getClipboardPasteKeys, KEYBINDINGS } from "../keybindings/keybindings.ts";
 import { theme } from "../theme/theme.ts";
 
 export type { KeyTextFormatOptions };

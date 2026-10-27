@@ -1,3 +1,5 @@
+/** Serialized stdout writes shared by every headless output path. */
+
 const RAW_STDOUT_RETRY_DELAY_MS = 10;
 
 let rawStdoutWriteTail: Promise<void> = Promise.resolve();

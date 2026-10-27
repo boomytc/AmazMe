@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { type Args, parseArgs, printHelp } from "./cli/args.ts";
 import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
-import type { PythonRunOptions } from "./python-headless.ts";
+import type { PythonRunOptions } from "./client/types.ts";
 import { VERSION } from "./config.ts";
 import { runPythonProductCommand } from "./python-product.ts";
 
@@ -147,7 +147,7 @@ export async function main(args: string[]): Promise<void> {
 		...(prepared.initialImages === undefined ? {} : {images:prepared.initialImages}),
 	};
 	if (interactive) {
-		const { runOwnedPythonInteractive, runPythonSessionTui } = await import("./python-session-tui.ts");
+		const { runOwnedPythonInteractive, runPythonSessionTui } = await import("./modes/interactive/session.ts");
 		if (parsed.pythonUrl && parsed.pythonToken)
 			await runPythonSessionTui({
 				...runOptions,
@@ -172,7 +172,7 @@ export async function main(args: string[]): Promise<void> {
 		return;
 	}
 
-	const { runPythonHeadless } = await import("./python-headless.ts");
+	const { runPythonHeadless } = await import("./modes/headless/run.ts");
 	process.exitCode = await runPythonHeadless({
 		...runOptions,
 		...sessionOptions,

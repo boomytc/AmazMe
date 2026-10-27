@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, onTestFinished, test } from "vitest";
-import { HostClient } from "../src/python-headless.ts";
-import { handleLine, type ScreenState } from "../src/python-session-tui.ts";
+import { HostClient } from "../src/client/host-client.ts";
+import { handleLine, type ScreenState } from "../src/modes/interactive/session.ts";
 
 const execFileAsync = promisify(execFile);
 const root = fileURLToPath(new URL("../../..", import.meta.url));

@@ -1,8 +1,11 @@
 /** Node clients and terminal presentation. Business operations run in the Python Host. */
 export { main, requestOptions } from "./main.ts";
 export { type Args, parseArgs } from "./cli/args.ts";
-export { HostClient, type PythonRunOptions, type PythonHeadlessOptions } from "./python-headless.ts";
-export { type PythonSessionTarget, connectPythonHost, runPythonSessionTui } from "./python-session-tui.ts";
+export { HostClient } from "./client/host-client.ts";
+export type { PythonRunOptions } from "./client/types.ts";
+export { type PythonHeadlessOptions } from "./modes/headless/run.ts";
+export { type PythonSessionTarget, runPythonSessionTui } from "./modes/interactive/session.ts";
+export { connectPythonHost } from "./connection/connection.ts";
 export { APP_NAME, CONFIG_DIR_NAME, VERSION, getAgentDir } from "./config.ts";
 export { CustomEditor, type CustomEditorOptions } from "./modes/interactive/components/custom-editor.ts";
 export { DynamicBorder } from "./modes/interactive/components/dynamic-border.ts";

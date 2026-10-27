@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, test } from "node:test";
 import {
@@ -44,6 +44,14 @@ function packageFixture(root, name, source, metadata = {}) {
 	);
 	writeFileSync(join(directory, "src/index.ts"), source);
 	return directory;
+}
+
+/** Write one nested source file of an existing package fixture. */
+function packageSource(root, name, path, source) {
+	const file = join(root, "packages", name, "src", path);
+	mkdirSync(dirname(file), { recursive: true });
+	writeFileSync(file, source);
+	return file;
 }
 
 test("product versions reject mixed desktop, client and backend release lines", () => {
@@ -533,4 +541,100 @@ test("the source allowlist retains clipboard scratch but rejects session output"
 	assert.ok(Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/utils/clipboard.ts"));
 	assert.ok(!Object.hasOwn(sourceTempDirAllowlist, "packages/coding-agent/src/utils/output-files.ts"));
 	assert.ok(!Object.keys(sourceTempDirAllowlist).some((file) => file.includes("/mcp/")));
+});
+
+test("headless and interactive cannot import each other", () => {
+	const root = fixture();
+	packageFixture(root, "coding-agent", "export {};");
+	packageSource(
+		root,
+		"coding-agent",
+		"modes/headless/run.ts",
+		'import { handleLine } from "../interactive/session.ts";\nexport const run = handleLine;',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"modes/interactive/session.ts",
+		'import { runPythonHeadless } from "../headless/run.ts";\nexport const line = runPythonHeadless;',
+	);
+	const failures = checkSourceContracts(root);
+	const direction = failures.filter((failure) => failure.includes("breaks a CLI module direction"));
+	assert.equal(direction.length, 2, failures.join("\n"));
+	assert.ok(
+		direction.some((failure) => failure.includes("headless and interactive share client and connection")),
+		failures.join("\n"),
+	);
+	assert.ok(
+		direction.some((failure) => failure.includes("interactive and headless share client and connection")),
+		failures.join("\n"),
+	);
+	assert.ok(direction.every((failure) => failure.includes("run.ts")));
+});
+
+test("client, connection and CLI helpers cannot reach back into a presentation mode", () => {
+	const root = fixture();
+	packageFixture(root, "coding-agent", "export {};");
+	packageSource(
+		root,
+		"coding-agent",
+		"client/host-client.ts",
+		'import { theme } from "../modes/interactive/theme/theme.ts";\nexport const client = theme;',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"connection/connection.ts",
+		'import { runPythonSessionTui } from "../modes/interactive/session.ts";\nexport const connect = runPythonSessionTui;',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"cli/args.ts",
+		'import { runPythonHeadless } from "../modes/headless/run.ts";\nexport const parse = runPythonHeadless;',
+	);
+	const failures = checkSourceContracts(root);
+	const direction = failures.filter((failure) => failure.includes("breaks a CLI module direction"));
+	assert.equal(direction.length, 3, failures.join("\n"));
+	assert.ok(direction.some((failure) => failure.includes("client stays below connection")));
+	assert.ok(direction.some((failure) => failure.includes("connection may use client")));
+	assert.ok(direction.some((failure) => failure.includes("CLI argument and file helpers stay independent")));
+});
+
+test("the split CLI layout passes when client, connection and both modes keep their direction", () => {
+	const root = fixture();
+	packageFixture(root, "coding-agent", 'export { HostClient } from "./client/host-client.ts";');
+	packageSource(root, "coding-agent", "client/types.ts", "export interface RunOptions {\n\treadonly cwd: string;\n}");
+	packageSource(
+		root,
+		"coding-agent",
+		"client/host-client.ts",
+		'import type { RunOptions } from "./types.ts";\nexport class HostClient {\n\tconstructor(readonly options: RunOptions) {}\n}',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"connection/connection.ts",
+		'import { HostClient } from "../client/host-client.ts";\nexport const connect = (options: { cwd: string }) => new HostClient(options);',
+	);
+	packageSource(root, "coding-agent", "cli/args.ts", "export interface Args {\n\treadonly cwd: string;\n}");
+	packageSource(
+		root,
+		"coding-agent",
+		"modes/headless/run.ts",
+		'import type { Args } from "../../cli/args.ts";\nimport { connect } from "../../connection/connection.ts";\nexport const run = (args: Args) => connect(args);',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"modes/interactive/session.ts",
+		'import { connect } from "../../connection/connection.ts";\nexport const session = (cwd: string) => connect({ cwd });',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"main.ts",
+		'import { run } from "./modes/headless/run.ts";\nimport { session } from "./modes/interactive/session.ts";\nexport const main = () => [run({ cwd: "" }), session("")];',
+	);
+	assert.deepEqual(checkSourceContracts(root), []);
 });

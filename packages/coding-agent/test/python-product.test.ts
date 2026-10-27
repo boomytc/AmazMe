@@ -5,9 +5,10 @@ import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { main, requestOptions } from "../src/main.ts";
 import { parseArgs } from "../src/cli/args.ts";
-import { HostClient } from "../src/python-headless.ts";
+import { HostClient } from "../src/client/host-client.ts";
 import { runPythonProductCommand } from "../src/python-product.ts";
-import { connectPythonHost, runPythonSessionTui } from "../src/python-session-tui.ts";
+import { connectPythonHost } from "../src/connection/connection.ts";
+import { runPythonSessionTui } from "../src/modes/interactive/session.ts";
 
 import { createTempDir } from "./temp-dir.ts";
 
@@ -26,13 +27,15 @@ vi.mock("node:child_process", () => ({
 	}),
 	spawnSync: vi.fn(),
 }));
-vi.mock("../src/python-session-tui.ts", () => ({
-    runPythonSessionTui: vi.fn(async () => {}),
-    runOwnedPythonInteractive: vi.fn(async () => {}),
+vi.mock("../src/connection/connection.ts", () => ({
 	connectPythonHost: vi.fn(async () => ({
 		url: "http://127.0.0.1:1234",
 		token: "web-token",
 	})),
+}));
+vi.mock("../src/modes/interactive/session.ts", () => ({
+	runPythonSessionTui: vi.fn(async () => {}),
+	runOwnedPythonInteractive: vi.fn(async () => {}),
 }));
 
 afterEach(() => {

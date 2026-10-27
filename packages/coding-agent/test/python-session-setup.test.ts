@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { HostClient } from "../src/python-headless.ts";
+import { HostClient } from "../src/client/host-client.ts";
 
 const session = "a".repeat(32);
 const reply = (body: unknown) => new Response(JSON.stringify(body));
@@ -59,7 +59,7 @@ test("explicit themes work with no-themes while ordinary user themes remain avai
 	const { mkdirSync, readFileSync, writeFileSync } = await import("node:fs");
 	const { join } = await import("node:path");
 	const { createTempDir } = await import("./temp-dir.ts");
-	const { configureTuiThemes } = await import("../src/python-session-tui.ts");
+	const { configureTuiThemes } = await import("../src/modes/interactive/session.ts");
 	const { getAvailableThemes, getThemeByName, setRegisteredThemes } = await import("../src/modes/interactive/theme/theme.ts");
 	const directory = createTempDir("amazme-cli-themes-");
 	vi.stubEnv("AMAZME_CODING_AGENT_DIR", directory);

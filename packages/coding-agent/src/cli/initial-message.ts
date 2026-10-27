@@ -1,4 +1,4 @@
-import type { ImageContent } from "../python-headless.ts";
+import type { ImageContent } from "../client/types.ts";
 import type { Args } from "./args.ts";
 
 export interface InitialMessageInput {

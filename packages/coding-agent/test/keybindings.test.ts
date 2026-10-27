@@ -5,7 +5,7 @@ import {
 	KEYBINDINGS,
 	KeybindingsManager,
 	useWindowsKeybindings,
-} from "../src/core/keybindings.ts";
+} from "../src/modes/interactive/keybindings/keybindings.ts";
 
 describe("Windows keybinding defaults", () => {
 	it("uses Windows keybindings on native Windows", () => {

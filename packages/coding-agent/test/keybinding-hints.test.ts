@@ -1,7 +1,7 @@
 import { stripVTControlCharacters } from "node:util";
 import { getKeybindings, setKeybindings } from "@amazme/tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { getClipboardPasteKeys, KeybindingsManager } from "../src/core/keybindings.ts";
+import { getClipboardPasteKeys, KeybindingsManager } from "../src/modes/interactive/keybindings/keybindings.ts";
 import {
 	clipboardPasteFallbackText,
 	formatKeyText,

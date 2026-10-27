@@ -1,6 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { HostClient } from "../src/python-headless.ts";
-import { handleLine, PendingPrompts, type ScreenState } from "../src/python-session-tui.ts";
+import { HostClient } from "../src/client/host-client.ts";
+import { handleLine, PendingPrompts, type ScreenState } from "../src/modes/interactive/session.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 

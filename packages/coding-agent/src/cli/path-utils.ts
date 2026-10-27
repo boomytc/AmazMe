@@ -1,5 +1,5 @@
 import { accessSync, constants } from "node:fs";
-import { resolvePath } from "../../utils/paths.ts";
+import { resolvePath } from "../utils/paths.ts";
 
 const NARROW_NO_BREAK_SPACE = "\u202F";
 

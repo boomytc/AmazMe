@@ -9,9 +9,9 @@ import {
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { Compile } from "typebox/compile";
-import { getAgentDir } from "../config.ts";
-import { stripBom } from "../utils/text.ts";
-import { KeybindingValueSchema } from "./key-id-schema.ts";
+import { getAgentDir } from "../../../config.ts";
+import { stripBom } from "../../../utils/text.ts";
+import { KeybindingValueSchema } from "./schema.ts";
 
 export function useWindowsKeybindings(
 	platform: NodeJS.Platform = process.platform,

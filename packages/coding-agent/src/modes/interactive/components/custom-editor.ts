@@ -9,7 +9,7 @@ import {
 	visibleWidth,
 	TuiAltScreen,
 } from "@amazme/tui";
-import type { BindingId, KeybindingsManager } from "../../../core/keybindings.ts";
+import type { BindingId, KeybindingsManager } from "../keybindings/keybindings.ts";
 import { isEmptyTerminalPaste } from "../../../utils/clipboard-paste.ts";
 import { copyToClipboard } from "../../../utils/clipboard.ts";
 import { promptShortcutLine } from "../composer-contract.ts";

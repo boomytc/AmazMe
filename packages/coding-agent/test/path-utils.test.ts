@@ -2,7 +2,7 @@ import { readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from 
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveReadPath, resolveToCwd } from "../src/core/tools/path-utils.ts";
+import { resolveReadPath, resolveToCwd } from "../src/cli/path-utils.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 describe("path-utils", () => {

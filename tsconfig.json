@@ -26,8 +26,14 @@
 			"@amazme/coding-agent": [
 				"./packages/coding-agent/src/index.ts"
 			],
-			"@amazme/coding-agent/*": [
-				"./packages/coding-agent/src/*"
+			"@amazme/coding-agent/config": [
+				"./packages/coding-agent/src/config.ts"
+			],
+			"@amazme/coding-agent/rpc-entry": [
+				"./packages/coding-agent/src/rpc-entry.ts"
+			],
+			"@amazme/coding-agent/update-manifest": [
+				"./packages/coding-agent/src/update-manifest.ts"
 			],
 			"@amazme/web": [
 				"./packages/web/dist/index.d.ts"

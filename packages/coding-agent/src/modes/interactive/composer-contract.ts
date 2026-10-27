@@ -1,4 +1,4 @@
-import { formatKeyText } from "../../core/keybinding-labels.ts";
+import { formatKeyText } from "./keybindings/labels.ts";
 
 export type TerminalClass = "default" | "apple-terminal" | "vscode";
 

@@ -5,7 +5,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, test } from "vitest";
-import { HostClient, runPtyCommand } from "../src/python-headless.ts";
+import { HostClient } from "../src/client/host-client.ts";
+import { runPtyCommand } from "../src/modes/headless/run.ts";
 
 const root = fileURLToPath(new URL("../../..", import.meta.url));
 const python = join(root, "backend/.venv/bin/python");

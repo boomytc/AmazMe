@@ -3,12 +3,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTempDir } from "./temp-dir.ts";
 
-vi.mock("../src/python-headless.ts", () => ({
+vi.mock("../src/modes/headless/run.ts", () => ({
 	runPythonHeadless: vi.fn(async () => 0),
 }));
 
 import { main } from "../src/main.ts";
-import { runPythonHeadless } from "../src/python-headless.ts";
+import { runPythonHeadless } from "../src/modes/headless/run.ts";
 
 describe("default headless runtime", () => {
 	let directory: string;

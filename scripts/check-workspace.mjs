@@ -31,6 +31,55 @@ const layers = new Map([
 	["@amazme/evals", 6],
 ]);
 
+/**
+ * Directions inside the CLI client. Each rule names the direction a violation breaks, so the
+ * failure states where the dependency belongs instead of only that it exists.
+ */
+const codingAgentDirections = [
+	{
+		from: /^client\//,
+		forbid: [/^connection\//, /^modes\//, /^cli\//, /^(?:main|index|python-product|rpc-entry|cli)\.ts$/],
+		reason:
+			"client stays below connection, the presentation modes, and the CLI entries; move the HTTP handling here and the caller upward",
+	},
+	{
+		from: /^connection\//,
+		forbid: [/^modes\//, /^(?:main|index|python-product|rpc-entry|cli)\.ts$/],
+		reason:
+			"connection may use client and platform helpers, never a presentation mode or a process entry; move the screen or entry logic upward",
+	},
+	{
+		from: /^cli\//,
+		forbid: [/^modes\//, /^(?:main|index|python-product|rpc-entry|cli)\.ts$/],
+		reason:
+			"CLI argument and file helpers stay independent of a presentation mode; move the rendering or entry logic upward",
+	},
+	{
+		from: /^modes\/headless\//,
+		forbid: [/^modes\/interactive\//],
+		reason:
+			"headless and interactive share client and connection instead of importing each other; move shared code into one of those",
+	},
+	{
+		from: /^modes\/interactive\//,
+		forbid: [/^modes\/headless\//],
+		reason:
+			"interactive and headless share client and connection instead of importing each other; move shared code into one of those",
+	},
+];
+
+/** The violated direction for one resolved relative import inside the CLI client, if any. */
+function codingAgentDirection(packageName, from, to) {
+	if (packageName !== "@amazme/coding-agent") return undefined;
+	const escaped = to === ".." || to.startsWith("../");
+	if (escaped) return undefined;
+	for (const rule of codingAgentDirections) {
+		if (!rule.from.test(from)) continue;
+		if (rule.forbid.some((pattern) => pattern.test(to))) return rule.reason;
+	}
+	return undefined;
+}
+
 function sourceFiles(directory) {
 	if (!existsSync(directory)) return [];
 	return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -460,6 +509,8 @@ export function checkSourceContracts(repoRoot) {
 		const program = api.updateSnapshot({ openProjects: [configPath] }).getProject(configPath).program;
 		for (const { file, pkg, development, excluded } of files) {
 			const source = program.getSourceFile(file);
+			const sourceRoot = join(pkg.directory, "src");
+			const sourcePath = relative(sourceRoot, file).replaceAll("\\", "/");
 			const declared = new Set([
 				pkg.manifest.name,
 				...Object.keys(pkg.manifest.dependencies ?? {}),
@@ -480,6 +531,12 @@ export function checkSourceContracts(repoRoot) {
 					if (isAbsolute(targetPath) || targetPath === ".." || targetPath.startsWith(`..${sep}`))
 						failures.push(`${location}: cross-package source import must use a declared package entry: ${value}`);
 					const normalized = targetPath.replaceAll("\\", "/");
+					const direction = codingAgentDirection(
+						pkg.manifest.name,
+						sourcePath,
+						relative(sourceRoot, target).replaceAll("\\", "/"),
+					);
+					if (direction) failures.push(`${location}: ${value} breaks a CLI module direction: ${direction}`);
 					if (
 						!development &&
 						excluded.some((item) => !item.includes("*") && (normalized === item || normalized.startsWith(`${item}/`)))

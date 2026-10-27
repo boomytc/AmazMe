@@ -1,7 +1,7 @@
 /** Product commands use the same Python host as interactive and headless clients. */
 import { spawn } from "node:child_process";
-import { connectPythonHost } from "./python-session-tui.ts";
-import { HostClient } from "./python-headless.ts";
+import { HostClient } from "./client/host-client.ts";
+import { connectPythonHost } from "./connection/connection.ts";
 
 const COMMANDS = new Set([
 	"web",

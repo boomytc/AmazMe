@@ -2,10 +2,10 @@ import { mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/main.ts";
-import { runOwnedPythonInteractive } from "../src/python-session-tui.ts";
+import { runOwnedPythonInteractive } from "../src/modes/interactive/session.ts";
 import { createTempDir } from "./temp-dir.ts";
 
-vi.mock("../src/python-session-tui.ts", () => ({
+vi.mock("../src/modes/interactive/session.ts", () => ({
 	runOwnedPythonInteractive: vi.fn(async () => {}),
 	runPythonSessionTui: vi.fn(async () => {}),
 }));
