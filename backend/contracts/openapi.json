@@ -6041,6 +6041,55 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/approval-policy": {
+      "put": {
+        "summary": "Set Approval Policy",
+        "operationId": "set_approval_policy_api_v1_sessions__session__approval_policy_put",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionApprovalPolicy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionApprovalPolicy"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/effects/resolve": {
       "post": {
         "summary": "Resolve",
@@ -8814,6 +8863,11 @@
             "type": "string",
             "title": "Session Id",
             "default": ""
+          },
+          "reuse_empty": {
+            "type": "boolean",
+            "title": "Reuse Empty",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -14366,6 +14420,25 @@
           "title"
         ],
         "title": "Session"
+      },
+      "SessionApprovalPolicy": {
+        "properties": {
+          "policy": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "mutations",
+              "all"
+            ],
+            "title": "Policy"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "policy"
+        ],
+        "title": "SessionApprovalPolicy"
       },
       "SessionDiagnostic": {
         "properties": {

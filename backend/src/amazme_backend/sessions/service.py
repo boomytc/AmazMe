@@ -61,6 +61,7 @@ from amazme_backend.contracts.sessions import (
     Preview,
     Receipt,
     SearchHit,
+    SessionApprovalPolicy,
     SessionDiagnostic,
     Submit,
     UsageReport,
@@ -635,6 +636,42 @@ class SessionStore:
             c.emit("approval", request.request_id, approval.state, approval=approval)
             c.hit("approval", request.request_id, approval.call_id)
             return request
+        return await self._store.transact(operation)
+
+    async def set_approval_policy(self, value: SessionApprovalPolicy) -> SessionApprovalPolicy:
+        def operation(db: sqlite3.Connection, c: Changes) -> SessionApprovalPolicy:
+            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
+                raise BackendError("worker_frozen", status=503)
+            if metadata_value(db, "blocked"):
+                raise BackendError("worker_blocked", status=503)
+            for request in list_requests(db):
+                if request.kind == "steer" or request.status in TERMINAL or request.decision or request.cancel_requested:
+                    continue
+                run = load_run(db, request.request_id)
+                if run.config.approval_policy == value.policy:
+                    continue
+                steps = list_steps(db, request.request_id)
+                denied = False
+                for step in steps:
+                    if step.phase != "proposed" or not step.approval_id or step.call is None:
+                        continue
+                    row = db.execute("SELECT payload FROM approvals WHERE id=?", (step.approval_id,)).fetchone()
+                    if row is not None:
+                        approval = Approval.model_validate_json(row[0])
+                        if approval.state == "denied" and approval.proposal_digest == approval_binding(self._state, db, request.request_id, step.call):
+                            denied = True
+                            break
+                if denied:
+                    continue
+                run.config.approval_policy = value.policy
+                save_run(db, run)
+                expire_approvals(db, c, request.request_id)
+                for step in steps:
+                    if step.phase == "proposed" and step.approval_id:
+                        step.approval_id = ""
+                        step.proposal_digest = ""
+                        save_step(db, step)
+            return value
         return await self._store.transact(operation)
 
     async def active_mcp_tools(self, request_id: str) -> list[str]:
@@ -1361,6 +1398,8 @@ def _model(value: BaseModel) -> str:
 
 
 async def run_session_op(store: SessionStore, name: SessionOpName, payload: str) -> str:
+    if name == "set_approval_policy":
+        return _model(await store.set_approval_policy(SessionApprovalPolicy.model_validate_json(payload)))
     if name == "prepare_branch":
         body = PrepareBranchBody.model_validate_json(payload)
         return _model(await store.prepare_branch(Path(body.parent_path), body.request_id, body.web, body.computer))
@@ -1456,6 +1495,7 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
 
 
 class SessionOps(Protocol):
+    async def set_approval_policy(self, value: SessionApprovalPolicy) -> SessionApprovalPolicy: ...
     async def prepare_branch(self, parent: Path, request_id: str, web: WebPolicy, computer: ComputerPolicy) -> Receipt: ...
     async def stopping(self, fence: HostFence, execution_epoch: int | None = None, *, cancel_work: bool = True) -> None: ...
     async def accept_code_tool(self, value: CodeChild) -> Receipt: ...

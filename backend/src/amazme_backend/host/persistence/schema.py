@@ -65,6 +65,9 @@ async def initialize(self: PersistenceOwner, instance: str, build: str, lease: P
             db.execute("ALTER TABLE sessions ADD COLUMN create_digest TEXT NOT NULL DEFAULT ''")
         if "branch_ready" not in present:
             db.execute("ALTER TABLE sessions ADD COLUMN branch_ready INTEGER NOT NULL DEFAULT 1")
+        if "empty_draft" not in present:
+            db.execute("ALTER TABLE sessions ADD COLUMN empty_draft INTEGER NOT NULL DEFAULT 0")
+        db.execute("CREATE TABLE IF NOT EXISTS session_create_aliases(id TEXT PRIMARY KEY,digest TEXT NOT NULL,session TEXT NOT NULL)")
         settings_columns = {str(row[1]) for row in db.execute("PRAGMA table_info(product_settings)")}
         if "preferences" not in settings_columns:
             db.execute("ALTER TABLE product_settings ADD COLUMN preferences TEXT NOT NULL DEFAULT '{}'")

@@ -134,6 +134,13 @@ class Host:
             async with self.access.maintenance(session.session_id, closing=True) as client:
                 await client.stopping(self.lifecycle.fence)
         await self.lifecycle.stop_owned_supervisor()
+        for session in await self.lifecycle.store.empty_drafts():
+            path = session_database(self.lifecycle.profile.path, session)
+            if path.is_file():
+                snapshot = await self.access.read(session, lambda store: store.snapshot())
+                if snapshot.requests:
+                    continue
+            await self.sessions.remove_empty_draft_after_shutdown(session)
         self.lifecycle.stop.set()
 
     async def close(self) -> None:

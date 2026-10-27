@@ -168,6 +168,18 @@ class HostStore:
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         return await sessions.create_session(self, session_id, value)
 
+    async def lookup_reused(self, session_id: str, value: CreateSession) -> Session | None:
+        return await sessions.lookup_reused(self, session_id, value)
+
+    async def record_reuse(self, session_id: str, value: CreateSession, target: str) -> Session | None:
+        return await sessions.record_reuse(self, session_id, value, target)
+
+    async def empty_drafts(self) -> list[str]:
+        return await sessions.empty_drafts(self)
+
+    async def retain_session(self, session_id: str) -> None:
+        await sessions.retain_session(self, session_id)
+
     async def create_branch(
         self, session_id: str, parent_id: str, fork_request_id: str, title: str, request_key: str = ""
     ) -> Session:

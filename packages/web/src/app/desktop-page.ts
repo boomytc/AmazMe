@@ -134,6 +134,8 @@ export class DesktopPage {
 	private providerEdit?: { readonly generation: number; readonly revision: number; readonly configurationRevision: number; configuration?: ConfigureProvider; credentialRevision?: number; credential?: CredentialUpdate };
 	private paletteSelection = 0;
 	private newSessionPending = false;
+	private permissionWrites = new Map<string, Promise<void>>();
+	private confirmedPermissions = new Map<string, ApprovalPolicy>();
 	private ready = false;
 	private dockOpen = false;
 	private dockTab = "files";
@@ -197,8 +199,24 @@ export class DesktopPage {
 		this.renderer.onSelectThinking = level => { this.thinking = level; this.render(); };
 		this.renderer.onSelectPermission = policy => run(async () => {
 			const connection = this.requireConnection();
+			const key = this.permissionKey(connection);
+			if (!this.confirmedPermissions.has(key)) this.confirmedPermissions.set(key, this.approvalPolicy);
 			sessionStorage.setItem(this.permissionKey(connection), policy);
 			this.render();
+			const prior = this.permissionWrites.get(key) ?? Promise.resolve();
+			const write = prior.catch(() => {}).then(async () => {
+				await this.client.call("PUT /api/v1/sessions/{session}/approval-policy", { path: { session: connection.sessionId }, body: { policy }, connection });
+				this.confirmedPermissions.set(key, policy);
+			});
+			this.permissionWrites.set(key, write);
+			try { await write; } catch (error) {
+				if (this.permissionWrites.get(key) === write) {
+					const confirmed = this.confirmedPermissions.get(key);
+					if (confirmed) sessionStorage.setItem(key, confirmed);
+					if (connection.active()) this.render();
+				}
+				throw error;
+			} finally { if (this.permissionWrites.get(key) === write) this.permissionWrites.delete(key); }
 		});
 		this.renderer.onDraftChange = text => { this.draft.text = text; this.draft.revision++; this.paletteSelection = 0; this.render(); };
 		this.renderer.onPaletteSelection = index => { this.paletteSelection = index; this.render(); };
@@ -265,7 +283,11 @@ export class DesktopPage {
 			if (!session || (target.get("workspace") && target.get("workspace") !== session.workspace)) throw new Error("链接的会话与工作区不匹配。");
 			await this.selectSession(sessionId);
 		} else if (target.get("new") === "1") await this.createSession();
-		else { const last = this.sessions.find(item => !item.archived); if (last) await this.selectSession(last.session_id); }
+		else {
+			const last = this.sessions.find(item => !item.archived);
+			if (last) await this.selectSession(last.session_id);
+			else this.renderer.setConnectionState("已连接", "connected");
+		}
 		this.render();
 	}
 	private async loadGlobal(): Promise<void> {
@@ -374,7 +396,7 @@ export class DesktopPage {
 		const id = sessionStorage.getItem(key) ?? newId(); sessionStorage.setItem(key, id);
 		this.newSessionPending = true; this.render();
 		try {
-			const session = await this.client.call("POST /api/v1/sessions", { body: { session_id: id, title: "新会话", workspace, project_id: projectId ?? "" }, identity });
+			const session = await this.client.call("POST /api/v1/sessions", { body: { session_id: id, title: "新会话", workspace, project_id: projectId ?? "", reuse_empty: true }, identity });
 			if (sessionStorage.getItem(key) === id) sessionStorage.removeItem(key);
 			await this.loadGlobal();
 			if (navigation === this.navigationGeneration) await this.selectSession(session.session_id);
@@ -396,6 +418,18 @@ export class DesktopPage {
 	}
 	private async submit(text: string, expectedRequest?: string): Promise<void> {
 		const draft = this.draft, revision = draft.revision, initial = this.client.connection;
+		const images = draft.images.map(item => item.image);
+		if (initial) {
+			const key = this.permissionKey(initial);
+			let permissionWrite = this.permissionWrites.get(key);
+			while (permissionWrite) {
+				await permissionWrite;
+				if (!initial.active() || this.draft !== draft) return;
+				const latest = this.permissionWrites.get(key);
+				if (latest === permissionWrite) break;
+				permissionWrite = latest;
+			}
+		}
 		const previous = initial?.ready && initial.active() ? this.ledger(initial).read("submission", "POST /api/v1/sessions/{session}/submissions") : undefined;
 		if (expectedRequest && previous?.id !== expectedRequest) throw new Error("原请求已变化，请核对当前记录");
 		if (!previous) {
@@ -414,7 +448,7 @@ export class DesktopPage {
 		const thinking = this.catalog?.models.find(item => item.provider === displayedModel?.provider && item.model === displayedModel.model)?.thinking_levels?.find(level => level === this.thinking);
 		const steer = this.mode === "steer" && root?.run_id;
 		const record = previous ?? ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
-			request_id: id, text, images: draft.images.map(item => item.image), mode: steer ? "steer" : "queue",
+			request_id: id, text, images, mode: steer ? "steer" : "queue",
 			time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 			...(steer ? { target_run_id: steer } : {
 				approval_policy: this.approvalPolicy,

@@ -15,6 +15,7 @@ from amazme_backend.ai.providers.google import google_body
 from amazme_backend.ai.providers.responses import responses_body
 from amazme_backend.ai.types import Auth
 from amazme_backend.contracts import BackendError, HostFence, Message, ProviderConfig, Submit, ToolCall
+from amazme_backend.contracts.sessions import ApprovalDecision, SessionApprovalPolicy
 from amazme_backend.sessions.service import SessionStore
 from amazme_backend.sessions.types import (
     Completion,
@@ -85,6 +86,43 @@ async def test_options_survive_restart_and_same_id_cannot_change_them(tmp_path: 
         assert isinstance(model, ModelInvocation)
         assert model.config.system_prompt == 'Keep this' and model.config.append_system_prompt == 'tail'
         assert model.config.allowed_tools == []
+    finally:
+        await store.close()
+
+
+async def test_live_policy_change_releases_pending_approval(tmp_path: Path) -> None:
+    store = await opened(tmp_path / 'session.sqlite')
+    try:
+        await store.accept(Submit(request_id='root', text='run', approval_policy='all',
+                                  tool_call=ToolCall(id='call', name='shell', arguments='{"command":"echo ok"}')), FENCE)
+        parked = await next_action(store)
+        assert isinstance(parked, Park) and parked.reason == 'approval'
+        approval = (await store.snapshot()).approvals[0]
+        assert approval.state == 'pending'
+        await store.set_approval_policy(SessionApprovalPolicy(policy='auto'))
+        assert all(item.state != 'pending' for item in (await store.snapshot()).approvals)
+        action = await next_action(store)
+        assert isinstance(action, OpenEpoch)
+        with pytest.raises(BackendError, match='stale_approval'):
+            await store.approve(ApprovalDecision(decision_id='old', approval_id=approval.approval_id,
+                expected_revision=approval.revision, proposal_digest=approval.proposal_digest, approve=True), FENCE)
+    finally:
+        await store.close()
+
+
+async def test_live_policy_change_does_not_override_an_already_denied_call(tmp_path: Path) -> None:
+    store = await opened(tmp_path / 'session.sqlite')
+    try:
+        await store.accept(Submit(request_id='root', text='run', approval_policy='all',
+                                  tool_call=ToolCall(id='call', name='shell', arguments='{"command":"echo no"}')), FENCE)
+        assert isinstance(await next_action(store), Park)
+        approval = (await store.snapshot()).approvals[0]
+        await store.approve(ApprovalDecision(decision_id='deny', approval_id=approval.approval_id,
+            expected_revision=approval.revision, proposal_digest=approval.proposal_digest, approve=False), FENCE)
+        await store.set_approval_policy(SessionApprovalPolicy(policy='auto'))
+        assert isinstance(await next_action(store), Park)
+        receipt = await store.get('root')
+        assert receipt.error == 'approval_denied'
     finally:
         await store.close()
 

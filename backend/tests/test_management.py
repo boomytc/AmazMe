@@ -10,6 +10,7 @@ from pathlib import Path
 import httpx
 
 from amazme_backend.contracts import (
+    CreateSession,
     ExportBundle,
     ExportMessage,
     ExportSession,
@@ -79,6 +80,74 @@ async def _append_message(host: Host, session: str, request_id: str, text: str) 
             return
         await asyncio.sleep(0.01)
     raise AssertionError("worker did not persist the submitted message")
+
+
+async def test_empty_new_chat_is_reused_and_removed_on_shutdown(tmp_path: Path) -> None:
+    async with _initialized_host(tmp_path) as host:
+        async with _client(host) as client:
+            create = {"title": "新会话", "reuse_empty": True}
+            first = (await client.post("/api/v1/sessions", json={**create, "session_id": "1" * 32})).json()
+            repeated = (await client.post("/api/v1/sessions", json={**create, "session_id": "2" * 32})).json()
+            assert repeated["session_id"] == first["session_id"]
+            await _message(host, first["session_id"], "imported", "保留")
+            retried = await client.post("/api/v1/sessions", json={**create, "session_id": "2" * 32})
+            assert retried.json()["session_id"] == first["session_id"]
+            conflict = await client.post("/api/v1/sessions", json={**create, "session_id": "2" * 32, "title": "其他"})
+            assert conflict.status_code == 409 and conflict.json()["code"] == "session_conflict"
+            second = (await client.post("/api/v1/sessions", json={**create, "session_id": "3" * 32})).json()
+            assert second["session_id"] != first["session_id"]
+            await _append_message(host, second["session_id"], "sent", "已发送")
+            empty = (await client.post("/api/v1/sessions", json={**create, "session_id": "4" * 32})).json()
+            assert empty["session_id"] not in {first["session_id"], second["session_id"]}
+            await host.access.operate(empty["session_id"], lambda store: store.snapshot())
+            await host.shutdown()
+            remaining = {item.session_id for item in (await host.lifecycle.store.sessions()).sessions}
+            assert remaining == {first["session_id"], second["session_id"]}
+    reopened = Host(Profile(tmp_path))
+    lease = ProcessLease(instance_id="reopened", role="host", profile_path=str(tmp_path),
+                         path=str(tmp_path / "lease"), device=1, inode=1)
+    try:
+        reopened.lifecycle.fence.host_epoch = await reopened.lifecycle.store.initialize(
+            reopened.lifecycle.instance, reopened.lifecycle.build, lease
+        )
+        reopened.lifecycle.initialized = True
+        remaining = {item.session_id for item in (await reopened.sessions.sessions()).sessions}
+        assert remaining == {first["session_id"], second["session_id"]}
+        retried = await reopened.sessions.create_session(CreateSession(session_id="2" * 32, reuse_empty=True))
+        assert retried.session_id == first["session_id"]
+    finally:
+        await reopened.close()
+
+
+async def test_live_policy_change_unblocks_running_worker(tmp_path: Path) -> None:
+    async with _initialized_host(tmp_path) as host:
+        async with _client(host) as client:
+            created = await client.post("/api/v1/sessions", json={"session_id": "5" * 32})
+            session = created.json()["session_id"]
+            attached = await client.post(f"/api/v1/sessions/{session}/attachments", json={})
+            client.headers["x-amazme-attachment"] = attached.json()["attachment_id"]
+            submitted = await client.post(f"/api/v1/sessions/{session}/submissions", json={
+                "request_id": "live-policy", "text": "run", "approval_policy": "all",
+                "tool_call": {"id": "call", "name": "shell", "arguments": '{"command":"printf live-policy-ok"}'},
+            })
+            assert submitted.status_code == 202, submitted.text
+            for _ in range(200):
+                snapshot = (await client.get(f"/api/v1/sessions/{session}/snapshot")).json()
+                if any(item["state"] == "pending" for item in snapshot["approvals"]):
+                    break
+                await asyncio.sleep(0.02)
+            else:
+                raise AssertionError("approval did not appear")
+            changed = await client.put(f"/api/v1/sessions/{session}/approval-policy", json={"policy": "auto"})
+            assert changed.status_code == 200
+            for _ in range(200):
+                receipt = (await client.get(f"/api/v1/sessions/{session}/requests/live-policy")).json()
+                if receipt["status"] in {"succeeded", "failed"}:
+                    break
+                await asyncio.sleep(0.02)
+            assert receipt["status"] == "succeeded"
+            messages = await host.access.read(session, lambda store: store.messages("live-policy"))
+            assert any("live-policy-ok" in message.content for message in messages)
 
 
 def _client(host: Host) -> httpx.AsyncClient:

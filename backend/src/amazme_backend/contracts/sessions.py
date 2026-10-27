@@ -184,6 +184,10 @@ class ArchiveSession(Model):
     archived: bool
 
 
+class SessionApprovalPolicy(Model):
+    policy: ApprovalPolicy
+
+
 class RenameSession(Model):
     title: str = Field(min_length=1, max_length=100)
     expected_title: str
@@ -209,6 +213,7 @@ class CreateSession(Model):
     workspace: str = "primary"
     project_id: str = ""
     session_id: str = ""
+    reuse_empty: bool = False
 
 
 class WorkflowChild(Model):

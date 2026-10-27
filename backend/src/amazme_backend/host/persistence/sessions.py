@@ -55,12 +55,69 @@ async def save_session_model(self: PersistenceOwner, value: SessionModel) -> Ses
     return await self.transaction(operation)
 
 
+def creation_digest(value: CreateSession) -> str:
+    excluded = {"session_id"} if value.reuse_empty else {"session_id", "reuse_empty"}
+    return hashlib.sha256(value.model_dump_json(exclude=excluded).encode()).hexdigest()
+
+
+def reused_session(db: sqlite3.Connection, session_id: str, creation: str) -> Session | None:
+    alias = db.execute("SELECT digest,session FROM session_create_aliases WHERE id=?", (session_id,)).fetchone()
+    if alias is None:
+        return None
+    if alias[0] != creation:
+        raise BackendError("session_conflict")
+    row = db.execute(rows.session_sql("WHERE s.id=?"), (alias[1],)).fetchone()
+    if row is None or db.execute("SELECT 1 FROM session_removals WHERE session=?", (alias[1],)).fetchone():
+        raise BackendError("session_removed")
+    return rows.session_row(row)
+
+
+async def lookup_reused(self: PersistenceOwner, session_id: str, value: CreateSession) -> Session | None:
+    return await self.call(lambda db: reused_session(db, session_id, creation_digest(value)))
+
+
+async def record_reuse(self: PersistenceOwner, session_id: str, value: CreateSession, target: str) -> Session | None:
+    creation = creation_digest(value)
+    def operation(db: sqlite3.Connection) -> Session | None:
+        control = db.execute("SELECT freeze_id,quitting FROM control WHERE id=1").fetchone()
+        if control[0]:
+            raise BackendError("update_frozen", status=503)
+        if control[1]:
+            raise BackendError("host_stopping", status=503)
+        existing = reused_session(db, session_id, creation)
+        if existing is not None:
+            return existing
+        if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
+            raise BackendError("session_removed")
+        existing_session = db.execute("SELECT create_digest FROM sessions WHERE id=?", (session_id,)).fetchone()
+        if existing_session is not None:
+            if existing_session[0] != creation:
+                raise BackendError("session_conflict")
+            return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
+        row = db.execute(rows.session_sql(
+            "WHERE s.id=? AND s.empty_draft=1 AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? "
+            "AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) "
+            "AND NOT EXISTS (SELECT 1 FROM session_removals r WHERE r.session=s.id)"
+        ), (target, value.workspace or "primary", value.project_id)).fetchone()
+        if row is None:
+            return None
+        db.execute("INSERT INTO session_create_aliases(id,digest,session) VALUES(?,?,?)", (session_id, creation, target))
+        return rows.session_row(row)
+    return await self.transaction(operation)
+
+
 async def create_session(self: PersistenceOwner, session_id: str, value: CreateSession) -> Session:
-    creation = hashlib.sha256(value.model_dump_json(exclude={"session_id"}).encode()).hexdigest()
+    creation = creation_digest(value)
 
     def operation(db: sqlite3.Connection) -> Session:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+        control = db.execute("SELECT freeze_id,quitting FROM control WHERE id=1").fetchone()
+        if str(control[0]):
             raise BackendError("update_frozen", status=503)
+        if control[1]:
+            raise BackendError("host_stopping", status=503)
+        existing = reused_session(db, session_id, creation)
+        if existing is not None:
+            return existing
         if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
             raise BackendError("session_removed")
         workspace = value.workspace or "primary"
@@ -86,8 +143,6 @@ async def create_session(self: PersistenceOwner, session_id: str, value: CreateS
             ):
                 raise BackendError("session_conflict")
             return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
-        if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
-            raise BackendError("session_capacity", status=429)
         if (
             project_id
             and db.execute("SELECT 1 FROM projects WHERE id=? AND removed=0", (project_id,)).fetchone()
@@ -100,15 +155,39 @@ async def create_session(self: PersistenceOwner, session_id: str, value: CreateS
             )
             if workspace not in project.workspaces:
                 raise BackendError("project_workspace_mismatch")
+        if value.reuse_empty:
+            reusable = db.execute(rows.session_sql(
+                "WHERE s.empty_draft=1 AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) ORDER BY s.updated_ms DESC,s.rowid DESC LIMIT 1"
+            ), (workspace, project_id)).fetchone()
+            if reusable is not None:
+                return rows.session_row(reusable)
+        if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
+            raise BackendError("session_capacity", status=429)
         db.execute(
-            "INSERT INTO sessions(id,title,workspace,updated_ms,create_digest) VALUES(?,?,?,?,?)",
-            (session_id, value.title, workspace, time.time_ns() // 1000000, creation),
+            "INSERT INTO sessions(id,title,workspace,updated_ms,create_digest,empty_draft) VALUES(?,?,?,?,?,?)",
+            (session_id, value.title, workspace, time.time_ns() // 1000000, creation, int(value.reuse_empty)),
         )
         if project_id:
             db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
         return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
 
     return await self.transaction(operation)
+
+
+async def empty_drafts(self: PersistenceOwner) -> list[str]:
+    return await self.call(lambda db: [str(row[0]) for row in db.execute(
+        "SELECT id FROM sessions s WHERE empty_draft=1 AND parent_id='' "
+        "AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) "
+        "AND NOT EXISTS (SELECT 1 FROM sessions child WHERE child.parent_id=s.id) "
+        "AND NOT EXISTS (SELECT 1 FROM schedules x WHERE x.session=s.id) "
+        "AND NOT EXISTS (SELECT 1 FROM feedback x WHERE x.session=s.id) "
+        "AND NOT EXISTS (SELECT 1 FROM shares x WHERE x.session=s.id) "
+        "AND NOT EXISTS (SELECT 1 FROM file_write_preparations x WHERE x.session=s.id)"
+    )])
+
+
+async def retain_session(self: PersistenceOwner, session_id: str) -> None:
+    await self.transaction(lambda db: db.execute("UPDATE sessions SET empty_draft=0 WHERE id=?", (session_id,)))
 
 
 async def create_branch(
@@ -126,6 +205,8 @@ async def create_branch(
     def operation(db: sqlite3.Connection) -> Session:
         if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
             raise BackendError("update_frozen", status=503)
+        if db.execute("SELECT 1 FROM session_create_aliases WHERE id=?", (session_id,)).fetchone():
+            raise BackendError("branch_conflict")
         if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
             raise BackendError("session_removed")
         existing = db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone()

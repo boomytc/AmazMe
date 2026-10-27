@@ -146,7 +146,23 @@ class SessionOperations:
         chosen = value.session_id
         if chosen and (len(chosen) != 32 or any((item not in "0123456789abcdef" for item in chosen))):
             raise BackendError("invalid_session_id", status=400)
-        return await self.lifecycle.store.create_session(chosen or secrets.token_hex(16), value)
+        chosen = chosen or secrets.token_hex(16)
+        while True:
+            created = await self.lifecycle.store.create_session(chosen, value)
+            if not value.reuse_empty or created.session_id == chosen:
+                return created
+            existing = await self.lifecycle.store.lookup_reused(chosen, value)
+            if existing is not None:
+                return existing
+            path = session_database(self.lifecycle.profile.path, created.session_id)
+            if path.is_file():
+                snapshot = await self.access.read(created.session_id, lambda store: store.snapshot())
+                if snapshot.requests:
+                    await self.lifecycle.store.retain_session(created.session_id)
+                    continue
+            reused = await self.lifecycle.store.record_reuse(chosen, value, created.session_id)
+            if reused is not None:
+                return reused
 
     async def rename_session(self, session_id: str, value: RenameSession) -> Session:
         self.lifecycle.admit()
@@ -435,6 +451,20 @@ class SessionOperations:
                     for attachment_id, attachment in list(self.attachments.items()):
                         if attachment.session_id == session:
                             self.release_attachment(session, attachment_id)
+
+    async def remove_empty_draft_after_shutdown(self, session: str) -> None:
+        directory = session_database(self.lifecycle.profile.path, session).parent
+        if directory.is_symlink() or directory.parent.is_symlink():
+            raise BackendError("branch_cleanup_refused")
+        if not await self.lifecycle.store.begin_session_removal(session):
+            return
+        if directory.exists():
+            handle = lock(directory / SessionRuntimeFile.WRITER_LOCK)
+            try:
+                remove_session_directory(directory)
+            finally:
+                handle.close()
+        await self.lifecycle.store.finish_session_removal(session)
 
     async def cancel_unstarted(self, session: str) -> None:
         path = session_database(self.lifecycle.profile.path, session)

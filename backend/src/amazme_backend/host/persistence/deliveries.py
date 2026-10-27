@@ -104,7 +104,7 @@ async def enqueue(
             (identity, session, kind, digest, payload, configured),
         )
         db.execute(
-            "UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?",
+            "UPDATE sessions SET empty_draft=0,wanted=1,next_check=0,updated_ms=? WHERE id=?",
             (time.time_ns() // 1000000, session),
         )
         return delivery_row(db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone())

@@ -706,7 +706,7 @@ async function boot(): Promise<void> {
 	const pageUrl = await host.start();
 	await settlePythonUpdate();
 	const namedSession = deepLinkSession?.trim();
-	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: "primary" } : { workspace: "primary", fresh: true }));
+	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: "primary" } : { workspace: "primary" }));
 	const installedRelease = app.isPackaged && existsSync(join(process.resourcesPath, "release-manifest.json"));
 	if (!SMOKE && !notices.quitting && shouldStartDesktopUpdates(installedRelease, app.getVersion())) {
 		const target = dirname(dirname(dirname(process.execPath)));
@@ -761,7 +761,7 @@ async function initializeDesktop(): Promise<void> {
 		showWindow();
 	});
 	app.on("activate", () => {
-		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: "primary", fresh: true }));
+		if (liveWindows().length === 0 && hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: "primary" }));
 		else showWindow();
 	});
 	app.on("window-all-closed", () => {

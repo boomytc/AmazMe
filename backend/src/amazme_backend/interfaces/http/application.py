@@ -130,6 +130,7 @@ from amazme_backend.contracts.sessions import (
     RenameSession,
     SearchResults,
     Session,
+    SessionApprovalPolicy,
     SessionDiagnostic,
     SessionList,
     SessionModel,
@@ -847,6 +848,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session}/approvals", status_code=202)
     async def approve(session: str, value: ApprovalDecision) -> Receipt:
         return await owner.sessions.deliver(session, "approval", value.decision_id, value)
+
+    @app.put("/api/v1/sessions/{session}/approval-policy")
+    async def set_approval_policy(session: str, value: SessionApprovalPolicy) -> SessionApprovalPolicy:
+        return await owner.access.operate(session, lambda store: store.set_approval_policy(value))
 
     @app.post("/api/v1/sessions/{session}/effects/resolve", status_code=202)
     async def resolve(session: str, value: EffectResolution) -> Receipt:

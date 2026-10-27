@@ -42,7 +42,13 @@ from amazme_backend.contracts.ipc.worker import (
 )
 from amazme_backend.contracts.models import ImagePart, Message
 from amazme_backend.contracts.profiles import ProviderConfig
-from amazme_backend.contracts.sessions import Compaction, Receipt, WorkerState, WorkflowView
+from amazme_backend.contracts.sessions import (
+    Compaction,
+    Receipt,
+    SessionApprovalPolicy,
+    WorkerState,
+    WorkflowView,
+)
 from amazme_backend.contracts.web import WebCallView, WebPolicy
 from amazme_backend.platform.ipc import Peer
 
@@ -52,6 +58,9 @@ class SessionRelay:
 
     def __init__(self, peer: Peer):
         self.peer = peer
+
+    async def set_approval_policy(self, value: SessionApprovalPolicy) -> SessionApprovalPolicy:
+        return SessionApprovalPolicy.model_validate_json(await self._call("set_approval_policy", value))
 
     async def prepare_branch(self, parent: Path, request_id: str, web: WebPolicy,
                              computer: ComputerPolicy) -> Receipt:

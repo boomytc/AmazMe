@@ -100,6 +100,7 @@ SessionOpName = Literal[
     "release_compaction",
     "commit_compaction",
     "import_transcript",
+    "set_approval_policy",
 ]
 
 

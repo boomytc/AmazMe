@@ -47,6 +47,7 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
   if (path.endsWith("/usage")) return response({ session_id: session });
   if (path.endsWith("/feedback")) return response({ session_id: session, records: [] });
   if (path.endsWith("/history")) return response({ session_id: session, requests: [], events: [] });
+  if (path.endsWith("/approval-policy")) return response(JSON.parse(String(options.body)));
   if (path.endsWith("/mcp-configuration")) return response({ revision: 0, workspace: "primary", path: "/profile/host.sqlite", servers: [] });
   if (path.endsWith("/mcp")) return response({ servers: [], calls: [] });
   if (path.endsWith("/submissions")) {
@@ -69,6 +70,19 @@ async function startPage(extra?: (path: string, options: RequestInit, query: URL
  return { page, submitted };
 }
 
+test("starting with no saved sessions leaves the welcome screen empty", async () => {
+ const creates = vi.fn();
+ const { page } = await startPage((path, options) => {
+  if (path !== "/api/v1/sessions") return undefined;
+  if (options.method === "POST") creates();
+  return new Response('{"sessions":[]}');
+ });
+ expect(page.client.connection).toBeUndefined();
+ expect(page.renderer.view?.roster).toHaveLength(0);
+ expect(document.querySelector<HTMLElement>("#connection-status")?.dataset.state).toBe("connected");
+ expect(creates).not.toHaveBeenCalled();
+});
+
 test("a submission captures the displayed model, retries the same request, and preserves a newer draft", async () => {
  const { page, submitted } = await startPage();
  page.renderer.onSelectPermission("all");
@@ -88,6 +102,64 @@ test("a submission captures the displayed model, retries the same request, and p
  page.renderer.onSubmit("new draft");
  await vi.waitFor(() => expect(submitted).toHaveLength(2));
  expect(submitted[1]).toEqual(submitted[0]);
+ expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
+});
+
+test("a failed live permission change restores the confirmed selection", async () => {
+ let attachment = "";
+ const { page } = await startPage((path, options) => {
+  if (!path.endsWith("/approval-policy")) return undefined;
+  attachment = new Headers(options.headers).get("x-amazme-attachment") ?? "";
+  return new Response('{"code":"worker_blocked"}', { status: 503 });
+ });
+ page.renderer.onSelectPermission("auto");
+ await vi.waitFor(() => expect(page.renderer.view?.approvalPolicy).toBe("mutations"));
+ expect(attachment).toBe("attachment-a");
+ expect(document.body.textContent).toContain("worker_blocked");
+});
+
+test("a submission waiting for a permission change cannot move to another session", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ let finishPermission: (value: Response) => void = () => { throw new Error("permission change not started"); };
+ const changing = vi.fn(() => new Promise<Response>(resolve => { finishPermission = resolve; }));
+ const { page, submitted } = await startPage(path => {
+  if (path === "/api/v1/sessions") return response({ sessions: [
+   { session_id: "a", title: "A", workspace: "primary" }, { session_id: "b", title: "B", workspace: "primary" },
+  ] });
+  if (path.endsWith("/approval-policy")) return changing();
+  return undefined;
+ });
+ page.renderer.onDraftChange("A only"); page.renderer.setDraft("A only");
+ page.renderer.onSelectPermission("auto");
+ await vi.waitFor(() => expect(changing).toHaveBeenCalledOnce());
+ page.renderer.onSubmit("A only");
+ page.renderer.onSelect("b");
+ await vi.waitFor(() => expect(page.client.connection?.sessionId).toBe("b"));
+ finishPermission(response({ policy: "auto" }));
+ await vi.waitFor(() => expect(sessionStorage.getItem("amazme:permission:host:a")).toBe("auto"));
+ await new Promise(resolve => setTimeout(resolve, 0));
+ expect(submitted).toHaveLength(0);
+ page.renderer.onSelect("a");
+ await vi.waitFor(() => expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("A only"));
+});
+
+test("a submission waits for a newer permission choice made during the first update", async () => {
+ const pending: Array<(value: Response) => void> = [];
+ const changing = vi.fn(() => new Promise<Response>(resolve => { pending.push(resolve); }));
+ const { page, submitted } = await startPage(path => path.endsWith("/approval-policy") ? changing() : undefined);
+ page.renderer.onDraftChange("send");
+ page.renderer.onSelectPermission("auto");
+ await vi.waitFor(() => expect(changing).toHaveBeenCalledTimes(1));
+ page.renderer.onSubmit("send");
+ page.renderer.onDraftChange("new draft"); page.renderer.setDraft("new draft");
+ page.renderer.onSelectPermission("all");
+ pending[0](new Response('{"policy":"auto"}'));
+ await vi.waitFor(() => expect(changing).toHaveBeenCalledTimes(2));
+ expect(submitted).toHaveLength(0);
+ pending[1](new Response('{"policy":"all"}'));
+ await vi.waitFor(() => expect(submitted).toHaveLength(1));
+ expect(submitted[0].approval_policy).toBe("all");
+ expect(submitted[0].text).toBe("send");
  expect(document.querySelector<HTMLTextAreaElement>("#prompt")?.value).toBe("new draft");
 });
 

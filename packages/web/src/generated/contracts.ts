@@ -428,6 +428,7 @@ export type CreateSession = {
   "workspace"?: string;
   "project_id"?: string;
   "session_id"?: string;
+  "reuse_empty"?: boolean;
 };
 
 export type CredentialUpdate = {
@@ -1442,6 +1443,10 @@ export type Session = {
   "prepared"?: boolean;
 };
 
+export type SessionApprovalPolicy = {
+  "policy": "auto" | "mutations" | "all";
+};
+
 export type SessionDiagnostic = {
   "session_id": string;
   "present": boolean;
@@ -1958,6 +1963,7 @@ export interface ApiModels {
   SearchResults: SearchResults;
   ServiceInfo: ServiceInfo;
   Session: Session;
+  SessionApprovalPolicy: SessionApprovalPolicy;
   SessionDiagnostic: SessionDiagnostic;
   SessionList: SessionList;
   SessionModel: SessionModel;
@@ -2399,6 +2405,9 @@ export interface HttpOperations {
   "POST /api/v1/sessions/{session}/approvals": { response: Receipt; path: {
   "session": string;
 }; query: Record<string, unknown>; body: ApprovalDecision };
+  "PUT /api/v1/sessions/{session}/approval-policy": { response: SessionApprovalPolicy; path: {
+  "session": string;
+}; query: Record<string, unknown>; body: SessionApprovalPolicy };
   "POST /api/v1/sessions/{session}/effects/resolve": { response: Receipt; path: {
   "session": string;
 }; query: Record<string, unknown>; body: EffectResolution };
