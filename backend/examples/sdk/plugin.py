@@ -1,11 +1,12 @@
 """Register this file using Client.register_plugin(PluginDraft(..., entry=absolute_path))."""
+from pydantic import BaseModel
+
 from amazme_backend.plugin_api import (
     ExtensionAPI,
     ExtensionContext,
     PluginResult,
     ToolDefinition,
 )
-from pydantic import BaseModel
 
 
 class Greeting(BaseModel):

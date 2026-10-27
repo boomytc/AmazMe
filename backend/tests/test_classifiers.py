@@ -104,7 +104,7 @@ async def test_sdk_image_example_resolves_account_and_runs_the_crop_pipeline(tmp
     factory = httpx.AsyncClient
     monkeypatch.setattr('amazme_backend.ai.classification.client.httpx.AsyncClient',
                         lambda **kwargs: factory(**kwargs, transport=httpx.MockTransport(respond)))
-    example = Path(__file__).resolve().parents[2] / 'packages/coding-agent/examples/sdk/locate-image.py'
+    example = Path(__file__).resolve().parents[1] / 'examples/sdk/locate-image.py'
     monkeypatch.setattr(sys, 'argv', [str(example), str(profile), str(picture), 'Continue'])
     await runpy.run_path(str(example))['main']()
     output = capsys.readouterr().out

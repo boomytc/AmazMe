@@ -203,4 +203,4 @@ worker、子任务与原请求沿用该快照，真正请求供应商前才从�
 文档评测的 `provider.json` 是工作区输出文件，由评测器解析为当前 `ProviderConfig`，再通过上述 API 应用；产品不监视这个文件。
 例如 `{"provider":"acme","model":"acme-chat","api":"openai-completions","base_url":"http://127.0.0.1:PORT/v1","max_tokens":4096}`。
 它不包含密钥；评测器在核对目标身份和地址后单独提供固定替身凭据。
-SDK 示例见 `packages/coding-agent/examples/sdk/`；Python Client 只连接现有 Host，不另开业务宿主。
+SDK 示例见 `backend/examples/sdk/`；Python Client 只连接现有 Host，不另开业务宿主。

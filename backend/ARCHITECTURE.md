@@ -75,6 +75,6 @@ backend/.venv/bin/python backend/tools/export_contracts.py --check
 
 `backend/contracts/public-exports.json` 固定重构前的具名公开声明，防止契约搬迁后模块仍可导入、其中某个公开类型却消失。协议测试直接检查实际供应商消息和工具序列化；纯模型独立探针使用本地 HTTP 替身，不代表真实供应商验证。
 
-常规 Pyright 同时检查 `packages/coding-agent/examples/sdk` 的 Python 示例，使公开调用签名的迁移遗漏进入现有类型检查。
+常规 Pyright 同时检查 `backend/examples/sdk` 的 Python 示例，使公开调用签名的迁移遗漏进入现有类型检查。
 
 实际运行、faux、真实供应商、TCC、SSH 与冻结产物各自证明对应范围。资源状态以 `backend/tools/resource_census.py` 的本次 scope 和退出码为准。

@@ -7,7 +7,6 @@
 	"include": [
 		"packages/*/src/**/*",
 		"packages/*/test/**/*",
-		"packages/coding-agent/examples/**/*",
 		"tools/native/computer-use/src/**/*"
 	],
 	"exclude": [

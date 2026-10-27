@@ -34,7 +34,6 @@
 	"files": [
 		"dist",
 		"docs",
-		"examples",
 		"schemas",
 		"CHANGELOG.md"
 	],

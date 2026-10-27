@@ -1,11 +1,11 @@
 {
 	"navigation": [
 		{
-			"title": "Python backend",
+			"title": "CLI 入口",
 			"items": [
 				{
-					"title": "SDK",
-					"path": "sdk.md"
+					"title": "RPC",
+					"path": "rpc.md"
 				}
 			]
 		}

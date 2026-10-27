@@ -130,7 +130,7 @@ node packages/coding-agent/dist/bundle/cli.js web --python-url http://127.0.0.1:
 
 `--python-url` 和 `--python-token` 必须同时提供，同样适用于 TUI、一次性命令及 `models`、`auth`、`doctor` 等命令。配对码属于本机凭据，不要提交到仓库或放进分享链接。新 profile 的初始化方式见 [Python 后端说明](backend/README.md)。
 
-RPC 客户端使用 `--mode rpc`；Python SDK 使用 Host URL 和配对码连接，示例见 [SDK 与 RPC 文档](packages/coding-agent/docs/sdk.md)。
+RPC 客户端使用 `--mode rpc`，通道说明见 [RPC 入口](packages/coding-agent/docs/rpc.md)；Python SDK 使用 Host URL 和配对码连接，说明与示例见 [后端 SDK 文档](backend/docs/sdk.md)。
 
 独立服务需要停止时，在另一个终端执行：
 
@@ -157,7 +157,8 @@ OAuth 沿用 Pi 的客户端 ID、回调及请求身份；凭据由 Python 私�
 | --- | --- |
 | 唯一现行契约 | [Python 本机方案](docs/python-backend-plan.md) |
 | 实施状态与证据 | [完成台账](docs/python-backend-completion.md) |
-| SDK、RPC 与插件 | [客户端文档](packages/coding-agent/docs/sdk.md) |
+| SDK 与 Python 插件 | [后端 SDK 文档](backend/docs/sdk.md) |
+| RPC 入口 | [RPC 文档](packages/coding-agent/docs/rpc.md) |
 | Electron 与本地构建 | [桌面说明](packages/gui/README.md) |
 | QuickJS helper | [Codemode](packages/codemode/README.md) |
 | 上游移植依据 | [UPSTREAM](UPSTREAM.md) |

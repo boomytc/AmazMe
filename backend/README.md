@@ -3,6 +3,8 @@
 AmazMe 按 [本机优先方案](../docs/python-backend-plan.md) 使用 Python shell、文件、PTY、MCP 操作用户真实环境。
 保留 Python 会话、模型、SQLite、审批及客户端，移除 VM 默认执行依赖。状态见 [验收台账](../docs/python-backend-completion.md)。
 
+Python SDK 入口是 `amazme_backend.sdk.Client`，说明见 [SDK](docs/sdk.md)，可运行示例在 [examples/sdk](examples/sdk/README.md)。
+
 本机 shell 具有当前用户权限，文件 API 的路径检查和命令审批不构成操作系统沙箱。
 不自动把后端令牌、模型密钥传给工具；继续保留签名、公证和系统权限要求。
 
