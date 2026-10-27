@@ -10,6 +10,7 @@ from amazme_backend.accounts.configuration import (
     checked_model_endpoint,
     choose_model,
     public_settings,
+    request_identity,
     select_model,
 )
 from amazme_backend.accounts.oauth.flow import BROWSER, DEVICE
@@ -330,7 +331,8 @@ class AccountOperations:
                         async for item in stream(
                             configured,
                             [Message(role="user", content="Reply OK.")],
-                            auth=Auth(api_key=configured.api_key, auth_type=configured.auth_type),
+                            auth=Auth(api_key=configured.api_key, auth_type=configured.auth_type,
+                                      headers=request_identity(configured.provider)),
                         ):
                             if isinstance(item, Completion):
                                 completed = True

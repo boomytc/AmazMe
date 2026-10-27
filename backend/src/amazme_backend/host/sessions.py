@@ -10,7 +10,7 @@ from urllib.parse import quote
 
 import httpx
 
-from amazme_backend.accounts.configuration import select_model
+from amazme_backend.accounts.configuration import request_identity, select_model
 from amazme_backend.agent.model import summarize
 from amazme_backend.ai.catalog import SELECTION_INDEX
 from amazme_backend.ai.types import Auth
@@ -508,7 +508,8 @@ class SessionOperations:
                 configured,
                 messages,
                 value.instructions,
-                auth=Auth(api_key=configured.api_key, auth_type=configured.auth_type),
+                auth=Auth(api_key=configured.api_key, auth_type=configured.auth_type,
+                          headers=request_identity(configured.provider)),
             )
         except BackendError:
             try:

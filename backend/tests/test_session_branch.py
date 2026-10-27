@@ -13,6 +13,7 @@ import pytest_asyncio
 from pydantic import BaseModel, SecretStr
 from session_test_support import session_database_owner, session_state
 
+from amazme_backend.accounts.oauth.flow import OAuthCredential
 from amazme_backend.agent.model import stream
 from amazme_backend.ai.types import Auth
 from amazme_backend.bootstrap.worker import create_worker
@@ -39,6 +40,7 @@ from amazme_backend.contracts import (
     WebPolicy,
     WorkspaceGrantRequest,
 )
+from amazme_backend.contracts.accounts import ConfigureProvider, ProviderCheckRequest
 from amazme_backend.contracts.ipc.supervisor import TerminalSession
 from amazme_backend.contracts.ipc.worker import SessionOp, SessionOpResult
 from amazme_backend.host.service import Host
@@ -610,6 +612,63 @@ async def test_compaction_is_not_sent_twice(owner: Host, monkeypatch: pytest.Mon
     with pytest.raises(BackendError, match="compaction_conflict"):
         await owner.sessions.compact_session(PARENT, CompactSession(compaction_id="c-new", through_request_id="r-held"))
     assert len(calls) == 2
+
+
+@pytest.mark.parametrize("operation", ["check", "compact"])
+async def test_copilot_request_identity_on_checks_and_compaction(
+    owner: Host, monkeypatch: pytest.MonkeyPatch, operation: str,
+) -> None:
+    provider, model = "github-copilot", "custom-copilot"
+    await owner.accounts.configure_provider(ConfigureProvider(
+        operation_id="d" * 32, expected_revision=0, provider=provider, api="anthropic-messages",
+        base_url="https://copilot.example/v1", model_ids=[model]))
+    await owner.accounts.accounts.set(provider, OAuthCredential(
+        access=SecretStr("copilot-access"), refresh=SecretStr("github-refresh"), expires=2**60), 0)
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        events = [
+            {"type": "message_start", "message": {"id": "summary", "usage": {"input_tokens": 1}}},
+            {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+            {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "summary"}},
+            {"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 1}},
+            {"type": "message_stop"},
+        ]
+        return httpx.Response(200, content="".join("data: " + json.dumps(event) + "\n\n" for event in events),
+                              headers={"content-type": "text/event-stream"})
+
+    real_http = httpx.AsyncClient
+
+    def local_http(**kwargs):
+        return real_http(transport=httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr("amazme_backend.ai.client.httpx.AsyncClient", local_http)
+    if operation == "check":
+        checked = await owner.accounts.check_provider(ProviderCheckRequest(
+            operation_id="c" * 32, provider=provider, model_ids=[model]))
+        assert checked.phase == "done" and checked.failed == []
+    else:
+        parent = await parent_store(owner)
+        try:
+            await finish(parent, "alpha", "r1", owner.lifecycle.build)
+        finally:
+            await parent.close()
+        await owner.accounts.save_session_model(SessionModel(session_id=PARENT, provider=provider, model=model))
+        compacted = await owner.sessions.compact_session(
+            PARENT, CompactSession(compaction_id="copilot", through_request_id="r1"))
+        assert compacted.summary == "summary"
+    assert len(sent) == 1
+    expected = {
+        "User-Agent": "GitHubCopilotChat/0.35.0",
+        "Editor-Version": "vscode/1.107.0",
+        "Editor-Plugin-Version": "copilot-chat/0.35.0",
+        "Copilot-Integration-Id": "vscode-chat",
+        "X-Initiator": "user",
+        "Openai-Intent": "conversation-edits",
+        "Authorization": "Bearer copilot-access",
+    }
+    assert {name: sent[0].headers.get(name) for name in expected} == expected
 
 
 async def test_compaction_pins_instructions_to_the_id_and_uses_the_session_model(owner: Host, monkeypatch: pytest.MonkeyPatch) -> None:
