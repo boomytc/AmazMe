@@ -719,7 +719,7 @@ class Supervisor:
                 if worker.state == "stopped":
                     if worker.process_lease is None or not exited(worker.process_lease):
                         raise BackendError("process_exit_unproven", status=503)
-                    with retirement_proof(self.profile, worker):
+                    with retirement_proof(self.profile, worker, removed=self.queries.session_removed):
                         pass
             if (health.blocked or any(e.state != "clean" for e in health.epochs)
                     or any(resource.state != "exited" for resource in health.resources)

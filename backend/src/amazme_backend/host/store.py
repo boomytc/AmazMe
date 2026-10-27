@@ -168,6 +168,9 @@ class HostStore:
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         return await sessions.create_session(self, session_id, value)
 
+    async def supersede_local_replacement(self, identity: str, revision: str, build: str) -> UpdateRecord:
+        return await updates.supersede_local_replacement(self, identity, revision, build)
+
     async def lookup_reused(self, session_id: str, value: CreateSession) -> Session | None:
         return await sessions.lookup_reused(self, session_id, value)
 
@@ -240,6 +243,9 @@ class HostStore:
 
     async def finish_session_removal(self, session: str) -> None:
         return await sessions.finish_session_removal(self, session)
+
+    async def removed_sessions(self) -> set[str]:
+        return await sessions.removed_sessions(self)
 
     async def activity(self, session: str, activity: WorkerActivity) -> None:
         return await sessions.activity(self, session, activity)

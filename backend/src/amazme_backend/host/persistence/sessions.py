@@ -360,6 +360,12 @@ async def finish_session_removal(self: PersistenceOwner, session: str) -> None:
     await self.transaction(operation)
 
 
+async def removed_sessions(self: PersistenceOwner) -> set[str]:
+    return await self.call(lambda db: {str(row[0]) for row in db.execute(
+        "SELECT session FROM session_removals WHERE completed=1"
+    )})
+
+
 async def activity(self: PersistenceOwner, session: str, activity: WorkerActivity) -> None:
     wanted = activity.runnable or activity.next_wake_ms > 0
     check = now_ms() + 500 if activity.runnable else activity.next_wake_ms

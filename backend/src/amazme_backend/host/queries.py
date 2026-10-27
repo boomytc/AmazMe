@@ -24,3 +24,6 @@ class HostQueries:
 
     def branch_pending(self, session: str) -> bool:
         return metadata.branch_pending(self.profile, session)
+
+    def session_removed(self, session: str) -> bool:
+        return metadata.session_removed(self.profile, session)

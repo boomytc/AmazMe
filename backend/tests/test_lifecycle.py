@@ -524,6 +524,84 @@ async def test_prepare_freezes_and_stops_each_session_before_retire(owner, runti
         await owner.lifecycle.ensure_supervisor()
 
 
+async def test_resume_frozen_update_with_removed_session(owner, runtime):
+    await runtime.install(owner.lifecycle.build)
+    session = "a" * 32
+    source = runtime.add_worker(session, state="stopped")
+    assert await owner.lifecycle.store.begin_session_removal(session)
+    await owner.lifecycle.store.finish_session_removal(session)
+    active = await owner.lifecycle.store.begin_update(
+        PrepareUpdate(update_id="upgrade", target_build=owner.lifecycle.build), "b" * 64
+    )
+    active.roster = [source]
+    await owner.lifecycle.store.save_update(active)
+    resumed = await owner.updates.resume_update("upgrade")
+    completed = await owner.updates.complete_update(
+        CompleteUpdate(update_id="upgrade", expected_revision=resumed.revision)
+    )
+    assert completed.activated
+    assert any(worker.worker_id == source.worker_id for worker in completed.roster)
+    assert all(worker.session_id != session or worker.worker_id == source.worker_id for worker in completed.roster)
+
+
+async def test_replacement_target_can_be_superseded_with_freeze_and_history_intact(owner, runtime):
+    await runtime.install(owner.lifecycle.build)
+    old = await owner.lifecycle.store.begin_update(
+        PrepareUpdate(update_id="replace-" + owner.lifecycle.instance, target_build=owner.lifecycle.build), "b" * 64
+    )
+    source = runtime.add_worker("a" * 32, state="stopped")
+    old.roster = [source]
+    old.phase = "validating"
+    old = await owner.lifecycle.store.save_update(old)
+    new = await owner.lifecycle.store.supersede_local_replacement(old.update_id, old.revision, "c" * 64)
+    assert new.target_build == "c" * 64 and new.phase == "freezing" and new.validation is None
+    assert new.roster == old.roster and not new.activated
+    assert (await owner.lifecycle.store.active_update()) == new
+    saved = await owner.lifecycle.store.db.call(lambda db: db.execute(
+        "SELECT payload FROM update_supersessions WHERE update_id=?", (old.update_id,)
+    ).fetchone())
+    assert json.loads(saved[0])["target_build"] == old.target_build
+    with pytest.raises(BackendError, match="update_target_mismatch"):
+        await owner.lifecycle.store.supersede_local_replacement(old.update_id, old.revision, "d" * 64)
+
+
+async def test_explicit_update_cannot_be_superseded(owner):
+    old = await owner.lifecycle.store.begin_update(
+        PrepareUpdate(update_id="upgrade", target_build="b" * 64), owner.lifecycle.build
+    )
+    with pytest.raises(BackendError, match="update_target_mismatch"):
+        await owner.lifecycle.store.supersede_local_replacement(old.update_id, old.revision, "c" * 64)
+    assert (await owner.lifecycle.store.active_update()) == old
+
+
+async def test_new_host_resumes_interrupted_local_replacement(owner, runtime, monkeypatch):
+    await runtime.install(owner.lifecycle.build)
+    old = await owner.lifecycle.store.begin_update(
+        PrepareUpdate(update_id="replace-" + owner.lifecycle.instance, target_build=owner.lifecycle.build), "b" * 64
+    )
+    await owner.lifecycle.store.db.close()
+    private_write(owner.lifecycle.profile.path / "initialized", "2\n")
+    owner.lifecycle.initialized = False
+    monkeypatch.setattr("amazme_backend.host.lifecycle.build_id", lambda: "c" * 64)
+    replacement = Host(owner.lifecycle.profile, "replacement", runtime.lease("host", "replacement"))
+    await replacement.lifecycle.supervisor.close()
+    runtime.owner = replacement
+    replacement.lifecycle.supervisor = runtime
+    replacement.lifecycle._spawn_supervisor = runtime.spawn
+    replacement.lifecycle._await_service = runtime.await_service
+    try:
+        await replacement.initialize()
+        current = await replacement.lifecycle.store.active_update()
+        assert current.update_id == old.update_id and current.target_build == replacement.lifecycle.build
+        validated = await replacement.updates.resume_update(current.update_id)
+        completed = await replacement.updates.complete_update(
+            CompleteUpdate(update_id=current.update_id, expected_revision=validated.revision)
+        )
+        assert completed.activated
+    finally:
+        await replacement.close()
+
+
 async def test_retire_receipt_cannot_drop_participant(owner, runtime):
     await runtime.install("b" * 64)
     worker = runtime.add_worker("a" * 32)

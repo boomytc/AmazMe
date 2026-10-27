@@ -27,7 +27,8 @@ def create_supervisor(profile: Profile, instance: str | None = None, process_lea
 
     if queries is None:
         host = HostQueries(profile.path)
-        queries = ExecutionQueries(host.session_workspace, host.workspace_grants, host.mcp_policy, host.branch_pending)
+        queries = ExecutionQueries(host.session_workspace, host.workspace_grants, host.mcp_policy,
+                                   host.branch_pending, host.session_removed)
 
     def definitions(offers: list[McpOffer], options: RunOptions, plugins: list[PluginOffer]) -> list[dict[str, object]]:
         return [tool.model_dump(mode="json") for tool in build_tools(offers, options, plugins, codemode=False)]

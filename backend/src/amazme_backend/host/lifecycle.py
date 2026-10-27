@@ -82,7 +82,7 @@ class HostLifecycle:
                 PrepareUpdate(update_id="replace-" + self.instance, target_build=self.build), previous_build
             )
         if active and self.build not in {active.source_build, active.target_build}:
-            raise BackendError("update_target_mismatch")
+            active = await self.store.supersede_local_replacement(active.update_id, active.revision, self.build)
         if not (
             active
             and active.phase in {"prepared", "validating", "completed"}

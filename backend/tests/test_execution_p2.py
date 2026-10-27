@@ -201,6 +201,23 @@ async def test_process_exit_and_writer_release_are_both_required(owner):
             pass
 
 
+async def test_removed_session_does_not_bypass_a_present_writer_lock(owner):
+    info, reservation = await worker(owner)
+    reservation.close()
+    directory = owner.profile.path / "sessions" / info.session_id
+    with lock(directory / "writer.lock"):
+        with pytest.raises(BackendError, match="worker_retirement_unproven"):
+            with retirement_proof(owner.profile, info, removed=lambda _: True):
+                pass
+    (directory / "writer.lock").unlink()
+    directory.rmdir()
+    with pytest.raises(BackendError, match="worker_retirement_unproven"):
+        with retirement_proof(owner.profile, info):
+            pass
+    with retirement_proof(owner.profile, info, removed=lambda _: True):
+        pass
+
+
 async def test_unknown_old_worker_never_overwritten(owner, monkeypatch):
     info, _ = await worker(owner)
     info.state = "unknown"

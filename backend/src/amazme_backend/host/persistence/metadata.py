@@ -79,3 +79,20 @@ def branch_pending(profile: Path, session: str) -> bool:
     finally:
         connection.close()
     return row is not None and bool(row[0]) and bool(row[1]) and not row[2] and not row[3]
+
+
+def session_removed(profile: Path, session: str) -> bool:
+    database = profile / "host.sqlite"
+    if not database.is_file():
+        raise BackendError("workspace_unresolved", status=503)
+    connection = sqlite3.connect(database.resolve().as_uri() + "?mode=ro", uri=True)
+    try:
+        try:
+            row = connection.execute(
+                "SELECT completed FROM session_removals WHERE session=?", (session,)
+            ).fetchone()
+        except sqlite3.Error as error:
+            raise BackendError("workspace_unresolved", status=503) from error
+    finally:
+        connection.close()
+    return row is not None and bool(row[0])

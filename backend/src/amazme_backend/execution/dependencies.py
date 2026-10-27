@@ -22,6 +22,7 @@ class ExecutionQueries:
     load_grants: Callable[[], list[tuple[str, str]]]
     mcp_policy: Callable[[str, str, str], McpServerSettings | None]
     branch_pending: Callable[[str], bool] = lambda _session: False
+    session_removed: Callable[[str], bool] = lambda _session: False
 
 
 type CodeToolDefinitions = Callable[

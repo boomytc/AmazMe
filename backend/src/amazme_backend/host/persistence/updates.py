@@ -91,6 +91,29 @@ async def save_update(self: PersistenceOwner, value: UpdateRecord) -> UpdateReco
     return await self.transaction(operation)
 
 
+async def supersede_local_replacement(self: PersistenceOwner, identity: str, revision: str, build: str) -> UpdateRecord:
+    def operation(db: sqlite3.Connection) -> UpdateRecord:
+        row = db.execute("SELECT payload FROM updates WHERE id=?", (identity,)).fetchone()
+        if row is None:
+            raise BackendError("update_not_found", status=404)
+        old = UpdateRecord.model_validate_json(row[0])
+        origin = db.execute("SELECT build FROM hosts WHERE instance=?", (identity.removeprefix("replace-"),)).fetchone()
+        first = db.execute("SELECT payload FROM update_supersessions WHERE update_id=? ORDER BY rowid LIMIT 1",
+                           (identity,)).fetchone()
+        original_target = UpdateRecord.model_validate_json(first[0]).target_build if first else old.target_build
+        target_host = db.execute("SELECT 1 FROM hosts WHERE build=?", (old.target_build,)).fetchone()
+        if (not identity.startswith("replace-") or origin is None or origin[0] != original_target or target_host is None
+                or old.activated or old.revision != revision
+                or db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0] != identity):
+            raise BackendError("update_target_mismatch")
+        db.execute("INSERT INTO update_supersessions VALUES(?,?,?)", (identity, old.revision, old.model_dump_json()))
+        result = old.model_copy(update={"target_build": build, "phase": "freezing", "validation": None,
+                                        "error": "", "revision": str(int(old.revision) + 1)})
+        db.execute("UPDATE updates SET payload=? WHERE id=?", (result.model_dump_json(), identity))
+        return result
+    return await self.transaction(operation)
+
+
 def verify_roster(previous: list[WorkerInfo], current: list[WorkerInfo]) -> None:
     indexed = {worker.worker_id: worker for worker in current}
     if len(indexed) != len(current):

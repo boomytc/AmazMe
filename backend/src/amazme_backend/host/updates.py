@@ -97,12 +97,17 @@ class UpdateOperations:
         await self.lifecycle.faults.hit("update_freeze", update_id=record.update_id)
         sessions = {s.session_id for s in (await self.lifecycle.store.sessions()).sessions}
         sessions.update((w.session_id for w in health.workers))
+        removed = await self.lifecycle.store.removed_sessions()
         for session in sorted(sessions):
             current = await self.lifecycle.supervisor.call("GET", "/health", SupervisorHealth)
             record = await self.lifecycle.update_health(record, current)
             live = [w for w in current.workers if w.session_id == session and w.state != "stopped"]
             if len(live) > 1:
                 raise BackendError("participant_identity_mismatch", status=503)
+            if session in removed:
+                if live:
+                    await self._stop_info(live[0])
+                continue
             if live and (
                 live[0].state in {"stopping", "blocked", "unknown"}
                 or live[0].process_lease is None
@@ -198,6 +203,7 @@ class UpdateOperations:
         self.lifecycle.verify_clean(health)
         sessions = {s.session_id for s in (await self.lifecycle.store.sessions()).sessions}
         sessions.update((w.session_id for w in health.workers))
+        sessions.difference_update(await self.lifecycle.store.removed_sessions())
         if not sessions:
             sessions.add(secrets.token_hex(16))
         validation: WorkerInfo | None = None
@@ -250,6 +256,7 @@ class UpdateOperations:
             record = await self._validate_target(record)
             sessions = {s.session_id for s in (await self.lifecycle.store.sessions()).sessions}
             sessions.update((w.session_id for w in record.roster))
+            sessions.difference_update(await self.lifecycle.store.removed_sessions())
             for session in sorted(sessions):
                 peer = await self.access.worker(
                     session, maintenance=True, validation_probe=True, update_id=record.update_id

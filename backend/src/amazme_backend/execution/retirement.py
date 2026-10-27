@@ -4,7 +4,7 @@ import contextlib
 import fcntl
 import os
 import stat
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 
 from amazme_backend.contracts.execution import (
     ProcessLease,
@@ -17,7 +17,7 @@ from amazme_backend.shared.errors import BackendError
 
 
 @contextlib.contextmanager
-def retirement_proof(profile: Profile, worker: WorkerInfo) -> Generator[None]:
+def retirement_proof(profile: Profile, worker: WorkerInfo, *, removed: Callable[[str], bool] = lambda _: False) -> Generator[None]:
     """Keep exact lifetime inode AND session writer lock held through retirement commit."""
     lease = worker.process_lease
     if lease is None:
@@ -41,8 +41,16 @@ def retirement_proof(profile: Profile, worker: WorkerInfo) -> Generator[None]:
             raise BackendError("process_lease_identity_mismatch", status=503)
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            with lock(profile.path / "sessions" / worker.session_id / SessionRuntimeFile.WRITER_LOCK):
+            directory = profile.path / "sessions" / worker.session_id
+            if not directory.exists() and not directory.is_symlink() and removed(worker.session_id):
                 yield
+            else:
+                try:
+                    writer = lock(directory / SessionRuntimeFile.WRITER_LOCK)
+                except FileNotFoundError as error:
+                    raise BackendError("worker_retirement_unproven", status=503) from error
+                with writer:
+                    yield
         except BlockingIOError as error:
             raise BackendError("worker_retirement_unproven", status=503) from error
     finally:
