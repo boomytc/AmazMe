@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -113,6 +114,19 @@ def test_atomic_create_refuses_a_racing_creator_and_preserves_file_metadata(tmp_
         assert subprocess.check_output(["/usr/bin/xattr", "-p", attribute, str(target)]).strip() == b"metadata"
     else:
         assert os.getxattr(target, attribute) == b"metadata"
+
+
+@pytest.mark.parametrize(("mask", "mode"), [(0o000, 0o644), (0o022, 0o644), (0o027, 0o640), (0o077, 0o600)])
+def test_new_file_permissions_respect_umask(tmp_path: Path, mask: int, mode: int) -> None:
+    previous = os.umask(mask)
+    try:
+        changed = write_file(tmp_path, FileWrite(path="new.txt", content="new\n"))
+    finally:
+        os.umask(previous)
+    target = tmp_path / "new.txt"
+    assert stat.S_IMODE(target.stat().st_mode) == mode
+    assert target.read_text() == "new\n" and changed.digest == hashlib.sha256(b"new\n").hexdigest()
+    assert not list(tmp_path.glob(".amazme-write-*"))
 
 
 def test_hardlink_and_stale_digest_do_not_write(tmp_path: Path) -> None:

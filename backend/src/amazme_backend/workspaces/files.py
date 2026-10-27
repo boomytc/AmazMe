@@ -305,14 +305,15 @@ def _mutate_file(root: Path, relative: str, expected_digest: str,
         payload = content.encode()
         if len(payload) > FILE_WRITE_LIMIT:
             raise BackendError("file_too_large")
-        stage = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+        stage = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600 if before is not None else 0o644, dir_fd=parent)
         _write_all(stage, payload)
         if before is not None:
             staged = os.fstat(stage)
             if (staged.st_uid, staged.st_gid) != (before.st_uid, before.st_gid):
                 os.fchown(stage, before.st_uid, before.st_gid)
             copy_extended_metadata(original, stage)
-        os.fchmod(stage, stat.S_IMODE(before.st_mode) if before is not None else 0o644)
+            os.fchmod(stage, stat.S_IMODE(before.st_mode))
         os.fsync(stage)
         if before is not None:
             current = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
