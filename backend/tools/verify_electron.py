@@ -18,8 +18,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
+import psutil
 from playwright.sync_api import expect, sync_playwright
-from resource_budget import ResourceBudget
+from resource_budget import ResourceBudget, allocated_bytes
 from resource_census import apply_cleanup, raise_pending, release_named_slot
 from verify_runtime import ROOT, until
 
@@ -51,8 +52,45 @@ def child_env(updates: dict[str, str]) -> dict[str, str]:
     return env
 
 
+def stop_owned_profile(root: Path) -> None:
+    """Stop only processes attached to this runner's disposable profile."""
+    parent = (ROOT / ".artifacts/native").resolve()
+    if root.is_symlink() or root.resolve().parent != parent or not root.name.startswith(("electron-", "desktop-restart-")):
+        raise RuntimeError("refusing to stop processes outside an owned Electron test directory")
+    profile = str(root.resolve() / "python-profile")
+    processes: dict[int, psutil.Process] = {}
+    for process in psutil.process_iter(["pid", "cmdline"]):
+        try:
+            args = process.info.get("cmdline") or []
+            if args.count("--profile") != 1:
+                continue
+            index = args.index("--profile")
+            if index + 1 >= len(args) or args[index + 1] != profile:
+                continue
+            processes[process.pid] = process
+            for child in process.children(recursive=True):
+                processes[child.pid] = child
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    for process in processes.values():
+        try:
+            process.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive_processes = psutil.wait_procs(list(processes.values()), timeout=5)
+    for process in alive_processes:
+        try:
+            process.kill()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive_processes = psutil.wait_procs(alive_processes, timeout=5)
+    if alive_processes:
+        raise RuntimeError("owned Electron test profile still has running processes")
+
+
 class ElectronRun:
     def __init__(self, root: Path, workspace: Path, wrapper: Path, app: Path | None = None):
+        self.app = app
         self.launcher = [str(app / "Contents/MacOS/AmazMe")] if app else [NODE, "dist/start.js"]
         self.root = root
         self.workspace = workspace
@@ -74,6 +112,13 @@ class ElectronRun:
         report = resource_census.collect()
         self.resource_before = report
         resource_census.admit(report, purpose="serve")
+        if not NODE:
+            raise RuntimeError("node is required to launch Electron")
+        if self.app is None:
+            checked = subprocess.run([NODE, str(ROOT / "scripts/dev-desktop.mjs"), "--check-build"],
+                                     cwd=ROOT, capture_output=True, text=True, check=False)
+            if checked.returncode:
+                raise RuntimeError(checked.stderr.strip() or "desktop build check failed")
         env = child_env({
             "AMAZME_GUI_SMOKE": "1",
             "AMAZME_GUI_SMOKE_HOLD": "1",
@@ -83,8 +128,6 @@ class ElectronRun:
             "AMAZME_GUI_READY_TIMEOUT_MS": "120000",
             "AMAZME_CODING_AGENT_DIR": str(self.root / "agent"),
         })
-        if not NODE:
-            raise RuntimeError("node is required to launch Electron")
         self.process = subprocess.Popen(
             [*self.launcher, f"--remote-debugging-port={port}",
              "--remote-debugging-address=127.0.0.1", "--remote-allow-origins=*"],
@@ -175,6 +218,7 @@ class ElectronRun:
                 self.opener.kill()
         finally:
             try:
+                stop_owned_profile(self.root)
                 report, processes = resource_census.scan()
                 self.resource_report = resource_census.owned_after(
                     [self.root], report, processes, before=self.resource_before,
@@ -209,7 +253,7 @@ def product_pages(browser):
 
 
 def session_of(page) -> str:
-    return page.url.split("session=")[1].split("&")[0] if "session=" in page.url else ""
+    return page.evaluate("new URL(location.href).searchParams.get('session') || ''")
 
 
 @contextmanager
@@ -279,6 +323,9 @@ def main() -> None:
     parent = ROOT / ".artifacts/native"
     parent.mkdir(parents=True, exist_ok=True)
     release_named_slot(parent, "electron-", 2)
+    # The large-image check needs room within the existing artifact cap.
+    if allocated_bytes([ROOT / ".artifacts"]) + 64 * 1024**2 > 512 * 1024**2:
+        release_named_slot(parent, "electron-", 1)
     root = Path(tempfile.mkdtemp(prefix="electron-", dir=parent))
     workspace = root / "workspace"
     workspace.mkdir()
@@ -308,11 +355,12 @@ def main() -> None:
                     page = until(lambda: product_pages(browser), lambda pages: bool(pages), timeout=30)[0]
                     errors = []
                     page.on("pageerror", lambda error: errors.append(str(error)))
-                    expect(page.locator("#composer")).to_be_visible()
+                    expect(page.locator("#connection-status")).to_have_attribute("data-state", "connected", timeout=30000)
                     expect(page.locator("#new-chat")).to_be_enabled(timeout=30000)
                     if not session_of(page):
                         page.locator("#new-chat").click()
                     until(lambda: session_of(page), bool, timeout=30)
+                    expect(page.locator("#composer")).to_be_visible(timeout=30000)
                     session = session_of(page)
                     expect(page.locator("#prompt")).to_be_enabled(timeout=30000)
                     assert page.locator("#model-form").count() == 0
