@@ -22,7 +22,7 @@ npm run build --workspace @amazme/coding-agent
 npm test --workspace @amazme/coding-agent
 ```
 
-构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。CUA 原生驱动的固定构建配方及安装校验仍保留在 `plugins/computer-use`；产品驱动与分类逻辑属于 Python。
+构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。CUA 原生驱动的固定构建配方及安装校验在仓库的 `tools/native/computer-use`，不随 npm 包分发；产品驱动与分类逻辑属于 Python。
 
 1.0.0 前仅本机构建、自用，不公证、不发布。MIT 许可证与上游来源归属保持原样。
 

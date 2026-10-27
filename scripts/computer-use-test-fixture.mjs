@@ -1,16 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { prepareMacBundle } from "../packages/coding-agent/plugins/computer-use/scripts/macos-bundle.mjs";
+import { prepareMacBundle } from "../tools/native/computer-use/scripts/macos-bundle.mjs";
 import {
 	installationHashes,
 	installationRoot,
 	MAC_FILES,
-} from "../packages/coding-agent/plugins/computer-use/src/installation.ts";
+} from "../tools/native/computer-use/src/installation.ts";
 import {
 	PATCH_BUILDS,
 	PATCH_PIN,
-} from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
+} from "../tools/native/computer-use/src/runtime-pin.ts";
 
 export async function signedRuntime(home, pin = PATCH_PIN) {
 	const directory = join(installationRoot("darwin", home), pin.version);

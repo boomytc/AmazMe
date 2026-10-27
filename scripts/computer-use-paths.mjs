@@ -4,8 +4,8 @@ import {
 	DRIVER_PIN,
 	PATCH_PIN,
 	patchBuild,
-} from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
-import { markReleaseDirectory } from "../packages/coding-agent/plugins/computer-use/src/maintenance.ts";
+} from "../tools/native/computer-use/src/runtime-pin.ts";
+import { markReleaseDirectory } from "../tools/native/computer-use/src/maintenance.ts";
 
 export function computerUseReleaseRoot() {
 	const root = dirname(dirname(fileURLToPath(import.meta.url)));

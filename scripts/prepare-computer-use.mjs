@@ -1,8 +1,8 @@
-import { prepareComputerUse } from "../packages/coding-agent/plugins/computer-use/scripts/prepare-computer-use.mjs";
+import { prepareComputerUse } from "../tools/native/computer-use/scripts/prepare-computer-use.mjs";
 import {
 	preparationArguments,
 	preparePatchedComputerUse,
-} from "../packages/coding-agent/plugins/computer-use/scripts/prepare-patched-computer-use.mjs";
+} from "../tools/native/computer-use/scripts/prepare-patched-computer-use.mjs";
 import {
 	computerUseReleaseRoot,
 	prepareComputerUseBuildRoot,

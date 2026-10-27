@@ -8,16 +8,16 @@ import {
 	driverPin,
 	prepareComputerUse,
 	verifyArchive,
-} from "../packages/coding-agent/plugins/computer-use/scripts/prepare-computer-use.mjs";
+} from "../tools/native/computer-use/scripts/prepare-computer-use.mjs";
 
 import {
 	patchedDriverPin,
 	preparationArguments,
-} from "../packages/coding-agent/plugins/computer-use/scripts/prepare-patched-computer-use.mjs";
+} from "../tools/native/computer-use/scripts/prepare-patched-computer-use.mjs";
 import {
 	PATCH_BUILDS,
 	PATCH_PIN,
-} from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
+} from "../tools/native/computer-use/src/runtime-pin.ts";
 
 test("candidate preparation validates the exact recipe without changing the default", async () => {
 	for (const { pin } of PATCH_BUILDS)

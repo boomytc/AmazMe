@@ -50,7 +50,7 @@ def test_native_capture_rejects_dimension_mismatch(tmp_path: Path, monkeypatch: 
 
 
 def test_runtime_pin_matches_existing_recipe() -> None:
-    source = (Path(__file__).parents[2] / 'packages/coding-agent/plugins/computer-use/src/runtime-pin.ts').read_text()
+    source = (Path(__file__).parents[2] / 'tools/native/computer-use/src/runtime-pin.ts').read_text()
     assert all(value in source for value in PIN.values())
 
 

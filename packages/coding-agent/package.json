@@ -34,7 +34,6 @@
 	"files": [
 		"dist",
 		"docs",
-		"plugins",
 		"examples",
 		"schemas",
 		"CHANGELOG.md"

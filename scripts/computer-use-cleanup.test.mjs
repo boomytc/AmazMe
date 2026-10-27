@@ -15,22 +15,22 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
 import { promisify } from "node:util";
-import { cleanupArguments } from "../packages/coding-agent/plugins/computer-use/scripts/cleanup-computer-use.mjs";
+import { cleanupArguments } from "../tools/native/computer-use/scripts/cleanup-computer-use.mjs";
 import {
 	installationRoot,
 	sha256,
-} from "../packages/coding-agent/plugins/computer-use/src/installation.ts";
+} from "../tools/native/computer-use/src/installation.ts";
 import {
 	cleanupBuildWorkspaces,
 	cleanupPermissionPanels,
 	cleanupRuntimeVersions,
 	createBuildWorkspace,
 	markReleaseDirectory,
-} from "../packages/coding-agent/plugins/computer-use/src/maintenance.ts";
+} from "../tools/native/computer-use/src/maintenance.ts";
 import {
 	DRIVER_PIN,
 	PATCH_PIN,
-} from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
+} from "../tools/native/computer-use/src/runtime-pin.ts";
 import { computerUseBuildRoot } from "./computer-use-paths.mjs";
 import { signedRuntime } from "./computer-use-test-fixture.mjs";
 
@@ -160,7 +160,7 @@ test(
 			await markReleaseDirectory(join(releaseRoot, oldVersion), oldVersion);
 			await markReleaseDirectory(workRoot, PATCH_PIN.version);
 			const module = new URL(
-				"../packages/coding-agent/plugins/computer-use/scripts/prepare-patched-computer-use.mjs",
+				"../tools/native/computer-use/scripts/prepare-patched-computer-use.mjs",
 				import.meta.url,
 			).href;
 			const run = (extra = {}) =>

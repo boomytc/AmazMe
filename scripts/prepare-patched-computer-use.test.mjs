@@ -6,7 +6,7 @@ import { test } from "node:test";
 import {
 	patchedDriverPin,
 	readPatchedInstallation,
-} from "../packages/coding-agent/plugins/computer-use/scripts/prepare-patched-computer-use.mjs";
+} from "../tools/native/computer-use/scripts/prepare-patched-computer-use.mjs";
 import { signedRuntime } from "./computer-use-test-fixture.mjs";
 
 test(

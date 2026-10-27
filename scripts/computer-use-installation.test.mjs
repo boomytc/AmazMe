@@ -4,7 +4,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
-import { resolveDriverBinary } from "../packages/coding-agent/plugins/computer-use/src/installation.ts";
+import { resolveDriverBinary } from "../tools/native/computer-use/src/installation.ts";
 import {
 	APP_NAME,
 	archivePin,
@@ -13,13 +13,13 @@ import {
 	installationRoot,
 	MAC_FILES,
 	readInstallation,
-} from "../packages/coding-agent/plugins/computer-use/src/installation.ts";
+} from "../tools/native/computer-use/src/installation.ts";
 import {
 	BUNDLE_BUILD,
 	DRIVER_PIN,
 	PATCH_BUILDS,
 	PATCH_PIN,
-} from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
+} from "../tools/native/computer-use/src/runtime-pin.ts";
 import { signedRuntime } from "./computer-use-test-fixture.mjs";
 
 const historicalPin = { ...PATCH_PIN, version: "0.38.0-amazme.1" };

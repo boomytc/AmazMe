@@ -1,8 +1,8 @@
 import {
 	cleanupArguments,
 	cleanupComputerUse,
-} from "../packages/coding-agent/plugins/computer-use/scripts/cleanup-computer-use.mjs";
-import { PATCH_BUILDS } from "../packages/coding-agent/plugins/computer-use/src/runtime-pin.ts";
+} from "../tools/native/computer-use/scripts/cleanup-computer-use.mjs";
+import { PATCH_BUILDS } from "../tools/native/computer-use/src/runtime-pin.ts";
 import {
 	computerUseBuildRoot,
 	computerUseReleaseRoot,
