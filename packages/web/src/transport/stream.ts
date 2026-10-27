@@ -1,5 +1,5 @@
-import type { Attachment, Preview, Receipt, Snapshot, Stream } from "./python-contracts.ts";
-import { isRecord, parseContract } from "./python-api.ts";
+import type { Attachment, Preview, Receipt, Snapshot, Stream } from "../generated/contracts.ts";
+import { isRecord, parseContract } from "./api.ts";
 
 export const settled = new Set<Receipt["status"]>(["succeeded", "cancelled", "interrupted", "failed", "unknown"]);
 export const requestStatus: Readonly<Record<Receipt["status"], string>> = {

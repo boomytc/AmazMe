@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
-import contracts from "./python-schema.json" with { type: "json" };
-import type { ApiModels, HttpOperations } from "./python-contracts.ts";
+import contracts from "../generated/schema.json" with { type: "json" };
+import type { ApiModels, HttpOperations } from "../generated/contracts.ts";
 
 type Schema = boolean | {
 	readonly [keyword: string]: unknown;

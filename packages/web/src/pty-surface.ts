@@ -1,5 +1,5 @@
 /// <reference lib="dom" />
-import { isRecord } from "./python-api.ts";
+import { isRecord } from "./transport/api.ts";
 
 export interface PtyPresentation {
 	readonly id: string;

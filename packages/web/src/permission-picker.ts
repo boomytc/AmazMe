@@ -1,5 +1,5 @@
 import type { Locale } from "./locale.ts";
-import type { Submit } from "./python-contracts.ts";
+import type { Submit } from "./generated/contracts.ts";
 import { translate, type MessageKey } from "./strings.ts";
 
 export type ApprovalPolicy = NonNullable<Submit["approval_policy"]>;

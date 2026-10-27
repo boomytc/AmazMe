@@ -1,21 +1,21 @@
-import * as actions from "./actions.ts";
-import { commandPalette, type CommandLike } from "./commands.ts";
-import { dockView, type DockView } from "./dock.ts";
-import type { Locale } from "./locale.ts";
-import type { ApprovalPolicy } from "./permission-picker.ts";
-import type { ModelConnectionsLike } from "./model-connections.ts";
-import type { PanelView } from "./panels.ts";
-import { projectGroups } from "./projects.ts";
-import { isRecord, parseContract } from "./python-api.ts";
-import type { ClientConnection } from "./python-client.ts";
-import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, TranscriptMessage, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
-import { requestStatus, seq, settled } from "./python-stream.ts";
-import { shortcuts } from "./shortcuts.ts";
-import { translate } from "./strings.ts";
-import { toolArguments } from "./tool-args.ts";
-import { toolResultView } from "./tool-results.ts";
-import type { Typography } from "./typography.ts";
-import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "./view.ts";
+import * as actions from "../actions.ts";
+import { commandPalette, type CommandLike } from "../commands.ts";
+import { dockView, type DockView } from "../dock.ts";
+import type { Locale } from "../locale.ts";
+import type { ApprovalPolicy } from "../permission-picker.ts";
+import type { ModelConnectionsLike } from "../model-connections.ts";
+import type { PanelView } from "../panels.ts";
+import { projectGroups } from "../projects.ts";
+import { isRecord, parseContract } from "../transport/api.ts";
+import type { ClientConnection } from "../transport/client.ts";
+import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, TranscriptMessage, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
+import { requestStatus, seq, settled } from "../transport/stream.ts";
+import { shortcuts } from "../shortcuts.ts";
+import { translate } from "../strings.ts";
+import { toolArguments } from "../tool-args.ts";
+import { toolResultView } from "../tool-results.ts";
+import type { Typography } from "../typography.ts";
+import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
 
 /** Project only the host's committed receipts and generation-matched previews. */
 export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined, feedback?: AnswerFeedbackList): TranscriptBlock[] {

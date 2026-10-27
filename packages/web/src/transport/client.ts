@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
-import type { Attachment, HttpOperations, Identity, Snapshot } from "./python-contracts.ts";
-import { ApiError, parseContract, parseResponse, validateRequest } from "./python-api.ts";
-import { applyFrame } from "./python-stream.ts";
+import type { Attachment, HttpOperations, Identity, Snapshot } from "../generated/contracts.ts";
+import { ApiError, parseContract, parseResponse, validateRequest } from "./api.ts";
+import { applyFrame } from "./stream.ts";
 
 type Options<K extends keyof HttpOperations> = {
 	readonly path?: HttpOperations[K]["path"];

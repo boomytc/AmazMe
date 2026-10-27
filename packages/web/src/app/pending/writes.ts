@@ -1,8 +1,8 @@
 /// <reference lib="dom" />
-import type { HttpOperations, Identity } from "./python-contracts.ts";
-import { definitive, isRecord, validateRequest } from "./python-api.ts";
-import type { ClientConnection, PythonClient } from "./python-client.ts";
-import { PendingPayloads } from "./python-payloads.ts";
+import type { HttpOperations, Identity } from "../../generated/contracts.ts";
+import { definitive, isRecord, validateRequest } from "../../transport/api.ts";
+import type { ClientConnection, PythonClient } from "../../transport/client.ts";
+import { PendingPayloads } from "./payloads.ts";
 
 export const newId = (): string => crypto.randomUUID().replaceAll("-", "");
 

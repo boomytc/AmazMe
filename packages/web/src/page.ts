@@ -1,4 +1,4 @@
-import { DesktopPage } from "./python-page.ts";
+import { DesktopPage } from "./app/desktop-page.ts";
 
 const page = new DesktopPage();
 window.addEventListener("pagehide", () => page.dispose());

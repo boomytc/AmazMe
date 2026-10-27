@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
-import { isRecord } from "./python-api.ts";
-import type { TerminalType, TerminalView } from "./python-contracts.ts";
-import { newId } from "./python-writes.ts";
+import { isRecord } from "../../transport/api.ts";
+import type { TerminalType, TerminalView } from "../../generated/contracts.ts";
+import { newId } from "./writes.ts";
 
 export interface TerminalBinding {
 	active(): boolean;

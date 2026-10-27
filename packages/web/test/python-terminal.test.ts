@@ -1,8 +1,8 @@
 /** @vitest-environment happy-dom */
 /// <reference lib="dom" />
 import { afterEach, expect, test, vi } from "vitest";
-import type { TerminalType, TerminalView } from "../src/python-contracts.ts";
-import { TerminalInputQueue } from "../src/python-terminal.ts";
+import type { TerminalType, TerminalView } from "../src/generated/contracts.ts";
+import { TerminalInputQueue } from "../src/app/pending/terminal.ts";
 
 const accepted: TerminalView = { terminal_id: "terminal", cols: 80, rows: 24, queued: 0, written: 0, output: "", phase: "running", input_status: "accepted" };
 afterEach(() => { sessionStorage.clear(); });

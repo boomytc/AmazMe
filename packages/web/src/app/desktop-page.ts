@@ -1,26 +1,26 @@
 /// <reference lib="dom" />
-import * as A from "./actions.ts";
-import { commandPalette, parseCommandLine, type CommandLike } from "./commands.ts";
-import { dockView, parseWorkspaceAction, type WorkspaceStateLike } from "./dock.ts";
-import { documentLanguage, resolveLocale, type Locale } from "./locale.ts";
-import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, PROVIDER_TEST_ACTION, PROVIDER_TEST_ALL_ACTION, PROVIDER_TEST_MODAL, providerConfigurationModal, providerLogoutModal, providerTestModal, verificationStatusText, type ModelConnectionsLike } from "./model-connections.ts";
-import { modelScopeModal } from "./model-scope.ts";
-import type { ApprovalPolicy } from "./permission-picker.ts";
-import * as P from "./panels.ts";
-import * as Projects from "./projects.ts";
-import { collectPageElements, createRenderer, type PageRenderer } from "./render.ts";
-import { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "./provider-auth.ts";
-import { ApiError, definitive, isRecord, parseContract } from "./python-api.ts";
-import { PythonClient, type ClientConnection } from "./python-client.ts";
-import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginCallView, PluginPackages, PluginView, ProductSettings, ProjectView, ProviderCheck, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "./python-contracts.ts";
-import { pythonDirectory, pythonView } from "./python-view.ts";
-import { PendingWrites, newId } from "./python-writes.ts";
-import { seq, settled } from "./python-stream.ts";
-import { TerminalInputQueue } from "./python-terminal.ts";
-import { followSystemTheme, applyTheme, resolveThemePreference } from "./theme.ts";
-import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, FONT_SIZE_LIMITS, resolveTypography, type Typography } from "./typography.ts";
-import { attachmentRejection, attachments, type SubmitMode, type TranscriptBlock } from "./view.ts";
-import { toolResultView } from "./tool-results.ts";
+import * as A from "../actions.ts";
+import { commandPalette, parseCommandLine, type CommandLike } from "../commands.ts";
+import { dockView, parseWorkspaceAction, type WorkspaceStateLike } from "../dock.ts";
+import { documentLanguage, resolveLocale, type Locale } from "../locale.ts";
+import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL, PROVIDER_LOGOUT_ACTION, PROVIDER_LOGOUT_MODAL, PROVIDER_SELECT_ACTION, PROVIDER_TEST_ACTION, PROVIDER_TEST_ALL_ACTION, PROVIDER_TEST_MODAL, providerConfigurationModal, providerLogoutModal, providerTestModal, verificationStatusText, type ModelConnectionsLike } from "../model-connections.ts";
+import { modelScopeModal } from "../model-scope.ts";
+import type { ApprovalPolicy } from "../permission-picker.ts";
+import * as P from "../panels.ts";
+import * as Projects from "../projects.ts";
+import { collectPageElements, createRenderer, type PageRenderer } from "../render.ts";
+import { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "../provider-auth.ts";
+import { ApiError, definitive, isRecord, parseContract } from "../transport/api.ts";
+import { PythonClient, type ClientConnection } from "../transport/client.ts";
+import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginCallView, PluginPackages, PluginView, ProductSettings, ProjectView, ProviderCheck, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
+import { pythonDirectory, pythonView } from "./view.ts";
+import { PendingWrites, newId } from "./pending/writes.ts";
+import { seq, settled } from "../transport/stream.ts";
+import { TerminalInputQueue } from "./pending/terminal.ts";
+import { followSystemTheme, applyTheme, resolveThemePreference } from "../theme.ts";
+import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, FONT_SIZE_LIMITS, resolveTypography, type Typography } from "../typography.ts";
+import { attachmentRejection, attachments, type SubmitMode, type TranscriptBlock } from "../view.ts";
+import { toolResultView } from "../tool-results.ts";
 
 const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 	anthropic: "browser", openai: "browser", "openai-codex": "browser", openrouter: "browser", "github-copilot": "device_code", "kimi-coding": "device_code", xai: "device_code", meta: "device_code",

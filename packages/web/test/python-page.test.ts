@@ -3,9 +3,9 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { DesktopPage } from "../src/python-page.ts";
-import type { Submit } from "../src/python-contracts.ts";
-import { parseContract } from "../src/python-api.ts";
+import { DesktopPage } from "../src/app/desktop-page.ts";
+import type { Submit } from "../src/generated/contracts.ts";
+import { parseContract } from "../src/transport/api.ts";
 import * as A from "../src/actions.ts";
 import * as P from "../src/panels.ts";
 import { MODEL_ENABLED_ACTION, PROVIDER_EDIT_ACTION, PROVIDER_EDIT_MODAL } from "../src/model-connections.ts";
@@ -422,7 +422,7 @@ test("the original resource palette submits resource commands for Python expansi
 });
 
 test("the original compaction dialog pins its instructions and completed turn across retries and does not close a newer dialog", async () => {
- const requests: Array<import("../src/python-contracts.ts").CompactSession> = [];
+ const requests: Array<import("../src/generated/contracts.ts").CompactSession> = [];
  let finish: (response: Response) => void = () => { throw new Error("compaction retry not started"); };
  const { page } = await startPage((path, options) => {
   if (!path.endsWith("/compactions")) return undefined;
@@ -451,7 +451,7 @@ test("the original compaction dialog pins its instructions and completed turn ac
 });
 
 test("original answer feedback retries the original vote, toggles to retract, and rejects controls from another session", async () => {
- const session = "a".repeat(32), requests: Array<import("../src/python-contracts.ts").AnswerFeedbackWrite> = [];
+ const session = "a".repeat(32), requests: Array<import("../src/generated/contracts.ts").AnswerFeedbackWrite> = [];
  const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
  const { page } = await startPage((path, options) => {
   if (path === "/api/v1/sessions") return response({ sessions: [{ session_id: session, title: "A", workspace: "primary" }] });
@@ -732,7 +732,7 @@ test("model choices follow configured connections and refresh an open picker wit
 
 test("provider configuration works before a session exists and a lost reply keeps its original public settings", async () => {
  const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
- const configurations: Array<import("../src/python-contracts.ts").ConfigureProvider> = [];
+ const configurations: Array<import("../src/generated/contracts.ts").ConfigureProvider> = [];
  let modelWrites = 0;
  const { page } = await startPage((path, options) => {
   if (path === "/api/v1/sessions") return response({ sessions: [] });
@@ -807,7 +807,7 @@ test("a confirmed provider catalog refreshes before API key and OAuth completion
 
 test("an unconfirmed credential keeps its original content and revision when its modal shows an error", async () => {
  const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
- const writes: Array<import("../src/python-contracts.ts").CredentialUpdate> = [];
+ const writes: Array<import("../src/generated/contracts.ts").CredentialUpdate> = [];
  const { page } = await startPage((path, options) => {
   if (path === "/api/v1/accounts") return response({ revision: 4, accounts: [{ provider: "openai", type: "api_key" }] });
   if (path === "/api/v1/models") return response({ models: [{ provider: "openai", model: "gpt", label: "GPT", endpoint_editable: true, api: "openai-completions", base_url: "https://api.openai.com/v1" }],
@@ -834,7 +834,7 @@ test("an unconfirmed credential keeps its original content and revision when its
 
 test("late OAuth controls cannot cancel or submit to a newer login, and confirmed cancellation clears only its own ID", async () => {
  const response = (value: unknown) => new Response(JSON.stringify(value));
- const logins: Array<import("../src/python-contracts.ts").OAuthStart> = [], cancellations: string[] = [], inputs: string[] = [];
+ const logins: Array<import("../src/generated/contracts.ts").OAuthStart> = [], cancellations: string[] = [], inputs: string[] = [];
  let finish: (response: Response) => void = () => { throw new Error("cancellation not started"); };
  const { page } = await startPage((path, options) => {
   if (path === "/api/v1/accounts/oauth") {
@@ -917,7 +917,7 @@ test("original file navigation keeps paths relative, retains page on refresh, sw
 });
 
 test("schedule creation retains its original session, ID and input after a lost receipt, and cannot close a newer dialog", async () => {
- const session = "a".repeat(32), saved: Array<import("../src/python-contracts.ts").ScheduleInput> = [];
+ const session = "a".repeat(32), saved: Array<import("../src/generated/contracts.ts").ScheduleInput> = [];
  let finish: (response: Response) => void = () => { throw new Error("retry not started"); };
  let records: unknown[] = [];
  const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
@@ -964,7 +964,7 @@ test("schedule creation retains its original session, ID and input after a lost 
 });
 
 test("a package add retries its original profile operation and a late response cannot close a newer dialog", async () => {
- const saved: Array<import("../src/python-contracts.ts").PluginPackageAdd> = [];
+ const saved: Array<import("../src/generated/contracts.ts").PluginPackageAdd> = [];
  let finish: (response: Response) => void = () => { throw new Error("retry not started"); };
  const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
  let packages: unknown[] = [];
@@ -999,7 +999,7 @@ test("a package add retries its original profile operation and a late response c
 });
 
 test("the MCP switch retries its original revision and intent before accepting a new opposite change", async () => {
- const calls: Array<import("../src/python-contracts.ts").McpConfigPatch> = [];
+ const calls: Array<import("../src/generated/contracts.ts").McpConfigPatch> = [];
  const response = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
  let revision = 4, enabled = true;
  const configuration = () => ({ revision, workspace: "primary", path: "/profile/host.sqlite", servers: [{ config_id: "c".repeat(32), launch_id: "d".repeat(32), name: "local", detail: "python3 server.py", scope: "global", enabled, exposure: "direct" }] });

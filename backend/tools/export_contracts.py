@@ -88,9 +88,9 @@ def main():
             generated += f"  {json.dumps(key)}: {{ response: {ts(response_schema)}; path: {ts(path_schema)}; query: {ts(query_schema)}; body: {ts(body_schema) if body_schema else 'undefined'} }};\n"
     generated += "}\n"
     web = ROOT.parent / "packages/web/src"
-    write(web / "python-contracts.ts", generated)
+    write(web / "generated/contracts.ts", generated)
     # The browser validates before a value can enter its typed presentation state.
-    write(web / "python-schema.json", json.dumps({"$defs": models, "operations": operations}, ensure_ascii=False, indent=2) + "\n")
+    write(web / "generated/schema.json", json.dumps({"$defs": models, "operations": operations}, ensure_ascii=False, indent=2) + "\n")
 
 
 if __name__ == "__main__":

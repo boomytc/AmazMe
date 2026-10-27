@@ -292,7 +292,7 @@ async def test_connection_capacity_counts_prehello(monkeypatch):
 
 
 def browser_module():
-    return (Path(__file__).parents[2] / "packages/web/src/python-stream.ts").resolve().as_uri()
+    return (Path(__file__).parents[2] / "packages/web/src/transport/stream.ts").resolve().as_uri()
 
 
 def browser_apply_batches(snapshot: Snapshot, batches: list[CommitBatch]) -> Snapshot:

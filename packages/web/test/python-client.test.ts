@@ -1,12 +1,12 @@
 /** @vitest-environment happy-dom */
 /// <reference lib="dom" />
 import { afterEach, expect, test, vi } from "vitest";
-import { ApiError, parseContract } from "../src/python-api.ts";
-import { PythonClient, type ClientConnection } from "../src/python-client.ts";
-import type { Attachment, Receipt, Snapshot, Stream } from "../src/python-contracts.ts";
-import { applyFrame } from "../src/python-stream.ts";
-import { pythonView, transcriptBlocks } from "../src/python-view.ts";
-import { PendingWrites } from "../src/python-writes.ts";
+import { ApiError, parseContract } from "../src/transport/api.ts";
+import { PythonClient, type ClientConnection } from "../src/transport/client.ts";
+import type { Attachment, Receipt, Snapshot, Stream } from "../src/generated/contracts.ts";
+import { applyFrame } from "../src/transport/stream.ts";
+import { pythonView, transcriptBlocks } from "../src/app/view.ts";
+import { PendingWrites } from "../src/app/pending/writes.ts";
 import { DEFAULT_TYPOGRAPHY } from "../src/typography.ts";
 import { failureView } from "../src/view.ts";
 
