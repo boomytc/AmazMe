@@ -10,7 +10,7 @@ import type { DesktopUpdateIO, PreparedUpdate } from "./update-controller.ts";
 import { handoffUpdate } from "./update-handoff.ts";
 import { discardPreparedUpdate } from "./update-cleanup.ts";
 import { macOSBundleVersion } from "./macos-version.ts";
-import { pythonUpdateStatePath, readPythonBuildId } from "./python-backend.ts";
+import { pythonUpdateStatePath, readPythonBuildId } from "../python-backend.ts";
 
 const exec = promisify(execFile);
 export type MacTool = (command: string, args: readonly string[]) => Promise<string>;
@@ -174,7 +174,7 @@ export function createMacUpdateIO(options: {
 				},
 				resume: async () => { await options.resumeHost?.(); },
 				start() {
-					const child = spawn(node, [fileURLToPath(new URL("./update-helper.bundle.mjs", import.meta.url)), prepared.directory], {
+					const child = spawn(node, [fileURLToPath(new URL("../update-helper.bundle.mjs", import.meta.url)), prepared.directory], {
 						detached: true, stdio: ["pipe", "pipe", "ignore"], env: helperEnv,
 					});
 					child.stdin.on("error", () => {});

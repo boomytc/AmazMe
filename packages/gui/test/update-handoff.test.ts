@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { handoffUpdate, type UpdateHelperPort } from "../src/update-handoff.ts";
+import { handoffUpdate, type UpdateHelperPort } from "../src/updates/update-handoff.ts";
 
 afterEach(() => vi.useRealTimers());
 function portFixture() {

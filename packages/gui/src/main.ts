@@ -31,10 +31,10 @@ import { withWindowTarget, type WindowAddress } from "./deep-link.ts";
 import { attentionOnTitle } from "./title.ts";
 import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
-import { createDesktopUpdates } from "./desktop-updates.ts";
-import { markUpdatedDesktopHealthy } from "./update-helper.ts";
-import { mayStartInstalledApp, shouldStartDesktopUpdates } from "./update-launch.ts";
-import { recoverStaleUpdateLock, updateLockState } from "./update-lock.ts";
+import { createDesktopUpdates } from "./updates/desktop-updates.ts";
+import { markUpdatedDesktopHealthy } from "./updates/update-helper.ts";
+import { mayStartInstalledApp, shouldStartDesktopUpdates } from "./updates/update-launch.ts";
+import { recoverStaleUpdateLock, updateLockState } from "./updates/update-lock.ts";
 import {
 	desktopPythonBootPlan,
 	initialPythonProvider,

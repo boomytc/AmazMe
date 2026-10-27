@@ -5,7 +5,7 @@ import { mkdtemp, mkdir, readFile, realpath, rename, rm, writeFile } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { macTool, verifyApp, fileDigest } from "../packages/gui/dist/macos-update.js";
+import { macTool, verifyApp, fileDigest } from "../packages/gui/dist/updates/macos-update.js";
 import { desktopUpdateAsset, parseUpdateManifest } from "../packages/coding-agent/dist/update-manifest.js";
 
 function argument(name) {

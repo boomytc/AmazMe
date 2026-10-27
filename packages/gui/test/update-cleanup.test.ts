@@ -3,11 +3,11 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { createUpdateController, type DesktopUpdateIO } from "../src/update-controller.ts";
-import { discardPreparedUpdate } from "../src/update-cleanup.ts";
-import { acquireUpdateLock, readUpdateLock, recoverStaleUpdateLock, updateLockState } from "../src/update-lock.ts";
-import { mayStartInstalledApp } from "../src/update-launch.ts";
-import type { InstallJob } from "../src/macos-update.ts";
+import { createUpdateController, type DesktopUpdateIO } from "../src/updates/update-controller.ts";
+import { discardPreparedUpdate } from "../src/updates/update-cleanup.ts";
+import { acquireUpdateLock, readUpdateLock, recoverStaleUpdateLock, updateLockState } from "../src/updates/update-lock.ts";
+import { mayStartInstalledApp } from "../src/updates/update-launch.ts";
+import type { InstallJob } from "../src/updates/macos-update.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 function fixture() {

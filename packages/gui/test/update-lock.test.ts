@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { acquireUpdateLock, readUpdateLock, recoverStaleUpdateLock, releaseUpdateLock, updateLockState } from "../src/update-lock.ts";
-import type { InstallJob } from "../src/macos-update.ts";
+import { acquireUpdateLock, readUpdateLock, recoverStaleUpdateLock, releaseUpdateLock, updateLockState } from "../src/updates/update-lock.ts";
+import type { InstallJob } from "../src/updates/macos-update.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 function fixture() {

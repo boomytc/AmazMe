@@ -2,9 +2,9 @@ import { createHash } from "node:crypto";
 import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, test, vi } from "vitest";
-import { downloadRelease, verifyApp, type MacTool } from "../src/macos-update.ts";
+import { downloadRelease, verifyApp, type MacTool } from "../src/updates/macos-update.ts";
 import { createTempDir } from "./temp-dir.ts";
-import { macOSBundleVersion } from "../src/macos-version.ts";
+import { macOSBundleVersion } from "../src/updates/macos-version.ts";
 
 const TEAM = "ABCDE12345";
 function fakeTool(detail = "TeamIdentifier=" + TEAM + "\nCDHash=" + "a".repeat(40)): MacTool {

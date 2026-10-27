@@ -1,5 +1,5 @@
 import { expect, test, vi } from "vitest";
-import { replaceApplication, type UpdateTransactionIO } from "../src/update-transaction.ts";
+import { replaceApplication, type UpdateTransactionIO } from "../src/updates/update-transaction.ts";
 
 const paths = { target: "/Applications/AmazMe.app", staged: "/Applications/.update/AmazMe.app", backup: "/Applications/.update/Previous.app" };
 function fixture(fault?: string) {

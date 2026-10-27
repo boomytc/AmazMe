@@ -1,7 +1,7 @@
 import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { mayStartInstalledApp, shouldStartDesktopUpdates } from "../src/update-launch.ts";
+import { mayStartInstalledApp, shouldStartDesktopUpdates } from "../src/updates/update-launch.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 test("desktop updates start only for packaged releases at or above 1.0.0", () => {

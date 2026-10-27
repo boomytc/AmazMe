@@ -18,7 +18,7 @@ import {
 	installPackageArtifacts,
 } from "./package-artifacts.mjs";
 import { resolveSigning, signApp, signDiskImage, writeChecksum } from "./macos-signing.mjs";
-import { macOSBundleVersion } from "../packages/gui/dist/macos-version.js";
+import { macOSBundleVersion } from "../packages/gui/dist/updates/macos-version.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);

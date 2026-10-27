@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { createUpdateController, type DesktopUpdateIO, type UpdateState } from "../src/update-controller.ts";
+import { createUpdateController, type DesktopUpdateIO, type UpdateState } from "../src/updates/update-controller.ts";
 
 const release = { manifest: { version: "8.6.0", tag: "v8.6.0", assets: [] }, asset: { name: "update.dmg", url: "https://github.com/boomytc/AmazMe/releases/download/v8.6.0/update.dmg", sha256: "c".repeat(64), size: 3 } };
 function setup(overrides: Partial<DesktopUpdateIO> = {}) {
