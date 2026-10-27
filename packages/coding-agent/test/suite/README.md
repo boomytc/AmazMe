@@ -4,6 +4,7 @@
 
 - Run them through `npm test --workspace @amazme/coding-agent`, or one file with
   `npx vitest --run test/suite/regressions/<file>` from the package directory.
-- Keep provider-bound tests deterministic and offline by using the faux provider from
-  `@amazme/ai`; tests that need real credentials must stay gated and skipped without them.
-- `test/mcp-conformance/` is a separate suite for MCP protocol conformance.
+- Business execution uses the Python backend. Provider-bound tests use its faux
+  provider; real credentials require an explicit opt-in.
+- MCP protocol conformance belongs to the backend: run `npm run test:mcp-conformance`
+  from the repository root.

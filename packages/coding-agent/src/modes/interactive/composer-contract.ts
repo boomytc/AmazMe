@@ -1,6 +1,4 @@
-import { matchesKey } from "@amazme/tui";
 import { formatKeyText } from "../../core/keybinding-labels.ts";
-import { keyDisplayText } from "./components/keybinding-hints.ts";
 
 export type TerminalClass = "default" | "apple-terminal" | "vscode";
 
@@ -25,71 +23,12 @@ export type ComposerDecision =
 	| { type: "background" }
 	| { type: "noop" };
 
-export interface ComposerEditor {
-	getText(): string;
-	setText(text: string): void;
-	insertTextAtCursor(text: string): void;
-}
-
-/** Side effects the session performs after a composer decision. */
-export interface ComposerEffects {
-	isTurnRunning(): boolean;
-	send(text: string): void;
-	queue(text: string): void;
-	sendQueued(text: string): void;
-	cancelAndSend(text: string): void;
-	cancelTurn(): void;
-	showEscHint(): void;
-	/** Move the running foreground command to the background. Returns false when nothing is running. */
-	background(): boolean;
-	/**
-	 * A retry or compaction countdown installed its own Escape handler, so the
-	 * composer hands the key through instead of showing the cancel hint.
-	 */
-	escOwnedBySurface?(): boolean;
-}
-
 /**
  * Chord that cancels a running turn. Every surface that advertises the cancel
  * action spells it through this helper.
  */
 export function turnCancelKey(): string {
 	return formatKeyText("ctrl+c", { capitalize: true });
-}
-
-/** Reminder shown when Esc is pressed during a turn, and next to the working indicator. */
-export function turnCancelHint(): string {
-	return `${turnCancelKey()} to cancel`;
-}
-
-export function turnCancelNotice(): string {
-	return `Press ${turnCancelKey()} to cancel the turn`;
-}
-
-const VS_CODE_TERMINALS = new Set(["vscode", "cursor", "windsurf", "zed"]);
-
-/** Native and hosted Durable terminals expose the same keyboard entry points. */
-export function durablePromptShortcutLine(turnRunning: boolean): string {
-	const parts = ["/ commands"];
-	for (const [action, label] of [["app.model.select", "model"], ["app.thinking.cycle", "thinking"]] as const) {
-		const keys = keyDisplayText(action);
-		if (keys) parts.push(`${keys} ${label}`);
-	}
-	if (turnRunning) {
-		const keys = keyDisplayText("app.interrupt");
-		if (keys) parts.push(`${keys} stop`);
-	}
-	parts.push(`Enter ${turnRunning ? "steer" : "send"}`);
-	const followUp = keyDisplayText("app.message.followUp");
-	if (followUp) parts.push(`${followUp} follow-up`);
-	return parts.join(" · ");
-}
-
-export function detectTerminalClass(env: NodeJS.ProcessEnv = process.env): TerminalClass {
-	const program = env.TERM_PROGRAM ?? "";
-	if (program === "Apple_Terminal") return "apple-terminal";
-	if (VS_CODE_TERMINALS.has(program)) return "vscode";
-	return "default";
 }
 
 /** Compact prompt hints for non-obvious entry points and state-specific actions. */
@@ -160,108 +99,4 @@ export function decideComposerAction(state: ComposerState, key: ComposerKey): Co
 		return { type: "send", text: trimmed };
 	}
 	return { type: "noop" };
-}
-
-function classifyComposerKey(data: string, terminalClass: TerminalClass): ComposerKey | undefined {
-	if (matchesKey(data, "escape")) return "escape";
-	if (matchesKey(data, "ctrl+c")) return "ctrl+c";
-	if (matchesKey(data, "ctrl+b")) return "background";
-	if (terminalClass === "apple-terminal" && matchesKey(data, "ctrl+o")) return "send-now";
-	if (terminalClass === "vscode" && matchesKey(data, "ctrl+l")) return "send-now";
-	if (terminalClass === "default" && matchesKey(data, "ctrl+enter")) return "send-now";
-	if (matchesKey(data, "shift+enter")) return "shift+enter";
-	if (matchesKey(data, "alt+enter")) return "alt+enter";
-	if (matchesKey(data, "enter")) return "enter";
-	return undefined;
-}
-
-/**
- * Input handler the interactive editor calls before its own key table.
- * The queue lives here so the footer and the turn-end flush see the same rows.
- */
-export class InteractiveComposer {
-	multiline = false;
-	terminalClass: TerminalClass;
-	readonly queue: string[] = [];
-	private readonly editor: ComposerEditor;
-	private readonly effects: ComposerEffects;
-
-	constructor(editor: ComposerEditor, effects: ComposerEffects, terminalClass: TerminalClass = detectTerminalClass()) {
-		this.editor = editor;
-		this.effects = effects;
-		this.terminalClass = terminalClass;
-	}
-
-	/** Send the oldest queued row after the current turn ends. Returns false when nothing is queued. */
-	deliverAfterTurn(send: (text: string) => void): boolean {
-		const next = this.queue.shift();
-		if (next === undefined) return false;
-		send(next);
-		return true;
-	}
-
-	handleInput(data: string): boolean {
-		const key = classifyComposerKey(data, this.terminalClass);
-		if (!key) return false;
-		if (key === "escape" && this.effects.escOwnedBySurface?.() === true) return false;
-		const decision = decideComposerAction(
-			{
-				draft: this.editor.getText(),
-				queue: this.queue,
-				turnRunning: this.effects.isTurnRunning(),
-				multiline: this.multiline,
-			},
-			key,
-		);
-		if (this.apply(decision)) return true;
-		// The newline chords belong to the composer, so a no-op still consumes them.
-		// Send-now and the background chord fall back to the application binding that
-		// shares the key when there is nothing to cancel or background (Apple
-		// Terminal's Ctrl+O toggles tool output, VS Code's Ctrl+L opens the model
-		// selector, Ctrl+B moves the cursor left).
-		return key === "shift+enter" || key === "alt+enter";
-	}
-
-	private apply(decision: ComposerDecision): boolean {
-		switch (decision.type) {
-			case "noop":
-				return false;
-			case "insert-newline":
-				this.editor.insertTextAtCursor("\n");
-				return true;
-			case "clear-draft":
-				this.editor.setText("");
-				return true;
-			case "esc-hint":
-				this.effects.showEscHint();
-				return true;
-			case "cancel-turn":
-				this.effects.cancelTurn();
-				return true;
-			case "background":
-				return this.effects.background();
-			case "queue":
-				this.queue.push(decision.text);
-				this.editor.setText("");
-				this.effects.queue(decision.text);
-				return true;
-			case "send":
-				this.editor.setText("");
-				this.effects.send(decision.text);
-				return true;
-			case "send-queued":
-				this.queue.shift();
-				this.effects.sendQueued(decision.text);
-				return true;
-			case "cancel-and-send": {
-				const draft = this.editor.getText().trim();
-				if (draft.length === 0) this.queue.shift();
-				this.editor.setText("");
-				this.effects.cancelAndSend(decision.text);
-				return true;
-			}
-			default:
-				return false;
-		}
-	}
 }

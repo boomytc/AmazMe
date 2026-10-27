@@ -263,53 +263,9 @@ renderDeclarations({ tools: sandbox.tools, globals: sandbox.globals });
 
 Property descriptions become `//` comments. Constraints the type cannot express follow as tags, such as `// @integer @minimum 1 @default 20`; they are dropped first when a type exceeds the size limit. Schemas only shape the declarations; values are not validated against them. Local references (`#/$defs/...`, `#/definitions/...`) are expanded; recursive and remote references render as `unknown`.
 
-## Using with @amazme/agent
+## AmazMe integration
 
-To give an `Agent` a codemode tool, expose its other tools to the sandbox and wrap `execute()` as an `AgentTool`:
-
-```ts
-import type { AgentTool } from "@amazme/agent";
-import {
-	type CodemodeJsonSchema,
-	CodemodeSandbox,
-	type CodemodeTool,
-	renderDeclarations,
-} from "@amazme/codemode";
-import { Type } from "typebox";
-
-const sandboxTools: CodemodeTool[] = agentTools.map((tool) => ({
-	name: tool.name,
-	description: tool.description,
-	inputSchema: tool.parameters as CodemodeJsonSchema,
-	outputSchema: (tool.outputSchema as CodemodeJsonSchema | undefined) ?? { type: "string" },
-	execute: async (args, { signal }) => {
-		const result = await tool.execute("nested", args as never, signal);
-		if (tool.outputSchema && result.structuredContent !== undefined) return result.structuredContent;
-		return result.content.map((block) => (block.type === "text" ? block.text : "")).join("\n");
-	},
-}));
-
-const codemodeTool: AgentTool = {
-	name: "codemode",
-	label: "Codemode",
-	description: `Run JavaScript that calls tools as \`await tools.<name>(args)\`. Output with text() or return.\n\n${renderDeclarations({ tools: sandboxTools })}`,
-	parameters: Type.Object({ code: Type.String() }),
-	execute: async (_toolCallId, { code }, signal) => {
-		const sandbox = new CodemodeSandbox({ tools: sandboxTools });
-		try {
-			const result = await sandbox.execute(code, { signal });
-			const content = [...result.output];
-			if (result.ok && result.value !== undefined) content.push({ type: "text", text: JSON.stringify(result.value) });
-			if (!result.ok) content.push({ type: "text", text: result.error.stack ?? result.error.message });
-			return { content, details: undefined, isError: !result.ok };
-		} finally {
-			await sandbox.close();
-		}
-	},
-};
-```
-
-`result.output` items already have the shape of `@amazme/ai`'s `TextContent` and `ImageContent`. Calling `tool.execute()` directly skips the agent's `beforeToolCall` and `afterToolCall` hooks. To apply them to nested calls too, run each call through `runToolCall()` from `@amazme/agent`, as the [mcp-codemode example](https://github.com/earendil-works/pi/tree/main/packages/agent/examples/mcp-codemode) does. That example also rejects failed nested calls inside the script and combines codemode with MCP tools.
+The Python Supervisor owns tool execution and persistence. Its [Node helper](../../backend/src/amazme_backend/execution/codemode/helper.mjs) runs `InlineCodemodeSandbox` and forwards nested tool calls to Python over stdio.
 
 ## Deterministic runs
 

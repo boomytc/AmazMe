@@ -1,6 +1,17 @@
 import { EventEmitter } from "node:events";
 import type { HostChild } from "../src/host.ts";
 
+export function pythonReadyLine(port: number): string {
+	return JSON.stringify({
+		url: `http://127.0.0.1:${port}/`,
+		role: "host",
+		protocol: "amazme-http/1",
+		build_id: "a".repeat(64),
+		host_epoch: 1,
+		profile_id: "fixture",
+	});
+}
+
 export interface FakeHost {
 	readonly child: HostChild;
 	emitStdout(chunk: string): void;

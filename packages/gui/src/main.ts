@@ -90,14 +90,12 @@ let notices: ShellController;
 let lifecycle: DesktopLifecycle<BrowserWindow>;
 let desktopApi: PythonDesktopApi;
 let updates: ReturnType<typeof createDesktopUpdates> | undefined;
-const desktopUpdateToken = randomBytes(32).toString("hex");
-let usingPythonBackend = false;
 let pythonProfile = "";
 let pythonWebToken = "";
 
 async function stopPythonBackend(): Promise<void> {
 	const ready = host?.pythonReady();
-	if (!usingPythonBackend || ready === undefined || pythonProfile.length === 0 || pythonWebToken.length === 0) return;
+	if (ready === undefined || pythonProfile.length === 0 || pythonWebToken.length === 0) return;
 	const request = pythonShutdownRequest(ready, readControlToken(pythonProfile), pythonWebToken);
 	const response = await fetch(request.url, {
 		method: "POST", redirect: "error", headers: request.headers, body: request.body, signal: AbortSignal.timeout(request.timeoutMs),
@@ -167,38 +165,27 @@ async function controlCall(path: string, method: string, body?: string): Promise
 /** Verify on the target build, then activate. The source build is left frozen. */
 async function settlePythonUpdate(): Promise<void> {
 	const ready = host?.pythonReady();
-	if (!usingPythonBackend || ready === undefined) return;
+	if (ready === undefined) return;
 	await settlePythonBackendUpdate(ready, readControlToken(pythonProfile), pythonWebToken);
 	if (readPendingPythonUpdate()?.updateId !== undefined) clearPendingPythonUpdate();
 }
 
-async function updateHostAdmission(action: "prepare" | "resume"): Promise<boolean> {
-	if (usingPythonBackend) {
-		const ready = host?.pythonReady();
-		if (ready === undefined || pythonWebToken.length === 0 || pythonProfile.length === 0) return false;
-		try {
-			if (action === "prepare") {
-				const target = readPendingPythonUpdate()?.targetBuild ?? process.env.AMAZME_PYTHON_TARGET_BUILD ?? "";
-				const updateId = randomBytes(8).toString("hex");
-				const request = pythonPrepareUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, updateId, target);
-				const response = await controlCall(new URL(request.url).pathname, "POST", request.body);
-				const prepared = parsePythonUpdateRecord(response.value);
-				if (!response.ok || prepared === undefined || prepared.activated || prepared.phase !== "prepared") return false;
-				writePendingPythonUpdate({ updateId: prepared.updateId, targetBuild: prepared.targetBuild });
-				return true;
-			}
-			await settlePythonUpdate();
-			return true;
-		} catch (error: unknown) {
-			console.error(`desktop python update failed: ${error instanceof Error ? error.message : "request failed"}`);
-			return false;
-		}
-	}
-	if (!hostPageUrl) return false;
+async function prepareHostUpdate(): Promise<boolean> {
+	const ready = host?.pythonReady();
+	if (ready === undefined || pythonWebToken.length === 0 || pythonProfile.length === 0) return false;
 	try {
-		const response = await fetch(new URL(`/desktop-update/${action}`, hostPageUrl), { method: "POST", redirect: "error", signal: AbortSignal.timeout(15_000), headers: { "x-amazme-desktop-update": desktopUpdateToken } });
-		await response.body?.cancel(); return response.ok;
-	} catch { return false; }
+		const target = readPendingPythonUpdate()?.targetBuild ?? process.env.AMAZME_PYTHON_TARGET_BUILD ?? "";
+		const updateId = randomBytes(8).toString("hex");
+		const request = pythonPrepareUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, updateId, target);
+		const response = await controlCall(new URL(request.url).pathname, "POST", request.body);
+		const prepared = parsePythonUpdateRecord(response.value);
+		if (!response.ok || prepared === undefined || prepared.activated || prepared.phase !== "prepared") return false;
+		writePendingPythonUpdate({ updateId: prepared.updateId, targetBuild: prepared.targetBuild });
+		return true;
+	} catch (error: unknown) {
+		console.error(`desktop python update failed: ${error instanceof Error ? error.message : "request failed"}`);
+		return false;
+	}
 }
 
 function readinessTimeout(): number | undefined {
@@ -673,7 +660,6 @@ async function boot(): Promise<void> {
 	app.dock?.setIcon(APP_ICON);
 	const pythonExecutable = requirePythonBackend(resolvePythonBackend(process.env, process.resourcesPath));
 	const cwd = hostWorkingDirectory(process.env, process.cwd());
-	usingPythonBackend = true;
 	pythonProfile = join(app.getPath("userData"), "python-profile");
 	const provider = join(app.getPath("userData"), "initial-provider.json");
 	if (!existsSync(provider)) {
@@ -718,7 +704,7 @@ async function boot(): Promise<void> {
 		},
 	});
 	const pageUrl = await host.start();
-	if (usingPythonBackend) await settlePythonUpdate();
+	await settlePythonUpdate();
 	const namedSession = deepLinkSession?.trim();
 	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: "primary" } : { workspace: "primary", fresh: true }));
 	const installedRelease = app.isPackaged && existsSync(join(process.resourcesPath, "release-manifest.json"));
@@ -745,7 +731,7 @@ async function boot(): Promise<void> {
 					return true;
 				} finally { showingDialog = false; }
 			},
-			prepareHost: () => updateHostAdmission("prepare"),
+			prepareHost: prepareHostUpdate,
 			quit: async () => { requestQuit(); },
 			resumeHost: async () => { await settlePythonUpdate(); },
 		});

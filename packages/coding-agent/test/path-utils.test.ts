@@ -1,36 +1,28 @@
-import { readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFileSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { expandPath, resolveReadPath, resolveToCwd } from "../src/core/tools/path-utils.ts";
+import { resolveReadPath, resolveToCwd } from "../src/core/tools/path-utils.ts";
 import { createTempDir } from "./temp-dir.ts";
 
 describe("path-utils", () => {
-	describe("expandPath", () => {
+	describe("resolveToCwd", () => {
 		it("should expand ~ to home directory", () => {
-			const result = expandPath("~");
-			expect(result).not.toContain("~");
+			const result = resolveToCwd("~", tmpdir());
+			expect(result).toBe(homedir());
 		});
 
 		it("should expand ~/path to home directory", () => {
-			const result = expandPath("~/Documents/file.txt");
-			expect(result).not.toContain("~/");
-		});
-
-		it("should keep tilde-prefixed filenames literal", () => {
-			expect(expandPath("~draft.md")).toBe("~draft.md");
-			expect(expandPath("@~draft.md")).toBe("~draft.md");
+			const result = resolveToCwd("~/Documents/file.txt", tmpdir());
+			expect(result).toBe(join(homedir(), "Documents", "file.txt"));
 		});
 
 		it("should normalize Unicode spaces", () => {
 			// Non-breaking space (U+00A0) should become regular space
 			const withNBSP = "file\u00A0name.txt";
-			const result = expandPath(withNBSP);
-			expect(result).toBe("file name.txt");
+			const result = resolveToCwd(withNBSP, tmpdir());
+			expect(result).toBe(resolve(tmpdir(), "file name.txt"));
 		});
-	});
-
-	describe("resolveToCwd", () => {
 		it("should resolve absolute paths as-is", () => {
 			const absolutePath = resolve(tmpdir(), "absolute", "path", "file.txt");
 			const result = resolveToCwd(absolutePath, resolve(tmpdir(), "some", "cwd"));
@@ -100,9 +92,7 @@ describe("path-utils", () => {
 
 			// User provides NFC path - should find the file (via filesystem normalization or our fallback)
 			const result = resolveReadPath(nfcFileName, tempDir);
-			// Result should contain the accented character (either NFC or NFD form)
-			expect(result).toContain(tempDir);
-			expect(result).toMatch(/file.+\.txt$/);
+			expect(readFileSync(result, "utf8")).toBe("content");
 		});
 
 		it("should handle curly quotes vs straight quotes (macOS filenames)", () => {

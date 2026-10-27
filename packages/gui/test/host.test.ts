@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from "vitest";
 import { createHostSupervisor, MAX_HOST_OUTPUT_CHARS, spawnNodeChild, type HostExitDetail, type HostStartupFailure } from "../src/host.ts";
-import { fakeHost } from "./fake-host.ts";
+import { fakeHost, pythonReadyLine } from "./fake-host.ts";
 
 describe("host supervisor", () => {
 	test("resolves the page URL and stops the child", async () => {
@@ -14,9 +14,9 @@ describe("host supervisor", () => {
 		});
 		const pending = supervisor.start();
 		fake.emitStdout("Mode: source\n");
-		fake.emitStdout("Web: http://127.0.0.1:4310/\n");
+		fake.emitStdout(`${pythonReadyLine(4310)}\n`);
 		await expect(pending).resolves.toBe("http://127.0.0.1:4310/");
-		expect(logged.join("")).toContain("Web: http://127.0.0.1:4310/");
+		expect(logged.join("")).toContain(pythonReadyLine(4310));
 		const stopped = supervisor.shutdown();
 		expect(fake.kills).toEqual(["SIGTERM"]);
 		fake.emitExit(null, "SIGTERM");
@@ -33,7 +33,7 @@ describe("host supervisor", () => {
 			},
 		});
 		const pending = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		fake.emitStdout(`${pythonReadyLine(1)}\n`);
 		await pending;
 		fake.emitStderr("still running\n");
 		expect(logged.join("")).toContain("still running");
@@ -56,7 +56,7 @@ describe("host supervisor", () => {
 		const fake = fakeHost();
 		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
 		const pending = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:9/");
+		fake.emitStdout(pythonReadyLine(9));
 		fake.emitExit(0, null);
 		await expect(pending).resolves.toBe("http://127.0.0.1:9/");
 	});
@@ -91,7 +91,7 @@ describe("host supervisor", () => {
 				shutdownTimeoutMs: 5_000,
 			});
 			const pending = supervisor.start();
-			fake.emitStdout("Web: http://127.0.0.1:1/\n");
+			fake.emitStdout(`${pythonReadyLine(1)}\n`);
 			await expect(pending).resolves.toBe("http://127.0.0.1:1/");
 			const stopped = supervisor.shutdown();
 			await vi.advanceTimersByTimeAsync(5_000);
@@ -126,7 +126,7 @@ describe("host supervisor", () => {
 		const fake = fakeHost();
 		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
 		const pending = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		fake.emitStdout(`${pythonReadyLine(1)}\n`);
 		await pending;
 		fake.emitStdout("x".repeat(MAX_HOST_OUTPUT_CHARS));
 		fake.emitStderr("TAIL");
@@ -144,11 +144,11 @@ describe("host supervisor", () => {
 			},
 		});
 		const pending = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		fake.emitStdout(`${pythonReadyLine(1)}\n`);
 		await pending;
 		fake.emitStderr("boom\n");
 		fake.emitExit(1, null);
-		expect(seen).toEqual([{ code: 1, signal: null, tail: "Web: http://127.0.0.1:1/\nboom\n" }]);
+		expect(seen).toEqual([{ code: 1, signal: null, tail: `${pythonReadyLine(1)}\nboom\n` }]);
 	});
 
 	test("names an exit before readiness and keeps the output on that failure", async () => {
@@ -188,7 +188,7 @@ describe("host supervisor", () => {
 					executable: process.execPath,
 					args: [
 						"-e",
-						"process.stdout.write('noise\\nWeb: http://127.0.0.1:4310/\\n'); setInterval(() => {}, 1000);",
+						`process.stdout.write(${JSON.stringify(`noise\n${pythonReadyLine(4310)}\n`)}); setInterval(() => {}, 1000);`,
 					],
 					cwd: process.cwd(),
 					env: process.env,
@@ -202,7 +202,7 @@ describe("host supervisor", () => {
 		const fake = fakeHost();
 		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
 		const starting = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		fake.emitStdout(`${pythonReadyLine(1)}\n`);
 		await starting;
 		const request = vi.fn(async () => { fake.emitExit(0, null); });
 		await supervisor.shutdown({ request, force: false });
@@ -216,7 +216,7 @@ describe("host supervisor", () => {
 			const fake = fakeHost();
 			const supervisor = createHostSupervisor({ spawnHost: () => fake.child, shutdownTimeoutMs: 5_000 });
 			const starting = supervisor.start();
-			fake.emitStdout("Web: http://127.0.0.1:1/\n");
+			fake.emitStdout(`${pythonReadyLine(1)}\n`);
 			await starting;
 			const request = vi.fn(async () => {});
 			const stopped = supervisor.shutdown({ request, force: false });
@@ -236,7 +236,7 @@ describe("host supervisor", () => {
 		const fake = fakeHost();
 		const supervisor = createHostSupervisor({ spawnHost: () => fake.child });
 		const starting = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		fake.emitStdout(`${pythonReadyLine(1)}\n`);
 		await starting;
 		const request = vi.fn().mockRejectedValueOnce(new Error("unavailable")).mockImplementation(async () => { fake.emitExit(0, null); });
 		const first = supervisor.shutdown({ request, force: false });

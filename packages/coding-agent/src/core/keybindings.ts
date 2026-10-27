@@ -1,7 +1,5 @@
 import {
-	getKeybindings,
 	type Keybinding,
-	matchesKey,
 	type KeybindingDefinitions,
 	type KeybindingsConfig,
 	type KeyId,
@@ -33,24 +31,6 @@ export function getClipboardPasteKeys(
 
 export function getClipboardPasteDescription(platform: NodeJS.Platform = process.platform): string {
 	return platform === "darwin" ? "Paste files, images, or text from clipboard" : "Paste images or text from clipboard";
-}
-
-/**
- * True when the input matches an application keybinding. Shared components can be
- * mounted before the application keybinding table is installed, so the shipped
- * default stands in for the resolved keys in that case.
- */
-export function matchesAppBinding(data: string, id: BindingId): boolean {
-	const manager = getKeybindings();
-	// A known binding reports what it resolved to, including a deliberate empty list.
-	const effective =
-		manager.getDefinition(id) !== undefined ? manager.getKeys(id) : normalizeDefaultKeys(KEYBINDINGS[id]?.defaultKeys);
-	return effective.some((key) => matchesKey(data, key));
-}
-
-function normalizeDefaultKeys(keys: KeyId | KeyId[] | undefined): KeyId[] {
-	if (keys === undefined) return [];
-	return Array.isArray(keys) ? keys : [keys];
 }
 
 const windowsKeybindings = useWindowsKeybindings();

@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import type { HostFailure, RenderFailure } from "../src/dialogs.ts";
 import { createHostSupervisor } from "../src/host.ts";
 import { createShellController } from "../src/shell.ts";
-import { fakeHost } from "./fake-host.ts";
+import { fakeHost, pythonReadyLine } from "./fake-host.ts";
 
 function recordingController() {
 	const hosts: HostFailure[] = [];
@@ -29,7 +29,7 @@ describe("quitting flag", () => {
 			},
 		});
 		const pending = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:9/\n");
+		fake.emitStdout(`${pythonReadyLine(9)}\n`);
 		await pending;
 		shell.applicationWillQuit();
 		fake.emitExit(0, null);
@@ -67,13 +67,13 @@ describe("quitting flag", () => {
 			},
 		});
 		const pending = supervisor.start();
-		fake.emitStdout("Web: http://127.0.0.1:1/\n");
+		fake.emitStdout(`${pythonReadyLine(1)}\n`);
 		await pending;
 		fake.emitStderr("boom\n");
 		fake.emitExit(1, null);
 		fake.emitExit(1, null);
 		expect(hosts).toEqual([
-			{ kind: "unexpected-exit", code: 1, signal: null, tail: "Web: http://127.0.0.1:1/\nboom\n" },
+			{ kind: "unexpected-exit", code: 1, signal: null, tail: `${pythonReadyLine(1)}\nboom\n` },
 		]);
 	});
 

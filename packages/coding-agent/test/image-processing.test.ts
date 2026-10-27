@@ -93,8 +93,7 @@ it("loadPngTranscoder converts synchronously to oriented PNG data", async () => 
 describe("resizeImage", () => {
 	it("should keep caller input bytes intact", async () => {
 		const input = new Uint8Array(imageBytes(TINY_PNG));
-		const originalByteLength = input.byteLength;
-		const originalFirstByte = input[0];
+		const original = input.slice();
 
 		const result = await resizeImage(input, "image/png", {
 			maxWidth: 100,
@@ -103,8 +102,7 @@ describe("resizeImage", () => {
 		});
 
 		expect(result).not.toBeNull();
-		expect(input.byteLength).toBe(originalByteLength);
-		expect(input[0]).toBe(originalFirstByte);
+		expect(input).toEqual(original);
 	});
 
 	it("should return original image if within limits", async () => {

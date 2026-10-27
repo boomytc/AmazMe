@@ -3,7 +3,7 @@
 import { afterEach, expect, test, vi } from "vitest";
 import { ApiError, parseContract } from "../src/python-api.ts";
 import { PythonClient, type ClientConnection } from "../src/python-client.ts";
-import type { Attachment, Snapshot, Stream } from "../src/python-contracts.ts";
+import type { Attachment, Receipt, Snapshot, Stream } from "../src/python-contracts.ts";
 import { applyFrame } from "../src/python-stream.ts";
 import { pythonView, transcriptBlocks } from "../src/python-view.ts";
 import { PendingWrites } from "../src/python-writes.ts";
@@ -14,7 +14,7 @@ const identity = { build_id: "build", profile_id: "host", instance_id: "host-ins
 const binding: Attachment = { attachment_id: "attachment", session_id: "a", host_epoch: 1, build_id: "build" };
 const empty = (): Snapshot => ({ session_id: "a", stream_id: "stream", seq: "0", state: "ready", requests: [], events: [], approvals: [], previews: [], effects: [] });
 const connection = (sessionId: string): ClientConnection => ({ sessionId, identity, generation: 1, attachment: { ...binding, session_id: sessionId }, ready: true, active: () => true });
-const receipt = (id: string, status = "queued") => ({ request_id: id, text: "你好", status, revision: "1" });
+const receipt = (id: string, status: Receipt["status"] = "queued"): Receipt => ({ request_id: id, text: "你好", status, revision: "1" });
 afterEach(() => { sessionStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 test("Python schemas reject malformed enums, required fields and additional properties at the browser boundary", () => {

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
-import type { Readable, Writable } from "node:stream";
+import type { Readable } from "node:stream";
 import type { PythonReady } from "./python-backend.ts";
 import { createReadinessParser } from "./readiness.ts";
 
@@ -103,16 +103,8 @@ function streamAdapter(stream: Readable): HostChild["stdout"] {
 	};
 }
 
-function terminate(child: ChildProcessByStdio<Writable | null, Readable, Readable>, signal: "SIGTERM" | "SIGKILL"): void {
+function terminate(child: ChildProcessByStdio<null, Readable, Readable>, signal: "SIGTERM" | "SIGKILL"): void {
 	if (child.pid === undefined) return;
-	// EOF requests ordinary cleanup on every platform, including ownership-aware worker release.
-	if (signal === "SIGTERM" && child.stdin !== null) {
-		if (!child.stdin.destroyed && !child.stdin.writableEnded) {
-			child.stdin.once("error", (error: Error) => console.error(`desktop parent pipe: ${error.message}`));
-			child.stdin.end();
-		}
-		return;
-	}
 	// Escalate only this child: descendants can have been adopted by a replacement/shared server.
 	if (process.platform === "win32") {
 		spawn("taskkill", ["/pid", String(child.pid), "/F"], { stdio: "ignore", windowsHide: true });
@@ -121,7 +113,7 @@ function terminate(child: ChildProcessByStdio<Writable | null, Readable, Readabl
 	child.kill(signal);
 }
 
-function nodeChildAdapter(child: ChildProcessByStdio<Writable | null, Readable, Readable>): HostChild {
+function nodeChildAdapter(child: ChildProcessByStdio<null, Readable, Readable>): HostChild {
 	return {
 		pid: child.pid,
 		stdout: streamAdapter(child.stdout),

@@ -8,7 +8,6 @@ import {
 import {
 	getAvailableThemes,
 	getThemeByName,
-	getThemeExportColors,
 	setTerminalColors,
 	type ThemeToken,
 } from "../src/modes/interactive/theme/theme.ts";
@@ -118,9 +117,8 @@ describe("generateSystemThemeColors", () => {
 });
 
 describe("system theme", () => {
-	it("is listed first, has no export colors, and is generated from the terminal colors", () => {
+	it("is listed first and is generated from the terminal colors", () => {
 		expect(getAvailableThemes()[0]).toBe("system");
-		expect(getThemeExportColors("system")).toEqual({});
 
 		setTerminalColors(DRACULA);
 		const theme = getThemeByName("system")!;

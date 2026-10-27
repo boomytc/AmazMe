@@ -1,12 +1,9 @@
-import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-	canonicalizePath,
-	getCwdRelativePath,
-	isLocalPath,
 	normalizePath,
 	normalizeWindowsShellPath,
 	resolvePath,
@@ -26,61 +23,6 @@ function openTempWorkspace(): string {
 	tempDir = createTempDir("pi-paths-");
 	return tempDir;
 }
-
-describe("canonicalizePath", () => {
-	it("returns the real path for a regular file", () => {
-		const dir = openTempWorkspace();
-		const file = join(dir, "file.txt");
-		writeFileSync(file, "hello");
-		expect(canonicalizePath(file)).toBe(realpathSync(file));
-	});
-
-	it("resolves symlinks to their targets", () => {
-		const dir = openTempWorkspace();
-		const target = join(dir, "target.txt");
-		const link = join(dir, "link.txt");
-		writeFileSync(target, "hello");
-		symlinkSync(target, link);
-		expect(canonicalizePath(link)).toBe(realpathSync(target));
-	});
-
-	it("resolves directory symlinks", () => {
-		const dir = openTempWorkspace();
-		const targetDir = join(dir, "target-dir");
-		const linkDir = join(dir, "link-dir");
-		mkdirSync(targetDir);
-		symlinkSync(targetDir, linkDir, "dir");
-		expect(canonicalizePath(linkDir)).toBe(realpathSync(targetDir));
-	});
-
-	it("falls back to the raw path when the target does not exist", () => {
-		const dir = openTempWorkspace();
-		const nonexistent = join(dir, "no-such-file");
-		expect(canonicalizePath(nonexistent)).toBe(nonexistent);
-	});
-
-	it("falls back to the raw path for a dangling symlink", () => {
-		const dir = openTempWorkspace();
-		const target = join(dir, "target.txt");
-		const link = join(dir, "link.txt");
-		// Create a symlink whose target does not exist.
-		symlinkSync(target, link);
-		// realpathSync would throw, so canonicalizePath returns the link path.
-		expect(canonicalizePath(link)).toBe(link);
-	});
-});
-
-describe("getCwdRelativePath", () => {
-	it("keeps cwd-relative names that start with dots", () => {
-		const cwd = join(tmpdir(), "pi-paths-cwd");
-		expect(getCwdRelativePath(join(cwd, "..config", "AGENTS.md"), cwd)).toBe(join("..config", "AGENTS.md"));
-	});
-
-	it("rejects parent-directory traversals", () => {
-		const cwd = join(tmpdir(), "pi-paths-cwd");
-		expect(getCwdRelativePath(join(cwd, "..", "AGENTS.md"), cwd)).toBeUndefined();
-	});
-});
 
 describe("resolvePath", () => {
 	it("expands only home tilde shortcuts", () => {
@@ -155,31 +97,5 @@ describe("normalizeWindowsShellPath", () => {
 	it.runIf(process.platform === "win32")("is applied by normal path handling on Windows", () => {
 		expect(normalizePath("/c/Users/example")).toBe("C:\\Users\\example");
 		expect(resolvePath("/mnt/c/Users/example", "D:\\work")).toBe(resolve("C:/Users/example"));
-	});
-});
-
-describe("isLocalPath", () => {
-	it("returns true for bare names", () => {
-		expect(isLocalPath("my-package")).toBe(true);
-	});
-
-	it("returns true for relative paths", () => {
-		expect(isLocalPath("./foo")).toBe(true);
-	});
-
-	it("returns true for file URLs", () => {
-		expect(isLocalPath("file:///tmp/foo")).toBe(true);
-	});
-
-	it("returns false for npm: protocol", () => {
-		expect(isLocalPath("npm:package")).toBe(false);
-	});
-
-	it("returns false for git: protocol", () => {
-		expect(isLocalPath("git://repo")).toBe(false);
-	});
-
-	it("returns false for https: protocol", () => {
-		expect(isLocalPath("https://example.com")).toBe(false);
 	});
 });

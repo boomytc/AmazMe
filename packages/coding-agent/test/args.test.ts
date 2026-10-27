@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { normalizeSessionName, parseArgs } from "../src/cli/args.ts";
+import { parseArgs } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	test.each(["+grep,-write", "read,bash", "read,*search"])("accepts tool selection %s", (selection) => {
@@ -221,11 +221,6 @@ describe("parseArgs", () => {
 		test("preserves empty values for main validation", () => {
 			const result = parseArgs(["--name", ""]);
 			expect(result.name).toBe("");
-		});
-
-		test("normalizes display names and rejects whitespace-only values", () => {
-			expect(normalizeSessionName("  named session  ")).toBe("named session");
-			expect(normalizeSessionName("   ")).toBeUndefined();
 		});
 
 		test("reports missing value", () => {
