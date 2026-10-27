@@ -554,6 +554,43 @@ test("host-resolved model patterns provide concrete choices and toggles save the
  await vi.waitFor(() => expect(choices()).toEqual(["different"]));
 });
 
+test("a large saved model scope resolves across request limits without losing or duplicating choices", async () => {
+ const response = (value: unknown) => new Response(JSON.stringify(value));
+ const models = Array.from({ length: 256 }, (_, index) => ({ provider: "faux", model: `model-${String(index).padStart(3, "0")}`, label: `Model ${index}`, endpoint_editable: true }));
+ const references = models.map(model => `${model.provider}/${model.model}`);
+ const patterns = [...references.slice(0, 128), references[0], "faux/model-*", ...references.slice(128), "missing/no-longer-present"];
+ let settings = parseContract("ProductSettings", { revision: 0, preferences: { enabledModels: patterns } });
+ const requests: string[][] = [];
+ const { page } = await startPage((path, options) => {
+  if (path === "/api/v1/models") return response({ models, current: { provider: "faux", model: models[0].model, base_url: "http://model", max_tokens: 10, key_configured: true } });
+  if (path === "/api/v1/models/scope") {
+   const body = parseContract("ModelScopeRequest", JSON.parse(String(options.body)));
+   requests.push(body.patterns);
+   const found = new Map<string, typeof models[number]>();
+   for (const pattern of body.patterns) {
+    const matches = pattern === "faux/model-*" ? models : models.filter(model => `${model.provider}/${model.model}` === pattern);
+    for (const model of matches) found.set(`${model.provider}/${model.model}`, model);
+   }
+   return response({ models: [...found.values()].map(model => ({ model })), diagnostics: [] });
+  }
+  if (path === "/api/v1/settings" || path === "/api/v1/settings/preferences") {
+   if (options.method === "PUT") {
+    const body = parseContract("PreferencesUpdate", JSON.parse(String(options.body)));
+    settings = { revision: (settings.revision ?? 0) + 1, preferences: body.preferences };
+   }
+   return response(settings);
+  }
+  return undefined;
+ });
+ expect(requests.flat()).toEqual(patterns);
+ expect(requests.every(batch => batch.length > 0 && batch.length <= 128)).toBe(true);
+ expect(page.renderer.view?.modelConnections?.state.enabledModelIds).toEqual(references);
+ expect(page.renderer.view?.model.groups.flatMap(group => group.options)).toHaveLength(models.length);
+ page.renderer.onPanelAction({ kind: "control", id: MODEL_ENABLED_ACTION, data: JSON.stringify(["faux", models[255].model]), value: "false" });
+ await vi.waitFor(() => expect(settings.preferences?.enabledModels).toEqual(references.slice(0, -1)));
+ await vi.waitFor(() => expect(page.renderer.view?.modelConnections?.state.enabledModelIds).toEqual(references.slice(0, -1)));
+});
+
 test("an older global load cannot restore model choices superseded by a settings write", async () => {
  const response = (value: unknown) => new Response(JSON.stringify(value));
  let settings = parseContract("ProductSettings", { revision: 0, preferences: {} });

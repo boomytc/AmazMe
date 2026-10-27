@@ -12,6 +12,7 @@ import { collectPageElements, createRenderer, type PageRenderer } from "../rende
 import { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "../provider-auth.ts";
 import { ApiError, definitive, isRecord, parseContract } from "../transport/api.ts";
 import { PythonClient, type ClientConnection } from "../transport/client.ts";
+import contracts from "../generated/schema.json" with { type: "json" };
 import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginCallView, PluginPackages, PluginView, ProductSettings, ProjectView, ProviderCheck, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
 import { pythonDirectory, pythonView } from "./view.ts";
 import { PendingWrites, newId } from "./pending/writes.ts";
@@ -1369,8 +1370,13 @@ export class DesktopPage {
 		if (patterns === null) return null;
 		const known = new Set(catalog?.models.map(model => `${model.provider}/${model.model}`));
 		if (patterns.every(pattern => known.has(pattern))) return [...patterns];
-		const scope = await this.client.call("POST /api/v1/models/scope", { body: { patterns: [...patterns] }, identity });
-		return scope.models.map(item => `${item.model.provider}/${item.model.model}`);
+		const limit = contracts.$defs.ModelScopeRequest.properties.patterns.maxItems;
+		const resolved = new Set<string>();
+		for (let offset = 0; offset < patterns.length; offset += limit) {
+			const scope = await this.client.call("POST /api/v1/models/scope", { body: { patterns: patterns.slice(offset, offset + limit) }, identity });
+			for (const item of scope.models) resolved.add(`${item.model.provider}/${item.model.model}`);
+		}
+		return [...resolved];
 	}
 	private sessionModelIds(sessionId: string): string[] | null {
 		const key = `${this.client.identity?.profile_id}:${sessionId}`;
