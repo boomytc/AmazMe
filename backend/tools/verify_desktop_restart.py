@@ -34,13 +34,19 @@ def prepare_builds(root: Path, candidate_ref: str | None, previous_ref: str | No
             shutil.copytree(ROOT / "backend/src/amazme_backend", destination / "backend/src/amazme_backend",
                             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
             shutil.copy2(ROOT / "backend/uv.lock", destination / "backend/uv.lock")
-        (destination / "packages").symlink_to(ROOT / "packages", target_is_directory=True)
 
     candidate = root / "candidate"
     copy_build(candidate, candidate_ref)
+    codemode_dist = ROOT / "packages/codemode/dist"
+    if codemode_dist.exists():
+        shutil.copytree(codemode_dist, candidate / "packages/codemode/dist")
+    shutil.copytree(ROOT / "packages/web/dist/page", candidate / "packages/web/dist/page")
+    (candidate / "packages/codemode").mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "packages/codemode/package.json", candidate / "packages/codemode/package.json")
     previous = root / "previous"
     if previous_ref:
         copy_build(previous, previous_ref)
+        shutil.copytree(candidate / "packages", previous / "packages")
     else:
         shutil.copytree(candidate, previous, symlinks=True)
     if not previous_ref:
@@ -154,4 +160,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from workspace_lock import run_locked
+
+    run_locked(main)

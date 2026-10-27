@@ -52,20 +52,15 @@ def child_env(updates: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def stop_owned_profile(root: Path) -> None:
-    """Stop only processes attached to this runner's disposable profile."""
+def stop_owned_profile(root: Path, owned: list[psutil.Process]) -> None:
+    """Stop only identities observed in the launched backend's process tree."""
     parent = (ROOT / ".artifacts/native").resolve()
     if root.is_symlink() or root.resolve().parent != parent or not root.name.startswith(("electron-", "desktop-restart-")):
         raise RuntimeError("refusing to stop processes outside an owned Electron test directory")
-    profile = str(root.resolve() / "python-profile")
     processes: dict[int, psutil.Process] = {}
-    for process in psutil.process_iter(["pid", "cmdline"]):
+    for process in owned:
         try:
-            args = process.info.get("cmdline") or []
-            if args.count("--profile") != 1:
-                continue
-            index = args.index("--profile")
-            if index + 1 >= len(args) or args[index + 1] != profile:
+            if not process.is_running():
                 continue
             processes[process.pid] = process
             for child in process.children(recursive=True):
@@ -102,6 +97,7 @@ class ElectronRun:
         self._lock = threading.Lock()
         self._io: list[threading.Thread] = []
         self.host_pid = 0
+        self.owned: list[psutil.Process] = []
         self.origin = ""
         self.resource_before: dict[str, object] | None = None
         self.resource_report: dict[str, object] | None = None
@@ -115,8 +111,9 @@ class ElectronRun:
         if not NODE:
             raise RuntimeError("node is required to launch Electron")
         if self.app is None:
+            lock_fd = int(os.environ["AMAZME_WORKSPACE_LOCK_FD"])
             checked = subprocess.run([NODE, str(ROOT / "scripts/dev-desktop.mjs"), "--check-build"],
-                                     cwd=ROOT, capture_output=True, text=True, check=False)
+                                     cwd=ROOT, capture_output=True, text=True, check=False, pass_fds=(lock_fd,))
             if checked.returncode:
                 raise RuntimeError(checked.stderr.strip() or "desktop build check failed")
         env = child_env({
@@ -148,7 +145,6 @@ class ElectronRun:
             raise TimeoutError(f"electron did not become ready\n{self.stdout}\n{self.stderr[-4000:]}")
         with self._lock:
             captured = self.stdout
-        self.host_pid = int(re.search(r"desktop host pid: (\d+)", captured).group(1))
         self.origin = re.search(r"desktop smoke: (http://127\.0\.0\.1:\d+)", captured).group(1)
 
     def open_second_window(self) -> None:
@@ -179,6 +175,13 @@ class ElectronRun:
                 with self._lock:
                     if target == "stdout":
                         self.stdout += line
+                        match = re.fullmatch(r"desktop host pid: (\d+)\s*", line)
+                        if match:
+                            self.host_pid = int(match.group(1))
+                            try:
+                                self.owned.append(psutil.Process(self.host_pid))
+                            except psutil.NoSuchProcess:
+                                pass
                     else:
                         self.stderr += line
 
@@ -191,9 +194,21 @@ class ElectronRun:
         with self._lock:
             return self.stdout
 
+    def _remember_descendants(self) -> None:
+        with self._lock:
+            owned = list(self.owned)
+        for process in owned:
+            try:
+                children = process.children(recursive=True)
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+            with self._lock:
+                self.owned.extend(children)
+
     def quit(self) -> None:
         if self.process is None or self.process.poll() is not None:
             return
+        self._remember_descendants()
         self.process.send_signal(signal.SIGTERM)
         try:
             self.process.wait(timeout=30)
@@ -207,6 +222,8 @@ class ElectronRun:
     def close(self) -> None:
         import resource_census
         try:
+            # Save descendants before graceful shutdown can orphan them.
+            self._remember_descendants()
             if self.process is not None and self.process.poll() is None:
                 try:
                     self.quit()
@@ -218,7 +235,7 @@ class ElectronRun:
                 self.opener.kill()
         finally:
             try:
-                stop_owned_profile(self.root)
+                stop_owned_profile(self.root, self.owned)
                 report, processes = resource_census.scan()
                 self.resource_report = resource_census.owned_after(
                     [self.root], report, processes, before=self.resource_before,
@@ -510,4 +527,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from workspace_lock import run_locked
+
+    run_locked(main)

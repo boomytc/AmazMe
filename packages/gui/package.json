@@ -6,8 +6,10 @@
 	"description": "Electron window for the packaged AmazMe Python backend",
 	"main": "./dist/main.js",
 	"scripts": {
-		"clean": "shx rm -rf dist",
-		"build": "tsc -p tsconfig.build.json && shx cp src/preload.cjs dist/ && shx mkdir -p dist/updates && shx cp src/updates/update-preload.cjs src/updates/update-window.html src/updates/update-window.js dist/updates/ && node ../../scripts/build-update-helper.mjs",
+		"clean": "node ../../scripts/locked-workspace-task.mjs @amazme/gui clean",
+		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && shx rm -rf dist",
+		"build": "node ../../scripts/locked-workspace-task.mjs @amazme/gui build",
+		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && tsc -p tsconfig.build.json && shx cp src/preload.cjs dist/ && shx mkdir -p dist/updates && shx cp src/updates/update-preload.cjs src/updates/update-window.html src/updates/update-window.js dist/updates/ && node ../../scripts/build-update-helper.mjs",
 		"start": "node dist/start.js",
 		"test": "vitest --run --exclude test/smoke.test.ts --exclude test/update-window.smoke.test.ts",
 		"test:smoke": "vitest --run --no-file-parallelism test/smoke.test.ts test/update-window.smoke.test.ts",

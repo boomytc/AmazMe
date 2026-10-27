@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 import { workspaceDependencyPackages, workspacePackages } from "./package-artifacts.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { heldWorkspaceLock, lockStdio, runWithWorkspaceLock } from "./workspace-lock.mjs";
 
 /** Build only the target's workspace closure, including workspace-only build-time dependencies. */
 export async function workspaceBuildPlan(root, targets) {
@@ -26,11 +27,18 @@ async function main() {
 	if (targets.length === 0) throw new Error("Specify a target workspace");
 	const root = fileURLToPath(new URL("..", import.meta.url));
 	if (args.includes("--plan")) { console.log(JSON.stringify(await workspaceBuildPlan(root, targets), null, 2)); return; }
+	const lock = heldWorkspaceLock(root);
+	if (lock === undefined) {
+		process.exitCode = runWithWorkspaceLock(root, [fileURLToPath(import.meta.url), ...args]);
+		return;
+	}
 	const run = (name, script) => {
 		const cli = process.env.npm_execpath;
 		const executable = cli ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm";
-		const result = spawnSync(executable, [...(cli ? [cli] : []), "run", script, "--workspace", name], {
-			cwd: root, stdio: "inherit", shell: !cli && process.platform === "win32",
+		const selected = ["@amazme/web", "@amazme/gui", "@amazme/codemode"].includes(name)
+			&& workspacePackages(root).get(name)?.manifest.scripts?.[`${script}:unlocked`] ? `${script}:unlocked` : script;
+		const result = spawnSync(executable, [...(cli ? [cli] : []), "run", selected, "--workspace", name], {
+			cwd: root, stdio: lockStdio(lock), shell: !cli && process.platform === "win32",
 		});
 		if (result.error) throw result.error;
 		return result.status ?? 1;

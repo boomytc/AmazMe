@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { chmod, copyFile, mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,9 +18,11 @@ async function launch(backend, failBuild = false, args = [], modifySource = fals
 	try {
 		const project = join(await realpath(directory), "project");
 		await mkdir(join(project, "scripts"), { recursive: true });
-		for (const name of ["dev-desktop.mjs", "build-workspace-dependencies.mjs", "package-artifacts.mjs"]) {
+		for (const name of ["dev-desktop.mjs", "build-workspace-dependencies.mjs", "package-artifacts.mjs", "workspace-lock.mjs"]) {
 			await copyFile(join(root, "scripts", name), join(project, "scripts", name));
 		}
+		await mkdir(join(project, "backend", "tools"), { recursive: true });
+		await copyFile(join(root, "backend", "tools", "workspace_lock.py"), join(project, "backend", "tools", "workspace_lock.py"));
 		for (const name of ["web", "gui"]) await mkdir(join(project, "packages", name), { recursive: true });
 		await writeFile(join(project, "packages", "web", "package.json"), JSON.stringify({ name: "@amazme/web", scripts: { build: "build" } }));
 		await writeFile(join(project, "packages", "gui", "package.json"), JSON.stringify({ name: "@amazme/gui", scripts: { build: "build" }, dependencies: { "@amazme/web": "workspace:*" } }));
@@ -120,6 +122,27 @@ test("the build cache requires output and changes with source and installed depe
 		await writeFile(installedLock, '{"changed":true}\n');
 		assert.equal(desktopBuildIsCurrent(state, desktopBuildFingerprint(fixtureRoot, plan), output), false);
 	} finally { await rm(fixtureRoot, { recursive: true, force: true }); }
+});
+
+test("the build cache rejects symlinks in sources and outputs", async () => {
+	const fixture = await mkdtemp(join(tmpdir(), "amazme-dev-symlink-"));
+	try {
+		const pkg = join(fixture, "packages/gui");
+		await mkdir(join(pkg, "src"), { recursive: true });
+		await mkdir(join(pkg, "dist"));
+		await writeFile(join(pkg, "package.json"), JSON.stringify({ name: "@amazme/gui" }));
+		await writeFile(join(fixture, "target"), "first");
+		const plan = [{ name: "@amazme/gui", script: "build" }];
+		const state = join(fixture, "state");
+		const output = join(pkg, "dist");
+		await symlink(join(fixture, "target"), join(pkg, "src", "linked.ts"));
+		assert.throws(() => desktopBuildFingerprint(fixture, plan), /符号链接/);
+		await rm(join(pkg, "src", "linked.ts"));
+		const fingerprint = desktopBuildFingerprint(fixture, plan);
+		await symlink(join(fixture, "target"), join(output, "linked.js"));
+		assert.throws(() => writeDesktopBuildState(state, fingerprint, output), /符号链接/);
+		assert.equal(desktopBuildIsCurrent(state, fingerprint, output), false);
+	} finally { await rm(fixture, { recursive: true, force: true }); }
 });
 
 async function runStart(args, { backend: override, expectFailure = false } = {}) {

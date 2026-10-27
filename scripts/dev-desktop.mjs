@@ -2,13 +2,15 @@
 
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { workspaceBuildPlan } from "./build-workspace-dependencies.mjs";
 import { workspacePackages } from "./package-artifacts.mjs";
+import { heldWorkspaceLock, lockStdio, runWithWorkspaceLock } from "./workspace-lock.mjs";
 
 function hashFile(hash, root, path) {
+	if (lstatSync(path).isSymbolicLink()) throw new Error(`桌面构建指纹不支持符号链接: ${path}`);
 	hash.update(relative(root, path)).update("\0").update(readFileSync(path)).update("\0");
 }
 
@@ -16,6 +18,7 @@ function hashDirectory(hash, root, directory) {
 	const entries = readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
 	for (const entry of entries) {
 		const path = join(directory, entry.name);
+		if (entry.isSymbolicLink()) throw new Error(`桌面构建指纹不支持符号链接: ${path}`);
 		if (entry.isDirectory()) hashDirectory(hash, root, path);
 		else if (entry.isFile()) hashFile(hash, root, path);
 	}
@@ -34,6 +37,7 @@ export function desktopBuildFingerprint(root, plan) {
 		const entries = readdirSync(pkg.directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
 		for (const entry of entries) {
 			const path = join(pkg.directory, entry.name);
+			if (entry.isSymbolicLink() && (["assets", "src", "package.json", "tsconfig.json", "tsconfig.build.json"].includes(entry.name) || entry.name.endsWith(".mjs"))) throw new Error(`桌面构建指纹不支持符号链接: ${path}`);
 			if (entry.isDirectory() && ["assets", "src"].includes(entry.name)) hashDirectory(hash, root, path);
 			else if (entry.isFile() && (entry.name === "package.json" || /^tsconfig(?:\.build)?\.json$/.test(entry.name) || entry.name.endsWith(".mjs"))) hashFile(hash, root, path);
 		}
@@ -45,7 +49,9 @@ function desktopOutputFingerprint(output) {
 	const hash = createHash("sha256");
 	for (const path of Array.isArray(output) ? output : [output]) {
 		if (!existsSync(path)) return undefined;
-		if (statSync(path).isDirectory()) hashDirectory(hash, path, path);
+		const stat = lstatSync(path);
+		if (stat.isSymbolicLink()) throw new Error(`桌面构建指纹不支持符号链接: ${path}`);
+		if (stat.isDirectory()) hashDirectory(hash, path, path);
 		else hashFile(hash, dirname(path), path);
 		hash.update("\0");
 	}
@@ -68,11 +74,7 @@ export function writeDesktopBuildState(state, fingerprint, output) {
 	writeFileSync(state, `${JSON.stringify({ input: fingerprint, output: outputFingerprint })}\n`);
 }
 
-async function main() {
-	const root = fileURLToPath(new URL("..", import.meta.url));
-	const backend = resolve(root, process.env.AMAZME_PYTHON_BACKEND || join("backend", ".venv",
-		process.platform === "win32" ? "Scripts" : "bin",
-		process.platform === "win32" ? "amazme-backend.exe" : "amazme-backend"));
+async function checkOrBuild(root, lock) {
 	const plan = await workspaceBuildPlan(root, ["@amazme/gui"]);
 	const fingerprint = desktopBuildFingerprint(root, plan);
 	const state = resolve(root, process.env.AMAZME_DEV_DESKTOP_BUILD_STATE || join(".artifacts", "dev-desktop-build.sha256"));
@@ -86,13 +88,28 @@ async function main() {
 		return;
 	}
 	if (!current) {
-		const result = spawnSync(process.execPath, [fileURLToPath(new URL("./build-workspace-dependencies.mjs", import.meta.url)), "@amazme/gui"], { cwd: root, stdio: "inherit" });
+		const result = spawnSync(process.execPath, [fileURLToPath(new URL("./build-workspace-dependencies.mjs", import.meta.url)), "@amazme/gui"], { cwd: root, stdio: lockStdio(lock) });
 		if (result.error) throw result.error;
-		if (result.status !== 0) { process.exitCode = result.status ?? 1; return; }
+		if (result.status !== 0) throw new Error(`桌面依赖构建失败: ${result.status ?? 1}`);
 		if (desktopBuildFingerprint(root, plan) !== fingerprint) throw new Error("桌面源码在构建期间发生变化，请重新构建");
 		writeDesktopBuildState(state, fingerprint, outputs);
 	}
-	if (process.argv.includes("--build-only")) return;
+}
+
+async function main() {
+	const root = fileURLToPath(new URL("..", import.meta.url));
+	const backend = resolve(root, process.env.AMAZME_PYTHON_BACKEND || join("backend", ".venv",
+		process.platform === "win32" ? "Scripts" : "bin",
+		process.platform === "win32" ? "amazme-backend.exe" : "amazme-backend"));
+	const lock = heldWorkspaceLock(root);
+	if (lock === undefined) {
+		const mode = process.argv.includes("--check-build") ? "--check-build" : "--build-only";
+		const status = runWithWorkspaceLock(root, [fileURLToPath(import.meta.url), mode]);
+		if (status !== 0) { process.exitCode = status; return; }
+	} else {
+		await checkOrBuild(root, lock);
+	}
+	if (process.argv.includes("--build-only") || process.argv.includes("--check-build")) return;
 
 	const cli = process.env.npm_execpath;
 	const executable = cli ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm";

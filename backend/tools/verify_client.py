@@ -201,4 +201,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    from workspace_lock import run_locked
+
+    run_locked(main)
