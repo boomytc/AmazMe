@@ -32,52 +32,126 @@ const layers = new Map([
 ]);
 
 /**
- * Directions inside the CLI client. Each rule names the direction a violation breaks, so the
- * failure states where the dependency belongs instead of only that it exists.
+ * Complete ownership of the CLI package's internal modules. A role lists every role its modules may
+ * reach, including indirectly: the check walks the internal import graph, so client -> utils -> modes
+ * fails instead of hiding behind a neutral helper. Every source file needs a role, so a new directory
+ * cannot quietly escape the model.
  */
-const codingAgentDirections = [
-	{
-		from: /^client\//,
-		forbid: [/^connection\//, /^modes\//, /^cli\//, /^(?:main|index|python-product|rpc-entry|cli)\.ts$/],
-		reason:
-			"client stays below connection, the presentation modes, and the CLI entries; move the HTTP handling here and the caller upward",
-	},
-	{
-		from: /^connection\//,
-		forbid: [/^modes\//, /^(?:main|index|python-product|rpc-entry|cli)\.ts$/],
-		reason:
-			"connection may use client and platform helpers, never a presentation mode or a process entry; move the screen or entry logic upward",
-	},
-	{
-		from: /^cli\//,
-		forbid: [/^modes\//, /^(?:main|index|python-product|rpc-entry|cli)\.ts$/],
-		reason:
-			"CLI argument and file helpers stay independent of a presentation mode; move the rendering or entry logic upward",
-	},
-	{
-		from: /^modes\/headless\//,
-		forbid: [/^modes\/interactive\//],
-		reason:
-			"headless and interactive share client and connection instead of importing each other; move shared code into one of those",
-	},
-	{
-		from: /^modes\/interactive\//,
-		forbid: [/^modes\/headless\//],
-		reason:
-			"interactive and headless share client and connection instead of importing each other; move shared code into one of those",
-	},
+const codingAgentRoleRules = new Map([
+	[
+		"entry",
+		["entry", "interactive", "headless", "connection", "client", "cli", "product", "media", "presentation", "neutral"],
+	],
+	["interactive", ["interactive", "connection", "client", "cli", "media", "presentation", "neutral"]],
+	["headless", ["headless", "connection", "client", "cli", "neutral"]],
+	["connection", ["connection", "client", "neutral"]],
+	["cli", ["cli", "client", "media", "neutral"]],
+	["client", ["client", "neutral"]],
+	["product", ["product", "connection", "client", "neutral"]],
+	["media", ["media", "neutral"]],
+	["presentation", ["presentation", "media", "neutral"]],
+	["neutral", ["neutral"]],
+]);
+
+const codingAgentModuleRoles = new Map([
+	...["main.ts", "index.ts", "cli.ts", "rpc-entry.ts"].map((path) => [path, "entry"]),
+	["python-product.ts", "product"],
+	...[
+		"config.ts",
+		"source-resolver.ts",
+		"update-check.ts",
+		"update-manifest.ts",
+		"utils/paths.ts",
+		"utils/text.ts",
+		"utils/fs-watch.ts",
+		"utils/open-browser.ts",
+		"utils/version-check.ts",
+		"utils/wsl.ts",
+	].map((path) => [path, "neutral"]),
+	...[
+		"utils/photon.ts",
+		"utils/exif-orientation.ts",
+		"utils/image-convert.ts",
+		"utils/image-process.ts",
+		"utils/image-resize-core.ts",
+		"utils/image-resize-worker.ts",
+		"utils/image-resize.ts",
+		"utils/mime.ts",
+	].map((path) => [path, "media"]),
+	...[
+		"utils/clipboard.ts",
+		"utils/clipboard-command.ts",
+		"utils/clipboard-paste.ts",
+		"utils/highlight-js.d.ts",
+		"utils/html.ts",
+		"utils/syntax-highlight.ts",
+	].map((path) => [path, "presentation"]),
+]);
+
+const codingAgentRolePrefixes = [
+	["client/", "client"],
+	["connection/", "connection"],
+	["cli/", "cli"],
+	["modes/headless/", "headless"],
+	["modes/interactive/", "interactive"],
 ];
 
-/** The violated direction for one resolved relative import inside the CLI client, if any. */
-function codingAgentDirection(packageName, from, to) {
-	if (packageName !== "@amazme/coding-agent") return undefined;
-	const escaped = to === ".." || to.startsWith("../");
-	if (escaped) return undefined;
-	for (const rule of codingAgentDirections) {
-		if (!rule.from.test(from)) continue;
-		if (rule.forbid.some((pattern) => pattern.test(to))) return rule.reason;
-	}
+/** The role of one source path relative to the CLI package's src directory. */
+function codingAgentRole(sourcePath) {
+	const exact = codingAgentModuleRoles.get(sourcePath);
+	if (exact) return exact;
+	for (const [prefix, role] of codingAgentRolePrefixes) if (sourcePath.startsWith(prefix)) return role;
 	return undefined;
+}
+
+/**
+ * Every module must stay inside the roles it may reach. Indirect routes are reported with the whole
+ * chain, which names the real files and the role the origin is not allowed to depend on.
+ */
+function codingAgentRoleFailures(root, entries, edges) {
+	const failures = [];
+	const roles = new Map();
+	for (const { file, sourcePath } of entries) {
+		const role = codingAgentRole(sourcePath);
+		if (!role) {
+			failures.push(
+				`${relative(root, file)}: needs an explicit role in codingAgentModuleRoles or codingAgentRolePrefixes`,
+			);
+			continue;
+		}
+		roles.set(file, role);
+	}
+	for (const { file } of entries) {
+		const role = roles.get(file);
+		if (!role) continue;
+		const allowed = new Set(codingAgentRoleRules.get(role));
+		const seen = new Set([file]);
+		const queue = [[file]];
+		let violation;
+		while (queue.length > 0 && !violation) {
+			const chain = queue.shift();
+			for (const target of edges.get(chain.at(-1)) ?? []) {
+				if (seen.has(target)) continue;
+				seen.add(target);
+				const targetRole =
+					roles.get(target) ?? codingAgentRole(relative(entries[0].sourceRoot, target).replaceAll("\\", "/"));
+				if (!targetRole) continue;
+				const next = [...chain, target];
+				if (!allowed.has(targetRole)) {
+					violation = next;
+					break;
+				}
+				queue.push(next);
+			}
+		}
+		if (violation)
+			failures.push(
+				`${relative(root, violation[0])} reaches ${roles.get(violation.at(-1))} through ` +
+					`${violation.map((path) => relative(root, path)).join(" -> ")}; ` +
+					`${role} may only reach ${[...allowed].join(", ")}`,
+			);
+	}
+	return failures;
 }
 
 function sourceFiles(directory) {
@@ -86,7 +160,7 @@ function sourceFiles(directory) {
 		const path = join(directory, entry.name);
 		return entry.isDirectory()
 			? sourceFiles(path)
-			: entry.name.endsWith(".ts") && !entry.name.endsWith(".d.ts")
+			: /\.(?:[cm]?ts)$/.test(entry.name)
 				? [path]
 				: [];
 	});
@@ -507,10 +581,14 @@ export function checkSourceContracts(repoRoot) {
 	});
 	try {
 		const program = api.updateSnapshot({ openProjects: [configPath] }).getProject(configPath).program;
+		const codingAgentEdges = new Map();
+		const codingAgentEntries = [];
 		for (const { file, pkg, development, excluded } of files) {
 			const source = program.getSourceFile(file);
 			const sourceRoot = join(pkg.directory, "src");
 			const sourcePath = relative(sourceRoot, file).replaceAll("\\", "/");
+			if (pkg.manifest.name === "@amazme/coding-agent")
+				codingAgentEntries.push({ file, sourcePath, sourceRoot });
 			const declared = new Set([
 				pkg.manifest.name,
 				...Object.keys(pkg.manifest.dependencies ?? {}),
@@ -531,12 +609,18 @@ export function checkSourceContracts(repoRoot) {
 					if (isAbsolute(targetPath) || targetPath === ".." || targetPath.startsWith(`..${sep}`))
 						failures.push(`${location}: cross-package source import must use a declared package entry: ${value}`);
 					const normalized = targetPath.replaceAll("\\", "/");
-					const direction = codingAgentDirection(
-						pkg.manifest.name,
-						sourcePath,
-						relative(sourceRoot, target).replaceAll("\\", "/"),
-					);
-					if (direction) failures.push(`${location}: ${value} breaks a CLI module direction: ${direction}`);
+					if (pkg.manifest.name === "@amazme/coding-agent" && normalized.startsWith("src/")) {
+						const targetSource = normalized.slice("src/".length);
+						if (/\.(?:[cm]?ts)$/.test(targetSource)) {
+							const reached = codingAgentEdges.get(file) ?? new Set();
+							reached.add(resolve(target));
+							codingAgentEdges.set(file, reached);
+						}
+						if (targetSource === "index.ts" && sourcePath !== "index.ts")
+							failures.push(
+								`${location}: ${value} imports this package's public entry; import a concrete module instead`,
+							);
+					}
 					if (
 						!development &&
 						excluded.some((item) => !item.includes("*") && (normalized === item || normalized.startsWith(`${item}/`)))
@@ -545,6 +629,17 @@ export function checkSourceContracts(repoRoot) {
 					return;
 				}
 				if (value.startsWith("/") || value.startsWith("cloudflare:") || isBuiltin(value)) return;
+				if (
+					pkg.manifest.name === "@amazme/coding-agent" &&
+					(value === pkg.manifest.name || value.startsWith(`${pkg.manifest.name}/`))
+				) {
+					failures.push(
+						`${location}: ${value} imports this package through its public exports; use a relative module instead`,
+					);
+					const reached = codingAgentEdges.get(file) ?? new Set();
+					reached.add(join(pkg.directory, "src", "index.ts"));
+					codingAgentEdges.set(file, reached);
+				}
 				const name = value
 					.split("/")
 					.slice(0, value.startsWith("@") ? 2 : 1)
@@ -601,6 +696,8 @@ export function checkSourceContracts(repoRoot) {
 				}
 			}
 		}
+		if (codingAgentEntries.length > 0)
+			failures.push(...codingAgentRoleFailures(root, codingAgentEntries, codingAgentEdges));
 	} finally {
 		api.close();
 	}
@@ -693,6 +790,65 @@ export async function checkEntryContracts(repoRoot) {
 		for (const path of inputs)
 			if (budget.forbid.some((forbidden) => path.startsWith(forbidden)))
 				failures.push(`${budget.entry}: forbidden runtime import ${path}`);
+	}
+	for (const entry of ["packages/coding-agent/src/rpc-entry.ts"]) {
+		try {
+			const result = await build({
+				entryPoints: [join(root, entry)],
+				absWorkingDir: root,
+				bundle: true,
+				splitting: true,
+				write: false,
+				outdir: join(root, ".workspace-contract-rpc"),
+				platform: "node",
+				format: "esm",
+				metafile: true,
+				logLevel: "silent",
+				plugins: [
+					{
+						name: "rpc-tui-external",
+						setup(builder) {
+							builder.onResolve({ filter: /^@amazme\/tui(?:\/|$)/ }, ({ path }) => ({ path, external: true }));
+						},
+					},
+					workspaceResolver(packages, true),
+				],
+			});
+			const outputs = result.metafile.outputs;
+			const first = Object.entries(outputs).find(([, output]) => output.entryPoint?.replaceAll("\\", "/") === entry);
+			if (!first) throw new Error("RPC entry output is missing");
+			const pending = [first[0]];
+			const visited = new Set();
+			const sources = new Set();
+			while (pending.length > 0) {
+				const name = pending.pop();
+				if (visited.has(name)) continue;
+				visited.add(name);
+				const output = outputs[name];
+				if (!output) throw new Error(`RPC output dependency is missing: ${name}`);
+				for (const input of Object.keys(output.inputs)) {
+					const path = input.replaceAll("\\", "/");
+					if (path.startsWith("packages/coding-agent/src/") && /\.(?:[cm]?ts)$/.test(path)) sources.add(path);
+				}
+				for (const dependency of output.imports) {
+					if (dependency.kind !== "import-statement") continue;
+					if (!dependency.external) pending.push(dependency.path);
+					else if (dependency.path === "@amazme/tui" || dependency.path.startsWith("@amazme/tui/"))
+						failures.push(`${entry}: presentation dependency in the RPC startup graph ${dependency.path}`);
+				}
+			}
+			measurements.push(`${entry}: ${sources.size}/12 startup source modules`);
+			if (sources.size > 12) failures.push(`${entry}: startup source graph ${sources.size} exceeds 12`);
+			for (const path of sources)
+				if (
+					path.includes("modes/interactive/") ||
+					path.endsWith("cli/file-processor.ts") ||
+					/utils\/(?:image-|photon)/.test(path)
+				)
+					failures.push(`${entry}: presentation or media module in the RPC entry graph ${path}`);
+		} catch (error) {
+			failures.push(`${entry}: ${error.message}`);
+		}
 	}
 	for (const entry of [
 		"packages/web/src/index.ts",

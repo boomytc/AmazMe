@@ -71,6 +71,17 @@ export function isValidThinkingLevel(level: string): level is ThinkingLevel {
 	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
 }
 
+/** parseArgs plus the diagnostics and unknown-flag handling every entry applies. */
+export function parseCliArgs(args: string[]): Args {
+	const parsed = parseArgs(args);
+	const invalid = parsed.diagnostics.find((item) => item.type === "error");
+	if (invalid) throw new Error(invalid.message);
+	for (const diagnostic of parsed.diagnostics)
+		if (diagnostic.type === "warning") process.stderr.write(diagnostic.message + "\n");
+	if (parsed.unknownFlags.size) throw new Error(`Unknown option --${parsed.unknownFlags.keys().next().value}`);
+	return parsed;
+}
+
 export function parseArgs(args: string[]): Args {
 	const result: Args = {
 		messages: [],

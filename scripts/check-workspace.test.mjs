@@ -262,6 +262,38 @@ test("production entry checks reject Node-only browser imports and heavy lean-en
 	);
 });
 
+test("the RPC startup graph excludes interactive modules even with a deferred non-RPC entry", async () => {
+	const root = fixture();
+	const codemode = packageFixture(root, "codemode", "export {};");
+	writeFileSync(join(codemode, "src/portable.ts"), "export {};");
+	writeFileSync(join(codemode, "src/cloudflare.ts"), "export {};");
+	packageFixture(root, "web", "export {};");
+	packageFixture(root, "coding-agent", "export {};");
+	packageSource(root, "coding-agent", "modes/interactive/session.ts", "globalThis.screenLoaded = true;");
+	packageSource(root, "coding-agent", "main.ts", 'import "./modes/interactive/session.ts";');
+	const entry = packageSource(
+		root,
+		"coding-agent",
+		"rpc-entry.ts",
+		'if (process.argv.includes("--other-mode")) import("./main.ts");',
+	);
+	const entryPrefix = "packages/coding-agent/src/rpc-entry.ts:";
+	let result = await checkEntryContracts(root);
+	assert.ok(!result.failures.some((failure) => failure.startsWith(entryPrefix)), result.failures.join("\n"));
+	writeFileSync(entry, 'import "./modes/interactive/session.ts";');
+	result = await checkEntryContracts(root);
+	assert.ok(
+		result.failures.some((failure) => failure.startsWith(entryPrefix) && failure.includes("modes/interactive/")),
+		result.failures.join("\n"),
+	);
+	writeFileSync(entry, 'import "@amazme/tui";');
+	result = await checkEntryContracts(root);
+	assert.ok(
+		result.failures.some((failure) => failure.startsWith(entryPrefix) && failure.includes("@amazme/tui")),
+		result.failures.join("\n"),
+	);
+});
+
 function changelogFixture(root, name, text) {
 	mkdirSync(join(root, "packages", name), { recursive: true });
 	writeFileSync(join(root, "packages", name, "CHANGELOG.md"), text);
@@ -543,7 +575,7 @@ test("the source allowlist retains clipboard scratch but rejects session output"
 	assert.ok(!Object.keys(sourceTempDirAllowlist).some((file) => file.includes("/mcp/")));
 });
 
-test("headless and interactive cannot import each other", () => {
+test("headless and interactive cannot reach each other, directly or through a helper", () => {
 	const root = fixture();
 	packageFixture(root, "coding-agent", "export {};");
 	packageSource(
@@ -559,20 +591,21 @@ test("headless and interactive cannot import each other", () => {
 		'import { runPythonHeadless } from "../headless/run.ts";\nexport const line = runPythonHeadless;',
 	);
 	const failures = checkSourceContracts(root);
-	const direction = failures.filter((failure) => failure.includes("breaks a CLI module direction"));
+	const direction = failures.filter((failure) => failure.includes("may only reach"));
 	assert.equal(direction.length, 2, failures.join("\n"));
+	assert.ok(direction.some((failure) => failure.includes("modes/headless/run.ts reaches interactive")));
+	assert.ok(direction.some((failure) => failure.includes("modes/interactive/session.ts reaches headless")));
 	assert.ok(
-		direction.some((failure) => failure.includes("headless and interactive share client and connection")),
+		direction.some((failure) => /modes\/headless\/run\.ts -> .*modes\/interactive\/session\.ts/.test(failure)),
 		failures.join("\n"),
 	);
 	assert.ok(
-		direction.some((failure) => failure.includes("interactive and headless share client and connection")),
+		direction.some((failure) => /modes\/interactive\/session\.ts -> .*modes\/headless\/run\.ts/.test(failure)),
 		failures.join("\n"),
 	);
-	assert.ok(direction.every((failure) => failure.includes("run.ts")));
 });
 
-test("client, connection and CLI helpers cannot reach back into a presentation mode", () => {
+test("client, connection and cli cannot reach a presentation mode", () => {
 	const root = fixture();
 	packageFixture(root, "coding-agent", "export {};");
 	packageSource(
@@ -594,11 +627,107 @@ test("client, connection and CLI helpers cannot reach back into a presentation m
 		'import { runPythonHeadless } from "../modes/headless/run.ts";\nexport const parse = runPythonHeadless;',
 	);
 	const failures = checkSourceContracts(root);
-	const direction = failures.filter((failure) => failure.includes("breaks a CLI module direction"));
+	const direction = failures.filter((failure) => failure.includes("may only reach"));
 	assert.equal(direction.length, 3, failures.join("\n"));
-	assert.ok(direction.some((failure) => failure.includes("client stays below connection")));
-	assert.ok(direction.some((failure) => failure.includes("connection may use client")));
-	assert.ok(direction.some((failure) => failure.includes("CLI argument and file helpers stay independent")));
+	assert.ok(direction.some((failure) => failure.includes("client may only reach client, neutral")));
+	assert.ok(direction.some((failure) => failure.includes("connection may only reach connection, client, neutral")));
+	assert.ok(direction.some((failure) => failure.includes("cli may only reach cli, client, media, neutral")));
+});
+
+test("a neutral helper cannot launder a client dependency into a presentation mode", () => {
+	const root = fixture();
+	packageFixture(root, "coding-agent", "export {};");
+	packageSource(
+		root,
+		"coding-agent",
+		"client/host-client.ts",
+		'import { text } from "../utils/text.ts";\nexport const client = text;',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"utils/text.ts",
+		'import { theme } from "../modes/interactive/theme/theme.ts";\nexport const text = theme;',
+	);
+	packageSource(root, "coding-agent", "modes/interactive/theme/theme.ts", "export const theme = 1;");
+	const failures = checkSourceContracts(root);
+	const laundered = failures.find((failure) =>
+		failure.startsWith("packages/coding-agent/src/client/host-client.ts reaches interactive"),
+	);
+	assert.ok(laundered, failures.join("\n"));
+	assert.match(laundered, /client\/host-client\.ts -> .*utils\/text\.ts -> .*modes\/interactive\/theme\/theme\.ts/);
+	assert.match(laundered, /client may only reach client, neutral/);
+	const helper = failures.find((failure) => failure.startsWith("packages/coding-agent/src/utils/text.ts reaches"));
+	assert.ok(helper, failures.join("\n"));
+	assert.match(helper, /neutral may only reach neutral/);
+});
+
+for (const extension of [".mts", ".cts", ".d.ts"]) {
+	test(`a ${extension} intermediary cannot hide a client dependency on interactive`, () => {
+		const root = fixture();
+		packageFixture(root, "coding-agent", "export {};");
+		packageSource(
+			root,
+			"coding-agent",
+			"client/host-client.ts",
+			`import type { Value } from "./bridge${extension}";\nexport type Client = Value;`,
+		);
+		packageSource(
+			root,
+			"coding-agent",
+			`client/bridge${extension}`,
+			'export type { Value } from "../modes/interactive/screen.ts";',
+		);
+		packageSource(root, "coding-agent", "modes/interactive/screen.ts", "export type Value = string;");
+		const failures = checkSourceContracts(root);
+		assert.ok(
+			failures.some((failure) =>
+				failure.startsWith("packages/coding-agent/src/client/host-client.ts reaches interactive"),
+			),
+			failures.join("\n"),
+		);
+	});
+}
+
+test("the package's own public entry and exports cannot be imported from inside", () => {
+	const root = fixture();
+	packageFixture(root, "coding-agent", "export {};");
+	packageSource(
+		root,
+		"coding-agent",
+		"client/host-client.ts",
+		'export { main } from "../index.ts";',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"connection/connection.ts",
+		'import type { Args } from "@amazme/coding-agent";\nexport type Connect = Args;',
+	);
+	packageSource(
+		root,
+		"coding-agent",
+		"cli/args.ts",
+		'import { VERSION } from "@amazme/coding-agent/config";\nexport const version = VERSION;',
+	);
+	const failures = checkSourceContracts(root);
+	assert.ok(
+		failures.some((failure) => failure.includes("imports this package's public entry")),
+		failures.join("\n"),
+	);
+	assert.equal(
+		failures.filter((failure) => failure.includes("imports this package through its public exports")).length,
+		2,
+		failures.join("\n"),
+	);
+});
+
+test("a source module without an explicit role fails instead of escaping the model", () => {
+	const root = fixture();
+	packageFixture(root, "coding-agent", "export {};");
+	packageSource(root, "coding-agent", "features/extra.ts", "export const extra = 1;");
+	const failures = checkSourceContracts(root);
+	assert.ok(failures.some((failure) => failure.includes("needs an explicit role")), failures.join("\n"));
 });
 
 test("the split CLI layout passes when client, connection and both modes keep their direction", () => {
@@ -617,7 +746,12 @@ test("the split CLI layout passes when client, connection and both modes keep th
 		"connection/connection.ts",
 		'import { HostClient } from "../client/host-client.ts";\nexport const connect = (options: { cwd: string }) => new HostClient(options);',
 	);
-	packageSource(root, "coding-agent", "cli/args.ts", "export interface Args {\n\treadonly cwd: string;\n}");
+	packageSource(
+		root,
+		"coding-agent",
+		"cli/args.ts",
+		'import type { RunOptions } from "../client/types.ts";\nexport interface Args extends RunOptions {}',
+	);
 	packageSource(
 		root,
 		"coding-agent",
@@ -628,7 +762,7 @@ test("the split CLI layout passes when client, connection and both modes keep th
 		root,
 		"coding-agent",
 		"modes/interactive/session.ts",
-		'import { connect } from "../../connection/connection.ts";\nexport const session = (cwd: string) => connect({ cwd });',
+		'import type { Args } from "../../cli/args.ts";\nimport { connect } from "../../connection/connection.ts";\nexport const session = (cwd: string) => connect({ cwd });',
 	);
 	packageSource(
 		root,
