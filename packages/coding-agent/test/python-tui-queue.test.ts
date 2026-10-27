@@ -4,13 +4,24 @@ import { createTempDir } from "./temp-dir.ts";
 import { runPythonSessionTui } from "../src/modes/interactive/session.ts";
 
 const screen = vi.hoisted(() => ({
+	rendered: new Array<string>(),
 	editor: null as null | {
 		onSubmit?: (text: string) => void;
 		onBeforeInput?: (text: string) => boolean;
 	},
 }));
 vi.mock("../src/modes/interactive/tui-renderer.ts", () => ({
-	createInteractiveTui: () => ({ stop() {}, start() {}, addChild() {}, setFocus() {}, requestRender() {} }),
+	createInteractiveTui: () => {
+		screen.rendered = [];
+		let child: { render(width: number): string[] } | undefined;
+		return {
+			stop() {},
+			start() {},
+			addChild(component: { render(width: number): string[] }) { child = component; },
+			setFocus() {},
+			requestRender() { screen.rendered = child?.render(120) ?? []; },
+		};
+	},
 }));
 vi.mock("../src/modes/interactive/components/custom-editor.ts", () => ({
 	CustomEditor: class {
@@ -20,6 +31,7 @@ vi.mock("../src/modes/interactive/components/custom-editor.ts", () => ({
 		onSubmit?: (text: string) => void;
 		onBeforeInput?: (text: string) => boolean;
 		setText() {}
+		render() { return []; }
 	},
 }));
 
@@ -32,7 +44,7 @@ async function until(ready: () => boolean): Promise<void> {
 	throw new Error("TUI did not progress");
 }
 
-test("initial attachments and consecutive prompts wait for a fresh approval, then drain in order", async () => {
+test.each(["批准", "拒绝"])("prompts entered before and during an approval drain in order after %s", async (decision) => {
 	const directory = createTempDir("amazme-tui-queue-");
 	vi.stubEnv("AMAZME_CODING_AGENT_DIR", directory);
 	let runtime: Promise<void> | undefined;
@@ -46,9 +58,8 @@ test("initial attachments and consecutive prompts wait for a fresh approval, the
 	});
 	const session = "a".repeat(32);
 	const submissions: Array<Record<string, unknown>> = [];
-	const events: string[] = [];
 	let resolveFirst: ((value: Response) => void) | undefined;
-	let approved = false,
+	let decided = false,
 		deleted = false;
 	vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
 		if (url.endsWith("/bootstrap")) return reply({ build_id: "build", host_epoch: 1 });
@@ -64,7 +75,7 @@ test("initial attachments and consecutive prompts wait for a fresh approval, the
 			return reply({
 				requests: [],
 				approvals:
-					resolveFirst && !approved
+					resolveFirst && !decided
 						? [
 								{
 									request_id: submissions[0]?.request_id,
@@ -82,12 +93,13 @@ test("initial attachments and consecutive prompts wait for a fresh approval, the
 			return reply({});
 		}
 		if (url.endsWith("/approvals")) {
-			approved = true;
+			expect(JSON.parse(String(init?.body))).toMatchObject({ approve: decision === "批准" });
+			decided = true;
 			return reply({});
 		}
 		if (url.includes("/requests/")) {
 			const id = url.slice(url.lastIndexOf("/") + 1);
-			if (id === submissions[0]?.request_id && !approved)
+			if (id === submissions[0]?.request_id && !decided)
 				return new Promise<Response>((resolve) => {
 					resolveFirst = resolve;
 				});
@@ -111,12 +123,14 @@ test("initial attachments and consecutive prompts wait for a fresh approval, the
 	screen.editor?.onSubmit?.("second");
 	screen.editor?.onSubmit?.("third");
 	resolveFirst?.(reply({ request_id: submissions[0]?.request_id, status: "waiting_approval" }));
-	await new Promise((resolve) => setTimeout(resolve, 15));
+	await until(() => screen.rendered.some((line) => line.startsWith("等待审批")));
 	expect(submissions.map((body) => body.text)).toEqual(["first"]);
 	expect(submissions[0]?.images).toEqual([{ media_type: "image/png", data_base64: "aW1hZ2U=" }]);
-	screen.editor?.onSubmit?.("批准");
-	await until(() => submissions.length === 3);
-	expect(submissions.map((body) => body.text)).toEqual(["first", "second", "third"]);
+	screen.editor?.onSubmit?.("fourth");
+	expect(screen.rendered).toContain("已排队 3 条");
+	screen.editor?.onSubmit?.(decision);
+	await until(() => submissions.length === 4);
+	expect(submissions.map((body) => body.text)).toEqual(["first", "second", "third", "fourth"]);
 	expect(submissions[1]?.images).toEqual([]);
 	screen.editor?.onBeforeInput?.("\x03");
 	await run;

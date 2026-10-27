@@ -493,7 +493,7 @@ export async function runPythonSessionTui(target: PythonSessionTarget): Promise<
 			tui.requestRender();
 			return;
 		}
-		if (busy) {
+		if (busy || (state.held && !isDecisionInput(prompt))) {
 			if (!queued.push(prompt)) {
 				editor.setText(prompt);
 				screen.addLine("待发送队列已满，输入留在编辑器中；请稍后提交");
