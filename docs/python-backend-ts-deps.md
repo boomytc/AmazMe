@@ -12,8 +12,6 @@
 
 这些 TypeScript 包保留现有消费者。业务执行与持久状态由 Python 拥有，不恢复旧 TS 业务内核或增加第二套循环。
 
-CUA 原生驱动的固定构建配方与安装完整性校验在 `tools/native/computer-use`，属于本机原生构建工具而不是 workspace，不进入产品版本统一、运行时依赖闭包或 CLI 的 npm 包。
-
 Python SDK 的正式入口是 `amazme_backend.sdk.Client`，参数使用 `amazme_backend.contracts`。SDK 的导入闭包只含客户端传输与轻量数据；插件 factory 使用 `amazme_backend.plugin_api`。模型调用由 `agent` 装配 prompt、工具和认证值后进入 `ai`；各客户端复用同一 Host 和真实会话/监督器 IPC。
 
 构建输入由 `scripts/package-artifacts.mjs` 管理。Python 源码、gate、helper、快照及静态资源的定位与冻结清单统一在 `backend/src/amazme_backend/platform/resource_manifest.py`。打包读取同一描述，不依赖源文件原来的目录深度。

@@ -6,7 +6,6 @@ import sqlite3
 
 from pydantic import TypeAdapter
 
-from amazme_backend.contracts.computer import ComputerPolicy
 from amazme_backend.contracts.events import Event
 from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.ipc.worker import WorkerActivity
@@ -202,7 +201,10 @@ def load_prompt_images(db: sqlite3.Connection, request_id: str) -> list[ImagePar
 
 
 def load_step_images(db: sqlite3.Connection, step_id: str) -> list[ImagePart]:
-    row = db.execute("SELECT payload FROM computer_images WHERE step_id=?", (step_id,)).fetchone()
+    try:
+        row = db.execute("SELECT payload FROM step_images WHERE step_id=?", (step_id,)).fetchone()
+    except sqlite3.OperationalError:
+        return []
     return [ImagePart.model_validate(item) for item in json.loads(str(row[0]))] if row else []
 
 
@@ -250,21 +252,6 @@ def load_web_call(db: sqlite3.Connection, call_id: str) -> WebCallView:
     if row is None:
         raise BackendError("web_call_not_found", status=404)
     return WebCallView.model_validate_json(row[0])
-
-
-def load_computer_policy(db: sqlite3.Connection) -> ComputerPolicy:
-    row = db.execute("SELECT payload FROM computer_policies WHERE id='policy'").fetchone()
-    if row is None:
-        return ComputerPolicy()
-    return ComputerPolicy.model_validate_json(row[0])
-
-
-def load_computer_runtime(db: sqlite3.Connection) -> tuple[bool, int | None, str]:
-    row = db.execute("SELECT blocked,exit_code,proof FROM computer_runtime WHERE id='current'").fetchone()
-    if row is None:
-        return False, None, ""
-    exit_code = None if row[1] is None else int(row[1])
-    return bool(row[0]), exit_code, str(row[2])
 
 
 def expire_approvals(db: sqlite3.Connection, c: Changes, request_id: str) -> None:

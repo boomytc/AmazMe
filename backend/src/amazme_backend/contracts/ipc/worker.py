@@ -3,12 +3,11 @@ from __future__ import annotations
 import hashlib
 from typing import Literal
 
-from pydantic import Field, JsonValue
+from pydantic import Field
 
-from amazme_backend.contracts.computer import ComputerActionView, ComputerPolicy
 from amazme_backend.contracts.execution import EffectResolution, JobId
 from amazme_backend.contracts.identity import HostFence
-from amazme_backend.contracts.models import ImagePart, Message, ToolCall
+from amazme_backend.contracts.models import Message, ToolCall
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.sessions import ApprovalDecision, Compaction, Submit, WorkerState
 from amazme_backend.contracts.web import WebCallView, WebPolicy
@@ -84,18 +83,7 @@ SessionOpName = Literal[
     "web_policy",
     "begin_web_call",
     "settle_web_call",
-    "save_computer_policy",
-    "computer_policy",
-    "computer_blocked",
-    "computer_runtime",
-    "find_computer_action",
-    "latest_computer_capture",
     "messages",
-    "note_computer_exit",
-    "save_computer_capture",
-    "begin_computer_action",
-    "settle_computer_action",
-    "finish_computer_cleanup",
     "begin_compaction",
     "release_compaction",
     "commit_compaction",
@@ -121,31 +109,8 @@ class EpochValue(Model):
     value: int
 
 
-class TextValue(Model):
-    value: str
-
-
-class FlagValue(Model):
-    value: bool
-
-
 class MessageList(Model):
     messages: list[Message]
-
-
-class FindActionBody(Model):
-    action_id: str
-    body: str
-
-
-class FoundAction(Model):
-    view: ComputerActionView | None = None
-
-
-class RuntimeValue(Model):
-    blocked: bool
-    exit_code: int | None = None
-    proof: str
 
 
 class OpenWorkflowBody(Model):
@@ -194,30 +159,6 @@ class SettleWebBody(Model):
     result: str
 
 
-class ExitBody(Model):
-    exit_code: int | None = None
-
-
-class BeginComputerBody(Model):
-    action_id: str
-    body: str
-
-
-class BeginComputerResult(Model):
-    view: ComputerActionView
-    send: bool
-
-
-class SettleComputerBody(Model):
-    result: dict[str, JsonValue] = Field(default_factory=lambda:dict[str, JsonValue]())
-    images: list[ImagePart] = Field(default_factory=lambda:list[ImagePart]())
-    action_id: str
-    phase: Literal["unknown", "done", "failed"]
-    error: str
-    driver_x: int | None = None
-    driver_y: int | None = None
-
-
 class BeginCompactionBody(Model):
     compaction_id: str
     through_request_id: str
@@ -247,7 +188,6 @@ class PrepareBranchBody(Model):
     parent_path: str
     request_id: str
     web: WebPolicy
-    computer: ComputerPolicy
 
 
 class StoppingBody(Model):

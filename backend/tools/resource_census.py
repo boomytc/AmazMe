@@ -21,8 +21,8 @@ PACKAGE_SLOTS = 2
 CHECKED = ["processes", "vm_dirs", "temp_dirs", "packages", "free_bytes"]
 SCOPE = (
     "processes classified by mode token and parentage (serve, supervisor, worker, execute, "
-    "service-runner, pty-gate, mcp-gate, plugin-gate, computer-driver, lima, hostagent, owned headless browsers, descendants); "
-    "VM directories; am2-/amcu- temp directories; package-* retention; free space on the artifact volume"
+    "service-runner, pty-gate, mcp-gate, plugin-gate, lima, hostagent, owned headless browsers, descendants); "
+    "VM directories; am2- temp directories; package-* retention; free space on the artifact volume"
 )
 NOTE = (
     "reclaimed covers only this scope. A test pass is not reclaimed. "
@@ -196,11 +196,6 @@ def classify_argv(argv: list[str], cwd: str = "") -> str | None:
         return None
     names = _names(argv)
     blob = "\n".join([*argv, cwd])
-    if (any(token.endswith("/AmazMe Computer Use.app/Contents/MacOS/" + name)
-            for token in argv for name in ("cua-driver", "amazme-computer-use"))
-            and any(token.startswith(("/tmp/amcu-", "/private/tmp/amcu-"))
-                    and token.endswith("/driver.sock") for token in argv)):
-        return "computer-driver"
     if gate_role(argv) is None and _backend(argv):
         for token in argv:
             if token in {"service-runner", "serve", "supervisor", "worker", "execute"}:
@@ -363,7 +358,7 @@ def temp_rows(root: Path) -> list[dict[str, object]]:
     directory = root.resolve() if root.is_symlink() else root
     rows: list[dict[str, object]] = []
     for child in directory.iterdir():
-        if child.is_symlink() or not child.is_dir() or not child.name.startswith(("am2-", "amcu-")):
+        if child.is_symlink() or not child.is_dir() or not child.name.startswith("am2-"):
             continue
         rows.append({"path": str(child), "name": child.name})
     return rows

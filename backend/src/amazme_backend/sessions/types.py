@@ -15,7 +15,6 @@ from amazme_backend.contracts.execution import (
     ToolObservation,
     ToolResult,
 )
-from amazme_backend.contracts.ipc.host import ComputerToolResult
 from amazme_backend.contracts.ipc.supervisor import CodeStatus
 from amazme_backend.contracts.models import ImagePart, Message, ToolCall
 from amazme_backend.contracts.plugins import PluginCallView
@@ -164,14 +163,6 @@ class McpRetrieval:
 
 
 @dataclass(frozen=True)
-class ComputerRetrieval:
-    step_id: str
-    request_id: str
-    generation: int
-    call: ToolCall
-
-
-@dataclass(frozen=True)
 class PluginRetrieval:
     step_id: str
     request_id: str
@@ -247,12 +238,6 @@ class McpReturned:
 
 
 @dataclass(frozen=True)
-class ComputerReturned:
-    invocation: ComputerRetrieval
-    result: ComputerToolResult
-
-
-@dataclass(frozen=True)
 class PluginReturned:
     invocation: PluginRetrieval
     view: PluginCallView
@@ -262,10 +247,10 @@ class PluginReturned:
 
 type Action = (
     Continue | Park | ModelInvocation | OpenEpoch | ToolInvocation | QueryTool | CloseEpoch | ReconcileEffect
-    | WebRetrieval | McpRetrieval | ComputerRetrieval | PluginRetrieval | CodeRetrieval
+    | WebRetrieval | McpRetrieval | PluginRetrieval | CodeRetrieval
 )
 
 type Observation = (
     ModelReturned | ToolReturned | ToolObserved | EpochOpened | EpochClosed | EffectResolved | Failed | Previewed
-    | WebReturned | McpReturned | ComputerReturned | PluginReturned | CodeReturned
+    | WebReturned | McpReturned | PluginReturned | CodeReturned
 )

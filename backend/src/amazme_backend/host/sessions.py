@@ -53,7 +53,6 @@ from amazme_backend.execution.processes import exited
 from amazme_backend.execution.web.client import execute_web_call, original_question
 from amazme_backend.features.management.rules import contains_secret
 from amazme_backend.host.accounts import AccountOperations
-from amazme_backend.host.computer import ComputerOperations
 from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.host.records import DeliveryKind
 from amazme_backend.host.session_access import WorkerSessions
@@ -76,12 +75,10 @@ class SessionOperations:
         self,
         access: WorkerSessions,
         accounts: AccountOperations,
-        computer: ComputerOperations,
         lifecycle: HostLifecycle,
     ):
         self.access = access
         self.accounts = accounts
-        self.computer = computer
         self.lifecycle = lifecycle
         self.delivery_locks: dict[str, asyncio.Lock] = {}
         self.session_management_locks: dict[str, asyncio.Lock] = {}
@@ -307,7 +304,7 @@ class SessionOperations:
             await self.lifecycle.require_session(parent)
             parent_path = session_database(self.lifecycle.profile.path, parent)
             read_settled_root(parent_path, value.request_id)
-            web, computer = read_session_policies(parent_path)
+            web = read_session_policies(parent_path)
             web = web.model_copy(update={"base_url": validate_base_url(web.base_url)})
             source = await self.lifecycle.store.session(parent)
             assert source is not None
@@ -320,7 +317,7 @@ class SessionOperations:
             )
             try:
                 async with self.access.maintenance(child_id) as child:
-                    await child.prepare_branch(parent_path, value.request_id, web, computer)
+                    await child.prepare_branch(parent_path, value.request_id, web)
             except Exception:
                 if not existing:
                     health = await self.lifecycle.supervisor.call("GET", "/health", SupervisorHealth)
@@ -405,14 +402,6 @@ class SessionOperations:
             return updated
 
     async def retire_session_resources(self, session: str) -> None:
-        driver = self.computer.computer_drivers.get(session)
-        if driver is not None:
-            code = await self.computer.park_driver(session, driver)
-            await self.access.operate(
-                session, lambda store: store.note_computer_exit(code), require_active=False
-            )
-            if code is None:
-                raise BackendError("computer_exit_unproven", status=503)
         service = await self.lifecycle.store.service()
         if service is not None and service.state != "stopped":
             await self.lifecycle.ensure_supervisor()

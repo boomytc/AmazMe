@@ -25,16 +25,6 @@ from amazme_backend.contracts.accounts import (
 )
 from amazme_backend.contracts.artifacts import ArtifactBody, ArtifactList, ArtifactView, ArtifactWrite
 from amazme_backend.contracts.code import CodeRun, CodeTools, CodeView
-from amazme_backend.contracts.computer import (
-    ComputerActionRequest,
-    ComputerActionView,
-    ComputerCleanup,
-    ComputerGroundRequest,
-    ComputerInspect,
-    ComputerLocateRequest,
-    ComputerObserve,
-    ComputerPolicy,
-)
 from amazme_backend.contracts.events import HistoryPage, Snapshot
 from amazme_backend.contracts.execution import (
     EffectResolution,
@@ -61,8 +51,6 @@ from amazme_backend.contracts.identity import HostFence, Identity
 from amazme_backend.contracts.ipc.host import (
     CodeToolDispatch,
     CodeToolReceipt,
-    ComputerToolRequest,
-    ComputerToolResult,
     PreparedFileWrite,
     PrepareFileWrite,
 )
@@ -341,37 +329,9 @@ def application(owner: Host) -> FastAPI:
     async def web_call(session: str, value: WebCallRequest) -> WebCallView:
         return await owner.sessions.web_call(session, value)
 
-    @app.get("/api/v1/sessions/{session}/computer")
-    async def computer_policy(session: str) -> ComputerPolicy:
-        return await owner.computer.computer_policy(session)
-
-    @app.post("/api/v1/sessions/{session}/computer")
-    async def save_computer_policy(session: str, value: ComputerPolicy) -> ComputerPolicy:
-        return await owner.computer.save_computer_policy(session, value)
-
-    @app.post("/api/v1/sessions/{session}/computer/observe")
-    async def computer_observe(session: str, value: ComputerInspect) -> ComputerObserve:
-        return await owner.computer.computer_observe(session, value)
-
     @app.get("/api/v1/classifiers")
     async def classifiers() -> ClassifierCatalog:
         return owner.accounts.classifier_catalog()
-
-    @app.post("/api/v1/sessions/{session}/computer/locate")
-    async def computer_locate(session: str, value: ComputerLocateRequest) -> ComputerActionView:
-        return await owner.computer.computer_locate(session, value)
-
-    @app.post("/api/v1/sessions/{session}/computer/ground")
-    async def computer_ground(session: str, value: ComputerGroundRequest) -> ComputerActionView:
-        return await owner.computer.computer_ground(session, value)
-
-    @app.post("/api/v1/sessions/{session}/computer/actions")
-    async def computer_action(session: str, value: ComputerActionRequest) -> ComputerActionView:
-        return await owner.computer.computer_action(session, value)
-
-    @app.post("/api/v1/sessions/{session}/computer/cleanup")
-    async def computer_cleanup(session: str) -> ComputerCleanup:
-        return await owner.computer.computer_cleanup(session)
 
     @app.post("/api/v1/sessions/{session}/artifacts", status_code=201)
     async def put_artifact(session: str, value: ArtifactWrite) -> ArtifactView:
@@ -904,10 +864,6 @@ def application(owner: Host) -> FastAPI:
     @app.get("/api/v1/sessions/{session_id}/code/tools")
     async def code_tools(session_id: str) -> CodeTools:
         return await owner.integrations.code_tools(session_id)
-
-    @app.post("/control/computer/tool")
-    async def computer_tool(value: ComputerToolRequest) -> ComputerToolResult:
-        return await owner.computer.computer_model_tool(value)
 
     @app.post("/control/recover")
     async def recover(value: Recovery) -> Health:

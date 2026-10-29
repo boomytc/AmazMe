@@ -6,8 +6,7 @@
 	},
 	"include": [
 		"packages/*/src/**/*",
-		"packages/*/test/**/*",
-		"tools/native/computer-use/src/**/*"
+		"packages/*/test/**/*"
 	],
 	"exclude": [
 		"**/dist/**",

@@ -1,7 +1,22 @@
 /** Product commands use the same Python host as interactive and headless clients. */
 import { spawn } from "node:child_process";
+import { accessSync, constants, statSync } from "node:fs";
 import { HostClient } from "./client/host-client.ts";
 import { connectPythonHost } from "./connection/connection.ts";
+
+const KIMI_CU_BINARY = "/Applications/KimiCU.app/Contents/MacOS/kimi-cu";
+const KIMI_CU_INSTALL_COMMAND =
+	"curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash";
+
+function isExecutableFile(path: string): boolean {
+	try {
+		if (!statSync(path).isFile()) return false;
+		accessSync(path, constants.X_OK);
+		return true;
+	} catch {
+		return false;
+	}
+}
 
 const COMMANDS = new Set([
 	"web",
@@ -11,6 +26,7 @@ const COMMANDS = new Set([
 	"model",
 	"accounts",
 	"auth",
+	"mcp",
 	"import",
 	"export",
 	"doctor",
@@ -21,7 +37,13 @@ const COMMANDS = new Set([
 export async function runPythonProductCommand(
 	args: readonly string[],
 	cwd: string,
-	options: { readonly input?: string; readonly quiet?: boolean; readonly sessionDir?: string } = {},
+	options: {
+		readonly input?: string;
+		readonly quiet?: boolean;
+		readonly sessionDir?: string;
+		readonly platform?: NodeJS.Platform;
+		readonly kimiCuBinary?: string;
+	} = {},
 ): Promise<boolean> {
 	const command = args[0];
 	if (!command || !COMMANDS.has(command)) return false;
@@ -39,6 +61,19 @@ export async function runPythonProductCommand(
 	}
 	if ((url === undefined) !== (token === undefined))
 		throw new Error("python_target_required");
+	if (command === "mcp" && forwarded.length === 1 && forwarded[0] === "add-kimi-cu") {
+		const activePlatform = options.platform ?? process.platform;
+		if (activePlatform !== "darwin") {
+			process.stderr.write("unsupported_platform\n");
+			process.exitCode = 1;
+			return true;
+		}
+		if (!isExecutableFile(options.kimiCuBinary ?? KIMI_CU_BINARY)) {
+			if (!options.quiet) process.stdout.write(`${KIMI_CU_INSTALL_COMMAND}\n`);
+			process.exitCode = 1;
+			return true;
+		}
+	}
 	if (command === "web" || command === "server") {
 		// The local host selects a free loopback port; an existing profile keeps its current listener.
 		if (

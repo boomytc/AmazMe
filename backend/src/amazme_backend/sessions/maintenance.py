@@ -2,7 +2,6 @@
 import sqlite3
 from pathlib import Path
 
-from amazme_backend.contracts.computer import ComputerPolicy
 from amazme_backend.contracts.models import Message
 from amazme_backend.contracts.sessions import (
     Receipt,
@@ -74,16 +73,13 @@ def read_settled_root(path: Path, request_id: str) -> tuple[str, Receipt, list[t
         connection.close()
 
 
-def read_session_policies(path: Path) -> tuple[WebPolicy, ComputerPolicy]:
-    """Read the parent's switches. Call history and driver state stay on the parent."""
+def read_session_policies(path: Path) -> WebPolicy:
+    """Read the parent's switches. Call history stays on the parent."""
     if not path.is_file():
         raise BackendError("branch_point_missing", status=404)
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     try:
-        web = _optional_policy(connection, "SELECT payload FROM web_policies WHERE id='policy'", WebPolicy)
-        computer = _optional_policy(
-            connection, "SELECT payload FROM computer_policies WHERE id='policy'", ComputerPolicy)
-        return web, computer
+        return _optional_policy(connection, "SELECT payload FROM web_policies WHERE id='policy'", WebPolicy)
     finally:
         connection.close()
 

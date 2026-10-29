@@ -239,180 +239,6 @@ export type CompleteUpdate = {
   "expected_revision": string;
 };
 
-export type ComputerActionRequest = {
-  "capture_id": string;
-  "target"?: ComputerWindow | null;
-  "delivery_mode"?: "background" | "foreground";
-  "action": ComputerClick | ComputerText | ComputerKey | ComputerHotkey | ComputerScroll | ComputerDrag;
-  "intent"?: string;
-  "action_id": string;
-};
-
-export type ComputerActionView = {
-  "action_id": string;
-  "session_id": string;
-  "phase": "unknown" | "done" | "failed";
-  "error"?: string;
-  "driver_x"?: number | null;
-  "driver_y"?: number | null;
-  "result"?: Record<string, JsonValue>;
-  "images"?: Array<ImagePart>;
-};
-
-export type ComputerCandidate = {
-  "id": string;
-  "role": "button" | "toggle" | "checkbox" | "radio" | "popup" | "menu_item" | "link" | "text_input";
-  "label": string;
-  "element_token": string;
-  "value"?: string | null;
-};
-
-export type ComputerCaptureView = {
-  "capture_id": string;
-  "width": number;
-  "height": number;
-  "raw_width": number;
-  "raw_height": number;
-  "orientation": number;
-  "scale": number;
-  "observed_ms": number;
-  "target"?: ComputerWindow | null;
-  "snapshot_id"?: string;
-  "tree"?: string;
-  "elements"?: Array<Record<string, JsonValue>>;
-  "window_bounds"?: ComputerRect | null;
-  "degraded_reason"?: string;
-  "candidates"?: Array<ComputerCandidate>;
-};
-
-export type ComputerCleanup = {
-  "cleared": boolean;
-  "proof"?: string;
-};
-
-export type ComputerClick = {
-  "action": "click" | "double_click" | "right_click";
-  "point": ComputerPixel | ComputerElement;
-};
-
-export type ComputerDrag = {
-  "x": number;
-  "y": number;
-  "action": "drag";
-  "to_x": number;
-  "to_y": number;
-};
-
-export type ComputerElement = {
-  "element_token": string;
-};
-
-export type ComputerGroundRequest = {
-  "target": ComputerWindow;
-  "goal": string;
-  "verification": string;
-  "action"?: "click" | "set_value" | "type_text";
-  "text"?: string | null;
-  "action_id": string;
-};
-
-export type ComputerHotkey = {
-  "action": "hotkey";
-  "keys": Array<string>;
-};
-
-export type ComputerInspect = {
-  "action"?: "desktop" | "window" | "apps" | "windows" | "permissions";
-  "target"?: ComputerWindow | null;
-  "pid"?: number | null;
-};
-
-export type ComputerKey = {
-  "action": "press_key";
-  "key": string;
-};
-
-export type ComputerLocateRequest = {
-  "capture_id": string;
-  "target"?: ComputerWindow | null;
-  "description": string;
-  "mode"?: "look_closer" | "tiled";
-  "action_id": string;
-};
-
-export type ComputerObserve = {
-  "permitted": boolean;
-  "accessibility"?: boolean;
-  "screen"?: boolean;
-  "identity"?: string;
-  "error"?: string;
-  "capture"?: ComputerCaptureView | null;
-  "image_base64"?: string;
-  "data"?: Record<string, JsonValue>;
-};
-
-export type ComputerPixel = {
-  "x": number;
-  "y": number;
-};
-
-export type ComputerPolicy = {
-  "enabled"?: boolean;
-  "allow_foreground"?: boolean;
-  "max_age_ms"?: number;
-  "jev_enabled"?: boolean;
-  "jev_provider"?: string;
-  "jev_model"?: string;
-  "min_presence"?: number;
-  "min_box_confidence"?: number;
-  "min_choice_confidence"?: number;
-  "allow_risk_categories"?: Array<"destructive" | "send" | "purchase" | "close_unsaved">;
-  "timeout_ms"?: number;
-};
-
-export type ComputerRect = {
-  "x": number;
-  "y": number;
-  "width": number;
-  "height": number;
-};
-
-export type ComputerScroll = {
-  "x": number;
-  "y": number;
-  "action": "scroll";
-  "direction": "up" | "down" | "left" | "right";
-  "amount"?: number;
-};
-
-export type ComputerText = {
-  "element_token": string;
-  "action": "type_text" | "set_value";
-  "text": string;
-};
-
-export type ComputerToolRequest = {
-  "host_epoch": number;
-  "build_id": string;
-  "session_id": string;
-  "worker_id": string;
-  "step_id": string;
-  "request_id": string;
-  "generation": number;
-  "call": ToolCall;
-};
-
-export type ComputerToolResult = {
-  "phase": "unknown" | "done" | "failed";
-  "result"?: string;
-  "images"?: Array<ImagePart>;
-};
-
-export type ComputerWindow = {
-  "pid": number;
-  "window_id": number;
-};
-
 export type ConfigureProvider = {
   "provider": string;
   "name"?: string;
@@ -1295,11 +1121,6 @@ export type RpcParams = {
   "plugin_draft"?: PluginDraft | null;
   "plugin_reload"?: PluginReload | null;
   "plugin_call"?: PluginCallRequest | null;
-  "computer_inspect"?: ComputerInspect | null;
-  "computer_policy"?: ComputerPolicy | null;
-  "computer_action"?: ComputerActionRequest | null;
-  "computer_ground"?: ComputerGroundRequest | null;
-  "computer_locate"?: ComputerLocateRequest | null;
   "provider"?: string;
   "login_id"?: string;
   "model_settings"?: UpdateModelSettings | null;
@@ -1820,28 +1641,6 @@ export interface ApiModels {
   CompactSession: CompactSession;
   Compaction: Compaction;
   CompleteUpdate: CompleteUpdate;
-  ComputerActionRequest: ComputerActionRequest;
-  ComputerActionView: ComputerActionView;
-  ComputerCandidate: ComputerCandidate;
-  ComputerCaptureView: ComputerCaptureView;
-  ComputerCleanup: ComputerCleanup;
-  ComputerClick: ComputerClick;
-  ComputerDrag: ComputerDrag;
-  ComputerElement: ComputerElement;
-  ComputerGroundRequest: ComputerGroundRequest;
-  ComputerHotkey: ComputerHotkey;
-  ComputerInspect: ComputerInspect;
-  ComputerKey: ComputerKey;
-  ComputerLocateRequest: ComputerLocateRequest;
-  ComputerObserve: ComputerObserve;
-  ComputerPixel: ComputerPixel;
-  ComputerPolicy: ComputerPolicy;
-  ComputerRect: ComputerRect;
-  ComputerScroll: ComputerScroll;
-  ComputerText: ComputerText;
-  ComputerToolRequest: ComputerToolRequest;
-  ComputerToolResult: ComputerToolResult;
-  ComputerWindow: ComputerWindow;
   ConfigureProvider: ConfigureProvider;
   CreateSession: CreateSession;
   CredentialUpdate: CredentialUpdate;
@@ -2068,28 +1867,7 @@ export interface HttpOperations {
   "POST /api/v1/sessions/{session}/web/calls": { response: WebCallView; path: {
   "session": string;
 }; query: Record<string, unknown>; body: WebCallRequest };
-  "GET /api/v1/sessions/{session}/computer": { response: ComputerPolicy; path: {
-  "session": string;
-}; query: Record<string, unknown>; body: undefined };
-  "POST /api/v1/sessions/{session}/computer": { response: ComputerPolicy; path: {
-  "session": string;
-}; query: Record<string, unknown>; body: ComputerPolicy };
-  "POST /api/v1/sessions/{session}/computer/observe": { response: ComputerObserve; path: {
-  "session": string;
-}; query: Record<string, unknown>; body: ComputerInspect };
   "GET /api/v1/classifiers": { response: ClassifierCatalog; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
-  "POST /api/v1/sessions/{session}/computer/locate": { response: ComputerActionView; path: {
-  "session": string;
-}; query: Record<string, unknown>; body: ComputerLocateRequest };
-  "POST /api/v1/sessions/{session}/computer/ground": { response: ComputerActionView; path: {
-  "session": string;
-}; query: Record<string, unknown>; body: ComputerGroundRequest };
-  "POST /api/v1/sessions/{session}/computer/actions": { response: ComputerActionView; path: {
-  "session": string;
-}; query: Record<string, unknown>; body: ComputerActionRequest };
-  "POST /api/v1/sessions/{session}/computer/cleanup": { response: ComputerCleanup; path: {
-  "session": string;
-}; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/sessions/{session}/artifacts": { response: ArtifactView; path: {
   "session": string;
 }; query: Record<string, unknown>; body: ArtifactWrite };

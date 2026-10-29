@@ -18,13 +18,6 @@ from amazme_backend.contracts.accounts import (
     ProviderCheckRequest,
 )
 from amazme_backend.contracts.code import CodeRun
-from amazme_backend.contracts.computer import (
-    ComputerActionRequest,
-    ComputerGroundRequest,
-    ComputerInspect,
-    ComputerLocateRequest,
-    ComputerPolicy,
-)
 from amazme_backend.contracts.execution import (
     JobOutput,
     TerminalOpen,
@@ -103,11 +96,6 @@ class RpcParams(RunOptions):
     plugin_draft: PluginDraft | None = None
     plugin_reload: PluginReload | None = None
     plugin_call: PluginCallRequest | None = None
-    computer_inspect: ComputerInspect | None = None
-    computer_policy: ComputerPolicy | None = None
-    computer_action: ComputerActionRequest | None = None
-    computer_ground: ComputerGroundRequest | None = None
-    computer_locate: ComputerLocateRequest | None = None
     provider: str = ""
     login_id: str = ""
     model_settings: UpdateModelSettings | None = None
@@ -212,30 +200,6 @@ async def _dispatch(owner: Host, method: str, params: RpcParams) -> Model:
         if not params.run_id:
             raise BackendError("codemode_binding_required")
         return await owner.integrations.cancel_code(session, params.run_id)
-    if method == "computer.policy":
-        return await owner.computer.computer_policy(await _bound(owner, params))
-    if method == "computer.configure":
-        if params.computer_policy is None:
-            raise BackendError("computer_policy_required")
-        return await owner.computer.save_computer_policy(await _bound(owner, params), params.computer_policy)
-    if method == "computer.observe":
-        return await owner.computer.computer_observe(await _bound(owner, params), params.computer_inspect)
-    if method == "computer.act":
-        if params.computer_action is None:
-            raise BackendError("computer_action_required")
-        return await owner.computer.computer_action(await _bound(owner, params), params.computer_action)
-    if method == "computer.ground":
-        session = await _bound(owner,params)
-        if params.computer_ground is None:
-            raise BackendError("computer_ground_required")
-        return await owner.computer.computer_ground(session,params.computer_ground)
-    if method == "computer.locate":
-        session = await _bound(owner,params)
-        if params.computer_locate is None:
-            raise BackendError("computer_locate_required")
-        return await owner.computer.computer_locate(session,params.computer_locate)
-    if method == "computer.cleanup":
-        return await owner.computer.computer_cleanup(await _bound(owner, params))
     if method == "schedule.list":
         return await owner.scheduling.list_schedules()
     if method == "schedule.save":

@@ -15,14 +15,14 @@ amazme doctor
 
 会话、SQLite、审批、执行归属、稳定调用 ID 和代际隔离由 Python 管理。离开客户端释放 attachment；它不等于取消工作。取消已受理与进程退出分开核对，未知副作用不自动重放。
 
-模型、原生 shell/文件/PTY、stdio MCP、Python 插件、Codemode、computer-use、SSH，以及项目、记忆、定时任务、工作流和产物共用 [现行契约](../../docs/python-backend-plan.md)。[RPC 入口](docs/rpc.md) 与 [Python SDK 示例](../../backend/docs/sdk.md) 使用真实 Python API。旧 TS API 与迁移前文档只保留在 Git 历史。
+模型、原生 shell/文件/PTY、stdio MCP、Python 插件、Codemode、SSH，以及项目、记忆、定时任务、工作流和产物共用 [现行契约](../../docs/python-backend-plan.md)。[RPC 入口](docs/rpc.md) 与 [Python SDK 示例](../../backend/docs/sdk.md) 使用真实 Python API。旧 TS API 与迁移前文档只保留在 Git 历史。
 
 ```bash
 npm run build --workspace @amazme/coding-agent
 npm test --workspace @amazme/coding-agent
 ```
 
-构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。CUA 原生驱动的固定构建配方及安装校验在仓库的 `tools/native/computer-use`，不随 npm 包分发；产品驱动与分类逻辑属于 Python。
+构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。
 
 1.0.0 前仅本机构建、自用，不公证、不发布。MIT 许可证与上游来源归属保持原样。
 

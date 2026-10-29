@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { writeFileSync, rmSync } from "node:fs";
+import { chmodSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 import { main, requestOptions } from "../src/main.ts";
@@ -317,4 +317,77 @@ test("retired TS options fail before any host mutation and offline sets the orig
     await main(["--offline", "--help"]);
     expect(process.env.AMAZME_OFFLINE).toBe("1");
     expect(process.env.AMAZME_SKIP_VERSION_CHECK).toBe("1");
+});
+
+test("mcp add-kimi-cu checks platform and executable binary before opening a Python host", async () => {
+	const directory = createTempDir("amazme-kimi-cu-");
+	onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
+	const fakeBin = join(directory, "kimi-cu");
+	writeFileSync(fakeBin, "#!/bin/sh\nexit 0\n");
+	chmodSync(fakeBin, 0o755);
+	const out: string[] = [];
+	const err: string[] = [];
+	vi.spyOn(process.stdout, "write").mockImplementation((chunk) => {
+		out.push(String(chunk));
+		return true;
+	});
+	vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+		err.push(String(chunk));
+		return true;
+	});
+
+	expect(
+		await runPythonProductCommand(["mcp", "add-kimi-cu"], "/project", {
+			platform: "darwin",
+			kimiCuBinary: join(directory, "missing-kimi-cu"),
+		}),
+	).toBe(true);
+	expect(process.exitCode).toBe(1);
+	expect(out.join("")).toBe(
+		"curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash\n",
+	);
+	expect(err.join("")).toBe("");
+	expect(connectPythonHost).not.toHaveBeenCalled();
+	expect(spawn).not.toHaveBeenCalled();
+
+	out.length = 0;
+	err.length = 0;
+	process.exitCode = 0;
+	expect(
+		await runPythonProductCommand(["mcp", "add-kimi-cu"], "/project", {
+			platform: "linux",
+			kimiCuBinary: fakeBin,
+		}),
+	).toBe(true);
+	expect(process.exitCode).toBe(1);
+	expect(out.join("")).toBe("");
+	expect(err.join("")).toBe("unsupported_platform\n");
+	expect(connectPythonHost).not.toHaveBeenCalled();
+	expect(spawn).not.toHaveBeenCalled();
+
+	out.length = 0;
+	err.length = 0;
+	process.exitCode = 0;
+	vi.stubEnv("AMAZME_PYTHON_BACKEND", "/local/amazme-backend");
+	expect(
+		await runPythonProductCommand(["mcp", "add-kimi-cu"], "/project", {
+			platform: "darwin",
+			kimiCuBinary: fakeBin,
+		}),
+	).toBe(true);
+	expect(process.exitCode).toBe(0);
+	expect(connectPythonHost).toHaveBeenCalledWith({ cwd: "/project" });
+	expect(spawn).toHaveBeenCalledWith(
+		"/local/amazme-backend",
+		[
+			"client",
+			"--url",
+			"http://127.0.0.1:1234",
+			"--token",
+			"web-token",
+			"mcp",
+			"add-kimi-cu",
+		],
+		{ cwd: "/project", stdio: ["inherit", "inherit", "inherit"] },
+	);
 });

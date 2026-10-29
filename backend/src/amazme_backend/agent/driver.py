@@ -31,8 +31,6 @@ from amazme_backend.contracts.execution import (
 )
 from amazme_backend.contracts.identity import HostFence, HostReady, Identity
 from amazme_backend.contracts.ipc.host import (
-    ComputerToolRequest,
-    ComputerToolResult,
     PreparedFileWrite,
     PrepareFileWrite,
 )
@@ -86,8 +84,6 @@ from amazme_backend.sessions.types import (
     CodeRetrieval,
     CodeReturned,
     Completion,
-    ComputerRetrieval,
-    ComputerReturned,
     Continue,
     EffectResolved,
     EpochClosed,
@@ -282,7 +278,7 @@ class Worker:
 
     def _interrupt(self) -> None:
         # Open/close/reconciliation boundaries are never cancelled with business work.
-        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval, PluginRetrieval)):
+        if self.run_task and isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, PluginRetrieval)):
             self.run_task.cancel()
 
     async def cancel(self, value: Cancel) -> Receipt:
@@ -290,7 +286,7 @@ class Worker:
         self.last_demand = time.monotonic()
         async with self.dispatch_lock:
             receipt = await self.store.cancel(value.request_id, value)
-            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, ComputerRetrieval, PluginRetrieval)):
+            if isinstance(self.current, (ModelInvocation, ToolInvocation, WebRetrieval, McpRetrieval, PluginRetrieval)):
                 current = await self.store.get(self.current.request_id)
                 if current.cancel_requested:
                     self._interrupt()
@@ -595,24 +591,6 @@ class Worker:
             text = json.dumps({"content":parts, "details":view.result.details, "is_error":view.result.is_error}, ensure_ascii=False)[:64000]
         return PluginReturned(action, view, text, images)
 
-    async def _retrieve_computer(self, action: ComputerRetrieval) -> ComputerReturned:
-        ready = self.context.host_ready()
-        epoch = await self.store.host_epoch()
-        if (ready.profile_id != self.context.profile_id or ready.build_id != self.build
-                or ready.fingerprint != self.build or ready.role != "host" or ready.host_epoch != epoch):
-            raise BackendError("stale_host_epoch")
-        request = ComputerToolRequest(build_id=self.build, host_epoch=epoch, session_id=self.session,
-            worker_id=self.instance, step_id=action.step_id, request_id=action.request_id,
-            generation=action.generation, call=action.call)
-        policy = await self.store.computer_policy()
-        async with httpx.AsyncClient(timeout=max(75,policy.timeout_ms / 1000 + 30), trust_env=False) as client:
-            response = await client.post(ready.url + "/control/computer/tool", json=request.model_dump(),
-                                         headers={"Authorization": "Bearer " + self.context.token})
-        if response.is_error:
-            error = ErrorBody.model_validate_json(response.content)
-            raise BackendError(error.code, status=response.status_code)
-        return ComputerReturned(action, ComputerToolResult.model_validate_json(response.content))
-
     async def _job_tool(self, action: ToolInvocation) -> ToolReturned:
         fence = await self._mcp_fence()
         context = JobSession(**fence.model_dump(), session_id=self.session)
@@ -721,8 +699,6 @@ class Worker:
             return await self._retrieve_web(action)
         if isinstance(action, McpRetrieval):
             return await self._retrieve_mcp(action)
-        if isinstance(action, ComputerRetrieval):
-            return await self._retrieve_computer(action)
         if isinstance(action, PluginRetrieval):
             return await self._retrieve_plugin(action)
         if isinstance(action, ToolInvocation):

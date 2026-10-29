@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Literal
-
 from pydantic import Field, JsonValue
 
 from amazme_backend.contracts.execution import EditFile, FileObservation, Lease, WriteFile
@@ -9,21 +7,6 @@ from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.models import ImagePart, ToolCall
 from amazme_backend.contracts.sessions import Receipt
 from amazme_backend.shared.model import Model
-
-
-class ComputerToolRequest(HostFence):
-    session_id: str
-    worker_id: str
-    step_id: str
-    request_id: str
-    generation: int
-    call: ToolCall
-
-
-class ComputerToolResult(Model):
-    phase: Literal["unknown", "done", "failed"]
-    result: str = ""
-    images: list[ImagePart] = Field(default_factory=lambda: list[ImagePart]())
 
 
 class CodeToolDispatch(HostFence):

@@ -50,7 +50,7 @@ test("remote tag lookup resolves annotated tags to their commit", () => {
 
 test("a local release build keeps only the version being built", () => {
 	assert.deepEqual(staleReleaseNames(["v0.2.0", "v0.3.0", "v0.3.0-baseline", ".DS_Store"], "v0.3.0"), ["v0.2.0", "v0.3.0-baseline"]);
-	assert.deepEqual(staleReleaseNames(["computer-use", "v0.3.0", "v0.2.0", "notes"], "v0.3.0"), ["v0.2.0"]);
+	assert.deepEqual(staleReleaseNames(["v0.3.0", "v0.2.0", "notes"], "v0.3.0"), ["v0.2.0"]);
 });
 
 test("release notes verify the published DMG by name", () => {

@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import secrets
+import shlex
 import sys
 from pathlib import Path
 from typing import cast
@@ -15,12 +16,18 @@ from pydantic import SecretStr
 
 from amazme_backend.contracts.accounts import CredentialUpdate, OAuthInput, OAuthStart
 from amazme_backend.contracts.management import ExportBundle
+from amazme_backend.contracts.mcp import McpConfiguration, McpConfigWrite, McpStdioSettings
 from amazme_backend.contracts.models import UpdateModelSettings
 from amazme_backend.contracts.sessions import Approval, Receipt
 from amazme_backend.contracts.workspaces import WorkspaceGrantRequest
 from amazme_backend.interfaces.client_context import local_time_zone
 from amazme_backend.sdk.client import Client
 from amazme_backend.shared.errors import BackendError
+
+KIMI_CU_NAME = "kimi-cu"
+KIMI_CU_COMMAND = "/Applications/KimiCU.app/Contents/MacOS/kimi-cu"
+KIMI_CU_ARGS = ("mcp", "-s", "user")
+KIMI_CU_INSTALL_COMMAND = "curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash"
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -99,6 +106,9 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("status", "input", "cancel"):
         lookup = actions.add_parser(name)
         lookup.add_argument("--login-id", required=True)
+    mcp = sub.add_parser("mcp")
+    mcp_actions = mcp.add_subparsers(dest="mcp_action", required=True)
+    mcp_actions.add_parser("add-kimi-cu")
     return parser
 
 
@@ -238,15 +248,57 @@ async def _apply_decision(client: Client, *, session_id: str, workspace: str, re
         await client.release(session_id=session_id, attachment_id=attachment.attachment_id)
 
 
-async def _run(argv: list[str]) -> int:
+async def _add_kimi_cu(client: Client) -> McpConfiguration:
+    current = await client.mcp_configuration("")
+    expected_detail = shlex.join([KIMI_CU_COMMAND, *KIMI_CU_ARGS])
+    existing = next((item for item in current.servers if item.scope == "global" and item.name == KIMI_CU_NAME), None)
+    if existing is not None and existing.detail == expected_detail and existing.enabled and existing.exposure == "direct":
+        return current
+    operation_id = hashlib.sha256(f"kimi-cu:{current.revision}".encode()).hexdigest()[:32]
+    return await client.change_mcp_configuration(
+        "",
+        "",
+        "",
+        McpConfigWrite(
+            operation_id=operation_id,
+            expected_revision=current.revision,
+            name=KIMI_CU_NAME,
+            entry=McpStdioSettings(
+                enabled=True,
+                exposure="direct",
+                command=KIMI_CU_COMMAND,
+                args=list(KIMI_CU_ARGS),
+            ),
+        ),
+    )
+
+
+async def _run(
+    argv: list[str],
+    *,
+    platform_name: str | None = None,
+    kimi_cu_binary: Path | None = None,
+) -> int:
     args = _parser().parse_args(argv)
     decision: tuple[str, str, str, bool] | None = None
     if args.command == "decide":
         decision = _decision_target(args)
         if decision is None:
             return 1
+    if args.command == "mcp":
+        active_platform = sys.platform if platform_name is None else platform_name
+        if active_platform != "darwin":
+            print("unsupported_platform", file=sys.stderr)
+            return 1
+        binary = Path(KIMI_CU_COMMAND) if kimi_cu_binary is None else kimi_cu_binary
+        if not (binary.is_file() and os.access(binary, os.X_OK)):
+            print(KIMI_CU_INSTALL_COMMAND)
+            return 1
     try:
         async with Client(args.url, args.token) as client:
+            if args.command == "mcp":
+                print((await _add_kimi_cu(client)).model_dump_json())
+                return 0
             if args.command == "resources":
                 print((await client.resources(args.session)).model_dump_json())
                 return 0

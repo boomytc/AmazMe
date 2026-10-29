@@ -11,7 +11,6 @@ from amazme_backend.contracts.ipc.supervisor import TaskActivity
 from amazme_backend.contracts.ipc.worker import WorkerActivity
 from amazme_backend.execution.processes import exited
 from amazme_backend.host.accounts import AccountOperations
-from amazme_backend.host.computer import ComputerOperations
 from amazme_backend.host.content import ContentOperations
 from amazme_backend.host.integrations import IntegrationOperations
 from amazme_backend.host.jobs import JobOperations
@@ -35,8 +34,7 @@ class Host:
         self.accounts = AccountOperations(self.lifecycle)
         self.integrations = IntegrationOperations(self.accounts, self.lifecycle)
         self.access = WorkerSessions(self.integrations, self.lifecycle)
-        self.computer = ComputerOperations(self.access, self.accounts, self.lifecycle)
-        self.sessions = SessionOperations(self.access, self.accounts, self.computer, self.lifecycle)
+        self.sessions = SessionOperations(self.access, self.accounts, self.lifecycle)
         self.workspaces = WorkspaceOperations(self.lifecycle)
         self.jobs = JobOperations(self.lifecycle)
         self.content = ContentOperations(self.access, self.accounts, self.lifecycle, self.sessions)
@@ -110,7 +108,7 @@ class Host:
                 if service.state != "stopped" and (not exited(service.process_lease)):
                     raise BackendError("activity_unavailable", status=503)
         tasks += len(self.accounts.provider_checks) + len(self.sessions.compacting)
-        tasks += len(self.computer.computer_held) + len(self.integrations.mcp_signins.active)
+        tasks += len(self.integrations.mcp_signins.active)
         tasks += sum((login.view.phase == "pending" for login in self.accounts.oauth_logins.values()))
         return TaskActivity(active=tasks > 0, tasks=tasks)
 
@@ -160,16 +158,7 @@ class Host:
             with contextlib.suppress(asyncio.CancelledError):
                 await self.background
         try:
-            closed = await asyncio.gather(
-                *(
-                    self.computer.park_driver(session, driver)
-                    for session, driver in list(self.computer.computer_drivers.items())
-                ),
-                return_exceptions=True,
-            )
             await self.lifecycle.stop_owned_supervisor()
-            if any((code is None or isinstance(code, BaseException) for code in closed)):
-                raise BackendError("computer_exit_unproven")
         finally:
             for _, peer in self.access.worker_peers.values():
                 await peer.close()

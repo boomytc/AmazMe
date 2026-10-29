@@ -61,9 +61,9 @@ def test_prompt_and_disabled_tools_reach_every_wire_protocol() -> None:
 
 
 def test_tool_patterns_and_exclusions_share_the_wire_selection() -> None:
-    config = ProviderConfig(provider='faux', allowed_tools=['*'], excluded_tools=['write_*', 'computer_*'])
+    config = ProviderConfig(provider='faux', allowed_tools=['*'], excluded_tools=['write_*', 'web_*'])
     names = [item.name for item in build_tools(None, config)]
-    assert 'read_file' in names and 'write_file' not in names and 'computer_act' not in names
+    assert 'read_file' in names and 'write_file' not in names and 'web_search' not in names
     assert config.tool_allowed('mcp_' + 'a'*20)
     config.allowed_tools = ['mcp_*']
     assert build_tools(None, config) == [] and not config.tool_allowed('shell')

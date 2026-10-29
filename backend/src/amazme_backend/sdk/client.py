@@ -21,16 +21,6 @@ from amazme_backend.contracts.accounts import (
 )
 from amazme_backend.contracts.artifacts import ArtifactBody, ArtifactView
 from amazme_backend.contracts.code import CodeRun, CodeTools, CodeView
-from amazme_backend.contracts.computer import (
-    ComputerActionRequest,
-    ComputerActionView,
-    ComputerCleanup,
-    ComputerGroundRequest,
-    ComputerInspect,
-    ComputerLocateRequest,
-    ComputerObserve,
-    ComputerPolicy,
-)
 from amazme_backend.contracts.events import Snapshot
 from amazme_backend.contracts.execution import (
     JobList,
@@ -284,35 +274,6 @@ class Client:
     async def import_bundle(self, value: ExportBundle) -> ImportResult:
         return ImportResult.model_validate(await self._send("POST", "/api/v1/import",
             json_body=value.model_dump(mode="json"), headers=self._write()))
-
-    async def computer_policy(self, session_id: str) -> ComputerPolicy:
-        return ComputerPolicy.model_validate(await self._send("GET", f"/api/v1/sessions/{session_id}/computer"))
-
-    async def configure_computer(self, session_id: str, attachment_id: str, value: ComputerPolicy) -> ComputerPolicy:
-        return ComputerPolicy.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer",
-            json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
-
-    async def observe_computer(self, session_id: str, attachment_id: str, value: ComputerInspect | None = None) -> ComputerObserve:
-        return ComputerObserve.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/observe",
-            json_body=(value or ComputerInspect()).model_dump(mode="json"), headers=self._write(attachment_id)))
-
-    async def act_computer(self, session_id: str, attachment_id: str, value: ComputerActionRequest) -> ComputerActionView:
-        return ComputerActionView.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/actions",
-            json_body=value.model_dump(mode="json"), headers=self._write(attachment_id)))
-
-    async def locate_computer(self, session_id: str, workspace: str, attachment_id: str, value: ComputerLocateRequest) -> ComputerActionView:
-        await self._require_workspace(session_id,workspace)
-        return ComputerActionView.model_validate(await self._send("POST",f"/api/v1/sessions/{session_id}/computer/locate",
-            json_body=value.model_dump(mode="json"),headers=self._write(attachment_id)))
-
-    async def ground_computer(self, session_id: str, workspace: str, attachment_id: str, value: ComputerGroundRequest) -> ComputerActionView:
-        await self._require_workspace(session_id,workspace)
-        return ComputerActionView.model_validate(await self._send("POST",f"/api/v1/sessions/{session_id}/computer/ground",
-            json_body=value.model_dump(mode="json"),headers=self._write(attachment_id)))
-
-    async def cleanup_computer(self, session_id: str, attachment_id: str) -> ComputerCleanup:
-        return ComputerCleanup.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/computer/cleanup",
-            json_body={}, headers=self._write(attachment_id)))
 
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
         return ModelSettings.model_validate(await self._send("POST", "/api/v1/models",

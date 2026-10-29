@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseArgs } from "../src/cli/args.ts";
+import { parseArgs, printHelp } from "../src/cli/args.ts";
 
 describe("parseArgs", () => {
 	test.each(["+grep,-write", "read,bash", "read,*search"])("accepts tool selection %s", (selection) => {
@@ -570,6 +570,35 @@ describe("parseArgs", () => {
 			expect(result.thinking).toBe("high");
 			expect(result.fileArgs).toEqual(["prompt.md"]);
 			expect(result.messages).toEqual(["Do the task"]);
+		});
+	});
+
+	describe("printHelp", () => {
+		test("shows mcp add-kimi-cu on darwin and omits it on linux", () => {
+			let darwinHelp = "";
+			printHelp(
+				{
+					write: (chunk: string | Uint8Array) => {
+						darwinHelp += String(chunk);
+						return true;
+					},
+				},
+				"darwin",
+			);
+			expect(darwinHelp).toContain("mcp add-kimi-cu");
+
+			let linuxHelp = "";
+			printHelp(
+				{
+					write: (chunk: string | Uint8Array) => {
+						linuxHelp += String(chunk);
+						return true;
+					},
+				},
+				"linux",
+			);
+			expect(linuxHelp).not.toContain("add-kimi-cu");
+			expect(linuxHelp.toLowerCase()).not.toContain("kimi");
 		});
 	});
 });

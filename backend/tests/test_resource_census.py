@@ -50,13 +50,6 @@ def test_supervisor_is_invisible_to_a_serve_only_pattern():
     assert census.classify_argv(["/bin/amazme-backend", "serve", "--profile", "/Users/keep"]) == "serve"
 
 
-def test_native_computer_socket_ownership_is_classified_without_name_matching():
-    binary = '/Users/keep/AmazMe Computer Use.app/Contents/MacOS/cua-driver'
-    assert census.classify_argv([binary, 'serve', '--socket', '/tmp/amcu-own/driver.sock']) == 'computer-driver'
-    assert census.classify_argv([binary, 'mcp']) is None
-    assert census.classify_argv(['/usr/bin/cua-driver', 'serve', '--socket', '/tmp/amcu-own/driver.sock']) is None
-
-
 def test_ephemeral_supervisor_and_its_child_block_a_new_build(tmp_path):
     processes = [
         proc(1, 0, ["python", "-m", "amazme_backend", "supervisor", "--profile", "/tmp/am2-x/p"]),

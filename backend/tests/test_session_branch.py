@@ -23,7 +23,6 @@ from amazme_backend.contracts import (
     BranchSession,
     Cleanup,
     CompactSession,
-    ComputerPolicy,
     CreateSession,
     HostFence,
     Lease,
@@ -305,11 +304,8 @@ async def test_branch_keeps_session_switches_and_leaves_calls_behind(owner: Host
         web = WebPolicy(
             enabled=True, base_url="https://tools.example/v1", count=3,
             send_original_question=False, timeout_ms=5000)
-        computer = ComputerPolicy(enabled=True, max_age_ms=1000)
         await parent.save_web_policy(web)
-        await parent.save_computer_policy(computer)
         await parent.begin_web_call("paid", "search", "query")
-        await parent.note_computer_exit(7)
         created = await owner.sessions.branch_session(PARENT, BranchSession(request_id="r1"))
         child = SessionStore(session_database(owner.lifecycle.profile.path, created.session_id), created.session_id,
                              build=owner.lifecycle.build, approval_policy="auto", instance="child-worker",
@@ -317,12 +313,9 @@ async def test_branch_keeps_session_switches_and_leaves_calls_behind(owner: Host
         await child.initialize()
         try:
             assert await child.web_policy() == web
-            assert await child.computer_policy() == computer
             assert await session_database_owner(child).call(lambda db: db.execute("SELECT count(*) FROM web_calls").fetchone()[0]) == 0
-            assert await child.computer_runtime() == (False, None, "")
             await child.save_web_policy(WebPolicy())
             assert await parent.web_policy() == web
-            assert (await parent.computer_runtime())[:2] == (True, 7)
         finally:
             await child.close()
     finally:

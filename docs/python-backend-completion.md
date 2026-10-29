@@ -7,7 +7,7 @@
 - Python Host、worker 与监督器拥有账号、模型、会话 SQLite、审批、工具执行和清理。
 - Web/Electron、CLI/TUI、RPC 与 Python SDK 共用 Python 契约；TypeScript 保留客户端呈现、终端及 QuickJS helper。
 - 执行直接作用于本机；应用层路径限制和审批不是操作系统沙箱。
-- MCP、PTY、插件、Codemode 和计算机操作按会话与调用身份管理；未知副作用不自动重放。
+- MCP、PTY、插件和 Codemode 按会话与调用身份管理；未知副作用不自动重放。
 - 桌面关闭窗口和退出应用使用统一生命周期入口；偏好保存在 Python 设置中。
 
 ## 验证入口

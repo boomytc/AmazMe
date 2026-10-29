@@ -4,12 +4,6 @@ from pathlib import PurePosixPath
 
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
-from amazme_backend.contracts.computer import (
-    ComputerGround,
-    ComputerInspect,
-    ComputerLocate,
-    ComputerMutation,
-)
 from amazme_backend.contracts.execution import (
     EditFile,
     JobListInput,
@@ -32,7 +26,7 @@ from amazme_backend.shared.errors import BackendError
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | WriteFile | EditFile | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall | ComputerInspect | ComputerMutation | ComputerLocate | ComputerGround = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | WriteFile | EditFile | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall = Shell.model_validate_json(call.arguments)
     elif call.name == "job_list":
         value = JobListInput.model_validate_json(call.arguments)
     elif call.name == "job_output":
@@ -71,14 +65,6 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = PluginToolCall.model_validate_json(call.arguments)
     elif call.name == "mcp_tool":
         value = McpToolCall.model_validate_json(call.arguments)
-    elif call.name == "computer_observe":
-        value = ComputerInspect.model_validate_json(call.arguments)
-    elif call.name == "computer_act":
-        value = ComputerMutation.model_validate_json(call.arguments)
-    elif call.name == "computer_locate":
-        value = ComputerLocate.model_validate_json(call.arguments)
-    elif call.name == "computer_ground":
-        value = ComputerGround.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
     if isinstance(value, (ReadFile, WriteFile, EditFile)):

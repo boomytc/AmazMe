@@ -1,7 +1,6 @@
 from typing import Protocol
 
 from amazme_backend.contracts.events import HistoryPage
-from amazme_backend.contracts.ipc.host import ComputerToolRequest
 from amazme_backend.contracts.ipc.worker import WorkerActivity
 from amazme_backend.contracts.models import ImagePart
 from amazme_backend.contracts.sessions import Receipt, SearchHit, SessionDiagnostic, UsageReport
@@ -12,8 +11,6 @@ class SessionView(SessionOps, Protocol):
     async def get(self, request_id: str) -> Receipt: ...
 
     async def request_cleanup_complete(self, request_id: str) -> bool: ...
-
-    async def check_computer_intent(self, value: ComputerToolRequest) -> None: ...
 
     async def activity(self) -> WorkerActivity: ...
 

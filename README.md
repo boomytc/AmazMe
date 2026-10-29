@@ -143,13 +143,26 @@ backend/.venv/bin/python -m amazme_backend stop --profile /absolute/profile
 ## 客户端与工具
 
 Electron 加载 Python 提供的页面；Web、TUI、CLI、RPC 与 SDK 共用 Host、会话、账号和副作用账本。
-真实 macOS 桌面驱动使用已有 CUA App 和系统 TCC 状态；SSH 使用系统 OpenSSH 和明确的主机密钥接纳。
-这两项需要用户自己的系统授权或账号，不以固定场景探针冒充产品实现。
+SSH 使用系统 OpenSSH 和明确的主机密钥接纳，需要用户自己的账号，不以固定场景探针冒充产品实现。
 
 Python factory 注册会话插件工具和命令，Codemode 通过现有 QuickJS helper 调用这些工具。
 项目记忆、检查点、网页、定时任务等使用 Python 业务入口，不加载旧 TS Host、Chord facets 或 Durable 会话。
 旧历史格式及旧生态不迁移；未知用户数据和凭据不删除。
 OAuth 沿用 Pi 的客户端 ID、回调及请求身份；凭据由 Python 私有账号库管理，不写入会话导出或工具环境。
+
+### 桌面操控（macOS）
+
+桌面操控依赖用户在 macOS 14 及以上自行安装的 KimiCU；Linux 不提供桌面操控。旧版留下的 `~/Library/Application Support/AmazMe/ComputerUse` 和 `~/Library/Caches/AmazMe/ComputerUse` 可手动删除。
+
+官方安装命令：
+
+```bash
+curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash
+```
+
+应用安装到 `/Applications/KimiCU.app` 后，打开 KimiCU，按其界面授予辅助功能和屏幕录制权限。
+
+在 AmazMe 中执行 `amazme mcp add-kimi-cu`（或在侧栏「插件 → MCP 服务 → 添加 MCP 服务」中填写），保存全局 stdio MCP 配置：服务器名 `kimi-cu`，`enabled` 为 `true`，`exposure` 为 `direct`，`command` 为 `/Applications/KimiCU.app/Contents/MacOS/kimi-cu`，`args` 为 `["mcp", "-s", "user"]`。
 
 ## 开发与文档
 

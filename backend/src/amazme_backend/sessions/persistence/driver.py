@@ -65,8 +65,6 @@ from amazme_backend.sessions.types import (
     CodemodeInput,
     CodeRetrieval,
     CodeReturned,
-    ComputerRetrieval,
-    ComputerReturned,
     Continue,
     EffectResolved,
     EpochClosed,
@@ -108,16 +106,6 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
             return CodeRetrieval(step.step_id, request.request_id, request.generation, step.call, run.config,
                                  state_scope=request.request_id if request.kind == "child" else "", initial_state=step.code_input_state,
                                  start=step.phase == "intent", stop=stopping)
-        if (step.kind == "tool" and step.phase == "intent" and step.call
-                and step.call.name in {"computer_observe", "computer_act", "computer_locate", "computer_ground"}):
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                return Park("frozen")
-            if request.cancel_requested or request.decision:
-                step.phase = "unknown"
-                save_step(db, step)
-                decide_request(db, c, request, Decision(status="cancelled"))
-                return Continue()
-            return ComputerRetrieval(step.step_id, request.request_id, request.generation, step.call)
         if step.kind == "tool" and step.phase == "intent" and step.call and step.call.name == "plugin_tool":
             return PluginRetrieval(step.step_id, request.request_id, request.generation, step.call,
                 stop=bool(request.cancel_requested or request.decision or metadata_value(db, "freeze_id") or metadata_value(db, "stopping")))
@@ -228,14 +216,6 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
             if step.call.name == "delegate_task":
                 delegate_children(state, db, c, request, step)
                 return Continue()
-            if step.call.name in {"computer_observe", "computer_act", "computer_locate", "computer_ground"}:
-                consume_approval(db, c, step)
-                step.phase, step.generation = "intent", request.generation
-                save_step(db, step)
-                request.status = "running"
-                save_request(db, c, request)
-                c.emit("tool", request.request_id, event_step_text(step))
-                return ComputerRetrieval(step.step_id, request.request_id, request.generation, step.call)
             if step.call.name == "plugin_tool":
                 consume_approval(db, c, step)
                 step.phase, step.generation = "intent", request.generation
@@ -398,31 +378,6 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
         c.emit("tool", request.request_id, event_step_text(step))
         c.hit("web_result", request.request_id, step.step_id)
         return
-    if isinstance(observation, ComputerReturned):
-        action = observation.invocation
-        request = load_request(db, action.request_id)
-        step = load_step(db, action.step_id)
-        if (request.generation != action.generation or step.phase != "intent"
-                or step.request_id != request.request_id or step.call != action.call):
-            raise BackendError("stale_generation")
-        result = observation.result
-        if result.phase == "unknown":
-            step.phase = "unknown"
-            save_step(db, step)
-            decide_request(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
-                                                 error="computer_outcome_unknown"))
-            return
-        step.result, step.phase = result.result, "result"
-        if result.images:
-            checked_images(result.images)
-            db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
-                       (step.step_id, json.dumps([image.model_dump() for image in result.images])))
-        save_step(db, step)
-        c.emit("tool", request.request_id, event_step_text(step))
-        if request.cancel_requested and not request.decision:
-            apply_step_result(state, db, c, request, step)
-            decide_request(db, c, request, Decision(status="cancelled"))
-        return
     if isinstance(observation, CodeReturned):
         action, status = observation.invocation, observation.status
         request = load_request(db, action.request_id)
@@ -465,7 +420,7 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
             images = []
             text.append("Script media omitted: " + error.code)
         if images:
-            db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
+            db.execute("INSERT INTO step_images(step_id,payload) VALUES(?,?)",
                        (step.step_id, json.dumps([image.model_dump() for image in images])))
         step.result, step.phase = "\n".join(text)[:64000], "result"
         if view.phase == "success":
@@ -502,7 +457,7 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
             step.result, step.phase = observation.text or view.error, "result"
             if observation.images:
                 checked_images(observation.images)
-                db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
+                db.execute("INSERT INTO step_images(step_id,payload) VALUES(?,?)",
                            (step.step_id, json.dumps([image.model_dump() for image in observation.images])))
             save_step(db, step)
             c.emit("tool", request.request_id, event_step_text(step))
@@ -521,7 +476,7 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
         if observation.phase == "done":
             if observation.images:
                 checked_images(observation.images)
-                db.execute("INSERT INTO computer_images(step_id,payload) VALUES(?,?)",
+                db.execute("INSERT INTO step_images(step_id,payload) VALUES(?,?)",
                            (step.step_id, json.dumps([image.model_dump() for image in observation.images])))
             step.result, step.phase = observation.result, "result"
             save_step(db, step)
@@ -561,7 +516,7 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
         if isinstance(action, (McpRetrieval, PluginRetrieval)):
             # The call may already exist. Leave the intent so the next advance queries it.
             return
-        if isinstance(action, (ModelInvocation, ToolInvocation, WebRetrieval, ComputerRetrieval)):
+        if isinstance(action, (ModelInvocation, ToolInvocation, WebRetrieval)):
             request = load_request(db, action.request_id)
             step = load_step(db, action.step_id)
             if request.generation != action.generation or step.request_id != request.request_id or step.phase != "intent":
@@ -571,11 +526,6 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
                 save_step(db, step)
                 decide_request(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
                                                      error=observation.error))
-            elif isinstance(action, ComputerRetrieval):
-                step.phase = "unknown"
-                save_step(db, step)
-                decide_request(db, c, request, Decision(status="cancelled" if request.cancel_requested else "unknown",
-                                                     error=observation.error or "computer_outcome_unknown"))
             elif isinstance(action, WebRetrieval):
                 row = db.execute("SELECT payload FROM web_calls WHERE id=?", (action.step_id,)).fetchone()
                 step.phase = "unknown"

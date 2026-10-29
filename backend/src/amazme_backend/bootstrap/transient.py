@@ -86,8 +86,6 @@ def settled(profile: Profile) -> bool:
                 return False
             if db.execute("SELECT 1 FROM effects WHERE json_extract(payload,'$.reconciled')=0 LIMIT 1").fetchone():
                 return False
-            if db.execute("SELECT 1 FROM computer_actions WHERE json_extract(payload,'$.phase')='unknown' LIMIT 1").fetchone():
-                return False
     return True
 
 

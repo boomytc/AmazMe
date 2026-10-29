@@ -216,7 +216,7 @@ def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, reques
     binding = approval_binding(state, db, request.request_id, step.call)
     policy = load_run(db, request.request_id).config.approval_policy or state.approval_policy
     required = policy == "all" or (
-        policy == "mutations" and step.call.name in {"shell", "write_file", "edit_file", "job_kill", "mcp_tool", "computer_act", "computer_ground", "plugin_tool"})
+        policy == "mutations" and step.call.name in {"shell", "write_file", "edit_file", "job_kill", "mcp_tool", "plugin_tool"})
     if not required:
         return True
     approval: Approval | None = None
@@ -286,7 +286,7 @@ def apply_step_result(state: SessionContext, db: sqlite3.Connection, c: Changes,
         append_message(db, c, request.request_id, step.step_id,
                       Message(role="tool", content=step.result, tool_call_id=step.call.id,
                               images=load_step_images(db, step.step_id)
-                              if step.call.name in {"computer_observe", "computer_locate", "computer_ground", "plugin_tool", "codemode", "mcp_tool"} else []))
+                              if step.call.name in {"plugin_tool", "codemode", "mcp_tool"} else []))
         if load_run(db, request.request_id).direct_call is not None:
             decide_request(db, c, request, Decision(status="succeeded", answer=step.result))
     step.phase = "applied"

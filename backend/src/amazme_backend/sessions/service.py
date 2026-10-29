@@ -9,18 +9,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Protocol
 
-from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic import BaseModel, TypeAdapter
 
 from amazme_backend.ai.pricing import token_cost_micro
-from amazme_backend.contracts.computer import ComputerActionView, ComputerCaptureView, ComputerPolicy
 from amazme_backend.contracts.events import CommitBatch, Event, HistoryPage, Replay, Snapshot
 from amazme_backend.contracts.execution import Cleanup, EffectHold, EffectResolution
 from amazme_backend.contracts.identity import HostFence
-from amazme_backend.contracts.ipc.host import ComputerToolRequest
 from amazme_backend.contracts.ipc.worker import (
     BeginCompactionBody,
-    BeginComputerBody,
-    BeginComputerResult,
     BeginWebBody,
     BeginWebResult,
     CancelBody,
@@ -29,27 +25,20 @@ from amazme_backend.contracts.ipc.worker import (
     CompactBody,
     CompactionClaim,
     EpochValue,
-    ExitBody,
-    FindActionBody,
-    FlagValue,
-    FoundAction,
     IdBody,
     JobNotice,
     MessageList,
     OpenWorkflowBody,
     PrepareBranchBody,
-    RuntimeValue,
     SessionOpName,
-    SettleComputerBody,
     SettleWebBody,
     SnapshotBody,
     StoppingBody,
-    TextValue,
     TranscriptBody,
     VerdictBody,
     WorkerActivity,
 )
-from amazme_backend.contracts.models import CatalogModel, ImagePart, Message, checked_images
+from amazme_backend.contracts.models import CatalogModel, ImagePart, Message
 from amazme_backend.contracts.plugins import PluginOffer
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.resources import ResourceOptions
@@ -84,8 +73,6 @@ from amazme_backend.sessions.persistence.records import (
     list_requests,
     list_steps,
     load_active_summary,
-    load_computer_policy,
-    load_computer_runtime,
     load_message_payloads,
     load_messages,
     load_prompt_images,
@@ -484,112 +471,6 @@ class SessionStore:
             return load_web_call(db, call_id)
         return await self._store.transact(operation)
 
-    async def computer_policy(self) -> ComputerPolicy:
-        return await self._store.database.call(load_computer_policy)
-
-    async def save_computer_policy(self, value: ComputerPolicy) -> ComputerPolicy:
-        def operation(db: sqlite3.Connection, _changes: Changes) -> ComputerPolicy:
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen")
-            db.execute(
-                "INSERT INTO computer_policies(id,payload) VALUES('policy',?) "
-                "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
-                (value.model_dump_json(),))
-            return value
-        return await self._store.transact(operation)
-
-    async def computer_blocked(self) -> bool:
-        blocked, _exit, _proof = await self._store.database.call(load_computer_runtime)
-        return blocked
-
-    async def computer_runtime(self) -> tuple[bool, int | None, str]:
-        return await self._store.database.call(load_computer_runtime)
-
-    async def note_computer_exit(self, exit_code: int | None) -> None:
-        def operation(db: sqlite3.Connection, _changes: Changes) -> None:
-            _blocked, previous, proof = load_computer_runtime(db)
-            code = previous if exit_code is None else exit_code
-            db.execute(
-                "INSERT INTO computer_runtime(id,blocked,exit_code,proof) VALUES('current',1,?,?) "
-                "ON CONFLICT(id) DO UPDATE SET blocked=1,exit_code=excluded.exit_code,proof=computer_runtime.proof",
-                (code, proof))
-        await self._store.transact(operation)
-
-    async def finish_computer_cleanup(self, proof: str) -> str:
-        def operation(db: sqlite3.Connection, _changes: Changes) -> str:
-            blocked, exit_code, existing = load_computer_runtime(db)
-            if not blocked:
-                return existing
-            if exit_code is None or not proof:
-                raise BackendError("computer_exit_unproven")
-            db.execute("UPDATE computer_runtime SET blocked=0,proof=? WHERE id='current'", (proof,))
-            return proof
-        return await self._store.transact(operation)
-
-    async def save_computer_capture(self, value: ComputerCaptureView) -> ComputerCaptureView:
-        def operation(db: sqlite3.Connection, _changes: Changes) -> ComputerCaptureView:
-            db.execute("INSERT INTO computer_captures(id,observed_ms,payload) VALUES(?,?,?)",
-                       (value.capture_id, value.observed_ms, value.model_dump_json()))
-            return value
-        return await self._store.transact(operation)
-
-    async def latest_computer_capture(self) -> ComputerCaptureView | None:
-        def operation(db: sqlite3.Connection) -> ComputerCaptureView | None:
-            row = db.execute("SELECT payload FROM computer_captures ORDER BY ordinal DESC LIMIT 1").fetchone()
-            if row is None:
-                return None
-            return ComputerCaptureView.model_validate_json(row[0])
-        return await self._store.database.call(operation)
-
-    async def find_computer_action(self, action_id: str, body: str) -> ComputerActionView | None:
-        def operation(db: sqlite3.Connection) -> ComputerActionView | None:
-            row = db.execute("SELECT digest,payload FROM computer_actions WHERE id=?", (action_id,)).fetchone()
-            if row is None:
-                return None
-            if str(row[0]) != digest(body):
-                raise BackendError("computer_action_conflict")
-            return ComputerActionView.model_validate_json(row[1])
-        return await self._store.database.call(operation)
-
-    async def begin_computer_action(self, action_id: str, body: str) -> tuple[ComputerActionView, bool]:
-        def operation(db: sqlite3.Connection, _changes: Changes) -> tuple[ComputerActionView, bool]:
-            blocked, _exit, _proof = load_computer_runtime(db)
-            key = digest(body)
-            row = db.execute("SELECT digest,payload FROM computer_actions WHERE id=?", (action_id,)).fetchone()
-            if row:
-                if str(row[0]) != key:
-                    raise BackendError("computer_action_conflict")
-                return ComputerActionView.model_validate_json(row[1]), False
-            if blocked:
-                raise BackendError("computer_blocked")
-            view = ComputerActionView(action_id=action_id, session_id=self._state.session_id, phase="unknown")
-            db.execute("INSERT INTO computer_actions(id,digest,payload) VALUES(?,?,?)",
-                       (action_id, key, view.model_dump_json()))
-            return view, True
-        return await self._store.transact(operation)
-
-    async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"],
-                                     error: str, driver_x: int | None, driver_y: int | None,
-                                     result: dict[str, JsonValue] | None = None, images: list[ImagePart] | None = None) -> ComputerActionView:
-        def operation(db: sqlite3.Connection, _changes: Changes) -> ComputerActionView:
-            row = db.execute("SELECT payload FROM computer_actions WHERE id=?", (action_id,)).fetchone()
-            if row is None:
-                raise BackendError("computer_action_missing", status=404)
-            current = ComputerActionView.model_validate_json(row[0])
-            if current.phase != "unknown":
-                return current
-            current.phase = phase
-            current.error = error
-            current.driver_x = driver_x
-            current.driver_y = driver_y
-            current.result = result or {}
-            current.images = checked_images(images or [])
-            db.execute(
-                "UPDATE computer_actions SET payload=? WHERE id=? AND json_extract(payload,'$.phase')='unknown'",
-                (current.model_dump_json(), action_id))
-            return current
-        return await self._store.transact(operation)
-
     async def cancel(self, request_id: str, fence: HostFence) -> Receipt:
         def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
             check_fence(self._state, db, fence)
@@ -729,18 +610,6 @@ class SessionStore:
                 step.search_catalog = search_catalog
                 save_step(db, step)
         await self._store.transact(operation)
-
-    async def check_computer_intent(self, value: ComputerToolRequest) -> None:
-        def operation(db: sqlite3.Connection) -> None:
-            check_fence(self._state, db, value)
-            step = load_step(db, value.step_id)
-            request = load_request(db, value.request_id)
-            if (step.phase != "intent" or step.request_id != value.request_id or step.generation != value.generation
-                    or request.generation != value.generation or request.cancel_requested or request.decision
-                    or step.call != value.call or value.call.name not in {"computer_observe", "computer_act", "computer_locate", "computer_ground"}
-                    or metadata_value(db, "freeze_id") or metadata_value(db, "stopping") or metadata_value(db, "blocked")):
-                raise BackendError("computer_intent_mismatch")
-        await self._store.database.call(operation)
 
     async def refresh_effect_proofs(self, proofs: list[EffectHold]) -> None:
         """Accept monotone cleanup facts from the current execution authority, never user reconciliation."""
@@ -1234,13 +1103,11 @@ class SessionStore:
 
         return await self._store.database.call(operation)
 
-    async def prepare_branch(self, parent: Path, request_id: str, web: WebPolicy,
-                             computer: ComputerPolicy) -> Receipt:
+    async def prepare_branch(self, parent: Path, request_id: str, web: WebPolicy) -> Receipt:
         """Copy a settled turn and its policies on the writer already owned by this worker."""
         await self.initialize()
         receipt = await self.import_settled_root(parent, request_id)
         await self.save_web_policy(web)
-        await self.save_computer_policy(computer)
         return receipt
 
     async def import_settled_root(self, parent: Path, request_id: str) -> Receipt:
@@ -1402,7 +1269,7 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
         return _model(await store.set_approval_policy(SessionApprovalPolicy.model_validate_json(payload)))
     if name == "prepare_branch":
         body = PrepareBranchBody.model_validate_json(payload)
-        return _model(await store.prepare_branch(Path(body.parent_path), body.request_id, body.web, body.computer))
+        return _model(await store.prepare_branch(Path(body.parent_path), body.request_id, body.web))
     if name == "stopping":
         body = StoppingBody.model_validate_json(payload)
         await store.stopping(body.fence, body.execution_epoch, cancel_work=body.cancel_work)
@@ -1444,38 +1311,8 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
     if name == "settle_web_call":
         body = SettleWebBody.model_validate_json(payload)
         return _model(await store.settle_web_call(body.call_id, body.phase, body.error, body.result))
-    if name == "save_computer_policy":
-        return _model(await store.save_computer_policy(ComputerPolicy.model_validate_json(payload)))
-    if name == "computer_policy":
-        return _model(await store.computer_policy())
-    if name == "computer_blocked":
-        return _model(FlagValue(value=await store.computer_blocked()))
-    if name == "computer_runtime":
-        blocked, exit_code, proof = await store.computer_runtime()
-        return _model(RuntimeValue(blocked=blocked, exit_code=exit_code, proof=proof))
-    if name == "find_computer_action":
-        body = FindActionBody.model_validate_json(payload)
-        return _model(FoundAction(view=await store.find_computer_action(body.action_id, body.body)))
-    if name == "latest_computer_capture":
-        found = await store.latest_computer_capture()
-        return "" if found is None else _model(found)
     if name == "messages":
         return _model(MessageList(messages=await store.messages(IdBody.model_validate_json(payload).id)))
-    if name == "note_computer_exit":
-        await store.note_computer_exit(ExitBody.model_validate_json(payload or "{}").exit_code)
-        return ""
-    if name == "save_computer_capture":
-        return _model(await store.save_computer_capture(ComputerCaptureView.model_validate_json(payload)))
-    if name == "begin_computer_action":
-        body = BeginComputerBody.model_validate_json(payload)
-        view, send = await store.begin_computer_action(body.action_id, body.body)
-        return _model(BeginComputerResult(view=view, send=send))
-    if name == "settle_computer_action":
-        body = SettleComputerBody.model_validate_json(payload)
-        return _model(await store.settle_computer_action(
-            body.action_id, body.phase, body.error, body.driver_x, body.driver_y, body.result, body.images))
-    if name == "finish_computer_cleanup":
-        return _model(TextValue(value=await store.finish_computer_cleanup(TextValue.model_validate_json(payload).value)))
     if name == "begin_compaction":
         body = BeginCompactionBody.model_validate_json(payload)
         return _model(CompactionClaim(compaction=await store.begin_compaction(
@@ -1496,7 +1333,7 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
 
 class SessionOps(Protocol):
     async def set_approval_policy(self, value: SessionApprovalPolicy) -> SessionApprovalPolicy: ...
-    async def prepare_branch(self, parent: Path, request_id: str, web: WebPolicy, computer: ComputerPolicy) -> Receipt: ...
+    async def prepare_branch(self, parent: Path, request_id: str, web: WebPolicy) -> Receipt: ...
     async def stopping(self, fence: HostFence, execution_epoch: int | None = None, *, cancel_work: bool = True) -> None: ...
     async def accept_code_tool(self, value: CodeChild) -> Receipt: ...
     async def open_workflow(self, workflow_id: str, check: str, correction_limit: int, *,
@@ -1513,19 +1350,7 @@ class SessionOps(Protocol):
     async def web_policy(self) -> WebPolicy: ...
     async def begin_web_call(self, call_id: str, kind: Literal["search", "fetch"], body: str) -> tuple[WebCallView, bool]: ...
     async def settle_web_call(self, call_id: str, phase: Literal["unknown", "done", "failed"], error: str, result: str) -> WebCallView: ...
-    async def save_computer_policy(self, value: ComputerPolicy) -> ComputerPolicy: ...
-    async def computer_policy(self) -> ComputerPolicy: ...
-    async def computer_blocked(self) -> bool: ...
-    async def computer_runtime(self) -> tuple[bool, int | None, str]: ...
-    async def find_computer_action(self, action_id: str, body: str) -> ComputerActionView | None: ...
-    async def latest_computer_capture(self) -> ComputerCaptureView | None: ...
     async def messages(self, request_id: str) -> list[Message]: ...
-    async def note_computer_exit(self, exit_code: int | None) -> None: ...
-    async def save_computer_capture(self, value: ComputerCaptureView) -> ComputerCaptureView: ...
-    async def begin_computer_action(self, action_id: str, body: str) -> tuple[ComputerActionView, bool]: ...
-    async def settle_computer_action(self, action_id: str, phase: Literal["unknown", "done", "failed"], error: str, driver_x: int | None, driver_y: int | None, result: dict[str, JsonValue] | None = None,
-                                     images: list[ImagePart] | None = None) -> ComputerActionView: ...
-    async def finish_computer_cleanup(self, proof: str) -> str: ...
     async def begin_compaction(self, compaction_id: str, through_request_id: str, instructions: str = "") -> Compaction | None: ...
     async def release_compaction(self, compaction_id: str) -> None: ...
     async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "") -> Compaction: ...

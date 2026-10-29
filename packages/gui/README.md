@@ -24,7 +24,7 @@ npm run dev:desktop
 
 菜单和错误框优先使用当前页面的 `lang`，页面未就绪、已崩溃或语言读取超时时使用同一 profile 的全局 `locale` 设置（与 `SettingsManager.getLocalePreference` 一致，不读项目覆盖）；`auto` 才跟随系统。程序生成的英文错误留在有界详情中，摘要按错误类型、退出码和超时参数本地化。
 
-桌面拥有的 Python 后端在显式退出时先阻止新投递、取消活动工作，再按进程租约和注册信息回收 Supervisor、Worker、终端、插件、MCP、工具及 Computer Use 驱动。关闭窗口继续运行不会取消任务。活动状态来自 `/control/desktop/activity` 对现有会话、投递和监督状态的只读聚合，查询失败不按空闲处理。控制关闭完成后还等待 Host 自然退出；清理失败或超时会保留应用供重试，不自动强杀或宣称成功。子进程没有父进程 stdin 管道。
+桌面拥有的 Python 后端在显式退出时先阻止新投递、取消活动工作，再按进程租约和注册信息回收 Supervisor、Worker、终端、插件、MCP 及工具。关闭窗口继续运行不会取消任务。活动状态来自 `/control/desktop/activity` 对现有会话、投递和监督状态的只读聚合，查询失败不按空闲处理。控制关闭完成后还等待 Host 自然退出；清理失败或超时会保留应用供重试，不自动强杀或宣称成功。子进程没有父进程 stdin 管道。
 
 壳的 typecheck 和构建解析 `@amazme/web/locale` 与 `@amazme/web/strings` 的 dist。单独启动这个包之前，Web 的 dist 要已经在。桌面运行时不再依赖 `@amazme/coding-agent`。
 
@@ -50,7 +50,7 @@ Electron 是窗口壳。正式安装包带上 Python 后端后才打开页面。
 
 ## DMG 与 GitHub Release
 
-1.0.0 之前不打 `v*` 标签，也不上传 GitHub Release。没有明确要求发布时，两者都不做。这个阶段只做本地验证和本地构建；`npm run release` 会拒绝低于 1.0.0 的版本。签名、公证、标签和上传留到 1.0.0，并且一次完成。本地 `dist-release/v*` 只保留正在构建的那一个应用版本，旧应用版本目录在下一次构建开始时删除。`dist-release/computer-use/` 是独立组件的构建与验证目录，由 computer-use 维护命令管理，应用发布不会删除它。
+1.0.0 之前不打 `v*` 标签，也不上传 GitHub Release。没有明确要求发布时，两者都不做。这个阶段只做本地验证和本地构建；`npm run release` 会拒绝低于 1.0.0 的版本。签名、公证、标签和上传留到 1.0.0，并且一次完成。本地 `dist-release/v*` 只保留正在构建的那一个应用版本，旧应用版本目录在下一次构建开始时删除。
 
 在独立包基础上加 `--dmg` 会生成 `AmazMe-<version>-macos-<arch>.dmg` 与同名 `.sha256`：DMG 内含应用和“应用程序”快捷方式，创建后会挂载回读 `release-manifest.json` 校验版本。
 

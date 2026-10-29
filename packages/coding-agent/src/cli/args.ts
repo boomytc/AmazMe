@@ -308,7 +308,12 @@ export function parseArgs(args: string[]): Args {
 	return result;
 }
 
-export function printHelp(output: Pick<NodeJS.WriteStream, "write"> = process.stdout): void {
+export function printHelp(
+	output: Pick<NodeJS.WriteStream, "write"> = process.stdout,
+	platform: NodeJS.Platform = process.platform,
+): void {
+	const desktopMcp =
+		platform === "darwin" ? "  mcp add-kimi-cu                  添加本机 KimiCU 的全局 stdio MCP 配置\n" : "";
 	output.write(`${APP_NAME} — 本机桌面助手
 
 用法：
@@ -324,7 +329,7 @@ export function printHelp(output: Pick<NodeJS.WriteStream, "write"> = process.st
   auth login --provider NAME --method api-key  从隐藏输入或 stdin 保存 key
   auth logout --provider NAME      删除对应账号凭据
   auth status|input|cancel --login-id ID  核对、补交授权输入或取消原登录
-  export [--output 文件]            导出当前 profile 的新格式数据，不覆盖已有文件
+${desktopMcp}  export [--output 文件]            导出当前 profile 的新格式数据，不覆盖已有文件
   import 文件                      导入新格式数据，不覆盖冲突记录
   doctor                           查看 Python Host 健康状态
   client <命令>                    使用 Python CLI；client --help 查看参数

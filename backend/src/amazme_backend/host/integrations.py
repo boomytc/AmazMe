@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from pathlib import Path
 from typing import TypedDict
 
@@ -46,6 +48,7 @@ from amazme_backend.contracts.mcp import (
     McpOpen,
     McpReconnect,
     McpState,
+    McpStdioSettings,
     McpView,
 )
 from amazme_backend.contracts.plugins import (
@@ -79,6 +82,15 @@ from amazme_backend.host.persistence import mcp as mcp_management
 from amazme_backend.profiles.layout import session_database
 from amazme_backend.sessions.service import TERMINAL, read_session
 from amazme_backend.shared.errors import BackendError
+
+KIMI_CU_COMMAND = "/Applications/KimiCU.app/Contents/MacOS/kimi-cu"
+KIMI_CU_BINARY = Path(KIMI_CU_COMMAND)
+
+
+def _kimi_cu_ready(item: mcp_management.Configured) -> bool:
+    if isinstance(item.settings, McpStdioSettings) and item.settings.command == KIMI_CU_COMMAND:
+        return sys.platform == "darwin" and KIMI_CU_BINARY.is_file() and os.access(KIMI_CU_BINARY, os.X_OK)
+    return True
 
 
 class McpFence(TypedDict):
@@ -236,7 +248,7 @@ class IntegrationOperations:
             ids = {
                 item.config_id: await self.lifecycle.store.current_mcp_server(item, session)
                 for item in configured
-                if item.settings.enabled
+                if item.settings.enabled and _kimi_cu_ready(item)
             }
             state = await self.mcp_state(session)
             for server in state.servers:

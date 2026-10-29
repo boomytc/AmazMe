@@ -92,16 +92,8 @@ def initialize(db: sqlite3.Connection) -> None:
                 CREATE TABLE IF NOT EXISTS web_policies(id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS web_calls(
                   id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS computer_policies(id TEXT PRIMARY KEY,payload TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS computer_captures(
-                  ordinal INTEGER PRIMARY KEY AUTOINCREMENT,id TEXT UNIQUE NOT NULL,observed_ms INTEGER NOT NULL,
-                  payload TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS computer_actions(
-                  id TEXT PRIMARY KEY,digest TEXT NOT NULL,payload TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS computer_images(
+                CREATE TABLE IF NOT EXISTS step_images(
                   step_id TEXT PRIMARY KEY REFERENCES steps(id),payload TEXT NOT NULL);
-                CREATE TABLE IF NOT EXISTS computer_runtime(
-                  id TEXT PRIMARY KEY,blocked INTEGER NOT NULL,exit_code INTEGER,proof TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS prompt_images(
                   request_id TEXT PRIMARY KEY REFERENCES requests(id),payload TEXT NOT NULL);
             """)

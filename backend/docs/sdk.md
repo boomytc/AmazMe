@@ -23,7 +23,7 @@ async with Client('http://127.0.0.1:PORT', Path('/absolute/profile/web.token').r
 
 模型选择 `models` / `update_model` 与账号 `accounts` / `update_account` 分离；OAuth 使用 `start_oauth` / `oauth` / `oauth_input` / `cancel_oauth`，沿用原供应商身份。不要通过模型配置传递密钥。
 
-其他入口包括 `register_plugin/reload_plugin/call_plugin/cancel_plugin/close_plugin`、`code_tools/run_code/cancel_code`、stdio MCP、会话 PTY、computer-use、检查点、产物和导入导出；参数直接来自 `amazme_backend.contracts`，不保留另一套 SDK 业务状态。
+其他入口包括 `register_plugin/reload_plugin/call_plugin/cancel_plugin/close_plugin`、`code_tools/run_code/cancel_code`、stdio MCP、会话 PTY、检查点、产物和导入导出；参数直接来自 `amazme_backend.contracts`，不保留另一套 SDK 业务状态。
 
 可运行示例见 [examples/sdk](../examples/sdk/README.md)。完整业务契约与运行边界统一见 [Python 方案](../../docs/python-backend-plan.md)，源码签名见 `src/amazme_backend/sdk/client.py`。
 
