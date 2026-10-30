@@ -1,5 +1,6 @@
 """Product-to-model boundary: prompts, tool selection, faux routing and public DTO validation."""
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import aclosing
 
 from amazme_backend.agent import faux
 from amazme_backend.agent.prompting import build_system_prompt, summary_message
@@ -34,29 +35,59 @@ def model_request(config: ProviderConfig, messages: Sequence[Message], offers: S
         tools=build_tools(offers, config, plugins), wire_names=wire_names(spec, auth))
 
 
+def _without_historical_images(request: ModelRequest) -> ModelRequest | None:
+    boundary = next((index for index in range(len(request.messages) - 1, -1, -1)
+                     if request.messages[index].role == "user"), 0)
+    if not any(message.images for message in request.messages[:boundary]):
+        return None
+    messages = [
+        message.model_copy(update={
+            "images": [],
+            "content": message.content + f"\n[{len(message.images)} historical image(s) omitted after request body size rejection.]",
+        }) if index < boundary and message.images else message
+        for index, message in enumerate(request.messages)
+    ]
+    return request.model_copy(update={"messages": messages})
+
+
 async def stream(config: ProviderConfig, messages: list[Message], offers: Sequence[McpOffer] | None = None,
-                 plugins: Sequence[PluginOffer] | None = None, *, auth: Auth, context: str = "") -> AsyncIterator[str | Completion[Message]]:
+                 plugins: Sequence[PluginOffer] | None = None, *, auth: Auth, context: str = "") -> AsyncGenerator[str | Completion[Message], None]:
     if config.provider == "faux":
         async for item in faux.stream(messages):
             yield item
         return
-    async for item in client.stream(model_spec(config), model_request(config, messages, offers, plugins, auth=auth, context=context),
-                                  auth, transport=model_transport(config)):
-        if isinstance(item, str):
-            yield item
-        else:
-            yield ProductCompletion.model_validate(item.model_dump())
+    request = model_request(config, messages, offers, plugins, auth=auth, context=context)
+    emitted = False
+    for attempt in range(2):
+        try:
+            async with aclosing(client.stream(model_spec(config), request, auth,
+                                              transport=model_transport(config))) as response:
+                async for item in response:
+                    emitted = True
+                    if isinstance(item, str):
+                        yield item
+                    else:
+                        yield ProductCompletion.model_validate(item.model_dump())
+            return
+        except BackendError as error:
+            reduced = _without_historical_images(request) if (
+                error.code == "model_http_413" and attempt == 0 and not emitted
+            ) else None
+            if reduced is None:
+                raise
+            request = reduced
 
 
 async def summarize(config: ProviderConfig, messages: list[Message], instructions: str = "", *, auth: Auth) -> str:
     """Ask the configured provider for a context summary. Callers commit it only if the basis still matches."""
     prompt = summary_message(messages, instructions)
     summary = ""
-    async for item in stream(config, [prompt], auth=auth):
-        if isinstance(item, str):
-            summary += item
-        elif item.message.content:
-            summary = item.message.content
+    async with aclosing(stream(config, [prompt], auth=auth)) as response:
+        async for item in response:
+            if isinstance(item, str):
+                summary += item
+            elif item.message.content:
+                summary = item.message.content
     if not summary.strip():
         raise BackendError("compaction_empty")
     return summary.strip()[:16000]

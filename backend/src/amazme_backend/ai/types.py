@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import Field, JsonValue, SecretStr, model_validator
@@ -32,7 +33,7 @@ type AuthSource = Auth | Callable[[], Awaitable[Auth]]
 class RequestTransport(Model):
     proxy: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = Field(default=60.0, gt=0, allow_inf_nan=False)
 
 
 class ToolDefinition(Model):
@@ -94,3 +95,12 @@ class Completion[MessageT = ModelMessage](Model):
     price_output_micro_per_million: int | None = None
     price_cache_read_micro_per_million: int | None = None
     price_cache_write_micro_per_million: int | None = None
+
+
+@dataclass(frozen=True)
+class StreamProgress:
+    """Reasoning or tool input arrived without public response text."""
+
+
+PROGRESS = StreamProgress()
+type ProviderEvent = str | Completion | StreamProgress

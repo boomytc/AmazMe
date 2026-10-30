@@ -1,5 +1,5 @@
 """Bounded JSON SSE parsing shared by the native HTTP provider protocols."""
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import httpx
 from pydantic import JsonValue, TypeAdapter
@@ -29,7 +29,7 @@ def text(value: JsonValue) -> str:
     return value if isinstance(value, str) else ''
 
 
-async def events(client: httpx.AsyncClient, url: str, headers: dict[str, str], body: Record) -> AsyncIterator[Record]:
+async def events(client: httpx.AsyncClient, url: str, headers: dict[str, str], body: Record) -> AsyncGenerator[Record, None]:
     async with client.stream('POST', url, json=body, headers=headers) as response:
         if not response.is_success:
             raise BackendError('model_http_' + str(response.status_code), status=503)

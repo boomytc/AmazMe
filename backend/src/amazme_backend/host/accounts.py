@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from contextlib import aclosing
 
 import httpx
 from pydantic import SecretStr
@@ -328,14 +329,15 @@ class AccountOperations:
                         raise BackendError("provider_configuration_changed")
                     completed = False
                     async with asyncio.timeout(30):
-                        async for item in stream(
+                        async with aclosing(stream(
                             configured,
                             [Message(role="user", content="Reply OK.")],
                             auth=Auth(api_key=configured.api_key, auth_type=configured.auth_type,
                                       headers=request_identity(configured.provider)),
-                        ):
-                            if isinstance(item, Completion):
-                                completed = True
+                        )) as response:
+                            async for item in response:
+                                if isinstance(item, Completion):
+                                    completed = True
                     if not completed:
                         failed.append(model)
                 except (BackendError, TimeoutError, httpx.HTTPError):

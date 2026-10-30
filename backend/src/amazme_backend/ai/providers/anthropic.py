@@ -1,6 +1,7 @@
 """Anthropic model protocol with caller-supplied prompt and tools."""
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 
 import httpx
 from pydantic import JsonValue
@@ -12,12 +13,14 @@ from amazme_backend.ai.providers.sse import RECORD, Record, events, number, reco
 from amazme_backend.ai.providers.tools import tool_records
 from amazme_backend.ai.reasoning import anthropic_thinking
 from amazme_backend.ai.types import (
+    PROGRESS,
     Auth,
     Completion,
     ModelMessage,
     ModelRequest,
     ModelSpec,
     ModelToolCall,
+    ProviderEvent,
     RequestTransport,
 )
 from amazme_backend.shared.errors import BackendError
@@ -63,7 +66,7 @@ def anthropic_body(config: ModelSpec, request: ModelRequest, auth: Auth, transpo
 
 
 async def anthropic(config: ModelSpec, request: ModelRequest, auth: Auth, transport: RequestTransport,
-                    client: httpx.AsyncClient) -> AsyncIterator[str | Completion]:
+                    client: httpx.AsyncClient) -> AsyncGenerator[ProviderEvent, None]:
     body, headers = anthropic_body(config, request, auth, transport)
     base = config.base_url.rstrip('/')
     endpoint = base + ('/messages' if base.endswith('/v1') else '/v1/messages')
@@ -71,41 +74,49 @@ async def anthropic(config: ModelSpec, request: ModelRequest, auth: Auth, transp
     input_tokens = output_tokens = cached = written = 0
     response_id, answer, stop = '', '', ''
     finished = False
-    async for event in events(client, endpoint, headers, body):
-        kind = event.get('type')
-        if kind == 'message_start':
-            message = record(event['message'])
-            response_id = text(message.get('id'))
-            usage = record(message.get('usage', {}))
-            input_tokens, cached, written = (number(usage.get(field)) for field in
-                                            ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
-        elif kind == 'content_block_start':
-            blocks[number(event.get('index'))] = record(event['content_block'])
-        elif kind == 'content_block_delta':
-            block = blocks[number(event.get('index'))]
-            delta = record(event['delta'])
-            if delta.get('type') == 'text_delta':
-                value = text(delta.get('text'))
-                answer += value
-                yield value
-            elif delta.get('type') == 'input_json_delta':
-                block['partial_json'] = text(block.get('partial_json')) + text(delta.get('partial_json'))
-            elif delta.get('type') == 'thinking_delta':
-                block['thinking'] = text(block.get('thinking')) + text(delta.get('thinking'))
-            elif delta.get('type') == 'signature_delta':
-                block['signature'] = text(block.get('signature')) + text(delta.get('signature'))
-            if len(answer) > 64000 or len(json.dumps(blocks)) > 131072:
-                raise BackendError('model_output_limit')
-        elif kind == 'message_delta':
-            stop = text(record(event['delta']).get('stop_reason'))
-            usage = record(event.get('usage', {}))
-            output_tokens = number(usage.get('output_tokens'))
-        elif kind == 'message_stop':
-            if stop not in {'end_turn', 'tool_use', 'stop_sequence', 'refusal'}:
-                raise BackendError('model_incomplete')
-            finished = True
-        elif kind == 'error':
-            raise BackendError('model_stream_interrupted')
+    async with aclosing(events(client, endpoint, headers, body)) as incoming:
+        async for event in incoming:
+            kind = event.get('type')
+            if kind == 'message_start':
+                message = record(event['message'])
+                response_id = text(message.get('id'))
+                usage = record(message.get('usage', {}))
+                input_tokens, cached, written = (number(usage.get(field)) for field in
+                                                ('input_tokens', 'cache_read_input_tokens', 'cache_creation_input_tokens'))
+            elif kind == 'content_block_start':
+                block = record(event['content_block'])
+                blocks[number(event.get('index'))] = block
+                if block.get('type') == 'tool_use' or block.get('thinking') or block.get('data'):
+                    yield PROGRESS
+            elif kind == 'content_block_delta':
+                block = blocks[number(event.get('index'))]
+                delta = record(event['delta'])
+                if delta.get('type') == 'text_delta':
+                    value = text(delta.get('text'))
+                    answer += value
+                    if value:
+                        yield value
+                elif delta.get('type') == 'input_json_delta':
+                    block['partial_json'] = text(block.get('partial_json')) + text(delta.get('partial_json'))
+                elif delta.get('type') == 'thinking_delta':
+                    block['thinking'] = text(block.get('thinking')) + text(delta.get('thinking'))
+                elif delta.get('type') == 'signature_delta':
+                    block['signature'] = text(block.get('signature')) + text(delta.get('signature'))
+                if len(answer) > 64000 or len(json.dumps(blocks)) > 131072:
+                    raise BackendError('model_output_limit')
+                if any(text(delta.get(field)) for field in ('partial_json', 'thinking', 'signature')):
+                    yield PROGRESS
+            elif kind == 'message_delta':
+                stop = text(record(event['delta']).get('stop_reason'))
+                usage = record(event.get('usage', {}))
+                output_tokens = number(usage.get('output_tokens'))
+            elif kind == 'message_stop':
+                if stop not in {'end_turn', 'tool_use', 'stop_sequence', 'refusal'}:
+                    raise BackendError('model_incomplete')
+                finished = True
+                break
+            elif kind == 'error':
+                raise BackendError('model_stream_interrupted')
     if not finished:
         raise BackendError('model_stream_interrupted')
     calls = [ModelToolCall(id=text(block.get('id')), name=request.internal_name(text(block.get('name'))),

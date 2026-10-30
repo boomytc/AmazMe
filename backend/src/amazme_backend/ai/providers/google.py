@@ -1,7 +1,8 @@
 """Google model protocol with caller-supplied prompt and tools."""
 import hashlib
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
+from contextlib import aclosing
 from urllib.parse import quote
 
 import httpx
@@ -14,12 +15,14 @@ from amazme_backend.ai.providers.sse import RECORD, Record, events, items, numbe
 from amazme_backend.ai.providers.tools import tool_records
 from amazme_backend.ai.reasoning import google_thinking
 from amazme_backend.ai.types import (
+    PROGRESS,
     Auth,
     Completion,
     ModelMessage,
     ModelRequest,
     ModelSpec,
     ModelToolCall,
+    ProviderEvent,
     RequestTransport,
 )
 from amazme_backend.shared.errors import BackendError
@@ -56,7 +59,7 @@ def google_body(config: ModelSpec, request: ModelRequest) -> Record:
 
 
 async def google(config: ModelSpec, request: ModelRequest, auth: Auth, transport: RequestTransport,
-                 client: httpx.AsyncClient) -> AsyncIterator[str | Completion]:
+                 client: httpx.AsyncClient) -> AsyncGenerator[ProviderEvent, None]:
     endpoint = config.base_url.rstrip('/') + '/models/' + quote(config.model, safe='') + ':streamGenerateContent?alt=sse'
     headers = {**transport.headers, **auth.headers}
     headers['x-goog-api-key'] = auth.api_key.get_secret_value()
@@ -64,29 +67,34 @@ async def google(config: ModelSpec, request: ModelRequest, auth: Auth, transport
     calls: list[ModelToolCall] = []
     signature: list[object] = []
     usage: Record = {}
-    async for event in events(client, endpoint, headers, google_body(config, request)):
-        response_id = text(event.get('responseId')) or response_id
-        usage = record(event.get('usageMetadata', {})) or usage
-        for raw in items(event.get('candidates', [])):
-            candidate = record(raw)
-            for raw_part in items(record(candidate.get('content', {})).get('parts', [])):
-                part = record(raw_part)
-                if 'functionCall' in part:
-                    call = record(part['functionCall'])
-                    cid = text(call.get('id')) or hashlib.sha256(f'{response_id}:{len(calls)}:{call.get("name")}'.encode()).hexdigest()[:32]
-                    calls.append(ModelToolCall(id=cid, name=request.internal_name(text(call.get('name'))), arguments=json.dumps(call.get('args', {}))))
-                    if 'thoughtSignature' in part:
-                        signature.append({'call_id': cid, 'thoughtSignature': part['thoughtSignature']})
-                elif part.get('thought') is not True and isinstance(part.get('text'), str):
-                    value = text(part['text'])
-                    answer += value
-                    yield value
-            if candidate.get('finishReason'):
-                if candidate['finishReason'] != 'STOP':
-                    raise BackendError('model_incomplete')
-                finished = True
-        if len(answer) > 64000 or len(calls) > 16:
-            raise BackendError('model_output_limit')
+    async with aclosing(events(client, endpoint, headers, google_body(config, request))) as incoming:
+        async for event in incoming:
+            response_id = text(event.get('responseId')) or response_id
+            usage = record(event.get('usageMetadata', {})) or usage
+            for raw in items(event.get('candidates', [])):
+                candidate = record(raw)
+                for raw_part in items(record(candidate.get('content', {})).get('parts', [])):
+                    part = record(raw_part)
+                    if 'functionCall' in part:
+                        call = record(part['functionCall'])
+                        cid = text(call.get('id')) or hashlib.sha256(f'{response_id}:{len(calls)}:{call.get("name")}'.encode()).hexdigest()[:32]
+                        calls.append(ModelToolCall(id=cid, name=request.internal_name(text(call.get('name'))), arguments=json.dumps(call.get('args', {}))))
+                        if 'thoughtSignature' in part:
+                            signature.append({'call_id': cid, 'thoughtSignature': part['thoughtSignature']})
+                        yield PROGRESS
+                    elif part.get('thought') is not True and isinstance(part.get('text'), str):
+                        value = text(part['text'])
+                        answer += value
+                        if value:
+                            yield value
+                    elif part.get('text') or part.get('thoughtSignature'):
+                        yield PROGRESS
+                if candidate.get('finishReason'):
+                    if candidate['finishReason'] != 'STOP':
+                        raise BackendError('model_incomplete')
+                    finished = True
+            if len(answer) > 64000 or len(calls) > 16:
+                raise BackendError('model_output_limit')
     if not finished:
         raise BackendError('model_stream_interrupted')
     yield with_catalog_price(config, Completion(message=ModelMessage(role='assistant', content=answer, tool_calls=calls,

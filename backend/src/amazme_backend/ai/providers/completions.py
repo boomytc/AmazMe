@@ -1,10 +1,10 @@
 """OpenAI Chat Completions request conversion and stream completion rules."""
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from typing import cast
 
 import httpx2
-from openai import AsyncOpenAI, omit
+from openai import APIStatusError, AsyncOpenAI, omit
 from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolParam
 
 from amazme_backend.ai.catalog import INDEX
@@ -17,12 +17,14 @@ from amazme_backend.ai.providers.history import (
 )
 from amazme_backend.ai.reasoning import completions_thinking
 from amazme_backend.ai.types import (
+    PROGRESS,
     Auth,
     Completion,
     ModelMessage,
     ModelRequest,
     ModelSpec,
     ModelToolCall,
+    ProviderEvent,
     RequestTransport,
 )
 from amazme_backend.shared.errors import BackendError
@@ -131,7 +133,7 @@ def tool_parameters(request: ModelRequest) -> list[ChatCompletionToolParam]:
 
 
 async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
-                 transport: RequestTransport) -> AsyncIterator[str | Completion]:
+                 transport: RequestTransport) -> AsyncGenerator[ProviderEvent, None]:
     calls: dict[int, PendingCall] = {}
     text = ""
     response_id = ""
@@ -158,7 +160,10 @@ async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
                     if chunk.usage:
                         input_tokens, output_tokens, cache_read_tokens, cache_write_tokens = read_stream_usage(chunk.usage)
                     for choice in chunk.choices:
-                        signature.extend(read_reasoning_details(choice.delta))
+                        details = read_reasoning_details(choice.delta)
+                        signature.extend(details)
+                        if details or _model_extra(choice.delta).get("reasoning_content"):
+                            yield PROGRESS
                         if choice.delta.content:
                             text += choice.delta.content
                             if len(text) > 64000:
@@ -173,6 +178,8 @@ async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
                                 pending_call.arguments += delta.function.arguments or ""
                             if len(calls) > 16 or sum(len(item.arguments) + len(item.id) + len(item.name) for item in calls.values()) > 64000:
                                 raise BackendError("tool_argument_limit")
+                            if delta.id or (delta.function and (delta.function.name or delta.function.arguments)):
+                                yield PROGRESS
                         if choice.finish_reason:
                             if choice.finish_reason not in {"stop", "tool_calls"}:
                                 raise BackendError("model_incomplete", choice.finish_reason)
@@ -189,5 +196,9 @@ async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
             message=ModelMessage(role="assistant", content=text, tool_calls=parsed, reasoning_signature=reasoning_signature(signature)),
             response_id=response_id, input_tokens=input_tokens, output_tokens=output_tokens,
             cache_read_tokens=cache_read_tokens, cache_write_tokens=cache_write_tokens))
+    except APIStatusError as error:
+        if error.status_code == 413:
+            raise BackendError("model_http_413", status=503) from error
+        raise
     finally:
         await http.aclose()

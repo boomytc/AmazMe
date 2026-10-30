@@ -669,19 +669,20 @@ class Worker:
                 raise BackendError("workflow_secret")
             context = clock_context(action.config.time_zone, action.started_at_ms)
             config, auth = await self.context.configured_model(action.config)
-            async for item in stream(config, messages, offers, plugins, auth=auth, context=context):
-                if not isinstance(item, str):
-                    completion = item
-                else:
-                    answer += item
-                    if len(answer) > 64000:
-                        raise BackendError("model_output_limit")
-                    if time.monotonic() - last_preview >= 0.05:
-                        preview_seq += 1
-                        await self.store.advance(Previewed(action, Preview(
-                            request_id=action.request_id, run_id=action.request_id, generation=action.generation,
-                            preview_seq=str(preview_seq), text=answer)))
-                        last_preview = time.monotonic()
+            async with contextlib.aclosing(stream(config, messages, offers, plugins, auth=auth, context=context)) as response:
+                async for item in response:
+                    if not isinstance(item, str):
+                        completion = item
+                    else:
+                        answer += item
+                        if len(answer) > 64000:
+                            raise BackendError("model_output_limit")
+                        if time.monotonic() - last_preview >= 0.05:
+                            preview_seq += 1
+                            await self.store.advance(Previewed(action, Preview(
+                                request_id=action.request_id, run_id=action.request_id, generation=action.generation,
+                                preview_seq=str(preview_seq), text=answer)))
+                            last_preview = time.monotonic()
             if completion is None:
                 raise BackendError("missing_model_completion")
             return ModelReturned(action, completion)
