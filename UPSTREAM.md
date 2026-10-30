@@ -2,11 +2,38 @@
 
 本页保留历史移植与验收记录；其中测试命令和脚本路径对应当时版本，已移除的设施从 Git 历史查询。当前开发入口见 [AGENTS.md](AGENTS.md)。
 
-实现来自 [Pi](https://github.com/earendil-works/pi)。最近核对基线为 `d5b3de22d0e24a3e9c38a9410d3329b099717283`；按当前 Python 产品的职责吸收适用行为，OAuth 客户端 ID、回调和供应商请求身份保持原样。当前执行与持久化契约见 [本机方案](docs/python-backend-plan.md)，完成状态见 [任务表](docs/python-backend-completion.md)。TS 仅保留客户端、TUI、纯呈现与 QuickJS helper。
+实现来自 [Pi](https://github.com/earendil-works/pi)。最近核对基线为 `50af8c160153e3721a18b1a046a4adf201635861`；按当前 Python 产品的职责吸收适用行为，OAuth 客户端 ID、回调和供应商请求身份保持原样。当前执行与持久化契约见 [本机方案](docs/python-backend-plan.md)，完成状态见 [任务表](docs/python-backend-completion.md)。TS 仅保留客户端、TUI、纯呈现与 QuickJS helper。
 
 旧产品线的移植记录保留在 Git 历史；当前行为以本仓源码和上述契约为准。
 
 QwenPaw 的最近核对基线为 `cee4c67e9a9a871c3730156ff81b3f8993fe97b0`。它提供增量参照，不替代本仓的 Python Host 与客户端职责。
+
+## 2026-10-30 增量核对
+
+范围为 `d5b3de22d0e24a3e9c38a9410d3329b099717283..50af8c160153e3721a18b1a046a4adf201635861`，共 161 个提交。终点固定为本轮 fetch 后的 Pi `origin/main`。以下按行为归并，核对到该基线不表示移植了 Pi 的全部能力。
+
+| Pi 提交或范围 | 处置 | 当前依据 |
+| --- | --- | --- |
+| `3bae85274` | 吸收 | 列表、设置和补全面板共用分页索引；聚焦组件用 `capturesViewportInput` 接收全屏分页键。Python 会话的外层组件转发编辑器状态，补全打开时分页优先于图片粘贴。 |
+| `deb12d78e`、`86dc686cf` | 吸收 | 解析 Kitty F1–F12 及修饰和释放事件，忽略未映射的功能键；原生 Shift 检测同时覆盖 Return 与 ESC+Return。 |
+| `fa1685152`、`cd1ea342a`、`2ce9d527d` | 吸收 | 裸链接遇中文标点停止；过宽的二维公式显示源文；换行正确丢弃带样式的空格并关闭删除线。 |
+| `89c921d8b`、`19ce8059c`、`f09d01b85` 的 TUI 部分 | 吸收 | 标题与程序状态共用控制字符过滤；普通模式移除行首 OSC 133；Orca 明确声明 Kitty 协议时启用图片。 |
+| `e7a0df27c` | 吸收 | 必须缩放时先比较 PNG 与配置质量的 JPEG，选择较小且满足限制的编码，之后才降低 JPEG 质量或尺寸。 |
+| `ae823bc0b` | 吸收 | Python BM25 将完整工具名及 `__` 后缀命中排在描述命中前，沿用普通查询评分与同分顺序。 |
+| `363ad78bf`、`177e2ad7e`、`2e0f175bd`、`44f6851b7` | 吸收 | 使用终点生成器刷新 Python 模型快照，包括 Terra、OpenCode 分协议端点和 OpenRouter Claude latest 的 Anthropic 协议。 |
+| `908aa7b74` | 吸收 | MCP OAuth 默认 `auto`，支持公开客户端元数据文档时使用 Pi CIMD，否则 DCR。自定义身份或回调走 DCR，显式 `cimd` 仍要求服务器支持；旧 DCR 凭据使用原存储键。注册身份变化时经操作 guard 原子清除旧 token，匹配的 DCR 注册在重新登录时保留。Python 与生成的客户端契约同步。 |
+| `89c921d8b` 的 OAuth、认证文件和流索引部分；`81d6759fc` | 已覆盖或无对应协议 | 设备登录已调用 `trusted_url`，MCP 元数据与请求使用 HTTP URL 校验；凭据用私有写入。Responses 本来就将工具放在顶层。当前不支持 `pi-messages`。 |
+| `807a5c051`、`b9e3eef6c`、`6fed3cfb9`、`c466a3595`、`50d9f823e` | 已覆盖适用行为 | 会话由 SQLite 单 writer 提交；当前没有 Pi JSONL 内存镜像或 `setActiveTools` 扩展 API。压缩经账号所有者解析认证，执行输出采用有界预览与分段日志。现有终端序列解析接受完整 CSI 参数范围。 |
+| `842c73170`、`d3398f826`、`c719d5b08` | 保留现有协议范围 | 当前没有 Bedrock 协议，也没有 Pi 的模型自动重试和溢出后自动压缩恢复循环。不为这些入口增加无法触发的分支。 |
+| Chord、Durable、env daemon、包管理、TS 扩展、HTML 导出与上游工程变更 | 不适用 | Python Host、会话 worker、Supervisor 和 SQLite 继续拥有业务状态及资源。本仓没有 Chord v2、Pi env daemon、npm 临时扩展缓存和 Pi HTML 导出，也不新增上游 CI 或发布设施。Windows 路径修复涉及的上游包管理与信任存储没有对应消费者。 |
+
+模型数据从固定终点的隔离源码运行 `node packages/ai/catalog/generate.ts --strict --data-only` 生成，再由 `backend/tools/sync_pi_models.py --source <data目录>` 导入。聊天模型由 1285 项变为 1281 项，新增 17 项、移除 21 项、更新 159 项元数据；分类器快照同批刷新。该结果是公开目录快照，不证明真实供应商可用性。
+
+实现提交为 `4ad6ec9c`（TUI）、`46946086`（图片编码）、`1b7e951e`（工具搜索）、`850226dd`（模型目录）和 `7b354f3c`（MCP OAuth）。
+
+有限验收使用临时脚本，完成后删除。TUI、coding-agent、Web 逐包构建，Python wheel 和 sdist、Ruff、Pyright、TypeScript 类型与工作区结构检查通过。构建产物的定向验收覆盖分页、补全与图片粘贴冲突、标题过滤、普通模式标记、Markdown、Orca 能力和真实 Photon 图片编码。
+
+独立 profile 经本机 HTTP OAuth 替身完成实际回环登录，覆盖自动 CIMD、DCR 回退、显式配置、自定义回调、无 `iss` 时的服务器专属回调、旧 DCR 注册重用、凭据保存后重开、取消 guard 与私有文件权限。未连接真实 MCP 授权服务或付费模型，也未在实体终端及 Linux、Windows 验证。临时 profile、服务和验证文件已清理；资源普查退出码为 0，在报告的 scope 内 `leaks=[]`、`reclaimed=true`。
 
 ## 2026-10-26 增量核对
 
