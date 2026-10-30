@@ -9394,11 +9394,12 @@
           "clientRegistration": {
             "type": "string",
             "enum": [
+              "auto",
               "dcr",
               "cimd"
             ],
             "title": "Clientregistration",
-            "default": "dcr"
+            "default": "auto"
           },
           "authServerMetadataUrl": {
             "type": "string",

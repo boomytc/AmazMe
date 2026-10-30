@@ -607,7 +607,7 @@ export type McpOAuthSettings = {
   "callbackUrl"?: string;
   "scope"?: string;
   "clientName"?: string;
-  "clientRegistration"?: "dcr" | "cimd";
+  "clientRegistration"?: "auto" | "dcr" | "cimd";
   "authServerMetadataUrl"?: string;
 };
 

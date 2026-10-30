@@ -56,8 +56,10 @@ def resolve_values(values: dict[str, str], cwd: str, expand: bool = True) -> dic
 class TokenStore:
     def __init__(self, profile: Profile, name: str, settings: McpHttpSettings, redirect: str = ""):
         self.settings = settings.oauth or McpOAuthSettings()
+        # Auto keeps the credential identity used by existing DCR configurations.
+        registration = "dcr" if self.settings.registration == "auto" else self.settings.registration
         key = hashlib.sha256(
-            json.dumps([name, settings.url, self.settings.client_id, self.settings.registration]).encode()
+            json.dumps([name, settings.url, self.settings.client_id, registration]).encode()
         ).hexdigest()
         directory = profile.account_path / "mcp-auth"
         directory.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -123,12 +125,29 @@ class TokenStore:
                 token_endpoint_auth_method="client_secret_post" if self.settings.client_secret else "none",
             )
         value = self.read().get("client")
-        return OAuthClientInformationFull.model_validate(value) if value else None
+        if not value:
+            return None
+        client = OAuthClientInformationFull.model_validate(value)
+        if self.authorizing and not (client.client_id or "").startswith("https://pi.dev/oauth/") and self.redirect not in [
+            str(uri) for uri in client.redirect_uris or []
+        ]:
+            await self.clear_client_info()
+            return None
+        return client
 
     async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
         if self.guard:
             await self.guard()
-        self.save(client=client_info.model_dump(mode="json"), redirect=self.redirect)
+        client = client_info.model_dump(mode="json")
+        changes: dict[str, object] = {"client": client, "redirect": self.redirect}
+        if self.read().get("client") != client:
+            changes.update(tokens=None, expires=None)
+        self.save(**changes)
+
+    async def clear_client_info(self) -> None:
+        if self.guard:
+            await self.guard()
+        self.save(client=None, tokens=None, expires=None)
 
 
 class McpAuth(OAuthClientProvider):
@@ -156,9 +175,6 @@ class McpAuth(OAuthClientProvider):
             redirect_handler=redirect,
             callback_handler=callback,
             timeout=15,
-            client_metadata_url="https://pi.dev/oauth/client.json"
-            if options.registration == "cimd"
-            else None,
         )
         self.store, self.interactive = store, redirect is not None
         self.issuer_required = False
@@ -167,29 +183,42 @@ class McpAuth(OAuthClientProvider):
     async def _perform_authorization_code_grant(self) -> tuple[str, str]:
         if not self.interactive:
             raise BackendError("mcp_oauth_authorization_required", status=401)
-        metadata = self.context.oauth_metadata
         if self.store.settings.scope:
             self.context.client_metadata.scope = self.store.settings.scope
-        if self.store.settings.registration == "cimd":
-            if (
-                not metadata
-                or not metadata.client_id_metadata_document_supported
-                or "none" not in (metadata.token_endpoint_auth_methods_supported or [])
-            ):
-                raise BackendError("mcp_cimd_not_supported")
-            redirect = self.store.redirect
-            client_id = "https://pi.dev/oauth/client.json"
-            if not self.issuer_required:
-                callback_id = callback_id_for(self.context.server_url)
-                parts = urlsplit(redirect)
-                redirect = urlunsplit((parts.scheme, parts.netloc, "/callback/" + callback_id, "", ""))
-                client_id = f"https://pi.dev/oauth/{callback_id}/client.json"
-            self.context.client_metadata.redirect_uris = [AnyUrl(redirect)]
-            self.context.client_info = OAuthClientInformationFull(
-                client_id=client_id, redirect_uris=[AnyUrl(redirect)], token_endpoint_auth_method="none"
-            )
-            await self.store.set_client_info(self.context.client_info)
+        await self._select_client_document(self.context.oauth_metadata)
         return await super()._perform_authorization_code_grant()
+
+    async def _select_client_document(self, metadata: OAuthMetadata | None) -> None:
+        options = self.store.settings
+        if not options.offers_cimd():
+            return
+        current = self.context.client_info
+        document_client = current is not None and (current.client_id or "").startswith("https://pi.dev/oauth/")
+        if options.registration == "auto" and current is not None and not document_client:
+            return
+        if (not metadata or not metadata.client_id_metadata_document_supported
+                or "none" not in (metadata.token_endpoint_auth_methods_supported or [])):
+            if options.registration == "cimd":
+                raise BackendError("mcp_cimd_not_supported")
+            if document_client:
+                await self.store.clear_client_info()
+                self.context.client_info = None
+            return
+        redirect = self.store.redirect
+        client_id = "https://pi.dev/oauth/client.json"
+        if not self.issuer_required:
+            callback_id = callback_id_for(self.context.server_url)
+            parts = urlsplit(redirect)
+            redirect = urlunsplit((parts.scheme, parts.netloc, "/callback/" + callback_id, "", ""))
+            client_id = f"https://pi.dev/oauth/{callback_id}/client.json"
+        redirects = [AnyUrl(redirect)]
+        selected = OAuthClientInformationFull(
+            client_id=client_id, redirect_uris=redirects, token_endpoint_auth_method="none"
+        )
+        self.context.client_metadata.redirect_uris = redirects
+        if current != selected:
+            await self.store.set_client_info(selected)
+            self.context.client_info = selected
 
     async def async_auth_flow(self, request: httpx.Request) -> AsyncGenerator[httpx.Request, httpx.Response]:
         async with self.store.locked():
@@ -244,13 +273,12 @@ class McpAuth(OAuthClientProvider):
                         await response.aread()
                         if response.is_success and outgoing.method == "GET":
                             metadata = TypeAdapter(dict[str, object]).validate_json(response.content)
-                            if "authorization_endpoint" in metadata and isinstance(
-                                metadata.get("issuer"), str
-                            ):
+                            if "authorization_endpoint" in metadata:
                                 self.issuer_required = (
                                     metadata.get("authorization_response_iss_parameter_supported") is True
                                 )
-                                self.expected_issuer = str(metadata["issuer"])
+                                self.expected_issuer = str(metadata.get("issuer", ""))
+                                await self._select_client_document(OAuthMetadata.model_validate(metadata))
                     outgoing = await flow.asend(response)
             except StopAsyncIteration:
                 pass

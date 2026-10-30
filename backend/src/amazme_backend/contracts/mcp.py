@@ -61,8 +61,16 @@ class McpOAuthSettings(Model):
     callback_url: str = Field(default="", alias="callbackUrl", max_length=4096)
     scope: str = Field(default="", max_length=4000)
     client_name: str = Field(default="pi", alias="clientName", min_length=1, max_length=200)
-    registration: Literal["dcr", "cimd"] = Field(default="dcr", alias="clientRegistration")
+    registration: Literal["auto", "dcr", "cimd"] = Field(default="auto", alias="clientRegistration")
     metadata_url: str = Field(default="", alias="authServerMetadataUrl", max_length=4096)
+
+    def offers_cimd(self) -> bool:
+        if self.registration != "auto":
+            return self.registration == "cimd"
+        if self.client_id or self.client_secret or self.client_name != "pi":
+            return False
+        parts = urlsplit(self.callback_url) if self.callback_url else None
+        return parts is None or parts.hostname != "::1" and parts.path == "/callback"
 
     @model_validator(mode="after")
     def checked_callback(self) -> McpOAuthSettings:
