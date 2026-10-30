@@ -357,6 +357,43 @@ def write_file(root: Path, value: FileWrite) -> FileChange:
     return _mutate_file(root, value.path, value.expected_digest, lambda _previous: value.content)
 
 
+def delete_file(root: Path, relative: str, expected_digest: str) -> None:
+    """Delete a regular file only at its prepared version, without following links."""
+    parts = _parts(relative)
+    parent = original = -1
+    deleted = False
+    try:
+        parent = _open_parent(root, parts)
+        original = os.open(parts[-1], os.O_RDWR | os.O_NONBLOCK | os.O_NOFOLLOW, dir_fd=parent)
+        try:
+            fcntl.flock(original, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise BackendError("file_conflict") from error
+        before = os.fstat(original)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink > 1:
+            raise BackendError("workspace_not_file")
+        data = os.pread(original, FILE_WRITE_LIMIT + 1, 0)
+        if len(data) > FILE_WRITE_LIMIT:
+            raise BackendError("file_too_large")
+        if not expected_digest or hashlib.sha256(data).hexdigest() != expected_digest:
+            raise BackendError("file_conflict")
+        current = os.stat(parts[-1], dir_fd=parent, follow_symlinks=False)
+        if _stamp(current) != _stamp(before) or _stamp(os.fstat(original)) != _stamp(before):
+            raise BackendError("file_conflict")
+        os.unlink(parts[-1], dir_fd=parent)
+        deleted = True
+        os.fsync(parent)
+    except OSError as error:
+        if deleted:
+            raise BackendError("file_outcome_unknown") from error
+        raise _os_error(error) from error
+    finally:
+        if original >= 0:
+            os.close(original)
+        if parent >= 0:
+            os.close(parent)
+
+
 def edit_file(root: Path, value: EditFile, expected_digest: str) -> FileChange:
     def replace(previous: str) -> str:
         matches = previous.count(value.old_string)

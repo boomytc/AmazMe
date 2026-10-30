@@ -21,6 +21,7 @@ from amazme_backend.contracts.execution import (
     FileAbsent,
     FilePresent,
     OutputRead,
+    PreparedPatch,
     ProcessLease,
     ReadFile,
     ToolResult,
@@ -34,6 +35,7 @@ from amazme_backend.platform.private_files import private_write
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
 from amazme_backend.workspaces.files import edit_file, read_file, write_file
+from amazme_backend.workspaces.patches import execute_patch
 
 LIMIT = 65536
 
@@ -63,6 +65,7 @@ class LocalPermit(Model):
     timeout_seconds: int = Field(ge=1, le=86400)
     file: WriteFile | EditFile | ReadFile | None = None
     file_key: str = ""
+    patch: PreparedPatch | None = None
     expected_digest: str | None = None
     output_read: OutputRead | None = None
     output_directory: str = ""
@@ -139,7 +142,9 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
     child: subprocess.Popen[bytes] | None = None
     report = LocalReport(call_id=permit.call_id, stopped=True)
     try:
-        if permit.output_read is not None:
+        if permit.patch is not None:
+            report.result = execute_patch(permit.patch)
+        elif permit.output_read is not None:
             page = read_output(Path(permit.output_directory), permit.output_read)
             report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=page.model_dump_json(), stderr="")
         elif permit.file is not None:

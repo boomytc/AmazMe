@@ -579,7 +579,7 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
             set_metadata_value(db, "blocked", "tool_pending_after_cleanup")
         else:
             step.phase = "unknown"
-            if observed.state == "unknown" and step.call and step.call.name in {"shell", "write_file", "edit_file"}:
+            if observed.state == "unknown" and step.call and step.call.name in {"shell", "write_file", "edit_file", "apply_patch"}:
                 hold = EffectHold(call_id=step.step_id, session_id=state.session_id, request_id=request.request_id,
                                   reason="tool_outcome_unknown", resource_clean=observed.resource_clean)
                 db.execute("INSERT INTO effects VALUES(?,?) ON CONFLICT(id) DO NOTHING", (hold.call_id, hold.model_dump_json()))

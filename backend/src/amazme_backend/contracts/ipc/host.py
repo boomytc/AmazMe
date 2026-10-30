@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pydantic import Field, JsonValue
 
-from amazme_backend.contracts.execution import EditFile, FileObservation, Lease, WriteFile
+from amazme_backend.contracts.execution import ApplyPatch, EditFile, FileObservation, Lease, WriteFile
 from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.models import ImagePart, ToolCall
 from amazme_backend.contracts.sessions import Receipt
@@ -43,3 +43,10 @@ class PreparedFileWrite(Model):
     expected_digest: str = Field(pattern=r"^(?:[a-f0-9]{64})?$")
     checkpoint_id: str = ""
     root: str = ""
+
+
+class PreparePatch(Lease, ApplyPatch):
+    host_epoch: int
+    call_id: str = Field(min_length=1, max_length=128)
+    observations: list[FileObservation] = Field(default_factory=lambda: list[FileObservation](), max_length=256,
+                                               description="Newest observations first; the first canonical path wins.")

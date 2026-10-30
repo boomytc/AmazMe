@@ -17,6 +17,7 @@ from amazme_backend.agent.prompting import clock_context, job_completion_text
 from amazme_backend.ai.types import Auth
 from amazme_backend.contracts.events import Snapshot
 from amazme_backend.contracts.execution import (
+    ApplyPatch,
     Command,
     EditFile,
     FileObservation,
@@ -24,6 +25,7 @@ from amazme_backend.contracts.execution import (
     JobQuery,
     Lease,
     OutputRead,
+    PreparedPatch,
     ReadFile,
     Shell,
     ToolResult,
@@ -33,6 +35,7 @@ from amazme_backend.contracts.identity import HostFence, HostReady, Identity
 from amazme_backend.contracts.ipc.host import (
     PreparedFileWrite,
     PrepareFileWrite,
+    PreparePatch,
 )
 from amazme_backend.contracts.ipc.supervisor import (
     CancelCode,
@@ -143,6 +146,8 @@ def command_for(call: ToolCall) -> Command:
         WriteFile.model_validate_json(call.arguments)
     elif call.name == "edit_file":
         EditFile.model_validate_json(call.arguments)
+    elif call.name == "apply_patch":
+        ApplyPatch.model_validate_json(call.arguments)
     elif call.name == "tool_output":
         OutputRead.model_validate_json(call.arguments)
     else:
@@ -495,27 +500,39 @@ class Worker:
             current = await self.supervisor.lookup_mcp_call(ref)
         return self._mcp_observation(action, current)
 
-    async def prepare_file_write(self, action: ToolInvocation) -> PreparedFileWrite:
+    async def _file_preparation_ready(self) -> tuple[HostReady, int]:
         ready = self.context.host_ready()
         epoch = await self.store.host_epoch()
         if (ready.profile_id != self.context.profile_id or ready.build_id != self.build
                 or ready.fingerprint != self.build or ready.role != "host" or ready.host_epoch != epoch):
             raise BackendError("stale_host_epoch")
-        write = (EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file"
-                 else WriteFile.model_validate_json(action.call.arguments))
-        name, inner = tool_path(self.context.workspace(), write.path)
-        path = client_path(name, inner)
-        observation: FileObservation | None = None
-        for message in reversed(await self.store.messages(action.request_id)):
+        return ready, epoch
+
+    async def _file_observations(self, request: str) -> dict[str, FileObservation]:
+        observations: dict[str, FileObservation] = {}
+        for message in reversed(await self.store.messages(request)):
             if message.role != "tool":
                 continue
             try:
                 result = ToolResult.model_validate_json(message.content)
             except ValueError:
                 continue
-            if result.file_observation is not None and result.file_observation.path == path:
-                observation = result.file_observation
-                break
+            values = [*result.file_observations]
+            if result.file_observation is not None:
+                values.append(result.file_observation)
+            for observation in values:
+                observations.setdefault(observation.path, observation)
+                if len(observations) >= 256:
+                    return observations
+        return observations
+
+    async def prepare_file_write(self, action: ToolInvocation) -> PreparedFileWrite:
+        ready, epoch = await self._file_preparation_ready()
+        write = (EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file"
+                 else WriteFile.model_validate_json(action.call.arguments))
+        name, inner = tool_path(self.context.workspace(), write.path)
+        path = client_path(name, inner)
+        observation = (await self._file_observations(action.request_id)).get(path)
         request = PrepareFileWrite(**action.lease.model_dump(), host_epoch=epoch,
                                    call_id=action.step_id, write=write, observation=observation)
         async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
@@ -526,6 +543,23 @@ class Worker:
             raise BackendError(error.code, status=response.status_code)
         prepared = PreparedFileWrite.model_validate_json(response.content)
         if not prepared.root or prepared.call_id != action.step_id or prepared.path != client_path(name, inner):
+            raise BackendError("file_preparation_mismatch")
+        return prepared
+
+    async def prepare_file_patch(self, action: ToolInvocation) -> PreparedPatch:
+        ready, epoch = await self._file_preparation_ready()
+        patch = ApplyPatch.model_validate_json(action.call.arguments)
+        observations = await self._file_observations(action.request_id)
+        request = PreparePatch(**action.lease.model_dump(), host_epoch=epoch, call_id=action.step_id,
+                               input=patch.input, observations=list(observations.values()))
+        async with httpx.AsyncClient(timeout=30, trust_env=False) as client:
+            response = await client.post(ready.url + "/control/file-patches/prepare", json=request.model_dump(),
+                                         headers={"Authorization": "Bearer " + self.context.token})
+        if response.is_error:
+            error = ErrorBody.model_validate_json(response.content)
+            raise BackendError(error.code, error.message, status=response.status_code)
+        prepared = PreparedPatch.model_validate_json(response.content)
+        if prepared.call_id != action.step_id:
             raise BackendError("file_preparation_mismatch")
         return prepared
 
@@ -704,11 +738,15 @@ class Worker:
                 return await self._job_tool(action)
             try:
                 prepared = await self.prepare_file_write(action) if action.call.name in {"write_file", "edit_file"} else None
+                patch = await self.prepare_file_patch(action) if action.call.name == "apply_patch" else None
             except BackendError as error:
                 if error.code not in {"file_not_observed", "file_conflict", "file_observation_mismatch",
-                                       "workspace_missing", "file_not_text", "file_too_large", "checkpoint_unavailable"}:
+                                       "workspace_missing", "file_not_text", "file_too_large", "checkpoint_unavailable",
+                                       "patch_syntax", "patch_mismatch", "patch_same_target", "patch_capacity",
+                                       "invalid_workspace_path", "workspace_path_escape", "workspace_symlink_write",
+                                       "workspace_not_file", "workspace_permission", "workspace_not_found"}:
                     raise
-                return ToolReturned(action, ToolResult(call_id=action.step_id, exit_code=1, stdout="", stderr=error.code))
+                return ToolReturned(action, ToolResult(call_id=action.step_id, exit_code=1, stdout="", stderr=error.message))
             command = command_for(action.call)
             file = (WriteFile.model_validate_json(action.call.arguments) if action.call.name == "write_file" else
                     EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file" else
@@ -720,6 +758,7 @@ class Worker:
                     run_in_background=command.run_in_background, file=file,
                     expected_digest=prepared.expected_digest if prepared else None,
                     expected_root=prepared.root if prepared else "",
+                    patch=patch,
                     output_read=OutputRead.model_validate_json(action.call.arguments) if action.call.name == "tool_output" else None,
                     effect="read" if action.call.name in {"read_file", "tool_output"} else "write"))
             except BackendError as error:

@@ -33,6 +33,7 @@ from amazme_backend.contracts.execution import (
     JobOutput,
     JobOutputView,
     JobView,
+    PreparedPatch,
     TerminalList,
     TerminalOpen,
     TerminalSize,
@@ -53,6 +54,7 @@ from amazme_backend.contracts.ipc.host import (
     CodeToolReceipt,
     PreparedFileWrite,
     PrepareFileWrite,
+    PreparePatch,
 )
 from amazme_backend.contracts.ipc.supervisor import Recovery, TaskActivity
 from amazme_backend.contracts.ipc.worker import Cancel
@@ -852,6 +854,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/control/file-writes/prepare")
     async def prepare_tool_write(value: PrepareFileWrite) -> PreparedFileWrite:
         return await owner.workspaces.prepare_tool_write(value)
+
+    @app.post("/control/file-patches/prepare")
+    async def prepare_tool_patch(value: PreparePatch) -> PreparedPatch:
+        return await owner.workspaces.prepare_tool_patch(value)
 
     @app.post("/control/code/tool")
     async def code_tool(value: CodeToolDispatch) -> CodeToolReceipt:

@@ -771,6 +771,32 @@ export type OutputPage = {
   "has_more": boolean;
 };
 
+export type PatchBaseline = {
+  "path": string;
+  "root": string;
+  "relative": string;
+  "expected_digest": string;
+};
+
+export type PatchDelete = {
+  "path": string;
+  "root": string;
+  "relative": string;
+  "kind"?: "delete";
+  "operation": number;
+  "expected_digest": string;
+};
+
+export type PatchWrite = {
+  "path": string;
+  "root": string;
+  "relative": string;
+  "expected_digest": string;
+  "kind"?: "write";
+  "operation": number;
+  "content": string;
+};
+
 export type PluginCallRequest = {
   "kind"?: "tool" | "command";
   "call_id": string;
@@ -875,6 +901,18 @@ export type PrepareFileWrite = {
   "observation"?: FilePresent | FileAbsent | null;
 };
 
+export type PreparePatch = {
+  "input": string;
+  "session_id": string;
+  "worker_id": string;
+  "execution_epoch": number;
+  "build_id": string;
+  "supervisor_id"?: string;
+  "host_epoch": number;
+  "call_id": string;
+  "observations"?: Array<FilePresent | FileAbsent>;
+};
+
 export type PrepareUpdate = {
   "update_id": string;
   "target_build": string;
@@ -887,6 +925,12 @@ export type PreparedFileWrite = {
   "expected_digest": string;
   "checkpoint_id"?: string;
   "root"?: string;
+};
+
+export type PreparedPatch = {
+  "call_id": string;
+  "baselines": Array<PatchBaseline>;
+  "mutations": Array<PatchWrite | PatchDelete>;
 };
 
 export type Preview = {
@@ -1708,6 +1752,9 @@ export interface ApiModels {
   OnceRule: OnceRule;
   OutputArchive: OutputArchive;
   OutputPage: OutputPage;
+  PatchBaseline: PatchBaseline;
+  PatchDelete: PatchDelete;
+  PatchWrite: PatchWrite;
   PluginCallRequest: PluginCallRequest;
   PluginCallView: PluginCallView;
   PluginDraft: PluginDraft;
@@ -1722,8 +1769,10 @@ export interface ApiModels {
   PluginView: PluginView;
   PreferencesUpdate: PreferencesUpdate;
   PrepareFileWrite: PrepareFileWrite;
+  PreparePatch: PreparePatch;
   PrepareUpdate: PrepareUpdate;
   PreparedFileWrite: PreparedFileWrite;
+  PreparedPatch: PreparedPatch;
   Preview: Preview;
   ProcessLease: ProcessLease;
   ProductSettings: ProductSettings;

@@ -1,7 +1,7 @@
 import hashlib
 import sqlite3
 
-from amazme_backend.contracts.execution import EditFile, WriteFile
+from amazme_backend.contracts.execution import EditFile, PreparedPatch, WriteFile
 from amazme_backend.contracts.ipc.host import PreparedFileWrite
 from amazme_backend.host.keys import checkpoint_id
 from amazme_backend.host.persistence.owner import PersistenceOwner
@@ -109,6 +109,43 @@ async def checkpoints_for(
         return [(str(row[0]), str(row[1]), str(row[2]), str(row[3])) for row in rows]
 
     return await self.call(operation)
+
+
+async def patch_preparation(self: PersistenceOwner, session: str, call: str, source: str) -> PreparedPatch | None:
+    request_digest = hashlib.sha256(source.encode()).hexdigest()
+
+    def operation(db: sqlite3.Connection) -> PreparedPatch | None:
+        row = db.execute("SELECT request_digest,payload FROM file_write_preparations WHERE session=? AND call=?",
+                         (session, call)).fetchone()
+        if row is None:
+            return None
+        if row[0] != request_digest:
+            raise BackendError("call_conflict")
+        return PreparedPatch.model_validate_json(row[1])
+
+    return await self.call(operation)
+
+
+async def save_patch_preparation(self: PersistenceOwner, session: str, source: str, plan: PreparedPatch,
+                                 checkpoints: list[tuple[str, str, str, str]]) -> PreparedPatch:
+    request_digest = hashlib.sha256(source.encode()).hexdigest()
+
+    def operation(db: sqlite3.Connection) -> PreparedPatch:
+        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
+            raise BackendError("update_frozen", status=503)
+        row = db.execute("SELECT request_digest,payload FROM file_write_preparations WHERE session=? AND call=?",
+                         (session, plan.call_id)).fetchone()
+        if row is not None:
+            if row[0] != request_digest:
+                raise BackendError("call_conflict")
+            return PreparedPatch.model_validate_json(row[1])
+        for workspace, path, digest, content in checkpoints:
+            save_checkpoint_row(db, checkpoint_id(workspace, path, digest), workspace, path, digest, content)
+        db.execute("INSERT INTO file_write_preparations VALUES(?,?,?,?)",
+                   (session, plan.call_id, request_digest, plan.model_dump_json()))
+        return plan
+
+    return await self.transaction(operation)
 
 
 async def checkpoint(self: PersistenceOwner, checkpoint_id: str) -> tuple[str, str, str, str, str] | None:

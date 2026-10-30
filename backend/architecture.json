@@ -322,7 +322,8 @@
         "amazme_backend.shared.model",
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
-        "amazme_backend.workspaces.paths"
+        "amazme_backend.workspaces.paths",
+        "amazme_backend.workspaces.patches"
       ]
     },
     "workspaces": {
@@ -332,7 +333,8 @@
       "public": [
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
-        "amazme_backend.workspaces.paths"
+        "amazme_backend.workspaces.paths",
+        "amazme_backend.workspaces.patches"
       ],
       "imports": [
         "amazme_backend.contracts.identity",
@@ -341,7 +343,8 @@
         "amazme_backend.platform.private_files",
         "amazme_backend.profiles.layout",
         "amazme_backend.shared.errors",
-        "amazme_backend.shared.model"
+        "amazme_backend.shared.model",
+        "amazme_backend.contracts.execution"
       ]
     },
     "features.artifacts": {
@@ -558,7 +561,8 @@
         "amazme_backend.shared.model",
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
-        "amazme_backend.workspaces.paths"
+        "amazme_backend.workspaces.paths",
+        "amazme_backend.workspaces.patches"
       ]
     },
     "interfaces": {

@@ -6,8 +6,15 @@ import hashlib
 from collections.abc import Callable
 from pathlib import Path
 
-from amazme_backend.contracts.execution import EditFile, FilePresent, SupervisorHealth
-from amazme_backend.contracts.ipc.host import PreparedFileWrite, PrepareFileWrite
+from amazme_backend.contracts.execution import (
+    EditFile,
+    FileObservation,
+    FilePresent,
+    PatchTarget,
+    PreparedPatch,
+    SupervisorHealth,
+)
+from amazme_backend.contracts.ipc.host import PreparedFileWrite, PrepareFileWrite, PreparePatch
 from amazme_backend.contracts.resources import ResourceCatalog, ResourceOptions
 from amazme_backend.contracts.skills import SkillDocument, SkillImport, SkillRemove, SkillWrite
 from amazme_backend.contracts.workspaces import (
@@ -40,6 +47,7 @@ from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.workspaces.files import capture_text, list_files, read_file, write_file
 from amazme_backend.workspaces.grants import check_grant_directory
+from amazme_backend.workspaces.patches import parse_patch, prepare_patch
 from amazme_backend.workspaces.paths import (
     PRIMARY,
     client_path,
@@ -241,7 +249,7 @@ class WorkspaceOperations:
             digest=current[0],
         )
 
-    async def prepare_tool_write(self, value: PrepareFileWrite) -> PreparedFileWrite:
+    async def _admit_file_preparation(self, value: PrepareFileWrite | PreparePatch) -> None:
         self.lifecycle.admit()
         if value.host_epoch != self.lifecycle.fence.host_epoch or value.build_id != self.lifecycle.build:
             raise BackendError("stale_host_epoch")
@@ -284,6 +292,9 @@ class WorkspaceOperations:
             )
         ):
             raise BackendError("execution_cleanup_pending", status=503)
+
+    async def prepare_tool_write(self, value: PrepareFileWrite) -> PreparedFileWrite:
+        await self._admit_file_preparation(value)
         prepared = await self.lifecycle.store.file_write_preparation(
             value.session_id, value.call_id, value.write
         )
@@ -313,6 +324,44 @@ class WorkspaceOperations:
         return await self.lifecycle.store.prepare_file_write(
             value.session_id, value.call_id, value.write, name, client_path(name, inner), previous, str(root.resolve())
         )
+
+    async def prepare_tool_patch(self, value: PreparePatch) -> PreparedPatch:
+        await self._admit_file_preparation(value)
+        existing = await self.lifecycle.store.patch_preparation(value.session_id, value.call_id, value.input)
+        if existing is not None:
+            return existing
+        session = await self.lifecycle.store.session(value.session_id)
+        if session is None:
+            raise BackendError("session_not_found", status=404)
+        operations = parse_patch(value.input)
+        targets: dict[str, PatchTarget] = {}
+        for operation in operations:
+            for raw in (operation.path, operation.destination):
+                if raw is None or raw in targets:
+                    continue
+                name, inner, root = await self._mapped_root(raw, session_name=session.workspace)
+                inner = Path(inner).as_posix()
+                if inner == "." or name == "grant":
+                    raise BackendError("invalid_workspace_path")
+                try:
+                    targets[raw] = PatchTarget(path=client_path(name, inner), root=str(root.resolve()), relative=inner)
+                except ValueError as error:
+                    raise BackendError("invalid_workspace_path") from error
+        observations: dict[str, FileObservation] = {}
+        for observation in value.observations:
+            name, inner = split_client_path(observation.path)
+            path = client_path(name, Path(inner).as_posix())
+            observations.setdefault(path, observation.model_copy(update={"path": path}))
+        try:
+            prepared = await asyncio.to_thread(prepare_patch, value.call_id, operations, targets, observations)
+        except ValueError as error:
+            raise BackendError("patch_capacity", "Prepared patch is too large; split it into smaller patches.") from error
+        rows: list[tuple[str, str, str, str]] = []
+        for baseline, content in prepared.snapshots:
+            if content is not None:
+                workspace, _ = split_client_path(baseline.path)
+                rows.append((workspace, baseline.path, baseline.expected_digest, content))
+        return await self.lifecycle.store.save_patch_preparation(value.session_id, value.input, prepared.plan, rows)
 
     async def list_checkpoints(self, workspace: str, path: str) -> CheckpointList:
         self.lifecycle.admit()

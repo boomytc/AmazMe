@@ -20,6 +20,7 @@ from amazme_backend.contracts.events import Snapshot as Snapshot
 from amazme_backend.contracts.events import Stream as Stream
 from amazme_backend.contracts.events import StreamAck as StreamAck
 from amazme_backend.contracts.events import StreamHello as StreamHello
+from amazme_backend.contracts.execution import ApplyPatch as ApplyPatch
 from amazme_backend.contracts.execution import Cleanup as Cleanup
 from amazme_backend.contracts.execution import Command as Command
 from amazme_backend.contracts.execution import EffectHold as EffectHold

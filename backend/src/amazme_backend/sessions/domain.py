@@ -5,6 +5,7 @@ from pathlib import PurePosixPath
 from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from amazme_backend.contracts.execution import (
+    ApplyPatch,
     EditFile,
     JobListInput,
     JobOutputWait,
@@ -26,7 +27,7 @@ from amazme_backend.shared.errors import BackendError
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | WriteFile | EditFile | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | WriteFile | EditFile | ApplyPatch | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall = Shell.model_validate_json(call.arguments)
     elif call.name == "job_list":
         value = JobListInput.model_validate_json(call.arguments)
     elif call.name == "job_output":
@@ -48,6 +49,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = WriteFile.model_validate_json(call.arguments)
     elif call.name == "edit_file":
         value = EditFile.model_validate_json(call.arguments)
+    elif call.name == "apply_patch":
+        value = ApplyPatch.model_validate_json(call.arguments)
     elif call.name == "delegate_task":
         value = DelegateTasks.model_validate_json(call.arguments)
         if any(not task or len(task) > 16000 for task in value.tasks):

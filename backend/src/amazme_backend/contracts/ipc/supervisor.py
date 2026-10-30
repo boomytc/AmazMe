@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from amazme_backend.contracts.code import CodeView
 from amazme_backend.contracts.execution import (
@@ -14,6 +14,7 @@ from amazme_backend.contracts.execution import (
     JobQuery,
     Lease,
     OutputRead,
+    PreparedPatch,
     ReadFile,
     WriteFile,
 )
@@ -136,6 +137,15 @@ class RunTool(Lease, Command):
     expected_digest: str | None = None
     expected_root: str = ""
     output_read: OutputRead | None = None
+    patch: PreparedPatch | None = None
+
+    @model_validator(mode="after")
+    def patch_identity(self) -> RunTool:
+        if self.patch is not None and (self.patch.call_id != self.call_id or self.command != "apply_patch"
+                                       or self.file is not None or self.output_read is not None
+                                       or self.run_in_background or self.effect != "write"):
+            raise ValueError("a patch requires its own synchronous write invocation")
+        return self
 
 
 class JobSession(HostFence):

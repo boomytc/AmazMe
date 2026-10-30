@@ -213,7 +213,7 @@ def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, reques
     binding = approval_binding(state, db, request.request_id, step.call)
     policy = load_run(db, request.request_id).config.approval_policy or state.approval_policy
     required = policy == "all" or (
-        policy == "mutations" and step.call.name in {"shell", "write_file", "edit_file", "job_kill", "mcp_tool", "plugin_tool"})
+        policy == "mutations" and step.call.name in {"shell", "write_file", "edit_file", "apply_patch", "job_kill", "mcp_tool", "plugin_tool"})
     if not required:
         return True
     approval: Approval | None = None

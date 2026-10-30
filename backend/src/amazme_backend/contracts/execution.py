@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from pathlib import PurePosixPath
 from typing import Annotated, Literal
 
-from pydantic import Field, StringConstraints, model_validator
+from pydantic import Field, StringConstraints, field_validator, model_validator
 
 from amazme_backend.contracts.identity import Identity
 from amazme_backend.contracts.mcp import McpView
@@ -55,6 +56,60 @@ class FileAbsent(Model):
 FileObservation = Annotated[FilePresent | FileAbsent, Field(discriminator="kind")]
 
 
+class ApplyPatch(Model):
+    input: str = Field(min_length=1, max_length=32000)
+
+
+class PatchTarget(Model):
+    path: str = Field(min_length=1, max_length=1024)
+    root: str = Field(min_length=1, max_length=4096)
+    relative: str = Field(min_length=1, max_length=1024)
+
+    @field_validator("path", "relative")
+    @classmethod
+    def canonical_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if path.is_absolute() or ".." in path.parts or value == "." or path.as_posix() != value:
+            raise ValueError("patch targets require canonical workspace-relative paths")
+        return value
+
+
+class PatchBaseline(PatchTarget):
+    expected_digest: str = Field(pattern=r"^(?:[a-f0-9]{64})?$")
+
+
+class PatchWrite(PatchBaseline):
+    kind: Literal["write"] = "write"
+    operation: int = Field(ge=0, le=15)
+    content: str = Field(max_length=1024 * 1024)
+
+
+class PatchDelete(PatchTarget):
+    kind: Literal["delete"] = "delete"
+    operation: int = Field(ge=0, le=15)
+    expected_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+PatchMutation = Annotated[PatchWrite | PatchDelete, Field(discriminator="kind")]
+
+
+class PreparedPatch(Model):
+    call_id: str = Field(min_length=1, max_length=128)
+    baselines: list[PatchBaseline] = Field(max_length=32)
+    mutations: list[PatchMutation] = Field(max_length=32)
+
+    @model_validator(mode="after")
+    def bounded(self) -> PreparedPatch:
+        targets = {(value.root, value.relative, value.path) for value in self.baselines}
+        if len(targets) != len(self.baselines) or any(
+            (value.root, value.relative, value.path) not in targets for value in self.mutations
+        ):
+            raise ValueError("every patch mutation requires one initial baseline")
+        if len(self.model_dump_json().encode()) > 128000:
+            raise ValueError("patch plan exceeds 128000 bytes; split it into smaller patches")
+        return self
+
+
 class OutputRead(Model):
     locator: str = Field(min_length=1, max_length=128, pattern=r"^[\w.:-]+$")
     stream: Literal["stdout", "stderr"] = "stdout"
@@ -94,6 +149,7 @@ class ToolResult(Model):
     stop_reason: str = ""
     output: OutputArchive | None = None
     file_observation: FileObservation | None = None
+    file_observations: list[FileObservation] = Field(default_factory=lambda: list[FileObservation](), max_length=32)
 
 
 JobId = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")]

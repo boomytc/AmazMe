@@ -4,6 +4,7 @@
     "AnswerFeedback",
     "AnswerFeedbackList",
     "AnswerFeedbackWrite",
+    "ApplyPatch",
     "Approval",
     "ApprovalDecision",
     "ApprovalEnvelope",

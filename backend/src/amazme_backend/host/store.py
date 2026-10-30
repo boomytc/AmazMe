@@ -7,7 +7,14 @@ from pydantic import ValidationError
 
 from amazme_backend.accounts.configuration import ProviderTransport
 from amazme_backend.contracts.accounts import OAuthView, ProviderCheck, ProviderCheckRequest
-from amazme_backend.contracts.execution import EditFile, ProcessLease, ServiceInfo, WorkerInfo, WriteFile
+from amazme_backend.contracts.execution import (
+    EditFile,
+    PreparedPatch,
+    ProcessLease,
+    ServiceInfo,
+    WorkerInfo,
+    WriteFile,
+)
 from amazme_backend.contracts.feedback import AnswerFeedback, AnswerFeedbackWrite
 from amazme_backend.contracts.host import PrepareUpdate, UpdateRecord
 from amazme_backend.contracts.ipc.host import PreparedFileWrite
@@ -155,6 +162,13 @@ class HostStore:
 
     async def checkpoints_for(self, workspace: str, path: str) -> list[tuple[str, str, str, str]]:
         return await checkpoints.checkpoints_for(self, workspace, path)
+
+    async def patch_preparation(self, session: str, call: str, source: str) -> PreparedPatch | None:
+        return await checkpoints.patch_preparation(self, session, call, source)
+
+    async def save_patch_preparation(self, session: str, source: str, plan: PreparedPatch,
+                                     rows: list[tuple[str, str, str, str]]) -> PreparedPatch:
+        return await checkpoints.save_patch_preparation(self, session, source, plan, rows)
 
     async def checkpoint(self, checkpoint_id: str) -> tuple[str, str, str, str, str] | None:
         return await checkpoints.checkpoint(self, checkpoint_id)

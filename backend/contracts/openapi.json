@@ -6010,6 +6010,44 @@
         }
       }
     },
+    "/control/file-patches/prepare": {
+      "post": {
+        "summary": "Prepare Tool Patch",
+        "operationId": "prepare_tool_patch_control_file_patches_prepare_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreparePatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreparedPatch"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/control/code/tool": {
       "post": {
         "summary": "Code Tool",
@@ -10247,6 +10285,146 @@
         ],
         "title": "OutputPage"
       },
+      "PatchBaseline": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "root": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Root"
+          },
+          "relative": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Relative"
+          },
+          "expected_digest": {
+            "type": "string",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Expected Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "root",
+          "relative",
+          "expected_digest"
+        ],
+        "title": "PatchBaseline"
+      },
+      "PatchDelete": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "root": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Root"
+          },
+          "relative": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Relative"
+          },
+          "kind": {
+            "type": "string",
+            "const": "delete",
+            "title": "Kind",
+            "default": "delete"
+          },
+          "operation": {
+            "type": "integer",
+            "maximum": 15.0,
+            "minimum": 0.0,
+            "title": "Operation"
+          },
+          "expected_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Expected Digest"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "root",
+          "relative",
+          "operation",
+          "expected_digest"
+        ],
+        "title": "PatchDelete"
+      },
+      "PatchWrite": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Path"
+          },
+          "root": {
+            "type": "string",
+            "maxLength": 4096,
+            "minLength": 1,
+            "title": "Root"
+          },
+          "relative": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Relative"
+          },
+          "expected_digest": {
+            "type": "string",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Expected Digest"
+          },
+          "kind": {
+            "type": "string",
+            "const": "write",
+            "title": "Kind",
+            "default": "write"
+          },
+          "operation": {
+            "type": "integer",
+            "maximum": 15.0,
+            "minimum": 0.0,
+            "title": "Operation"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 1048576,
+            "title": "Content"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "path",
+          "root",
+          "relative",
+          "expected_digest",
+          "operation",
+          "content"
+        ],
+        "title": "PatchWrite"
+      },
       "PluginCallRequest": {
         "properties": {
           "kind": {
@@ -10789,6 +10967,82 @@
         ],
         "title": "PrepareFileWrite"
       },
+      "PreparePatch": {
+        "properties": {
+          "input": {
+            "type": "string",
+            "maxLength": 32000,
+            "minLength": 1,
+            "title": "Input"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "worker_id": {
+            "type": "string",
+            "title": "Worker Id"
+          },
+          "execution_epoch": {
+            "type": "integer",
+            "title": "Execution Epoch"
+          },
+          "build_id": {
+            "type": "string",
+            "title": "Build Id"
+          },
+          "supervisor_id": {
+            "type": "string",
+            "title": "Supervisor Id",
+            "default": ""
+          },
+          "host_epoch": {
+            "type": "integer",
+            "title": "Host Epoch"
+          },
+          "call_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Call Id"
+          },
+          "observations": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/FilePresent"
+                },
+                {
+                  "$ref": "#/components/schemas/FileAbsent"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": {
+                  "absent": "#/components/schemas/FileAbsent",
+                  "present": "#/components/schemas/FilePresent"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 256,
+            "title": "Observations",
+            "description": "Newest observations first; the first canonical path wins."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input",
+          "session_id",
+          "worker_id",
+          "execution_epoch",
+          "build_id",
+          "host_epoch",
+          "call_id"
+        ],
+        "title": "PreparePatch"
+      },
       "PrepareUpdate": {
         "properties": {
           "update_id": {
@@ -10850,6 +11104,54 @@
           "expected_digest"
         ],
         "title": "PreparedFileWrite"
+      },
+      "PreparedPatch": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Call Id"
+          },
+          "baselines": {
+            "items": {
+              "$ref": "#/components/schemas/PatchBaseline"
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Baselines"
+          },
+          "mutations": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/PatchWrite"
+                },
+                {
+                  "$ref": "#/components/schemas/PatchDelete"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "kind",
+                "mapping": {
+                  "delete": "#/components/schemas/PatchDelete",
+                  "write": "#/components/schemas/PatchWrite"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 32,
+            "title": "Mutations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "baselines",
+          "mutations"
+        ],
+        "title": "PreparedPatch"
       },
       "Preview": {
         "properties": {
@@ -13923,7 +14225,7 @@
           },
           "name": {
             "type": "string",
-            "pattern": "^(shell|read_file|write_file|edit_file|tool_output|job_list|job_output|job_kill|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
+            "pattern": "^(shell|read_file|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
             "title": "Name"
           },
           "arguments": {

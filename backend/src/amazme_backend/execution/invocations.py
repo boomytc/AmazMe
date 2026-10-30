@@ -108,7 +108,7 @@ class InvocationOperations:
                     raise BackendError("tool_outcome_unknown")
                 self.owner.admit(value.session_id)
                 if value.run_in_background:
-                    if value.file is not None or value.output_read is not None:
+                    if value.file is not None or value.output_read is not None or value.patch is not None:
                         raise BackendError("background_command_required")
                     counts = await self.owner.db.call(lambda db: db.execute(
                         "SELECT count(*),sum(session=?) FROM scopes WHERE background=1 AND (outcome='pending' OR clean=0)",
@@ -151,9 +151,17 @@ class InvocationOperations:
                     file_key = client_path(name, inner)
                     if isinstance(file, (WriteFile, EditFile)) and value.expected_root != str(root.resolve()):
                         raise BackendError("file_preparation_mismatch")
+                if value.patch is not None:
+                    for target in [*value.patch.baselines, *value.patch.mutations]:
+                        name, inner = tool_path(workspace, target.path)
+                        location = (self.owner.profile.config.workspace if name == PRIMARY
+                                    else dict(self.owner.queries.load_grants()).get(name))
+                        if (not location or not inner or name == "grant" or target.relative != inner
+                                or target.path != client_path(name, inner) or target.root != str(Path(location).resolve())):
+                            raise BackendError("file_preparation_mismatch")
                 instance = hashlib.sha256(value.call_id.encode()).hexdigest()[:32]
                 directory = self.owner.profile.path / "executions" / instance
-                log_expires = await self._reserve_output() if file is None and value.output_read is None else 0
+                log_expires = await self._reserve_output() if file is None and value.output_read is None and value.patch is None else 0
                 directory.mkdir(mode=0o700, parents=True, exist_ok=False)
                 with ProcessReservation(self.owner.profile.path, "execution", instance) as reservation:
                     await self.owner.db.call(lambda db: db.execute(
@@ -171,6 +179,7 @@ class InvocationOperations:
                 await channel.permit(LocalPermit(call_id=value.call_id, cwd=str(root), command=value.command,
                     timeout_seconds=value.timeout_seconds, file=file, expected_digest=value.expected_digest,
                     file_key=file_key,
+                    patch=value.patch,
                     output_read=value.output_read, output_directory=output_directory, log_expires=log_expires,
                     log_error="output_capacity" if not log_expires else ""))
                 await self.phase(value.call_id, "permitted")
