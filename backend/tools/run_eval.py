@@ -12,14 +12,25 @@ import tempfile
 from pathlib import Path
 from typing import Literal
 
+from eval_runtime import EvalRuntime
 from pydantic import Field, JsonValue, SecretStr, TypeAdapter
-from verify_runtime import Runtime
 
-from amazme_backend.accounts.store import AccountStore
-from amazme_backend.platform.private_files import private_write
-from amazme_backend.contracts import BackendError, CredentialUpdate, Message, Model, PluginDraft, PluginToolCall, ProfileConfig, ProviderConfig, UpdateModelSettings, plugin_alias
-from amazme_backend.ai.catalog import INDEX
 from amazme_backend.accounts.oauth.flow import OAuthCredential
+from amazme_backend.accounts.store import AccountStore
+from amazme_backend.ai.catalog import INDEX
+from amazme_backend.contracts import (
+    BackendError,
+    CredentialUpdate,
+    Message,
+    Model,
+    PluginDraft,
+    PluginToolCall,
+    ProfileConfig,
+    ProviderConfig,
+    UpdateModelSettings,
+    plugin_alias,
+)
+from amazme_backend.platform.private_files import private_write
 from amazme_backend.sdk import Client
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -147,7 +158,7 @@ async def probe_provider(client: Client, workspace: Path, value: ProviderProbe) 
         'existing_models_preserved':previous.issubset({(item.provider,item.model) for item in current.models})}
 
 
-async def run(value: EvalInput, runtime: Runtime) -> dict[str, JsonValue]:
+async def run(value: EvalInput, runtime: EvalRuntime) -> dict[str, JsonValue]:
     await borrow_credential(value,runtime.profile)
     await asyncio.to_thread(runtime.start)
     for name,content in value.workspace_files.items():
@@ -223,13 +234,13 @@ def main() -> None:
     value = EvalInput.model_validate_json(raw)
     root = Path(tempfile.mkdtemp(prefix='amazme-eval-'))
     identity = root.stat()
-    runtime: Runtime | None = None
+    runtime: EvalRuntime | None = None
     result: dict[str, JsonValue]
     try:
         config = actor_config(value)
         provider = root / 'provider.json'
         private_write(provider,json.dumps({**config.model_dump(mode='json'),'api_key':''}))
-        runtime = Runtime([sys.executable,'-m','amazme_backend'],root,provider)
+        runtime = EvalRuntime([sys.executable,'-m','amazme_backend'],root,provider)
         async def bounded() -> dict[str, JsonValue]:
             async with asyncio.timeout(value.timeout_ms / 1000) as deadline:
                 partial = await run(value,runtime)

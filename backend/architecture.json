@@ -192,7 +192,6 @@
         "amazme_backend.contracts.web",
         "amazme_backend.contracts.workflows",
         "amazme_backend.contracts.workspaces",
-        "amazme_backend.diagnostics.faults",
         "amazme_backend.features.management.rules",
         "amazme_backend.features.tools.search",
         "amazme_backend.platform.identity",
@@ -249,7 +248,6 @@
         "amazme_backend.contracts.tools",
         "amazme_backend.contracts.web",
         "amazme_backend.contracts.workspaces",
-        "amazme_backend.diagnostics.faults",
         "amazme_backend.execution.client",
         "amazme_backend.features.memories.policy",
         "amazme_backend.features.resources.service",
@@ -313,7 +311,6 @@
         "amazme_backend.contracts.tools",
         "amazme_backend.contracts.web",
         "amazme_backend.contracts.workspaces",
-        "amazme_backend.diagnostics.faults",
         "amazme_backend.platform.identity",
         "amazme_backend.platform.ipc",
         "amazme_backend.platform.private_files",
@@ -531,7 +528,6 @@
         "amazme_backend.contracts.web",
         "amazme_backend.contracts.workflows",
         "amazme_backend.contracts.workspaces",
-        "amazme_backend.diagnostics.faults",
         "amazme_backend.execution.client",
         "amazme_backend.execution.mcp.auth",
         "amazme_backend.execution.mcp.configuration",
@@ -712,7 +708,6 @@
         "amazme_backend.contracts.tools",
         "amazme_backend.contracts.web",
         "amazme_backend.contracts.workspaces",
-        "amazme_backend.diagnostics.faults",
         "amazme_backend.execution.client",
         "amazme_backend.execution.dependencies",
         "amazme_backend.execution.mcp.gate",
@@ -747,19 +742,6 @@
         "amazme_backend.shared.errors",
         "amazme_backend.shared.model",
         "amazme_backend.workspaces.paths"
-      ]
-    },
-    "diagnostics": {
-      "prefixes": [
-        "amazme_backend.diagnostics"
-      ],
-      "public": [
-        "amazme_backend.diagnostics.faults"
-      ],
-      "imports": [
-        "amazme_backend.platform.private_files",
-        "amazme_backend.shared.errors",
-        "amazme_backend.shared.model"
       ]
     },
     "plugin_api": {

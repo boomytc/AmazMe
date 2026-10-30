@@ -231,7 +231,6 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
                 request.status = "running"
                 save_request(db, c, request)
                 c.emit("tool", request.request_id, event_step_text(step))
-                c.hit("mcp_intent", request.request_id, step.step_id)
                 return McpRetrieval(step.step_id, request.request_id, request.generation, step.call)
             if step.call.name in {"web_search", "web_fetch"}:
                 # The call id is the step id. No epoch: the supervisor cannot prove a paid HTTP call.
@@ -241,7 +240,6 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
                 request.status = "running"
                 save_request(db, c, request)
                 c.emit("tool", request.request_id, event_step_text(step))
-                c.hit("web_intent", request.request_id, step.step_id)
                 return WebRetrieval(step.step_id, request.request_id, request.generation, step.call)
             if not run.lease:
                 run.opening = True
@@ -266,7 +264,6 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
             request.status = "running"
             save_request(db, c, request)
             c.emit("tool", request.request_id, event_step_text(step))
-            c.hit("tool_intent", request.request_id, step.step_id)
             return ToolInvocation(step.step_id, request.request_id, request.generation, run.lease, step.call)
         if step.kind == "model" and step.phase == "intent":
             decide_request(db, c, request, Decision(status="unknown", error="model_outcome_unknown"))
@@ -297,7 +294,6 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
     request.status = "running"
     save_request(db, c, request)
     c.emit("tool", request.request_id, event_step_text(step))
-    c.hit("model_intent", request.request_id, step_id)
     return ModelInvocation(step_id, request.request_id, request.generation,
                            load_messages(db, request.request_id), run.config, run.started_at_ms)
 
@@ -337,7 +333,6 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
                 hold.resource_clean = True
                 db.execute("UPDATE effects SET payload=? WHERE id=?", (hold.model_dump_json(), hold.call_id))
         c.emit("cleanup", run.request_id, proof.model_dump_json())
-        c.hit("cleanup", run.request_id)
         return
     if isinstance(observation, EffectResolved):
         value, hold = observation.resolution, observation.hold
@@ -376,7 +371,6 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
         step.phase = "result"
         save_step(db, step)
         c.emit("tool", request.request_id, event_step_text(step))
-        c.hit("web_result", request.request_id, step.step_id)
         return
     if isinstance(observation, CodeReturned):
         action, status = observation.invocation, observation.status
@@ -481,7 +475,6 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
             step.result, step.phase = observation.result, "result"
             save_step(db, step)
             c.emit("tool", request.request_id, event_step_text(step))
-            c.hit("mcp_result", request.request_id, step.step_id)
             # A result that arrives after cancel stays in the transcript and does not start another model turn.
             if request.cancel_requested and not request.decision:
                 apply_step_result(state, db, c, request, step)
@@ -567,14 +560,12 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
             raise BackendError("invalid_tool_calls")
         step.result, step.phase = completion.model_dump_json(), "result"
         c.emit("tool", request.request_id, event_step_text(step))
-        c.hit("model_result", request.request_id, step.step_id)
     elif isinstance(observation, ToolReturned) or observation.observation.state == "completed":
         result = observation.result if isinstance(observation, ToolReturned) else observation.observation.result
         if result is None or result.call_id != step.step_id:
             raise BackendError("tool_result_identity_mismatch")
         step.result, step.phase = result.model_dump_json(), "result"
         c.emit("tool", request.request_id, event_step_text(step))
-        c.hit("tool_result", request.request_id, step.step_id)
     else:
         observed = observation.observation
         if observed.call_id != step.step_id:

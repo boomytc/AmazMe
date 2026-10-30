@@ -420,8 +420,7 @@ export const sourceTempDirAllowlist = {
 };
 
 /**
- * Package test trees may not call mkdtemp/mkdtempSync except from packages/<pkg>/test/temp-dir.ts at
- * the test root. Package sources (`packages/<pkg>/src`) may not call `tmpdir()` / `os.tmpdir()`
+ * Package sources (`packages/<pkg>/src`) may not call `tmpdir()` / `os.tmpdir()`
  * outside `allowed` (repo-relative path -> reason). Every entry is one exact source file with a
  * non-empty reason: no directories, no globs. An entry goes stale, and fails, when its file no longer
  * calls `tmpdir()`; {@link checkTempDirAllowlistFiles} fails one whose file is gone.
@@ -470,43 +469,8 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 				);
 		}
 	};
-	const banned = /\bmkdtemp(?:Sync)?\s*\(/;
-	const canonicalPath = join(packagesDirectory, "coding-agent", "test", "temp-dir.ts");
-	const canonical = existsSync(canonicalPath) ? readFileSync(canonicalPath) : undefined;
-	const walk = (testRoot, directory) => {
-		if (!existsSync(directory)) return;
-		const helper = join(testRoot, "temp-dir.ts");
-		for (const entry of readdirSync(directory, { withFileTypes: true })) {
-			const path = join(directory, entry.name);
-			if (entry.isDirectory()) {
-				walk(testRoot, path);
-				continue;
-			}
-			if (!entry.name.endsWith(".ts") && !entry.name.endsWith(".js") && !entry.name.endsWith(".mjs")) continue;
-			if (path === helper) continue;
-			const source = readFileSync(path, "utf8");
-			for (const [index, line] of source.split("\n").entries()) {
-				if (!banned.test(line)) continue;
-				failures.push(
-					`${relative(repoRoot, path)}:${index + 1}: use createTempDir from temp-dir.ts instead of ${line.includes("mkdtempSync") ? "mkdtempSync" : "mkdtemp"}`,
-				);
-			}
-		}
-	};
 	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
-		if (!entry.isDirectory()) continue;
-		walkSource(join(packagesDirectory, entry.name, "src"));
-		const testRoot = join(packagesDirectory, entry.name, "test");
-		walk(testRoot, testRoot);
-		const helper = join(testRoot, "temp-dir.ts");
-		if (!existsSync(helper)) continue;
-		if (entry.name === "tui") continue;
-		if (canonical === undefined) continue;
-		const content = readFileSync(helper);
-		if (!content.equals(canonical))
-			failures.push(
-				`${relative(repoRoot, helper)}: must match packages/coding-agent/test/temp-dir.ts byte-for-byte (vitest helper); only packages/tui/test/temp-dir.ts may differ`,
-			);
+		if (entry.isDirectory()) walkSource(join(packagesDirectory, entry.name, "src"));
 	}
 	return failures;
 }
@@ -514,7 +478,6 @@ export function checkTempDirUsage(repoRoot, allowed = sourceTempDirAllowlist) {
 /**
  * Every `sourceTempDirAllowlist` entry names a file in this repository. A deleted or moved file is
  * never visited by {@link checkTempDirUsage}, so without this its stale entry would stay silently.
- * Run against the real tree only: a fixture tree does not carry the listed files.
  */
 export function checkTempDirAllowlistFiles(repoRoot, allowed = sourceTempDirAllowlist) {
 	return Object.keys(allowed)
@@ -525,11 +488,55 @@ export function checkTempDirAllowlistFiles(repoRoot, allowed = sourceTempDirAllo
 		);
 }
 
+/** Keep permanent regression suites out of the workspace; model evaluation is a product capability. */
+export function checkDevelopmentAssets(repoRoot) {
+	const files = execFileSync("git", ["ls-files", "--cached", "--others", "--exclude-standard", "-z"], {
+		cwd: repoRoot, encoding: "utf8", maxBuffer: 64 * 1024 * 1024,
+	}).split("\0").filter((file) => file && existsSync(join(repoRoot, file)));
+	const suite = /(?:^|\/)(?:tests?|__tests__|__mocks__|__snapshots__|fixtures?|mocks?)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$|(?:^|\/)(?:test_[^/]+\.py|[^/]+_test\.py|conftest\.py|pytest\.ini|tsconfig\.test\.json|vitest(?:\.[^/]+)?\.config\.[cm]?[jt]s|playwright\.config\.[cm]?[jt]s)$/;
+	const failures = files.filter((file) => file !== "packages/evals/vitest.evals.config.ts" && suite.test(file))
+		.map((file) => `${file}: permanent test asset; use disposable verification under a temporary or ignored directory`);
+	for (const file of files.filter((file) => file === "package.json" || /^packages\/[^/]+\/package\.json$/.test(file))) {
+		const manifest = JSON.parse(readFileSync(join(repoRoot, file), "utf8"));
+		for (const [name, command] of Object.entries(manifest.scripts ?? {})) {
+			const evaluation = file === "packages/evals/package.json" && /^eval(?::|$)/.test(name);
+			if (/^test(?::|$)/.test(name) || (!evaluation && /(?:^|\s)(?:vitest|pytest)(?:\s|$)|node\s+--test/.test(command)))
+				failures.push(`${file}: scripts.${name} is a permanent test entry; keep build, type and artifact checks`);
+		}
+		for (const name of Object.keys({ ...manifest.dependencies, ...manifest.devDependencies })) {
+			if (/^(?:vitest|@vitest\/[^/]+|happy-dom|jsdom|@playwright\/test|@xterm\/headless)$/.test(name) && !(name === "vitest" && file === "packages/evals/package.json"))
+				failures.push(`${file}: ${name} is a test-only dependency`);
+		}
+	}
+	const pyproject = join(repoRoot, "backend/pyproject.toml");
+	if (existsSync(pyproject)) {
+		const config = JSON.parse(execFileSync(join(repoRoot, "backend/.venv/bin/python"), ["-I", "-c", `
+import json, sys, tomllib
+from pathlib import Path
+data = tomllib.loads(Path(sys.argv[1]).read_text())
+project = data.get("project", {})
+groups = [project.get("dependencies", []), data.get("build-system", {}).get("requires", [])]
+groups.extend(project.get("optional-dependencies", {}).values())
+groups.extend(data.get("dependency-groups", {}).values())
+print(json.dumps({"dependencies": [item for group in groups for item in group if isinstance(item, str)],
+                  "pytest_config": "pytest" in data.get("tool", {})}))
+`, pyproject], { encoding: "utf8" }));
+		for (const dependency of config.dependencies) {
+			const name = dependency.match(/^[A-Za-z0-9][A-Za-z0-9._-]*/)?.[0].toLowerCase().replaceAll("_", "-");
+			if (/^(?:pytest(?:-|$)|tox$|hypothesis$|coverage$)/.test(name ?? ""))
+				failures.push(`backend/pyproject.toml: ${name} is a test-only dependency`);
+		}
+		if (config.pytest_config) failures.push("backend/pyproject.toml: remove permanent pytest configuration");
+	}
+	return failures;
+}
+
 /** Syntax-aware checks over source, including development-only host and browser modules. */
 export function checkSourceContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
 	const failures = [
+		...checkDevelopmentAssets(root),
 		...checkDependencyVersions(root, packages),
 		...checkProductVersions(root, packages),
 		...checkChangelogs(root),
@@ -894,6 +901,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
 	else
 		console.log(
-			"Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, test and source temp dirs, and version literals passed.",
+			"Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, development assets, source temp dirs, and version literals passed.",
 		);
 }

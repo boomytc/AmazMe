@@ -34,28 +34,18 @@ TUI、SDK 等客户端的连接令牌用 `pair --profile /absolute/new-profile` 
 退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
 默认修改操作需要审批。执行环境保留 PATH/HOME 等工具查找变量，不继承模型密钥和控制令牌。
 
-开发验证：
+开发采用 `confident-development-conventions`，从状态归属、类型与模块边界保证逻辑闭环。按本次改动选择必要检查：
 
 ```bash
 uv sync --project backend --frozen
-uv build --project backend
-backend/.venv/bin/ruff check backend
+backend/.venv/bin/ruff check backend/src backend/examples/sdk
 backend/.venv/bin/pyright --project backend/pyproject.toml
-backend/.venv/bin/pytest backend/tests -q
-backend/.venv/bin/python backend/tools/verify_native.py
-backend/.venv/bin/python backend/tools/verify_client.py
-backend/.venv/bin/python backend/tools/verify_terminal.py
-backend/.venv/bin/python backend/tools/verify_mcp.py
-backend/.venv/bin/python backend/tools/verify_screen.py
+backend/.venv/bin/python backend/tools/check_architecture.py
+backend/.venv/bin/python backend/tools/verify_imports.py
+backend/.venv/bin/python backend/tools/export_contracts.py --check
 ```
 
-`verify_native.py` 使用 faux 和真实本机进程；`verify_client.py` 使用已安装 Chrome。
-`verify_mcp.py` 用 Chrome 操作本机官方 MCP Python SDK 探针服务，覆盖审批、丢回执、结构化结果和停止。
-`verify_mcp_model.py` 用隔离 profile 和现有 DeepSeek 配置，让模型选择已连接的本机探针工具；拒绝无副作用，批准后的结果回到模型。
-这些旧运行报告只证明当时构建；当前状态以完成台账为准。
-真实模型与 Chrome 用 `verify_web.py --provider-config /private/provider.json`，会产生模型费用。
-这些运行器创建自己的隔离 profile、记录报告并关闭所属进程；不会接管用户原有服务。
-报告保存在 `.artifacts/native`，两个 native `run-*` 之后先核对已有证据再运行，避免无界积累。
+行为改动使用独立 profile 对受影响的实际入口做有限验收；临时脚本、样本和报告在完成后清理，不保留常驻测试套件。模型评测由 `npm run eval` 显式运行，说明见 [evals](../packages/evals/README.md)。产品连接检查、会话诊断、资源普查与冻结包完整性校验继续保留。
 
 用新隔离 profile 验收，不读取、迁移或删除用户历史库。禁止恢复 VM 链路、运行 prepare_runtime/bootstrap_resources，
 以及反复打包积累磁盘。普通开发先做源码验证，需要安装验证时仅保留一份本轮包。

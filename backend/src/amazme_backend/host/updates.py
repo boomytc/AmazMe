@@ -94,7 +94,6 @@ class UpdateOperations:
             FreezeSupervisor(**self.lifecycle.fence.model_dump(), freeze_id=record.update_id),
         )
         record = await self.lifecycle.update_health(record, health)
-        await self.lifecycle.faults.hit("update_freeze", update_id=record.update_id)
         sessions = {s.session_id for s in (await self.lifecycle.store.sessions()).sessions}
         sessions.update((w.session_id for w in health.workers))
         removed = await self.lifecycle.store.removed_sessions()
@@ -166,7 +165,6 @@ class UpdateOperations:
             if service is None:
                 raise BackendError("supervisor_unavailable", status=503)
             record = await self.lifecycle.retire_service(service, record)
-        await self.lifecycle.faults.hit("update_prepared", update_id=record.update_id)
         return record
 
     async def resume_update(self, identity: str) -> UpdateRecord:
@@ -240,7 +238,6 @@ class UpdateOperations:
         record.phase = "completed" if record.phase == "completed" else "validating"
         record.error = ""
         record = await self.lifecycle.store.save_update(record)
-        await self.lifecycle.faults.hit("update_health", update_id=record.update_id)
         return record
 
     async def complete_update(self, value: CompleteUpdate) -> UpdateRecord:
@@ -283,7 +280,6 @@ class UpdateOperations:
             self.lifecycle.verify_clean(health)
             record.phase = "completed"
             record = await self.lifecycle.store.save_update(record)
-            await self.lifecycle.faults.hit("update_completed", update_id=record.update_id)
             thawed = await self.lifecycle.supervisor.call(
                 "POST",
                 "/thaw",

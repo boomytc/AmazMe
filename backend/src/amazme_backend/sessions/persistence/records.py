@@ -43,7 +43,6 @@ class Changes:
     def __init__(self, seq: int):
         self.seq = seq
         self.events: list[Event] = []
-        self.hooks: list[tuple[str, str, str]] = []
 
     def emit(self, kind: str, request_id: str = "", text: str = "", *,
              receipt: Receipt | None = None, approval: Approval | None = None,
@@ -52,8 +51,6 @@ class Changes:
                                                      receipt=receipt, approval=approval, preview=preview,
                                                      message=message)))
 
-    def hit(self, point: str, request_id: str = "", call_id: str = "") -> None:
-        self.hooks.append((point, request_id, call_id))
 
 
 def context_requests(db: sqlite3.Connection, request_id: str) -> tuple[int, list[str]]:

@@ -27,11 +27,8 @@ build-backend = "hatchling.build"
 dev = [
     "ruff==0.17.2",
     "pyright",
-    "pytest",
-    "pytest-asyncio",
     "pyinstaller==6.22.3",
     "types-PyYAML",
-    "playwright",
     "types-psutil>=7.2.2.20260906",
 ]
 
@@ -50,7 +47,3 @@ pythonVersion = "3.13"
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
-
-[tool.pytest.ini_options]
-asyncio_mode = "auto"
-testpaths = ["tests"]

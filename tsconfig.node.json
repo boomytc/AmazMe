@@ -5,12 +5,10 @@
 		"tsBuildInfoFile": "./.artifacts/typecheck/node.tsbuildinfo"
 	},
 	"include": [
-		"packages/*/src/**/*",
-		"packages/*/test/**/*"
+		"packages/*/src/**/*"
 	],
 	"exclude": [
 		"**/dist/**",
-		"packages/web/src/**",
-		"packages/web/test/**"
+		"packages/web/src/**"
 	]
 }

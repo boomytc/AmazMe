@@ -21,7 +21,6 @@
 | `interfaces` | HTTP/WS、RPC、CLI/TUI、私有进程 API 和页面 boot；解析、认证、调用与呈现 |
 | `sdk` | `from amazme_backend.sdk import Client`；只连接现有 Host |
 | `bootstrap` | 命令分派与 Host、worker、Supervisor 的构造、能力注入和服务启动 |
-| `diagnostics` | 按角色和实例归属的显式故障注入 |
 
 完整模块归属、公开入口、允许依赖、纯闭包和进程创建所有者以 [architecture.json](architecture.json) 为准。`features` 各子域分别检查；内部调用使用具体契约模块，公开数据总入口 `amazme_backend.contracts` 和插件入口 `amazme_backend.plugin_api` 保留。
 
@@ -65,15 +64,14 @@ Host、会话 worker、Supervisor 分别拥有自己的数据库。保留稳定�
 ```bash
 backend/.venv/bin/python backend/tools/check_architecture.py
 backend/.venv/bin/python backend/tools/verify_imports.py
-backend/.venv/bin/python backend/tools/verify_ai_boundary.py
 backend/.venv/bin/python backend/tools/export_contracts.py --check
 ```
 
 结构检查递归扫描 Python 子包，覆盖绝对/相对导入、别名、父包初始化、重导出、函数内、TYPE_CHECKING 和可确定的动态导入。延迟导入不豁免跨域回环；进程创建、exec、生命周期操作与继承锁也受同一清单约束。检查已接入 `npm run check:workspace`，只读检查不安装环境或启动服务。
 
-第一层用轻量契约、显式请求值、私有持久化模块和装配时注入能力排除反向业务依赖。第二层用递归结构检查、违规样例与独立进程导入探针拦截绕过。资源定位、冻结数据和身份检查共用 `platform/resource_manifest.py`；gate、远端 daemon、模型快照、Codemode helper 与页面资源都进入冻结身份。
+第一层用轻量契约、显式请求值、私有持久化模块和装配时注入能力排除反向业务依赖。第二层用递归结构检查与独立进程导入检查拦截绕过。资源定位、冻结数据和身份检查共用 `platform/resource_manifest.py`；gate、远端 daemon、模型快照、Codemode helper 与页面资源都进入冻结身份。
 
-`backend/contracts/public-exports.json` 固定重构前的具名公开声明，防止契约搬迁后模块仍可导入、其中某个公开类型却消失。协议测试直接检查实际供应商消息和工具序列化；纯模型独立探针使用本地 HTTP 替身，不代表真实供应商验证。
+`backend/contracts/public-exports.json` 固定具名公开声明，防止契约搬迁后模块仍可导入、其中某个公开类型却消失。模型调用的 prompt、工具、认证与协议转换由显式请求值和模块边界约束。供应商兼容性按实际改动做临时验收或真实模型评测，不将本地替身视为真实服务证据。
 
 常规 Pyright 同时检查 `backend/examples/sdk` 的 Python 示例，使公开调用签名的迁移遗漏进入现有类型检查。
 

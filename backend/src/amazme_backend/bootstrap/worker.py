@@ -17,7 +17,6 @@ from amazme_backend.contracts.models import Message
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.resources import ResourceOptions
 from amazme_backend.contracts.web import WebCallRequest, WebCallView
-from amazme_backend.diagnostics.faults import Faults
 from amazme_backend.execution.client import SupervisorClient
 from amazme_backend.execution.web.client import execute_web_call
 from amazme_backend.features.management.rules import contains_secret
@@ -37,7 +36,6 @@ from amazme_backend.shared.errors import BackendError
 def create_worker(profile: Profile, session: str, instance: str, *, frozen: bool = False,
                   require_existing: bool = False, validation: bool = False) -> Worker:
     build = build_id()
-    faults = Faults(profile.path, 'worker', instance, enabled=profile.config.testing)
     queries = HostQueries(profile.path)
 
     def current_provider() -> ProviderConfig:
@@ -87,9 +85,9 @@ def create_worker(profile: Profile, session: str, instance: str, *, frozen: bool
 
     store = SessionStore(session_database(profile.path, session), session, build=build,
                          config=profile.config.provider, approval_policy=profile.config.approval_policy,
-                         faults=faults, require_existing=require_existing, instance=instance,
+                         require_existing=require_existing, instance=instance,
                          model_catalog=SELECTION_INDEX, expand_resources=expand, secret_source=resource_secrets)
-    context = WorkerContext(build=build, profile_id=profile.config.profile_id, token=profile.token, faults=faults,
+    context = WorkerContext(build=build, profile_id=profile.config.profile_id, token=profile.token,
         identity=lambda state, epoch: profile.identity(instance, build, role='worker', state=state, host_epoch=epoch),
         current_provider=current_provider, configured_model=configured_model, secrets=account_secrets,
         contains_secret=scan, prepare_messages=prepare_messages,

@@ -74,7 +74,6 @@ from amazme_backend.contracts.plugins import PluginCallView, PluginOffer, Plugin
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.sessions import Preview, Receipt, WorkerState
 from amazme_backend.contracts.web import WebCallRequest, WebCallView, WebFetch, WebSearch
-from amazme_backend.diagnostics.faults import Faults
 from amazme_backend.execution.client import SupervisorClient
 from amazme_backend.sessions.service import SessionOps, SessionStore
 from amazme_backend.sessions.types import (
@@ -121,7 +120,6 @@ class WorkerContext:
     build: str
     profile_id: str
     token: str
-    faults: Faults
     identity: Callable[[WorkerState, int], Identity]
     current_provider: Callable[[], ProviderConfig]
     configured_model: Callable[[ProviderConfig], Awaitable[tuple[ProviderConfig, Auth]]]
@@ -160,7 +158,6 @@ class Worker:
         self.build = context.build
         self.frozen_on_start = frozen
         self.validation = validation
-        self.faults = context.faults
         self.store = store
         self.supervisor = supervisor
         self.owner = WorkerRequest(session_id=session, worker_id=instance, build_id=self.build)

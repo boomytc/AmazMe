@@ -37,12 +37,9 @@
 		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && shx rm -rf dist",
 		"build": "node ../../scripts/locked-workspace-task.mjs @amazme/web build",
 		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && npm run clean:unlocked && tsc -p tsconfig.build.json && shx cp -r src/page dist/page && node build-page.mjs",
-		"test": "vitest --run",
-		"typecheck": "tsc -p tsconfig.test.json"
+		"typecheck": "tsc -p tsconfig.build.json --noEmit"
 	},
 	"devDependencies": {
-		"happy-dom": "20.10.5",
-		"shx": "0.3.4",
-		"vitest": "4.1.12"
+		"shx": "0.3.4"
 	}
 }

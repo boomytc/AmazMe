@@ -164,11 +164,8 @@ class InvocationOperations:
                          value.effect, log_expires, str(root.resolve()), int(value.run_in_background),
                          time.time_ns() // 1_000_000 if value.run_in_background else 0)), write=True)
                     admitted = True
-                    await self._hit("create_intent", value)
                     channel = await LocalProcess.start(self.owner.profile.path, instance, directory, reservation)
                     self.channels[value.call_id] = channel
-                await self._hit("registered", value)
-                await self._hit("before_permit", value)
                 await self.owner.check_lease(value)
                 await self.phase(value.call_id, "permit_intent")
                 await channel.permit(LocalPermit(call_id=value.call_id, cwd=str(root), command=value.command,
@@ -176,7 +173,6 @@ class InvocationOperations:
                     file_key=file_key,
                     output_read=value.output_read, output_directory=output_directory, log_expires=log_expires,
                     log_error="output_capacity" if not log_expires else ""))
-                await self._hit("permit_sent", value)
                 await self.phase(value.call_id, "permitted")
                 if value.run_in_background:
                     scope = await self.scope(value.call_id)
@@ -185,7 +181,6 @@ class InvocationOperations:
                     await self.owner.db.call(lambda db: db.execute(
                         "UPDATE scopes SET job_ack=? WHERE id=?", (ack.model_dump_json(), value.call_id)), write=True)
                     acknowledged.set_result(ack)
-                await self._hit("permitted", value)
             report = await channel.collect()
             if report.call_id != value.call_id or report.result is None:
                 raise BackendError("tool_outcome_unknown")
@@ -199,7 +194,6 @@ class InvocationOperations:
                     if changed != 1:
                         raise BackendError("tool_outcome_unknown")
                 await self.owner.db.call(captured, write=True)
-                await self._hit("result", value)
                 scope = await self.scope(value.call_id)
                 assert scope is not None
                 await self.clean_scope(scope)
@@ -221,9 +215,6 @@ class InvocationOperations:
             if channel is not None:
                 await channel.close()
             self.channels.pop(value.call_id, None)
-
-    async def _hit(self, point: str, value: RunTool) -> None:
-        await self.owner.faults.hit(point, session_id=value.session_id, request_id=value.request_id, call_id=value.call_id)
 
     async def run(self, value: RunTool) -> ToolResult:
         # A disconnected HTTP waiter does not cancel the supervisor-owned operation.
@@ -273,7 +264,6 @@ class InvocationOperations:
         lease = ProcessLease.model_validate_json(str(scope["lease"]))
         if not await reconcile(directory, lease, permitted=scope["phase"] != "registered"):
             raise BackendError("stop_unconfirmed", status=503)
-        await self.owner.faults.hit("cleanup_proven", session_id=str(scope["session"]), call_id=str(scope["id"]))
         await self.owner.db.call(lambda db: db.execute("UPDATE scopes SET clean=1 WHERE id=?", (scope["id"],)), write=True)
 
     async def cancel_all(self, session: str = "", epoch: int | None = None, *,

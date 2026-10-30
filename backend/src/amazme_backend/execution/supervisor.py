@@ -35,7 +35,6 @@ from amazme_backend.contracts.ipc.supervisor import (
     WorkerRequest,
     WorkerSpec,
 )
-from amazme_backend.diagnostics.faults import Faults
 from amazme_backend.execution.codemode.operations import CodeOperations
 from amazme_backend.execution.dependencies import CodeToolDefinitions, ExecutionQueries, ResolveModelCall
 from amazme_backend.execution.invocations import InvocationOperations
@@ -89,7 +88,6 @@ class Supervisor:
         self.children: dict[str, asyncio.subprocess.Process] = {}
         self.heartbeats: dict[str, float] = {}
         self.monitor_task: asyncio.Task[None] | None = None
-        self.faults = Faults(profile.path, "supervisor", self.instance, enabled=profile.config.testing)
         self.invocations = InvocationOperations(self)
         self.pty = TerminalOperations(self)
         self.mcp = McpOperations(self)
@@ -295,7 +293,6 @@ class Supervisor:
                 await self.db.call(lambda db: db.execute("INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
                     (instance, value.session_id, worker.model_dump_json())), write=True)
                 self.heartbeats[instance] = time.monotonic()
-                await self.faults.hit("worker_reserved", session_id=value.session_id)
                 log_fd = os.open(directory / SessionRuntimeFile.WORKER_LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
                 try:
                     args = child_command("worker", "--profile", str(self.profile.path), "--session", value.session_id,
@@ -314,7 +311,6 @@ class Supervisor:
                 finally:
                     os.close(log_fd)
             self.heartbeats[instance] = time.monotonic()
-            await self.faults.hit("worker_spawned", session_id=value.session_id)
             return worker
 
     async def validate_worker(self, value: WorkerRequest) -> WorkerInfo:
@@ -370,7 +366,6 @@ class Supervisor:
                 self._put_worker(db, worker)
                 return epoch
             epoch = await self.db.call(opened, write=True)
-            await self.faults.hit("epoch_opened", session_id=value.session_id)
             return Lease(session_id=value.session_id, worker_id=value.worker_id, build_id=value.build_id,
                          execution_epoch=epoch, supervisor_id=self.instance)
 
@@ -519,8 +514,6 @@ class Supervisor:
                          resources=ids, reason=reason, proof_id=secrets.token_hex(16) if not reason else "")
         await self.db.call(lambda db: db.execute("UPDATE epochs SET state=?,receipt=? WHERE session=? AND epoch=?",
                           (result.state, result.model_dump_json(), session, epoch)), write=True)
-        if result.state == "clean":
-            await self.faults.hit("closed", session_id=session)
         return result
 
     def _unexpected_worker_exit(self, worker: WorkerInfo) -> bool:

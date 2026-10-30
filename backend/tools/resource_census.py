@@ -627,43 +627,6 @@ def owned_after(
     }
 
 
-def apply_cleanup(runtime: object, report: dict[str, object]) -> BaseException | None:
-    pending: BaseException | None = None
-    try:
-        if runtime is not None:
-            close = getattr(runtime, "close")
-            close()
-    except BaseException as error:
-        pending = error
-    found = getattr(runtime, "resource_report", None) if runtime is not None else None
-    if not isinstance(found, dict):
-        found = None
-    if found is None:
-        report["cleanup"] = {
-            "reclaimed": False,
-            "owned_reclaimed": False,
-            "global_reclaimed": None,
-            "scope": "census did not run" if runtime is None else SCOPE,
-            "deletion": "not_performed",
-            "note": NOTE,
-        }
-        if pending is None:
-            pending = RuntimeError(refuse_message(report["cleanup"]))
-    else:
-        report["cleanup"] = found
-        if not found.get("reclaimed", False) and pending is None:
-            pending = RuntimeError(refuse_message(found))
-    if pending is not None:
-        report["status"] = "failed"
-        report["cleanup_error"] = f"{type(pending).__name__}: {pending}"
-    return pending
-
-
-def raise_pending(pending: BaseException | None) -> None:
-    if pending is not None and sys.exc_info()[0] is None:
-        raise pending
-
-
 def exit_code(report: Report) -> int:
     if not report["build_allowed"]:
         return 1
@@ -782,30 +745,6 @@ def retire_unused_packages(
     return _trim_unused(
         paths, processes, keep=keep, roots=_resolved_roots(roots), prefix="package-", direct=False,
         removed=sink, event="packages_retired", extra={"roots": [str(root) for root in roots]},
-    )
-
-
-def release_named_slot(
-    parent: Path, prefix: str, slots: int, processes: list[ProcessRow] | None = None,
-) -> list[str]:
-    """Make room for one new direct child. Keep the newest ``slots - 1`` directories."""
-    if slots < 1:
-        raise ValueError("slot count must be positive")
-    if not prefix or "/" in prefix or prefix in {".", ".."} or not prefix.endswith("-"):
-        raise ValueError("slot prefix must be one path segment ending with '-'")
-    if not parent.exists():
-        return []
-    if parent.is_symlink() or not parent.is_dir():
-        raise RuntimeError(f"slot parent is not a real directory: {parent}")
-    rows = live_processes() if processes is None else processes
-    children = [
-        child for child in parent.iterdir()
-        if child.is_dir() and not child.is_symlink() and child.name.startswith(prefix)
-    ]
-    children.sort(key=lambda path: path.stat().st_mtime, reverse=True)
-    return _trim_unused(
-        children, rows, keep=slots - 1, roots=[parent.resolve()], prefix=prefix, direct=True,
-        removed=[], event="slot_released", extra={"parent": str(parent), "prefix": prefix, "slots": slots},
     )
 
 

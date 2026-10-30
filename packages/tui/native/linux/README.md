@@ -11,13 +11,3 @@ Install a C compiler and XCB development headers, then run from the repository r
 ```sh
 npm --prefix packages/tui run build:native:linux
 ```
-
-## Testing
-
-Install the build dependencies plus `pkg-config`, `Xvfb`, and `xclip`, then run from `packages/tui`:
-
-```sh
-node --test test/native-clipboard-linux.test.ts
-```
-
-Tests use isolated X11 servers, not the desktop clipboard. They skip when dependencies are missing.

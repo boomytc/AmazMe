@@ -18,7 +18,7 @@ macOS 启动时在 `~/Library/Caches/AmazMe/desktop` 中缓存独立的 `AmazMe.
 npm run dev:desktop
 ```
 
-该命令按 package manifest 计算 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖；源码、资源、构建配置、构建脚本或已安装依赖变化时按序重建，未变化时复用现有 dist。AI 使用 `build:offline`，已有模型数据不会被刷新；缺数据时先显式运行 `npm run hydrate:model-data`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
+该命令按 package manifest 计算 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖；源码、资源、构建配置、构建脚本或已安装依赖变化时按序重建，未变化时复用现有 dist。已有模型数据不会被自动刷新；需要更新模型目录时显式运行 `npm run sync:pi-models`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
 
 界面语言仍读取 `AMAZME_CODING_AGENT_DIR` 或 `~/.amazme/agent/settings.json`。桌面包自己解析这个路径，不加载旧宿主。
 
@@ -30,7 +30,7 @@ npm run dev:desktop
 
 需要 Node.js 22.19 或更新版本来构建窗口。业务宿主是包内的 Python 后端。项目目录可显式指定，设置 `AMAZME_GUI_CWD`。`AMAZME_GUI_SESSION` 用会话 id 打开指定会话，地址里同时写上宿主和工作区。
 
-`npm test` 检查 Python 启动合同、关闭/退出状态转换、竞态、偏好持久化、清理重试、语言和错误合同；不含真实窗口 smoke。构建后用 `npm run test:smoke --workspace @amazme/gui` 验证没有 Python 后端时真实 Electron 进程会拒绝启动。smoke 使用临时目录，不读取用户凭据。
+开发采用 `confident-development-conventions`。构建和类型检查后，按改动选择受影响的真实桌面路径做有限验收，使用独立 profile，完成后清理临时资产。桌面打包的 `--verify` 保留为产物启动自检。
 
 Electron 是窗口壳。正式安装包带上 Python 后端后才打开页面。更新辅助程序仍使用包内 Node。
 
@@ -46,8 +46,6 @@ Electron 是窗口壳。正式安装包带上 Python 后端后才打开页面。
 
 更新锁先完整写入并 fsync 所有者记录，再原子获取；重复启动不会截断已有锁。普通启动遇到活跃或未知锁立即退出，不留下占用应用 PID 的模态框。持锁 helper 崩溃后，启动进程取得 Electron 单例，再检查私有锁中的完整 job 快照、所有者 PID 已退出、当前应用的 Apple 信任/发布者/版本和旧版本 hash，才恢复启动并清理已知失效锁；未知记录保留，恢复不会自动继续安装或移动应用。恢复元数据不依赖准备目录存在。GUI 退出仅删除未交接的暂存；任何锁、旧应用副本或已开始的事务日志都会保留该目录，由安装/恢复流程接管清理。
 
-`npm run release -- --acceptance` 在发布前额外做可信更新验收，加 `--dry-run` 时只输出签名/公证产物，不创建 tag 或 Release。目标 DMG 与较低版本的合成基线分别经过真实公证、staple、Gatekeeper 与隔离安装测试；合成基线只改变 GUI 包版本，用来验证安装器，不代表旧正式产品兼容性。Release HTTPS 清单/重定向故障由精确 mocks 覆盖；artifact 安装验收不等于线上 Release 端到端验收。
-
 ## DMG 与 GitHub Release
 
 1.0.0 之前不打 `v*` 标签，也不上传 GitHub Release。没有明确要求发布时，两者都不做。这个阶段只做本地验证和本地构建；`npm run release` 会拒绝低于 1.0.0 的版本。签名、公证、标签和上传留到 1.0.0，并且一次完成。本地 `dist-release/v*` 只保留正在构建的那一个应用版本，旧应用版本目录在下一次构建开始时删除。
@@ -59,7 +57,7 @@ Electron 是窗口壳。正式安装包带上 Python 后端后才打开页面。
 1. 预检：当前在 `main`、工作区干净且等于 `origin/main`，根目录与 `packages/gui` 版本一致，`v<version>` 标签与 Release 都还不存在（标签已在 HEAD 但 Release 缺失时续发），并用只读 `notarytool history` 确认公证凭证。
 2. 在临时 worktree 里对 HEAD 跑 `npm ci`、`check:workspace` 和 `build:offline`，本地改动和旧构建产物不会进入 DMG。
 3. 下载并按 SHASUMS256 校验官方 Node，缓存在 `~/Library/Caches/amazme-release`。
-4. 签名打包、公证、staple 并复核；`--acceptance` 再构建、公证较低版本基线并做隔离安装验收。
+4. 签名打包、公证、staple 并复核。
 5. 生成 `latest.json` 和发布说明，产物留在 `dist-release/<tag>/`。`--dry-run` 到此为止。
 6. 打附注标签 `v<version>` 并推送，`gh release create --verify-tag` 上传 DMG、`.sha256` 和 `latest.json`。带 `-` 的预发布版本标为 prerelease，不成为 latest。
 
@@ -90,7 +88,7 @@ ASC_KEY_PATH=~/path/to/AuthKey_<Key ID>.p8
 
 先构建 `@amazme/codemode` 和 `@amazme/web`，再运行 `backend/.venv/bin/python backend/tools/package_backend.py`。这个入口只生成本机使用的 PyInstaller onedir，不提交公证或生成 DMG。它收集全部 Python 子包，并从 `platform/resource_manifest.py` 取得模型、分类、gate、远端 daemon、Codemode helper 和页面资源路径。资源定位和 `build.json` 身份检查共用这份描述。
 
-构建输出记录产物绝对路径和 `build_id`。对该路径运行 `backend/tools/verify_frozen_clients.py` 和 `backend/tools/verify_frozen_resources.py`，两者都接受 `--executable <本轮产物中的 amazme-backend>` 与 `--report <产物外的报告路径>`。前者验证 SDK、CLI、RPC 与 TUI；后者检查完整 manifest、实际 PTY、带认证的本地 HTTP MCP、插件 gate、Node 与 QuickJS helper、目录快照和页面资源。两份报告的 `build_id` 必须与本轮构建记录一致。`latest-bundle` 只用于定位，旧产物或旧报告不能证明当前源码已通过。
+构建输出记录产物绝对路径和 `build_id`。对该路径运行 `backend/.venv/bin/python backend/tools/verify_frozen_resources.py --executable <本轮产物中的 amazme-backend> --report <产物外路径>`，只读核对 manifest 文件摘要、构建身份和必需资源。报告的 `build_id` 必须与本轮构建记录一致；它不启动后端、不证明真实交互。`latest-bundle` 只用于定位，旧产物或旧报告不能证明当前源码已通过。
 
 ## 独立预览包
 
@@ -105,4 +103,4 @@ node scripts/package-desktop.mjs --node /path/to/node-v22.23.3-darwin-arm64/bin/
 
 当前限制：1.0.0 之前用 ad-hoc 预览包在本机验证，不对外发 Release。1.0.0 起，对外分发以 GitHub Release 上公证过的 DMG 为准。产品包统一使用同一个发布版本（以根目录 `package.json` 为准），应用显示、安装包与发布清单一致；`release-manifest.json` 记录实际组合，便于回查。
 
-已通过独立安装产物的真实窗口启动、同宿主状态查询和 Web 同步验证；`AMAZME_GUI_CWD` 指定实际项目，`INIT_CWD` 保留 npm 的原启动位置。开发目录和源码解析器不参与已安装桌面的宿主启动。
+独立安装产物的真实窗口、宿主状态查询和 Web 使用同一后端；`AMAZME_GUI_CWD` 指定实际项目，`INIT_CWD` 保留 npm 的原启动位置。开发目录和源码解析器不参与已安装桌面的宿主启动。

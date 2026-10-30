@@ -12,7 +12,6 @@
 	},
 	"include": [
 		"packages/web/src/**/*",
-		"packages/web/test/**/*",
 		"packages/coding-agent/src/utils/highlight-js.d.ts"
 	]
 }

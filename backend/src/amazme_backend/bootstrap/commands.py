@@ -78,7 +78,6 @@ def main() -> None:
     parser.add_argument("--frozen", action="store_true")
     parser.add_argument("--validation", action="store_true")
     parser.add_argument("--approval-policy", choices=["auto", "mutations", "all"], default="mutations")
-    parser.add_argument("--test-mode", action="store_true")
     parser.add_argument("--port", type=int, default=0)
     args = parser.parse_args()
     os.umask(0o077)
@@ -92,7 +91,7 @@ def main() -> None:
             source = Profile(args.source_profile)
             from amazme_backend.profiles.configuration import stored_provider
             config = source.config.model_copy(update={
-                "profile_id": secrets.token_hex(16), "workspace": str(workspace), "testing": False,
+                "profile_id": secrets.token_hex(16), "workspace": str(workspace),
                 "provider": stored_provider(source.config.provider), "account_profile": str(source.account_path),
             })
             args.profile.mkdir(parents=True, mode=0o700, exist_ok=False)
@@ -110,7 +109,7 @@ def main() -> None:
         args.profile.mkdir(parents=True, mode=0o700, exist_ok=False)
         provider_data = {**provider.model_dump(), "api_key": provider.api_key.get_secret_value()}
         config = {"format": 2, "profile_id": secrets.token_hex(16), "workspace": str(workspace),
-                  "approval_policy": args.approval_policy, "testing": args.test_mode,
+                  "approval_policy": args.approval_policy,
                   "resources": str(resource_root()), "provider": provider_data,
                   "user_resources": str(Path(os.environ.get("AMAZME_CODING_AGENT_DIR", "~/.amazme/agent")).expanduser().resolve())}
         private_write(args.profile / "config.json", json.dumps(config))

@@ -39,7 +39,7 @@ def create_profile(source: Profile, workspace: Path) -> tuple[Profile, tuple[int
     path = Path(tempfile.mkdtemp(prefix="am2-no-session-")).resolve()
     info = path.stat()
     config = source.config.model_copy(update={
-        "profile_id":secrets.token_hex(16), "workspace":str(workspace), "testing":False,
+        "profile_id":secrets.token_hex(16), "workspace":str(workspace),
         "provider":stored_provider(source.config.provider), "account_profile":str(source.account_path),
     })
     private_write(path / "config.json", config.model_dump_json())

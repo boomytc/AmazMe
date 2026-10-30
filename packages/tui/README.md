@@ -29,7 +29,16 @@ const tui: TUI = new TuiMainScreen(terminal);
 // Add components
 tui.addChild(new Text("Welcome to my app!"));
 
-import { defaultEditorTheme as editorTheme } from './test/test-themes.ts';
+const editorTheme = {
+  borderColor: (text: string) => text,
+  selectList: {
+    selectedPrefix: (text: string) => text,
+    selectedText: (text: string) => text,
+    description: (text: string) => text,
+    scrollInfo: (text: string) => text,
+    noMatch: (text: string) => text,
+  },
+};
 const editor = new Editor(tui, editorTheme);
 editor.onSubmit = (text) => {
   console.log("Submitted:", text);
@@ -789,7 +798,6 @@ interface Terminal {
 
 **Built-in implementations:**
 - `ProcessTerminal` - Uses `process.stdin/stdout`
-- `VirtualTerminal` - For testing (uses `@xterm/headless`)
 
 ## Utilities
 

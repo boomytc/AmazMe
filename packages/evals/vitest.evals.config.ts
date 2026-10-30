@@ -1,7 +1,6 @@
-import { defineConfig, mergeConfig } from "vitest/config";
-import baseConfig from "../../vitest.base.ts";
+import { defineConfig } from "vitest/config";
 
-const evalConfig = defineConfig({
+export default defineConfig({
 	test: {
 		watch: false,
 		passWithNoTests: false,
@@ -33,5 +32,3 @@ const evalConfig = defineConfig({
 		],
 	},
 });
-
-export default mergeConfig(baseConfig, evalConfig);

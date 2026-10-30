@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 
 from amazme_backend.contracts.models import ProviderApi
 from amazme_backend.contracts.sessions import ApprovalPolicy, RunOptions
@@ -30,5 +30,11 @@ class ProfileConfig(Model):
     account_profile: str = ""
     provider: ProviderConfig
     approval_policy: ApprovalPolicy = "mutations"
-    testing: bool = False
     credential_revision: int = Field(default=0, ge=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_retired_testing_flag(cls, value: object) -> object:
+        if isinstance(value, dict):
+            return {key: item for key, item in cast(dict[object, object], value).items() if key != "testing"}
+        return value

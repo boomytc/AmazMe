@@ -116,7 +116,6 @@ def create_request(state: SessionContext, db: sqlite3.Connection, c: Changes, va
     save_run(db, Run(request_id=value.request_id, config=config, depth=depth, direct_call=direct, input_text=expanded_text,
                      input_origin=origin, background_anchor=anchor))
     c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
-    c.hit("accepted", receipt.request_id)
     return receipt
 
 
@@ -157,7 +156,6 @@ def decide_request(db: sqlite3.Connection, c: Changes, request: Receipt, decisio
     expire_approvals(db, c, request.request_id)
     db.execute("DELETE FROM previews WHERE request_id=?", (request.request_id,))
     save_request(db, c, request)
-    c.hit("decision", request.request_id)
     if decision.status != "succeeded":
         for child in list_requests(db):
             if child.parent_id == request.request_id and child.kind == "child" and child.status not in TERMINAL:
@@ -208,7 +206,6 @@ def claim_request(state: SessionContext, db: sqlite3.Connection, c: Changes, req
         append_message(db, c, request.request_id, "direct-call", Message(role="assistant", content="", tool_calls=[call]))
         save_step(db, Step(step_id=step_id, request_id=request.request_id, ordinal=1,
             kind="tool",phase="proposed",generation=request.generation,call=call))
-    c.hit("claimed", request.request_id)
 
 
 def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, request: Receipt, step: Step) -> bool:
@@ -240,7 +237,6 @@ def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, reques
         save_step(db, step)
         db.execute("INSERT INTO approvals VALUES(?,?,?)", (approval.approval_id, request.request_id, approval.model_dump_json()))
         c.emit("approval", request.request_id, "pending", approval=approval)
-        c.hit("approval", request.request_id, step.step_id)
     if request.status != "waiting_approval":
         request.status = "waiting_approval"
         save_request(db, c, request)
@@ -328,7 +324,6 @@ def join_children(db: sqlite3.Connection, c: Changes, request: Receipt, step: St
     step.phase = "result"
     save_step(db, step)
     c.emit("children", request.request_id, step.result)
-    c.hit("child_join", request.request_id, step.step_id)
     request.status = "running"
     save_request(db, c, request)
     if failures:

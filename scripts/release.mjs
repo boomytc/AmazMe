@@ -164,9 +164,11 @@ function dmgIn(directory) {
 }
 
 async function main() {
+	const args = process.argv.slice(2);
+	const unsupported = args.find((argument) => argument !== "--dry-run");
+	if (unsupported !== undefined) throw new Error(`Unsupported release option: ${unsupported}`);
 	if (process.platform !== "darwin") throw new Error("Releases are built on macOS");
-	const dryRun = process.argv.includes("--dry-run");
-	const acceptance = process.argv.includes("--acceptance");
+	const dryRun = args.includes("--dry-run");
 	const config = loadConfig();
 
 	step("Checking repository, tag, and release state");
@@ -183,7 +185,6 @@ async function main() {
 			await rm(join(releaseRoot, name), { recursive: true, force: true });
 		}
 	}
-	const baselineOut = `${out}-baseline`;
 	const work = await mkdtemp(join(tmpdir(), "amazme-release-"));
 	const source = join(work, "source");
 	try {
@@ -201,20 +202,6 @@ async function main() {
 
 		step("Notarizing and stapling the DMG");
 		run(process.execPath, ["scripts/notarize-macos.mjs", "--dmg", dmg, "--key", config.key, "--team-id", config.teamId], { cwd: source });
-
-		if (acceptance) {
-			step("Building and notarizing the previous-version baseline");
-			run(process.execPath, ["scripts/prepare-update-baseline.mjs"], { cwd: source });
-			try {
-				run(process.execPath, ["scripts/package-desktop.mjs", "--node", node, "--out", baselineOut, "--dmg", ...signing], { cwd: source });
-			} finally {
-				run(process.execPath, ["scripts/prepare-update-baseline.mjs", "--restore"], { cwd: source });
-			}
-			run(process.execPath, ["scripts/notarize-macos.mjs", "--dmg", dmgIn(baselineOut), "--key", config.key, "--team-id", config.teamId], { cwd: source });
-			step("Validating the update from the baseline in isolation");
-			run(process.execPath, ["scripts/accept-trusted-desktop.mjs", "--target", dmg, "--baseline", dmgIn(baselineOut), "--out", join(out, "acceptance.json")], { cwd: source });
-		}
-
 		step("Writing latest.json and release notes");
 		run(process.execPath, ["scripts/release-manifest.mjs", plan.tag, REPOSITORY, out, join(out, "latest.json")], { cwd: source });
 		const notes = join(out, "notes.md");

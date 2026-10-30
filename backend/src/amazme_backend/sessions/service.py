@@ -59,7 +59,6 @@ from amazme_backend.contracts.sessions import (
     WorkflowView,
 )
 from amazme_backend.contracts.web import WebCallView, WebPolicy
-from amazme_backend.diagnostics.faults import Faults
 from amazme_backend.sessions.maintenance import read_settled_root
 from amazme_backend.sessions.persistence import clock, schema
 from amazme_backend.sessions.persistence.driver import advance_request, apply_observation
@@ -145,18 +144,18 @@ from amazme_backend.shared.model import Model
 class SessionStore:
     """Complete session operations; one private writer commits their durable intents and events."""
 
-    def __init__(self, path: Path, session_id: str, *, build: str = 'test-build',
+    def __init__(self, path: Path, session_id: str, *, build: str,
                  config: ProviderConfig | None = None, approval_policy: str = 'mutations',
-                 faults: Faults | None = None, require_existing: bool = False, read_only: bool = False,
+                 require_existing: bool = False, read_only: bool = False,
                  instance: str = '', model_catalog: Mapping[tuple[str, str], CatalogModel] | None = None,
                  expand_resources: ResourceExpander | None = None, secret_source: SecretSource | None = None):
         if expand_resources is not None and secret_source is None:
             raise ValueError('Resource expansion requires a fresh secret source')
         self._state = SessionContext(session_id, build, config or ProviderConfig(provider='faux'),
-            approval_policy, faults, instance or secrets.token_hex(16),
+            approval_policy, instance or secrets.token_hex(16),
             {} if model_catalog is None else model_catalog, expand_resources,
             (lambda: ()) if secret_source is None else secret_source)
-        self._store = SessionTransactions(path, self._state, require_existing=require_existing, read_only=read_only)
+        self._store = SessionTransactions(path, require_existing=require_existing, read_only=read_only)
 
     @property
     def config(self) -> ProviderConfig:
@@ -243,7 +242,6 @@ class SessionStore:
                 save_prompt_images(db, value.request_id, value.images)
                 expire_approvals(db, c, target.request_id)
                 c.emit("accepted", receipt.request_id, receipt.text, receipt=receipt.model_copy(deep=True))
-                c.hit("accepted", receipt.request_id)
                 return receipt
             receipt = create_request(self._state, db, c, value, accepted_config=accepted_config)
             if tombstone:
@@ -515,7 +513,6 @@ class SessionStore:
             db.execute("UPDATE approvals SET payload=? WHERE id=?", (approval.model_dump_json(), approval.approval_id))
             db.execute("INSERT INTO decisions VALUES(?,?,?)", (value.decision_id, key, request.request_id))
             c.emit("approval", request.request_id, approval.state, approval=approval)
-            c.hit("approval", request.request_id, approval.call_id)
             return request
         return await self._store.transact(operation)
 
@@ -741,7 +738,7 @@ class SessionStore:
             wake = min((r.not_before_ms for r in requests if r.not_before_ms > clock.now_ms()), default=0)
             for request in candidates:
                 db.execute("SAVEPOINT advance_request")
-                event_count, hook_count = len(c.events), len(c.hooks)
+                event_count = len(c.events)
                 try:
                     action = advance_request(self._state, db, c, request)
                     db.execute("RELEASE advance_request")
@@ -749,7 +746,6 @@ class SessionStore:
                     db.execute("ROLLBACK TO advance_request")
                     db.execute("RELEASE advance_request")
                     del c.events[event_count:]
-                    del c.hooks[hook_count:]
                     request = load_request(db, request.request_id)
                     decide_request(db, c, request, Decision(status="failed", error=exc.code if isinstance(exc, BackendError) else "invalid_tool_arguments"))
                     return Continue()
@@ -1358,7 +1354,7 @@ class SessionOps(Protocol):
 
 
 @asynccontextmanager
-async def read_session(path: Path, session_id: str, *, build: str = 'test-build') -> AsyncGenerator[SessionStore]:
+async def read_session(path: Path, session_id: str, *, build: str) -> AsyncGenerator[SessionStore]:
     """A short-lived read-only session owner; never acquires a writer or starts an agent."""
     store = SessionStore(path, session_id, build=build, require_existing=True, read_only=True)
     try:

@@ -46,7 +46,6 @@
 		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && shx rm -rf dist",
 		"build": "node ../../scripts/locked-workspace-task.mjs @amazme/codemode build",
 		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && tsc -p tsconfig.build.json",
-		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"keywords": [
@@ -72,7 +71,6 @@
 		"quickjs-wasi": "3.6.2"
 	},
 	"devDependencies": {
-		"shx": "0.3.4",
-		"vitest": "4.1.12"
+		"shx": "0.3.4"
 	}
 }

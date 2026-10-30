@@ -1,4 +1,4 @@
-// Vendored from @xterm/xterm 5.5.0 (MIT). Same major line as packages/tui @xterm/headless.
+// Vendored from @xterm/xterm 5.5.0 (MIT).
 // The page opens this terminal instead of printing a hand-parsed buffer.
 // Local CSP integration: only this trusted renderer receives the document style nonce.
 function createTerminalStyle(document) {

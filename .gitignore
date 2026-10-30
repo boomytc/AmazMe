@@ -26,8 +26,6 @@ packages/*/dist-firefox/
 
 # Package specific
 .npm/
-coverage/
-.nyc_output/
 .pi_config/
 .pi/settings.json
 tui-debug.log

@@ -683,9 +683,6 @@ class SessionOperations:
                 )
             if expected_request and receipt.request_id != expected_request:
                 raise BackendError("receipt_identity_mismatch", status=503)
-            await self.lifecycle.faults.hit(
-                "delivery", session_id=delivery.session_id, request_id=receipt.request_id
-            )
             result = await self.lifecycle.store.delivered(delivery.delivery_id, receipt)
             return result
         except BackendError as error:

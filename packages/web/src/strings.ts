@@ -727,7 +727,7 @@ export const EN = {
 	"panel.settings.fontPreviewTitle": "Font preview",
 	"panel.settings.fontPreviewText": "Text · Conversation and composer: The quick brown fox jumps over 123.",
 	"panel.settings.fontPreviewCode": "const ready = items.filter(item => item.active);",
-	"panel.settings.fontPreviewTerminal": "$ npm test --workspace @amazme/web  ✓ passed",
+	"panel.settings.fontPreviewTerminal": "$ npm run build --workspace @amazme/web",
 
 	"panel.skills.title": "Skills",
 	"panel.skills.description":
@@ -1701,7 +1701,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"panel.settings.fontPreviewTitle": "字体效果预览",
 	"panel.settings.fontPreviewText": "正文 · 对话与输入框效果预览：春江潮水连海平，The quick brown fox 123。",
 	"panel.settings.fontPreviewCode": "const ready = items.filter(item => item.active);",
-	"panel.settings.fontPreviewTerminal": "$ npm test --workspace @amazme/web  ✓ passed",
+	"panel.settings.fontPreviewTerminal": "$ npm run build --workspace @amazme/web",
 
 	"panel.skills.title": "技能",
 	"panel.skills.description": "为 AmazMe 添加处理特定任务的方法和操作指引。",
@@ -2455,21 +2455,4 @@ export function localizeDocument(html: string, locale: Locale): string {
 		return translate(locale, key as MessageKey);
 	});
 	return localized.replace(/<html lang="[^"]*"/, `<html lang="${documentLanguage(locale)}"`);
-}
-
-/** Every identity the dictionaries carry, for the coverage tests. */
-export function copyIdentities(locale: Locale): {
-	readonly messages: readonly string[];
-	readonly settingGroups: readonly string[];
-	readonly settingFields: readonly string[];
-	readonly settingOptions: Readonly<Record<string, readonly string[]>>;
-} {
-	const fields = locale === "zh" ? ZH_SETTING_FIELDS : EN_SETTING_FIELDS;
-	const options = locale === "zh" ? ZH_SETTING_OPTIONS : EN_SETTING_OPTIONS;
-	return {
-		messages: Object.keys(locale === "zh" ? ZH : EN),
-		settingGroups: Object.keys(locale === "zh" ? ZH_SETTING_GROUPS : EN_SETTING_GROUPS),
-		settingFields: Object.keys(fields),
-		settingOptions: Object.fromEntries(Object.entries(options).map(([id, values]) => [id, Object.keys(values)])),
-	};
 }

@@ -18,14 +18,3 @@ CC_X64=/path/to/x86_64-w64-mingw32-gcc \
 CC_ARM64=/path/to/aarch64-w64-mingw32-gcc \
 npm --prefix packages/tui run build:native:win32
 ```
-
-## Testing clipboard writes
-
-On a Windows test desktop, run from `packages/tui` in PowerShell:
-
-```powershell
-$env:AMAZME_TEST_NATIVE_CLIPBOARD = "1"
-node --test test/native-platform.test.ts
-```
-
-This opt-in test checks native text writes and reads. **It replaces the system clipboard contents.**

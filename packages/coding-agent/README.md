@@ -19,10 +19,9 @@ amazme doctor
 
 ```bash
 npm run build --workspace @amazme/coding-agent
-npm test --workspace @amazme/coding-agent
 ```
 
-构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。
+构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。开发按 `confident-development-conventions` 做有限验收，临时验证资产完成即清理。
 
 1.0.0 前仅本机构建、自用，不公证、不发布。MIT 许可证与上游来源归属保持原样。
 

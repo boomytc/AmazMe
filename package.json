@@ -15,14 +15,10 @@
 		"dev:tui": "node --import ./packages/coding-agent/src/source-resolver.ts ./packages/coding-agent/src/cli.ts",
 		"dev:web": "node scripts/dev-web.mjs",
 		"dev:desktop": "node scripts/dev-desktop.mjs",
-		"check:model-data": "backend/.venv/bin/python -m pytest backend/tests/test_model_catalog.py backend/tests/test_thinking.py -q",
-		"test:engineering": "node --test scripts/*.test.mjs",
 		"typecheck": "tsc -b tsconfig.json --pretty false",
 		"check:workspace": "node scripts/check-workspace.mjs",
 		"release": "node scripts/release.mjs",
 		"eval": "npm run eval --workspace=@amazme/evals --",
-		"test": "npm run test --workspaces --if-present",
-		"test:mcp-conformance": "backend/.venv/bin/python -m pytest backend/tests/test_mcp.py backend/tests/test_mcp_model.py backend/tests/test_native_mcp.py",
 		"sync:pi-models": "backend/.venv/bin/python backend/tools/sync_pi_models.py"
 	},
 	"devDependencies": {

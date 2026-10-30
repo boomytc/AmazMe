@@ -11,7 +11,7 @@ function execNpmSync(args, options) {
 	return execFileSync("npm", args, options);
 }
 
-/** Top-level product packages; examples and test fixtures are not install artifacts. */
+/** Top-level product packages; examples are not install artifacts. */
 export function workspacePackages(repoRoot) {
 	const packages = readdirSync(join(repoRoot, "packages"), {
 		withFileTypes: true,

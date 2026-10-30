@@ -13,7 +13,6 @@ from amazme_backend.contracts.execution import ProcessLease, SupervisorHealth, W
 from amazme_backend.contracts.host import Health, PrepareUpdate, UpdateRecord
 from amazme_backend.contracts.identity import HostFence, Identity
 from amazme_backend.contracts.ipc.supervisor import FreezeSupervisor, RetireSupervisor
-from amazme_backend.diagnostics.faults import Faults
 from amazme_backend.execution.client import SupervisorClient
 from amazme_backend.execution.processes import ProcessReservation, exited, wait_exited
 from amazme_backend.host.store import HostStore, ServiceRecord
@@ -46,7 +45,6 @@ class HostLifecycle:
         self.initialized = False
         self.storage_failed = False
         self.child: asyncio.subprocess.Process | None = None
-        self.faults = Faults(profile.path, "host", self.instance, enabled=profile.config.testing)
 
     @property
     def storage_failed(self) -> bool:

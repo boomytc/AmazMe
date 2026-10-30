@@ -42,7 +42,6 @@
 		"build": "npm run clean && npm run build:unbundled && node ../../scripts/build-coding-agent-bundle.mjs",
 		"build:unbundled": "tsc -p tsconfig.build.json && shx chmod +x dist/cli.js dist/rpc-entry.js && npm run copy-assets",
 		"copy-assets": "shx mkdir -p dist/modes/interactive/theme && shx cp src/modes/interactive/theme/*.json dist/modes/interactive/theme/",
-		"test": "vitest --run",
 		"prepublishOnly": "npm run build"
 	},
 	"dependencies": {
@@ -59,9 +58,7 @@
 	"devDependencies": {
 		"@types/node": "22.19.19",
 		"@types/semver": "7.7.1",
-		"marked": "18.0.11",
-		"shx": "0.3.4",
-		"vitest": "4.1.12"
+		"shx": "0.3.4"
 	},
 	"keywords": [
 		"coding-agent",

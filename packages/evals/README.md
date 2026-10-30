@@ -15,7 +15,6 @@ npm run eval -w @amazme/evals
 ```bash
 npm run eval:docs -w @amazme/evals -- evals/extensions.docs.eval.ts --runs-per-variant 1
 npm run build -w @amazme/evals
-npm test -w @amazme/evals
 ```
 
 `without_docs` 和 `with_docs` 使用相同后端、独立临时工作区、账号副本和会话。后者额外提供现行 Python 契约及其提示词入口。默认仅开放工作区文件读写；插件用例再开放该会话插件。它们是本机助手的评测工作区隔离，不是操作系统沙箱；用户 Python 插件仍以本机用户权限运行。不要将这些结果解释为对不可信代码的安全隔离证明。
@@ -24,4 +23,4 @@ npm test -w @amazme/evals
 
 `src/plan.ts` 预先规划每个 `(case, variant, model, runNumber)`；`src/native.ts` 串行运行；`src/report.ts` 配对并计算差值。失败、缺失或重复结果阻止对应配对的结论，已有消耗仍计入运行总量。`.eval/<run>/` 保存协议摘要、计划、原始报告、完整已提交消息和实际后端 build_id。没有原始证据的历史运行数字不代表当前实现。
 
-单元/定向测试仅使用 faux 与本机 HTTP 替身，不调用付费供应商。真实评测需要显式运行上述命令。
+本包提供显式的模型能力评测，保留 Vitest 作为评测运行器；开发用的单元测试设施已移除。评测结果是该次模型运行的交付数据，不代表产品整体正确性。运行器的 Host 与借用凭据由 `backend/tools/eval_runtime.py` 持有。

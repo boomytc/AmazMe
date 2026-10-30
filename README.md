@@ -176,7 +176,7 @@ curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash
 | QuickJS helper | [Codemode](packages/codemode/README.md) |
 | 上游移植依据 | [UPSTREAM](UPSTREAM.md) |
 
-改包后构建该包并运行相关检查。不要主动运行根目录完整测试或完整构建；最终集中检查包括 Python Ruff、Pyright、后端测试、受影响客户端及 `check:workspace`，修改工程脚本时还包括 `test:engineering`。
+开发采用 `confident-development-conventions`，代码逻辑正确性优先。改包后构建该包，按影响选择 Ruff、Pyright、TypeScript 类型与 `check:workspace` 检查，以及受影响的实际使用路径；必要验收通过后交付，同一份改动不重复验证。临时验证资产完成即清理，真实模型评测仍由 `npm run eval` 显式启动。不要主动运行根目录完整构建。
 资源阈值由 `backend/tools/resource_census.py` 统一报告。1.0.0 前只做本地自用构建，不公证、不发布、不打标签。
 
 AmazMe 保留 Pi 的 MIT 许可证和版权归属，见 [LICENSE](LICENSE)。
