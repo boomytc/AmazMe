@@ -65,13 +65,16 @@ def rank_tools(query: str, offers: list[McpOffer], limit: int) -> list[McpOffer]
     average = sum(lengths) / len(documents) or 1
     idf = {term: math.log(1 + (len(documents) - sum(term in document for document in documents) + 0.5)
                           / (sum(term in document for document in documents) + 0.5)) for term in terms}
-    ranked: list[tuple[float, McpOffer]] = []
+    name_query = re.sub(r"[^a-z0-9_$]", "_", query.strip().lower())
+    ranked: list[tuple[bool, float, McpOffer]] = []
     for offer, document, length in zip(offers, documents, lengths, strict=True):
         norm = 1.2 * (1 - 0.75 + 0.75 * length / average)
         score = sum(idf[term] * (document[term] * 2.2 / (document[term] + norm)) for term in terms if document[term])
         if score > 0:
-            ranked.append((score, offer))
-    return [offer for _score, offer in sorted(ranked, key=lambda item: -item[0])[:limit]]
+            name = re.sub(r"[^a-z0-9_$]", "_", offer.name.strip().lower())
+            named = name == name_query or name.endswith("__" + name_query)
+            ranked.append((named, score, offer))
+    return [offer for _named, _score, offer in sorted(ranked, key=lambda item: (not item[0], -item[1]))[:limit]]
 
 
 def search_result(offers: list[McpOffer]) -> ToolSearchOutput:
