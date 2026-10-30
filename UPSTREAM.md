@@ -8,6 +8,48 @@
 
 QwenPaw 的最近核对基线为 `c26d31c0688aa9cce9bc1aef688177d2e14e25df`。它提供增量参照，不替代本仓的 Python Host 与客户端职责。
 
+deepseek-harness 的最近核对终点为 `ce7073d51254c26cd63b22a60835b8f948deb447`。本轮按现有产品入口选择适用行为，保留 Python 执行、SQLite 持久化和桌面客户端范围。
+
+## 2026-10-30 deepseek-harness 增量核对
+
+参考仓库当前 `master` 的起点为 `22ddee3792402c3e70ec5f86a63c3e3e895a2f60`，终点固定为本轮 fetch 后的 `upstream/master`，共 988 个提交，其中 706 个非合并提交、282 个合并提交。按提交目录和净源码差异归并候选，再核对下面涉及现有入口的行为。这不是逐项移植或全功能对齐。
+
+| deepseek-harness 提交或领域 | 处置 | 当前依据 |
+| --- | --- | --- |
+| `d54475a681`、`a05a0d02fa` 的请求头部分 | 吸收适用部分 | `ai/providers/headers.py` 按大小写无关规则合并目录、传输、认证和协议头，后写入的值覆盖前值。SDK 默认头也参与合并，避免客户端再次产生同名头。无效名称、控制字符和当前客户端不支持的非 ASCII 值在发网前返回安全错误，不回显头值。不新增上游 Cordis 请求头插件事件。 |
+| `cb046fde2c`、`ef0e2b3461` | 补齐完整性提示 | 当前加载器已隔离不同技能根的读取失败。现在每次加载显式产生 `skills_complete`，读取或解码失败时继续提供已确认来源，并向模型说明目录不完整及同名技能可能使用较低优先级来源。无可用技能时也保留提示。该提示随受理回合配置保存，重开与同 ID 重试不重新解释历史来源；新提交重新发现。无新增公开 DTO 或持久化字段。 |
+| `2eb0df5628`、`da80c3d9e6`、`317e56d108`、`2c2574ade6`、`a1659120a3` 的发送确认 | 已有对应机制 | Web `submit` 在等待前绑定连接、草稿对象、修订和请求 ID；`PendingWrites` 保留不确定写入并检查回执身份。对话从后端快照呈现，发送前不把草稿当作已受理消息。清理草稿也检查原修订，保留期间的新编辑。没有上游 queued echo 状态。 |
+| `86bf2734c6`、`c099ecdfd5`、`aa1cf9115b` 的错误结果展示 | 已有对应行为 | `toolOutputText` 保留真实文本和 JSON 文本，只有没有内容、图片与诊断时才使用占位。错误状态由 `isError` 决定，失败不展示成功文件 diff。不增加上游轨迹页的双结果面板。 |
+| `102b42d14a`、`fcca540841`、`2f2caf88b3` 的会话投影 | 保留现有所有权 | 会话动作、工具结果和读取投影由 Python session SQLite 单 writer 负责，客户端通过 HTTP 与 WS 读取。没有 Cordis projection handle、JSONL controller 或额外内存业务真相可迁移。 |
+| `9a4e78b469`、`9b154c04a6`、`743d4602e9`、`7bd189b3b5`、`ea4837abb1` 的 apply_patch | 保留当前文件工具 | 上游增加整补丁预检、删除、移动、SSH 支持及可选观察策略，终点的 `applyPatch` 默认关闭，由组合配置开启。本仓仍用带读取摘要与冲突校验的 `write_file`、`edit_file`，没有批量删除和移动工具。本轮不新增另一套文件修改协议或放松观察约束。 |
+| `ef284800b9`、`e8bdbbe823`、`b1c8c9bbbc`、`f9ef03834a` | 无对应工具入口 | 上游优化 `rg --files` 的 glob 遍历和 argv 预算。当前模型工具表没有 glob、grep，命令搜索通过本机 shell 及其既有审批，不另加 ripgrep 工具包或下载器。 |
+| `f673eec903`、`0d7ae41c8f` | 不适用直抓网页解码 | 当前 `execution/web/client.py` 向配置的鉴权 provider 发送 JSON 请求，接收 JSON 内容，不直接解码目标网页的 HTML charset。保留请求登记、响应预算与 unknown 不重发的规则。 |
+| `cf7229e72a`、`3081c71bab` | 不引入已回退的压缩重试 | 上游缩小前缀重试超大摘要的改动已回退。当前压缩检查 basis 并保留原消息，失败由现有入口返回，不增加自动重试或另一套成本策略。 |
+| `e90f65c0d7`、`70b945901d`、`663aa618c5`、`23c2ee5f73`、`8394a200b9` | 保留模型目录来源 | 本仓沿用刚核对的 Pi 模型快照和自定义连接，不接入 DeepSeek 官方账号的动态 `/models`、`tool_update` 或 badge 缓存。没有动态 badge 的刷新消费者。 |
+| `7745b3b9da`、`1f45e38279`、`9e979a71e6`、`aa455f5a40`、`ce7073d512` | 保留 QuickJS 执行方式 | 上游新增可保留状态的 Node VM Script，并修复其取消、REPL 和浏览器 Worker 模块转换。本仓 Code Mode 仍通过隔离 QuickJS 和已登记子调用执行，取消与结果由 session 和 Supervisor 结算，不新增 Node REPL、模块 lowering 或浏览器内完整 Host。 |
+| `90e398328d`、`f78984a497` | 不迁入 preset 生命周期 | 当前委派是同一 session 驱动的子请求，沿用明确的配置与工具限制；没有 Cordis preset revision 或延迟挂载的子 Agent 配置树。 |
+| `74ff76d1ff`、`917cf6c267`、`e122cfb627`、`57a6929c98` 的 SDK 命令 | 保留当前公开接口 | Python SDK 调用已有 Host REST 操作；Web 与 TUI 分别解析本仓命令。上游统一 slash command `run`、原生内容块和 plan 文本解码没有同名 SDK 协议，不混入第二套命令状态机。 |
+| `341ea6eea4` | 保留现有排程范围 | 当前排程已提供 once、interval、cron、手动运行、暂停和历史，持久投递到明确的 `session_id`。本轮不扩为每次新建会话、独立任务模板或事件触发自动化。 |
+| `fc43a2d507`、`d0fc1f6458`、`bd1c30cd81` 与 Forge 后续修复 | 不扩展产品范围 | 不新增 GitHub PR 绑定、自动 worktree、diff 审阅和合并面板。本仓已有分支与文件检查点仍使用自己的持久化和资源归属。 |
+| `635d9c88f6` | 不引入 LiveShare | 不新增独立分享服务、远程 viewer 身份、网关或受限写入模式。本机 Host 的连接和分享能力继续按现有接口工作。 |
+| `6ae9ce5e2f`、`9199e1a795`、`dbd881ab46` 与 CUA 后续修复 | 不引入原生 Computer Use | 当前没有应用授权、辅助功能 helper 或按需公证插件的运行入口，不增加上游 helper 安装、同意状态库、平台包和发布流程。 |
+| `eb8efe84e4`、`c7b6fba276`、`205a465046`、`90838b790a` 的插件管理 | 保留当前插件边界 | 本仓登记本地 Python 入口并在独立 gate 加载，不提供 Cordis bundle 市场、npm 安装和平台包激活。安装流水线诊断与动态 Loader 行刷新没有对应消费者。 |
+| 桌面诊断、DevTools、下载与发布修复 | 保留当前 Electron 流程 | 本轮没有更改桌面启动、退出、更新和构建身份。上游插件安装恢复报告、EdgeOne 清理、Windows 与 Intel 发布流程不迁入本仓，不执行签名、公证或发布操作。 |
+| `160ba96793` 及 Statistics、`c47d9a3868` 及轨迹页、侧栏与菜单布局 | 保留现有呈现 | 不新增统计页、子调用独立折叠、React slot 菜单、分栏文件树或移动抽屉。当前只针对桌面宽窗；上游手机布局与触屏交互不适用。 |
+| `09d9f1152e`、`b1cb1f34e9`、`bdfc0c1d12`、`ca40dc544e` | 保留 Web Markdown 范围 | 当前 Web 解析显式 Markdown 链接，不自动识别裸 URL，也没有链接内行列号到文件预览的跳转入口。TUI 的中文标点修复已在本轮之前跟进 Pi；不把 Web 的不同实现混作同一修复。 |
+| `94ed636380`、`bf8d8494ba` | 无对应提问工具 | 当前工具表没有上游的多选问题、推荐项预选和跳过回执，不增加无法触发的状态或提示分支。用户审批继续使用明确批准与拒绝的操作。 |
+| Cordis rc.11、JSON storage、Proxy values、性能和工程设施 | 不迁移运行时与门禁 | 当前没有 Cordis fiber、JS Proxy 调度或 whole-unit JSON 存储。不引入上游测试套件、snapshots、CI、pnpm 拓扑、发布版本和基准。保留本仓的构建、类型、契约及结构检查。 |
+
+另核对参考仓库 `master-local` 相对 `master` 独有的 5 个提交。`0848ae6d79` 的技能管理已有本仓本地导入、读写与诊断入口；`bfb848db90`、`b7eb0a15a2` 的归档管理已有设置页、恢复与删除入口。`992f151f99`、`44cb4e78ff` 的归档时间和保留期删除没有移植，当前保留显式删除与执行资源检查。该旧分支不合并、不改写。
+
+实现提交为 `a439d5eb`（请求头）和 `5f083eb3`（技能目录）。请求头的唯一合并入口和每次加载必需的完整性值把约束放在代码层，所有权仍沿现有账号、会话和 Supervisor 路径传递。
+
+有限验收通过 Ruff、Pyright、公开契约漂移检查、工作区检查、diff 检查与 Python wheel、sdist 构建。临时脚本用真实本机 HTTP 服务驱动 Chat Completions、Responses、Codex Responses、Anthropic 和 Google 五种协议，核对同名头只发送一次、API key 与 OAuth、Copilot 和 Pi 身份、并发请求隔离及原配置不变。非法名称、CR、LF、NUL 和非 ASCII 值均在服务收到请求前失败，公开错误不含头值。
+
+技能验收使用临时目录的真实权限拒绝与无效 UTF-8，核对其他来源仍可用、空的部分目录也有提示、来源恢复后重新发现，以及提示不受无关模板诊断影响。实际 session 受理后关闭并重开 SQLite，模型动作仍取得原目录和完整性提示；同 ID 再提交复用原回执，新提交重新加载。
+
+本轮临时脚本、SQLite 样本和构建输出已删除，没有读取用户 profile、账号或历史数据，没有保留测试依赖与运行入口。清理后的资源普查退出码为 0，在报告的 scope 内 `leaks=[]`、`reclaimed=true`。未实连供应商，未运行浏览器或桌面整体验收、冻结产物，以及 Linux、Windows 平台；参考仓库仅更新源码，没有运行其全仓构建或测试。
+
 ## 2026-10-30 QwenPaw 增量核对
 
 范围为 `cee4c67e9a9a871c3730156ff81b3f8993fe97b0..c26d31c0688aa9cce9bc1aef688177d2e14e25df`，共 41 个提交。终点固定为本轮 fetch 后的 QwenPaw `origin/main`，按当前入口归并处置。
