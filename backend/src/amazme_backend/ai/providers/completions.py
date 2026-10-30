@@ -9,7 +9,7 @@ from openai.types.chat import ChatCompletionMessageParam, ChatCompletionToolPara
 
 from amazme_backend.ai.catalog import INDEX
 from amazme_backend.ai.pricing import with_catalog_price
-from amazme_backend.ai.providers.headers import base_headers
+from amazme_backend.ai.providers.headers import base_headers, merge_headers
 from amazme_backend.ai.providers.history import (
     reasoning_signature,
     replay_reasoning_details,
@@ -144,8 +144,9 @@ async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
     http = httpx2.AsyncClient(proxy=transport.proxy or None, trust_env=False, timeout=transport.timeout_seconds)
     try:
         async with AsyncOpenAI(api_key=auth.api_key.get_secret_value(), base_url=config.base_url,
-                               max_retries=0, timeout=transport.timeout_seconds, default_headers=request_headers,
+                               max_retries=0, timeout=transport.timeout_seconds,
                                http_client=http) as client:
+            sdk_headers = {name: value for name, value in client.default_headers.items() if isinstance(value, str)}
             metadata = INDEX.get((config.provider, config.model))
             completion_limit = metadata is not None and metadata.compat.get("maxTokensField") == "max_completion_tokens"
             response = await client.chat.completions.create(
@@ -153,6 +154,7 @@ async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
                 max_tokens=omit if completion_limit else config.max_tokens,
                 max_completion_tokens=config.max_tokens if completion_limit else omit,
                 stream=True, stream_options={"include_usage": True},
+                extra_headers=merge_headers(sdk_headers, request_headers),
                 extra_body=completions_thinking(config) or None)
             async with response:
                 async for chunk in response:

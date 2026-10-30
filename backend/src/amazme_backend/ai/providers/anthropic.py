@@ -7,7 +7,7 @@ import httpx
 from pydantic import JsonValue
 
 from amazme_backend.ai.pricing import with_catalog_price
-from amazme_backend.ai.providers.headers import base_headers
+from amazme_backend.ai.providers.headers import base_headers, merge_headers
 from amazme_backend.ai.providers.history import reasoning_signature, replay_blocks, tool_image_messages
 from amazme_backend.ai.providers.sse import RECORD, Record, events, number, record, text
 from amazme_backend.ai.providers.tools import tool_records
@@ -55,14 +55,14 @@ def anthropic_body(config: ModelSpec, request: ModelRequest, auth: Auth, transpo
         body.pop('tools')
     body.update(anthropic_thinking(config))
     headers = base_headers(config, request, auth, transport)
-    headers['anthropic-version'] = '2023-06-01'
+    protocol = {'anthropic-version': '2023-06-01'}
     if oauth:
-        headers.update({'user-agent': 'claude-cli/2.1.280', 'x-app': 'cli',
+        protocol.update({'user-agent': 'claude-cli/2.1.280', 'x-app': 'cli',
             'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20', 'anthropic-dangerous-direct-browser-access': 'true'})
     elif config.provider != 'github-copilot':
-        headers.pop('Authorization', None)
-        headers['x-api-key'] = auth.api_key.get_secret_value()
-    return body, headers
+        headers = {name: value for name, value in headers.items() if name.lower() != 'authorization'}
+        protocol['x-api-key'] = auth.api_key.get_secret_value()
+    return body, merge_headers(headers, protocol)
 
 
 async def anthropic(config: ModelSpec, request: ModelRequest, auth: Auth, transport: RequestTransport,

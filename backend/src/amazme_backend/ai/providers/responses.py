@@ -7,7 +7,7 @@ import httpx
 from pydantic import JsonValue
 
 from amazme_backend.ai.pricing import with_catalog_price
-from amazme_backend.ai.providers.headers import base_headers
+from amazme_backend.ai.providers.headers import base_headers, merge_headers
 from amazme_backend.ai.providers.history import reasoning_signature, replay_blocks, tool_image_messages
 from amazme_backend.ai.providers.sse import RECORD, Record, events, items, number, record, text
 from amazme_backend.ai.providers.tools import tool_records
@@ -65,14 +65,15 @@ async def responses(config: ModelSpec, request: ModelRequest, auth: Auth, transp
     endpoint = config.base_url.rstrip('/') + '/responses'
     if config.api == 'openai-codex-responses':
         endpoint = config.base_url.rstrip('/') + '/codex/responses'
-        headers.update({'originator': 'pi', 'OpenAI-Beta': 'responses=experimental',
-                        'accept': 'text/event-stream', 'content-type': 'application/json'})
+        protocol = {'originator': 'pi', 'OpenAI-Beta': 'responses=experimental',
+                    'accept': 'text/event-stream', 'content-type': 'application/json'}
         try:
             encoded = auth.api_key.get_secret_value().split('.')[1]
             claims = RECORD.validate_json(base64.urlsafe_b64decode(encoded + '=' * (-len(encoded) % 4)))
-            headers['chatgpt-account-id'] = text(record(claims['https://api.openai.com/auth'])['chatgpt_account_id'])
+            protocol['chatgpt-account-id'] = text(record(claims['https://api.openai.com/auth'])['chatgpt_account_id'])
         except (ValueError, IndexError, KeyError) as exc:
             raise BackendError('oauth_account_id_missing') from exc
+        headers = merge_headers(headers, protocol)
     answer, finished = '', False
     async with aclosing(events(client, endpoint, headers, responses_body(config, request))) as incoming:
         async for event in incoming:

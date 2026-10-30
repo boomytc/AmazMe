@@ -10,6 +10,7 @@ from pydantic import JsonValue
 
 from amazme_backend.ai.pricing import with_catalog_price
 from amazme_backend.ai.providers.google_schema import const_as_enum
+from amazme_backend.ai.providers.headers import merge_headers
 from amazme_backend.ai.providers.history import reasoning_signature, replay_blocks, tool_image_messages
 from amazme_backend.ai.providers.sse import RECORD, Record, events, items, number, record, text
 from amazme_backend.ai.providers.tools import tool_records
@@ -61,8 +62,7 @@ def google_body(config: ModelSpec, request: ModelRequest) -> Record:
 async def google(config: ModelSpec, request: ModelRequest, auth: Auth, transport: RequestTransport,
                  client: httpx.AsyncClient) -> AsyncGenerator[ProviderEvent, None]:
     endpoint = config.base_url.rstrip('/') + '/models/' + quote(config.model, safe='') + ':streamGenerateContent?alt=sse'
-    headers = {**transport.headers, **auth.headers}
-    headers['x-goog-api-key'] = auth.api_key.get_secret_value()
+    headers = merge_headers(transport.headers, auth.headers, {'x-goog-api-key': auth.api_key.get_secret_value()})
     answer, response_id, finished = '', '', False
     calls: list[ModelToolCall] = []
     signature: list[object] = []
