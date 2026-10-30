@@ -32,6 +32,7 @@ class LoadedResources:
     catalog: ResourceCatalog
     context: list[tuple[str, str]]
     templates: dict[str, str]
+    skills_complete: bool
 
     def system_context(self) -> str:
         sections: list[str] = []
@@ -62,6 +63,12 @@ class LoadedResources:
                         "</available_skills>",
                     ]
                 )
+            )
+        if not self.skills_complete:
+            sections.append(
+                "Some skill sources could not be checked. The skill list is incomplete; only confirmed skills "
+                "are listed. A lower-priority definition of the same name may be selected when a preferred "
+                "source is unavailable. Discovery is retried on the next user submission."
             )
         return "\n\n".join(sections)
 
@@ -204,6 +211,7 @@ def _shadowed_context(cwd: Path) -> Path | None:
 class _Discovery:
     diagnostics: list[str] = field(default_factory=lambda: list[str]())
     entries: int = 0
+    skills_complete: bool = True
 
     def visit(self) -> None:
         self.entries += 1
@@ -212,6 +220,10 @@ class _Discovery:
 
     def warning(self, path: Path, error: object) -> None:
         self.diagnostics.append(f"{path}: {type(error).__name__ if isinstance(error, Exception) else error}")
+
+    def skill_failure(self, path: Path, error: Exception) -> None:
+        self.skills_complete = False
+        self.warning(path, error)
 
     def skill_files(self, root: Path) -> list[Path]:
         seen: set[Path] = set()
@@ -291,7 +303,10 @@ def load_resources(cwd: Path, agent_dir: Path, options: ResourceOptions) -> Load
                 seen_skills.add(actual)
                 try:
                     metadata, _ = frontmatter(read_text(candidate))
-                except (OSError, UnicodeError, ValueError, yaml.YAMLError) as error:
+                except (OSError, UnicodeError) as error:
+                    discovery.skill_failure(candidate, error)
+                    continue
+                except (ValueError, yaml.YAMLError) as error:
                     discovery.warning(candidate, error)
                     continue
                 description = metadata.get("description")
@@ -323,7 +338,7 @@ def load_resources(cwd: Path, agent_dir: Path, options: ResourceOptions) -> Load
                     editable=actual == agent_dir / "skills" / name / "SKILL.md",
                 )
         except (OSError, UnicodeError, ValueError, yaml.YAMLError) as error:
-            discovery.warning(path, error)
+            discovery.skill_failure(path, error)
     templates: dict[str, str] = {}
     prompts: list[ResourceItem] = []
     prompt_paths = [] if options.no_prompt_templates else [agent_dir / "prompts", cwd / ".amazme/prompts"]
@@ -368,6 +383,7 @@ def load_resources(cwd: Path, agent_dir: Path, options: ResourceOptions) -> Load
         ),
         context,
         templates,
+        discovery.skills_complete,
     )
 
 
