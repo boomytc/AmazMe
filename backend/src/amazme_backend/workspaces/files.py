@@ -14,6 +14,7 @@ from pathlib import Path
 
 from amazme_backend.contracts.workspaces import (
     FILE_LIST_LIMIT,
+    FILE_READ_LIMIT,
     FILE_WRITE_LIMIT,
     EditFile,
     FileChange,
@@ -24,19 +25,6 @@ from amazme_backend.contracts.workspaces import (
 )
 from amazme_backend.platform.private_files import copy_extended_metadata
 from amazme_backend.shared.errors import BackendError
-
-_READ_LIMIT = 32_000
-
-
-
-
-
-
-
-
-
-
-
 
 
 def _parts(relative: str) -> list[str]:
@@ -201,9 +189,9 @@ def capture_text(root: Path, relative: str) -> tuple[str, str] | None:
         os.close(parent)
 
 
-def read_file(root: Path, relative: str, offset: int = 0, limit: int = _READ_LIMIT, *,
+def read_file(root: Path, relative: str, offset: int = 0, limit: int = FILE_READ_LIMIT, *,
               max_bytes: int | None = None) -> FileContent:
-    if offset < 0 or not 4 <= limit <= _READ_LIMIT:
+    if offset < 0 or not 4 <= limit <= FILE_READ_LIMIT:
         raise BackendError("invalid_workspace_page")
     parts = _parts(relative)
     if len(parts) > 1:

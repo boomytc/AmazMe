@@ -4,7 +4,8 @@
  * business state of its own. Stable blocks retain their DOM; changed blocks retain the reader's
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
-import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_CONNECTIONS_ACTION, MODEL_SCOPE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION } from "./actions.ts";
+import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_CONNECTIONS_ACTION, MODEL_SCOPE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION, WORKSPACE_FILE_LINK_ACTION } from "./actions.ts";
+import type { FileLocation } from "./file-links.ts";
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
 import { createModelPicker } from "./model-picker.ts";
@@ -432,7 +433,7 @@ function icon(name: IconName, className = "icon"): SVGSVGElement {
  * The formatted-answer adapter: the pure markdown nodes become DOM, and model text reaches the
  * document only through `textContent` / text nodes. No model string is ever markup.
  */
-function inlineFragment(nodes: readonly InlineNode[]): DocumentFragment {
+function inlineFragment(nodes: readonly InlineNode[], context: MarkdownContext): DocumentFragment {
 	const fragment = document.createDocumentFragment();
 	for (const node of nodes) {
 		switch (node.kind) {
@@ -444,13 +445,13 @@ function inlineFragment(nodes: readonly InlineNode[]): DocumentFragment {
 				break;
 			case "strong": {
 				const strong = document.createElement("strong");
-				strong.append(inlineFragment(node.children));
+				strong.append(inlineFragment(node.children, context));
 				fragment.append(strong);
 				break;
 			}
 			case "em": {
 				const em = document.createElement("em");
-				em.append(inlineFragment(node.children));
+				em.append(inlineFragment(node.children, context));
 				fragment.append(em);
 				break;
 			}
@@ -459,7 +460,15 @@ function inlineFragment(nodes: readonly InlineNode[]): DocumentFragment {
 				link.setAttribute("href", node.href);
 				link.setAttribute("target", "_blank");
 				link.setAttribute("rel", "noreferrer noopener");
-				link.append(inlineFragment(node.children));
+				link.append(inlineFragment(node.children, context));
+				fragment.append(link);
+				break;
+			}
+			case "file": {
+				const link = button("md-file-link");
+				link.title = node.location.path + (node.location.line === undefined ? "" : `:${node.location.line}`);
+				link.append(inlineFragment(node.children, context));
+				link.addEventListener("click", () => context.openFile(node.location));
 				fragment.append(link);
 				break;
 			}
@@ -472,18 +481,19 @@ function inlineFragment(nodes: readonly InlineNode[]): DocumentFragment {
 interface MarkdownContext {
 	readonly copy: (key: MessageKey) => string;
 	readonly codeBlock: (text: string, language: string | undefined, index?: number) => HTMLElement;
+	readonly openFile: (location: FileLocation) => void;
 }
 
 function markdownNode(node: MarkdownNode, context: MarkdownContext, codeIndex = 0): HTMLElement {
 	switch (node.kind) {
 		case "paragraph": {
 			const paragraph = document.createElement("p");
-			paragraph.append(inlineFragment(node.children));
+			paragraph.append(inlineFragment(node.children, context));
 			return paragraph;
 		}
 		case "heading": {
 			const heading = document.createElement(`h${Math.min(Math.max(node.level, 1), 6)}`);
-			heading.append(inlineFragment(node.children));
+			heading.append(inlineFragment(node.children, context));
 			return heading;
 		}
 		case "list": {
@@ -491,7 +501,7 @@ function markdownNode(node: MarkdownNode, context: MarkdownContext, codeIndex = 
 			if (node.ordered && list instanceof HTMLOListElement && node.start !== 1) list.start = node.start;
 			for (const item of node.items) {
 				const entry = document.createElement("li");
-				entry.append(inlineFragment(item));
+				entry.append(inlineFragment(item, context));
 				list.append(entry);
 			}
 			return list;
@@ -499,7 +509,7 @@ function markdownNode(node: MarkdownNode, context: MarkdownContext, codeIndex = 
 		case "code":
 			return context.codeBlock(node.text, node.language, codeIndex);
 		case "table":
-			return tableElement(node);
+			return tableElement(node, context);
 	}
 }
 
@@ -530,7 +540,7 @@ function columnAlignment(node: TableNode, column: number): TableAlignment | unde
 }
 
 /** A table inside a scroller, so a wide one scrolls instead of pushing the column sideways. */
-function tableElement(node: TableNode): HTMLElement {
+function tableElement(node: TableNode, context: MarkdownContext): HTMLElement {
 	const scroll = element("div", "table-scroll");
 	const table = document.createElement("table");
 	table.className = "markdown-table";
@@ -541,7 +551,7 @@ function tableElement(node: TableNode): HTMLElement {
 		th.scope = "col";
 		const align = columnAlignment(node, column);
 		if (align !== undefined) th.className = `align-${align}`;
-		th.append(inlineFragment(cell));
+		th.append(inlineFragment(cell, context));
 		headRow.append(th);
 	});
 	head.append(headRow);
@@ -553,7 +563,7 @@ function tableElement(node: TableNode): HTMLElement {
 			const td = document.createElement("td");
 			const align = columnAlignment(node, column);
 			if (align !== undefined) td.className = `align-${align}`;
-			td.append(inlineFragment(cell));
+			td.append(inlineFragment(cell, context));
 			rowElement.append(td);
 		});
 		body.append(rowElement);
@@ -2651,10 +2661,17 @@ export function createRenderer(
 	};
 
 	/** What the markdown adapter borrows from the renderer. */
-	const markdownFor = (blockId: string): MarkdownContext => ({
-		copy,
-		codeBlock: (text, language, index = 0) => codeBlockElement(text, language, `${blockId}:${index}`),
-	});
+	const markdownFor = (blockId: string): MarkdownContext => {
+		const sessionId = lastView?.attachedId;
+		return {
+			copy,
+			codeBlock: (text, language, index = 0) => codeBlockElement(text, language, `${blockId}:${index}`),
+			openFile: location => {
+				if (sessionId !== undefined) report({ kind: "command", id: WORKSPACE_FILE_LINK_ACTION,
+					data: JSON.stringify({ kind: "link", sessionId, ...location }) });
+			},
+		};
+	};
 
 	/** The tool calls waiting for a decision: what wants to run, and the two ways to answer. */
 	const renderApprovals = (view: WebView): void => {

@@ -83,6 +83,8 @@ export type WorkspaceViewLike =
 			readonly path: string;
 			readonly text: string;
 			readonly truncated: boolean;
+			readonly startLine: number;
+			readonly selection?: { readonly line: number; readonly revision: number };
 	  }
 	| { readonly kind: "binary"; readonly path: string }
 	| { readonly kind: "missing"; readonly path: string }
@@ -379,15 +381,27 @@ export function workspaceSize(bytes: number): string {
 	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-type WorkspaceActionTarget = { readonly kind: "open" | "read"; readonly path: string; readonly offset?: number };
+type WorkspaceActionTarget =
+	| { readonly kind: "open"; readonly path: string; readonly offset?: number }
+	| { readonly kind: "read"; readonly path: string }
+	| { readonly kind: "link"; readonly path: string; readonly sessionId: string; readonly line?: number };
 
 /** Decode a presentation-bound target without consulting the service's mutable selected directory. */
 export function parseWorkspaceAction(data: string | undefined): WorkspaceActionTarget {
 	const target: unknown = data === undefined ? undefined : JSON.parse(data);
 	if (target === null || typeof target !== "object" || !("path" in target) || typeof target.path !== "string" || target.path.length === 0
-		|| !("kind" in target) || (target.kind !== "open" && target.kind !== "read")) throw new TypeError("Invalid workspace navigation target");
-	if ("offset" in target && (target.kind !== "open" || typeof target.offset !== "number" || !Number.isSafeInteger(target.offset) || target.offset < 0)) throw new TypeError("Invalid workspace directory page");
-	return { kind: target.kind, path: target.path, ...("offset" in target ? { offset: target.offset as number } : {}) };
+		|| !("kind" in target)) throw new TypeError("Invalid workspace navigation target");
+	if (target.kind === "link") {
+		if (!("sessionId" in target) || typeof target.sessionId !== "string" || !target.sessionId) throw new TypeError("Missing file link owner");
+		const line = "line" in target ? target.line : undefined;
+		if (line !== undefined && (typeof line !== "number" || !Number.isSafeInteger(line) || line < 1)) throw new TypeError("Invalid file line");
+		return { kind: "link", path: target.path, sessionId: target.sessionId, ...(typeof line === "number" ? { line } : {}) };
+	}
+	if (target.kind === "read") return { kind: "read", path: target.path };
+	if (target.kind !== "open") throw new TypeError("Invalid workspace navigation kind");
+	const offset = "offset" in target ? target.offset : undefined;
+	if (offset !== undefined && (typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0)) throw new TypeError("Invalid workspace directory page");
+	return { kind: "open", path: target.path, ...(typeof offset === "number" ? { offset } : {}) };
 }
 
 function reloadAction(locale: Locale, path: string, read: boolean) {
@@ -454,7 +468,11 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 			id: "files",
 			title: segments.at(-1) ?? view.path,
 			files,
-			notices: view.truncated ? [{ tone: "info", persistence: "pinned", text: translate(locale, "dock.truncated") }] : [],
+			notices: [
+				...(view.truncated ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "dock.truncated") }] : []),
+				...(view.selection && (view.selection.line < view.startLine || view.selection.line >= view.startLine + (view.text ? view.text.split("\n").length - Number(view.text.endsWith("\n")) : 0))
+					? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "dock.lineUnavailable", { line: String(view.selection.line) }) }] : []),
+			],
 			groups: [
 				...folders,
 				{
@@ -464,7 +482,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 					rows: [rootRow(locale, translate(locale, "dock.backToFolder"), parent, state.cwd)],
 				},
 			],
-			texts: [{ id: "files:text", text: view.text, source: true }],
+			texts: [{ id: `files:text:${state.cwd}:${view.path}`, text: view.text, source: { startLine: view.startLine, selection: view.selection } }],
 		};
 	}
 	if (view.kind !== "listing") {

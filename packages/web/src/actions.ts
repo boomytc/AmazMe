@@ -43,6 +43,8 @@ export const WORKSPACE_RELOAD_ACTION = "workspace:reload";
 export const WORKSPACE_PAGE_ACTION = "workspace:page";
 /** Read one file as text: `data` is its displayed project-folder-bound absolute path. */
 export const WORKSPACE_READ_ACTION = "workspace:read";
+/** Open a model-linked file using the session that owns the rendered answer. */
+export const WORKSPACE_FILE_LINK_ACTION = "workspace:file-link";
 /** Run a terminal command: `data` is the command line. */
 export const TERMINAL_RUN_ACTION = "terminal:run";
 /** Stop the running terminal command. */

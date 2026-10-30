@@ -182,7 +182,7 @@ export interface PanelText {
 	readonly empty?: string;
 	readonly text: string;
 	/** Read-only source preview, with line numbers and copy/wrap controls. */
-	readonly source?: boolean;
+	readonly source?: { readonly startLine: number; readonly selection?: { readonly line: number; readonly revision: number } };
 	/** Recorded unified diff, not a proposed edit or ordinary terminal output. */
 	readonly diff?: boolean;
 }

@@ -25,6 +25,8 @@ async with Client('http://127.0.0.1:PORT', Path('/absolute/profile/web.token').r
 
 其他入口包括 `register_plugin/reload_plugin/call_plugin/cancel_plugin/close_plugin`、`code_tools/run_code/cancel_code`、stdio MCP、会话 PTY、检查点、产物和导入导出；参数直接来自 `amazme_backend.contracts`，不保留另一套 SDK 业务状态。
 
+`read_file(path, offset=0, limit=32000)` 对应 `GET /api/v1/files/content` 的字节分页，`limit` 为 4–32000。下一页使用返回的 `next_offset`，不要按字符串长度计算；游标必须落在 UTF-8 字符边界。`has_more` 表示是否还有内容，连续读取时比较 `digest`，避免拼接不同版本。
+
 可运行示例见 [examples/sdk](../examples/sdk/README.md)。完整业务契约与运行边界统一见 [Python 方案](../../docs/python-backend-plan.md)，源码签名见 `src/amazme_backend/sdk/client.py`。
 
 SDK 只加载 HTTP 客户端和轻量数据契约；导入不会进入 Host、会话存储、监督器或供应商实现。后端按业务所有权划分，入口、公开模块与依赖方向见 [后端架构](../ARCHITECTURE.md)。

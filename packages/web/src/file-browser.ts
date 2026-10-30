@@ -29,6 +29,7 @@ function button(className: string): HTMLButtonElement {
 export function createFileBrowser(options: FileBrowserOptions) {
 	const { icon, copy, actionButton: panelButton, headerAction: placeHeaderAction, copyText: copyAnswer } = options;
 	let fileFilter = { scope: "", query: "" };
+	let lastJump: number | undefined;
 	const fileNavigation = (panel: PanelSpec, node: HTMLElement, sessionId: string): HTMLElement => {
 		const files = panel.files!;
 		const busy = panel.pending?.id.startsWith("workspace:") === true;
@@ -132,10 +133,25 @@ export function createFileBrowser(options: FileBrowserOptions) {
 			source.setAttribute("aria-label", copy("dock.contents"));
 			for (const [index, line] of lines.entries()) {
 				const row = element("div", "file-source-line");
-				const number = element("span", "file-line-number", String(index + 1));
+				const lineNumber = index + text.source.startLine;
+				row.dataset.line = String(lineNumber);
+				const number = element("span", "file-line-number", String(lineNumber));
 				number.setAttribute("aria-hidden", "true");
 				row.append(number, element("code", "file-line-code", line.replace(/\r$/, "") || "\u200b"));
 				source.append(row);
+				const selection = text.source.selection;
+				if (selection?.line === lineNumber) {
+					row.dataset.selected = "true";
+					row.tabIndex = -1;
+					if (lastJump !== selection.revision) {
+						lastJump = selection.revision;
+						queueMicrotask(() => {
+							if (!row.isConnected || lastJump !== selection.revision) return;
+							row.focus({ preventScroll: true });
+							row.scrollIntoView({ block: "center", inline: "nearest" });
+						});
+					}
+				}
 			}
 			if (lines.length === 0) source.append(element("p", "panel-empty", copy("dock.emptyFile")));
 			block.append(source);

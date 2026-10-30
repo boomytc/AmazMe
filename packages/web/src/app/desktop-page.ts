@@ -22,11 +22,16 @@ import { followSystemTheme, applyTheme, resolveThemePreference } from "../theme.
 import { adjustedFontSizes, DEFAULT_TYPOGRAPHY, FONT_FAMILY_FIELDS, FONT_SIZE_FIELDS, FONT_SIZE_LIMITS, resolveTypography, type Typography } from "../typography.ts";
 import { attachmentRejection, attachments, type SubmitMode, type TranscriptBlock } from "../view.ts";
 import { toolResultView } from "../tool-results.ts";
+import { readFilePreview } from "../file-preview.ts";
+import { translate } from "../strings.ts";
 
 const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 	anthropic: "browser", openai: "browser", "openai-codex": "browser", openrouter: "browser", "github-copilot": "device_code", "kimi-coding": "device_code", xai: "device_code", meta: "device_code",
 };
 interface ImageDraft { readonly id: string; readonly name: string; readonly dataUrl: string; readonly bytes: number; readonly image: ImagePart }
+type WorkspaceOpen =
+	| { readonly kind: "directory"; readonly path?: string; readonly offset?: number }
+	| { readonly kind: "file"; readonly path: string; readonly line?: number };
 interface Draft { text: string; images: ImageDraft[]; revision: number; submission?: { readonly id: string; readonly revision: number } }
 interface ActiveTerminal { readonly connection: ClientConnection; readonly id: string; readonly queue: TerminalInputQueue; view: TerminalView; desiredSize?: { cols: number; rows: number }; resizing: boolean }
 
@@ -580,8 +585,18 @@ export class DesktopPage {
 		if (id === A.WELCOME_DISMISS_ACTION) { await this.setPreference("showWelcome", "false"); return; }
 		if (id === A.DOCK_TOGGLE_ACTION) { this.dockOpen = !this.dockOpen; if (this.dockOpen && this.dockTab === "files" && !this.workspace) await this.openWorkspace(); this.render(); return; }
 		if (id === A.DOCK_TAB_ACTION) { this.dockTab = value; this.dockOpen = true; if (value === "files" && !this.workspace) await this.openWorkspace(); if (value === "terminal") await this.loadTerminal(this.requireConnection(), true); this.render(); return; }
-		if (id === A.WORKSPACE_OPEN_ACTION || id === A.WORKSPACE_READ_ACTION) { await this.openWorkspace(value, id === A.WORKSPACE_READ_ACTION); return; }
-		if (id === A.WORKSPACE_RELOAD_ACTION || id === A.WORKSPACE_PAGE_ACTION) { const target = parseWorkspaceAction(data); await this.openWorkspace(target.path, target.kind === "read", target.offset); return; }
+		if (id === A.WORKSPACE_OPEN_ACTION || id === A.WORKSPACE_READ_ACTION) { await this.openWorkspace(id === A.WORKSPACE_READ_ACTION ? { kind: "file", path: value } : { kind: "directory", path: value }); return; }
+		if (id === A.WORKSPACE_FILE_LINK_ACTION) {
+			const target = parseWorkspaceAction(data);
+			if (target.kind !== "link") throw new TypeError("Invalid file link action");
+			if (this.client.connection?.sessionId !== target.sessionId) return;
+			await this.openWorkspace({ kind: "file", path: target.path, line: target.line }); return;
+		}
+		if (id === A.WORKSPACE_RELOAD_ACTION || id === A.WORKSPACE_PAGE_ACTION) {
+			const target = parseWorkspaceAction(data);
+			if (target.kind === "link") throw new TypeError("Invalid workspace reload action");
+			await this.openWorkspace(target.kind === "read" ? { kind: "file", path: target.path } : { kind: "directory", path: target.path, offset: target.offset }); return;
+		}
 		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
 		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.draft.revision++; this.render(); return; }
 		if (id === A.QUEUE_CANCEL_ACTION) { await this.cancel(data); return; }
@@ -1237,15 +1252,21 @@ export class DesktopPage {
 			}
 		} finally { terminal.resizing = false; }
 	}
-	private async openWorkspace(path?: string, file = false, offset?: number): Promise<void> {
+	private async openWorkspace(request: WorkspaceOpen = { kind: "directory" }): Promise<void> {
 		const connection = this.requireConnection(), generation = ++this.workspaceGeneration;
+		let path = request.path;
 		const session = this.sessions.find(item => item.session_id === connection.sessionId);
 		const project = this.projects.find(item => item.project_id === session?.project_id);
 		const names = project?.workspaces ?? [session?.workspace ?? "primary"];
 		const roots = this.workspaces.filter(item => names.includes(item.name));
-		let root = roots.find(item => item.host_path === this.workspace?.cwd) ?? roots.find(item => item.name === session?.workspace) ?? roots[0];
+		let root = (request.kind === "directory" ? roots.find(item => item.host_path === this.workspace?.cwd) : undefined) ?? roots.find(item => item.name === session?.workspace) ?? roots[0];
 		if (!root) throw new Error("工作区目录不可用");
 		this.dockOpen = true; this.dockTab = "files"; this.render();
+		if (path?.startsWith("grant/")) {
+			const parts = path.split("/"), matched = roots.find(item => item.name === parts[1]);
+			if (!matched) { this.workspace = { cwd: root.host_path, workspaces: roots.map(item => item.host_path), view: { kind: "denied", path, reason: "目录不属于当前项目" } }; this.render(); return; }
+			root = matched; path = parts.slice(2).join("/");
+		}
 		if (path?.startsWith("/")) {
 			const matched = [...roots].sort((a, b) => b.host_path.length - a.host_path.length).find(item => path === item.host_path || path.startsWith(item.host_path + "/"));
 			if (!matched) { this.workspace = { cwd: root.host_path, workspaces: roots.map(item => item.host_path), view: { kind: "denied", path, reason: "目录不属于当前项目" } }; this.render(); return; }
@@ -1253,14 +1274,20 @@ export class DesktopPage {
 		}
 		const relative = path?.startsWith("/") ? path.slice(root.host_path.length).replace(/^\/+/, "") || "." : path || ".";
 		const previous = this.workspace?.cwd === root.host_path && this.workspace.view.kind === "listing" && this.workspace.view.path === relative ? this.workspace.view.page : undefined;
-		const pageOffset = offset ?? previous?.offset ?? 0;
+		const pageOffset = request.kind === "directory" ? request.offset ?? previous?.offset ?? 0 : 0;
 		const prefix = root.name === "primary" ? "" : `grant/${root.name}`;
 		const target = relative === "." ? prefix : prefix ? `${prefix}/${relative}` : relative;
 		let view: WorkspaceStateLike["view"];
 		try {
-			if (file) {
-				const result = await this.client.call("GET /api/v1/files/content", { query: { path: target } });
-				view = { kind: "text", path: relative, text: result.content, truncated: result.truncated ?? false };
+			if (request.kind === "file") {
+				const result = await readFilePreview({
+					line: request.line,
+					active: () => connection.active() && generation === this.workspaceGeneration && this.dockOpen && this.dockTab === "files",
+					read: page => this.client.call("GET /api/v1/files/content", { query: { path: target, ...page }, connection }),
+				});
+				if (result === undefined) return;
+				view = result.kind === "changed" ? { kind: "denied", path: relative, reason: translate(this.locale, "dock.fileChanged") }
+					: { ...result, path: relative, ...(request.line === undefined ? {} : { selection: { line: request.line, revision: generation } }) };
 			} else {
 				const result = await this.client.call("GET /api/v1/files", { query: { path: target, offset: pageOffset } });
 				view = { kind: "listing", path: relative, parent: relative === "." ? null : relative.includes("/") ? relative.split("/").slice(0, -1).join("/") : ".",

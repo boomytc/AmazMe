@@ -1964,6 +1964,8 @@ export interface HttpOperations {
 }; body: undefined };
   "GET /api/v1/files/content": { response: FileContent; path: Record<string, unknown>; query: {
   "path": string;
+  "offset"?: number;
+  "limit"?: number;
 }; body: undefined };
   "POST /api/v1/files/content": { response: FileChange; path: Record<string, unknown>; query: Record<string, unknown>; body: FileWrite };
   "POST /api/v1/checkpoints": { response: CheckpointView; path: Record<string, unknown>; query: Record<string, unknown>; body: CheckpointCreate };

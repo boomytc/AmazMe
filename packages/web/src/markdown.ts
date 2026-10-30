@@ -5,12 +5,16 @@
  * text: the answer is always shown, never dropped.
  */
 
+import { parseFileLink } from "./file-links.ts";
+import type { FileLocation } from "./file-links.ts";
+
 export type InlineNode =
 	| { readonly kind: "text"; readonly text: string }
 	| { readonly kind: "code"; readonly text: string }
 	| { readonly kind: "strong"; readonly children: readonly InlineNode[] }
 	| { readonly kind: "em"; readonly children: readonly InlineNode[] }
-	| { readonly kind: "link"; readonly href: string; readonly children: readonly InlineNode[] };
+	| { readonly kind: "link"; readonly href: string; readonly children: readonly InlineNode[] }
+	| { readonly kind: "file"; readonly location: FileLocation; readonly children: readonly InlineNode[] };
 
 export interface ParagraphNode {
 	readonly kind: "paragraph";
@@ -141,7 +145,52 @@ function findClosing(text: string, from: number, delimiter: string): number {
 	return -1;
 }
 
-function inline(text: string): InlineNode[] {
+function linkDestination(text: string, start: number): { target: string; end: number } | undefined {
+	if (text[start] === "<") {
+		const close = text.indexOf(">)", start + 1);
+		return close < 0 ? undefined : { target: text.slice(start + 1, close), end: close + 1 };
+	}
+	let depth = 0;
+	for (let index = start; index < text.length; index += 1) {
+		if (text[index] === "(") depth += 1;
+		else if (text[index] === ")") {
+			if (depth === 0) return { target: text.slice(start, index), end: index };
+			depth -= 1;
+		}
+	}
+	return undefined;
+}
+
+/** Non-ASCII punctuation and symbols end bare links; letters remain part of the path. */
+function bareUrl(text: string, index: number): string | undefined {
+	if (/[\p{L}\p{N}_@]/u.test(text[index - 1] ?? "")) return undefined;
+	const prefix = /^https?:\/\//i.exec(text.slice(index, index + 8))?.[0];
+	if (prefix === undefined) return undefined;
+	let length = prefix.length;
+	for (const char of text.slice(index + length)) {
+		if (/[\s<>"'`\u0000-\u001f\u007f]/u.test(char) || ((char.codePointAt(0) ?? 0) > 127 && /[\p{P}\p{S}]/u.test(char))) break;
+		length += char.length;
+	}
+	let url = text.slice(index, index + length);
+	const closing = new Map([["(", ")"], ["[", "]"], ["{", "}"]]);
+	const excess = new Map<string, number>();
+	for (const char of url) {
+		const close = closing.get(char);
+		if (close !== undefined) excess.set(close, (excess.get(close) ?? 0) - 1);
+		else if (char === ")" || char === "]" || char === "}") excess.set(char, (excess.get(char) ?? 0) + 1);
+	}
+	let end = url.length;
+	while (end > 0) {
+		const char = url[end - 1] ?? "", count = excess.get(char) ?? 0;
+		if (/[.,;:!?]/.test(char)) end -= 1;
+		else if (count > 0) { excess.set(char, count - 1); end -= 1; }
+		else break;
+	}
+	url = url.slice(0, end);
+	return /^https?:\/\/.+/i.test(url) ? url : undefined;
+}
+
+function inline(text: string, links = true): InlineNode[] {
 	const nodes: InlineNode[] = [];
 	let buffer = "";
 	let index = 0;
@@ -176,24 +225,36 @@ function inline(text: string): InlineNode[] {
 			const close = inWord ? -1 : findClosing(text, index + delimiter.length, delimiter);
 			if (close > index + delimiter.length) {
 				flush();
-				const children = inline(text.slice(index + delimiter.length, close));
+				const children = inline(text.slice(index + delimiter.length, close), links);
 				nodes.push(strong ? { kind: "strong", children } : { kind: "em", children });
 				index = close + delimiter.length;
 				continue;
 			}
 		}
-		if (character === "[") {
+		if (links && character === "[") {
 			const labelEnd = text.indexOf("](", index + 1);
-			const targetEnd = labelEnd === -1 ? -1 : text.indexOf(")", labelEnd + 2);
-			if (labelEnd !== -1 && targetEnd !== -1) {
+			const destination = labelEnd === -1 ? undefined : linkDestination(text, labelEnd + 2);
+			if (labelEnd !== -1 && destination !== undefined) {
 				const label = text.slice(index + 1, labelEnd);
-				const href = safeHref(text.slice(labelEnd + 2, targetEnd));
-				if (label.length > 0 && href !== undefined) {
+				const location = parseFileLink(destination.target);
+				const href = /^(?:https?:|mailto:|\/\/|#)/i.test(destination.target) ? safeHref(destination.target) : undefined;
+				if (label.length > 0 && (location !== undefined || href !== undefined)) {
 					flush();
-					nodes.push({ kind: "link", href, children: inline(label) });
-					index = targetEnd + 1;
+					const children = inline(label, false);
+					if (location !== undefined) nodes.push({ kind: "file", location, children });
+					else if (href !== undefined) nodes.push({ kind: "link", href, children });
+					index = destination.end + 1;
 					continue;
 				}
+			}
+		}
+		if (links && (character === "h" || character === "H")) {
+			const href = bareUrl(text, index);
+			if (href !== undefined) {
+				flush();
+				nodes.push({ kind: "link", href, children: [{ kind: "text", text: href }] });
+				index += href.length;
+				continue;
 			}
 		}
 		buffer += character;

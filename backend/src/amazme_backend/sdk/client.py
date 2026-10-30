@@ -86,6 +86,7 @@ from amazme_backend.contracts.sessions import (
     UsageReport,
 )
 from amazme_backend.contracts.workspaces import (
+    FILE_READ_LIMIT,
     CheckpointView,
     FileContent,
     FileList,
@@ -423,8 +424,9 @@ class Client:
             headers=self._write(attachment_id))
         return Receipt.model_validate(payload)
 
-    async def read_file(self, path: str) -> FileContent:
-        payload = await self._send("GET", "/api/v1/files/content?path=" + quote(path, safe=""))
+    async def read_file(self, path: str, *, offset: int = 0, limit: int = FILE_READ_LIMIT) -> FileContent:
+        payload = await self._send(
+            "GET", "/api/v1/files/content?path=" + quote(path, safe="") + "&offset=" + str(offset) + "&limit=" + str(limit))
         return FileContent.model_validate(payload)
 
     async def list_files(self, path: str = "", *, offset: int = 0) -> FileList:

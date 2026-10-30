@@ -18,6 +18,7 @@ from amazme_backend.contracts.ipc.host import PreparedFileWrite, PrepareFileWrit
 from amazme_backend.contracts.resources import ResourceCatalog, ResourceOptions
 from amazme_backend.contracts.skills import SkillDocument, SkillImport, SkillRemove, SkillWrite
 from amazme_backend.contracts.workspaces import (
+    FILE_READ_LIMIT,
     CheckpointCreate,
     CheckpointList,
     CheckpointPreview,
@@ -197,10 +198,10 @@ class WorkspaceOperations:
         listing.absolute_path = str(root / inner)
         return listing
 
-    async def read_workspace(self, relative: str) -> FileContent:
+    async def read_workspace(self, relative: str, offset: int = 0, limit: int = FILE_READ_LIMIT) -> FileContent:
         self.lifecycle.admit()
         name, inner, root = await self._mapped_root(relative)
-        content = read_file(root, inner)
+        content = await asyncio.to_thread(read_file, root, inner, offset, limit)
         content.path = client_path(name, content.path)
         content.absolute_path = str(root / inner)
         return content

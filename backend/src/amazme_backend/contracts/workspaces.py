@@ -5,6 +5,7 @@ from pydantic import Field
 from amazme_backend.shared.model import Model
 
 FILE_LIST_LIMIT = 200
+FILE_READ_LIMIT = 32_000
 FILE_WRITE_LIMIT = 1_048_576
 
 

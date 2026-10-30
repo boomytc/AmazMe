@@ -140,6 +140,7 @@ from amazme_backend.contracts.sharing import ShareView, ShareWrite
 from amazme_backend.contracts.skills import SkillDocument, SkillImport, SkillRemove, SkillWrite
 from amazme_backend.contracts.web import WebCallRequest, WebCallView, WebPolicy
 from amazme_backend.contracts.workspaces import (
+    FILE_READ_LIMIT,
     CheckpointCreate,
     CheckpointList,
     CheckpointPreview,
@@ -398,8 +399,9 @@ def application(owner: Host) -> FastAPI:
         return await owner.workspaces.list_workspace(path, offset)
 
     @app.get("/api/v1/files/content")
-    async def file_content(path: str) -> FileContent:
-        return await owner.workspaces.read_workspace(path)
+    async def file_content(path: str, offset: int = Query(default=0, ge=0, le=9007199254740991),
+                           limit: int = Query(default=FILE_READ_LIMIT, ge=4, le=FILE_READ_LIMIT)) -> FileContent:
+        return await owner.workspaces.read_workspace(path, offset, limit)
 
     @app.post("/api/v1/files/content")
     async def file_write(value: FileWrite) -> FileChange:
