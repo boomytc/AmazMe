@@ -281,6 +281,10 @@ class PythonSessionScreen implements Component {
 	#header: string;
 	#lines: string[];
 
+	get capturesViewportInput(): boolean {
+		return this.#editor.capturesViewportInput;
+	}
+
 	constructor(editor: CustomEditor, header: string) {
 		this.#editor = editor;
 		this.#header = header;
