@@ -12,6 +12,7 @@ from amazme_backend.contracts.ipc.worker import (
     Cancel,
     FreezeWorker,
     JobNoticeEnvelope,
+    QuestionEnvelope,
     ResolutionEnvelope,
     SessionOp,
     SessionOpResult,
@@ -76,6 +77,10 @@ def application(owner: Worker) -> FastAPI:
     @app.post("/approvals", status_code=202)
     async def approve(value: ApprovalEnvelope) -> Receipt:
         return await owner.approve(value)
+
+    @app.post("/questions", status_code=202)
+    async def answer_question(value: QuestionEnvelope) -> Receipt:
+        return await owner.answer_question(value)
 
     @app.post("/effects/resolve", status_code=202)
     async def resolve(value: ResolutionEnvelope) -> Receipt:

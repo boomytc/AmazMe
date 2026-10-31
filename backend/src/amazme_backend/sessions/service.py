@@ -41,6 +41,7 @@ from amazme_backend.contracts.ipc.worker import (
 from amazme_backend.contracts.models import CatalogModel, ImagePart, Message
 from amazme_backend.contracts.plugins import PluginOffer
 from amazme_backend.contracts.profiles import ProviderConfig
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.resources import ResourceOptions
 from amazme_backend.contracts.sessions import (
     Approval,
@@ -62,6 +63,7 @@ from amazme_backend.contracts.web import WebCallView, WebPolicy
 from amazme_backend.sessions.maintenance import read_settled_root
 from amazme_backend.sessions.persistence import clock, schema
 from amazme_backend.sessions.persistence.driver import advance_request, apply_observation
+from amazme_backend.sessions.persistence.questions import answer_question, pending_questions
 from amazme_backend.sessions.persistence.records import (
     Changes,
     append_message,
@@ -516,6 +518,12 @@ class SessionStore:
             return request
         return await self._store.transact(operation)
 
+    async def answer_question(self, value: QuestionAnswer, fence: HostFence) -> Receipt:
+        def operation(db: sqlite3.Connection, c: Changes) -> Receipt:
+            check_fence(self._state, db, fence)
+            return answer_question(db, c, value)
+        return await self._store.transact(operation)
+
     async def set_approval_policy(self, value: SessionApprovalPolicy) -> SessionApprovalPolicy:
         def operation(db: sqlite3.Connection, c: Changes) -> SessionApprovalPolicy:
             if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
@@ -682,6 +690,9 @@ class SessionStore:
                     run.cleanup_required = True
                 save_run(db, run)
                 for step in list_steps(db, r.request_id):
+                    if step.phase == "question":
+                        step.generation = r.generation
+                        save_step(db, step)
                     if step.kind == "model" and step.phase == "intent":
                         step.phase = "unknown"
                         save_step(db, step)
@@ -874,8 +885,17 @@ class SessionStore:
             set_metadata_value(db, "stopping", "1")
             c.emit("status", text="stopping")
             if cancel_work:
-                for r in list_requests(db):
+                requests = list_requests(db)
+                for r in requests:
                     if r.kind == "root" and r.status not in TERMINAL:
+                        tree = {r.request_id}
+                        for _ in range(4):
+                            tree.update(child.request_id for child in requests if child.parent_id in tree)
+                        pending = [child for child in requests if child.request_id in tree and child.status not in TERMINAL]
+                        if (any(child.status == "waiting_input" for child in pending)
+                            and all(child.status in {"waiting_input", "waiting_children"} and not child.cancel_requested
+                                    and not child.decision and load_run(db, child.request_id).lease is None for child in pending)):
+                            continue
                         cancel_request_tree(db, c, r.request_id)
         await self._store.transact(operation)
 
@@ -1230,6 +1250,7 @@ class SessionStore:
                                 compaction=load_active_summary(db),
                                 state=activity.state if activity.state != "ready" else state or "ready", requests=requests,
                                 events=events, approvals=approvals, effects=effects, previews=previews,
+                                questions=pending_questions(db),
                                 next_wake_ms=activity.next_wake_ms, pending=activity.pending)
             if len(snapshot.model_dump_json().encode()) > SNAPSHOT_MAX_BYTES:
                 raise BackendError("snapshot_fact_limit", status=503)

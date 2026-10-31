@@ -186,7 +186,8 @@
             "children",
             "effect",
             "freeze",
-            "compaction"
+            "compaction",
+            "question"
           ],
           "title": "Kind",
           "type": "string"
@@ -242,6 +243,17 @@
             }
           ],
           "default": null
+        },
+        "question": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuestionView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -287,6 +299,82 @@
       "title": "Preview",
       "type": "object"
     },
+    "QuestionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Description",
+          "type": "string"
+        },
+        "recommended": {
+          "default": false,
+          "title": "Recommended",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "QuestionOption",
+      "type": "object"
+    },
+    "QuestionView": {
+      "additionalProperties": false,
+      "properties": {
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/UserQuestion"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Questions",
+          "type": "array"
+        },
+        "question_id": {
+          "title": "Question Id",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "proposal_digest": {
+          "title": "Proposal Digest",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        },
+        "state": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "answered",
+            "skipped"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "questions",
+        "question_id",
+        "request_id",
+        "proposal_digest",
+        "generation"
+      ],
+      "title": "QuestionView",
+      "type": "object"
+    },
     "Receipt": {
       "additionalProperties": false,
       "properties": {
@@ -303,6 +391,7 @@
             "queued",
             "running",
             "waiting_approval",
+            "waiting_input",
             "waiting_children",
             "waiting_time",
             "waiting_host",
@@ -476,6 +565,13 @@
           "title": "Previews",
           "type": "array"
         },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/QuestionView"
+          },
+          "title": "Questions",
+          "type": "array"
+        },
         "next_wake_ms": {
           "default": 0,
           "title": "Next Wake Ms",
@@ -511,7 +607,7 @@
           "type": "string"
         },
         "name": {
-          "pattern": "^(shell|read_file|glob|grep|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
+          "pattern": "^(shell|read_file|glob|grep|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|ask_user_question|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
           "title": "Name",
           "type": "string"
         },
@@ -568,6 +664,48 @@
         "content"
       ],
       "title": "TranscriptMessage",
+      "type": "object"
+    },
+    "UserQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "question": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "header": {
+          "default": "",
+          "maxLength": 64,
+          "title": "Header",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "maxItems": 8,
+          "title": "Options",
+          "type": "array"
+        },
+        "multi_select": {
+          "default": false,
+          "title": "Multi Select",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "question"
+      ],
+      "title": "UserQuestion",
       "type": "object"
     }
   },

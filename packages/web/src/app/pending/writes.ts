@@ -105,7 +105,7 @@ export class PendingWrites {
 			if (isRecord(value) && isRecord(body)) for (const field of ["operation_id", "request_id", "terminal_id", "call_id", "compaction_id", "workflow_id", "plugin_id", "schedule_id"]) {
 				if (typeof body[field] === "string" && typeof value[field] === "string" && body[field] !== value[field]) throw new Error("回执操作编号不匹配；原记录已保留。");
 			}
-			const acceptedDecision = record.operation === "POST /api/v1/sessions/{session}/approvals" || record.operation === "POST /api/v1/sessions/{session}/effects/resolve";
+			const acceptedDecision = record.operation === "POST /api/v1/sessions/{session}/approvals" || record.operation === "POST /api/v1/sessions/{session}/questions" || record.operation === "POST /api/v1/sessions/{session}/effects/resolve";
 			if (acceptedDecision || !isRecord(value) || (value.phase !== "unknown" && value.input_status !== "unknown" && value.status !== "unknown")) await this.forget(key, record);
 			else this.uncertain(key, record);
 			return result;

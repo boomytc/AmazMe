@@ -9,6 +9,7 @@ from amazme_backend.contracts.execution import EffectResolution, JobId
 from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.models import Message, ToolCall
 from amazme_backend.contracts.profiles import ProviderConfig
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.sessions import ApprovalDecision, Compaction, Submit, WorkerState
 from amazme_backend.contracts.web import WebCallView, WebPolicy
 from amazme_backend.shared.model import Model
@@ -49,6 +50,10 @@ class Cancel(HostFence):
 
 class ApprovalEnvelope(HostFence):
     value: ApprovalDecision
+
+
+class QuestionEnvelope(HostFence):
+    value: QuestionAnswer
 
 
 class ResolutionEnvelope(HostFence):

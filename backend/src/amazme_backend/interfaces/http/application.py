@@ -92,6 +92,7 @@ from amazme_backend.contracts.plugins import (
     PluginView,
 )
 from amazme_backend.contracts.projects import ProjectList, ProjectUpdate, ProjectView, ProjectWrite
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.remote import (
     RemoteCallView,
     RemoteHostKeys,
@@ -812,6 +813,10 @@ def application(owner: Host) -> FastAPI:
     @app.post("/api/v1/sessions/{session}/approvals", status_code=202)
     async def approve(session: str, value: ApprovalDecision) -> Receipt:
         return await owner.sessions.deliver(session, "approval", value.decision_id, value)
+
+    @app.post("/api/v1/sessions/{session}/questions", status_code=202)
+    async def answer_question(session: str, value: QuestionAnswer) -> Receipt:
+        return await owner.sessions.deliver(session, "question", value.decision_id, value)
 
     @app.put("/api/v1/sessions/{session}/approval-policy")
     async def set_approval_policy(session: str, value: SessionApprovalPolicy) -> SessionApprovalPolicy:

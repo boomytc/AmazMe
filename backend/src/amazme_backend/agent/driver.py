@@ -63,6 +63,7 @@ from amazme_backend.contracts.ipc.worker import (
     Cancel,
     FreezeWorker,
     JobNoticeEnvelope,
+    QuestionEnvelope,
     ResolutionEnvelope,
     Submission,
 )
@@ -306,6 +307,14 @@ class Worker:
         self._business()
         self.last_demand = time.monotonic()
         receipt = await self.store.approve(value.value, value)
+        self.quiescent.clear()
+        self.wake.set()
+        return receipt
+
+    async def answer_question(self, value: QuestionEnvelope) -> Receipt:
+        self._business()
+        self.last_demand = time.monotonic()
+        receipt = await self.store.answer_question(value.value, value)
         self.quiescent.clear()
         self.wake.set()
         return receipt

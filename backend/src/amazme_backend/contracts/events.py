@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import Field
 
 from amazme_backend.contracts.execution import EffectHold
+from amazme_backend.contracts.questions import QuestionView
 from amazme_backend.contracts.sessions import Approval, Preview, Receipt, TranscriptMessage, WorkerState
 from amazme_backend.shared.model import Model
 
@@ -12,13 +13,14 @@ from amazme_backend.shared.model import Model
 class Event(Model):
     seq: str
     kind: Literal["accepted", "status", "preview", "message", "tool", "cleanup", "approval", "children", "effect",
-                  "freeze", "compaction"]
+                  "freeze", "compaction", "question"]
     request_id: str
     text: str
     message: TranscriptMessage | None = None
     receipt: Receipt | None = None
     approval: Approval | None = None
     preview: Preview | None = None
+    question: QuestionView | None = None
 
 
 class Snapshot(Model):
@@ -31,6 +33,7 @@ class Snapshot(Model):
     approvals: list[Approval] = Field(default_factory=lambda: list[Approval]())
     effects: list[EffectHold] = Field(default_factory=lambda: list[EffectHold]())
     previews: list[Preview] = Field(default_factory=lambda: list[Preview]())
+    questions: list[QuestionView] = Field(default_factory=lambda: list[QuestionView]())
     next_wake_ms: int = 0
     pending: int = 0
     compaction: str = ""

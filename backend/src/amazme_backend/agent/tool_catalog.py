@@ -19,6 +19,7 @@ from amazme_backend.contracts.execution import (
 )
 from amazme_backend.contracts.mcp import McpOffer
 from amazme_backend.contracts.plugins import PluginOffer
+from amazme_backend.contracts.questions import AskUser
 from amazme_backend.contracts.sessions import DelegateTasks, RunOptions
 from amazme_backend.contracts.tools import ToolSearchInput
 from amazme_backend.contracts.web import WebFetch, WebSearch
@@ -43,6 +44,7 @@ _BUILTINS: tuple[tuple[str, str, type[Model]], ...] = (
     ("edit_file", "Replace an exact literal string in a previously read UTF-8 file (up to 1 MiB). The default requires exactly one match; replace_all explicitly replaces every match. Preserves literal line endings. Refuses stale observations, missing files, zero matches and ambiguous matches.", EditFile),
     ("apply_patch", "Apply a Codex-style *** Begin Patch / *** End Patch through the input string. Supports Add File, Update File with @@ hunks and optional Move to, and Delete File, up to 16 file operations and 32000 input characters. Read existing sources and existing destinations first. The complete patch is checked before any file mutation; syntax, stale reads, or unmatched hunks reject all writes. Updates normalize CRLF to LF. Execution stops at the first failure and reports completed, failed and skipped mutations without rollback. Never retry an unknown result; re-read affected files. Prepared file content is bounded; split oversized patches.", ApplyPatch),
     ("tool_output", "Read a retained shell output stream using its locator and byte offset. stdout/stderr have separate cursors; use next_offset for the next page. Reads are repeatable. Logs retain a bounded prefix for seven days; inspect archive errors and retained_bytes before claiming complete output.", OutputRead),
+    ("ask_user_question", "Ask up to three concise questions when a choice or required information blocks progress. Provide stable ids, optional choices, and multi_select for independent options. Mark recommended options explicitly. Wait for the actual human answer; defaults are never consent. Free text is always available. A skipped question is answered: do not ask it again; continue with a stated assumption when possible or explain what remains required. Human answers are not tool approvals.", AskUser),
     ("delegate_task", "Delegate up to eight required independent tasks. Wait for their results before completing.", DelegateTasks),
     ("web_search", "Search through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", WebSearch),
     ("web_fetch", "Fetch one http(s) page through the saved web policy. It stays off until the user enables that policy, uses an authenticated provider endpoint, and an unknown result must not be retried.", WebFetch),

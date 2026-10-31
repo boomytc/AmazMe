@@ -22,6 +22,7 @@ from pydantic import JsonValue, TypeAdapter, ValidationError
 
 from amazme_backend.contracts.execution import TerminalView
 from amazme_backend.contracts.mcp import McpCall
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.sessions import Approval, Attachment, Receipt, Session
 from amazme_backend.interfaces.client_context import local_time_zone
 from amazme_backend.sdk.client import Client
@@ -173,9 +174,20 @@ class _Held:
     summary: str = ""
 
 
-async def _settle_request(client: Client, session_id: str, request_id: str) -> str:
-    receipt = await client.wait(session_id=session_id, request_id=request_id, attempts=800)
-    return _receipt_line(receipt)
+async def _request_interaction(client: Client, session_id: str, request_id: str, lines: list[str]) -> _Held | None:
+    receipt, approval = await client.await_user_decision(session_id=session_id, request_id=request_id, attempts=800)
+    if receipt.status == "waiting_input":
+        questions = [question.model_dump() for question in (await client.snapshot(session_id)).questions
+                     if question.request_id == request_id]
+        lines.append(json.dumps(questions, ensure_ascii=False))
+        lines.append("等待回答；/questions 查看，/answer <QuestionAnswer JSON> 回答或跳过。回答不会批准工具。")
+        return None
+    if approval is not None:
+        summary = _approval_line(approval)
+        lines.extend([summary, "输入批准或拒绝"])
+        return _Held(kind="request", request_id=request_id, approval=approval, summary=summary)
+    lines.append(_receipt_line(receipt))
+    return None
 
 
 async def _settle_mcp(client: Client, session_id: str, call: McpCall) -> str:
@@ -244,41 +256,40 @@ async def _submit_text(client: Client, session: Session, attachment: Attachment,
     await client.submit(
         session_id=session.session_id, workspace=workspace, attachment_id=attachment.attachment_id,
         request_id=request_id, text=text, time_zone=local_time_zone())
-    receipt, approval = await client.await_user_decision(session_id=session.session_id, request_id=request_id)
-    if approval is None:
-        lines.append(_receipt_line(receipt))
-        return None
-    summary = _approval_line(approval)
-    lines.append(summary)
-    lines.append("输入批准或拒绝")
-    return _Held(kind="request", request_id=request_id, approval=approval, summary=summary)
+    return await _request_interaction(client, session.session_id, request_id, lines)
 
 
 async def _decide_held(client: Client, session: Session, attachment: Attachment, held: _Held, approve: bool,
-                       lines: list[str]) -> None:
+                       lines: list[str]) -> _Held | None:
     if held.kind == "request":
         assert held.approval is not None
         await client.decide(
             session_id=session.session_id, attachment_id=attachment.attachment_id,
             decision_id=secrets.token_hex(16), approval_id=held.approval.approval_id,
             expected_revision=held.approval.revision, proposal_digest=held.approval.proposal_digest, approve=approve)
-        lines.append(await _settle_request(client, session.session_id, held.request_id))
-        return
+        return await _request_interaction(client, session.session_id, held.request_id, lines)
     call = await client.decide_mcp(
         session_id=session.session_id, attachment_id=attachment.attachment_id, server_id=held.server_id,
         call_id=held.call_id, decision_id=secrets.token_hex(16), digest=held.digest, approve=approve)
     lines.append(await _settle_mcp(client, session.session_id, call))
+    return None
 
 
 async def _handle(client: Client, session: Session, attachment: Attachment, workspace: str, text: str,
                   lines: list[str], held: _Held | None, terminal_id: str, server_id: str,
                   pending: _PtyPending) -> tuple[_Held | None, str, str]:
+    if text == "/questions":
+        lines.append(json.dumps([question.model_dump() for question in (await client.snapshot(session.session_id)).questions], ensure_ascii=False))
+        return held, terminal_id, server_id
+    if text.startswith("/answer "):
+        value = QuestionAnswer.model_validate_json(text[8:])
+        receipt = await client.answer_question(session_id=session.session_id, attachment_id=attachment.attachment_id, value=value)
+        return await _request_interaction(client, session.session_id, receipt.request_id, lines), terminal_id, server_id
     if held is not None:
         if text not in {"批准", "拒绝"}:
             lines.append("先输入批准或拒绝")
             return held, terminal_id, server_id
-        await _decide_held(client, session, attachment, held, text == "批准", lines)
-        return None, terminal_id, server_id
+        return await _decide_held(client, session, attachment, held, text == "批准", lines), terminal_id, server_id
     if text == "/jobs":
         view = await client.list_jobs(session.session_id)
         lines.extend(f"作业 {job.job_id} {job.state} 已退出:{job.resource_clean}" for job in view.jobs)

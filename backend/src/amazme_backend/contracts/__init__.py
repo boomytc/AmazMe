@@ -172,6 +172,13 @@ from amazme_backend.contracts.projects import ProjectList as ProjectList
 from amazme_backend.contracts.projects import ProjectUpdate as ProjectUpdate
 from amazme_backend.contracts.projects import ProjectView as ProjectView
 from amazme_backend.contracts.projects import ProjectWrite as ProjectWrite
+from amazme_backend.contracts.questions import AskUser as AskUser
+from amazme_backend.contracts.questions import QuestionAnswer as QuestionAnswer
+from amazme_backend.contracts.questions import QuestionOption as QuestionOption
+from amazme_backend.contracts.questions import QuestionResult as QuestionResult
+from amazme_backend.contracts.questions import QuestionView as QuestionView
+from amazme_backend.contracts.questions import UserAnswer as UserAnswer
+from amazme_backend.contracts.questions import UserQuestion as UserQuestion
 from amazme_backend.contracts.remote import RemoteCallRequest as RemoteCallRequest
 from amazme_backend.contracts.remote import RemoteCallView as RemoteCallView
 from amazme_backend.contracts.remote import RemoteHostKey as RemoteHostKey

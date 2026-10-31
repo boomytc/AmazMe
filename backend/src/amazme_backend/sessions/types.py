@@ -52,7 +52,7 @@ class Step(Model):
     request_id: str
     ordinal: int
     kind: Literal["model", "tool"]
-    phase: Literal["proposed", "intent", "result", "applied", "unknown", "children", "code"]
+    phase: Literal["proposed", "question", "intent", "result", "applied", "unknown", "children", "code"]
     generation: int
     call: ToolCall | None = None
     result: str = ""

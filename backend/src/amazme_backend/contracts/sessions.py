@@ -69,7 +69,7 @@ class Submit(RunOptions):
 TerminalStatus = Literal["succeeded", "cancelled", "interrupted", "failed", "unknown"]
 
 
-Status = Literal["queued", "running", "waiting_approval", "waiting_children", "waiting_time", "waiting_host",
+Status = Literal["queued", "running", "waiting_approval", "waiting_input", "waiting_children", "waiting_time", "waiting_host",
                  "cancelling", "cleaning", "blocked", "succeeded", "cancelled", "interrupted", "failed", "unknown"]
 
 

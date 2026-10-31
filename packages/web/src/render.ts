@@ -6,6 +6,8 @@
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_CONNECTIONS_ACTION, MODEL_SCOPE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION, WORKSPACE_FILE_LINK_ACTION } from "./actions.ts";
 import type { FileLocation } from "./file-links.ts";
+import { questionForm } from "./questions.ts";
+import { QUESTION_ANSWER_ACTION } from "./actions.ts";
 import type { DockTabId } from "./dock.ts";
 import { credentialRanges } from "./credentials.ts";
 import { createModelPicker } from "./model-picker.ts";
@@ -120,6 +122,7 @@ export interface PageElements {
 	readonly dockBody: HTMLElement;
 	/** The tool calls waiting for a decision, filled by the renderer. */
 	readonly approvals: HTMLElement;
+	readonly questions: HTMLElement;
 	/** The composer's command palette, filled by the renderer. */
 	readonly palette: HTMLElement;
 	/** Fork and the session tools. Compaction is on the context ring. */
@@ -216,6 +219,7 @@ export function collectPageElements(): PageElements {
 		runActions: pick("run-actions"),
 		palette: pick("command-palette"),
 		approvals: pick("approvals"),
+		questions: pick("questions"),
 		dock: pick("dock"),
 		dockTabs: pick("dock-tabs"),
 		dockBody: pick("dock-body"),
@@ -2674,6 +2678,28 @@ export function createRenderer(
 	};
 
 	/** The tool calls waiting for a decision: what wants to run, and the two ways to answer. */
+	const questionForms = new Map<string, HTMLFormElement>();
+	const renderQuestions = (view: WebView): void => {
+		const sessionId = view.attachedId;
+		const questions = sessionId === undefined ? [] : view.questions ?? [];
+		const keys = new Set<string>();
+		const nodes = questions.map(question => {
+			const key = `${view.locale}:${sessionId}:${question.question_id}:${question.proposal_digest}`;
+			keys.add(key);
+			let node = questionForms.get(key);
+			if (!node) {
+				node = questionForm(question, view.locale, value => report({ kind: "command", id: QUESTION_ANSWER_ACTION,
+					data: JSON.stringify({ sessionId, value: { ...value, question_id: question.question_id, request_id: question.request_id,
+						proposal_digest: question.proposal_digest, generation: question.generation } }) }));
+				questionForms.set(key, node);
+			}
+			for (const input of node.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLButtonElement>("input, textarea, button")) input.disabled = view.readOnly === true;
+			return node;
+		});
+		for (const key of questionForms.keys()) if (!keys.has(key)) questionForms.delete(key);
+		if (nodes.length !== elements.questions.children.length || nodes.some((node, index) => elements.questions.children[index] !== node)) elements.questions.replaceChildren(...nodes);
+		elements.questions.hidden = nodes.length === 0;
+	};
 	const renderApprovals = (view: WebView): void => {
 		elements.approvals.replaceChildren();
 		if (view.approvals.length === 0) {
@@ -3527,6 +3553,7 @@ export function createRenderer(
 			const paletteChanged = changed("palette", [view.locale, view.palette, view.attachedId !== undefined]);
 			if (paletteChanged) renderPalette(view);
 			if (changed("approvals", [view.locale, view.approvals])) renderApprovals(view);
+			renderQuestions(view);
 			if (changed("run", [view.locale, view.run, view.dock.toggle, view.lane, view.panel.current])) renderRunActions(view);
 			if (changed("dock", [view.locale, view.dock, view.panel.current])) renderDock(view);
 			if (changed("submit", [view.locale, view.busy, view.run.submitModes])) renderSubmitModes(view);

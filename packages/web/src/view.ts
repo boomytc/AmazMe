@@ -12,6 +12,7 @@ import { shortcuts, type Shortcut } from "./shortcuts.ts";
 import { translate, thinkingLevelCopy, toolTitleCopy, type MessageKey } from "./strings.ts";
 import { errorMessageCopy } from "./errors.ts";
 import type { ToolResultView } from "./tool-results.ts";
+import type { QuestionView } from "./generated/contracts.ts";
 import * as actions from "./actions.ts";
 const {APPROVAL_APPROVE_ACTION, APPROVAL_DENY_ACTION, ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, CONVERSATION_FORK_ACTION, FEEDBACK_DOWN_ACTION, FEEDBACK_UP_ACTION, QUEUE_CANCEL_ACTION, SESSION_REMOVE_ACTION, WELCOME_DISMISS_ACTION, WELCOME_SESSION_ACTION, WELCOME_SETTINGS_ACTION} = actions;
 export type BlockTone = "plain" | "muted" | "error";
@@ -400,6 +401,7 @@ export interface WebView {
 	readonly attachments: readonly Attachment[];
 	/** The session's pending tool approvals. */
 	readonly approvals: readonly ApprovalCard[];
+	readonly questions?: readonly QuestionView[];
 	/** Pending approvals the header keeps visible. Absent when the queue is empty. */
 	readonly approvalIndicator: ApprovalIndicator | undefined;
 	/** Host-owned export warning; never inserted into the model transcript. */

@@ -83,6 +83,7 @@ function mcpLine(call: Record<string, unknown>): string {
 
 function receiptLine(receipt: Record<string, unknown>): string {
 	const status = typeof receipt.status === "string" ? receipt.status : "failed";
+	if (status === "waiting_input") return "等待回答；/questions 查看，/answer <QuestionAnswer JSON> 回答或跳过。回答不会批准工具。";
 	if (status === "succeeded") return typeof receipt.answer === "string" && receipt.answer ? receipt.answer : "succeeded";
 	const error = typeof receipt.error === "string" && receipt.error ? ` ${receipt.error}` : "";
 	return `${status}${error} request=${String(receipt.request_id)}；/request ${String(receipt.request_id)} 查询原回执`;
@@ -152,6 +153,13 @@ function isDecisionInput(prompt: string): boolean {
 }
 
 export async function handleLine(client: HostClient, sessionId: string, attachmentId: string, workspace: string, state: ScreenState, prompt: string, images: readonly ImageContent[] = []): Promise<string[]> {
+	if (prompt === "/questions") return [JSON.stringify((await client.snapshot(sessionId)).questions ?? [])];
+	if (prompt.startsWith("/answer ")) {
+		const value: unknown = JSON.parse(prompt.slice(8));
+		const result = await client.answerQuestion(sessionId, attachmentId, value);
+		if (result.approval) { state.held = requestHeld(result.approval); return [state.held.summary]; }
+		return [receiptLine(result.receipt)];
+	}
 	if (state.held && !prompt.startsWith("/request ")) {
 		if (prompt !== "批准" && prompt !== "拒绝") return ["先输入批准或拒绝"];
 		return decideHeld(client, sessionId, attachmentId, state, prompt === "批准");

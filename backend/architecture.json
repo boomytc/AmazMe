@@ -72,7 +72,8 @@
         "amazme_backend.contracts.tools",
         "amazme_backend.contracts.web",
         "amazme_backend.contracts.workflows",
-        "amazme_backend.contracts.workspaces"
+        "amazme_backend.contracts.workspaces",
+        "amazme_backend.contracts.questions"
       ],
       "imports": [
         "amazme_backend.shared.errors",
@@ -201,7 +202,8 @@
         "amazme_backend.profiles.layout",
         "amazme_backend.profiles.profile",
         "amazme_backend.shared.errors",
-        "amazme_backend.shared.model"
+        "amazme_backend.shared.model",
+        "amazme_backend.contracts.questions"
       ]
     },
     "agent": {
@@ -257,7 +259,8 @@
         "amazme_backend.sessions.types",
         "amazme_backend.shared.errors",
         "amazme_backend.shared.model",
-        "amazme_backend.workspaces.paths"
+        "amazme_backend.workspaces.paths",
+        "amazme_backend.contracts.questions"
       ]
     },
     "execution": {
@@ -564,7 +567,8 @@
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
         "amazme_backend.workspaces.paths",
-        "amazme_backend.workspaces.patches"
+        "amazme_backend.workspaces.patches",
+        "amazme_backend.contracts.questions"
       ]
     },
     "interfaces": {
@@ -623,7 +627,8 @@
         "amazme_backend.sdk.client",
         "amazme_backend.sessions.service",
         "amazme_backend.shared.errors",
-        "amazme_backend.shared.model"
+        "amazme_backend.shared.model",
+        "amazme_backend.contracts.questions"
       ]
     },
     "sdk": {
@@ -666,7 +671,8 @@
         "amazme_backend.contracts.workflows",
         "amazme_backend.contracts.workspaces",
         "amazme_backend.shared.errors",
-        "amazme_backend.shared.model"
+        "amazme_backend.shared.model",
+        "amazme_backend.contracts.questions"
       ]
     },
     "bootstrap": {

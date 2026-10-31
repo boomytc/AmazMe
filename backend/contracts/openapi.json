@@ -5744,6 +5744,55 @@
         }
       }
     },
+    "/api/v1/sessions/{session}/questions": {
+      "post": {
+        "summary": "Answer Question",
+        "operationId": "answer_question_api_v1_sessions__session__questions_post",
+        "parameters": [
+          {
+            "name": "session",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuestionAnswer"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Receipt"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/sessions/{session}/approval-policy": {
       "put": {
         "summary": "Set Approval Policy",
@@ -7846,7 +7895,8 @@
               "children",
               "effect",
               "freeze",
-              "compaction"
+              "compaction",
+              "question"
             ],
             "title": "Kind"
           },
@@ -7892,6 +7942,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Preview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "question": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionView"
               },
               {
                 "type": "null"
@@ -11560,6 +11620,141 @@
         ],
         "title": "ProviderDefinition"
       },
+      "QuestionAnswer": {
+        "properties": {
+          "decision_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Decision Id"
+          },
+          "question_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Question Id"
+          },
+          "request_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Request Id"
+          },
+          "proposal_digest": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Proposal Digest"
+          },
+          "generation": {
+            "type": "integer",
+            "minimum": 1.0,
+            "title": "Generation"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "answered",
+              "skipped"
+            ],
+            "title": "Kind"
+          },
+          "answers": {
+            "items": {
+              "$ref": "#/components/schemas/UserAnswer"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "title": "Answers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "decision_id",
+          "question_id",
+          "request_id",
+          "proposal_digest",
+          "generation",
+          "kind"
+        ],
+        "title": "QuestionAnswer"
+      },
+      "QuestionOption": {
+        "properties": {
+          "label": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Label"
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "title": "Description",
+            "default": ""
+          },
+          "recommended": {
+            "type": "boolean",
+            "title": "Recommended",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "label"
+        ],
+        "title": "QuestionOption"
+      },
+      "QuestionView": {
+        "properties": {
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/UserQuestion"
+            },
+            "type": "array",
+            "maxItems": 3,
+            "minItems": 1,
+            "title": "Questions"
+          },
+          "question_id": {
+            "type": "string",
+            "title": "Question Id"
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "proposal_digest": {
+            "type": "string",
+            "title": "Proposal Digest"
+          },
+          "generation": {
+            "type": "integer",
+            "title": "Generation"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "answered",
+              "skipped"
+            ],
+            "title": "State",
+            "default": "pending"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "questions",
+          "question_id",
+          "request_id",
+          "proposal_digest",
+          "generation"
+        ],
+        "title": "QuestionView"
+      },
       "Receipt": {
         "properties": {
           "request_id": {
@@ -11576,6 +11771,7 @@
               "queued",
               "running",
               "waiting_approval",
+              "waiting_input",
               "waiting_children",
               "waiting_time",
               "waiting_host",
@@ -12292,6 +12488,16 @@
             "type": "array",
             "maxItems": 128,
             "title": "Excluded Tools"
+          },
+          "question_answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QuestionAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "provider_check": {
             "anyOf": [
@@ -13724,6 +13930,13 @@
             "type": "array",
             "title": "Previews"
           },
+          "questions": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionView"
+            },
+            "type": "array",
+            "title": "Questions"
+          },
           "next_wake_ms": {
             "type": "integer",
             "title": "Next Wake Ms",
@@ -14249,7 +14462,7 @@
           },
           "name": {
             "type": "string",
-            "pattern": "^(shell|read_file|glob|grep|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
+            "pattern": "^(shell|read_file|glob|grep|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|ask_user_question|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
             "title": "Name"
           },
           "arguments": {
@@ -14547,6 +14760,78 @@
         ],
         "title": "UsageReport",
         "description": "Token totals and catalog cost already stored with finished model calls.\n\n``priced`` is true only when every finished call had a catalog rate. A partial sum is not returned\nas ``cost_micro_usd``. One micro-USD is one millionth of a US dollar; the stored product truncates."
+      },
+      "UserAnswer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "selected": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Selected"
+          },
+          "custom": {
+            "type": "string",
+            "maxLength": 8000,
+            "title": "Custom",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "UserAnswer"
+      },
+      "UserQuestion": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Id"
+          },
+          "question": {
+            "type": "string",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "header": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Header",
+            "default": ""
+          },
+          "options": {
+            "items": {
+              "$ref": "#/components/schemas/QuestionOption"
+            },
+            "type": "array",
+            "maxItems": 8,
+            "title": "Options"
+          },
+          "multi_select": {
+            "type": "boolean",
+            "title": "Multi Select",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "question"
+        ],
+        "title": "UserQuestion"
       },
       "ValidationError": {
         "properties": {
@@ -14851,6 +15136,7 @@
               "queued",
               "running",
               "waiting_approval",
+              "waiting_input",
               "waiting_children",
               "waiting_time",
               "waiting_host",
@@ -14971,6 +15257,7 @@
               "queued",
               "running",
               "waiting_approval",
+              "waiting_input",
               "waiting_children",
               "waiting_time",
               "waiting_host",

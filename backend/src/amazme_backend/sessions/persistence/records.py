@@ -11,6 +11,7 @@ from amazme_backend.contracts.identity import HostFence
 from amazme_backend.contracts.ipc.worker import WorkerActivity
 from amazme_backend.contracts.mcp import McpOffer
 from amazme_backend.contracts.models import ImagePart, Message, checked_images
+from amazme_backend.contracts.questions import QuestionView
 from amazme_backend.contracts.sessions import (
     Approval,
     Compaction,
@@ -46,10 +47,11 @@ class Changes:
 
     def emit(self, kind: str, request_id: str = "", text: str = "", *,
              receipt: Receipt | None = None, approval: Approval | None = None,
-             preview: Preview | None = None, message: TranscriptMessage | None = None) -> None:
+             preview: Preview | None = None, message: TranscriptMessage | None = None,
+             question: QuestionView | None = None) -> None:
         self.events.append(Event.model_validate(dict(seq=str(self.seq), kind=kind, request_id=request_id, text=text,
                                                      receipt=receipt, approval=approval, preview=preview,
-                                                     message=message)))
+                                                     message=message, question=question)))
 
 
 
@@ -307,7 +309,7 @@ def session_activity(db: sqlite3.Connection) -> WorkerActivity:
     state: WorkerState = "blocked" if metadata_value(db, "blocked") else (
         "stopping" if metadata_value(db, "stopping") else "frozen" if metadata_value(db, "freeze_id") else "ready")
     runnable = state == "ready" and (resolutions > 0 or any(
-        r.kind != "steer" and r.status not in {"waiting_approval", "waiting_children"} and r.not_before_ms <= clock.now_ms()
+        r.kind != "steer" and r.status not in {"waiting_approval", "waiting_input", "waiting_children"} and r.not_before_ms <= clock.now_ms()
         for r in requests))
     return WorkerActivity(pending=len(pending_request_ids(db)),
                           runnable=runnable, next_wake_ms=due, state=state)

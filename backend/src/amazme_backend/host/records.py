@@ -5,7 +5,7 @@ from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.sessions import Receipt
 from amazme_backend.shared.model import Model
 
-DeliveryKind = Literal["submit", "cancel", "approval", "resolve", "job_notice"]
+DeliveryKind = Literal["submit", "cancel", "approval", "question", "resolve", "job_notice"]
 
 
 class Delivery(Model):

@@ -308,13 +308,14 @@ export type EpochHealth = {
 
 export type Event = {
   "seq": string;
-  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction";
+  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction" | "question";
   "request_id": string;
   "text": string;
   "message"?: TranscriptMessage | null;
   "receipt"?: Receipt | null;
   "approval"?: Approval | null;
   "preview"?: Preview | null;
+  "question"?: QuestionView | null;
 };
 
 export type ExecutionResource = {
@@ -1012,10 +1013,35 @@ export type ProviderDefinition = {
   "model_ids"?: Array<string> | null;
 };
 
+export type QuestionAnswer = {
+  "decision_id": string;
+  "question_id": string;
+  "request_id": string;
+  "proposal_digest": string;
+  "generation": number;
+  "kind": "answered" | "skipped";
+  "answers"?: Array<UserAnswer>;
+};
+
+export type QuestionOption = {
+  "label": string;
+  "description"?: string;
+  "recommended"?: boolean;
+};
+
+export type QuestionView = {
+  "questions": Array<UserQuestion>;
+  "question_id": string;
+  "request_id": string;
+  "proposal_digest": string;
+  "generation": number;
+  "state"?: "pending" | "answered" | "skipped";
+};
+
 export type Receipt = {
   "request_id": string;
   "text": string;
-  "status": "queued" | "running" | "waiting_approval" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
+  "status": "queued" | "running" | "waiting_approval" | "waiting_input" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
   "answer"?: string;
   "error"?: string;
   "accepted_revision"?: string;
@@ -1141,6 +1167,7 @@ export type RpcParams = {
   "append_system_prompt"?: string;
   "allowed_tools"?: Array<string> | null;
   "excluded_tools"?: Array<string>;
+  "question_answer"?: QuestionAnswer | null;
   "provider_check"?: ProviderCheckRequest | null;
   "feedback"?: AnswerFeedbackWrite | null;
   "compaction"?: CompactSession | null;
@@ -1386,6 +1413,7 @@ export type Snapshot = {
   "approvals"?: Array<Approval>;
   "effects"?: Array<EffectHold>;
   "previews"?: Array<Preview>;
+  "questions"?: Array<QuestionView>;
   "next_wake_ms"?: number;
   "pending"?: number;
   "compaction"?: string;
@@ -1527,6 +1555,20 @@ export type UsageReport = {
   "cost_micro_usd"?: number | null;
 };
 
+export type UserAnswer = {
+  "id": string;
+  "selected"?: Array<string>;
+  "custom"?: string;
+};
+
+export type UserQuestion = {
+  "id": string;
+  "question": string;
+  "header"?: string;
+  "options"?: Array<QuestionOption>;
+  "multi_select"?: boolean;
+};
+
 export type ValidationError = {
   "loc": Array<string | number>;
   "msg": string;
@@ -1582,7 +1624,7 @@ export type WorkflowChild = {
   "request_id": string;
   "role": "check" | "correction";
   "text": string;
-  "status"?: "queued" | "running" | "waiting_approval" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
+  "status"?: "queued" | "running" | "waiting_approval" | "waiting_input" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
 };
 
 export type WorkflowOpen = {
@@ -1603,7 +1645,7 @@ export type WorkflowView = {
   "correction_limit": number;
   "attempts": number;
   "parent_id": string;
-  "parent_status"?: "queued" | "running" | "waiting_approval" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
+  "parent_status"?: "queued" | "running" | "waiting_approval" | "waiting_input" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
   "check": string;
   "children"?: Array<WorkflowChild>;
 };
@@ -1784,6 +1826,9 @@ export interface ApiModels {
   ProviderCheckRequest: ProviderCheckRequest;
   ProviderConfigured: ProviderConfigured;
   ProviderDefinition: ProviderDefinition;
+  QuestionAnswer: QuestionAnswer;
+  QuestionOption: QuestionOption;
+  QuestionView: QuestionView;
   Receipt: Receipt;
   Recovery: Recovery;
   RemoteCallView: RemoteCallView;
@@ -1838,6 +1883,8 @@ export interface ApiModels {
   UpdateModelSettings: UpdateModelSettings;
   UpdateRecord: UpdateRecord;
   UsageReport: UsageReport;
+  UserAnswer: UserAnswer;
+  UserQuestion: UserQuestion;
   ValidationError: ValidationError;
   WebCallRequest: WebCallRequest;
   WebCallView: WebCallView;
@@ -2234,6 +2281,9 @@ export interface HttpOperations {
   "POST /api/v1/sessions/{session}/approvals": { response: Receipt; path: {
   "session": string;
 }; query: Record<string, unknown>; body: ApprovalDecision };
+  "POST /api/v1/sessions/{session}/questions": { response: Receipt; path: {
+  "session": string;
+}; query: Record<string, unknown>; body: QuestionAnswer };
   "PUT /api/v1/sessions/{session}/approval-policy": { response: SessionApprovalPolicy; path: {
   "session": string;
 }; query: Record<string, unknown>; body: SessionApprovalPolicy };

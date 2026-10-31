@@ -4444,3 +4444,13 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	outline-offset: 3px;
 	border-radius: 8px;
 }
+
+.questions { display: grid; gap: 12px; }
+.question-card { border: 1px solid var(--line); border-radius: 12px; padding: 14px; background: var(--raised); }
+.question-card h3 { margin: 0 0 12px; font-size: 14px; }
+.question-card fieldset { border: 0; padding: 0; margin: 0 0 14px; min-width: 0; }
+.question-card legend { margin-bottom: 8px; font-weight: 600; }
+.question-option { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; }
+.question-option small { display: block; color: var(--text-2); margin-top: 3px; }
+.question-custom { display: grid; gap: 6px; margin-top: 8px; color: var(--text-2); }
+.question-custom textarea { width: 100%; resize: vertical; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }

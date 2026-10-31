@@ -1526,7 +1526,8 @@
             "children",
             "effect",
             "freeze",
-            "compaction"
+            "compaction",
+            "question"
           ],
           "title": "Kind",
           "type": "string"
@@ -1576,6 +1577,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/Preview"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "question": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/QuestionView"
             },
             {
               "type": "null"
@@ -5244,6 +5256,141 @@
       ],
       "title": "ProviderDefinition"
     },
+    "QuestionAnswer": {
+      "properties": {
+        "decision_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Decision Id"
+        },
+        "question_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Question Id"
+        },
+        "request_id": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Request Id"
+        },
+        "proposal_digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Proposal Digest"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 1.0,
+          "title": "Generation"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "answered",
+            "skipped"
+          ],
+          "title": "Kind"
+        },
+        "answers": {
+          "items": {
+            "$ref": "#/components/schemas/UserAnswer"
+          },
+          "type": "array",
+          "maxItems": 3,
+          "title": "Answers"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "decision_id",
+        "question_id",
+        "request_id",
+        "proposal_digest",
+        "generation",
+        "kind"
+      ],
+      "title": "QuestionAnswer"
+    },
+    "QuestionOption": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Description",
+          "type": "string"
+        },
+        "recommended": {
+          "default": false,
+          "title": "Recommended",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "title": "QuestionOption",
+      "type": "object"
+    },
+    "QuestionView": {
+      "additionalProperties": false,
+      "properties": {
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/UserQuestion"
+          },
+          "maxItems": 3,
+          "minItems": 1,
+          "title": "Questions",
+          "type": "array"
+        },
+        "question_id": {
+          "title": "Question Id",
+          "type": "string"
+        },
+        "request_id": {
+          "title": "Request Id",
+          "type": "string"
+        },
+        "proposal_digest": {
+          "title": "Proposal Digest",
+          "type": "string"
+        },
+        "generation": {
+          "title": "Generation",
+          "type": "integer"
+        },
+        "state": {
+          "default": "pending",
+          "enum": [
+            "pending",
+            "answered",
+            "skipped"
+          ],
+          "title": "State",
+          "type": "string"
+        }
+      },
+      "required": [
+        "questions",
+        "question_id",
+        "request_id",
+        "proposal_digest",
+        "generation"
+      ],
+      "title": "QuestionView",
+      "type": "object"
+    },
     "Receipt": {
       "additionalProperties": false,
       "properties": {
@@ -5260,6 +5407,7 @@
             "queued",
             "running",
             "waiting_approval",
+            "waiting_input",
             "waiting_children",
             "waiting_time",
             "waiting_host",
@@ -5977,6 +6125,16 @@
           "type": "array",
           "maxItems": 128,
           "title": "Excluded Tools"
+        },
+        "question_answer": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/QuestionAnswer"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "provider_check": {
           "anyOf": [
@@ -7410,6 +7568,13 @@
           "title": "Previews",
           "type": "array"
         },
+        "questions": {
+          "items": {
+            "$ref": "#/$defs/QuestionView"
+          },
+          "title": "Questions",
+          "type": "array"
+        },
         "next_wake_ms": {
           "default": 0,
           "title": "Next Wake Ms",
@@ -7934,7 +8099,7 @@
           "type": "string"
         },
         "name": {
-          "pattern": "^(shell|read_file|glob|grep|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
+          "pattern": "^(shell|read_file|glob|grep|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|ask_user_question|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
           "title": "Name",
           "type": "string"
         },
@@ -8232,6 +8397,78 @@
       ],
       "title": "UsageReport",
       "description": "Token totals and catalog cost already stored with finished model calls.\n\n``priced`` is true only when every finished call had a catalog rate. A partial sum is not returned\nas ``cost_micro_usd``. One micro-USD is one millionth of a US dollar; the stored product truncates."
+    },
+    "UserAnswer": {
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id"
+        },
+        "selected": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "maxItems": 8,
+          "title": "Selected"
+        },
+        "custom": {
+          "type": "string",
+          "maxLength": 8000,
+          "title": "Custom",
+          "default": ""
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "title": "UserAnswer"
+    },
+    "UserQuestion": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "question": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "header": {
+          "default": "",
+          "maxLength": 64,
+          "title": "Header",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/QuestionOption"
+          },
+          "maxItems": 8,
+          "title": "Options",
+          "type": "array"
+        },
+        "multi_select": {
+          "default": false,
+          "title": "Multi Select",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "question"
+      ],
+      "title": "UserQuestion",
+      "type": "object"
     },
     "ValidationError": {
       "properties": {
@@ -8536,6 +8773,7 @@
             "queued",
             "running",
             "waiting_approval",
+            "waiting_input",
             "waiting_children",
             "waiting_time",
             "waiting_host",
@@ -8656,6 +8894,7 @@
             "queued",
             "running",
             "waiting_approval",
+            "waiting_input",
             "waiting_children",
             "waiting_time",
             "waiting_host",
@@ -9836,6 +10075,14 @@
       },
       "body": {
         "$ref": "#/components/schemas/ApprovalDecision"
+      }
+    },
+    "POST /api/v1/sessions/{session}/questions": {
+      "response": {
+        "$ref": "#/components/schemas/Receipt"
+      },
+      "body": {
+        "$ref": "#/components/schemas/QuestionAnswer"
       }
     },
     "PUT /api/v1/sessions/{session}/approval-policy": {

@@ -20,6 +20,7 @@ from amazme_backend.contracts.execution import (
 from amazme_backend.contracts.mcp import McpOffer, McpToolCall
 from amazme_backend.contracts.models import ToolCall
 from amazme_backend.contracts.plugins import PluginOffer, PluginToolCall
+from amazme_backend.contracts.questions import AskUser
 from amazme_backend.contracts.sessions import DelegateTasks
 from amazme_backend.contracts.tools import ToolSearchInput
 from amazme_backend.contracts.web import WebFetch, WebSearch, validate_fetch_url
@@ -29,7 +30,7 @@ from amazme_backend.shared.errors import BackendError
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | FileGlob | FileGrep | WriteFile | EditFile | ApplyPatch | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | WebSearch | WebFetch | McpToolCall | PluginToolCall = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | FileGlob | FileGrep | WriteFile | EditFile | ApplyPatch | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | AskUser | WebSearch | WebFetch | McpToolCall | PluginToolCall = Shell.model_validate_json(call.arguments)
     elif call.name == "job_list":
         value = JobListInput.model_validate_json(call.arguments)
     elif call.name == "job_output":
@@ -57,6 +58,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = EditFile.model_validate_json(call.arguments)
     elif call.name == "apply_patch":
         value = ApplyPatch.model_validate_json(call.arguments)
+    elif call.name == "ask_user_question":
+        value = AskUser.model_validate_json(call.arguments)
     elif call.name == "delegate_task":
         value = DelegateTasks.model_validate_json(call.arguments)
         if any(not task or len(task) > 16000 for task in value.tasks):

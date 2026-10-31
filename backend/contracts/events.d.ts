@@ -36,13 +36,14 @@ export type EffectHold = {
 
 export type Event = {
   "seq": string;
-  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction";
+  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction" | "question";
   "request_id": string;
   "text": string;
   "message"?: TranscriptMessage | null;
   "receipt"?: Receipt | null;
   "approval"?: Approval | null;
   "preview"?: Preview | null;
+  "question"?: QuestionView | null;
 };
 
 export type Preview = {
@@ -53,10 +54,25 @@ export type Preview = {
   "text": string;
 };
 
+export type QuestionOption = {
+  "label": string;
+  "description"?: string;
+  "recommended"?: boolean;
+};
+
+export type QuestionView = {
+  "questions": Array<UserQuestion>;
+  "question_id": string;
+  "request_id": string;
+  "proposal_digest": string;
+  "generation": number;
+  "state"?: "pending" | "answered" | "skipped";
+};
+
 export type Receipt = {
   "request_id": string;
   "text": string;
-  "status": "queued" | "running" | "waiting_approval" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
+  "status": "queued" | "running" | "waiting_approval" | "waiting_input" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
   "answer"?: string;
   "error"?: string;
   "accepted_revision"?: string;
@@ -83,6 +99,7 @@ export type Snapshot = {
   "approvals"?: Array<Approval>;
   "effects"?: Array<EffectHold>;
   "previews"?: Array<Preview>;
+  "questions"?: Array<QuestionView>;
   "next_wake_ms"?: number;
   "pending"?: number;
   "compaction"?: string;
@@ -100,6 +117,14 @@ export type TranscriptMessage = {
   "role": "user" | "assistant" | "tool";
   "content": string;
   "tool_calls"?: Array<string>;
+};
+
+export type UserQuestion = {
+  "id": string;
+  "question": string;
+  "header"?: string;
+  "options"?: Array<QuestionOption>;
+  "multi_select"?: boolean;
 };
 
 export type Stream = {

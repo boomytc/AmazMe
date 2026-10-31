@@ -66,6 +66,7 @@ from amazme_backend.contracts.plugins import (
     PluginReload,
     PluginView,
 )
+from amazme_backend.contracts.questions import QuestionAnswer, QuestionView
 from amazme_backend.contracts.resources import ResourceCatalog, ResourceOptions
 from amazme_backend.contracts.schedules import (
     ScheduleControl,
@@ -402,7 +403,7 @@ class Client:
         """Return a pending approval, or the terminal receipt. Waiting is not a grant."""
         for _ in range(attempts):
             receipt = await self.request(session_id=session_id, request_id=request_id)
-            if receipt.status in {"succeeded", "cancelled", "interrupted", "failed", "unknown"}:
+            if receipt.status in {"waiting_input", "succeeded", "cancelled", "interrupted", "failed", "unknown"}:
                 return receipt, None
             if receipt.status == "waiting_approval":
                 pending = next((
@@ -423,6 +424,21 @@ class Client:
             },
             headers=self._write(attachment_id))
         return Receipt.model_validate(payload)
+
+    async def answer_question(self, *, session_id: str, attachment_id: str, value: QuestionAnswer) -> Receipt:
+        return Receipt.model_validate(await self._send("POST", f"/api/v1/sessions/{session_id}/questions",
+            json_body=value.model_dump(), headers=self._write(attachment_id)))
+
+    async def wait_for_question(self, *, session_id: str, request_id: str, attempts: int = 200) -> QuestionView:
+        for _ in range(attempts):
+            question = next((item for item in (await self.snapshot(session_id)).questions
+                             if item.request_id == request_id and item.state == "pending"), None)
+            if question is not None:
+                return question
+            if (await self.request(session_id=session_id, request_id=request_id)).status in {"succeeded", "cancelled", "failed", "interrupted", "unknown"}:
+                raise BackendError("question_not_found", status=404)
+            await asyncio.sleep(0.05)
+        raise BackendError("question_pending", status=503)
 
     async def read_file(self, path: str, *, offset: int = 0, limit: int = FILE_READ_LIMIT) -> FileContent:
         payload = await self._send(

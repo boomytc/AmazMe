@@ -18,6 +18,7 @@ from amazme_backend.contracts.accounts import CredentialUpdate, OAuthInput, OAut
 from amazme_backend.contracts.management import ExportBundle
 from amazme_backend.contracts.mcp import McpConfiguration, McpConfigWrite, McpStdioSettings
 from amazme_backend.contracts.models import UpdateModelSettings
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.sessions import Approval, Receipt
 from amazme_backend.contracts.workspaces import WorkspaceGrantRequest
 from amazme_backend.interfaces.client_context import local_time_zone
@@ -37,6 +38,11 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
     resource = sub.add_parser("resources")
     resource.add_argument("--session", required=True)
+    questions = sub.add_parser("questions")
+    questions.add_argument("--session", required=True)
+    answer = sub.add_parser("answer")
+    answer.add_argument("--session", required=True)
+    answer.add_argument("--value", required=True, help="QuestionAnswer JSON with a stable decision_id")
     create = sub.add_parser("create")
     create.add_argument("--workspace", required=True)
     create.add_argument("--title", default="新会话")
@@ -296,6 +302,22 @@ async def _run(
             return 1
     try:
         async with Client(args.url, args.token) as client:
+            if args.command == "questions":
+                print(json.dumps([question.model_dump() for question in (await client.snapshot(args.session)).questions], ensure_ascii=False))
+                return 0
+            if args.command == "answer":
+                try:
+                    value = QuestionAnswer.model_validate_json(args.value)
+                except ValueError as error:
+                    raise BackendError("question_answer_invalid") from error
+                attachment = await client.attach(args.session)
+                try:
+                    receipt = await client.answer_question(session_id=args.session, attachment_id=attachment.attachment_id, value=value)
+                    receipt, approval = await client.await_user_decision(session_id=args.session, request_id=receipt.request_id)
+                    _print_receipt(receipt, approval)
+                    return 2 if receipt.status in {"waiting_input", "waiting_approval"} else 0 if receipt.status == "succeeded" else 1
+                finally:
+                    await client.release(session_id=args.session, attachment_id=attachment.attachment_id)
             if args.command == "mcp":
                 print((await _add_kimi_cu(client)).model_dump_json())
                 return 0
@@ -368,7 +390,7 @@ async def _run(
                                                   text=args.text, time_zone=args.time_zone if args.time_zone is not None else local_time_zone())
                     receipt, approval = await client.await_user_decision(session_id=args.session, request_id=receipt.request_id)
                     _print_receipt(receipt,approval)
-                    if approval is not None:
+                    if approval is not None or receipt.status == "waiting_input":
                         return 2
                     return 0 if receipt.status == "succeeded" else 1
                 finally:
@@ -378,7 +400,7 @@ async def _run(
                 approval = next((item for item in (await client.snapshot(args.session)).approvals
                     if item.request_id == args.request_id and item.state == "pending"), None) if receipt.status == "waiting_approval" else None
                 _print_receipt(receipt,approval)
-                return 2 if approval is not None else 0 if receipt.status == "succeeded" else 1
+                return 2 if approval is not None or receipt.status == "waiting_input" else 0 if receipt.status == "succeeded" else 1
             if args.command == "release":
                 await client.release(session_id=args.session, attachment_id=args.attachment)
                 print(json.dumps({"detached": True, "cancelled": False}))

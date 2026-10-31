@@ -128,7 +128,7 @@ async function emitReceipt(
 		);
 	}
 	if (status === "succeeded") return 0;
-	if (status === "waiting_approval") return 2;
+	if (status === "waiting_approval" || status === "waiting_input") return 2;
 	return 1;
 }
 

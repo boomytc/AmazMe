@@ -19,6 +19,7 @@ from amazme_backend.contracts.tools import ToolSearchInput
 from amazme_backend.contracts.web import WebCallView
 from amazme_backend.features.tools.search import rank_tools, search_result
 from amazme_backend.sessions.persistence import clock
+from amazme_backend.sessions.persistence.questions import question_view
 from amazme_backend.sessions.persistence.records import (
     Changes,
     append_message,
@@ -182,7 +183,18 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
             if join_children(db, c, request, step):
                 return Continue()
             return Park("children")
+        if step.phase == "question":
+            return Park("input")
         if step.phase == "proposed":
+            if step.call is not None and step.call.name == "ask_user_question":
+                if run.lease:
+                    return CloseEpoch(request.request_id, run.lease)
+                step.phase = "question"
+                save_step(db, step)
+                request.status = "waiting_input"
+                save_request(db, c, request)
+                c.emit("question", request.request_id, "pending", question=question_view(request, step))
+                return Park("input")
             if step.call is not None and step.call.name == "tool_search":
                 search = ToolSearchInput.model_validate_json(step.call.arguments)
                 loaded = set(loaded_mcp_keys(db, request.request_id))

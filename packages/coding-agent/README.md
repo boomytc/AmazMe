@@ -54,5 +54,7 @@ TUI 用 `/model provider/id` 选择、`/model next` 按候选循环；模型和�
 无界面审批先用 `--session ID --request ID` 查询，再用 `--decision 批准 --request ID --approval-id ID` 指向显示的原提案。
 重试保留这些编号；已结算提案只查询，不能自动批准同一请求的下一项工具。待审批退出码为 2。
 
+模型等待结构化回答时，非交互调用也返回退出码 2。终端 `/questions` 查看问题，`/answer <QuestionAnswer JSON>` 显式回答或跳过；JSON 绑定当前 `question_id`、`request_id`、`proposal_digest`、`generation`，并包含稳定 `decision_id`、`kind` 和 `answers`。`kind="skipped"` 使用空回答数组。也可在 Web 作答，或通过 RPC `question.answer` 的 `question_answer` 参数传入同一 JSON。选择与回答不会批准工具；编号未确认时保留原内容。
+
 `--offline` 仅跳过版本检查；模型目录默认使用包内快照，供应商调用仍按配置联网。
 `--verbose` 显示 profile、构建和代际，不显示令牌。旧文件导出参数改用 `export --output PATH`；旧 TS 项目资源信任选项不再接纳，Python 插件只按显式登记加载。

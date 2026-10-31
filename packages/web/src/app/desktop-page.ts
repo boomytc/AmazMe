@@ -582,6 +582,21 @@ export class DesktopPage {
 		}
 		if (id === A.WELCOME_SESSION_ACTION) { await this.createSession(); return; }
 		if (id === A.WELCOME_SETTINGS_ACTION || id === A.MODEL_CONNECTIONS_ACTION) { this.currentPanel = P.SETTINGS_VIEW; this.modal = undefined; this.render(); return; }
+		if (id === A.QUESTION_ANSWER_ACTION) {
+			const connection = this.requireConnection(), target: unknown = JSON.parse(data ?? "null");
+			if (!isRecord(target) || target.sessionId !== connection.sessionId || !isRecord(target.value)) return;
+			const answer = parseContract("QuestionAnswer", { ...target.value, decision_id: "pending" });
+			if (!connection.snapshot?.questions?.some(question => question.state === "pending" && question.question_id === answer.question_id
+				&& question.proposal_digest === answer.proposal_digest && question.generation === answer.generation)) return;
+			const ledger = this.ledger(connection), key = `question:${answer.question_id}`;
+			const record = ledger.prepare(key, "POST /api/v1/sessions/{session}/questions", decisionId => ({
+				path: { session: connection.sessionId }, body: { ...answer, decision_id: decisionId },
+			}));
+			if (record.body.kind !== answer.kind || JSON.stringify(record.body.answers ?? []) !== JSON.stringify(answer.answers ?? [])) {
+				throw new Error("原回答尚未确认，请先核对或重试原回答。");
+			}
+			await ledger.send(key, record, this.client, connection); return;
+		}
 		if (id === A.WELCOME_DISMISS_ACTION) { await this.setPreference("showWelcome", "false"); return; }
 		if (id === A.DOCK_TOGGLE_ACTION) { this.dockOpen = !this.dockOpen; if (this.dockOpen && this.dockTab === "files" && !this.workspace) await this.openWorkspace(); this.render(); return; }
 		if (id === A.DOCK_TAB_ACTION) { this.dockTab = value; this.dockOpen = true; if (value === "files" && !this.workspace) await this.openWorkspace(); if (value === "terminal") await this.loadTerminal(this.requireConnection(), true); this.render(); return; }

@@ -49,6 +49,7 @@ from amazme_backend.contracts.plugins import (
     PluginPackageRemove,
     PluginReload,
 )
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.schedules import (
     ScheduleControl,
     ScheduleInput,
@@ -72,6 +73,7 @@ from amazme_backend.shared.model import Model
 
 
 class RpcParams(RunOptions):
+    question_answer: QuestionAnswer | None = None
     provider_check: ProviderCheckRequest | None = None
     feedback: AnswerFeedbackWrite | None = None
     compaction: CompactSession | None = None
@@ -353,6 +355,11 @@ async def _dispatch(owner: Host, method: str, params: RpcParams) -> Model:
         return await owner.sessions.deliver(session, "approval", params.decision_id, ApprovalDecision(
             decision_id=params.decision_id, approval_id=params.approval_id,
             expected_revision=params.expected_revision, proposal_digest=params.proposal_digest, approve=approve))
+    if method == "question.answer":
+        session = await _bound(owner, params)
+        if params.question_answer is None:
+            raise BackendError("question_answer_required")
+        return await owner.sessions.deliver(session, "question", params.question_answer.decision_id, params.question_answer)
     if method == "file.list":
         await _bound(owner, params)
         return await owner.workspaces.list_workspace(params.path, params.offset)

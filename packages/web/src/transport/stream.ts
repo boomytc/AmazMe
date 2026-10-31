@@ -3,7 +3,7 @@ import { isRecord, parseContract } from "./api.ts";
 
 export const settled = new Set<Receipt["status"]>(["succeeded", "cancelled", "interrupted", "failed", "unknown"]);
 export const requestStatus: Readonly<Record<Receipt["status"], string>> = {
-	queued: "等待执行", running: "执行中", waiting_approval: "等待审批", waiting_children: "等待子任务", waiting_time: "等待计划时间", waiting_host: "等待恢复",
+	queued: "等待执行", running: "执行中", waiting_approval: "等待审批", waiting_input: "等待回答", waiting_children: "等待子任务", waiting_time: "等待计划时间", waiting_host: "等待恢复",
 	cancelling: "正在清理", cleaning: "正在清理", blocked: "等待清理", succeeded: "已完成", cancelled: "已取消", interrupted: "运行中断", failed: "失败", unknown: "结果未知，未自动重试",
 };
 
@@ -37,6 +37,8 @@ function trim(model: Snapshot): Snapshot {
 	model.requests = model.requests.filter(row => !settled.has(row.status) || keep.has(row.request_id) || held.has(row.request_id));
 	const ids = new Set(model.requests.map(row => row.request_id));
 	model.approvals = (model.approvals ?? []).filter(item => ids.has(item.request_id) || item.state === "pending");
+	model.questions = (model.questions ?? []).filter(question => question.state === "pending"
+		&& model.requests.some(request => request.request_id === question.request_id && request.status === "waiting_input" && !request.cancel_requested && !request.decision));
 	model.previews = (model.previews ?? []).filter(item => previewMatches(item, model.requests.find(row => row.request_id === item.request_id)));
 	model.events = model.events.slice(-200);
 	return model;
@@ -57,7 +59,7 @@ export function applyFrame(previous: Snapshot | undefined, frame: Stream, bindin
 	if (!previous || frame.resync || frame.stream_id !== previous.stream_id || !batches.length || batches.length > 16) throw new Error("需要重新同步快照");
 	const model = structuredClone(previous);
 	let cursor = seq(model.seq), last: bigint | undefined;
-	model.approvals ??= []; model.previews ??= []; model.effects ??= [];
+	model.approvals ??= []; model.previews ??= []; model.effects ??= []; model.questions ??= [];
 	for (const batch of batches) {
 		const number = seq(batch.seq);
 		if (batch.stream_id !== model.stream_id || seq(batch.revision) !== number || seq(batch.base_revision) !== number - 1n || !batch.events.length ||
@@ -71,6 +73,10 @@ export function applyFrame(previous: Snapshot | undefined, frame: Stream, bindin
 				upsert(model.requests, event.receipt, "request_id");
 			}
 			if (event.approval) upsert(model.approvals, event.approval, "approval_id");
+			if (event.question) {
+				if (event.question.request_id !== event.request_id) throw new Error("问题与事务归属不匹配");
+				upsert(model.questions, event.question, "question_id");
+			}
 			if (event.preview) {
 				const preview = event.preview;
 				seq(preview.preview_seq);

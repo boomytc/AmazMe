@@ -45,6 +45,7 @@ export const WORKSPACE_PAGE_ACTION = "workspace:page";
 export const WORKSPACE_READ_ACTION = "workspace:read";
 /** Open a model-linked file using the session that owns the rendered answer. */
 export const WORKSPACE_FILE_LINK_ACTION = "workspace:file-link";
+export const QUESTION_ANSWER_ACTION = "question:answer";
 /** Run a terminal command: `data` is the command line. */
 export const TERMINAL_RUN_ACTION = "terminal:run";
 /** Stop the running terminal command. */

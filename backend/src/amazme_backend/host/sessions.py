@@ -25,10 +25,12 @@ from amazme_backend.contracts.ipc.worker import (
     CodeChild,
     JobNotice,
     JobNoticeEnvelope,
+    QuestionEnvelope,
     ResolutionEnvelope,
     Submission,
 )
 from amazme_backend.contracts.models import ImagePart, Message
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.sessions import (
     ApprovalDecision,
     Attachment,
@@ -665,6 +667,11 @@ class SessionOperations:
                     Receipt,
                     Cancel(**self.lifecycle.fence.model_dump(), request_id=value.request_id),
                 )
+            elif delivery.kind == "question":
+                answer = QuestionAnswer.model_validate_json(delivery.payload)
+                expected_request = answer.request_id
+                receipt = await peer.call("POST", "/questions", Receipt,
+                    QuestionEnvelope(**self.lifecycle.fence.model_dump(), value=answer))
             elif delivery.kind == "approval":
                 approval = ApprovalDecision.model_validate_json(delivery.payload)
                 receipt = await peer.call(
@@ -696,6 +703,10 @@ class SessionOperations:
                 "steer_target_settled",
                 "context_limit",
                 "approval_decision_conflict",
+                "question_answer_conflict",
+                "question_not_found",
+                "question_answer_invalid",
+                "stale_question",
                 "approval_not_found",
                 "stale_approval",
                 "resolution_conflict",

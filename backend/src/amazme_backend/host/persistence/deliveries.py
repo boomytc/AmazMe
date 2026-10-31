@@ -9,6 +9,7 @@ from amazme_backend.contracts.execution import EffectResolution
 from amazme_backend.contracts.ipc.worker import Cancel, JobNotice
 from amazme_backend.contracts.models import ModelSelection
 from amazme_backend.contracts.profiles import ProviderConfig
+from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.sessions import ApprovalDecision, Receipt, Submit
 from amazme_backend.host.persistence.owner import PersistenceOwner
 from amazme_backend.host.records import Delivery, DeliveryKind
@@ -54,7 +55,7 @@ def delivery_row(row: sqlite3.Row) -> Delivery:
             "provider": ProviderConfig.model_validate_json(row["provider"]) if row["provider"] else None,
         }
     )
-    commands = {"submit": Submit, "cancel": Cancel, "approval": ApprovalDecision, "resolve": EffectResolution,
+    commands = {"submit": Submit, "cancel": Cancel, "approval": ApprovalDecision, "question": QuestionAnswer, "resolve": EffectResolution,
                 "job_notice": JobNotice}
     commands[value.kind].model_validate_json(value.payload)
     return value

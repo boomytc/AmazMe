@@ -219,6 +219,13 @@ export class HostClient {
 		return this.#send("GET", `/api/v1/sessions/${sessionId}/snapshot`);
 	}
 
+	async answerQuestion(sessionId: string, attachmentId: string, value: unknown): Promise<Polled> {
+		if (!isRecord(value)) fail("question_answer_invalid");
+		const receipt = await this.#send("POST", `/api/v1/sessions/${sessionId}/questions`, value, attachmentId);
+		if (typeof receipt.request_id !== "string") fail("invalid_receipt");
+		return this.#untilDecision(sessionId, receipt.request_id);
+	}
+
 	async inspectRequest(sessionId: string, requestId: string): Promise<Polled> {
 		return this.#untilDecision(sessionId, requestId);
 	}
@@ -518,6 +525,7 @@ export class HostClient {
 	async #untilDecision(sessionId: string, requestId: string): Promise<Polled> {
 		for (let attempt = 0; attempt < 800; attempt += 1) {
 			const receipt = await this.#send("GET", `/api/v1/sessions/${sessionId}/requests/${requestId}`);
+			if (receipt.status === "waiting_input") return { receipt };
 			if (typeof receipt.status === "string" && TERMINAL.has(receipt.status)) return { receipt };
 			if (receipt.status === "waiting_approval") {
 				const approval = await this.pendingApproval(sessionId, requestId);

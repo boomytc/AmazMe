@@ -14,6 +14,10 @@ Python SDK 入口是 `amazme_backend.sdk.Client`，说明见 [SDK](docs/sdk.md)�
 
 模型可用 `apply_patch` 提交 Codex 格式的多文件补丁，支持新增、更新、移动和删除，自动创建新增文件的父目录。已有源文件和覆盖目标必须先通过 `read_file` 取得版本。Host 对整批内容做预检并保存原文件检查点，Supervisor 在执行前再次核对版本，沿用当前会话的修改审批。每次最多 16 个文件操作，输入最多 32000 个字符，准备后的计划最多 128000 字节；超限时拆分补丁。执行按顺序进行，失败后停止，不回滚此前已完成的文件，结果列出完成、失败和跳过项。未知结果需要核对文件，不能重发补丁。更新内容采用 LF 换行。
 
+`ask_user_question` 可提出 1–3 个问题，每题支持至多 8 个选项、单选、多选和自由输入。问题进入会话的 `waiting_input` 状态，不申请执行许可；用户的回答也不批准其他工具。Web 的推荐项只预选，必须显式提交；跳过会形成明确结果并提示模型不要重复提问。取消后拒绝晚到回答。无执行资源的待答请求树在普通停机时保留，重开后更新问题代次，用户重新连接后可继续回答；显式取消仍结束请求。
+
+Python CLI 用 `client questions --session ID` 查看，用 `client answer --session ID --value '<QuestionAnswer JSON>'` 回答或跳过。终端对应 `/questions`、`/answer <QuestionAnswer JSON>`，RPC 为 `question.answer`，其 `question_answer` 参数是同一 DTO。回答必须携带稳定 `decision_id`、`question_id`、`request_id`、`proposal_digest`、`generation`、`kind` 和 `answers`；`kind="skipped"` 时 `answers=[]`。同编号同内容查询原决定，不得用原编号改答案。等待回答的非交互调用退出码为 2。
+
 本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。用户可以连接服务、
 选择工具、填写 JSON 参数并审批调用。已连接服务的工具目录也会交给模型；模型提出的调用走会话审批，
 不能调用 Host 的用户审批接口代替决定，批准后的结果进入后续模型上下文。
