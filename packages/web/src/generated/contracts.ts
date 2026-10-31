@@ -1800,6 +1800,24 @@ export type AppliedFileChange = {
   "truncated"?: boolean;
 };
 
+export type GitChangedFile = {
+  "path": string;
+  "status": "A" | "M" | "D" | "R" | "C" | "T" | "U" | "?";
+  "original_path"?: string;
+};
+
+export type GitDiffResult = {
+  "path": string;
+  "scope": "uncommitted" | "unstaged" | "staged";
+  "branch": string;
+  "head": string;
+  "total_files": number;
+  "files": Array<GitChangedFile>;
+  "diff": string;
+  "truncated"?: boolean;
+  "reason"?: string;
+};
+
 export type StoppedFileChange = {
   "kind": "failed" | "skipped";
   "action": "write" | "delete";
@@ -1819,6 +1837,13 @@ export type ToolResult = {
   "file_observation"?: FilePresent | FileAbsent | null;
   "file_observations"?: Array<FilePresent | FileAbsent>;
   "file_changes"?: Array<AppliedFileChange | StoppedFileChange>;
+  "repository_diff"?: GitDiffResult | null;
+};
+
+export type GitDiff = {
+  "kind"?: "git_diff";
+  "path"?: string;
+  "scope"?: "uncommitted" | "unstaged" | "staged";
 };
 
 export interface ApiModels {
@@ -2036,8 +2061,11 @@ export interface ApiModels {
   CommitBatch: CommitBatch;
   Stream: Stream;
   AppliedFileChange: AppliedFileChange;
+  GitChangedFile: GitChangedFile;
+  GitDiffResult: GitDiffResult;
   StoppedFileChange: StoppedFileChange;
   ToolResult: ToolResult;
+  GitDiff: GitDiff;
 }
 
 export interface HttpOperations {

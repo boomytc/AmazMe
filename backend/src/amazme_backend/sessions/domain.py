@@ -9,6 +9,7 @@ from amazme_backend.contracts.execution import (
     EditFile,
     FileGlob,
     FileGrep,
+    GitDiff,
     JobListInput,
     JobOutputWait,
     JobQuery,
@@ -30,7 +31,7 @@ from amazme_backend.shared.errors import BackendError
 
 def normalized_call(call: ToolCall) -> ToolCall:
     if call.name == "shell":
-        value: Shell | ReadFile | FileGlob | FileGrep | WriteFile | EditFile | ApplyPatch | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | AskUser | WebSearch | WebFetch | McpToolCall | PluginToolCall = Shell.model_validate_json(call.arguments)
+        value: Shell | ReadFile | FileGlob | FileGrep | GitDiff | WriteFile | EditFile | ApplyPatch | OutputRead | JobListInput | JobOutputWait | JobQuery | DelegateTasks | AskUser | WebSearch | WebFetch | McpToolCall | PluginToolCall = Shell.model_validate_json(call.arguments)
     elif call.name == "job_list":
         value = JobListInput.model_validate_json(call.arguments)
     elif call.name == "job_output":
@@ -43,6 +44,8 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = FileGlob.model_validate_json(call.arguments)
     elif call.name == "grep":
         value = FileGrep.model_validate_json(call.arguments)
+    elif call.name == "git_diff":
+        value = GitDiff.model_validate_json(call.arguments)
     elif call.name == "tool_output":
         value = OutputRead.model_validate_json(call.arguments)
     elif call.name == "tool_search":
@@ -79,7 +82,7 @@ def normalized_call(call: ToolCall) -> ToolCall:
         value = McpToolCall.model_validate_json(call.arguments)
     else:
         raise BackendError("not_an_execution_tool")
-    if isinstance(value, (ReadFile, FileGlob, FileGrep, WriteFile, EditFile)):
+    if isinstance(value, (ReadFile, FileGlob, FileGrep, GitDiff, WriteFile, EditFile)):
         path = PurePosixPath(value.path)
         if path.is_absolute() or ".." in path.parts:
             raise BackendError("invalid_workspace_path")

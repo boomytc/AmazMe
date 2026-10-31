@@ -64,6 +64,30 @@ class FileSearchResult(Model):
     reason: str = ""
 
 
+class GitDiff(Model):
+    kind: Literal["git_diff"] = "git_diff"
+    path: str = Field(default=".", min_length=1, max_length=1024)
+    scope: Literal["uncommitted", "unstaged", "staged"] = "uncommitted"
+
+
+class GitChangedFile(Model):
+    path: str
+    status: Literal["A", "M", "D", "R", "C", "T", "U", "?"]
+    original_path: str = ""
+
+
+class GitDiffResult(Model):
+    path: str
+    scope: Literal["uncommitted", "unstaged", "staged"]
+    branch: str
+    head: str
+    total_files: int = Field(ge=0)
+    files: list[GitChangedFile] = Field(max_length=200)
+    diff: str = Field(max_length=32000)
+    truncated: bool = False
+    reason: str = ""
+
+
 class WriteFile(FileTarget):
     content: str = Field(max_length=32000)
 
@@ -199,6 +223,7 @@ class ToolResult(Model):
     file_observation: FileObservation | None = None
     file_observations: list[FileObservation] = Field(default_factory=lambda: list[FileObservation](), max_length=32)
     file_changes: list[ExecutedFileChange] = Field(default_factory=lambda: list[ExecutedFileChange](), max_length=32)
+    repository_diff: GitDiffResult | None = None
 
 
 JobId = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")]

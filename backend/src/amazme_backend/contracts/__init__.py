@@ -32,6 +32,9 @@ from amazme_backend.contracts.execution import ExecutionResource as ExecutionRes
 from amazme_backend.contracts.execution import FileGlob as FileGlob
 from amazme_backend.contracts.execution import FileGrep as FileGrep
 from amazme_backend.contracts.execution import FileSearchResult as FileSearchResult
+from amazme_backend.contracts.execution import GitChangedFile as GitChangedFile
+from amazme_backend.contracts.execution import GitDiff as GitDiff
+from amazme_backend.contracts.execution import GitDiffResult as GitDiffResult
 from amazme_backend.contracts.execution import Lease as Lease
 from amazme_backend.contracts.execution import ProcessLease as ProcessLease
 from amazme_backend.contracts.execution import ReadFile as ReadFile

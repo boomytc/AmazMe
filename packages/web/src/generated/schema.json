@@ -8612,7 +8612,7 @@
           "type": "string"
         },
         "name": {
-          "pattern": "^(shell|read_file|glob|grep|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|ask_user_question|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
+          "pattern": "^(shell|read_file|glob|grep|git_diff|write_file|edit_file|apply_patch|tool_output|job_list|job_output|job_kill|delegate_task|ask_user_question|web_search|web_fetch|mcp_tool|mcp_[a-f0-9]{20}|plugin_tool|plugin_[a-f0-9]{20}|tool_search|codemode)$",
           "title": "Name",
           "type": "string"
         },
@@ -9798,6 +9798,105 @@
       "title": "AppliedFileChange",
       "type": "object"
     },
+    "GitChangedFile": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "A",
+            "M",
+            "D",
+            "R",
+            "C",
+            "T",
+            "U",
+            "?"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "original_path": {
+          "default": "",
+          "title": "Original Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "status"
+      ],
+      "title": "GitChangedFile",
+      "type": "object"
+    },
+    "GitDiffResult": {
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "scope": {
+          "enum": [
+            "uncommitted",
+            "unstaged",
+            "staged"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "branch": {
+          "title": "Branch",
+          "type": "string"
+        },
+        "head": {
+          "title": "Head",
+          "type": "string"
+        },
+        "total_files": {
+          "minimum": 0,
+          "title": "Total Files",
+          "type": "integer"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/GitChangedFile"
+          },
+          "maxItems": 200,
+          "title": "Files",
+          "type": "array"
+        },
+        "diff": {
+          "maxLength": 32000,
+          "title": "Diff",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "scope",
+        "branch",
+        "head",
+        "total_files",
+        "files",
+        "diff"
+      ],
+      "title": "GitDiffResult",
+      "type": "object"
+    },
     "StoppedFileChange": {
       "additionalProperties": false,
       "properties": {
@@ -9952,6 +10051,17 @@
           "maxItems": 32,
           "title": "File Changes",
           "type": "array"
+        },
+        "repository_diff": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GitDiffResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -9961,6 +10071,36 @@
         "stderr"
       ],
       "title": "ToolResult",
+      "type": "object"
+    },
+    "GitDiff": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "git_diff",
+          "default": "git_diff",
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "default": ".",
+          "maxLength": 1024,
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "scope": {
+          "default": "uncommitted",
+          "enum": [
+            "uncommitted",
+            "unstaged",
+            "staged"
+          ],
+          "title": "Scope",
+          "type": "string"
+        }
+      },
+      "title": "GitDiff",
       "type": "object"
     }
   },

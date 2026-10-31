@@ -13,7 +13,7 @@ import { providerAuthModal, providerLoginModal, type ProviderAuthLike } from "..
 import { ApiError, definitive, isRecord, parseContract } from "../transport/api.ts";
 import { PythonClient, type ClientConnection } from "../transport/client.ts";
 import contracts from "../generated/schema.json" with { type: "json" };
-import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginCallView, PluginPackages, PluginView, ProductSettings, ProjectView, ProviderCheck, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
+import type { AccountsView, AnswerFeedbackList, ConfigureProvider, CredentialUpdate, GitDiff, HistoryPage, Identity, ImagePart, InterfacePreferences, McpConfiguration, McpState, ModelCatalog, ModelSelection, OAuthView, PluginCallView, PluginPackages, PluginView, ProductSettings, ProjectView, ProviderCheck, ResourceCatalog, ScheduleInput, SchedulesView, ScheduleView, Session, SessionModel, SkillDocument, TerminalView, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
 import { pythonDirectory, pythonView } from "./view.ts";
 import { PendingWrites, newId } from "./pending/writes.ts";
 import { seq, settled } from "../transport/stream.ts";
@@ -168,6 +168,7 @@ export class DesktopPage {
 		const builtins: CommandLike[] = [
 			{ name: "new", description: "新建会话", source: "builtin" }, { name: "model", description: "模型与连接", source: "builtin" }, { name: "settings", description: "设置", source: "builtin" },
 			{ name: "compact", description: "压缩上下文", source: "builtin" }, { name: "fork", description: "创建分支", source: "builtin" }, { name: "export", description: "导出会话", source: "builtin" },
+			{ name: "diff", description: "只读审阅本地 Git 变更", argumentHint: "[uncommitted|unstaged|staged]", source: "builtin" },
 		];
 		const commands = new Map(builtins.map(item => [item.name, item]));
 		for (const plugin of this.pluginRuntime) if (plugin.phase === "ready") for (const item of plugin.tools ?? []) if (item.kind === "command" && !commands.has(item.name)) commands.set(item.name, { name: item.name, description: item.description, source: "plugin" });
@@ -448,12 +449,16 @@ export class DesktopPage {
 		}
 		const previous = initial?.ready && initial.active() ? this.ledger(initial).read("submission", "POST /api/v1/sessions/{session}/submissions") : undefined;
 		if (expectedRequest && previous?.id !== expectedRequest) throw new Error("原请求已变化，请核对当前记录");
+		let review: GitDiff | undefined;
 		if (!previous) {
 			const command = parseCommandLine(text);
 			if (command) {
 				const descriptor = this.commands.find(item => item.name === command.name);
 				if (!descriptor) throw new Error(`未识别的命令：/${command.name}`);
-				if (descriptor.source === "builtin") { await this.command(command.name, command.args); this.clearDraft(draft, revision); this.render(); return; }
+				if (descriptor.source === "builtin" && command.name === "diff") {
+					if (images.length) throw new Error("/diff 不接受图片；请先移除附件");
+					review = parseContract("GitDiff", { scope: command.args.trim() || "uncommitted" });
+				} else if (descriptor.source === "builtin") { await this.command(command.name, command.args); this.clearDraft(draft, revision); this.render(); return; }
 				if (descriptor.source === "plugin") { await this.runPluginCommand(command.name, command.args); return; }
 			}
 		}
@@ -462,9 +467,10 @@ export class DesktopPage {
 		const displayedModel = this.selection ?? this.catalog?.current;
 		const root = connection.snapshot?.requests.find(item => item.kind === "root" && !settled.has(item.status));
 		const thinking = this.catalog?.models.find(item => item.provider === displayedModel?.provider && item.model === displayedModel.model)?.thinking_levels?.find(level => level === this.thinking);
-		const steer = this.mode === "steer" && root?.run_id;
+		const steer = !review && this.mode === "steer" && root?.run_id;
 		const record = previous ?? ledger.prepare("submission", "POST /api/v1/sessions/{session}/submissions", id => ({ path: { session: connection.sessionId }, body: {
 			request_id: id, text, images, mode: steer ? "steer" : "queue",
+			...(review ? { tool_call: { id, name: "git_diff", arguments: JSON.stringify(review) } } : {}),
 			time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
 			...(steer ? { target_run_id: steer } : {
 				approval_policy: this.approvalPolicy,

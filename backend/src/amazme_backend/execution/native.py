@@ -10,6 +10,7 @@ import select
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from amazme_backend.contracts.execution import (
     FileGlob,
     FileGrep,
     FilePresent,
+    GitDiff,
     OutputRead,
     PreparedPatch,
     ProcessLease,
@@ -39,6 +41,7 @@ from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
 from amazme_backend.workspaces.files import applied_change, edit_file, read_file, write_file
 from amazme_backend.workspaces.patches import execute_patch
+from amazme_backend.workspaces.repositories import DIFF_BYTES, repository_diff
 from amazme_backend.workspaces.search import search_files
 
 LIMIT = 65536
@@ -67,7 +70,7 @@ class LocalPermit(Model):
     cwd: str
     command: str
     timeout_seconds: int = Field(ge=1, le=86400)
-    file: WriteFile | EditFile | ReadFile | FileGlob | FileGrep | None = None
+    file: WriteFile | EditFile | ReadFile | FileGlob | FileGrep | GitDiff | None = None
     file_key: str = ""
     patch: PreparedPatch | None = None
     expected_digest: str | None = None
@@ -151,6 +154,70 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
         elif permit.output_read is not None:
             page = read_output(Path(permit.output_directory), permit.output_read)
             report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=page.model_dump_json(), stderr="")
+        elif isinstance(permit.file, GitDiff):
+            deadline = time.monotonic() + permit.timeout_seconds
+
+            def check_repository() -> None:
+                if select.select([0], [], [], 0)[0]:
+                    raise BackendError("repository_cancelled")
+                if time.monotonic() >= deadline:
+                    raise BackendError("repository_timeout")
+
+            def git_query(cwd: Path, args: list[str], allowed: tuple[int, ...], prefix: bool) -> bytes:
+                check_repository()
+                env = {**tool_environment(), "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0",
+                       "GIT_NO_LAZY_FETCH": "1", "GIT_NO_REPLACE_OBJECTS": "1", "LC_ALL": "C"}
+                limit = DIFF_BYTES + 1 if prefix else 1024 * 1024
+                with tempfile.TemporaryFile(dir=directory) as out, tempfile.TemporaryFile(dir=directory) as err:
+                    try:
+                        process = subprocess.Popen(["git", "--no-optional-locks", "-c", "core.hooksPath=/dev/null",
+                            "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", *args], cwd=cwd,
+                            env=env, stdin=subprocess.DEVNULL, stdout=out, stderr=err, start_new_session=True)
+                    except FileNotFoundError:
+                        raise BackendError("git_not_installed") from None
+                    identity = ProcessIdentity.capture(psutil.Process(process.pid))
+                    tracked[identity.pid] = identity
+                    private_write(directory / "tracked.json", json.dumps([p.model_dump() for p in tracked.values()]))
+                    limited = False
+                    try:
+                        while process.poll() is None:
+                            live = identity.live()
+                            if live:
+                                for descendant in live.children(recursive=True):
+                                    if len(tracked) >= 256:
+                                        raise BackendError("process_tracking_limit")
+                                    tracked.setdefault(descendant.pid, ProcessIdentity.capture(descendant))
+                                private_write(directory / "tracked.json", json.dumps([p.model_dump() for p in tracked.values()]))
+                            check_repository()
+                            if os.fstat(err.fileno()).st_size > 65536:
+                                raise BackendError("repository_output_limit")
+                            if os.fstat(out.fileno()).st_size > limit:
+                                limited = True
+                                break
+                            time.sleep(0.01)
+                        if limited:
+                            if not stop_tracked([identity]):
+                                raise BackendError("repository_cleanup_pending")
+                        code = process.wait(timeout=2)
+                        out.seek(0)
+                        payload = out.read(limit + 1)
+                        if len(payload) > limit:
+                            limited = True
+                        if limited and not prefix:
+                            raise BackendError("repository_output_limit")
+                        if not limited and code not in allowed:
+                            raise BackendError("repository_git_failed")
+                        return payload[:limit] if prefix else payload
+                    finally:
+                        if not stop_tracked(list(tracked.values())):
+                            raise BackendError("repository_cleanup_pending")
+                        if process.poll() is None:
+                            process.wait(timeout=2)
+
+            review = repository_diff(Path(permit.cwd), permit.file, git_query, check_repository)
+            report.result = ToolResult(call_id=permit.call_id, exit_code=0,
+                stdout=f"{review.scope}: {review.total_files} files" + (f"; incomplete: {review.reason}" if review.truncated else ""),
+                stderr="", truncated=review.truncated, repository_diff=review)
         elif isinstance(permit.file, (FileGlob, FileGrep)):
             deadline = time.monotonic() + permit.timeout_seconds
 

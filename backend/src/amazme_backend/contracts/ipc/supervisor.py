@@ -12,6 +12,7 @@ from amazme_backend.contracts.execution import (
     EffectResolution,
     FileGlob,
     FileGrep,
+    GitDiff,
     JobOutput,
     JobQuery,
     Lease,
@@ -135,7 +136,7 @@ class RunTool(Lease, Command):
     call_id: str
     request_id: str = ""
     effect: Literal["read", "write"] = "write"
-    file: WriteFile | EditFile | ReadFile | FileGlob | FileGrep | None = None
+    file: WriteFile | EditFile | ReadFile | FileGlob | FileGrep | GitDiff | None = None
     expected_digest: str | None = None
     expected_root: str = ""
     output_read: OutputRead | None = None

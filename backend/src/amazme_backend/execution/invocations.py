@@ -15,6 +15,7 @@ from amazme_backend.contracts.execution import (
     EditFile,
     FileGlob,
     FileGrep,
+    GitDiff,
     JobList,
     JobOutputView,
     JobState,
@@ -140,7 +141,7 @@ class InvocationOperations:
                 file_key = ""
                 if file is not None:
                     name, inner = tool_path(workspace, file.path)
-                    if name == "grant" or (not inner and not isinstance(file, (FileGlob, FileGrep))):
+                    if name == "grant" or (not inner and not isinstance(file, (FileGlob, FileGrep, GitDiff))):
                         raise BackendError("invalid_workspace_path")
                     if name == PRIMARY:
                         root = Path(self.owner.profile.config.workspace)

@@ -1,7 +1,7 @@
 type ImagesOutputContent = {type:"text";text:string} | {type:"image";mimeType:string;data:string};
 interface ToolDiagnostic { severity:"error" | "warning";code:string;message:string }
 import type { Locale } from "./locale.ts";
-import type { ToolResult } from "./generated/contracts.ts";
+import type { GitDiffResult, ToolResult } from "./generated/contracts.ts";
 import { toolDiagnosticCopy } from "./errors.ts";
 import { translate } from "./strings.ts";
 
@@ -32,6 +32,11 @@ function text(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+export function gitReviewSummary(locale: Locale, review: GitDiffResult): string {
+	const scope = translate(locale, review.scope === "staged" ? "tool.reviewStaged" : review.scope === "unstaged" ? "tool.reviewUnstaged" : "tool.reviewUncommitted");
+	return translate(locale, "tool.reviewSummary", { scope, branch: review.branch || review.head.slice(0, 8) || translate(locale, "tool.reviewUnborn"), files: String(review.total_files) });
+}
+
 /** Presentation uses the executed result. Arguments alone never imply that a file changed. */
 export function toolResultView(
 	locale: Locale,
@@ -45,7 +50,8 @@ export function toolResultView(
 	const stopped = Boolean(native?.stop_reason);
 	const failed = result.isError === true || (native !== undefined && native.exit_code !== 0);
 	const changes = native?.file_changes ?? [];
-	const diff = result.isError !== true && (name === "edit" || name === "write") ? text(details.diff) : undefined;
+	const review = native?.repository_diff ?? undefined;
+	const diff = failed ? undefined : review ? text(review.diff) : (name === "edit" || name === "write") ? text(details.diff) : undefined;
 	const duration = result.durationMs;
 	const exit = native?.exit_code ?? details.exit_code;
 	return {
@@ -64,8 +70,8 @@ export function toolResultView(
 					diff: {
 						text: diff,
 						patch: text(details.patch),
-						path: text(record(args).path),
-						label: translate(locale, "tool.appliedDiff"),
+						path: review?.path ?? text(record(args).path),
+						label: translate(locale, review ? "tool.reviewDiff" : "tool.appliedDiff"),
 					},
 				}),
 		...(name !== "bash" && name !== "powershell" && !(name === "shell" && native)
@@ -79,10 +85,10 @@ export function toolResultView(
 							: {}),
 					},
 				}),
-		diagnostics: (result.diagnostics ?? []).map((item) => ({
+		diagnostics: [...(review?.truncated ? [{ tone: "muted" as const, text: translate(locale, "tool.reviewIncomplete", { reason: review.reason ?? "" }) }] : []), ...(result.diagnostics ?? []).map<ToolResultView["diagnostics"][number]>((item) => ({
 			tone: item.severity === "error" ? "error" : "muted",
 			text: toolDiagnosticCopy(locale, item.code, item.message),
-		})),
+		}))],
 	};
 }
 

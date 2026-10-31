@@ -23,6 +23,7 @@ from amazme_backend.contracts.execution import (
     FileGlob,
     FileGrep,
     FileObservation,
+    GitDiff,
     JobOutputWait,
     JobQuery,
     Lease,
@@ -149,6 +150,8 @@ def command_for(call: ToolCall) -> Command:
         FileGlob.model_validate_json(call.arguments)
     elif call.name == "grep":
         FileGrep.model_validate_json(call.arguments)
+    elif call.name == "git_diff":
+        GitDiff.model_validate_json(call.arguments)
     elif call.name == "write_file":
         WriteFile.model_validate_json(call.arguments)
     elif call.name == "edit_file":
@@ -767,7 +770,8 @@ class Worker:
                     EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file" else
                     ReadFile.model_validate_json(action.call.arguments) if action.call.name == "read_file" else
                     FileGlob.model_validate_json(action.call.arguments) if action.call.name == "glob" else
-                    FileGrep.model_validate_json(action.call.arguments) if action.call.name == "grep" else None)
+                    FileGrep.model_validate_json(action.call.arguments) if action.call.name == "grep" else
+                    GitDiff.model_validate_json(action.call.arguments) if action.call.name == "git_diff" else None)
             try:
                 result = await self.supervisor.run_tool(RunTool(
                     **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
@@ -777,7 +781,7 @@ class Worker:
                     expected_root=prepared.root if prepared else "",
                     patch=patch,
                     output_read=OutputRead.model_validate_json(action.call.arguments) if action.call.name == "tool_output" else None,
-                    effect="read" if action.call.name in {"read_file", "glob", "grep", "tool_output"} else "write"))
+                    effect="read" if action.call.name in {"read_file", "glob", "grep", "git_diff", "tool_output"} else "write"))
             except BackendError as error:
                 if error.code != "background_capacity":
                     raise

@@ -13,7 +13,7 @@ import { requestStatus, seq, settled } from "../transport/stream.ts";
 import { shortcuts } from "../shortcuts.ts";
 import { translate } from "../strings.ts";
 import { toolArguments } from "../tool-args.ts";
-import { toolResultView } from "../tool-results.ts";
+import { gitReviewSummary, toolResultView } from "../tool-results.ts";
 import type { Typography } from "../typography.ts";
 import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
 
@@ -58,7 +58,7 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 					}
 				} catch { /* Other shell results retain their existing presentation. */ }
 			}
-			tools.set(String(call.id), { id, kind: "tool", title: String(call.name), toolName: String(call.name), text: native ? [native.stdout, native.stderr].filter(Boolean).join("\n") : result || error || (done ? phase : ""), ...(native ? { raw: result } : {}),
+			tools.set(String(call.id), { id, kind: "tool", title: String(call.name), toolName: String(call.name), text: native?.repository_diff ? gitReviewSummary(locale, native.repository_diff) : native ? [native.stdout, native.stderr].filter(Boolean).join("\n") : result || error || (done ? phase : ""), ...(native ? { raw: result } : {}),
 				toolArgs: argumentsView.view,
 				...(done ? { result: { ...toolResultView(locale, String(call.name), argumentsView.args, { content: [{ type: "text", text: result || error }], native, isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }), ...(backgroundAccepted ? { status: locale === "zh" ? "后台已受理" : "Background accepted" } : {}) } } : {}),
 				tone: error || native && native.exit_code !== 0 ? "error" : "plain", running: !done && !settled.has(receipt.status) });
@@ -79,7 +79,8 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 		}
 		blocks.push(...tools.values());
 		const preview = snapshot.previews?.find(item => item.request_id === receipt.request_id && item.run_id === receipt.run_id && item.generation === receipt.generation);
-		const text = !settled.has(receipt.status) && preview?.text ? preview.text : !finalMessage ? receipt.answer : undefined;
+		const review = !finalMessage ? executedResult(receipt.answer ?? "")?.repository_diff : undefined;
+		const text = !settled.has(receipt.status) && preview?.text ? preview.text : !finalMessage ? review ? gitReviewSummary(locale, review) : receipt.answer : undefined;
 		if (text) blocks.push({ id: `${receipt.request_id}:answer`, kind: "assistant", title: "AmazMe", text, tone: "plain", running: !settled.has(receipt.status), interrupted: receipt.status === "interrupted" || receipt.status === "cancelled", feedback: controls });
 		if (receipt.error || ["failed", "unknown", "interrupted", "cancelled"].includes(receipt.status)) blocks.push({ id: `${receipt.request_id}:status`, kind: "notice", title: requestStatus[receipt.status], text: receipt.error ?? requestStatus[receipt.status], tone: receipt.status === "failed" ? "error" : "muted", running: false });
 	}
