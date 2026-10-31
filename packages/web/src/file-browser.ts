@@ -29,7 +29,21 @@ function button(className: string): HTMLButtonElement {
 export function createFileBrowser(options: FileBrowserOptions) {
 	const { icon, copy, actionButton: panelButton, headerAction: placeHeaderAction, copyText: copyAnswer } = options;
 	let fileFilter = { scope: "", query: "" };
-	let lastJump: number | undefined;
+	interface Position { readonly top: number; readonly left: number; readonly line?: string; readonly offset?: number; readonly revision?: number }
+	const positions = new Map<string, Position>();
+	let activeSource: { readonly key: string; readonly node: HTMLElement } | undefined;
+	const remember = (key: string, position: Position): void => {
+		positions.delete(key);
+		positions.set(key, position);
+		if (positions.size > 32) positions.delete(positions.keys().next().value ?? "");
+	};
+	const capture = (): void => {
+		if (!activeSource?.node.isConnected || activeSource.node.getClientRects().length === 0) return;
+		const { key, node } = activeSource, top = node.getBoundingClientRect().top;
+		const first = [...node.querySelectorAll<HTMLElement>("[data-line]")].find(row => row.getBoundingClientRect().bottom > top);
+		remember(key, { top: node.scrollTop, left: node.scrollLeft, line: first?.dataset.line,
+			offset: first ? first.getBoundingClientRect().top - top : undefined, revision: positions.get(key)?.revision });
+	};
 	const fileNavigation = (panel: PanelSpec, node: HTMLElement, sessionId: string): HTMLElement => {
 		const files = panel.files!;
 		const busy = panel.pending?.id.startsWith("workspace:") === true;
@@ -109,7 +123,7 @@ export function createFileBrowser(options: FileBrowserOptions) {
 	};
 
 	/** One text block: a file's content or a terminal's output, kept as text. */
-	const textElement = (text: PanelText): HTMLElement => {
+	const textElement = (text: PanelText, scope: string): HTMLElement => {
 		const block = element("div", "panel-text-block");
 		if (text.title !== undefined) block.append(element("p", "panel-text-title", text.title));
 		if (text.text.length === 0 && text.empty !== undefined) {
@@ -117,6 +131,8 @@ export function createFileBrowser(options: FileBrowserOptions) {
 			return block;
 		}
 		if (text.source) {
+			const key = `${scope}:${text.id}`, position = positions.get(key), selection = text.source.selection;
+			const navigate = selection !== undefined && position?.revision !== selection.revision;
 			block.classList.add("file-source");
 			const all = text.text.length === 0 ? [] : text.text.split("\n");
 			if (all.at(-1) === "") all.pop();
@@ -139,24 +155,32 @@ export function createFileBrowser(options: FileBrowserOptions) {
 				number.setAttribute("aria-hidden", "true");
 				row.append(number, element("code", "file-line-code", line.replace(/\r$/, "") || "\u200b"));
 				source.append(row);
-				const selection = text.source.selection;
 				if (selection?.line === lineNumber) {
 					row.dataset.selected = "true";
 					row.tabIndex = -1;
-					if (lastJump !== selection.revision) {
-						lastJump = selection.revision;
-						queueMicrotask(() => {
-							if (!row.isConnected || lastJump !== selection.revision) return;
-							row.focus({ preventScroll: true });
-							row.scrollIntoView({ block: "center", inline: "nearest" });
-						});
-					}
 				}
 			}
 			if (lines.length === 0) source.append(element("p", "panel-empty", copy("dock.emptyFile")));
 			block.append(source);
 			options.reading.attach({ key: "file-source", root: block, content: source, toolbar, text: displayed,
 				copyLabel: "dock.copyContents", fold: false });
+			activeSource = { key, node: source };
+			source.addEventListener("scroll", capture, { passive: true });
+			queueMicrotask(() => {
+				if (!source.isConnected || activeSource?.node !== source) return;
+				const target = navigate ? source.querySelector<HTMLElement>(`[data-line="${selection.line}"]`) : undefined;
+				if (target) {
+					target.focus({ preventScroll: true });
+					target.scrollIntoView({ block: "center", inline: "nearest" });
+				} else if (position) {
+					source.scrollTop = position.top;
+					source.scrollLeft = position.left;
+					const line = [...source.querySelectorAll<HTMLElement>("[data-line]")].find(row => row.dataset.line === position.line);
+					if (line && position.offset !== undefined) source.scrollTop += line.getBoundingClientRect().top - source.getBoundingClientRect().top - position.offset;
+				}
+				remember(key, { ...position, top: source.scrollTop, left: source.scrollLeft, revision: selection?.revision ?? position?.revision });
+				capture();
+			});
 		} else {
 			const toolbar = element("div", "file-source-toolbar");
 			const output = element("pre", "panel-text", text.text);
@@ -166,5 +190,5 @@ export function createFileBrowser(options: FileBrowserOptions) {
 		return block;
 	};
 
-	return { navigation: fileNavigation, text: textElement };
+	return { navigation: fileNavigation, text: textElement, capture };
 }

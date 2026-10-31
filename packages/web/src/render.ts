@@ -1560,7 +1560,7 @@ export function createRenderer(
 	const fileBrowser = createFileBrowser({ icon, copy, actionButton: (action, pending) => panelButton(action, report, pending),
 		headerAction: placeHeaderAction, copyText: (control, text, label) => copyAnswer(control, text, label), reading,
 	});
-	const textElement = fileBrowser.text;
+	const textElement = (text: Parameters<typeof fileBrowser.text>[0]): HTMLElement => fileBrowser.text(text, lastView?.transcriptScope ?? lastView?.attachedId ?? "");
 
 	const panelElement = (panel: PanelSpec, container?: HTMLElement): HTMLElement => {
 		const node = element("div", "panel");
@@ -2864,6 +2864,7 @@ export function createRenderer(
 		elements.dock.hidden = !open;
 		document.body.classList.toggle("dock-open", open);
 		if (!open) {
+			fileBrowser.capture();
 			panelFocus.delete(elements.dockBody);
 			elements.dockTabs.replaceChildren();
 			elements.dockBody.replaceChildren();
@@ -2909,11 +2910,15 @@ export function createRenderer(
 		const repeated = panel.groups.find(group => group.title.length > 0 && group.title === panel.title);
 		const panelContainer = view.dock.pty ? ptyChrome : elements.dockBody;
 		if (view.dock.pty && ptyChrome.parentElement !== elements.dockBody) elements.dockBody.replaceChildren(ptyChrome, ptySurface.element);
-		if (!view.dock.pty || changed("dock-terminal-chrome", [panel, view.locale, view.dock.pty.id])) replacePanel(panelContainer, repeated === undefined ? panel : {
-			...panel,
-			actions: repeated.actions ?? panel.actions,
-			groups: panel.groups.map(group => group === repeated ? { ...group, title: "", actions: undefined } : group),
-		});
+		const panelChanged = changed("dock-panel", [panel, view.locale, view.transcriptScope ?? view.attachedId, view.dock.pty?.id]);
+		if (!panelContainer.firstElementChild || panelChanged) {
+			fileBrowser.capture();
+			replacePanel(panelContainer, repeated === undefined ? panel : {
+				...panel,
+				actions: repeated.actions ?? panel.actions,
+				groups: panel.groups.map(group => group === repeated ? { ...group, title: "", actions: undefined } : group),
+			});
+		}
 		if (view.dock.pty) {
 			if (ptySurface.element.parentElement !== elements.dockBody) elements.dockBody.append(ptySurface.element);
 			ptySurface.update(view.dock.pty);

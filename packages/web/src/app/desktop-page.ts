@@ -31,7 +31,7 @@ const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 interface ImageDraft { readonly id: string; readonly name: string; readonly dataUrl: string; readonly bytes: number; readonly image: ImagePart }
 type WorkspaceOpen =
 	| { readonly kind: "directory"; readonly path?: string; readonly offset?: number }
-	| { readonly kind: "file"; readonly path: string; readonly line?: number };
+	| { readonly kind: "file"; readonly path: string; readonly line?: number; readonly preserve?: boolean };
 interface Draft { text: string; images: ImageDraft[]; revision: number; submission?: { readonly id: string; readonly revision: number } }
 interface ActiveTerminal { readonly connection: ClientConnection; readonly id: string; readonly queue: TerminalInputQueue; view: TerminalView; desiredSize?: { cols: number; rows: number }; resizing: boolean }
 
@@ -611,7 +611,7 @@ export class DesktopPage {
 		if (id === A.WORKSPACE_RELOAD_ACTION || id === A.WORKSPACE_PAGE_ACTION) {
 			const target = parseWorkspaceAction(data);
 			if (target.kind === "link") throw new TypeError("Invalid workspace reload action");
-			await this.openWorkspace(target.kind === "read" ? { kind: "file", path: target.path } : { kind: "directory", path: target.path, offset: target.offset }); return;
+			await this.openWorkspace(target.kind === "read" ? { kind: "file", path: target.path, preserve: true } : { kind: "directory", path: target.path, offset: target.offset }); return;
 		}
 		if (id === A.SUBMIT_MODE_ACTION) { this.mode = value === "steer" ? "steer" : "followUp"; this.render(); return; }
 		if (id === A.ATTACHMENT_REMOVE_ACTION) { this.draft.images = this.draft.images.filter(item => item.id !== data); this.draft.revision++; this.render(); return; }
@@ -1311,17 +1311,20 @@ export class DesktopPage {
 		const pageOffset = request.kind === "directory" ? request.offset ?? previous?.offset ?? 0 : 0;
 		const prefix = root.name === "primary" ? "" : `grant/${root.name}`;
 		const target = relative === "." ? prefix : prefix ? `${prefix}/${relative}` : relative;
+		const previousText = this.workspace?.cwd === root.host_path && this.workspace.view.kind === "text" && this.workspace.view.path === relative ? this.workspace.view : undefined;
+		const retained = request.kind === "file" && request.preserve ? previousText : undefined;
+		const line = request.kind === "file" ? request.line ?? retained?.selection?.line ?? (retained && retained.startLine > 1 ? retained.startLine + 40 : undefined) : undefined;
 		let view: WorkspaceStateLike["view"];
 		try {
 			if (request.kind === "file") {
 				const result = await readFilePreview({
-					line: request.line,
+					line,
 					active: () => connection.active() && generation === this.workspaceGeneration && this.dockOpen && this.dockTab === "files",
 					read: page => this.client.call("GET /api/v1/files/content", { query: { path: target, ...page }, connection }),
 				});
 				if (result === undefined) return;
 				view = result.kind === "changed" ? { kind: "denied", path: relative, reason: translate(this.locale, "dock.fileChanged") }
-					: { ...result, path: relative, ...(request.line === undefined ? {} : { selection: { line: request.line, revision: generation } }) };
+					: { ...result, path: relative, ...(retained?.selection ? { selection: retained.selection } : line === undefined ? {} : { selection: { line, revision: generation } }) };
 			} else {
 				const result = await this.client.call("GET /api/v1/files", { query: { path: target, offset: pageOffset } });
 				view = { kind: "listing", path: relative, parent: relative === "." ? null : relative.includes("/") ? relative.split("/").slice(0, -1).join("/") : ".",
