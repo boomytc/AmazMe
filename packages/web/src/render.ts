@@ -2165,7 +2165,7 @@ export function createRenderer(
 		// block that starts open (a running tool) is not one either, so neither is recorded.
 		details.addEventListener("click", (event) => {
 			const target = event.target;
-			if (target instanceof Element && target.closest("summary") !== null) expanded.set(block.id, !details.open);
+			if (target instanceof Element && target.closest("summary")?.parentElement === details) expanded.set(block.id, !details.open);
 		});
 		return details;
 	};
