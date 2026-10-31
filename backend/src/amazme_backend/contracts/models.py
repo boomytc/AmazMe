@@ -24,6 +24,20 @@ class ModelSelection(Model):
     model: str = Field(min_length=1, max_length=128, pattern=r"^[\w./:@+-]+$")
 
 
+class ModelCallUsage(Model):
+    call_id: str
+    provider: str
+    model: str
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    cost_micro_usd: int | None = None
+    started_at_ms: int | None = None
+    first_text_at_ms: int | None = None
+    finished_at_ms: int | None = None
+
+
 class CatalogModel(Model):
     api: ProviderApi = "openai-completions"
     base_url: str = ""

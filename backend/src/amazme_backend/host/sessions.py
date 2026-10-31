@@ -531,6 +531,7 @@ class SessionOperations:
                 value.instructions,
                 auth=Auth(api_key=configured.api_key, auth_type=configured.auth_type,
                           headers=request_identity(configured.provider)),
+                call_id=value.compaction_id,
             )
         except BackendError:
             try:
@@ -541,12 +542,12 @@ class SessionOperations:
                 pass
             raise
         self.lifecycle.profile.reload_provider()
-        if contains_secret(summary, self.accounts.secrets()):
+        if contains_secret(summary.text, self.accounts.secrets()):
             raise BackendError("compaction_secret")
         return await self.access.operate(
             session,
             lambda store: store.commit_compaction(
-                value.compaction_id, value.through_request_id, summary, basis, value.instructions
+                value.compaction_id, value.through_request_id, summary.text, basis, value.instructions, summary.usage
             ),
         )
 

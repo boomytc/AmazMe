@@ -7,7 +7,7 @@ from pydantic import Field
 
 from amazme_backend.contracts.execution import EffectResolution, JobId
 from amazme_backend.contracts.identity import HostFence
-from amazme_backend.contracts.models import Message, ToolCall
+from amazme_backend.contracts.models import Message, ModelCallUsage, ToolCall
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.questions import QuestionAnswer
 from amazme_backend.contracts.sessions import ApprovalDecision, Compaction, Submit, WorkerState
@@ -177,6 +177,7 @@ class CompactionClaim(Model):
 class CompactBody(BeginCompactionBody):
     summary: str
     basis: str
+    usage: ModelCallUsage | None = None
 
 
 class TranscriptRow(Model):

@@ -24,6 +24,7 @@ import { attachmentRejection, attachments, type SubmitMode, type TranscriptBlock
 import { toolResultView } from "../tool-results.ts";
 import { readFilePreview } from "../file-preview.ts";
 import { translate } from "../strings.ts";
+import { USAGE_ACTION, USAGE_REFRESH_ACTION } from "../usage.ts";
 
 const OAUTH_METHODS: Readonly<Record<string, "browser" | "device_code">> = {
 	anthropic: "browser", openai: "browser", "openai-codex": "browser", openrouter: "browser", "github-copilot": "device_code", "kimi-coding": "device_code", xai: "device_code", meta: "device_code",
@@ -103,6 +104,7 @@ export class DesktopPage {
 	private selection?: SessionModel;
 	private resources?: ResourceCatalog;
 	private usage?: UsageReport;
+	private usageGeneration = 0;
 	private history?: HistoryPage;
 	private historyLoading = false;
 	private historyGeneration = 0;
@@ -318,16 +320,15 @@ export class DesktopPage {
 	private async loadSession(connection: ClientConnection): Promise<void> {
 		const selectionGeneration = ++this.selectionGeneration;
 		const resourceGeneration = ++this.resourceGeneration;
-		const [selection, resources, usage, feedback] = await Promise.all([
+		const [selection, resources, , feedback] = await Promise.all([
 			this.client.call("GET /api/v1/session-models/{session_id}", { path: { session_id: connection.sessionId } }).catch(error => { if (error instanceof ApiError && error.code === "session_model_missing") return undefined; throw error; }),
 			this.client.call("GET /api/v1/sessions/{session}/resources", { path: { session: connection.sessionId } }),
-			this.client.call("GET /api/v1/sessions/{session_id}/usage", { path: { session_id: connection.sessionId } }),
+			this.loadUsage(connection),
 			this.client.call("GET /api/v1/sessions/{session}/feedback", { path: { session: connection.sessionId } }),
 		]);
 		if (!connection.active()) return;
 		if (selectionGeneration === this.selectionGeneration) this.selection = selection;
 		if (resourceGeneration === this.resourceGeneration) this.resources = resources;
-		this.usage = usage;
 		this.mergeFeedback(feedback);
 		await this.loadPlugins();
 		if (!connection.active()) return;
@@ -352,7 +353,10 @@ export class DesktopPage {
 			if (health.identity.profile_id !== connection.identity.profile_id) throw new Error("宿主身份已更换");
 			if (health.identity.host_epoch !== connection.identity.host_epoch || health.identity.build_id !== connection.identity.build_id) { await this.client.connect(connection.sessionId); return; }
 			this.ready = health.state === "ready";
-			const feedback = await this.client.call("GET /api/v1/sessions/{session}/feedback", { path: { session: connection.sessionId } });
+			const [feedback] = await Promise.all([
+				this.client.call("GET /api/v1/sessions/{session}/feedback", { path: { session: connection.sessionId } }),
+				this.loadUsage(connection),
+			]);
 			if (!connection.active()) return;
 			this.mergeFeedback(feedback);
 			if (this.currentPanel === P.AUTOMATION_VIEW) await this.loadSchedules();
@@ -361,7 +365,13 @@ export class DesktopPage {
 		} catch (error) { if (connection.active()) this.error(error); }
 		finally { if (connection.active()) this.healthTimer = setTimeout(() => { void this.poll(connection); }, 3000); }
 	}
+	private async loadUsage(connection: ClientConnection): Promise<void> {
+		const generation = ++this.usageGeneration;
+		const value = await this.client.call("GET /api/v1/sessions/{session_id}/usage", { path: { session_id: connection.sessionId }, connection });
+		if (connection.active() && generation === this.usageGeneration) this.usage = value;
+	}
 	private clearSessionView(): void {
+		this.usageGeneration++;
 		this.selection = undefined; this.resources = undefined; this.usage = undefined; this.workspace = undefined; this.feedback = undefined;
 		this.thinking = this.catalog?.current.thinking ?? "off";
 		this.pluginRuntime = []; this.pluginsGeneration++;
@@ -576,6 +586,13 @@ export class DesktopPage {
 		if (await this.scheduleAction(action)) return;
 		if (await this.pluginAction(action)) return;
 		if (await this.mcpAction(action)) return;
+		if (id === USAGE_ACTION || id === USAGE_REFRESH_ACTION) {
+			const connection = this.requireConnection();
+			this.dockOpen = true; this.dockTab = "statistics"; this.render();
+			await this.loadUsage(connection);
+			if (connection.active()) this.render();
+			return;
+		}
 		if (id === A.HISTORY_MORE_ACTION || id === A.TRANSCRIPT_SEARCH_ACTION) {
 			await this.loadHistory(this.requireConnection(), true, id === A.TRANSCRIPT_SEARCH_ACTION);
 			if (id === A.TRANSCRIPT_SEARCH_ACTION) this.renderer.refreshTranscriptSearch();
@@ -1581,7 +1598,7 @@ export class DesktopPage {
 				result: toolResultView(this.locale, name, {}, { content: [{ type: "text", text }], isError: error, details: result.result?.details }),
 			};
 		});
-		const dock = dockView(this.locale, { open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.session_id === session?.parent_id || item.parent_id === connection?.sessionId || Boolean(session?.parent_id && item.parent_id === session.parent_id)).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, role: item.parent_id ? "fork" as const : "main" as const, parentConversationId: item.parent_id || undefined, children: this.sessions.filter(child => child.parent_id === item.session_id).length, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
+		const dock = dockView(this.locale, { usage: this.usage, open: this.dockOpen, tab: this.dockTab, cwd, workspace: this.workspace, terminal: terminal ? { status: terminal.view.phase === "running" ? "running" : "done", command: "/bin/zsh -il", exitCode: terminal.view.exit_code ?? null, output: "", truncated: false, error: null } : undefined, conversations: { selected: connection?.sessionId ?? "", conversations: this.sessions.filter(item => item.session_id === connection?.sessionId || item.session_id === session?.parent_id || item.parent_id === connection?.sessionId || Boolean(session?.parent_id && item.parent_id === session.parent_id)).map(item => ({ id: item.session_id, label: item.title, root: !item.parent_id, role: item.parent_id ? "fork" as const : "main" as const, parentConversationId: item.parent_id || undefined, children: this.sessions.filter(child => child.parent_id === item.session_id).length, hasEntries: true, ...(item.archived ? { archivedAt: item.updated_ms ?? 0 } : {}) })), tasks: (connection?.snapshot?.requests ?? []).map(item => ({ id: item.request_id, kind: item.kind ?? "root", conversationId: connection?.sessionId ?? "", background: item.kind === "child", status: item.status, phase: item.status, waitsOn: item.children ?? [], conversations: [] })) } });
 		this.renderer.render({ ...picker, blocks: [...picker.blocks, ...commandBlocks], readOnly: picker.readOnly || Boolean(pendingError), queue: [...picker.queue, ...commandPending, ...feedbackPending, ...(branchPending ? [{ id: branchPending, text: "分支创建尚未确认", retry: { id: "write:retry-branch", data: branchPending, label: "重试原分支", weight: "line" as const } }] : []), ...(pending ? [{ id: pending.id, text: `请求尚未确认：${pending.body.text}`, retry: { id: "write:retry-submit", data: pending.id, label: "重试原请求", weight: "line" as const }, cancel: { id: "write:cancel-submit", data: pending.id, label: "取消原请求", weight: "text" as const } }] : [])],
 			dock: terminal && this.dockTab === "terminal" ? { ...dock, panel: { ...dock.panel, texts: [], notices: terminal.queue.paused ? [{ tone: "warning", text: "终端输入尚未确认；请重试原输入或核对后继续。" }] : dock.panel.notices, actions: [
 				{ id: "terminal:retry", label: "重试原输入", weight: "line", disabled: terminal.queue.busy || !terminal.queue.items.length },

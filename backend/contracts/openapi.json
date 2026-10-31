@@ -7507,6 +7507,16 @@
             "type": "string",
             "title": "Instructions",
             "default": ""
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelCallUsage"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -9968,6 +9978,98 @@
         ],
         "title": "MemoryWrite"
       },
+      "ModelCallUsage": {
+        "properties": {
+          "call_id": {
+            "type": "string",
+            "title": "Call Id"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Write Tokens",
+            "default": 0
+          },
+          "cost_micro_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Micro Usd"
+          },
+          "started_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At Ms"
+          },
+          "first_text_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Text At Ms"
+          },
+          "finished_at_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At Ms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "call_id",
+          "provider",
+          "model"
+        ],
+        "title": "ModelCallUsage"
+      },
       "ModelCatalog": {
         "properties": {
           "models": {
@@ -10161,6 +10263,149 @@
           "key_configured"
         ],
         "title": "ModelSettings"
+      },
+      "ModelUsage": {
+        "properties": {
+          "model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Model Calls",
+            "default": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Write Tokens",
+            "default": 0
+          },
+          "reasoning_signatures": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Reasoning Signatures",
+            "default": 0
+          },
+          "priced_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Priced Calls",
+            "default": 0
+          },
+          "unpriced_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unpriced Calls",
+            "default": 0
+          },
+          "priced": {
+            "type": "boolean",
+            "title": "Priced",
+            "default": false
+          },
+          "cost_micro_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Micro Usd"
+          },
+          "attempted_model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempted Model Calls",
+            "default": 0
+          },
+          "steps": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Steps",
+            "default": 0
+          },
+          "unknown_steps": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unknown Steps",
+            "default": 0
+          },
+          "failed_tool_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Failed Tool Calls",
+            "default": 0
+          },
+          "model_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Model Ms",
+            "default": 0
+          },
+          "timed_model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timed Model Calls",
+            "default": 0
+          },
+          "tool_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Tool Ms",
+            "default": 0
+          },
+          "timed_tool_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timed Tool Calls",
+            "default": 0
+          },
+          "first_text_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "First Text Ms",
+            "default": 0
+          },
+          "first_text_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "First Text Calls",
+            "default": 0
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "title": "Model"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "model"
+        ],
+        "title": "ModelUsage"
       },
       "NewSessionScheduleTarget": {
         "properties": {
@@ -12280,6 +12525,171 @@
           "expected_title"
         ],
         "title": "RenameSession"
+      },
+      "RequestUsage": {
+        "properties": {
+          "model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Model Calls",
+            "default": 0
+          },
+          "input_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Input Tokens",
+            "default": 0
+          },
+          "output_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Output Tokens",
+            "default": 0
+          },
+          "cache_read_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Read Tokens",
+            "default": 0
+          },
+          "cache_write_tokens": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cache Write Tokens",
+            "default": 0
+          },
+          "reasoning_signatures": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Reasoning Signatures",
+            "default": 0
+          },
+          "priced_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Priced Calls",
+            "default": 0
+          },
+          "unpriced_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unpriced Calls",
+            "default": 0
+          },
+          "priced": {
+            "type": "boolean",
+            "title": "Priced",
+            "default": false
+          },
+          "cost_micro_usd": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Micro Usd"
+          },
+          "attempted_model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempted Model Calls",
+            "default": 0
+          },
+          "steps": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Steps",
+            "default": 0
+          },
+          "unknown_steps": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unknown Steps",
+            "default": 0
+          },
+          "failed_tool_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Failed Tool Calls",
+            "default": 0
+          },
+          "model_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Model Ms",
+            "default": 0
+          },
+          "timed_model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timed Model Calls",
+            "default": 0
+          },
+          "tool_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Tool Ms",
+            "default": 0
+          },
+          "timed_tool_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timed Tool Calls",
+            "default": 0
+          },
+          "first_text_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "First Text Ms",
+            "default": 0
+          },
+          "first_text_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "First Text Calls",
+            "default": 0
+          },
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "waiting_approval",
+              "waiting_input",
+              "waiting_children",
+              "waiting_time",
+              "waiting_host",
+              "cancelling",
+              "cleaning",
+              "blocked",
+              "succeeded",
+              "cancelled",
+              "interrupted",
+              "failed",
+              "unknown"
+            ],
+            "title": "Status"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "request_id",
+          "text",
+          "status"
+        ],
+        "title": "RequestUsage"
       },
       "ResourceCatalog": {
         "properties": {
@@ -14787,10 +15197,6 @@
       },
       "UsageReport": {
         "properties": {
-          "session_id": {
-            "type": "string",
-            "title": "Session Id"
-          },
           "model_calls": {
             "type": "integer",
             "minimum": 0.0,
@@ -14854,6 +15260,126 @@
               }
             ],
             "title": "Cost Micro Usd"
+          },
+          "attempted_model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Attempted Model Calls",
+            "default": 0
+          },
+          "steps": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Steps",
+            "default": 0
+          },
+          "unknown_steps": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unknown Steps",
+            "default": 0
+          },
+          "failed_tool_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Failed Tool Calls",
+            "default": 0
+          },
+          "model_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Model Ms",
+            "default": 0
+          },
+          "timed_model_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timed Model Calls",
+            "default": 0
+          },
+          "tool_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Tool Ms",
+            "default": 0
+          },
+          "timed_tool_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Timed Tool Calls",
+            "default": 0
+          },
+          "first_text_ms": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "First Text Ms",
+            "default": 0
+          },
+          "first_text_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "First Text Calls",
+            "default": 0
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "request_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Request Count",
+            "default": 0
+          },
+          "failed_requests": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Failed Requests",
+            "default": 0
+          },
+          "cancelled_requests": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Cancelled Requests",
+            "default": 0
+          },
+          "compaction_calls": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Compaction Calls",
+            "default": 0
+          },
+          "unmeasured_compactions": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Unmeasured Compactions",
+            "default": 0
+          },
+          "latest_context_tokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Context Tokens"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ModelUsage"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "recent": {
+            "items": {
+              "$ref": "#/components/schemas/RequestUsage"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Recent"
           }
         },
         "additionalProperties": false,
@@ -14861,8 +15387,7 @@
         "required": [
           "session_id"
         ],
-        "title": "UsageReport",
-        "description": "Token totals and catalog cost already stored with finished model calls.\n\n``priced`` is true only when every finished call had a catalog rate. A partial sum is not returned\nas ``cost_micro_usd``. One micro-USD is one millionth of a US dollar; the stored product truncates."
+        "title": "UsageReport"
       },
       "UserAnswer": {
         "properties": {

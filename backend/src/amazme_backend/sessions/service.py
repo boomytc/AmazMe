@@ -11,7 +11,6 @@ from typing import Literal, Protocol
 
 from pydantic import BaseModel, TypeAdapter
 
-from amazme_backend.ai.pricing import token_cost_micro
 from amazme_backend.contracts.events import CommitBatch, Event, HistoryPage, Replay, Snapshot
 from amazme_backend.contracts.execution import Cleanup, EffectHold, EffectResolution
 from amazme_backend.contracts.identity import HostFence
@@ -38,7 +37,7 @@ from amazme_backend.contracts.ipc.worker import (
     VerdictBody,
     WorkerActivity,
 )
-from amazme_backend.contracts.models import CatalogModel, ImagePart, Message
+from amazme_backend.contracts.models import CatalogModel, ImagePart, Message, ModelCallUsage
 from amazme_backend.contracts.plugins import PluginOffer
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.questions import QuestionAnswer
@@ -127,11 +126,11 @@ from amazme_backend.sessions.policy.projection import (
     verdict_body,
     workflow_body,
 )
+from amazme_backend.sessions.policy.usage import summarize_usage
 from amazme_backend.sessions.store import SessionTransactions
 from amazme_backend.sessions.types import (
     Action,
     CloseEpoch,
-    Completion,
     Continue,
     Observation,
     Park,
@@ -814,7 +813,7 @@ class SessionStore:
             db.execute("DELETE FROM compaction_claims WHERE id=?", (compaction_id,))
         await self._store.transact(operation)
 
-    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "") -> Compaction:
+    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "", usage: ModelCallUsage | None = None) -> Compaction:
         """Store a summary without deleting the messages it covers. A stale basis writes nothing."""
         def operation(db: sqlite3.Connection, c: Changes) -> Compaction:
             row = db.execute("SELECT payload FROM requests WHERE id=?", (through_request_id,)).fetchone()
@@ -832,7 +831,7 @@ class SessionStore:
                                       or str(claim["basis"]) != compaction_basis([basis, instructions])):
                 raise BackendError("compaction_conflict")
             record = Compaction(compaction_id=compaction_id, through_request_id=through_request_id, basis=current,
-                                message_count=len(payloads), summary=summary, instructions=instructions)
+                                message_count=len(payloads), summary=summary, instructions=instructions, usage=usage)
             existing = db.execute("SELECT payload FROM compactions WHERE id=?", (compaction_id,)).fetchone()
             if existing:
                 previous = Compaction.model_validate_json(existing[0])
@@ -1038,51 +1037,11 @@ class SessionStore:
         return await self._store.database.call(operation)
 
     async def usage(self) -> UsageReport:
-        """Sum tokens from finished model steps. In-progress calls and tool results are not usage."""
-
         def operation(db: sqlite3.Connection) -> UsageReport:
-            calls = 0
-            input_tokens = 0
-            output_tokens = 0
-            cache_read_tokens = 0
-            cache_write_tokens = 0
-            signatures = 0
-            priced_calls = 0
-            unpriced_calls = 0
-            cost = 0
-            for (payload,) in db.execute("SELECT payload FROM steps"):
-                step = Step.model_validate_json(str(payload))
-                if step.kind != "model" or step.phase not in {"result", "applied"} or not step.result:
-                    continue
-                completion = Completion.model_validate_json(step.result)
-                calls += 1
-                input_tokens += completion.input_tokens
-                output_tokens += completion.output_tokens
-                cache_read_tokens += completion.cache_read_tokens
-                cache_write_tokens += completion.cache_write_tokens
-                if completion.message.reasoning_signature:
-                    signatures += 1
-                pin = completion.price_input_micro_per_million
-                pout = completion.price_output_micro_per_million
-                pcr = completion.price_cache_read_micro_per_million
-                pcw = completion.price_cache_write_micro_per_million
-                cache_priced = pcr is not None and pcw is not None
-                if pin is None or pout is None or ((completion.cache_read_tokens or completion.cache_write_tokens) and not cache_priced):
-                    unpriced_calls += 1
-                    continue
-                priced_calls += 1
-                cost += token_cost_micro(
-                    completion.input_tokens, completion.output_tokens,
-                    completion.cache_read_tokens, completion.cache_write_tokens,
-                    (pin, pout, pcr or 0, pcw or 0))
-            priced = unpriced_calls == 0
-            return UsageReport(
-                session_id=self._state.session_id, model_calls=calls, input_tokens=input_tokens,
-                output_tokens=output_tokens, cache_read_tokens=cache_read_tokens,
-                cache_write_tokens=cache_write_tokens, reasoning_signatures=signatures,
-                priced_calls=priced_calls, unpriced_calls=unpriced_calls,
-                priced=priced, cost_micro_usd=cost if priced else None)
-
+            return summarize_usage(self._state.session_id, list_requests(db),
+                {str(row[0]): Run.model_validate_json(row[1]) for row in db.execute("SELECT request_id,payload FROM runs")},
+                [Step.model_validate_json(row[0]) for row in db.execute("SELECT payload FROM steps")],
+                [Compaction.model_validate_json(row[0]) for row in db.execute("SELECT payload FROM compactions")])
         return await self._store.database.call(operation)
 
     async def diagnostic(self) -> SessionDiagnostic:
@@ -1340,7 +1299,7 @@ async def run_session_op(store: SessionStore, name: SessionOpName, payload: str)
     if name == "commit_compaction":
         body = CompactBody.model_validate_json(payload)
         return _model(await store.commit_compaction(
-            body.compaction_id, body.through_request_id, body.summary, body.basis, body.instructions))
+            body.compaction_id, body.through_request_id, body.summary, body.basis, body.instructions, body.usage))
     if name == "import_transcript":
         body = TranscriptBody.model_validate_json(payload)
         await store.import_transcript([(item.request_id, item.role, item.content) for item in body.messages])
@@ -1370,7 +1329,7 @@ class SessionOps(Protocol):
     async def messages(self, request_id: str) -> list[Message]: ...
     async def begin_compaction(self, compaction_id: str, through_request_id: str, instructions: str = "") -> Compaction | None: ...
     async def release_compaction(self, compaction_id: str) -> None: ...
-    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "") -> Compaction: ...
+    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "", usage: ModelCallUsage | None = None) -> Compaction: ...
     async def import_transcript(self, messages: list[tuple[str, str, str]]) -> None: ...
 
 

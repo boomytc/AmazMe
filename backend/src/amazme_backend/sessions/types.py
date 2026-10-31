@@ -56,6 +56,9 @@ class Step(Model):
     generation: int
     call: ToolCall | None = None
     result: str = ""
+    started_at_ms: int | None = None
+    first_text_at_ms: int | None = None
+    finished_at_ms: int | None = None
     mcp_catalog: str = ""
     plugin_catalog: str = ""
     search_catalog: str = ""

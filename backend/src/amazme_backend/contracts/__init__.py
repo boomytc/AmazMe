@@ -141,6 +141,7 @@ from amazme_backend.contracts.models import TOOL_NAME_PATTERN as TOOL_NAME_PATTE
 from amazme_backend.contracts.models import CatalogModel as CatalogModel
 from amazme_backend.contracts.models import ImagePart as ImagePart
 from amazme_backend.contracts.models import Message as Message
+from amazme_backend.contracts.models import ModelCallUsage as ModelCallUsage
 from amazme_backend.contracts.models import ModelCatalog as ModelCatalog
 from amazme_backend.contracts.models import ModelScope as ModelScope
 from amazme_backend.contracts.models import ModelScopeRequest as ModelScopeRequest
@@ -217,9 +218,11 @@ from amazme_backend.contracts.sessions import CompactSession as CompactSession
 from amazme_backend.contracts.sessions import CreateSession as CreateSession
 from amazme_backend.contracts.sessions import Decision as Decision
 from amazme_backend.contracts.sessions import DelegateTasks as DelegateTasks
+from amazme_backend.contracts.sessions import ModelUsage as ModelUsage
 from amazme_backend.contracts.sessions import Preview as Preview
 from amazme_backend.contracts.sessions import Receipt as Receipt
 from amazme_backend.contracts.sessions import RenameSession as RenameSession
+from amazme_backend.contracts.sessions import RequestUsage as RequestUsage
 from amazme_backend.contracts.sessions import RunOptions as RunOptions
 from amazme_backend.contracts.sessions import SearchHit as SearchHit
 from amazme_backend.contracts.sessions import SearchResults as SearchResults
@@ -232,6 +235,7 @@ from amazme_backend.contracts.sessions import Submit as Submit
 from amazme_backend.contracts.sessions import TerminalStatus as TerminalStatus
 from amazme_backend.contracts.sessions import TranscriptMessage as TranscriptMessage
 from amazme_backend.contracts.sessions import UsageReport as UsageReport
+from amazme_backend.contracts.sessions import UsageTotals as UsageTotals
 from amazme_backend.contracts.sessions import WorkerState as WorkerState
 from amazme_backend.contracts.sessions import WorkflowChild as WorkflowChild
 from amazme_backend.contracts.sessions import WorkflowOpen as WorkflowOpen

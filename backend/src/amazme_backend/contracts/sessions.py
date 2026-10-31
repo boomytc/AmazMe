@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 from amazme_backend.contracts.models import (
     IMAGE_MAX_COUNT,
     ImagePart,
+    ModelCallUsage,
     ModelSelection,
     ThinkingLevel,
     ToolCall,
@@ -111,14 +112,13 @@ class SearchResults(Model):
     hits: list[SearchHit]
 
 
-class UsageReport(Model):
+class UsageTotals(Model):
     """Token totals and catalog cost already stored with finished model calls.
 
     ``priced`` is true only when every finished call had a catalog rate. A partial sum is not returned
     as ``cost_micro_usd``. One micro-USD is one millionth of a US dollar; the stored product truncates.
     """
 
-    session_id: str
     model_calls: int = Field(default=0, ge=0)
     input_tokens: int = Field(default=0, ge=0)
     output_tokens: int = Field(default=0, ge=0)
@@ -129,6 +129,39 @@ class UsageReport(Model):
     unpriced_calls: int = Field(default=0, ge=0)
     priced: bool = False
     cost_micro_usd: int | None = None
+    attempted_model_calls: int = Field(default=0, ge=0)
+    steps: int = Field(default=0, ge=0)
+    unknown_steps: int = Field(default=0, ge=0)
+    failed_tool_calls: int = Field(default=0, ge=0)
+    model_ms: int = Field(default=0, ge=0)
+    timed_model_calls: int = Field(default=0, ge=0)
+    tool_ms: int = Field(default=0, ge=0)
+    timed_tool_calls: int = Field(default=0, ge=0)
+    first_text_ms: int = Field(default=0, ge=0)
+    first_text_calls: int = Field(default=0, ge=0)
+
+
+class ModelUsage(UsageTotals):
+    provider: str
+    model: str
+
+
+class RequestUsage(UsageTotals):
+    request_id: str
+    text: str
+    status: Status
+
+
+class UsageReport(UsageTotals):
+    session_id: str
+    request_count: int = Field(default=0, ge=0)
+    failed_requests: int = Field(default=0, ge=0)
+    cancelled_requests: int = Field(default=0, ge=0)
+    compaction_calls: int = Field(default=0, ge=0)
+    unmeasured_compactions: int = Field(default=0, ge=0)
+    latest_context_tokens: int | None = None
+    models: list[ModelUsage] = Field(default_factory=lambda: list[ModelUsage]())
+    recent: list[RequestUsage] = Field(default_factory=lambda: list[RequestUsage](), max_length=100)
 
 
 class SessionDiagnostic(Model):
@@ -206,6 +239,7 @@ class Compaction(Model):
     message_count: int = Field(ge=1)
     summary: str = Field(min_length=1, max_length=16000)
     instructions: str = ""
+    usage: ModelCallUsage | None = None
 
 
 class CreateSession(Model):

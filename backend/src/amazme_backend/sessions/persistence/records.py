@@ -144,6 +144,10 @@ def save_run(db: sqlite3.Connection, run: Run) -> None:
 
 
 def save_step(db: sqlite3.Connection, step: Step) -> None:
+    if step.phase == "intent" and step.started_at_ms is None:
+        step.started_at_ms = clock.now_ms()
+    if step.phase == "result" and step.started_at_ms is not None and step.finished_at_ms is None:
+        step.finished_at_ms = clock.now_ms()
     db.execute("INSERT INTO steps VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload",
                (step.step_id, step.request_id, step.ordinal, step.model_dump_json()))
 

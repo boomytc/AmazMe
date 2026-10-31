@@ -558,6 +558,9 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
         row = db.execute("SELECT payload FROM previews WHERE request_id=?", (request.request_id,)).fetchone()
         if row and int(Preview.model_validate_json(row[0]).preview_seq) >= int(preview.preview_seq):
             return
+        if preview.text and step.first_text_at_ms is None:
+            step.first_text_at_ms = clock.now_ms()
+            save_step(db, step)
         db.execute("INSERT INTO previews VALUES(?,?) ON CONFLICT(request_id) DO UPDATE SET payload=excluded.payload",
                    (request.request_id, preview.model_dump_json()))
         c.emit("preview", request.request_id, preview=preview)

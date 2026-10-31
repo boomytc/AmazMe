@@ -30,7 +30,7 @@ from amazme_backend.contracts.ipc.worker import (
     TranscriptRow,
     VerdictBody,
 )
-from amazme_backend.contracts.models import Message
+from amazme_backend.contracts.models import Message, ModelCallUsage
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.sessions import (
     Compaction,
@@ -126,9 +126,9 @@ class SessionRelay:
         await self._call("release_compaction", BeginCompactionBody(
             compaction_id=compaction_id, through_request_id=""))
 
-    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "") -> Compaction:
+    async def commit_compaction(self, compaction_id: str, through_request_id: str, summary: str, basis: str, instructions: str = "", usage: ModelCallUsage | None = None) -> Compaction:
         return Compaction.model_validate_json(await self._call("commit_compaction", CompactBody(
-            compaction_id=compaction_id, through_request_id=through_request_id, summary=summary, basis=basis, instructions=instructions)))
+            compaction_id=compaction_id, through_request_id=through_request_id, summary=summary, basis=basis, instructions=instructions, usage=usage)))
 
     async def import_transcript(self, messages: list[tuple[str, str, str]]) -> None:
         await self._call("import_transcript", TranscriptBody(messages=[

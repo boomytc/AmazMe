@@ -5,6 +5,7 @@
  * selection, focus and viewport position. Disclosure choices belong to this page.
  */
 import { COMPACT_ACTION, DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, HISTORY_MORE_ACTION, MODEL_CONNECTIONS_ACTION, MODEL_SCOPE_ACTION, SESSION_COPY_ID_ACTION, SESSION_RENAME_ACTION, SUBMIT_MODE_ACTION, TRANSCRIPT_SEARCH_ACTION, WELCOME_SESSION_ACTION, WORKSPACE_FILE_LINK_ACTION } from "./actions.ts";
+import { USAGE_ACTION } from "./usage.ts";
 import type { FileLocation } from "./file-links.ts";
 import { questionForm } from "./questions.ts";
 import { QUESTION_ANSWER_ACTION } from "./actions.ts";
@@ -639,6 +640,7 @@ const DOCK_ICONS: Record<DockTabId, IconName> = {
 	conversations: "message",
 	tasks: "activity",
 	changes: "git-fork",
+	statistics: "activity",
 };
 
 /** Whether this control is the one whose call the page has in flight. */
@@ -3994,6 +3996,10 @@ export function createRenderer(
 	meterNodes.trigger.addEventListener("focus", () => {
 		meterFocus = true;
 		syncMeterOpen();
+	});
+	meterNodes.trigger.addEventListener("click", () => {
+		closeMeterDetail();
+		report({ kind: "command", id: USAGE_ACTION, data: undefined });
 	});
 	meterNodes.trigger.addEventListener("blur", () => {
 		meterFocus = false;

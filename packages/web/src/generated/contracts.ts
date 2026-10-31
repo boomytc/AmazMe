@@ -232,6 +232,7 @@ export type Compaction = {
   "message_count": number;
   "summary": string;
   "instructions"?: string;
+  "usage"?: ModelCallUsage | null;
 };
 
 export type CompleteUpdate = {
@@ -692,6 +693,20 @@ export type MemoryWrite = {
   "text": string;
 };
 
+export type ModelCallUsage = {
+  "call_id": string;
+  "provider": string;
+  "model": string;
+  "input_tokens"?: number;
+  "output_tokens"?: number;
+  "cache_read_tokens"?: number;
+  "cache_write_tokens"?: number;
+  "cost_micro_usd"?: number | null;
+  "started_at_ms"?: number | null;
+  "first_text_at_ms"?: number | null;
+  "finished_at_ms"?: number | null;
+};
+
 export type ModelCatalog = {
   "models": Array<CatalogModel>;
   "current": ModelSettings;
@@ -726,6 +741,31 @@ export type ModelSettings = {
   "proxy"?: string;
   "headers"?: Record<string, string>;
   "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+};
+
+export type ModelUsage = {
+  "model_calls"?: number;
+  "input_tokens"?: number;
+  "output_tokens"?: number;
+  "cache_read_tokens"?: number;
+  "cache_write_tokens"?: number;
+  "reasoning_signatures"?: number;
+  "priced_calls"?: number;
+  "unpriced_calls"?: number;
+  "priced"?: boolean;
+  "cost_micro_usd"?: number | null;
+  "attempted_model_calls"?: number;
+  "steps"?: number;
+  "unknown_steps"?: number;
+  "failed_tool_calls"?: number;
+  "model_ms"?: number;
+  "timed_model_calls"?: number;
+  "tool_ms"?: number;
+  "timed_tool_calls"?: number;
+  "first_text_ms"?: number;
+  "first_text_calls"?: number;
+  "provider": string;
+  "model": string;
 };
 
 export type NewSessionScheduleTarget = {
@@ -1131,6 +1171,32 @@ export type RemoteView = {
 export type RenameSession = {
   "title": string;
   "expected_title": string;
+};
+
+export type RequestUsage = {
+  "model_calls"?: number;
+  "input_tokens"?: number;
+  "output_tokens"?: number;
+  "cache_read_tokens"?: number;
+  "cache_write_tokens"?: number;
+  "reasoning_signatures"?: number;
+  "priced_calls"?: number;
+  "unpriced_calls"?: number;
+  "priced"?: boolean;
+  "cost_micro_usd"?: number | null;
+  "attempted_model_calls"?: number;
+  "steps"?: number;
+  "unknown_steps"?: number;
+  "failed_tool_calls"?: number;
+  "model_ms"?: number;
+  "timed_model_calls"?: number;
+  "tool_ms"?: number;
+  "timed_tool_calls"?: number;
+  "first_text_ms"?: number;
+  "first_text_calls"?: number;
+  "request_id": string;
+  "text": string;
+  "status": "queued" | "running" | "waiting_approval" | "waiting_input" | "waiting_children" | "waiting_time" | "waiting_host" | "cancelling" | "cleaning" | "blocked" | "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
 };
 
 export type ResourceCatalog = {
@@ -1557,7 +1623,6 @@ export type UpdateRecord = {
 };
 
 export type UsageReport = {
-  "session_id": string;
   "model_calls"?: number;
   "input_tokens"?: number;
   "output_tokens"?: number;
@@ -1568,6 +1633,25 @@ export type UsageReport = {
   "unpriced_calls"?: number;
   "priced"?: boolean;
   "cost_micro_usd"?: number | null;
+  "attempted_model_calls"?: number;
+  "steps"?: number;
+  "unknown_steps"?: number;
+  "failed_tool_calls"?: number;
+  "model_ms"?: number;
+  "timed_model_calls"?: number;
+  "tool_ms"?: number;
+  "timed_tool_calls"?: number;
+  "first_text_ms"?: number;
+  "first_text_calls"?: number;
+  "session_id": string;
+  "request_count"?: number;
+  "failed_requests"?: number;
+  "cancelled_requests"?: number;
+  "compaction_calls"?: number;
+  "unmeasured_compactions"?: number;
+  "latest_context_tokens"?: number | null;
+  "models"?: Array<ModelUsage>;
+  "recent"?: Array<RequestUsage>;
 };
 
 export type UserAnswer = {
@@ -1828,11 +1912,13 @@ export interface ApiModels {
   MemoryList: MemoryList;
   MemoryView: MemoryView;
   MemoryWrite: MemoryWrite;
+  ModelCallUsage: ModelCallUsage;
   ModelCatalog: ModelCatalog;
   ModelScope: ModelScope;
   ModelScopeRequest: ModelScopeRequest;
   ModelSelection: ModelSelection;
   ModelSettings: ModelSettings;
+  ModelUsage: ModelUsage;
   NewSessionScheduleTarget: NewSessionScheduleTarget;
   OAuthInput: OAuthInput;
   OAuthStart: OAuthStart;
@@ -1885,6 +1971,7 @@ export interface ApiModels {
   RemoteRun: RemoteRun;
   RemoteView: RemoteView;
   RenameSession: RenameSession;
+  RequestUsage: RequestUsage;
   ResourceCatalog: ResourceCatalog;
   ResourceItem: ResourceItem;
   ResourceOptions: ResourceOptions;

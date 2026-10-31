@@ -116,7 +116,8 @@
         "amazme_backend.ai.pricing",
         "amazme_backend.ai.reasoning",
         "amazme_backend.ai.selection",
-        "amazme_backend.ai.types"
+        "amazme_backend.ai.types",
+        "amazme_backend.ai.usage"
       ],
       "imports": [
         "amazme_backend.contracts.models",
@@ -203,7 +204,8 @@
         "amazme_backend.profiles.profile",
         "amazme_backend.shared.errors",
         "amazme_backend.shared.model",
-        "amazme_backend.contracts.questions"
+        "amazme_backend.contracts.questions",
+        "amazme_backend.ai.usage"
       ]
     },
     "agent": {
@@ -260,7 +262,8 @@
         "amazme_backend.shared.errors",
         "amazme_backend.shared.model",
         "amazme_backend.workspaces.paths",
-        "amazme_backend.contracts.questions"
+        "amazme_backend.contracts.questions",
+        "amazme_backend.ai.usage"
       ]
     },
     "execution": {
@@ -853,7 +856,8 @@
           "amazme_backend",
           "amazme_backend.sessions",
           "amazme_backend.ai",
-          "amazme_backend.ai.types"
+          "amazme_backend.ai.types",
+          "amazme_backend.ai.usage"
         ],
         "prefixes": [
           "amazme_backend.shared",

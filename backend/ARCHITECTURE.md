@@ -2,6 +2,8 @@
 
 后端保持一个 `amazme-backend` 分发包。执行契约见[本机方案](../docs/python-backend-plan.md)，客户端职责见[依赖说明](../docs/python-backend-ts-deps.md)。业务状态与持久化由 Python 拥有。
 
+模型目录读取和价格快照属于 `ai.pricing`；已保存单价的纯计算属于 `ai.usage`。会话统计由 `sessions.policy.usage` 对完整持久记录汇总，客户端只呈现结果。该纯闭包由结构检查约束，不能经目录读取进入文件 I/O。
+
 ## 模块
 
 | 模块 | 职责与入口 |

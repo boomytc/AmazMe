@@ -1,6 +1,8 @@
 """Product-to-model boundary: prompts, tool selection, faux routing and public DTO validation."""
+import time
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
+from dataclasses import dataclass
 
 from amazme_backend.agent import faux
 from amazme_backend.agent.prompting import build_system_prompt, summary_message
@@ -8,8 +10,9 @@ from amazme_backend.agent.tool_catalog import build_tools, wire_names
 from amazme_backend.ai import client
 from amazme_backend.ai.catalog import CATALOG as MODEL_CATALOG
 from amazme_backend.ai.types import Auth, Completion, ModelMessage, ModelRequest, ModelSpec, RequestTransport
+from amazme_backend.ai.usage import call_usage
 from amazme_backend.contracts.mcp import McpOffer
-from amazme_backend.contracts.models import CatalogModel, Message
+from amazme_backend.contracts.models import CatalogModel, Message, ModelCallUsage
 from amazme_backend.contracts.plugins import PluginOffer
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.shared.errors import BackendError
@@ -78,16 +81,33 @@ async def stream(config: ProviderConfig, messages: list[Message], offers: Sequen
             request = reduced
 
 
-async def summarize(config: ProviderConfig, messages: list[Message], instructions: str = "", *, auth: Auth) -> str:
+@dataclass(frozen=True)
+class SummaryResult:
+    text: str
+    usage: ModelCallUsage
+
+
+async def summarize(config: ProviderConfig, messages: list[Message], instructions: str = "", *,
+                    auth: Auth, call_id: str) -> SummaryResult:
     """Ask the configured provider for a context summary. Callers commit it only if the basis still matches."""
     prompt = summary_message(messages, instructions)
     summary = ""
+    started = time.time_ns() // 1000000
+    first_text: int | None = None
+    completion: ProductCompletion | None = None
     async with aclosing(stream(config, [prompt], auth=auth)) as response:
         async for item in response:
             if isinstance(item, str):
                 summary += item
-            elif item.message.content:
-                summary = item.message.content
+                if item and first_text is None:
+                    first_text = time.time_ns() // 1000000
+            else:
+                completion = item
+                if item.message.content:
+                    summary = item.message.content
+    if completion is None:
+        raise BackendError("missing_model_completion")
     if not summary.strip():
         raise BackendError("compaction_empty")
-    return summary.strip()[:16000]
+    return SummaryResult(summary.strip()[:16000], call_usage(call_id, config.provider, config.model, completion,
+        started_at_ms=started, first_text_at_ms=first_text, finished_at_ms=time.time_ns() // 1000000))

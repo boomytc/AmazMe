@@ -27,17 +27,20 @@ import type { PanelGroup, PanelNotice, PanelPending, PanelRow, PanelSpec } from 
 import type { MessageKey } from "./strings.ts";
 import { taskBlockedCopy, taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
 import type { PtyPresentation } from "./pty-surface.ts";
+import type { UsageReport } from "./generated/contracts.ts";
+import { usagePanel } from "./usage.ts";
 
 /** The dock's tabs, in the order it shows them. */
-export type DockTabId = "files" | "terminal" | "conversations" | "tasks" | "changes";
+export type DockTabId = "files" | "terminal" | "conversations" | "tasks" | "changes" | "statistics";
 
-const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "conversations", "tasks"];
+const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "conversations", "tasks", "statistics"];
 const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
 	files: "dock.files",
 	terminal: "dock.terminal",
 	conversations: "dock.conversations",
 	tasks: "dock.tasks",
 	changes: "review.tab",
+	statistics: "stats.title",
 };
 
 export interface DockTab {
@@ -142,6 +145,7 @@ export interface ConversationsStateLike {
 }
 
 export interface DockViewInput {
+	readonly usage?: UsageReport;
 	readonly open: boolean;
 	readonly tab: string;
 	/** The session's working directory, which both dock surfaces live in. */
@@ -643,7 +647,7 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
 				: tab === "conversations"
 					? conversationsPanel(locale, input.conversations, input.readOnly)
-					: tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff, input.reviewFile) : tasksPanel(locale, input.conversations);
+					: tab === "statistics" ? usagePanel(locale, input.usage) : tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff, input.reviewFile) : tasksPanel(locale, input.conversations);
 	return {
 		open: input.open,
 		tabs: [...dockTabs(locale, tab), ...(input.insights ? [{ id: "changes" as const, label: translate(locale, "review.tab"), active: tab === "changes" }] : [])],

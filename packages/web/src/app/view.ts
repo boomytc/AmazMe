@@ -155,7 +155,7 @@ export function pythonView(input: PresentationInput): WebView {
 		palette: commandPalette(locale, { draft: input.draft, commands: input.commands, selected: input.paletteSelection }),
 		shortcuts: shortcuts(locale, typeof navigator === "undefined" ? "" : navigator.platform),
 		dock: input.dock ?? dockView(locale, { open: false, tab: "files", cwd, workspace: undefined, terminal: undefined, conversations: undefined }),
-		meter: { context: "?", tokens: input.usage ? `${input.usage.input_tokens ?? 0} / ${input.usage.output_tokens ?? 0}` : "? / ?", cost: input.usage?.priced && input.usage.cost_micro_usd !== null && input.usage.cost_micro_usd !== undefined ? `$${(input.usage.cost_micro_usd / 1_000_000).toFixed(3)}` : "?", tone: "neutral" },
+		meter: { context: "?", tokens: input.usage ? `${(input.usage.input_tokens ?? 0) + (input.usage.cache_read_tokens ?? 0) + (input.usage.cache_write_tokens ?? 0)} / ${input.usage.output_tokens ?? 0}` : "? / ?", cost: input.usage?.priced && input.usage.cost_micro_usd !== null && input.usage.cost_micro_usd !== undefined ? `$${(input.usage.cost_micro_usd / 1_000_000).toFixed(3)}` : "?", tone: "neutral" },
 	};
 }
 
