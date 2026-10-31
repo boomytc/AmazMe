@@ -51,9 +51,12 @@ class Scheduling:
             )
 
     async def _schedule_busy(self, record: ScheduleView) -> bool:
-        if not session_database(self.lifecycle.profile.path, record.session_id).is_file():
+        if record.target.kind != "session":
             return False
-        activity = await self.access.read(record.session_id, lambda store: store.activity())
+        session_id = record.target.session_id
+        if not session_database(self.lifecycle.profile.path, session_id).is_file():
+            return False
+        activity = await self.access.read(session_id, lambda store: store.activity())
         return activity.pending > 0
 
     async def _reconcile_schedule(self, record: ScheduleView, now: int) -> ScheduleView:
@@ -61,16 +64,24 @@ class Scheduling:
         if pending is None:
             return record
         try:
-            path = session_database(self.lifecycle.profile.path, record.session_id)
+            path = session_database(self.lifecycle.profile.path, pending.session_id)
             receipt = None
             if path.is_file():
                 try:
                     receipt = await self.access.read(
-                        record.session_id, lambda store: store.get(pending.request_id)
+                        pending.session_id, lambda store: store.get(pending.request_id)
                     )
                 except BackendError as error:
                     if error.code != "request_not_found":
                         raise
+            if receipt is None:
+                delivery = await self.lifecycle.store.submitted_delivery(pending.session_id, pending.request_id)
+                if delivery and delivery.state == "rejected":
+                    return await self.lifecycle.store.finish_schedule(record, ScheduleOutcome(
+                        session_id=pending.session_id, request_id=pending.request_id,
+                        started_at=pending.started_at, finished_at=now, scheduled_for=pending.scheduled_for,
+                        status=pending.cancel_reason or "refused", detail=delivery.error_code or None,
+                    ), now)
             if receipt is None or receipt.status not in {
                 "succeeded",
                 "cancelled",
@@ -83,23 +94,24 @@ class Scheduling:
                 pending.cancel_reason = pending.cancel_reason or "timed_out"
                 await self.lifecycle.store.persist_schedule(record)
                 await self.sessions.deliver(
-                    record.session_id,
+                    pending.session_id,
                     "cancel",
                     pending.request_id,
                     Cancel(host_epoch=0, build_id="", request_id=pending.request_id),
                 )
                 receipt = await self.access.read(
-                    record.session_id, lambda store: store.get(pending.request_id)
+                    pending.session_id, lambda store: store.get(pending.request_id)
                 )
             if receipt.status == "unknown":
                 record.enabled = False
                 pending.problem = "结果未知，计划已暂停；核对原调用和资源后，可取消本次运行。"
                 if pending.cancel_reason and await self.access.read(
-                    record.session_id, lambda store: store.request_cleanup_complete(pending.request_id)
+                    pending.session_id, lambda store: store.request_cleanup_complete(pending.request_id)
                 ):
                     return await self.lifecycle.store.finish_schedule(
                         record,
                         ScheduleOutcome(
+                            session_id=pending.session_id,
                             request_id=pending.request_id,
                             started_at=pending.started_at,
                             finished_at=now,
@@ -111,12 +123,13 @@ class Scheduling:
                     )
             elif receipt.status in {"succeeded", "cancelled", "interrupted", "failed"}:
                 if not await self.access.read(
-                    record.session_id, lambda store: store.request_cleanup_complete(pending.request_id)
+                    pending.session_id, lambda store: store.request_cleanup_complete(pending.request_id)
                 ):
                     record.enabled = False
                     pending.problem = "原任务或子任务仍有待核对的效果或资源，计划已暂停。"
                     return await self.lifecycle.store.persist_schedule(record)
                 outcome = ScheduleOutcome(
+                    session_id=pending.session_id,
                     request_id=pending.request_id,
                     started_at=pending.started_at,
                     finished_at=now,

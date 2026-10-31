@@ -61,6 +61,14 @@ def delivery_row(row: sqlite3.Row) -> Delivery:
     return value
 
 
+async def submitted(self: PersistenceOwner, session: str, request: str) -> Delivery | None:
+    identity = hashlib.sha256(json.dumps([session, "submit", request]).encode()).hexdigest()
+    def operation(db: sqlite3.Connection) -> Delivery | None:
+        row = db.execute("SELECT * FROM deliveries WHERE id=?", (identity,)).fetchone()
+        return delivery_row(row) if row else None
+    return await self.call(operation)
+
+
 async def enqueue(
     self: PersistenceOwner,
     session: str,

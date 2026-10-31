@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
+from amazme_backend.contracts.models import ModelSelection
 from amazme_backend.shared.model import Model
 
 
@@ -27,9 +28,25 @@ class CronRule(Model):
 ScheduleRule = Annotated[IntervalRule | OnceRule | CronRule, Field(discriminator="kind")]
 
 
+class SessionScheduleTarget(Model):
+    kind: Literal["session"]
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class NewSessionScheduleTarget(Model):
+    kind: Literal["new_session"]
+    workspace: str = Field(default="primary", min_length=1, max_length=128)
+    title: str = Field(default="定时任务", min_length=1, max_length=100)
+    project_id: str = ""
+    model_selection: ModelSelection | None = None
+
+
+ScheduleTarget = Annotated[SessionScheduleTarget | NewSessionScheduleTarget, Field(discriminator="kind")]
+
+
 class ScheduleInput(Model):
     schedule_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    target: ScheduleTarget
     text: str = Field(min_length=1, max_length=8000)
     rule: ScheduleRule
     busy: Literal["queue", "skip"] = "queue"
@@ -38,8 +55,31 @@ class ScheduleInput(Model):
     timeout_seconds: int = Field(default=600, ge=1, le=86400)
     expected_generation: int = Field(default=0, ge=0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_target(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        data = dict(cast(dict[object, object], value))
+        if "session_id" not in data:
+            return data
+        session_id = data.pop("session_id")
+        if "target" in data:
+            raise ValueError("Use one schedule target")
+        data["target"] = {"kind": "session", "session_id": session_id}
+        pending, history = data.get("pending"), data.get("history")
+        if isinstance(pending, dict):
+            data["pending"] = {"session_id": session_id, **cast(dict[object, object], pending)}
+        if isinstance(history, list):
+            data["history"] = [
+                {"session_id": session_id, **cast(dict[object, object], item)} if isinstance(item, dict) else item
+                for item in cast(list[object], history)
+            ]
+        return data
+
 
 class ScheduleRun(Model):
+    session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     request_id: str
     started_at: int
     deadline_at: int
@@ -49,6 +89,7 @@ class ScheduleRun(Model):
 
 
 class ScheduleOutcome(Model):
+    session_id: str = Field(default="", pattern=r"^(?:[a-f0-9]{32})?$")
     request_id: str
     started_at: int
     finished_at: int

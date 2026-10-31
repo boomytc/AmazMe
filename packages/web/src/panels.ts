@@ -424,8 +424,7 @@ export type ScheduleRuleLike =
 export interface ScheduleRecordLike {
 	readonly id: string;
 	readonly generation: number;
-	readonly sessionId: string;
-	readonly conversationId: string;
+	readonly target: { readonly kind: "session"; readonly sessionId: string } | { readonly kind: "new_session"; readonly workspace: string; readonly title: string; readonly projectId: string; readonly model: string };
 	readonly prompt: string;
 	readonly rule: ScheduleRuleLike;
 	readonly busy: "queue" | "skip";
@@ -435,8 +434,8 @@ export interface ScheduleRecordLike {
 	readonly enabled: boolean;
 	readonly createdAt: number;
 	readonly nextRunAt: number | null;
-	readonly pending: { readonly cancelReason: "cancelled" | "timed_out" | null; readonly deadlineAt: number; readonly problem: string | null } | null;
-	readonly history: readonly { readonly startedAt: number; readonly finishedAt: number; readonly scheduledFor: number | null;
+	readonly pending: { readonly sessionId: string; readonly cancelReason: "cancelled" | "timed_out" | null; readonly deadlineAt: number; readonly problem: string | null } | null;
+	readonly history: readonly { readonly sessionId: string; readonly startedAt: number; readonly finishedAt: number; readonly scheduledFor: number | null;
 		readonly status: "done" | "unanswered" | "refused" | "cancelled" | "timed_out" | "skipped"; readonly detail: string | null }[];
 }
 
@@ -1013,7 +1012,7 @@ function summarize(text: string, max: number): string {
  * next due, and what its last run produced; Add plans one for the attached session.
  */
 export function automationPanel(locale: Locale, input: AutomationPanelInput): PanelSpec {
-	const { state, sessionId } = input;
+	const { state } = input;
 	const now = input.now ?? Date.now();
 	const title = translate(locale, "panel.automation.title");
 	if (state === undefined) {
@@ -1025,7 +1024,6 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 		description: translate(locale, "panel.automation.description"),
 		notices: [
 			...(state.problem ? [{ tone: "error" as const, text: state.problem }] : []),
-			...(sessionId === undefined ? [{ tone: "info" as const, text: translate(locale, "panel.automation.noSession"), persistence: "pinned" as const }] : []),
 		],
 		groups: [
 			{
@@ -1037,17 +1035,17 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 						id: SCHEDULE_ADD_ACTION,
 						label: translate(locale, "panel.automation.add"),
 						weight: "filled" as const,
-						...(sessionId === undefined || state.problem ? { disabled: true } : {}),
+						...(state.problem ? { disabled: true } : {}),
 					},
 					...(state.problem ? [{ id: SCHEDULE_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), weight: "line" as const }] : []),
 				],
 				rows: state.schedules.map((schedule) => ({
 					id: `schedule:${schedule.id}`,
-					title: summarize(schedule.prompt, 90),
+					title: summarize(schedule.target.kind === "new_session" ? schedule.target.title : schedule.prompt, 90),
 					description: [scheduleRuleCopy(locale, schedule.rule), translate(locale, schedule.busy === "queue" ? "panel.automation.busyQueue" : "panel.automation.busySkip"),
 						translate(locale, schedule.missed === "latest" ? "panel.automation.missedLatest" : "panel.automation.missedSkip"),
 						translate(locale, "panel.automation.timeout", { seconds: String(schedule.timeoutSeconds) })].join(" · "),
-					badges: [schedule.sessionId, translate(locale, "panel.automation.conversation", { id: schedule.conversationId }), ...(schedule.nextRunAt === null ? [translate(locale, "panel.automation.finished")] : schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
+					badges: [schedule.target.kind === "session" ? schedule.target.sessionId : translate(locale, "modal.scheduleAdd.newSession"), ...(schedule.nextRunAt === null ? [translate(locale, "panel.automation.finished")] : schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
 					value: [
 						translate(locale, "panel.automation.next", {
 							when: scheduleDueCopy(locale, schedule.nextRunAt, now),
@@ -1068,6 +1066,7 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 						label: translate(locale, "panel.rowActions"),
 						data: schedule.id,
 						actions: [
+							...(schedule.pending?.sessionId || schedule.history.some(item => item.sessionId) ? [{ id: "schedule:open-session", label: translate(locale, "panel.automation.openResult"), weight: "text" as const, glyph: "folder" as const }] : []),
 							{
 								id: SCHEDULE_RUN_ACTION,
 								...(state.problem || schedule.pending !== null ? { disabled: true } : {}),
@@ -1358,32 +1357,51 @@ export function mcpProjectModal(locale: Locale, server: { readonly name: string;
 /**
  * The modal a plan-a-prompt action opens: the text the host will send, and the gap between runs.
  */
-export function addScheduleModal(locale: Locale, sessionId: string, conversationId = "1", id: string = crypto.randomUUID()): PanelModal {
-	return scheduleModal(locale, { id, sessionId, conversationId });
+export interface ScheduleEditorContext {
+	readonly id: string;
+	readonly sessionId?: string;
+	readonly workspace: string;
+	readonly workspaces: readonly { readonly value: string; readonly label: string }[];
+	readonly models: readonly { readonly value: string; readonly label: string }[];
+	readonly model: string;
 }
 
-export function editScheduleModal(locale: Locale, record: ScheduleRecordLike): PanelModal {
-	return scheduleModal(locale, record, record);
+export function addScheduleModal(locale: Locale, context: ScheduleEditorContext): PanelModal {
+	return scheduleModal(locale, context);
 }
 
-function scheduleModal(locale: Locale, target: { id: string; sessionId: string; conversationId: string }, record?: ScheduleRecordLike): PanelModal {
+export function editScheduleModal(locale: Locale, record: ScheduleRecordLike, context: ScheduleEditorContext): PanelModal {
+	return scheduleModal(locale, { ...context, sessionId: record.target.kind === "session" ? record.target.sessionId : context.sessionId }, record);
+}
+
+function scheduleModal(locale: Locale, context: ScheduleEditorContext, record?: ScheduleRecordLike): PanelModal {
 	const rule = record?.rule;
 	const kind = rule?.kind ?? "interval";
 	const timeZone = rule?.kind === "once" || rule?.kind === "cron" ? rule.timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone;
 	const options = (entries: readonly string[]) => entries.map((value) => ({ value, label: translate(locale, `modal.scheduleAdd.${value}` as MessageKey) }));
+	const target = record?.target;
+	const models = [...context.models], workspaces = [...context.workspaces];
+	const model = target?.kind === "new_session" ? target.model : context.model;
+	const workspace = target?.kind === "new_session" ? target.workspace : context.workspace;
+	if (model && !models.some(item => item.value === model)) models.push({ value: model, label: model });
+	if (!workspaces.some(item => item.value === workspace)) workspaces.push({ value: workspace, label: workspace });
 	return {
 		id: SCHEDULE_ADD_MODAL,
 		title: translate(locale, record === undefined ? "modal.scheduleAdd.title" : "modal.scheduleAdd.editTitle"),
-		description: translate(locale, "modal.scheduleAdd.description", { session: target.sessionId, conversation: target.conversationId }),
-		data: JSON.stringify({ id: target.id, sessionId: target.sessionId, conversationId: target.conversationId, ...(record === undefined ? {} : { expectedGeneration: record.generation }) }),
+		description: translate(locale, "modal.scheduleAdd.description"),
+		data: JSON.stringify({ id: context.id, sessionId: context.sessionId ?? "", projectId: target?.kind === "new_session" ? target.projectId : "", ...(record === undefined ? {} : { expectedGeneration: record.generation }) }),
 		fields: [
+			{ id: "targetKind", label: translate(locale, "modal.scheduleAdd.target"), kind: "select", value: target?.kind ?? "new_session", options: [{ value: "new_session", label: translate(locale, "modal.scheduleAdd.newSession") }, ...(context.sessionId ? [{ value: "session", label: `${translate(locale, "modal.scheduleAdd.existingSession")} · ${context.sessionId}` }] : [])] },
+			{ id: "title", label: translate(locale, "modal.scheduleAdd.taskTitle"), kind: "text", value: target?.kind === "new_session" ? target.title : "", visibleWhen: { field: "targetKind", values: ["new_session"] } },
+			{ id: "workspace", label: translate(locale, "modal.scheduleAdd.workspace"), kind: "select", value: workspace, options: workspaces, visibleWhen: { field: "targetKind", values: ["new_session"] } },
+			{ id: "model", label: translate(locale, "modal.scheduleAdd.model"), kind: "select", value: model, options: [{ value: "", label: translate(locale, "modal.scheduleAdd.defaultModel") }, ...models], visibleWhen: { field: "targetKind", values: ["new_session"] } },
 			{ id: "prompt", label: translate(locale, "modal.scheduleAdd.prompt"), kind: "textarea", value: record?.prompt ?? "", placeholder: translate(locale, "modal.scheduleAdd.promptPlaceholder") },
 			{ id: "kind", label: translate(locale, "modal.scheduleAdd.kind"), kind: "select", value: kind, options: options(["interval", "once", "cron"]) },
 			{ id: "everyMinutes", label: translate(locale, "modal.scheduleAdd.every"), kind: "text", inputType: "number", value: rule?.kind === "interval" ? String(rule.everyMinutes) : "15", visibleWhen: { field: "kind", values: ["interval"] } },
 			{ id: "at", label: translate(locale, "modal.scheduleAdd.at"), kind: "text", inputType: "datetime-local", value: rule?.kind === "once" ? rule.at : "", visibleWhen: { field: "kind", values: ["once"] } },
 			{ id: "expression", label: translate(locale, "modal.scheduleAdd.expression"), kind: "text", value: rule?.kind === "cron" ? rule.expression : "0 9 * * 1-5", description: translate(locale, "modal.scheduleAdd.cronHelp"), visibleWhen: { field: "kind", values: ["cron"] } },
 			{ id: "timeZone", label: translate(locale, "modal.scheduleAdd.timeZone"), kind: "text", value: timeZone, description: translate(locale, "modal.scheduleAdd.zoneHelp"), visibleWhen: { field: "kind", values: ["once", "cron"] } },
-			{ id: "busy", label: translate(locale, "modal.scheduleAdd.busy"), kind: "select", value: record?.busy ?? "queue", options: options(["queue", "skip"]) },
+			{ id: "busy", label: translate(locale, "modal.scheduleAdd.busy"), kind: "select", value: record?.busy ?? "queue", options: options(["queue", "skip"]), visibleWhen: { field: "targetKind", values: ["session"] } },
 			{ id: "missed", label: translate(locale, "modal.scheduleAdd.missed"), kind: "select", value: record?.missed ?? "latest", options: options(["latest", "skip"]) },
 			{ id: "graceMinutes", label: translate(locale, "modal.scheduleAdd.grace"), kind: "text", inputType: "number", value: String(record?.graceMinutes ?? 10) },
 			{ id: "timeoutSeconds", label: translate(locale, "modal.scheduleAdd.timeout"), kind: "text", inputType: "number", value: String(record?.timeoutSeconds ?? 600) },
@@ -1399,6 +1417,7 @@ export function scheduleHistoryModal(locale: Locale, record: ScheduleRecordLike)
 	const value = [...record.history].reverse().map((receipt) => [
 		`${format(receipt.startedAt)} — ${scheduleOutcomeCopy(locale, receipt)}`,
 		translate(locale, "panel.automation.historyFinished", { time: format(receipt.finishedAt) }),
+		...(receipt.sessionId ? [translate(locale, "panel.automation.historySession", { session: receipt.sessionId })] : []),
 		...(receipt.scheduledFor === null ? [] : [translate(locale, "panel.automation.historyDue", { time: format(receipt.scheduledFor) })]),
 	].join("\n")).join("\n\n");
 	return { id: SCHEDULE_HISTORY_MODAL, title: translate(locale, "panel.automation.history"), description: `${record.prompt} · ${translate(locale, "modal.scheduleAdd.timeZone")}: ${zone}`,

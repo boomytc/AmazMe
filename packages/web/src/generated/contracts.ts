@@ -728,6 +728,14 @@ export type ModelSettings = {
   "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 };
 
+export type NewSessionScheduleTarget = {
+  "kind": "new_session";
+  "workspace"?: string;
+  "title"?: string;
+  "project_id"?: string;
+  "model_selection"?: ModelSelection | null;
+};
+
 export type OAuthInput = {
   "value": string;
 };
@@ -1240,7 +1248,7 @@ export type ScheduleControl = {
 
 export type ScheduleInput = {
   "schedule_id": string;
-  "session_id": string;
+  "target": SessionScheduleTarget | NewSessionScheduleTarget;
   "text": string;
   "rule": IntervalRule | OnceRule | CronRule;
   "busy"?: "queue" | "skip";
@@ -1256,6 +1264,7 @@ export type ScheduleNow = {
 };
 
 export type ScheduleOutcome = {
+  "session_id"?: string;
   "request_id": string;
   "started_at": number;
   "finished_at": number;
@@ -1265,6 +1274,7 @@ export type ScheduleOutcome = {
 };
 
 export type ScheduleRun = {
+  "session_id": string;
   "request_id": string;
   "started_at": number;
   "deadline_at": number;
@@ -1275,7 +1285,7 @@ export type ScheduleRun = {
 
 export type ScheduleView = {
   "schedule_id": string;
-  "session_id": string;
+  "target": SessionScheduleTarget | NewSessionScheduleTarget;
   "text": string;
   "rule": IntervalRule | OnceRule | CronRule;
   "busy"?: "queue" | "skip";
@@ -1356,6 +1366,11 @@ export type SessionList = {
 export type SessionModel = {
   "provider": string;
   "model": string;
+  "session_id": string;
+};
+
+export type SessionScheduleTarget = {
+  "kind": "session";
   "session_id": string;
 };
 
@@ -1788,6 +1803,7 @@ export interface ApiModels {
   ModelScopeRequest: ModelScopeRequest;
   ModelSelection: ModelSelection;
   ModelSettings: ModelSettings;
+  NewSessionScheduleTarget: NewSessionScheduleTarget;
   OAuthInput: OAuthInput;
   OAuthStart: OAuthStart;
   OAuthView: OAuthView;
@@ -1860,6 +1876,7 @@ export interface ApiModels {
   SessionDiagnostic: SessionDiagnostic;
   SessionList: SessionList;
   SessionModel: SessionModel;
+  SessionScheduleTarget: SessionScheduleTarget;
   SettingsUpdate: SettingsUpdate;
   ShareMessage: ShareMessage;
   ShareView: ShareView;

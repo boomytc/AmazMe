@@ -23,6 +23,8 @@ async with Client('http://127.0.0.1:PORT', Path('/absolute/profile/web.token').r
 
 模型选择 `models` / `update_model` 与账号 `accounts` / `update_account` 分离；OAuth 使用 `start_oauth` / `oauth` / `oauth_input` / `cancel_oauth`，沿用原供应商身份。不要通过模型配置传递密钥。
 
+`save_schedule(ScheduleInput(...))` 的 `target` 可选 `SessionScheduleTarget(kind="session", session_id=...)`，或 `NewSessionScheduleTarget(kind="new_session", workspace="primary", title="定时检查", model_selection=...)`。后者每次执行创建独立会话，可选 `project_id`；省略模型选择时使用执行时的 Host 默认模型。旧版 `session_id` 输入和持久计划仍可读取。`run_schedule` 的操作编号重复使用时查询原次运行，不创建新会话；`pending` 和 `history` 都带实际运行的 `session_id`。运行中的会话需先取消该次排程并等待清理，才能删除。任务不重叠执行，Host 同时最多接纳四个排程；达到会话容量时暂停任务并留下未接纳记录，历史会话由用户显式管理。
+
 其他入口包括 `register_plugin/reload_plugin/call_plugin/cancel_plugin/close_plugin`、`code_tools/run_code/cancel_code`、stdio MCP、会话 PTY、检查点、产物和导入导出；参数直接来自 `amazme_backend.contracts`，不保留另一套 SDK 业务状态。
 
 `read_file(path, offset=0, limit=32000)` 对应 `GET /api/v1/files/content` 的字节分页，`limit` 为 4–32000。下一页使用返回的 `next_offset`，不要按字符串长度计算；游标必须落在 UTF-8 字符边界。`has_more` 表示是否还有内容，连续读取时比较 `digest`，避免拼接不同版本。

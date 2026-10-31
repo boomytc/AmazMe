@@ -191,6 +191,7 @@ from amazme_backend.contracts.remote import SshTarget as SshTarget
 from amazme_backend.contracts.resources import ResourceOptions as ResourceOptions
 from amazme_backend.contracts.schedules import CronRule as CronRule
 from amazme_backend.contracts.schedules import IntervalRule as IntervalRule
+from amazme_backend.contracts.schedules import NewSessionScheduleTarget as NewSessionScheduleTarget
 from amazme_backend.contracts.schedules import OnceRule as OnceRule
 from amazme_backend.contracts.schedules import ScheduleControl as ScheduleControl
 from amazme_backend.contracts.schedules import ScheduleInput as ScheduleInput
@@ -199,7 +200,9 @@ from amazme_backend.contracts.schedules import ScheduleOutcome as ScheduleOutcom
 from amazme_backend.contracts.schedules import ScheduleRule as ScheduleRule
 from amazme_backend.contracts.schedules import ScheduleRun as ScheduleRun
 from amazme_backend.contracts.schedules import SchedulesView as SchedulesView
+from amazme_backend.contracts.schedules import ScheduleTarget as ScheduleTarget
 from amazme_backend.contracts.schedules import ScheduleView as ScheduleView
+from amazme_backend.contracts.schedules import SessionScheduleTarget as SessionScheduleTarget
 from amazme_backend.contracts.sessions import Approval as Approval
 from amazme_backend.contracts.sessions import ApprovalDecision as ApprovalDecision
 from amazme_backend.contracts.sessions import ApprovalPolicy as ApprovalPolicy

@@ -106,73 +106,73 @@ async def record_reuse(self: PersistenceOwner, session_id: str, value: CreateSes
     return await self.transaction(operation)
 
 
-async def create_session(self: PersistenceOwner, session_id: str, value: CreateSession) -> Session:
+def create(db: sqlite3.Connection, session_id: str, value: CreateSession) -> Session:
     creation = creation_digest(value)
-
-    def operation(db: sqlite3.Connection) -> Session:
-        control = db.execute("SELECT freeze_id,quitting FROM control WHERE id=1").fetchone()
-        if str(control[0]):
-            raise BackendError("update_frozen", status=503)
-        if control[1]:
-            raise BackendError("host_stopping", status=503)
-        existing = reused_session(db, session_id, creation)
-        if existing is not None:
-            return existing
-        if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
-            raise BackendError("session_removed")
-        workspace = value.workspace or "primary"
-        project_id = value.project_id
-        row = db.execute(
-            "SELECT title, workspace, create_digest FROM sessions WHERE id=?", (session_id,)
-        ).fetchone()
-        if row is not None:
-            if str(row["create_digest"]):
-                if str(row["create_digest"]) != creation:
-                    raise BackendError("session_conflict")
-                return rows.session_row(
-                    db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone()
-                )
-            linked = db.execute(
-                "SELECT project FROM project_sessions WHERE session=?", (session_id,)
-            ).fetchone()
-            stored_project = "" if linked is None else str(linked[0])
-            if (
-                str(row[0]) != value.title
-                or str(row[1] or "primary") != workspace
-                or stored_project != project_id
-            ):
+    control = db.execute("SELECT freeze_id,quitting FROM control WHERE id=1").fetchone()
+    if str(control[0]):
+        raise BackendError("update_frozen", status=503)
+    if control[1]:
+        raise BackendError("host_stopping", status=503)
+    existing = reused_session(db, session_id, creation)
+    if existing is not None:
+        return existing
+    if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
+        raise BackendError("session_removed")
+    workspace = value.workspace or "primary"
+    project_id = value.project_id
+    row = db.execute(
+        "SELECT title, workspace, create_digest FROM sessions WHERE id=?", (session_id,)
+    ).fetchone()
+    if row is not None:
+        if str(row["create_digest"]):
+            if str(row["create_digest"]) != creation:
                 raise BackendError("session_conflict")
-            return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
-        if (
-            project_id
-            and db.execute("SELECT 1 FROM projects WHERE id=? AND removed=0", (project_id,)).fetchone()
-            is None
-        ):
-            raise BackendError("project_not_found", status=404)
-        if project_id:
-            project = content.project_row(
-                db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+            return rows.session_row(
+                db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone()
             )
-            if workspace not in project.workspaces:
-                raise BackendError("project_workspace_mismatch")
-        if value.reuse_empty:
-            reusable = db.execute(rows.session_sql(
-                "WHERE s.empty_draft=1 AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) ORDER BY s.updated_ms DESC,s.rowid DESC LIMIT 1"
-            ), (workspace, project_id)).fetchone()
-            if reusable is not None:
-                return rows.session_row(reusable)
-        if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
-            raise BackendError("session_capacity", status=429)
-        db.execute(
-            "INSERT INTO sessions(id,title,workspace,updated_ms,create_digest,empty_draft) VALUES(?,?,?,?,?,?)",
-            (session_id, value.title, workspace, time.time_ns() // 1000000, creation, int(value.reuse_empty)),
-        )
-        if project_id:
-            db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
+        linked = db.execute(
+            "SELECT project FROM project_sessions WHERE session=?", (session_id,)
+        ).fetchone()
+        stored_project = "" if linked is None else str(linked[0])
+        if (
+            str(row[0]) != value.title
+            or str(row[1] or "primary") != workspace
+            or stored_project != project_id
+        ):
+            raise BackendError("session_conflict")
         return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
+    if (
+        project_id
+        and db.execute("SELECT 1 FROM projects WHERE id=? AND removed=0", (project_id,)).fetchone()
+        is None
+    ):
+        raise BackendError("project_not_found", status=404)
+    if project_id:
+        project = content.project_row(
+            db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
+        )
+        if workspace not in project.workspaces:
+            raise BackendError("project_workspace_mismatch")
+    if value.reuse_empty:
+        reusable = db.execute(rows.session_sql(
+            "WHERE s.empty_draft=1 AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) ORDER BY s.updated_ms DESC,s.rowid DESC LIMIT 1"
+        ), (workspace, project_id)).fetchone()
+        if reusable is not None:
+            return rows.session_row(reusable)
+    if db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
+        raise BackendError("session_capacity", status=429)
+    db.execute(
+        "INSERT INTO sessions(id,title,workspace,updated_ms,create_digest,empty_draft) VALUES(?,?,?,?,?,?)",
+        (session_id, value.title, workspace, time.time_ns() // 1000000, creation, int(value.reuse_empty)),
+    )
+    if project_id:
+        db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
+    return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
 
-    return await self.transaction(operation)
 
+
+async def create_session(self: PersistenceOwner, session_id: str, value: CreateSession) -> Session:
+    return await self.transaction(lambda db: create(db, session_id, value))
 
 async def empty_drafts(self: PersistenceOwner) -> list[str]:
     return await self.call(lambda db: [str(row[0]) for row in db.execute(
@@ -322,6 +322,11 @@ async def begin_session_removal(self: PersistenceOwner, session: str) -> bool:
             return False
         if not db.execute("SELECT 1 FROM sessions WHERE id=?", (session,)).fetchone():
             raise BackendError("session_not_found", status=404)
+        if db.execute(
+            "SELECT 1 FROM schedules WHERE deleted=0 AND json_extract(payload,'$.pending.session_id')=? LIMIT 1",
+            (session,),
+        ).fetchone():
+            raise BackendError("schedule_cleanup_pending")
         db.execute("INSERT OR IGNORE INTO session_removals(session) VALUES(?)", (session,))
         db.execute("UPDATE sessions SET archived=1,wanted=0,next_check=0 WHERE id=?", (session,))
         db.execute(

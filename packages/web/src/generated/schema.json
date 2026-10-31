@@ -3798,6 +3798,50 @@
       ],
       "title": "ModelSettings"
     },
+    "NewSessionScheduleTarget": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "new_session",
+          "title": "Kind"
+        },
+        "workspace": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Workspace",
+          "default": "primary"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 100,
+          "minLength": 1,
+          "title": "Title",
+          "default": "定时任务"
+        },
+        "project_id": {
+          "type": "string",
+          "title": "Project Id",
+          "default": ""
+        },
+        "model_selection": {
+          "anyOf": [
+            {
+              "$ref": "#/components/schemas/ModelSelection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "title": "NewSessionScheduleTarget"
+    },
     "OAuthInput": {
       "properties": {
         "value": {
@@ -6622,10 +6666,23 @@
           "pattern": "^[a-f0-9]{32}$",
           "title": "Schedule Id"
         },
-        "session_id": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{32}$",
-          "title": "Session Id"
+        "target": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/SessionScheduleTarget"
+            },
+            {
+              "$ref": "#/components/schemas/NewSessionScheduleTarget"
+            }
+          ],
+          "title": "Target",
+          "discriminator": {
+            "propertyName": "kind",
+            "mapping": {
+              "new_session": "#/components/schemas/NewSessionScheduleTarget",
+              "session": "#/components/schemas/SessionScheduleTarget"
+            }
+          }
         },
         "text": {
           "type": "string",
@@ -6698,7 +6755,7 @@
       "type": "object",
       "required": [
         "schedule_id",
-        "session_id",
+        "target",
         "text",
         "rule"
       ],
@@ -6727,6 +6784,12 @@
     },
     "ScheduleOutcome": {
       "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^(?:[a-f0-9]{32})?$",
+          "title": "Session Id",
+          "default": ""
+        },
         "request_id": {
           "type": "string",
           "title": "Request Id"
@@ -6786,6 +6849,11 @@
     },
     "ScheduleRun": {
       "properties": {
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        },
         "request_id": {
           "type": "string",
           "title": "Request Id"
@@ -6839,6 +6907,7 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
+        "session_id",
         "request_id",
         "started_at",
         "deadline_at"
@@ -6852,10 +6921,23 @@
           "pattern": "^[a-f0-9]{32}$",
           "title": "Schedule Id"
         },
-        "session_id": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{32}$",
-          "title": "Session Id"
+        "target": {
+          "oneOf": [
+            {
+              "$ref": "#/components/schemas/SessionScheduleTarget"
+            },
+            {
+              "$ref": "#/components/schemas/NewSessionScheduleTarget"
+            }
+          ],
+          "title": "Target",
+          "discriminator": {
+            "propertyName": "kind",
+            "mapping": {
+              "new_session": "#/components/schemas/NewSessionScheduleTarget",
+              "session": "#/components/schemas/SessionScheduleTarget"
+            }
+          }
         },
         "text": {
           "type": "string",
@@ -6974,7 +7056,7 @@
       "type": "object",
       "required": [
         "schedule_id",
-        "session_id",
+        "target",
         "text",
         "rule",
         "workspace",
@@ -7316,6 +7398,27 @@
       ],
       "title": "SessionModel",
       "description": "The model last selected for one session. This does not add a provider implementation."
+    },
+    "SessionScheduleTarget": {
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "session",
+          "title": "Kind"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Session Id"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "kind",
+        "session_id"
+      ],
+      "title": "SessionScheduleTarget"
     },
     "SettingsUpdate": {
       "properties": {

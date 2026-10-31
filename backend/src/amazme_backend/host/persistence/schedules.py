@@ -14,7 +14,7 @@ from amazme_backend.contracts.schedules import (
     ScheduleRun,
     ScheduleView,
 )
-from amazme_backend.contracts.sessions import Submit
+from amazme_backend.contracts.sessions import CreateSession, Submit
 from amazme_backend.features.management.rules import contains_secret
 from amazme_backend.features.schedules.policy import (
     MAX_TIME,
@@ -25,6 +25,7 @@ from amazme_backend.features.schedules.policy import (
     normalize,
 )
 from amazme_backend.host.persistence.deliveries import delivery_provider
+from amazme_backend.host.persistence.sessions import create as create_session
 from amazme_backend.host.persistence.workspaces import grant_present
 from amazme_backend.shared.errors import BackendError
 
@@ -44,8 +45,25 @@ def listing(db: sqlite3.Connection) -> list[ScheduleView]:
 
 
 def persist(db: sqlite3.Connection, value: ScheduleView) -> ScheduleView:
-    db.execute("UPDATE schedules SET payload=? WHERE id=?", (value.model_dump_json(), value.schedule_id))
+    session = value.target.session_id if value.target.kind == "session" else ""
+    db.execute("UPDATE schedules SET session=?,payload=? WHERE id=?", (session, value.model_dump_json(), value.schedule_id))
     return value
+
+
+def target_workspace(db: sqlite3.Connection, value: ScheduleInput) -> str | None:
+    target = value.target
+    if target.kind == "session":
+        session = db.execute(
+            "SELECT workspace,archived,branch_ready FROM sessions WHERE id=?", (target.session_id,)
+        ).fetchone()
+        return str(session[0]) if session and not session[1] and session[2] and grant_present(db, str(session[0])) else None
+    if not grant_present(db, target.workspace):
+        return None
+    if target.project_id:
+        project = db.execute("SELECT workspaces FROM projects WHERE id=? AND removed=0", (target.project_id,)).fetchone()
+        if project is None or target.workspace not in json.loads(project[0]):
+            return None
+    return target.workspace
 
 
 def check_open(db: sqlite3.Connection) -> None:
@@ -69,29 +87,27 @@ def save(db: sqlite3.Connection, value: ScheduleInput, now: int, secrets: tuple[
         same = all((current.model_dump()[key] == content for key, content in data.items()))
         if (
             not value.expected_generation
-            and previous[0] == digest
+            and (previous[0] == digest or same)
             or (same and current.generation == value.expected_generation + 1)
         ):
             return current
         if (
             current.pending
             or current.generation != value.expected_generation
-            or current.session_id != value.session_id
         ):
             raise BackendError("schedule_conflict")
     elif value.expected_generation:
         raise BackendError("schedule_not_found", status=404)
-    session = db.execute(
-        "SELECT workspace,archived,branch_ready FROM sessions WHERE id=?", (value.session_id,)
-    ).fetchone()
-    if session is None or session[1] or (not session[2]) or (not grant_present(db, str(session[0]))):
+    workspace = target_workspace(db, value)
+    if workspace is None:
         raise BackendError("schedule_target_missing")
-    target = first_target(value.rule, now)
-    if target is None or target <= now or now + value.timeout_seconds * 1000 > MAX_TIME:
+    unchanged_rule = current is not None and current.rule == value.rule
+    target = current.next_run_at if current and unchanged_rule else first_target(value.rule, now)
+    if (not unchanged_rule and (target is None or target <= now)) or now + value.timeout_seconds * 1000 > MAX_TIME:
         raise BackendError("schedule_future_required")
     record = ScheduleView(
         **data,
-        workspace=str(session[0]),
+        workspace=workspace,
         generation=current.generation + 1 if current else 1,
         enabled=current.enabled if current else True,
         created_at=current.created_at if current else now,
@@ -103,7 +119,7 @@ def save(db: sqlite3.Connection, value: ScheduleInput, now: int, secrets: tuple[
             raise BackendError("schedule_capacity", status=429)
         db.execute(
             "INSERT INTO schedules(id,session,digest,payload) VALUES(?,?,?,?)",
-            (record.schedule_id, record.session_id, digest, record.model_dump_json()),
+            (record.schedule_id, record.target.session_id if record.target.kind == "session" else "", digest, record.model_dump_json()),
         )
     return persist(db, record)
 
@@ -154,17 +170,11 @@ def claim(
     if sum((item.pending is not None for item in listing(db))) >= 4:
         raise BackendError("schedule_running_capacity", status=429)
     reason = ""
-    session = db.execute(
-        "SELECT workspace,archived,branch_ready FROM sessions WHERE id=?", (record.session_id,)
-    ).fetchone()
-    if (
-        session is None
-        or session[1]
-        or (not session[2])
-        or (session[0] != record.workspace)
-        or (not grant_present(db, record.workspace))
-        or contains_secret(record.text, secrets)
-    ):
+    target = record.target
+    session_id = target.session_id if target.kind == "session" else hashlib.sha256(
+        f"schedule-session:{schedule_id}:{request_id}".encode()
+    ).hexdigest()[:32]
+    if target_workspace(db, record) != record.workspace or contains_secret(record.text, secrets):
         reason = "target_missing"
         record.enabled = False
     elif (
@@ -173,47 +183,57 @@ def claim(
         and (now - occurrence > record.grace_minutes * MINUTE)
     ):
         reason = "missed"
-    elif record.busy == "skip" and (
+    elif target.kind == "session" and record.busy == "skip" and (
         busy
         or db.execute(
-            "SELECT 1 FROM deliveries WHERE session=? AND state='pending' LIMIT 1", (record.session_id,)
+            "SELECT 1 FROM deliveries WHERE session=? AND state='pending' LIMIT 1", (session_id,)
         ).fetchone()
     ):
         reason = "busy"
+    elif target.kind == "new_session" and db.execute("SELECT count(*) FROM sessions").fetchone()[0] >= 128:
+        reason = "session_capacity"
+        record.enabled = False
     db.execute("INSERT INTO schedule_runs(schedule,request) VALUES(?,?)", (schedule_id, request_id))
     if reason:
         return finish(
             db,
             record,
             ScheduleOutcome(
+                session_id=target.session_id if target.kind == "session" else "",
                 request_id=request_id,
                 started_at=now,
                 finished_at=now,
                 scheduled_for=occurrence,
-                status="refused" if reason == "target_missing" else "skipped",
+                status="refused" if reason in {"target_missing", "session_capacity"} else "skipped",
                 detail=reason,
             ),
             now,
         )
     if db.execute("SELECT count(*) FROM deliveries WHERE state='pending'").fetchone()[0] >= 128:
         raise BackendError("delivery_capacity", status=429)
-    value = Submit(request_id=request_id, text=record.text)
+    if target.kind == "new_session":
+        create_session(db, session_id, CreateSession(
+            session_id=session_id, title=target.title, workspace=target.workspace, project_id=target.project_id,
+        ))
+    value = Submit(request_id=request_id, text=record.text,
+                   model_selection=target.model_selection if target.kind == "new_session" else None)
     payload = value.model_dump_json()
-    identity = hashlib.sha256(json.dumps([record.session_id, "submit", request_id]).encode()).hexdigest()
-    configured = delivery_provider(db, record.session_id, value, provider, transports)
+    identity = hashlib.sha256(json.dumps([session_id, "submit", request_id]).encode()).hexdigest()
+    configured = delivery_provider(db, session_id, value, provider, transports)
     db.execute(
         "INSERT INTO deliveries(id,session,kind,digest,payload,provider) VALUES(?,?,?,?,?,?)",
         (
             identity,
-            record.session_id,
+            session_id,
             "submit",
             hashlib.sha256(payload.encode()).hexdigest(),
             payload,
             configured,
         ),
     )
-    db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (now, record.session_id))
+    db.execute("UPDATE sessions SET wanted=1,next_check=0,updated_ms=? WHERE id=?", (now, session_id))
     record.pending = ScheduleRun(
+        session_id=session_id,
         request_id=request_id,
         started_at=now,
         deadline_at=now + record.timeout_seconds * 1000,

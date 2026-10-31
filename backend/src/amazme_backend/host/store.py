@@ -246,6 +246,9 @@ class HostStore:
     async def pending(self, session: str | None = None) -> list[Delivery]:
         return await deliveries.pending(self, session)
 
+    async def submitted_delivery(self, session: str, request: str) -> Delivery | None:
+        return await deliveries.submitted(self, session, request)
+
     async def set_archived(self, session_id: str, archived: bool) -> Session:
         return await sessions.set_archived(self, session_id, archived)
 
