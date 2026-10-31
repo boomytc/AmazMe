@@ -36,5 +36,3 @@ def call_usage[T](call_id: str, provider: str, model: str, completion: Completio
                           cache_read_tokens=completion.cache_read_tokens, cache_write_tokens=completion.cache_write_tokens,
                           cost_micro_usd=cost, started_at_ms=started_at_ms, finished_at_ms=finished_at_ms,
                           first_text_at_ms=first_text_at_ms)
-
-
