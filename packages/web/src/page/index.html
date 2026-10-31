@@ -79,6 +79,7 @@
 				<symbol id="i-wrap" viewBox="0 0 24 24"><path d="M3 6h18M3 12h15a3 3 0 1 1 0 6h-4" /><path d="m16 16-2 2 2 2M3 18h7" /></symbol>
 			</defs>
 		</svg>
+		<div id="amazme-root">
 		<nav class="app-rail" aria-label="{{sidebar.management}}">
 			<div class="rail-brand" id="connection-status" data-state="connecting" tabindex="0" role="status" aria-live="polite" aria-atomic="true" aria-label="AmazMe" aria-describedby="connection-status-text">
 				<span class="brand-mark" aria-hidden="true"><svg class="pixel-logo" viewBox="0 0 10 4" aria-hidden="true"><use href="#i-logo-a" class="pixel-a"></use><use href="#i-logo-m" class="pixel-m"></use></svg><span class="connection-dot" aria-hidden="true"></span></span>
@@ -261,6 +262,7 @@
 		</aside>
 		<!-- The one modal host: editors and prompts render here, over the main area. -->
 		<dialog class="modal-root" id="modal-root" hidden></dialog>
+		</div>
 		<!--amazme-startup-guard-->
 		<script id="amazme-page-entry" type="module" src="/page.js"></script>
 	</body>

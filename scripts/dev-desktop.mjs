@@ -26,7 +26,7 @@ function hashDirectory(hash, root, directory) {
 
 export function desktopBuildFingerprint(root, plan) {
 	const hash = createHash("sha256");
-	for (const name of ["node_modules/.package-lock.json", "tsconfig.base.json", "tsconfig.browser.json", "tsconfig.node.json", "scripts/build-update-helper.mjs", "scripts/build-workspace-dependencies.mjs", "scripts/package-artifacts.mjs"]) {
+	for (const name of ["package.json", "package-lock.json", "node_modules/.package-lock.json", "tsconfig.base.json", "tsconfig.browser.json", "tsconfig.node.json", "scripts/build-update-helper.mjs", "scripts/build-workspace-dependencies.mjs", "scripts/dev-desktop.mjs", "scripts/package-artifacts.mjs"]) {
 		const path = join(root, name);
 		if (existsSync(path)) hashFile(hash, root, path);
 	}
@@ -45,7 +45,7 @@ export function desktopBuildFingerprint(root, plan) {
 	return hash.digest("hex");
 }
 
-function desktopOutputFingerprint(output) {
+export function desktopOutputFingerprint(output) {
 	const hash = createHash("sha256");
 	for (const path of Array.isArray(output) ? output : [output]) {
 		if (!existsSync(path)) return undefined;
@@ -56,6 +56,18 @@ function desktopOutputFingerprint(output) {
 		hash.update("\0");
 	}
 	return hash.digest("hex");
+}
+
+export function desktopBuildOutputs(root) {
+	const outputs = ["main.js", "start.js", "preload.cjs", "updates/update-preload.cjs", "updates/update-window.html", "updates/update-window.js"]
+		.map(name => join(root, "packages", "gui", "dist", name));
+	outputs.push(...["index.html", "page.js", "page.css"].map(name => join(root, "packages", "web", "dist", "page", name)));
+	outputs.push(join(root, "packages", "gui", "dist"), join(root, "packages", "web", "dist", "page"));
+	return outputs;
+}
+
+export function desktopBuildState(root) {
+	return resolve(root, process.env.AMAZME_DEV_DESKTOP_BUILD_STATE || join(".artifacts", "dev-desktop-build.sha256"));
 }
 
 export function desktopBuildIsCurrent(state, fingerprint, output) {
@@ -77,11 +89,8 @@ export function writeDesktopBuildState(state, fingerprint, output) {
 async function checkOrBuild(root, lock) {
 	const plan = await workspaceBuildPlan(root, ["@amazme/gui"]);
 	const fingerprint = desktopBuildFingerprint(root, plan);
-	const state = resolve(root, process.env.AMAZME_DEV_DESKTOP_BUILD_STATE || join(".artifacts", "dev-desktop-build.sha256"));
-	const outputs = ["main.js", "start.js", "preload.cjs", "updates/update-preload.cjs", "updates/update-window.html", "updates/update-window.js"]
-		.map(name => join(root, "packages", "gui", "dist", name));
-	outputs.push(...["index.html", "page.js", "page.css"].map(name => join(root, "packages", "web", "dist", "page", name)));
-	outputs.push(join(root, "packages", "gui", "dist"), join(root, "packages", "web", "dist", "page"));
+	const state = desktopBuildState(root);
+	const outputs = desktopBuildOutputs(root);
 	const current = desktopBuildIsCurrent(state, fingerprint, outputs);
 	if (process.argv.includes("--check-build")) {
 		if (!current) throw new Error("桌面源码构建已过期，请先运行 npm run dev:desktop -- --build-only");

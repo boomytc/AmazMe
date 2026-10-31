@@ -6,7 +6,7 @@
  * button quits.
  */
 import type { Locale } from "@amazme/web/locale";
-import { errorCodeCopy } from "@amazme/web";
+import { errorCodeCopy } from "@amazme/web/errors";
 import { translate, type MessageKey } from "@amazme/web/strings";
 import type { HostExitDetail, HostStartupFailure } from "./host.ts";
 

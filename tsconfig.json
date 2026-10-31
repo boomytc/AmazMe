@@ -58,6 +58,9 @@
 			],
 			"@amazme/tui/*": [
 				"./packages/tui/src/*"
+			],
+			"@amazme/web/errors": [
+				"./packages/web/src/errors.ts"
 			]
 		}
 	},

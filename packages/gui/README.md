@@ -18,7 +18,7 @@ macOS 启动时在 `~/Library/Caches/AmazMe/desktop` 中缓存独立的 `AmazMe.
 npm run dev:desktop
 ```
 
-该命令按 package manifest 计算 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖；源码、资源、构建配置、构建脚本或已安装依赖变化时按序重建，未变化时复用现有 dist。已有模型数据不会被自动刷新；需要更新模型目录时显式运行 `npm run sync:pi-models`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
+该命令按 package manifest 计算 GUI 的 workspace 依赖闭包，覆盖源码中的构建期 workspace 依赖；源码、资源、构建配置、构建脚本或已安装依赖变化时按序重建，未变化时复用现有 dist。指纹覆盖根 manifest/锁文件、构建脚本、TS/TSX、CSS 和资源；构建记录同时保存输入与实际输出摘要。`npm run dev:desktop -- --build-only` 只建立该记录，不启动应用。已有模型数据不会被自动刷新；需要更新模型目录时显式运行 `npm run sync:pi-models`。可用 `node scripts/build-workspace-dependencies.mjs @amazme/gui --plan` 查看构建顺序。
 
 界面语言仍读取 `AMAZME_CODING_AGENT_DIR` 或 `~/.amazme/agent/settings.json`。桌面包自己解析这个路径，不加载旧宿主。
 
@@ -26,7 +26,7 @@ npm run dev:desktop
 
 桌面拥有的 Python 后端在显式退出时先阻止新投递、取消活动工作，再按进程租约和注册信息回收 Supervisor、Worker、终端、插件、MCP 及工具。关闭窗口继续运行不会取消任务。活动状态来自 `/control/desktop/activity` 对现有会话、投递和监督状态的只读聚合，查询失败不按空闲处理。控制关闭完成后还等待 Host 自然退出；清理失败或超时会保留应用供重试，不自动强杀或宣称成功。子进程没有父进程 stdin 管道。
 
-壳的 typecheck 和构建解析 `@amazme/web/locale` 与 `@amazme/web/strings` 的 dist。单独启动这个包之前，Web 的 dist 要已经在。桌面运行时不再依赖 `@amazme/coding-agent`。
+壳的 typecheck 和构建解析 `@amazme/web/locale`、`@amazme/web/strings` 与 `@amazme/web/errors` 的 dist；这些轻量入口不加载 React 或 DOM。单独启动这个包之前，Web 的 dist 要已经在。桌面运行时不再依赖 `@amazme/coding-agent`。
 
 需要 Node.js 22.19 或更新版本来构建窗口。业务宿主是包内的 Python 后端。项目目录可显式指定，设置 `AMAZME_GUI_CWD`。`AMAZME_GUI_SESSION` 用会话 id 打开指定会话，地址里同时写上宿主和工作区。
 
@@ -86,7 +86,7 @@ ASC_KEY_PATH=~/path/to/AuthKey_<Key ID>.p8
 
 ## 本机冻结后端
 
-先构建 `@amazme/codemode` 和 `@amazme/web`，再运行 `backend/.venv/bin/python backend/tools/package_backend.py`。这个入口只生成本机使用的 PyInstaller onedir，不提交公证或生成 DMG。它收集全部 Python 子包，并从 `platform/resource_manifest.py` 取得模型、分类、gate、远端 daemon、Codemode helper 和页面资源路径。资源定位和 `build.json` 身份检查共用这份描述。
+先构建 `@amazme/codemode` 和 `@amazme/web`，再运行 `backend/.venv/bin/python backend/tools/package_backend.py`。这个入口只生成本机使用的 PyInstaller onedir，不提交公证或生成 DMG。它收集全部 Python 子包，并从 `platform/resource_manifest.py` 取得模型、分类、gate、远端 daemon、Codemode helper 和页面资源路径。资源定位和 `build.json` 身份检查共用这份描述。正式页面的中英文 HTML、JS、CSS、主题和图标由同一必需资源集合校验；缺少任一项会在冻结构建前拒绝。xterm 的动态 JS/CSS 继续从同一页面资源树提供。
 
 构建输出记录产物绝对路径和 `build_id`。对该路径运行 `backend/.venv/bin/python backend/tools/verify_frozen_resources.py --executable <本轮产物中的 amazme-backend> --report <产物外路径>`，只读核对 manifest 文件摘要、构建身份和必需资源。报告的 `build_id` 必须与本轮构建记录一致；它不启动后端、不证明真实交互。`latest-bundle` 只用于定位，旧产物或旧报告不能证明当前源码已通过。
 
@@ -99,7 +99,7 @@ ASC_KEY_PATH=~/path/to/AuthKey_<Key ID>.p8
 node scripts/package-desktop.mjs --node /path/to/node-v22.23.3-darwin-arm64/bin/node --out /tmp/AmazMe --verify
 ```
 
-`--verify` 会把应用复制到临时目录，PATH 只留系统目录。没有打进 Python 后端时，进程必须报「桌面需要包内的 Python 后端」。打进之后才要求 `desktop smoke:`。产物内的 `Contents/Resources/release-manifest.json` 记录应用版本、Electron、Node 与各内部包版本。内部包不应再包含 `@amazme/coding-agent`。
+`--verify` 会把应用复制到临时目录，PATH 只留系统目录。没有打进 Python 后端时，进程必须报「桌面需要包内的 Python 后端」。打进之后才要求 `desktop smoke:`。产物内的 `Contents/Resources/release-manifest.json` 记录应用版本、Electron、Node 与各内部包版本。内部包不应再包含 `@amazme/coding-agent`。打包先核对源码桌面的输入/输出记录，并将摘要写入清单的 `desktopBuild`；打包期间相关源码或输出变化会拒绝交付。
 
 当前限制：1.0.0 之前用 ad-hoc 预览包在本机验证，不对外发 Release。1.0.0 起，对外分发以 GitHub Release 上公证过的 DMG 为准。产品包统一使用同一个发布版本（以根目录 `package.json` 为准），应用显示、安装包与发布清单一致；`release-manifest.json` 记录实际组合，便于回查。
 

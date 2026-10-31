@@ -1,10 +1,16 @@
 # @amazme/web
 
-Web 和 Electron 共用的原客户端呈现：导航、聊天、模型连接、管理面板和会话停靠栏。会话、账号与执行状态归 Python Host 所有；本包保留草稿、界面偏好和按宿主/会话绑定的未确认操作编号，不加载旧 Durable 运行时。
+Web 和 Electron 共用的 React 19 + TypeScript 页面：导航、聊天、模型连接、管理面板和会话停靠栏。会话、账号与执行状态归 Python Host 所有；本包保留草稿、界面偏好和按宿主/会话绑定的未确认操作编号，不加载旧 Durable 运行时。
 
 `npm run build --workspace @amazme/web` 生成 `dist/page`。Python Host 在源码模式读取该目录，冻结包将同一目录装入资源；`npm run dev:web` 会先构建客户端。HTTP/事件类型及运行时校验由 `backend/tools/export_contracts.py` 从 Python 生成到 `src/generated/`（`contracts.ts`、`schema.json`），`--check` 检查漂移。
 
-原界面的恢复和调用接线仍在实施，实际完成项以现行台账为准；不要把旧 Python 验证页当作正式客户端。
+正式页面由 React 接管，继续复用现有 CSS、主题和文案。唯一浏览器构建链路是 `build-page.mjs` 的 esbuild；TSX 同时进入 TypeScript 检查，生产 bundle 使用 React 的 production 构建。`dist` 还包含公开 TypeScript 包导出；`./locale`、`./strings`、`./typography` 和 `./errors` 是无 React/DOM 副作用的轻量入口，Electron 主进程只使用这些入口。
+
+`src/page.ts` 为每个窗口创建 `PageRuntime` 和 React `Presentation`。运行实例拥有 PythonClient、导航、待确认账本及页面释放；`app/` 中的草稿、历史、设置、供应商、集成、自动化和工作区模块分别拥有对应状态。页面启动在 React 生命周期之外，普通重挂载不会重新连接或写入。运行实例销毁是终态，关闭页面会使导航续体失效。
+
+`react/state.ts` 将缓存投影通过 `useSyncExternalStore` 提供给各呈现区域；一次发布先更新所有区域的快照，再通知订阅者。渲染和订阅不发命令。聊天、输入、问题表单、管理面板、Markdown 与停靠栏均为 React 组件，xterm 只拥有独立容器内部。显示组件释放不会停止后端 PTY。
+
+`render.ts` 保留原公开类型、元素收集和 `createRenderer` 入口，并统一挂载同一 React 实现；同一容器只允许一个 root。旧 DOM 主渲染器及其独占控件已退役，原协议消费、生成契约、账本与纯视图转换继续复用。
 
 现行契约见 [Python 方案](../../docs/python-backend-plan.md)。
 

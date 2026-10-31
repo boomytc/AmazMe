@@ -17,8 +17,15 @@ import {
 	createPackageArtifacts,
 	installPackageArtifacts,
 } from "./package-artifacts.mjs";
+import { workspaceBuildPlan } from "./build-workspace-dependencies.mjs";
+import {
+	desktopBuildFingerprint,
+	desktopBuildIsCurrent,
+	desktopBuildOutputs,
+	desktopBuildState,
+	desktopOutputFingerprint,
+} from "./dev-desktop.mjs";
 import { resolveSigning, signApp, signDiskImage, writeChecksum } from "./macos-signing.mjs";
-import { macOSBundleVersion } from "../packages/gui/dist/updates/macos-version.js";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -39,6 +46,12 @@ function guard(condition, message) {
 	if (!condition) throw new Error(message);
 }
 
+function runNpmScript(script, args = []) {
+	const npmCli = process.env.npm_execpath;
+	const executable = npmCli ? process.execPath : "npm";
+	run(executable, [...(npmCli ? [npmCli] : []), "run", script, "--", ...args], { stdio: "inherit" });
+}
+
 function versionAtLeast(version, minimum) {
 	const parse = (value) => value.replace(/^v/, "").split(".").map(Number);
 	const [major = 0, minor = 0] = parse(version);
@@ -56,7 +69,33 @@ function assertSelfContainedNode(nodeExecutable) {
 	guard(linked.length === 0, `Node ${nodeExecutable} depends on non-system libraries; pass --node with an official tarball:\n${linked.join("\n")}`);
 }
 
-async function releaseManifest(electronVersion, packages, nodeExecutable) {
+async function desktopBuildRecord() {
+	const plan = await workspaceBuildPlan(repoRoot, DESKTOP_PACKAGES);
+	const input = desktopBuildFingerprint(repoRoot, plan);
+	const outputs = desktopBuildOutputs(repoRoot);
+	const output = desktopOutputFingerprint(outputs);
+	guard(output !== undefined, "Desktop source build is missing required outputs");
+	guard(
+		desktopBuildIsCurrent(desktopBuildState(repoRoot), input, outputs),
+		"Desktop source build record does not match the current input and outputs",
+	);
+	return { input, output };
+}
+
+async function ensureDesktopBuild() {
+	runNpmScript("dev:desktop", ["--build-only"]);
+	return desktopBuildRecord();
+}
+
+async function assertDesktopBuildUnchanged(expected) {
+	const current = await desktopBuildRecord();
+	guard(
+		current.input === expected.input && current.output === expected.output,
+		"Desktop sources or build outputs changed while packaging",
+	);
+}
+
+async function releaseManifest(electronVersion, packages, nodeExecutable, desktopBuild, bundleVersion) {
 	const node = run(nodeExecutable, ["--version"]).trim();
 	guard(versionAtLeast(node, "22.19"), `Bundled Node must be 22.19 or newer, got ${node}`);
 	const app = JSON.parse(await readFile(join(repoRoot, "packages/gui/package.json"), "utf8"));
@@ -66,12 +105,13 @@ async function releaseManifest(electronVersion, packages, nodeExecutable) {
 			name: "AmazMe",
 			version: app.version,
 			identifier: "com.amazme.desktop",
-			bundleVersion: macOSBundleVersion(app.version),
+			bundleVersion: bundleVersion(app.version),
 		},
 		electron: electronVersion,
 		node,
 		arch: process.arch,
 		builtAt: new Date().toISOString(),
+		desktopBuild,
 		packages,
 	};
 }
@@ -200,6 +240,8 @@ async function main() {
 	const nodeExecutable = resolve(nodeArgument ?? process.execPath);
 	assertSelfContainedNode(nodeExecutable);
 	guard(!resolve(out).startsWith(repoRoot + "/packages/"), "Output must stay outside package sources");
+	const desktopBuild = await ensureDesktopBuild();
+	const { macOSBundleVersion } = await import(pathToFileURL(join(repoRoot, "packages/gui/dist/updates/macos-version.js")).href);
 	await rm(out, { recursive: true, force: true });
 	await mkdir(out, { recursive: true });
 
@@ -225,12 +267,13 @@ async function main() {
 	}
 	await rename(join(contents, "MacOS", basename(electron)), join(contents, "MacOS", "AmazMe"));
 	const staged = await stageHost(appDirectory);
+	await assertDesktopBuildUnchanged(desktopBuild);
 	const manifest = await releaseManifest(electronVersion, Object.fromEntries(
 		(await readdir(join(staged, "node_modules", "@amazme"))).map((name) => {
 			const pkg = JSON.parse(readFileSync(join(staged, "node_modules", "@amazme", name, "package.json"), "utf8"));
 			return [pkg.name, pkg.version];
 		}),
-	), nodeExecutable);
+	), nodeExecutable, desktopBuild, macOSBundleVersion);
 	await finalizeBundle(appDirectory, manifest, nodeExecutable);
 	const pythonBackend = argument("--python-backend");
 	if (pythonBackend !== undefined) {
@@ -248,6 +291,7 @@ async function main() {
 			cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "inherit", "inherit"],
 		});
 	});
+	await assertDesktopBuildUnchanged(desktopBuild);
 	console.log(`Built ${appDirectory}`);
 	console.log(`Version ${manifest.app.version} · Node ${manifest.node} · Electron ${manifest.electron}`);
 	console.log(signing.kind === "ad-hoc" ? "Signed ad-hoc (no hardened runtime)" : `Signed with Developer ID, team ${signing.teamId}`);
@@ -257,6 +301,7 @@ async function main() {
 		console.log(`DMG ${image}`);
 		console.log(`SHA256 ${digest}`);
 	}
+	if (verify || withDmg) await assertDesktopBuildUnchanged(desktopBuild);
 }
 
 const invokedDirectly = process.argv[1] !== undefined && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;

@@ -3,7 +3,9 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
-	"sideEffects": false,
+	"sideEffects": [
+		"**/*.css"
+	],
 	"files": [
 		"dist",
 		"README.md",
@@ -30,6 +32,10 @@
 		"./typography": {
 			"types": "./dist/typography.d.ts",
 			"import": "./dist/typography.js"
+		},
+		"./errors": {
+			"types": "./dist/errors.d.ts",
+			"import": "./dist/errors.js"
 		}
 	},
 	"scripts": {
@@ -40,6 +46,12 @@
 		"typecheck": "tsc -p tsconfig.build.json --noEmit"
 	},
 	"devDependencies": {
+		"@types/react": "19.3.0",
+		"@types/react-dom": "19.3.0",
 		"shx": "0.3.4"
+	},
+	"dependencies": {
+		"react": "19.3.1",
+		"react-dom": "19.3.1"
 	}
 }

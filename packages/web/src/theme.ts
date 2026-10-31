@@ -49,10 +49,11 @@ export function applyTheme(next: ThemePreference): void {
  * Follow the system's palette changes for the lifetime of the page. Called once at boot, before the
  * first paint the document's own script already made.
  */
-export function followSystemTheme(): void {
-	if (installed || typeof window === "undefined") return;
+export function followSystemTheme(): () => void {
+	if (installed || typeof window === "undefined") return () => {};
 	installed = true;
 	media = window.matchMedia(DARK_QUERY);
 	media.addEventListener("change", paint);
 	paint();
+	return () => { media?.removeEventListener("change", paint); media = undefined; installed = false; };
 }

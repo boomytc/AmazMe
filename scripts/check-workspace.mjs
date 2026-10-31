@@ -160,7 +160,7 @@ function sourceFiles(directory) {
 		const path = join(directory, entry.name);
 		return entry.isDirectory()
 			? sourceFiles(path)
-			: /\.(?:[cm]?ts)$/.test(entry.name)
+			: /\.(?:[cm]?ts|tsx)$/.test(entry.name)
 				? [path]
 				: [];
 	});
@@ -609,8 +609,8 @@ export function checkSourceContracts(repoRoot) {
 				const { line } = source.getLineAndCharacterOfPosition(node.getStart(source));
 				const location = `${relative(root, file)}:${line + 1}`;
 				if (value.startsWith(".")) {
-					if (!/\.(?:ts|mts|cts|json|node)(?:[?#].*)?$/.test(value))
-						failures.push(`${location}: relative TypeScript import must use .ts: ${value}`);
+					if (!/\.(?:ts|tsx|mts|cts|json|node)(?:[?#].*)?$/.test(value))
+						failures.push(`${location}: relative TypeScript import must use .ts or .tsx: ${value}`);
 					const target = resolve(dirname(file), value.split(/[?#]/)[0]);
 					const targetPath = relative(pkg.directory, target);
 					if (isAbsolute(targetPath) || targetPath === ".." || targetPath.startsWith(`..${sep}`))
@@ -857,13 +857,16 @@ export async function checkEntryContracts(repoRoot) {
 			failures.push(`${entry}: ${error.message}`);
 		}
 	}
+	const lightweightWebEntries = ["errors", "locale", "strings", "typography"].map(name => `packages/web/src/${name}.ts`);
 	for (const entry of [
+		...lightweightWebEntries,
 		"packages/web/src/index.ts",
+		"packages/web/src/page.ts",
 		"packages/codemode/src/portable.ts",
 		"packages/codemode/src/cloudflare.ts",
 	]) {
 		try {
-			await build({
+			const result = await build({
 				entryPoints: [join(root, entry)],
 				absWorkingDir: root,
 				bundle: true,
@@ -872,9 +875,16 @@ export async function checkEntryContracts(repoRoot) {
 				// Wrangler supplies these two modules, but still reject all Node dependencies in Workers entries.
 				external: entry.endsWith("/cloudflare.ts") ? ["cloudflare:workers", "quickjs-wasi/quickjs.wasm"] : [],
 				format: "esm",
+				...(entry === "packages/web/src/page.ts" ? { jsx: "automatic" } : {}),
+				metafile: true,
 				logLevel: "silent",
 				plugins: [workspaceResolver(packages, false)],
 			});
+			if (lightweightWebEntries.includes(entry)) {
+				for (const path of Object.keys(result.metafile.inputs).map((input) => `/${input.replaceAll("\\", "/")}`))
+					if (/\/node_modules\/(?:react|react-dom|scheduler)(?:\/|$)/.test(path))
+						failures.push(`${entry}: React runtime leaked into the lightweight export ${path.slice(1)}`);
+			}
 			measurements.push(`${entry}: browser bundle passed`);
 		} catch (error) {
 			failures.push(`${entry}: ${error.message}`);

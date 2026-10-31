@@ -2,6 +2,7 @@
 	"extends": "./tsconfig.json",
 	"compilerOptions": {
 		"incremental": true,
+		"jsx": "react-jsx",
 		"tsBuildInfoFile": "./.artifacts/typecheck/browser.tsbuildinfo",
 		"lib": [
 			"ES2024",
@@ -11,7 +12,8 @@
 		"paths": {}
 	},
 	"include": [
-		"packages/web/src/**/*",
+		"packages/web/src/**/*.ts",
+		"packages/web/src/**/*.tsx",
 		"packages/coding-agent/src/utils/highlight-js.d.ts"
 	]
 }

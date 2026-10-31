@@ -269,6 +269,7 @@ export interface PanelView {
 	readonly current: string;
 	readonly panel?: PanelSpec;
 	readonly modal?: PanelModal;
+	readonly settingsSection?: { readonly id: string; readonly generation: number };
 }
 
 /** What the renderer reports back; the page turns each report into a host call. */
@@ -463,6 +464,7 @@ export interface PanelViewInput {
 	/** Management views backed by the connected host's actual service catalogue. */
 	readonly availableViews?: readonly string[];
 	readonly modal?: PanelModal;
+	readonly settingsSection?: PanelView["settingsSection"];
 	readonly settings?: SettingsPanelInput;
 	readonly skills?: SkillsPanelInput;
 	readonly plugins?: PluginsPanelInput;
@@ -1168,6 +1170,7 @@ export function panelView(input: PanelViewInput): PanelView {
 	return {
 		nav: panelNav(input.locale, current, input.availableViews),
 		current: spec === undefined ? CHAT_VIEW : current,
+		...(input.settingsSection === undefined ? {} : { settingsSection: input.settingsSection }),
 		...(withState === undefined ? {} : { panel: withState }),
 		...(modal === undefined ? {} : { modal }),
 	};

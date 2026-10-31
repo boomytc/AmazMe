@@ -4454,3 +4454,10 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .question-option small { display: block; color: var(--text-2); margin-top: 3px; }
 .question-custom { display: grid; gap: 6px; margin-top: 8px; color: var(--text-2); }
 .question-custom textarea { width: 100%; resize: vertical; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+
+#amazme-root, .react-chat { display: contents; }
+.roster-menu-anchor { position: relative; }
+
+body.startup-failed > #amazme-root { display: contents; }
+
+.rail-brand { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; }

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from amazme_backend.platform.resource_manifest import (
     CLIENT_DIRECTORY,
+    CLIENT_REQUIRED_FILES,
     NODE_MODULES_DIRECTORY,
     REQUIRED_IDENTITY,
     RESOURCE_PATHS,
@@ -112,8 +113,12 @@ def main() -> None:
 
 def build_once(parent: Path) -> None:
     client = ROOT.parent / "packages/web/dist/page"
-    if not (client / "page.js").is_file():
-        raise SystemExit("build @amazme/web before freezing the desktop backend")
+    missing_client = [name for name in CLIENT_REQUIRED_FILES if not (client / name).is_file()]
+    if missing_client:
+        raise SystemExit(
+            "build @amazme/web before freezing the desktop backend; missing page resources: "
+            + ", ".join(missing_client)
+        )
     output = Path(tempfile.mkdtemp(prefix="package-", dir=parent))
     entry = output / "entrypoint.py"
     entry.write_text("from amazme_backend.__main__ import main\nmain()\n")

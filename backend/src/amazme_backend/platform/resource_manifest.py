@@ -14,6 +14,17 @@ RESOURCE_PATHS = {
     "codemode_helper": "execution/codemode/helper.mjs",
 }
 CLIENT_DIRECTORY = "assets/web/client"
+CLIENT_REQUIRED_FILES = (
+    "index.html",
+    "index.en.html",
+    "index.zh.html",
+    "page.js",
+    "page.css",
+    "tokens.css",
+    "app-icon.png",
+    "app-icon.svg",
+    "favicon.png",
+)
 NODE_MODULES_DIRECTORY = "execution/codemode/node_modules"
 REQUIRED_IDENTITY = (
     "runtime/node/bin/node",
@@ -21,8 +32,7 @@ REQUIRED_IDENTITY = (
     RESOURCE_PATHS["web"] + "/events.schema.json",
     RESOURCE_PATHS["web"] + "/xterm-terminal.js",
     RESOURCE_PATHS["web"] + "/xterm.css",
-    CLIENT_DIRECTORY + "/index.html",
-    CLIENT_DIRECTORY + "/page.js",
+    *(CLIENT_DIRECTORY + "/" + name for name in CLIENT_REQUIRED_FILES),
     NODE_MODULES_DIRECTORY + "/quickjs-wasi/quickjs.wasm",
     NODE_MODULES_DIRECTORY + "/@amazme/codemode/dist/index.js",
 )
