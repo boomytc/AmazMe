@@ -36,6 +36,34 @@ class ReadFile(FileTarget):
     limit: int = Field(default=16000, ge=4, le=32000)
 
 
+class FileGlob(Model):
+    kind: Literal["glob"] = "glob"
+    pattern: str = Field(min_length=1, max_length=1024)
+    path: str = Field(default=".", min_length=1, max_length=1024)
+
+
+class FileGrep(Model):
+    kind: Literal["grep"] = "grep"
+    pattern: str = Field(min_length=1, max_length=1024)
+    path: str = Field(default=".", min_length=1, max_length=1024)
+    include: str = Field(default="", max_length=1024)
+    ignore_case: bool = False
+
+
+class SearchMatch(Model):
+    path: str
+    line: int | None = None
+    text: str = ""
+
+
+class FileSearchResult(Model):
+    matches: list[SearchMatch]
+    truncated: bool
+    visited_files: int
+    skipped_files: int
+    reason: str = ""
+
+
 class WriteFile(FileTarget):
     content: str = Field(max_length=32000)
 

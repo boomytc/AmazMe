@@ -20,6 +20,8 @@ from amazme_backend.contracts.execution import (
     ApplyPatch,
     Command,
     EditFile,
+    FileGlob,
+    FileGrep,
     FileObservation,
     JobOutputWait,
     JobQuery,
@@ -142,6 +144,10 @@ def command_for(call: ToolCall) -> Command:
         return Shell.model_validate_json(call.arguments)
     if call.name == "read_file":
         ReadFile.model_validate_json(call.arguments)
+    elif call.name == "glob":
+        FileGlob.model_validate_json(call.arguments)
+    elif call.name == "grep":
+        FileGrep.model_validate_json(call.arguments)
     elif call.name == "write_file":
         WriteFile.model_validate_json(call.arguments)
     elif call.name == "edit_file":
@@ -750,7 +756,9 @@ class Worker:
             command = command_for(action.call)
             file = (WriteFile.model_validate_json(action.call.arguments) if action.call.name == "write_file" else
                     EditFile.model_validate_json(action.call.arguments) if action.call.name == "edit_file" else
-                    ReadFile.model_validate_json(action.call.arguments) if action.call.name == "read_file" else None)
+                    ReadFile.model_validate_json(action.call.arguments) if action.call.name == "read_file" else
+                    FileGlob.model_validate_json(action.call.arguments) if action.call.name == "glob" else
+                    FileGrep.model_validate_json(action.call.arguments) if action.call.name == "grep" else None)
             try:
                 result = await self.supervisor.run_tool(RunTool(
                     **action.lease.model_dump(), call_id=action.step_id, request_id=action.request_id,
@@ -760,7 +768,7 @@ class Worker:
                     expected_root=prepared.root if prepared else "",
                     patch=patch,
                     output_read=OutputRead.model_validate_json(action.call.arguments) if action.call.name == "tool_output" else None,
-                    effect="read" if action.call.name in {"read_file", "tool_output"} else "write"))
+                    effect="read" if action.call.name in {"read_file", "glob", "grep", "tool_output"} else "write"))
             except BackendError as error:
                 if error.code != "background_capacity":
                     raise

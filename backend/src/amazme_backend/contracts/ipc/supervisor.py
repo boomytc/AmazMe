@@ -10,6 +10,8 @@ from amazme_backend.contracts.execution import (
     Command,
     EditFile,
     EffectResolution,
+    FileGlob,
+    FileGrep,
     JobOutput,
     JobQuery,
     Lease,
@@ -133,7 +135,7 @@ class RunTool(Lease, Command):
     call_id: str
     request_id: str = ""
     effect: Literal["read", "write"] = "write"
-    file: WriteFile | EditFile | ReadFile | None = None
+    file: WriteFile | EditFile | ReadFile | FileGlob | FileGrep | None = None
     expected_digest: str | None = None
     expected_root: str = ""
     output_read: OutputRead | None = None
@@ -145,6 +147,11 @@ class RunTool(Lease, Command):
                                        or self.file is not None or self.output_read is not None
                                        or self.run_in_background or self.effect != "write"):
             raise ValueError("a patch requires its own synchronous write invocation")
+        if isinstance(self.file, (FileGlob, FileGrep)) and (
+            self.command != self.file.kind or self.effect != "read" or self.run_in_background
+            or self.patch is not None or self.output_read is not None
+        ):
+            raise ValueError("a search requires its own synchronous read invocation")
         return self
 
 

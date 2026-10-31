@@ -19,6 +19,8 @@ from pydantic import Field
 from amazme_backend.contracts.execution import (
     EditFile,
     FileAbsent,
+    FileGlob,
+    FileGrep,
     FilePresent,
     OutputRead,
     PreparedPatch,
@@ -36,6 +38,7 @@ from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
 from amazme_backend.workspaces.files import edit_file, read_file, write_file
 from amazme_backend.workspaces.patches import execute_patch
+from amazme_backend.workspaces.search import search_files
 
 LIMIT = 65536
 
@@ -63,7 +66,7 @@ class LocalPermit(Model):
     cwd: str
     command: str
     timeout_seconds: int = Field(ge=1, le=86400)
-    file: WriteFile | EditFile | ReadFile | None = None
+    file: WriteFile | EditFile | ReadFile | FileGlob | FileGrep | None = None
     file_key: str = ""
     patch: PreparedPatch | None = None
     expected_digest: str | None = None
@@ -147,6 +150,27 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
         elif permit.output_read is not None:
             page = read_output(Path(permit.output_directory), permit.output_read)
             report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=page.model_dump_json(), stderr="")
+        elif isinstance(permit.file, (FileGlob, FileGrep)):
+            deadline = time.monotonic() + permit.timeout_seconds
+
+            def check_search() -> None:
+                if select.select([0], [], [], 0)[0]:
+                    raise BackendError("search_cancelled")
+
+            def search_deadline(_signum: int, _frame: object) -> None:
+                check_search()
+                if time.monotonic() >= deadline:
+                    raise BackendError("search_timeout")
+
+            signal.signal(signal.SIGALRM, search_deadline)
+            private_write(directory / "tracked.json", "[]")
+            signal.setitimer(signal.ITIMER_REAL, 0.1, 0.1)
+            try:
+                found = search_files(Path(permit.cwd), permit.file, check_search)
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            report.result = ToolResult(call_id=permit.call_id, exit_code=0,
+                stdout=found.model_dump_json(), stderr="", truncated=found.truncated)
         elif permit.file is not None:
             root = Path(permit.cwd)
             observation_path = permit.file_key or permit.file.path

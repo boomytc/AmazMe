@@ -323,7 +323,8 @@
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
         "amazme_backend.workspaces.paths",
-        "amazme_backend.workspaces.patches"
+        "amazme_backend.workspaces.patches",
+        "amazme_backend.workspaces.search"
       ]
     },
     "workspaces": {
@@ -334,7 +335,8 @@
         "amazme_backend.workspaces.files",
         "amazme_backend.workspaces.grants",
         "amazme_backend.workspaces.paths",
-        "amazme_backend.workspaces.patches"
+        "amazme_backend.workspaces.patches",
+        "amazme_backend.workspaces.search"
       ],
       "imports": [
         "amazme_backend.contracts.identity",

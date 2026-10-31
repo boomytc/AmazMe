@@ -10,6 +10,14 @@ QwenPaw 的最近核对基线为 `c26d31c0688aa9cce9bc1aef688177d2e14e25df`。�
 
 deepseek-harness 的最近核对终点为 `ce7073d51254c26cd63b22a60835b8f948deb447`。按当前产品用途吸收适用能力，保留 Python 执行、SQLite 持久化和桌面客户端范围。
 
+## 2026-10-31 deepseek-harness 功能价值复核
+
+复核范围仍为 `22ddee3792..ce7073d512` 的 988 个提交。将功能价值与当前实现是否已有入口分开判断；前次排除的搜索、提问、排程、结果审阅和统计继续按实际使用结果核对。本节按完成的功能单元记录，后文的初轮处置保留历史背景。
+
+文件搜索补齐 `glob` 和 `grep`，参照 `ef284800b9`、`e8bdbbe823`、`b1c8c9bbbc`、`f9ef03834a` 的目录剪枝、参数预算与空过滤器语义。实现使用 Python 和 no-follow 目录句柄，字面目录前缀限制遍历，glob 包含隐藏与忽略文件并排除 VCS；grep 支持正则、正向 include 和嵌套 .gitignore。会话、工作区映射、只读效果、执行归属、取消、超时及结果沿现有 Host/worker/Supervisor 账本传递。结果限量并显式标注不完整，不把搜索当作写入所需的文件观察。
+
+有限验收使用真实文件验证前缀剪枝、嵌套忽略、Unicode、花括号、空 include、缺失前缀、越界与链接拒绝；独立 profile 经 SDK 实际驱动 Host、worker 和 native 搜索。确认默认修改审批不拦只读搜索、搜索后仍不能覆盖未读取文件，并能取消正在执行的病态正则。未调用真实模型或 SSH；未运行其他平台与冻结桌面包。
+
 ## 2026-10-31 deepseek-harness 补充吸收
 
 仍以 `ce7073d51254c26cd63b22a60835b8f948deb447` 为固定参照，补齐当前编码工作流可直接使用的能力。新增能力按其产品用途判断，不以缺少原有入口作为排除理由。
@@ -34,7 +42,7 @@ Web 回答新增本地 Markdown 文件链接与行定位，支持 `path:line`、
 | `86bf2734c6`、`c099ecdfd5`、`aa1cf9115b` 的错误结果展示 | 已有对应行为 | `toolOutputText` 保留真实文本和 JSON 文本，只有没有内容、图片与诊断时才使用占位。错误状态由 `isError` 决定，失败不展示成功文件 diff。不增加上游轨迹页的双结果面板。 |
 | `102b42d14a`、`fcca540841`、`2f2caf88b3` 的会话投影 | 保留现有所有权 | 会话动作、工具结果和读取投影由 Python session SQLite 单 writer 负责，客户端通过 HTTP 与 WS 读取。没有 Cordis projection handle、JSONL controller 或额外内存业务真相可迁移。 |
 | `9a4e78b469`、`9b154c04a6`、`743d4602e9`、`7bd189b3b5`、`ea4837abb1` 的 apply_patch | 补充复核后吸收本机能力 | 增加模型 `apply_patch`，支持新增、更新、删除、移动和新增父目录。Host 整批预检，保留读取版本约束并保存全部原文件检查点；Supervisor 绑定计划与调用身份，执行前再次核对全部初始版本。按序执行，失败停止，记录完成、失败和跳过项；未知结果保持效果阻塞，不自动重放。解析和文本匹配移植到 Python，不依赖上游 Cordis；SSH 文件 provider 本轮没有迁入。 |
-| `ef284800b9`、`e8bdbbe823`、`b1c8c9bbbc`、`f9ef03834a` | 无对应工具入口 | 上游优化 `rg --files` 的 glob 遍历和 argv 预算。当前模型工具表没有 glob、grep，命令搜索通过本机 shell 及其既有审批，不另加 ripgrep 工具包或下载器。 |
+| `ef284800b9`、`e8bdbbe823`、`b1c8c9bbbc`、`f9ef03834a` | 功能价值复核后吸收 | 新增独立 glob、grep，只读搜索返回路径、行号和明确限量。采用 Python 遍历与正则，复用本机执行、超时、取消和持久回执；保留字面前缀剪枝、空 include 与过滤器约束，不增加搜索二进制安装链。 |
 | `f673eec903`、`0d7ae41c8f` | 不适用直抓网页解码 | 当前 `execution/web/client.py` 向配置的鉴权 provider 发送 JSON 请求，接收 JSON 内容，不直接解码目标网页的 HTML charset。保留请求登记、响应预算与 unknown 不重发的规则。 |
 | `cf7229e72a`、`3081c71bab` | 不引入已回退的压缩重试 | 上游缩小前缀重试超大摘要的改动已回退。当前压缩检查 basis 并保留原消息，失败由现有入口返回，不增加自动重试或另一套成本策略。 |
 | `e90f65c0d7`、`70b945901d`、`663aa618c5`、`23c2ee5f73`、`8394a200b9` | 保留模型目录来源 | 本仓沿用刚核对的 Pi 模型快照和自定义连接，不接入 DeepSeek 官方账号的动态 `/models`、`tool_update` 或 badge 缓存。没有动态 badge 的刷新消费者。 |

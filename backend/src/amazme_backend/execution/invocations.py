@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING
 
 from amazme_backend.contracts.execution import (
     EditFile,
+    FileGlob,
+    FileGrep,
     JobList,
     JobOutputView,
     JobState,
@@ -138,7 +140,7 @@ class InvocationOperations:
                 file_key = ""
                 if file is not None:
                     name, inner = tool_path(workspace, file.path)
-                    if name == "grant" or not inner:
+                    if name == "grant" or (not inner and not isinstance(file, (FileGlob, FileGrep))):
                         raise BackendError("invalid_workspace_path")
                     if name == PRIMARY:
                         root = Path(self.owner.profile.config.workspace)
@@ -147,7 +149,7 @@ class InvocationOperations:
                         if location is None:
                             raise BackendError("workspace_not_found")
                         root = Path(location)
-                    file = file.model_copy(update={"path": inner})
+                    file = file.model_copy(update={"path": inner or "."})
                     file_key = client_path(name, inner)
                     if isinstance(file, (WriteFile, EditFile)) and value.expected_root != str(root.resolve()):
                         raise BackendError("file_preparation_mismatch")

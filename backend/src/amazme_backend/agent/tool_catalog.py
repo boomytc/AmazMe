@@ -7,6 +7,8 @@ from amazme_backend.ai.types import Auth, ModelSpec, ToolDefinition
 from amazme_backend.contracts.execution import (
     ApplyPatch,
     EditFile,
+    FileGlob,
+    FileGrep,
     JobListInput,
     JobOutputWait,
     JobQuery,
@@ -35,6 +37,8 @@ _BUILTINS: tuple[tuple[str, str, type[Model]], ...] = (
     ("job_output", "Read a retained background output page. Byte cursors are per stream, repeatable and never consumed by completion notices. Optional wait_seconds (0..30) waits for settlement; user input interrupts waiting without stopping the job. The command keeps its execution deadline. Inspect wait_reason, state and output retention errors.", JobOutputWait),
     ("job_kill", "Idempotently request cancellation of a job in this session and check real exit. Accepted cancellation is not proof of exit; retry cleanup_pending. Unknown effects are never replayed.", JobQuery),
     ("read_file", "Read a UTF-8 workspace file page, with a whole-file digest and zero-based byte offset. Use next_offset to continue; at most 32000 bytes per page and 16 MiB per file. Read before overwriting or editing. A missing file is an explicit absence observation.", ReadFile),
+    ("glob", "Discover workspace files by a glob pattern, including hidden and ignored files except VCS metadata. A basename pattern matches any depth; ** spans directories. Literal directory prefixes narrow traversal. Results show at most 100 newest visited matches and explicit limits. Does not follow symlinks or count as reading file contents.", FileGlob),
+    ("grep", "Search UTF-8 workspace files with a Python regular expression, optionally one positive include glob and ignore_case. Empty include is unrestricted. Respects nested .gitignore rules and skips hidden files, VCS metadata, symlinks and binary files. Returns paths, 1-based lines and bounded previews; inspect truncated, skipped_files and reason before claiming completeness. Narrow the search when limited; use read_file for full contents and a write baseline.", FileGrep),
     ("write_file", "Create a UTF-8 workspace file without overwriting a concurrent creation, or replace a file at the version you previously read. Existing unread or externally modified files are refused; read again on conflict.", WriteFile),
     ("edit_file", "Replace an exact literal string in a previously read UTF-8 file (up to 1 MiB). The default requires exactly one match; replace_all explicitly replaces every match. Preserves literal line endings. Refuses stale observations, missing files, zero matches and ambiguous matches.", EditFile),
     ("apply_patch", "Apply a Codex-style *** Begin Patch / *** End Patch through the input string. Supports Add File, Update File with @@ hunks and optional Move to, and Delete File, up to 16 file operations and 32000 input characters. Read existing sources and existing destinations first. The complete patch is checked before any file mutation; syntax, stale reads, or unmatched hunks reject all writes. Updates normalize CRLF to LF. Execution stops at the first failure and reports completed, failed and skipped mutations without rollback. Never retry an unknown result; re-read affected files. Prepared file content is bounded; split oversized patches.", ApplyPatch),
@@ -73,7 +77,7 @@ def build_tools(offers: Sequence[McpOffer] | None = None, options: RunOptions | 
     return tools if options is None else [tool for tool in tools if options.tool_allowed(tool.name)]
 
 
-_ANTHROPIC_NAMES = {"shell": "Bash", "read_file": "Read", "write_file": "Write", "delegate_task": "Task",
+_ANTHROPIC_NAMES = {"shell": "Bash", "read_file": "Read", "glob": "Glob", "grep": "Grep", "write_file": "Write", "delegate_task": "Task",
                     "web_search": "WebSearch", "web_fetch": "WebFetch"}
 
 
