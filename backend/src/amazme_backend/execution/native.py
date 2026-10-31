@@ -18,6 +18,7 @@ from pydantic import Field
 
 from amazme_backend.contracts.execution import (
     EditFile,
+    ExecutedFileChange,
     FileAbsent,
     FileGlob,
     FileGrep,
@@ -36,7 +37,7 @@ from amazme_backend.platform.ipc import child_command
 from amazme_backend.platform.private_files import private_write
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
-from amazme_backend.workspaces.files import edit_file, read_file, write_file
+from amazme_backend.workspaces.files import applied_change, edit_file, read_file, write_file
 from amazme_backend.workspaces.patches import execute_patch
 from amazme_backend.workspaces.search import search_files
 
@@ -174,6 +175,7 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
         elif permit.file is not None:
             root = Path(permit.cwd)
             observation_path = permit.file_key or permit.file.path
+            file_changes: list[ExecutedFileChange] = []
             if isinstance(permit.file, (WriteFile, EditFile)):
                 if permit.expected_digest is None:
                     raise BackendError("file_write_unprepared")
@@ -182,13 +184,14 @@ def runner(profile: Path, instance: str, lifetime_fd: int, directory: Path) -> N
                                                    expected_digest=permit.expected_digest)))
                 output = json.dumps({"path": changed.path, "digest": changed.digest})
                 observation = FilePresent(path=observation_path, root=str(root.resolve()), digest=changed.digest)
+                file_changes = [applied_change(observation_path, "write", changed.diff)]
             else:
                 content = read_file(root, permit.file.path, permit.file.offset, permit.file.limit,
                                     max_bytes=16 * 1024 * 1024)
                 output = content.model_dump_json()
                 observation = FilePresent(path=observation_path, root=str(root.resolve()), digest=content.digest)
             report.result = ToolResult(call_id=permit.call_id, exit_code=0, stdout=output, stderr="",
-                                       file_observation=observation)
+                                       file_observation=observation, file_changes=file_changes)
         else:
             shell = pwd.getpwuid(os.getuid()).pw_shell or "/bin/sh"
             child = subprocess.Popen([shell, "-c", permit.command], cwd=permit.cwd, env=tool_environment(),

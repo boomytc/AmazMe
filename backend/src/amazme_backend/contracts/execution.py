@@ -168,6 +168,26 @@ class OutputPage(Model):
     has_more: bool
 
 
+class AppliedFileChange(Model):
+    kind: Literal["applied"]
+    action: Literal["write", "delete"]
+    operation: int = Field(default=0, ge=0, le=15)
+    path: str
+    diff: str = Field(max_length=16000)
+    truncated: bool = False
+
+
+class StoppedFileChange(Model):
+    kind: Literal["failed", "skipped"]
+    action: Literal["write", "delete"]
+    operation: int = Field(default=0, ge=0, le=15)
+    path: str
+    error: str = ""
+
+
+ExecutedFileChange = Annotated[AppliedFileChange | StoppedFileChange, Field(discriminator="kind")]
+
+
 class ToolResult(Model):
     call_id: str
     exit_code: int
@@ -178,6 +198,7 @@ class ToolResult(Model):
     output: OutputArchive | None = None
     file_observation: FileObservation | None = None
     file_observations: list[FileObservation] = Field(default_factory=lambda: list[FileObservation](), max_length=32)
+    file_changes: list[ExecutedFileChange] = Field(default_factory=lambda: list[ExecutedFileChange](), max_length=32)
 
 
 JobId = Annotated[str, StringConstraints(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")]

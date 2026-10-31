@@ -11,7 +11,9 @@ import secrets
 import stat
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
+from amazme_backend.contracts.execution import AppliedFileChange
 from amazme_backend.contracts.workspaces import (
     FILE_LIST_LIMIT,
     FILE_READ_LIMIT,
@@ -25,6 +27,19 @@ from amazme_backend.contracts.workspaces import (
 )
 from amazme_backend.platform.private_files import copy_extended_metadata
 from amazme_backend.shared.errors import BackendError
+
+
+def applied_change(path: str, action: Literal["write", "delete"], diff: str, *,
+                   operation: int = 0, limit: int = 16000) -> AppliedFileChange:
+    payload = diff.encode()
+    return AppliedFileChange(kind="applied", action=action, operation=operation, path=path,
+                             diff=payload[:limit].decode(errors="ignore"), truncated=len(payload) > limit)
+
+
+def file_diff(before: str, after: str, path: str, *, deleted: bool = False) -> str:
+    lines = difflib.unified_diff(before.splitlines(keepends=True), after.splitlines(keepends=True),
+                                 fromfile=path, tofile="/dev/null" if deleted else path)
+    return "".join(line if line.endswith("\n") else line + "\n\\ No newline at end of file\n" for line in lines)
 
 
 def _parts(relative: str) -> list[str]:
@@ -333,9 +348,7 @@ def _mutate_file(root: Path, relative: str, expected_digest: str,
             finally:
                 os.close(parent)
     written = "/".join(parts)
-    diff = "".join(difflib.unified_diff(
-        previous_text.splitlines(keepends=True), content.splitlines(keepends=True),
-        fromfile=written, tofile=written))
+    diff = file_diff(previous_text, content, written)
     return FileChange(path=written, digest=hashlib.sha256(payload).hexdigest(), diff=diff)
 
 

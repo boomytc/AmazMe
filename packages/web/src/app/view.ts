@@ -8,7 +8,7 @@ import type { PanelView } from "../panels.ts";
 import { projectGroups } from "../projects.ts";
 import { isRecord, parseContract } from "../transport/api.ts";
 import type { ClientConnection } from "../transport/client.ts";
-import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, TranscriptMessage, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
+import type { AnswerFeedbackList, HistoryPage, ModelCatalog, ProjectView, Session, SessionModel, Snapshot, ToolResult, TranscriptMessage, UsageReport, WorkspaceGrantView } from "../generated/contracts.ts";
 import { requestStatus, seq, settled } from "../transport/stream.ts";
 import { shortcuts } from "../shortcuts.ts";
 import { translate } from "../strings.ts";
@@ -16,6 +16,11 @@ import { toolArguments } from "../tool-args.ts";
 import { toolResultView } from "../tool-results.ts";
 import type { Typography } from "../typography.ts";
 import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
+
+function executedResult(value: string): ToolResult | undefined {
+	try { return parseContract("ToolResult", JSON.parse(value)); }
+	catch { return undefined; }
+}
 
 /** Project only the host's committed receipts and generation-matched previews. */
 export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined, feedback?: AnswerFeedbackList): TranscriptBlock[] {
@@ -40,6 +45,7 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 			const result = typeof value.result === "string" ? value.result : "";
 			const error = typeof value.error === "string" ? value.error : "";
 			const phase = typeof value.phase === "string" ? value.phase : "";
+			const native = executedResult(result);
 			const done = ["applied", "result", "observed", "succeeded", "completed", "failed", "unknown", "denied"].includes(phase);
 			const id = `${receipt.request_id}:tool:${call.id}`;
 			let backgroundAccepted = false;
@@ -52,10 +58,10 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 					}
 				} catch { /* Other shell results retain their existing presentation. */ }
 			}
-			tools.set(String(call.id), { id, kind: "tool", title: String(call.name), toolName: String(call.name), text: result || error || (done ? phase : ""),
+			tools.set(String(call.id), { id, kind: "tool", title: String(call.name), toolName: String(call.name), text: native ? [native.stdout, native.stderr].filter(Boolean).join("\n") : result || error || (done ? phase : ""), ...(native ? { raw: result } : {}),
 				toolArgs: argumentsView.view,
-				...(done ? { result: { ...toolResultView(locale, String(call.name), argumentsView.args, { content: [{ type: "text", text: result || error }], isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }), ...(backgroundAccepted ? { status: locale === "zh" ? "后台已受理" : "Background accepted" } : {}) } } : {}),
-				tone: error ? "error" : "plain", running: !done && !settled.has(receipt.status) });
+				...(done ? { result: { ...toolResultView(locale, String(call.name), argumentsView.args, { content: [{ type: "text", text: result || error }], native, isError: Boolean(error) || ["failed", "unknown", "denied"].includes(phase) }), ...(backgroundAccepted ? { status: locale === "zh" ? "后台已受理" : "Background accepted" } : {}) } } : {}),
+				tone: error || native && native.exit_code !== 0 ? "error" : "plain", running: !done && !settled.has(receipt.status) });
 		}
 		const messages = new Map<string, TranscriptMessage>();
 		for (const event of snapshot.events) if (event.request_id === receipt.request_id && event.kind === "message" && event.message) messages.set(event.message.key, event.message);

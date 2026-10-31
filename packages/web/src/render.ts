@@ -2464,6 +2464,13 @@ export function createRenderer(
 				details.append(command);
 			}
 			if (block.result.diff) details.append(diffElement(block.result.diff, `diff:${block.id}`));
+			for (const [index, change] of (block.result.fileChanges ?? []).entries()) {
+				const row = element("section", "tool-file-change");
+				row.append(element("p", "reader-meta", `${change.path} · ${change.status}${change.error ? ` · ${change.error}` : ""}`));
+				if (change.diff) row.append(diffElement(change.diff, `diff:${block.id}:${index}`));
+				if (change.truncated) row.append(element("p", "tool-diagnostic muted", copy("tool.diffTruncated")));
+				details.append(row);
+			}
 		}
 		if (block.text.length > 0) {
 			const output = element("div", block.result?.terminal === undefined ? "tool-output" : "tool-output terminal-output", block.text);
@@ -2492,6 +2499,14 @@ export function createRenderer(
 			details.append(gallery);
 		}
 		for (const diagnostic of block.result?.diagnostics ?? []) details.append(element("p", `tool-diagnostic ${diagnostic.tone}`, diagnostic.text));
+		if (block.raw !== undefined) {
+			const raw = disclosure({ ...block, id: `${block.id}:raw` }, "tool-raw", false);
+			raw.append(element("summary", "reader-meta", copy("tool.rawResult")));
+			const controls = element("div", "reader-controls"), content = element("pre", "tool-output", block.raw);
+			raw.append(controls, content);
+			reading.attach({ key: `raw:${block.id}`, root: raw, content, toolbar: controls, text: block.raw, copyLabel: "tool.copyOutput" });
+			details.append(raw);
+		}
 		return details;
 	};
 

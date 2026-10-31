@@ -1834,29 +1834,29 @@
       "title": "FeedbackWrite"
     },
     "FileAbsent": {
+      "additionalProperties": false,
       "properties": {
         "kind": {
-          "type": "string",
           "const": "absent",
+          "default": "absent",
           "title": "Kind",
-          "default": "absent"
+          "type": "string"
         },
         "path": {
-          "type": "string",
-          "title": "Path"
+          "title": "Path",
+          "type": "string"
         },
         "root": {
-          "type": "string",
-          "title": "Root"
+          "title": "Root",
+          "type": "string"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
       "required": [
         "path",
         "root"
       ],
-      "title": "FileAbsent"
+      "title": "FileAbsent",
+      "type": "object"
     },
     "FileChange": {
       "properties": {
@@ -2010,35 +2010,35 @@
       "title": "FileList"
     },
     "FilePresent": {
+      "additionalProperties": false,
       "properties": {
         "kind": {
-          "type": "string",
           "const": "present",
+          "default": "present",
           "title": "Kind",
-          "default": "present"
+          "type": "string"
         },
         "path": {
-          "type": "string",
-          "title": "Path"
+          "title": "Path",
+          "type": "string"
         },
         "root": {
-          "type": "string",
-          "title": "Root"
+          "title": "Root",
+          "type": "string"
         },
         "digest": {
-          "type": "string",
           "pattern": "^[a-f0-9]{64}$",
-          "title": "Digest"
+          "title": "Digest",
+          "type": "string"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
       "required": [
         "path",
         "root",
         "digest"
       ],
-      "title": "FilePresent"
+      "title": "FilePresent",
+      "type": "object"
     },
     "FileWrite": {
       "properties": {
@@ -3976,36 +3976,36 @@
       "title": "OnceRule"
     },
     "OutputArchive": {
+      "additionalProperties": false,
       "properties": {
         "locator": {
-          "type": "string",
-          "title": "Locator"
+          "title": "Locator",
+          "type": "string"
         },
         "expires_at": {
-          "type": "integer",
-          "title": "Expires At"
+          "title": "Expires At",
+          "type": "integer"
         },
         "stdout": {
-          "$ref": "#/components/schemas/StreamRetention"
+          "$ref": "#/$defs/StreamRetention"
         },
         "stderr": {
-          "$ref": "#/components/schemas/StreamRetention"
+          "$ref": "#/$defs/StreamRetention"
         },
         "settled": {
-          "type": "boolean",
+          "default": false,
           "title": "Settled",
-          "default": false
+          "type": "boolean"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
       "required": [
         "locator",
         "expires_at",
         "stdout",
         "stderr"
       ],
-      "title": "OutputArchive"
+      "title": "OutputArchive",
+      "type": "object"
     },
     "OutputPage": {
       "properties": {
@@ -7706,26 +7706,26 @@
       "type": "object"
     },
     "StreamRetention": {
+      "additionalProperties": false,
       "properties": {
         "observed_bytes": {
-          "type": "integer",
+          "default": 0,
           "title": "Observed Bytes",
-          "default": 0
+          "type": "integer"
         },
         "retained_bytes": {
-          "type": "integer",
+          "default": 0,
           "title": "Retained Bytes",
-          "default": 0
+          "type": "integer"
         },
         "error": {
-          "type": "string",
+          "default": "",
           "title": "Error",
-          "default": ""
+          "type": "string"
         }
       },
-      "additionalProperties": false,
-      "type": "object",
-      "title": "StreamRetention"
+      "title": "StreamRetention",
+      "type": "object"
     },
     "Submit": {
       "properties": {
@@ -9224,6 +9224,218 @@
         }
       },
       "title": "Stream",
+      "type": "object"
+    },
+    "AppliedFileChange": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "const": "applied",
+          "title": "Kind",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "write",
+            "delete"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "operation": {
+          "default": 0,
+          "maximum": 15,
+          "minimum": 0,
+          "title": "Operation",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "diff": {
+          "maxLength": 16000,
+          "title": "Diff",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "action",
+        "path",
+        "diff"
+      ],
+      "title": "AppliedFileChange",
+      "type": "object"
+    },
+    "StoppedFileChange": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "enum": [
+            "failed",
+            "skipped"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "write",
+            "delete"
+          ],
+          "title": "Action",
+          "type": "string"
+        },
+        "operation": {
+          "default": 0,
+          "maximum": 15,
+          "minimum": 0,
+          "title": "Operation",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "error": {
+          "default": "",
+          "title": "Error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "action",
+        "path"
+      ],
+      "title": "StoppedFileChange",
+      "type": "object"
+    },
+    "ToolResult": {
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "title": "Call Id",
+          "type": "string"
+        },
+        "exit_code": {
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "stdout": {
+          "title": "Stdout",
+          "type": "string"
+        },
+        "stderr": {
+          "title": "Stderr",
+          "type": "string"
+        },
+        "truncated": {
+          "default": false,
+          "title": "Truncated",
+          "type": "boolean"
+        },
+        "stop_reason": {
+          "default": "",
+          "title": "Stop Reason",
+          "type": "string"
+        },
+        "output": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutputArchive"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file_observation": {
+          "anyOf": [
+            {
+              "discriminator": {
+                "mapping": {
+                  "absent": "#/$defs/FileAbsent",
+                  "present": "#/$defs/FilePresent"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/FilePresent"
+                },
+                {
+                  "$ref": "#/$defs/FileAbsent"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "File Observation"
+        },
+        "file_observations": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "absent": "#/$defs/FileAbsent",
+                "present": "#/$defs/FilePresent"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/FilePresent"
+              },
+              {
+                "$ref": "#/$defs/FileAbsent"
+              }
+            ]
+          },
+          "maxItems": 32,
+          "title": "File Observations",
+          "type": "array"
+        },
+        "file_changes": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "applied": "#/$defs/AppliedFileChange",
+                "failed": "#/$defs/StoppedFileChange",
+                "skipped": "#/$defs/StoppedFileChange"
+              },
+              "propertyName": "kind"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/AppliedFileChange"
+              },
+              {
+                "$ref": "#/$defs/StoppedFileChange"
+              }
+            ]
+          },
+          "maxItems": 32,
+          "title": "File Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "call_id",
+        "exit_code",
+        "stdout",
+        "stderr"
+      ],
+      "title": "ToolResult",
       "type": "object"
     }
   },

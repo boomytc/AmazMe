@@ -25,6 +25,7 @@ export interface TranscriptBlock {
 	/** Registered identity stays available when the visible tool name is localized. */
 	readonly toolName?: string;
 	readonly text: string;
+	readonly raw?: string;
 	/**
 	 * The requested command/file digest, readable key: value details and lossless JSON for copying.
 	 * Absent when the call has no arguments; executed output stays separate.

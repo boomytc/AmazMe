@@ -1707,6 +1707,36 @@ export type Stream = {
   "resync"?: string;
 };
 
+export type AppliedFileChange = {
+  "kind": "applied";
+  "action": "write" | "delete";
+  "operation"?: number;
+  "path": string;
+  "diff": string;
+  "truncated"?: boolean;
+};
+
+export type StoppedFileChange = {
+  "kind": "failed" | "skipped";
+  "action": "write" | "delete";
+  "operation"?: number;
+  "path": string;
+  "error"?: string;
+};
+
+export type ToolResult = {
+  "call_id": string;
+  "exit_code": number;
+  "stdout": string;
+  "stderr": string;
+  "truncated"?: boolean;
+  "stop_reason"?: string;
+  "output"?: OutputArchive | null;
+  "file_observation"?: FilePresent | FileAbsent | null;
+  "file_observations"?: Array<FilePresent | FileAbsent>;
+  "file_changes"?: Array<AppliedFileChange | StoppedFileChange>;
+};
+
 export interface ApiModels {
   AccountInfo: AccountInfo;
   AccountsView: AccountsView;
@@ -1918,6 +1948,9 @@ export interface ApiModels {
   WriteFile: WriteFile;
   CommitBatch: CommitBatch;
   Stream: Stream;
+  AppliedFileChange: AppliedFileChange;
+  StoppedFileChange: StoppedFileChange;
+  ToolResult: ToolResult;
 }
 
 export interface HttpOperations {

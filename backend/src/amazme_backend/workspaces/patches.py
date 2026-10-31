@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Literal
 
 from amazme_backend.contracts.execution import (
+    ExecutedFileChange,
     FileAbsent,
     FileObservation,
     FilePresent,
@@ -25,11 +26,12 @@ from amazme_backend.contracts.execution import (
     PatchTarget,
     PatchWrite,
     PreparedPatch,
+    StoppedFileChange,
     ToolResult,
 )
 from amazme_backend.contracts.workspaces import FileWrite
 from amazme_backend.shared.errors import BackendError
-from amazme_backend.workspaces.files import capture_text, delete_file, write_file
+from amazme_backend.workspaces.files import applied_change, capture_text, delete_file, file_diff, write_file
 
 
 @dataclass
@@ -319,18 +321,24 @@ def _parents(target: PatchTarget, created: list[str]) -> None:
 
 def execute_patch(plan: PreparedPatch) -> ToolResult:
     """Recheck every initial file before effects, then stop on the first failed mutation."""
+    contents: dict[tuple[str, str], str] = {}
     for baseline in plan.baselines:
         captured = capture_text(Path(baseline.root), baseline.relative)
         if (captured[0] if captured is not None else "") != baseline.expected_digest:
             raise BackendError("file_conflict")
+        contents[baseline.root, baseline.relative] = captured[1] if captured else ""
     observations: dict[str, FileObservation] = {}
     records: list[dict[str, str | int]] = []
     created: list[str] = []
     failed = ""
+    changes: list[ExecutedFileChange] = []
+    remaining = 16000
     for mutation in plan.mutations:
         record: dict[str, str | int] = {"operation": mutation.operation, "kind": mutation.kind, "path": mutation.path}
         if failed:
             records.append({**record, "status": "skipped"})
+            changes.append(StoppedFileChange(kind="skipped", action=mutation.kind, path=mutation.path,
+                                             operation=mutation.operation))
             continue
         try:
             if isinstance(mutation, PatchWrite):
@@ -339,15 +347,24 @@ def execute_patch(plan: PreparedPatch) -> ToolResult:
                 changed = write_file(Path(mutation.root), FileWrite(path=mutation.relative, content=mutation.content,
                                                                    expected_digest=mutation.expected_digest))
                 observations[mutation.path] = FilePresent(path=mutation.path, root=mutation.root, digest=changed.digest)
+                diff = changed.diff
+                contents[mutation.root, mutation.relative] = mutation.content
             else:
                 delete_file(Path(mutation.root), mutation.relative, mutation.expected_digest)
                 observations[mutation.path] = FileAbsent(path=mutation.path, root=mutation.root)
+                diff = file_diff(contents[mutation.root, mutation.relative], "", mutation.path, deleted=True)
+                contents[mutation.root, mutation.relative] = ""
+            applied = applied_change(mutation.path, mutation.kind, diff, operation=mutation.operation, limit=remaining)
+            changes.append(applied)
+            remaining -= len(applied.diff.encode())
             records.append({**record, "status": "completed"})
         except BackendError as error:
             if error.code == "file_outcome_unknown":
                 raise
             failed = error.code
             records.append({**record, "status": "failed", "error": failed})
+            changes.append(StoppedFileChange(kind="failed", action=mutation.kind, path=mutation.path,
+                                             operation=mutation.operation, error=failed))
     return ToolResult(call_id=plan.call_id, exit_code=1 if failed else 0,
                       stdout=json.dumps({"phase": "commit", "outcomes": records, "created_directories": created}, ensure_ascii=False), stderr=failed,
-                      file_observations=list(observations.values()))
+                      file_observations=list(observations.values()), file_changes=changes)
