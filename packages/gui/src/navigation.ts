@@ -24,3 +24,14 @@ export function hasOrigin(raw: string, expected: string): boolean {
 export function isAllowedNavigation(raw: string, origin: string): boolean {
 	return raw === "about:blank" || hasOrigin(raw, origin);
 }
+
+/** The host page keeps its document identity while session navigation changes query/hash. */
+export function isHostPageDocument(raw: string, expected: string): boolean {
+	try {
+		const current = new URL(raw), page = new URL(expected);
+		return current.origin === page.origin && current.pathname === page.pathname
+			&& current.username === "" && current.password === "";
+	} catch {
+		return false;
+	}
+}

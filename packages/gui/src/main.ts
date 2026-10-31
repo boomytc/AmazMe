@@ -25,7 +25,7 @@ import { PythonDesktopApi } from "./desktop-api.ts";
 import { createDesktopLifecycle, type DesktopLifecycle, type LifecycleError } from "./lifecycle.ts";
 import { hostWorkingDirectory } from "./launch.ts";
 import { applicationMenuTemplate, editMenuTemplate } from "./menu.ts";
-import { isAllowedNavigation, isExternalUrl } from "./navigation.ts";
+import { isAllowedNavigation, isExternalUrl, isHostPageDocument } from "./navigation.ts";
 import { createShellController, type ShellController } from "./shell.ts";
 import { withWindowTarget, type WindowAddress } from "./deep-link.ts";
 import { attentionOnTitle } from "./title.ts";
@@ -209,7 +209,7 @@ async function currentLocale() {
 	let documentLanguage: unknown;
 	// Constant read from the owned page, not a new renderer capability or arbitrary IPC execution.
 	const pageUrl = current === undefined ? undefined : pageUrls.get(current.id);
-	if (current !== undefined && pageUrl !== undefined && readiedWindows.has(current.id) && current.webContents.getURL() === pageUrl) {
+	if (current !== undefined && pageUrl !== undefined && readiedWindows.has(current.id) && isHostPageDocument(current.webContents.getURL(), pageUrl)) {
 		documentLanguage = await readDesktopDocumentLanguage(() => current.webContents.executeJavaScript("document.documentElement.lang"));
 	}
 	return desktopLocale(preference, languages, documentLanguage);
@@ -295,7 +295,7 @@ ipcMain.handle("amazme:pick-directories", async event => {
 	const current = liveWindows().find((candidate) => candidate.webContents === event.sender);
 	const pageUrl = current === undefined ? undefined : pageUrls.get(current.id);
 	if (!current || pageUrl === undefined || event.senderFrame !== current.webContents.mainFrame
-		|| current.webContents.getURL() !== pageUrl || notices.quitting) return [];
+		|| !isHostPageDocument(current.webContents.getURL(), pageUrl) || notices.quitting) return [];
 	const pending = folderPicker ??= (async () => {
 		const locale = await currentLocale();
 		if (current.isDestroyed() || notices.quitting) return [];
