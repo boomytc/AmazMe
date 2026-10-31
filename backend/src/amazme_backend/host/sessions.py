@@ -697,6 +697,7 @@ class SessionOperations:
             if delivery.kind == "job_notice" and error.code == "queue_full":
                 raise
             if error.code in {
+                "invalid_workspace_path",
                 "request_conflict",
                 "queue_full",
                 "session_busy",
