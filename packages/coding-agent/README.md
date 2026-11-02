@@ -26,7 +26,7 @@ npm run build --workspace @amazme/coding-agent
 
 本机 CLI 从启动目录选择对应的 Python 工作区；`--workspace NAME` 使用已登记名称。
 `amazme workspaces list` 查看目录，`workspaces add NAME /absolute/path` 显式登记。
-`--continue` 继续当前工作区最近的非归档会话，`--session ID` 指定会话。
+`--continue` 继续当前工作区最近的非归档会话，`--session ID` 在指定会话上提交问题。
 回执未确认时保留原请求 ID，使用 `--session ID --request ID` 查询，不会自动重发。
 
 上下文文件、技能和提示词模板由 Python 按 Pi 的目录规则加载。
@@ -39,7 +39,7 @@ Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿
 本机 `--no-session` 使用临时会话，退出时关闭其拥有的后端并清除已结算历史。
 若副作用或退出仍未确认，会保留恢复记录并输出路径；原账号库和工作区不会被删除。
 
-`amazme -e /absolute/tool.py` 为选中的 Python 会话加载 `setup(api)` 插件。
+`amazme -e /absolute/tool.py` 为本次会话加载 `setup(api)` 插件；未指定 `--session` 时新建会话。
 原会话重试查询同一登记，未知加载不会重新导入；更新代码使用原插件重载入口。
 `--no-extensions` 禁用未显式指定的插件工具；RPC 下显式加载还需 `--session ID`。
 `amazme web` 输出包含宿主、会话和工作区的窗口链接，不在链接中放置令牌。
@@ -49,7 +49,7 @@ Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿
 `--model provider/id` 为本次会话选择模型；`--models 'provider/*:high,other/model'` 设置候选顺序。
 模型和推理选项随原请求固定，重试不读取另一窗口的新选择。
 
-无界面审批先用 `--session ID --request ID` 查询，再用 `--decision 批准 --request ID --approval-id ID` 指向显示的原提案。
+一次性命令的审批先用 `--session ID --request ID` 查询，再用 `--decision 批准 --request ID --approval-id ID` 指向显示的原提案。
 重试保留这些编号；已结算提案只查询，不能自动批准同一请求的下一项工具。待审批退出码为 2。
 
 模型等待结构化回答时，非交互调用也返回退出码 2。`amazme client questions --session ID` 查看问题，`amazme client answer --session ID --value '<QuestionAnswer JSON>'` 显式回答或跳过；JSON 绑定当前 `question_id`、`request_id`、`proposal_digest`、`generation`，并包含稳定 `decision_id`、`kind` 和 `answers`。`kind="skipped"` 使用空回答数组。也可在 Web 作答，或通过 RPC `question.answer` 的 `question_answer` 参数传入同一 JSON。选择与回答不会批准工具；编号未确认时保留原内容。

@@ -36,7 +36,7 @@
 2. 检测连接，勾选要启用的模型。
 3. 在「新聊天默认模型」中选择默认值。输入区的模型选择器只修改当前会话，不改写新聊天的默认值。
 
-关闭主窗口默认保持后台运行；有活动任务时询问，可记住选择，也可在设置中改为退出。通过 Dock 或托盘恢复窗口。托盘菜单或 `Cmd/Ctrl+Q` 始终表示退出，取消任务并回收自己拥有的资源。更多窗口行为见 [桌面说明](packages/gui/README.md)。
+关闭主窗口时，没有进行中的任务直接退出应用；有任务运行时才询问是否同时关闭后台，可记住选择，也可在设置中调整「空闲时直接退出」与「关闭窗口时询问」。通过 Dock 或托盘恢复窗口。托盘菜单或 `Cmd/Ctrl+Q` 始终表示退出，取消任务并回收自己拥有的资源。更多窗口行为见 [桌面说明](packages/gui/README.md)。
 
 ### 手动准备与其他客户端
 
@@ -69,7 +69,7 @@ node packages/coding-agent/dist/bundle/cli.js --print '说明当前项目的启�
 
 无参数运行时输出帮助；提交问题默认按一次性命令执行，输出结果后退出。非 TTY 调用可以只从 stdin 读取问题。
 
-终端入口按启动目录选择工作区，会复用仍存活的本机 Host，没有时才启动新的 Host。`--workspace NAME` 选择已登记工作区，`--continue` 继续最近的非归档会话（仍需同时给出问题），`--session ID` 打开指定会话；`workspaces list` 可查看登记目录。
+终端入口按启动目录选择工作区，会复用仍存活的本机 Host，没有时才启动新的 Host。`--workspace NAME` 选择已登记工作区，`--continue` 继续最近的非归档会话（仍需同时给出问题），`--session ID` 在指定会话上提交问题；`workspaces list` 可查看登记目录。
 
 如果希望使用短命令，可在仓库根目录执行一次：
 
@@ -87,7 +87,7 @@ amazme doctor
 amazme --continue '继续上次任务'
 ```
 
-`auth login` 用于完成账号登录，`models` 查看模型目录，`doctor` 检查 Host 健康状态。API Key 也可通过隐藏的交互提示输入，不必写进命令。更多会话、技能、图片和推理参数见 [CLI 说明](packages/coding-agent/README.md)。
+`auth login` 用于完成账号登录，`models` 查看模型目录，`doctor` 检查 Host 健康状态。API Key 也可通过隐藏输入录入，不必写进命令。更多会话、技能、图片和推理参数见 [CLI 说明](packages/coding-agent/README.md)。
 
 普通持久会话在一次性命令结束后，不会因释放客户端绑定而取消已接纳的工作。`--no-session` 是临时会话，退出时按清理证明关闭其拥有的后端并清除已结算历史。
 

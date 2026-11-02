@@ -4,7 +4,7 @@
 
 实现来自 [Pi](https://github.com/earendil-works/pi)。最近核对基线为 `c9f4c7b9fcd0f3e6b5bbc35c7c9b6cda35580eb8`；按当前 Python 产品的职责吸收适用行为，OAuth 客户端 ID、回调和供应商请求身份保持原样。当前执行与持久化契约见 [本机方案](docs/python-backend-plan.md)，完成状态见 [任务表](docs/python-backend-completion.md)。TS 仅保留客户端、纯呈现与 QuickJS helper。
 
-旧产品线的移植记录保留在 Git 历史；当前行为以本仓源码和上述契约为准。
+2026-11-02 起产品形态收敛为 Web/桌面，终端 TUI 已移除；本页涉及 TUI 的记录只描述当时状态。旧产品线的移植记录保留在 Git 历史；当前行为以本仓源码和上述契约为准。
 
 QwenPaw 的最近核对基线为 `c26d31c0688aa9cce9bc1aef688177d2e14e25df`。它提供增量参照，不替代本仓的 Python Host 与客户端职责。
 
