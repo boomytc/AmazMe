@@ -2107,7 +2107,7 @@ const ZH_SETTING_GROUPS: Readonly<Record<string, string>> = {
 
 const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, string]>> = {
 	interface: ["Choose language, appearance, fonts, next-question suggestions, and the welcome guide.", "选择界面语言、外观、字体、下一问建议和欢迎引导。"],
-	desktop: ["Choose what closing a window does and whether running tasks require confirmation.", "设置关闭窗口的动作，以及有任务运行时是否询问。"],
+	desktop: ["Set window-close behavior, idle exit, and whether running tasks require confirmation.", "设置关闭窗口、空闲退出，以及有任务运行时是否询问。"],
 	conversation: ["Manage context, in-progress messages, and turn budgets.", "管理上下文、运行中输入和每轮预算。"],
 	"models-reasoning": ["Set default reasoning and prompt cache preferences.", "设置默认思考强度和提示缓存偏好。"],
 	"skills-tools": ["Choose how skills are offered as commands.", "选择技能是否作为快捷命令提供。"],
@@ -2120,8 +2120,9 @@ const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, stri
 
 const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	display_name: { label: "Display name", description: "The name saved in your local profile." },
-	closeWindow: { label: "When closing a window", description: "Choose whether AmazMe keeps running or quits when close confirmation is disabled." },
-	closeWindowPrompt: { label: "Ask when closing a window", description: "Ask before closing while tasks are running. With no active task, closing quits AmazMe; when disabled, follow your close preference." },
+	closeWindow: { label: "When closing a window", description: "With close confirmation disabled, choose whether a window closes to the background or quits while tasks are running. With Quit when idle off, this also applies to idle windows." },
+	idleQuit: { label: "Quit when idle", description: "With no active task, closing the window quits AmazMe directly. Turn this off to use the window-close preference or ask when closing an idle window." },
+	closeWindowPrompt: { label: "Ask when closing a window", description: "Ask before closing to the background while tasks are running. With Quit when idle on, idle windows close directly; when disabled, running tasks follow your close preference." },
 	textFont: { label: "Text font", description: "Conversation and composer fonts, separated by commas. Empty uses the built-in fonts.", placeholder: "System fonts" },
 	codeFont: { label: "Code font", description: "Code blocks, file content and diffs. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
 	terminalFont: { label: "Terminal font", description: "Terminal command output. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
@@ -2231,8 +2232,9 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 
 const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	display_name: { label: "显示名称", description: "保存在本机配置中的名称。" },
-	closeWindow: { label: "关闭窗口时", description: "关闭询问后，选择关闭窗口时保持应用运行或退出应用。" },
-	closeWindowPrompt: { label: "关闭窗口时询问", description: "有任务运行时再询问是否保留后台；没有进行中的任务时直接退出应用。关闭询问后，按关闭窗口偏好执行。" },
+	closeWindow: { label: "关闭窗口时", description: "关闭询问后，有任务运行时选择关闭窗口保持后台还是退出应用；关闭“空闲时直接退出”后，空闲时也按此选择处理。" },
+	idleQuit: { label: "空闲时直接退出", description: "没有进行中的任务时，关闭窗口直接退出应用；关闭此项后，空闲关闭改按“关闭窗口时”偏好或“关闭窗口时询问”处理。" },
+	closeWindowPrompt: { label: "关闭窗口时询问", description: "有任务运行时再询问是否保留后台；空闲时按“空闲时直接退出”设置处理。关闭询问后，有任务时按关闭窗口偏好执行。" },
 	textFont: { label: "正文字体", description: "对话和输入框使用的字体，以逗号分隔；留空使用内置字体。", placeholder: "系统字体" },
 	codeFont: { label: "代码字体", description: "代码块、文件内容和差异使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
 	terminalFont: { label: "终端字体", description: "命令输出使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
@@ -2345,7 +2347,7 @@ const EN_SETTING_OPTIONS: Readonly<Record<string, Readonly<Record<string, string
 	executionMode: { "full-access": "Full access", "workspace-write": "Project folders writable", "read-only": "Read only" },
 	locale: { auto: "Browser default", zh: "中文", en: "English" },
 	appearance: { system: "System", light: "Light", dark: "Dark" },
-	closeWindow: { background: "Keep AmazMe running", quit: "Quit AmazMe" },
+	closeWindow: { background: "Keep in background while tasks run", quit: "Quit AmazMe" },
 	steeringMode: { "one-at-a-time": "Add one per step", all: "Add all pending" },
 	followUpMode: { "one-at-a-time": "Process one at a time", all: "Process all queued" },
 	cacheWarming: { off: "Off", streaming: "While streaming", idle: "Between runs too" },
@@ -2360,7 +2362,7 @@ const ZH_SETTING_OPTIONS: Readonly<Record<string, Readonly<Record<string, string
 	executionMode: { "full-access": "完全访问", "workspace-write": "项目目录可写", "read-only": "只读" },
 	locale: { auto: "跟随浏览器", zh: "中文", en: "English" },
 	appearance: { system: "跟随系统", light: "浅色", dark: "深色" },
-	closeWindow: { background: "保持应用运行", quit: "退出应用" },
+	closeWindow: { background: "有任务时保持后台", quit: "退出应用" },
 	steeringMode: { "one-at-a-time": "每次加入一条", all: "一次加入全部" },
 	followUpMode: { "one-at-a-time": "每次处理一条", all: "一次处理全部" },
 	cacheWarming: { off: "关闭", streaming: "流式过程中", idle: "回合之间也预热" },

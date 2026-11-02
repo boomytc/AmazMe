@@ -478,6 +478,7 @@ export type InterfacePreferences = {
   "showWelcome"?: boolean;
   "closeWindow"?: "background" | "quit";
   "closeWindowPrompt"?: boolean;
+  "idleQuit"?: boolean;
   "textFont"?: string;
   "codeFont"?: string;
   "terminalFont"?: string;

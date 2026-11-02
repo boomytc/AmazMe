@@ -17,6 +17,8 @@ class InterfacePreferences(Model):
     showWelcome: bool = True
     closeWindow: Literal["background", "quit"] = "background"
     closeWindowPrompt: bool = True
+    # An idle window has nothing to keep alive; closing it quits directly unless the reader opts out.
+    idleQuit: bool = True
     textFont: str = Field(default="", max_length=256)
     codeFont: str = Field(default="", max_length=256)
     terminalFont: str = Field(default="", max_length=256)

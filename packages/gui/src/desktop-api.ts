@@ -20,6 +20,7 @@ function preferences(value: unknown): DesktopPreferences {
 	return {
 		closeWindow: raw.closeWindow === "quit" ? "quit" : DEFAULT_DESKTOP_PREFERENCES.closeWindow,
 		closeWindowPrompt: raw.closeWindowPrompt === false ? false : DEFAULT_DESKTOP_PREFERENCES.closeWindowPrompt,
+		idleQuit: raw.idleQuit === false ? false : DEFAULT_DESKTOP_PREFERENCES.idleQuit,
 	};
 }
 
@@ -95,11 +96,11 @@ export class PythonDesktopApi {
 				"x-amazme-epoch": String(ready.hostEpoch),
 			},
 			body: JSON.stringify({
-				preferences: { ...current.raw, closeWindow: value.closeWindow, closeWindowPrompt: value.closeWindowPrompt },
+				preferences: { ...current.raw, closeWindow: value.closeWindow, closeWindowPrompt: value.closeWindowPrompt, idleQuit: value.idleQuit },
 				expected_revision: current.revision,
 			}),
 		}));
-		if (updated.preferences.closeWindow !== value.closeWindow || updated.preferences.closeWindowPrompt !== value.closeWindowPrompt) {
+		if (updated.preferences.closeWindow !== value.closeWindow || updated.preferences.closeWindowPrompt !== value.closeWindowPrompt || updated.preferences.idleQuit !== value.idleQuit) {
 			throw new Error("desktop settings acknowledgement is invalid");
 		}
 	}

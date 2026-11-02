@@ -144,7 +144,7 @@ export class InterfaceSettings {
 			return;
 		}
 		const typed =
-			id === "showWelcome" || id === "closeWindowPrompt"
+			id === "showWelcome" || id === "closeWindowPrompt" || id === "idleQuit"
 				? value === "true"
 				: FONT_SIZE_FIELDS.some((field) => field === id)
 					? Number(value)
@@ -213,6 +213,13 @@ export class InterfaceSettings {
 							kind: "enum" as const,
 							options: ["background", "quit"],
 							value: preferences.closeWindow ?? "background",
+						},
+						{
+							...desktopDescriptor,
+							id: "idleQuit",
+							field: "idleQuit",
+							kind: "boolean" as const,
+							value: String(preferences.idleQuit ?? true),
 						},
 						{
 							...desktopDescriptor,

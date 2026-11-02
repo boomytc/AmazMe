@@ -2415,6 +2415,11 @@
           "title": "Closewindowprompt",
           "default": true
         },
+        "idleQuit": {
+          "type": "boolean",
+          "title": "Idlequit",
+          "default": true
+        },
         "textFont": {
           "type": "string",
           "maxLength": 256,

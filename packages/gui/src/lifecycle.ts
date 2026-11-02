@@ -3,11 +3,14 @@ export type CloseWindowPreference = "background" | "quit";
 export interface DesktopPreferences {
 	readonly closeWindow: CloseWindowPreference;
 	readonly closeWindowPrompt: boolean;
+	/** With nothing running there is nothing to keep alive: closing quits directly. */
+	readonly idleQuit: boolean;
 }
 
 export const DEFAULT_DESKTOP_PREFERENCES: DesktopPreferences = {
 	closeWindow: "background",
 	closeWindowPrompt: true,
+	idleQuit: true,
 };
 
 export interface CloseConfirmation {
@@ -105,16 +108,18 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 		if (beforePrompt !== undefined) return beforePrompt;
 		let action = preferences.closeWindow;
 		let remember = false;
-		if (preferences.closeWindowPrompt) {
+		if (preferences.idleQuit) {
 			// Nothing to keep alive: closing an idle window is a normal quit. If the activity
-			// check itself fails, keep the dialog rather than stopping unknown work.
-			let active = true;
+			// check itself fails, fall through to the confirmation/preference instead of guessing.
+			let idle = false;
 			try {
-				active = (await ports.readActivity()).active;
+				idle = !(await ports.readActivity()).active;
 			} catch {
-				// Keep the confirmation below.
+				// Unknown activity never counts as idle.
 			}
-			if (!active) return "cleanup";
+			if (idle) return "cleanup";
+		}
+		if (preferences.closeWindowPrompt) {
 			phase = "asking-close";
 			const confirmation = await ports.confirmClose(target);
 			const promoted = takePending();
@@ -130,7 +135,7 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 			remember = confirmation.remember;
 		}
 		if (remember) {
-			const saved = await save({ closeWindow: action, closeWindowPrompt: false });
+			const saved = await save({ ...preferences, closeWindow: action, closeWindowPrompt: false });
 			if (saved === "retry") return "close";
 			if (saved === "cancel") return "done";
 		}
