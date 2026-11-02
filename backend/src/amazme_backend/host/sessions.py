@@ -12,7 +12,7 @@ import httpx
 
 from amazme_backend.accounts.configuration import request_identity, select_model
 from amazme_backend.agent.model import summarize
-from amazme_backend.ai.catalog import SELECTION_INDEX
+from amazme_backend.ai.catalog import PROVIDERS, SELECTION_INDEX
 from amazme_backend.ai.types import Auth
 from amazme_backend.contracts.events import HistoryPage, Snapshot
 from amazme_backend.contracts.execution import Cleanup, EffectResolution, SupervisorHealth
@@ -200,6 +200,7 @@ class SessionOperations:
                 choice,
                 self.accounts.accounts.read().transports,
                 catalog=SELECTION_INDEX,
+                providers=PROVIDERS,
             )
             if not existing
             else None
@@ -522,6 +523,7 @@ class SessionOperations:
                 choice,
                 self.accounts.accounts.read().transports,
                 catalog=SELECTION_INDEX,
+                providers=PROVIDERS,
             )
             configured = await self.accounts.accounts.configured(selected)
             await self.accounts.write_guard()

@@ -1199,13 +1199,20 @@
           "title": "Base Url"
         },
         "api": {
-          "type": "string",
-          "enum": [
-            "openai-completions",
-            "openai-responses",
-            "openai-codex-responses",
-            "anthropic-messages",
-            "google-generative-ai"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "openai-completions",
+                "openai-responses",
+                "openai-codex-responses",
+                "anthropic-messages",
+                "google-generative-ai"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ],
           "title": "Api"
         },
@@ -5515,13 +5522,20 @@
           "title": "Base Url"
         },
         "api": {
-          "type": "string",
-          "enum": [
-            "openai-completions",
-            "openai-responses",
-            "openai-codex-responses",
-            "anthropic-messages",
-            "google-generative-ai"
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "openai-completions",
+                "openai-responses",
+                "openai-codex-responses",
+                "anthropic-messages",
+                "google-generative-ai"
+              ]
+            },
+            {
+              "type": "null"
+            }
           ],
           "title": "Api"
         },

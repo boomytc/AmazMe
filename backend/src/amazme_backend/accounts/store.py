@@ -27,7 +27,7 @@ from amazme_backend.contracts.accounts import (
     OAuthView,
     ProviderConfigured,
 )
-from amazme_backend.contracts.models import ProviderDefinition
+from amazme_backend.contracts.models import ProviderApi, ProviderDefinition
 from amazme_backend.contracts.profiles import ProfileConfig, ProviderConfig
 from amazme_backend.platform.private_files import private_write
 from amazme_backend.shared.errors import BackendError
@@ -131,13 +131,13 @@ class AccountStore:
             if not self.path.exists():
                 self.write(self.read())
 
-    async def save_transport(self, config: ProviderConfig, guard: Callable[[], Awaitable[None]]) -> None:
+    async def save_transport(self, config: ProviderConfig, guard: Callable[[], Awaitable[None]], *, api: ProviderApi | None) -> None:
         async with self.locked():
             await guard()
             document = self.read()
             current = document.transports.get(config.provider, ProviderTransport())
             updated = current.model_copy(update={"proxy": config.proxy, "headers": config.headers,
-                "base_url": config.base_url, "api": config.api})
+                "base_url": config.base_url, "api": api})
             if updated != current:
                 document.configuration_revision += 1
             document.transports[config.provider] = updated
@@ -169,8 +169,8 @@ class AccountStore:
 
     def provider_definitions(self, document: AccountDocument | None = None) -> list[ProviderDefinition]:
         document = document if document is not None else self.read()
-        return [ProviderDefinition(provider=name, name=value.name or name, base_url=value.base_url, api=value.api,
-                model_ids=value.model_ids) for name, value in document.transports.items() if value.api and value.base_url]
+        return [ProviderDefinition(provider=name, name=value.name, base_url=value.base_url, api=value.api,
+                model_ids=value.model_ids) for name, value in document.transports.items() if value.base_url]
 
     def view(self) -> AccountsView:
         return self._view(self.read())

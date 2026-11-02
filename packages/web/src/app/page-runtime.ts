@@ -1785,7 +1785,7 @@ export class PageRuntime {
 						const values: Readonly<Record<string, string>> = {
 							name: previous.name ?? previous.provider,
 							baseUrl: previous.base_url,
-							api: previous.api,
+							api: previous.api ?? "auto",
 							models: previous.model_ids?.join("\n") ?? "",
 						};
 						return field.id in values

@@ -5,6 +5,7 @@ IDENTITY_SUFFIXES = {".py", ".html", ".js", ".css", ".json", ".mjs"}
 # Package-relative resources shared by lookup, freezing and bundle identity checks.
 RESOURCE_PATHS = {
     "models": "assets/model_catalog.json",
+    "command_code_models": "assets/command_code_models.json",
     "classifiers": "assets/classifier_catalog.json",
     "web": "assets/web",
     "pty_gate": "execution/pty/gate.py",

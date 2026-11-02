@@ -66,7 +66,8 @@ class ProviderDefinition(Model):
     provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     name: str = Field(default="", max_length=100)
     base_url: str = Field(max_length=300)
-    api: ProviderApi
+    # None keeps each catalog model's protocol instead of replacing the whole provider's API.
+    api: ProviderApi | None
     model_ids: list[str] | None = Field(default=None, max_length=256)
 
     @field_validator("model_ids")

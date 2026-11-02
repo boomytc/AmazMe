@@ -4,7 +4,7 @@ import sqlite3
 import time
 
 from amazme_backend.accounts.configuration import ProviderTransport, select_model
-from amazme_backend.ai.catalog import SELECTION_INDEX
+from amazme_backend.ai.catalog import PROVIDERS, SELECTION_INDEX
 from amazme_backend.contracts.execution import EffectResolution
 from amazme_backend.contracts.ipc.worker import Cancel, JobNotice
 from amazme_backend.contracts.models import ModelSelection
@@ -33,7 +33,7 @@ def delivery_provider(
         ).fetchone()
         if chosen is not None:
             selection = ModelSelection(provider=str(chosen[0]), model=str(chosen[1]))
-    captured = select_model(provider, selection, transports or {}, catalog=SELECTION_INDEX)
+    captured = select_model(provider, selection, transports or {}, catalog=SELECTION_INDEX, providers=PROVIDERS)
     db.execute(
         "INSERT INTO session_models(session,provider,model) VALUES(?,?,?) ON CONFLICT(session) DO UPDATE SET provider=excluded.provider,model=excluded.model",
         (session, captured.provider, captured.model),

@@ -190,10 +190,12 @@ export class Providers {
 								? current.base_url
 								: (model?.base_url ?? "")),
 						api:
-							definition?.api ??
-							(current?.provider === provider.id
-								? (current.api ?? "openai-completions")
-								: (model?.api ?? "openai-completions")),
+							definition?.api === null
+								? "auto"
+								: (definition?.api ??
+									(current?.provider === provider.id
+										? (current.api ?? "openai-completions")
+										: (model?.api ?? "openai-completions"))),
 						modelCount: models.filter((item) => item.provider === provider.id)
 							.length,
 						custom: definition?.model_ids != null,
@@ -392,7 +394,7 @@ export class Providers {
 								provider,
 								name: fields.name || provider,
 								base_url: fields.baseUrl,
-								api: fields.api,
+								api: fields.api === "auto" ? null : fields.api,
 								...(fields.models === undefined
 									? {}
 									: {

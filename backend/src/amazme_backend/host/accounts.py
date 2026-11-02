@@ -10,6 +10,7 @@ from pydantic import SecretStr
 from amazme_backend.accounts.configuration import (
     checked_model_endpoint,
     choose_model,
+    provider_transport,
     public_settings,
     request_identity,
     select_model,
@@ -18,7 +19,7 @@ from amazme_backend.accounts.oauth.flow import BROWSER, DEVICE
 from amazme_backend.accounts.oauth.flow import Login as OAuthLogin
 from amazme_backend.accounts.store import AccountDocument, AccountStore, ApiKeyCredential
 from amazme_backend.agent.model import CATALOG, stream
-from amazme_backend.ai.catalog import SELECTION_INDEX
+from amazme_backend.ai.catalog import PROVIDERS, SELECTION_INDEX
 from amazme_backend.ai.classification.catalog import MODELS as CLASSIFIER_MODELS
 from amazme_backend.ai.classification.types import ClassifierCatalog
 from amazme_backend.ai.types import Auth, Completion
@@ -224,18 +225,26 @@ class AccountOperations:
         self.lifecycle.admit()
         self.lifecycle.profile.reload_provider()
         document = self.accounts.read()
-        definitions = {item.provider: item for item in self.accounts.provider_definitions(document)}
+        definitions = dict(PROVIDERS)
+        for definition in self.accounts.provider_definitions(document):
+            builtin = definitions.get(definition.provider)
+            if not definition.name:
+                definition = definition.model_copy(update={"name": builtin.name if builtin else definition.provider})
+            definitions[definition.provider] = definition
         models: list[CatalogModel] = []
         for item in CATALOG:
             definition = definitions.get(item.provider)
             if definition and definition.model_ids is not None and (item.model not in definition.model_ids):
                 continue
             models.append(
-                item.model_copy(update={"base_url": definition.base_url, "api": definition.api})
+                item.model_copy(update={"base_url": definition.base_url,
+                    **({"api": definition.api} if definition.api is not None else {})})
                 if definition
                 else item
             )
         for definition in definitions.values():
+            if definition.api is None:
+                continue
             for name in definition.model_ids or []:
                 if not any((item.provider == definition.provider and item.model == name for item in models)):
                     models.append(
@@ -274,12 +283,17 @@ class AccountOperations:
         ):
             raise BackendError("provider_models_required")
         if value.api not in {
+            None,
             "openai-completions",
             "openai-responses",
             "anthropic-messages",
             "google-generative-ai",
         }:
             raise BackendError("provider_configuration_readonly")
+        if value.api is None and value.model_ids is not None and any(
+            (value.provider, model) not in SELECTION_INDEX for model in value.model_ids
+        ):
+            raise BackendError("model_not_available")
         checked_model_endpoint(value.base_url)
         async with self.provider_lock:
             self.lifecycle.profile.reload_provider()
@@ -317,6 +331,7 @@ class AccountOperations:
                         ModelSelection(provider=value.provider, model=model),
                         document.transports,
                         catalog=SELECTION_INDEX,
+                        providers=PROVIDERS,
                     )
                     configured = await self.accounts.configured(
                         selected.model_copy(update={"max_tokens": 16, "thinking": "off"})
@@ -389,6 +404,7 @@ class AccountOperations:
                 ModelSelection(provider=value.provider, model=value.model),
                 self.accounts.read().transports,
                 catalog=SELECTION_INDEX,
+                providers=PROVIDERS,
             )
             return await self.lifecycle.store.save_session_model(value)
 
@@ -404,7 +420,7 @@ class AccountOperations:
             else SecretStr("")
         )
         configured = select_model(
-            self.lifecycle.profile.config.provider, None, document.transports, catalog=SELECTION_INDEX
+            self.lifecycle.profile.config.provider, None, document.transports, catalog=SELECTION_INDEX, providers=PROVIDERS
         ).model_copy(
             update={
                 "api_key": key,
@@ -421,27 +437,28 @@ class AccountOperations:
             if await self.lifecycle.store.active_update():
                 raise BackendError("update_frozen", status=503)
             self.lifecycle.profile.reload_provider()
-            select_model(
-                self.lifecycle.profile.config.provider.model_copy(
-                    update={"provider": value.provider, "model": value.model}
-                ),
-                None,
-                self.accounts.read().transports,
+            document = self.accounts.read()
+            transport = provider_transport(value.provider, document.transports, PROVIDERS)
+            automatic_api = transport is not None and bool(transport.base_url) and transport.api is None
+            selected = select_model(
+                self.lifecycle.profile.config.provider,
+                ModelSelection(provider=value.provider, model=value.model),
+                document.transports,
                 catalog=SELECTION_INDEX,
+                providers=PROVIDERS,
             )
             await self.accounts.ensure(self.write_guard)
-            target = self.lifecycle.profile.config.provider.model_copy(update={"provider": value.provider})
-            target = await self.accounts.configured(target)
+            target = await self.accounts.configured(selected)
             requested = value.model_copy(
                 update={
                     key: getattr(target, key)
-                    for key in ("proxy", "headers", "max_tokens")
+                    for key in ("proxy", "headers", "max_tokens", "base_url")
                     if key not in value.model_fields_set
-                }
+                } | ({"api": target.api} if automatic_api or value.api is None else {})
             )
-            chosen = choose_model(target, requested, catalog=SELECTION_INDEX)
+            chosen = choose_model(target, requested)
             await self.write_guard()
-            await self.accounts.save_transport(chosen, self.write_guard)
+            await self.accounts.save_transport(chosen, self.write_guard, api=None if automatic_api else chosen.api)
             persisted = chosen.model_copy(update={"api_key": SecretStr("")})
             self.lifecycle.profile.save_provider(persisted, credential_revision=self.accounts.read().revision)
             return self._published_model()

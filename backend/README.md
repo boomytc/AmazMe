@@ -29,6 +29,7 @@ Python CLI 用 `client questions --session ID` 查看，用 `client answer --ses
 `client request --session ID --request-id ID` 查询原回执。`client decide` 必须单独给出「批准」或「拒绝」；请求审批还需 `--approval-id ID`，MCP 则指向原调用。
 重试只核对原提案，不能批准后续工具；已经结算的决定只返回原请求状态。提交文本里的「批准」不是决定。
 模型选择请求不携带密钥。更换或清除密钥走单独入口；过期代际不会覆盖新密钥，响应里也不出现密钥。
+内置供应商 Command Code 共用一个 API key，默认使用「自动（按模型）」协议：依据公开目录的 `supported_endpoints`，Claude 走 Anthropic Messages、GPT 优先走 OpenAI Responses，其余兼容模型走 Chat Completions。配置、切换默认模型及重启均保留自动模式；如需固定协议，可在供应商配置中修改。目录随程序提供，启动不联网刷新；维护时运行 `npm run sync:command-code-models`，来源与接口说明见 [Command Code Provider](https://commandcode.ai/docs/provider)。目录未提供的价格保持未知。
 MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、

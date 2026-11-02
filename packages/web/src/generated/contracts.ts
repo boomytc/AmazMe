@@ -244,7 +244,7 @@ export type ConfigureProvider = {
   "provider": string;
   "name"?: string;
   "base_url": string;
-  "api": "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
+  "api": "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai" | null;
   "model_ids"?: Array<string> | null;
   "operation_id": string;
   "expected_revision": number;
@@ -1058,7 +1058,7 @@ export type ProviderDefinition = {
   "provider": string;
   "name"?: string;
   "base_url": string;
-  "api": "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai";
+  "api": "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai" | null;
   "model_ids"?: Array<string> | null;
 };
 

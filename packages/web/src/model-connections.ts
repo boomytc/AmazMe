@@ -50,7 +50,7 @@ export function verificationStatusText(locale: Locale, verification: { readonly 
 	const when = verification.checkedAt === undefined ? undefined : new Date(verification.checkedAt).toLocaleString(locale);
 	return [name, label, when].filter((part): part is string => part !== undefined && part.length > 0).join(" · ");
 }
-const EDITABLE_APIS = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
+const EDITABLE_APIS = ["auto", "openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
 type CredentialMethod = { readonly type: "api_key" | "oauth"; readonly label: string };
 
 export function providerConfigurationModal(locale: Locale, provider?: ModelConnectionsLike["state"]["providers"][number], models: readonly ConnectionModelLike[] = [], presets: readonly { readonly id: string; readonly name: string; readonly methods: readonly CredentialMethod[] }[] = [], methods: readonly CredentialMethod[] = []): PanelModal {
@@ -90,6 +90,7 @@ export function providerConfigurationModal(locale: Locale, provider?: ModelConne
 			{ id: "name", label: copy("connections.name"), kind: "text" as const, value: provider.name },
 			{ id: "baseUrl", label: copy("connections.endpoint"), kind: "text" as const, value: provider.baseUrl },
 			{ id: "api", label: copy("connections.protocol"), kind: "select" as const, value: provider.api, options: [
+				...(!provider.custom || provider.api === "auto" ? [{ value: "auto", label: copy("connections.protocolAuto") }] : []),
 				{ value: "openai-completions", label: "OpenAI Chat Completions" }, { value: "openai-responses", label: "OpenAI Responses" },
 				{ value: "anthropic-messages", label: "Anthropic Messages" }, { value: "google-generative-ai", label: "Google Generative AI" },
 			] },

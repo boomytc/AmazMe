@@ -12,6 +12,7 @@ from amazme_backend.contracts.models import (
     ModelSelection,
     ModelSettings,
     ProviderApi,
+    ProviderDefinition,
     UpdateModelSettings,
 )
 from amazme_backend.contracts.profiles import ProviderConfig
@@ -72,7 +73,7 @@ def public_settings(config: ProviderConfig, credential_revision: int = 0) -> Mod
                          proxy=_redact_proxy(config.proxy), headers=dict(config.headers), thinking=config.thinking or "off")
 
 
-def choose_model(current: ProviderConfig, requested: UpdateModelSettings, *, catalog: Mapping[tuple[str, str], CatalogModel]) -> ProviderConfig:
+def choose_model(current: ProviderConfig, requested: UpdateModelSettings) -> ProviderConfig:
     """Return the next provider config. The stored API key is kept and never taken from the request."""
     transport = {
         "proxy": _normalize_proxy(current.proxy, requested.proxy),
@@ -88,9 +89,8 @@ def choose_model(current: ProviderConfig, requested: UpdateModelSettings, *, cat
         raise BackendError("provider_not_configured")
     if current.provider != requested.provider:
         raise BackendError("provider_not_configured")
-    model = catalog.get((requested.provider, requested.model))
-    api = requested.api or (model.api if model is not None else current.api)
-    endpoint = checked_model_endpoint(requested.base_url.strip() or (model.base_url if model is not None else ""))
+    api = requested.api or current.api
+    endpoint = checked_model_endpoint(requested.base_url.strip() or current.base_url)
     return current.model_copy(update={
         "provider": requested.provider, "model": requested.model, "api": api, "base_url": endpoint, **transport,
     })
@@ -107,16 +107,34 @@ def checked_model_endpoint(value: str) -> str:
     return parts.geturl()
 
 
-def select_model(config: ProviderConfig, selection: ModelSelection | None, transports: Mapping[str, ProviderTransport], *, catalog: Mapping[tuple[str, str], CatalogModel]) -> ProviderConfig:
+def provider_transport(provider: str, transports: Mapping[str, ProviderTransport], providers: Mapping[str, ProviderDefinition]) -> ProviderTransport | None:
+    stored = transports.get(provider)
+    builtin = providers.get(provider)
+    if builtin is None:
+        return stored
+    if stored is None:
+        return ProviderTransport(name=builtin.name, base_url=builtin.base_url, api=builtin.api, model_ids=builtin.model_ids)
+    return stored.model_copy(update={"name": stored.name or builtin.name,
+        **({"base_url": builtin.base_url, "api": builtin.api} if not stored.base_url else {})})
+
+
+def select_model(config: ProviderConfig, selection: ModelSelection | None, transports: Mapping[str, ProviderTransport], *, catalog: Mapping[tuple[str, str], CatalogModel], providers: Mapping[str, ProviderDefinition]) -> ProviderConfig:
     """Resolve a provider definition before admission; credential refresh cannot change this endpoint."""
     selected = selection or ModelSelection(provider=config.provider, model=config.model)
-    transport = transports.get(selected.provider)
+    transport = provider_transport(selected.provider, transports, providers)
+    model = catalog.get((selected.provider, selected.model))
+    if transport is not None and transport.base_url and transport.api is None and model is None:
+        raise BackendError("model_not_available")
     if transport and transport.model_ids is not None:
         if selected.model not in transport.model_ids:
             raise BackendError("model_not_available")
         chosen = _stored_provider(config.model_copy(update={"provider": selected.provider, "model": selected.model}))
+        if model is not None:
+            chosen = chosen.model_copy(update={"api": model.api, "base_url": model.base_url})
     else:
         chosen = _selected_provider(config, selected, catalog=catalog)
+    if model is not None and transport is not None and transport.base_url and transport.api is None:
+        chosen = chosen.model_copy(update={"api": model.api})
     if transport:
         chosen = chosen.model_copy(update={**({"base_url": transport.base_url} if transport.base_url else {}),
             **({"api": transport.api} if transport.api else {})})
