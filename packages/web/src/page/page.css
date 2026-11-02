@@ -4398,8 +4398,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .project-heading:hover .project-action,
 .project-heading:focus-within .project-action,
 .project-heading:has(.project-select.selected) .project-new-session { opacity: 1; }
-.project-sessions { padding-left: 14px; }
-.project-sessions .session-row { border-radius: 12px; }
+/* Project rows own their heading; the sessions below it start one level in. */
+.project-group > .session-row { margin-inline-start: 14px; border-radius: 12px; }
 .project-archived-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 11px 10px; cursor: default; }
 .project-group.archived .project-heading:hover { background: transparent; }
 .project-group.archived .session-age { flex-basis: auto; white-space: nowrap; }
