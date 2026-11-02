@@ -446,7 +446,12 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 				} else if (indent === top.indent) {
 					if (ordered === top.list.ordered)
 						top.list.items.push({ text: body, lists: [] });
-					else {
+					else if (top.parent === undefined) {
+						// A different marker closes the top-level list; nested ones are already
+						// attached to their parent item and only need the level popped.
+						closeLists();
+						startLevel(indent, ordered, ordered ? Number.parseInt(listMatch[2] ?? "1", 10) : 1, undefined, body);
+					} else {
 						levels.pop();
 						startLevel(indent, ordered, ordered ? Number.parseInt(listMatch[2] ?? "1", 10) : 1, top.parent, body);
 					}
