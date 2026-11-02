@@ -9829,6 +9829,11 @@
             "title": "Name",
             "default": ""
           },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "default": ""
+          },
           "enabled": {
             "type": "boolean",
             "title": "Enabled",

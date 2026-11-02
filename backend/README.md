@@ -44,6 +44,8 @@ TUI、SDK 等客户端的连接令牌用 `pair --profile /absolute/new-profile` 
 退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
 默认修改操作需要审批。执行环境保留 PATH/HOME 等工具查找变量，不继承模型密钥和控制令牌。
 
+工具搜索通过 PyICU 使用 ICU 的多语言词典分词。源码安装前需准备 ICU 开发库与 `pkg-config`：macOS 用 `brew install pkg-config icu4c`，并将 `$(brew --prefix icu4c)/lib/pkgconfig` 加入 `PKG_CONFIG_PATH`；Debian/Ubuntu 用 `apt install pkg-config libicu-dev`。详见 [PyICU 安装说明](https://pypi.org/project/pyicu/)。本机冻结包包含所需动态库，运行时不读取 Homebrew 安装目录。
+
 开发采用 `confident-development-conventions`，从状态归属、类型与模块边界保证逻辑闭环。按本次改动选择必要检查：
 
 ```bash

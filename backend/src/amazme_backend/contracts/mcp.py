@@ -214,6 +214,7 @@ class McpView(Model):
     command: str = ""
     managed_id: str = ""
     name: str = ""
+    description: str = ""
     enabled: bool = True
     exposure: McpExposure = "direct"
     tool_exposure: dict[str, McpExposure] = Field(default_factory=dict)
@@ -299,6 +300,7 @@ class McpOffer(Model):
     command: str = Field(min_length=1, max_length=16000)
     name: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,128}$")
     description: str = ""
+    namespace_text: str = ""
     input_schema: dict[str, JsonValue]
     schema_digest: str = Field(pattern=r"^[a-f0-9]{64}$")
     managed_id: str = ""
@@ -364,6 +366,7 @@ def offers_from_views(servers: list[McpView], *, surface: Literal["model", "code
             offers.append(McpOffer(alias=mcp_alias(server.server_id, tool.name), server_id=server.server_id,
                                    workspace=server.workspace, command=server.command, name=tool.name,
                                    description=tool.description[:500], input_schema=schema,
+                                   namespace_text=" ".join(filter(None, [server.name, server.description])),
                                    schema_digest=schema_digest(schema), managed_id=server.managed_id,
                                    exposure=visible, active=surface == "code"))
     if len({item.alias for item in offers}) != len(offers):

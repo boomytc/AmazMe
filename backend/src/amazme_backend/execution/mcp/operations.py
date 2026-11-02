@@ -64,6 +64,7 @@ class McpOperations:
             "server_id": row["id"], "session_id": row["session"], "workspace": row["workspace"],
             "command": row["command"], "protocol_version": row["protocol_version"],
             "managed_id": str(row["managed_id"]), "name": str(row["name"]),
+            "description": config.description if config else "",
             "enabled": config.enabled if config else not bool(row["managed_id"]),
             "exposure": config.exposure if config else "hidden" if row["managed_id"] else "direct",
             "tool_exposure": config.tool_exposure if config else {},

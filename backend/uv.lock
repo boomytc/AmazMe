@@ -24,6 +24,7 @@ dependencies = [
     { name = "pillow" },
     { name = "psutil" },
     { name = "pydantic" },
+    { name = "pyicu" },
     { name = "pyyaml" },
     { name = "uvicorn" },
     { name = "websockets" },
@@ -48,6 +49,7 @@ requires-dist = [
     { name = "pillow", specifier = ">=12.0,<13" },
     { name = "psutil", specifier = "==7.2.2" },
     { name = "pydantic", specifier = "==2.14.1" },
+    { name = "pyicu", specifier = "==2.16.2" },
     { name = "pyyaml" },
     { name = "uvicorn", specifier = "==0.54.0" },
     { name = "websockets", specifier = "==17.3" },
@@ -562,6 +564,12 @@ sdist = { url = "https://files.pythonhosted.org/packages/05/ca/7817b4bf0c4b15c6a
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3c/74/fdf926afe145d8629c4b2ff57f4ea1d64ed7abc4d84d97463b2517a2547e/pydantic_settings-2.16.1-py3-none-any.whl", hash = "sha256:30f5313340da4e8f1b440d1910b92a5bc3ccbb6b4ba70ec2b8395bc921f418f5", size = 80771, upload-time = "2026-10-20T11:37:17.298Z" },
 ]
+
+[[package]]
+name = "pyicu"
+version = "2.16.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/d5/354eb1bf84dcf4ab0bfa46f0620ecf68fe313bb082c26872ceb7a5021f94/pyicu-2.16.2.tar.gz", hash = "sha256:006d51e24b5ec76df6ec2130f3dde269c51db8b8cfebb7d45a427dde0d10aa52", size = 268223, upload-time = "2026-03-20T21:58:30.794Z" }
 
 [[package]]
 name = "pyinstaller"

@@ -666,6 +666,7 @@ export type McpView = {
   "command"?: string;
   "managed_id"?: string;
   "name"?: string;
+  "description"?: string;
   "enabled"?: boolean;
   "exposure"?: "codemode" | "deferred" | "direct" | "hidden";
   "tool_exposure"?: Record<string, "codemode" | "deferred" | "direct" | "hidden">;

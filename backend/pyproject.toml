@@ -14,6 +14,7 @@ dependencies = [
     "pillow>=12.0,<13",
     "pathspec==0.12.1",
     "mcp==1.26.0",
+    "pyicu==2.16.2",
 ]
 
 [project.scripts]
@@ -47,3 +48,4 @@ pythonVersion = "3.13"
 typeCheckingMode = "strict"
 venvPath = "."
 venv = ".venv"
+stubPath = "typings"
