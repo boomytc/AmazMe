@@ -546,6 +546,11 @@ p {
 	color: var(--text);
 }
 
+/* The category column is a scrollport; an outward focus ring would be clipped at its edge. */
+.section-nav .nav-row:focus-visible {
+	outline-offset: -2px;
+}
+
 .nav-row-stack {
 	flex-direction: column;
 	align-items: stretch;
