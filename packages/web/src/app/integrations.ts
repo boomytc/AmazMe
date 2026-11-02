@@ -612,6 +612,25 @@ export class Integrations {
 		};
 	}
 
+	/** The connected servers a reader can call by hand, with the tool names the host published. */
+	mcpCallTargets(): Readonly<Record<string, P.McpCallTargetLike>> {
+		const targets: Record<string, P.McpCallTargetLike> = {};
+		for (const item of this.mcpConfiguration?.servers ?? []) {
+			const live = this.mcpRuntime?.servers.find(
+				(server) => server.managed_id === item.config_id && server.enabled,
+			);
+			if (live === undefined || live.phase !== "ready") continue;
+			targets[item.name] = {
+				serverId: live.server_id,
+				tools: live.tools.map((tool) => ({
+					name: tool.name,
+					...(tool.description ? { description: tool.description } : {}),
+				})),
+			};
+		}
+		return targets;
+	}
+
 	mcpPanelRuntime(
 		config: McpConfiguration | undefined,
 		state: McpState | undefined,

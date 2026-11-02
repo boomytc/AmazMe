@@ -415,10 +415,22 @@ export interface McpRuntimeLike {
 	} | null;
 }
 
+export interface McpToolLike {
+	readonly name: string;
+	readonly description?: string;
+}
+
+export interface McpCallTargetLike {
+	readonly serverId: string;
+	readonly tools: readonly McpToolLike[];
+}
+
 export interface PluginsPanelInput {
 	readonly state: PluginsStateLike | undefined;
 	/** null means a selected session has no usable MCP binding yet. */
 	readonly runtime?: McpRuntimeLike | null;
+	/** Connected servers that can be called by hand, keyed by the configured server name. */
+	readonly callTargets?: Readonly<Record<string, McpCallTargetLike>>;
 }
 
 export type ScheduleRuleLike =
@@ -511,6 +523,9 @@ export const PLUGIN_MCP_LOGIN_MODAL = "plugins:mcp-login-response";
 export const PLUGIN_MCP_MODAL = "plugins:mcp-entry";
 export const PLUGIN_MCP_PROJECT_ACTION = "plugins:mcp-project";
 export const PLUGIN_MCP_PROJECT_MODAL = "plugins:mcp-project-submit";
+export const PLUGIN_MCP_CALL_ACTION = "plugins:mcp-call";
+export const PLUGIN_MCP_CALL_MODAL = "plugins:mcp-call-submit";
+export const PLUGIN_MCP_DECISION_ACTION = "plugins:mcp-decision";
 
 function settingsControls(locale: Locale, descriptor: SettingDescriptorLike): PanelControl[] {
 	const base = { id: SETTINGS_FIELD_ACTION, data: descriptor.id, value: descriptor.value };
@@ -963,6 +978,9 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 										: []),
 									...(live?.canLogin
 										? [{ id: PLUGIN_MCP_LOGIN_ACTION, label: translate(locale, "panel.plugins.login"), data: server.name, weight: "text" as const, glyph: "folder" as const }]
+										: []),
+									...(input.callTargets?.[server.name]?.tools.length
+										? [{ id: PLUGIN_MCP_CALL_ACTION, label: translate(locale, "panel.plugins.callTool"), data: server.name, weight: "text" as const, glyph: "folder" as const }]
 										: []),
 									{
 										id: PLUGIN_MCP_REMOVE_ACTION,
@@ -1445,6 +1463,50 @@ export function removeScheduleModal(locale: Locale, id: string): PanelModal {
 }
 
 /** The SKILL.md a create submits: the frontmatter the loader requires, then the instructions. */
+/** The hand-call form: pick one of the server's tools and give its arguments as one JSON object. */
+export function mcpCallModal(locale: Locale, server: string, tools: readonly McpToolLike[], previous?: { readonly name: string; readonly arguments: string }): PanelModal {
+	return {
+		id: PLUGIN_MCP_CALL_MODAL,
+		title: translate(locale, "panel.plugins.callTitle", { server }),
+		description: translate(locale, "panel.plugins.callDescription"),
+		data: server,
+		fields: [
+			{
+				id: "tool",
+				kind: "select",
+				label: translate(locale, "panel.plugins.callTool"),
+				value: previous?.name ?? tools[0]?.name ?? "",
+				options: tools.map((tool) => ({ value: tool.name, label: tool.name })),
+			},
+			{
+				id: "arguments",
+				kind: "textarea",
+				label: translate(locale, "panel.plugins.callArguments"),
+				value: previous?.arguments ?? "{}",
+				placeholder: "{}",
+			},
+		],
+		submit: translate(locale, "panel.plugins.callSubmit"),
+	};
+}
+
+/** The approval the host requests before a hand-called MCP tool runs. */
+export function mcpDecisionModal(locale: Locale, call: { readonly serverId: string; readonly callId: string; readonly name: string; readonly digest: string; readonly arguments: string }): PanelModal {
+	const short = call.arguments.length > 400 ? `${call.arguments.slice(0, 400)}…` : call.arguments;
+	const decision = (approve: boolean): string =>
+		JSON.stringify({ serverId: call.serverId, callId: call.callId, digest: call.digest, approve });
+	return {
+		id: PLUGIN_MCP_DECISION_ACTION,
+		title: translate(locale, "panel.plugins.callApproveTitle", { name: call.name }),
+		description: short,
+		fields: [],
+		actions: [
+			{ id: PLUGIN_MCP_DECISION_ACTION, label: translate(locale, "panel.plugins.callDeny"), weight: "line", data: decision(false) },
+			{ id: PLUGIN_MCP_DECISION_ACTION, label: translate(locale, "panel.plugins.callApprove"), weight: "filled", data: decision(true) },
+		],
+	};
+}
+
 export function composeSkill(name: string, description: string, body: string): string {
 	const trimmedBody = body.trim();
 	return `---\nname: ${name}\ndescription: ${description}\n---\n\n${trimmedBody.length === 0 ? "" : `${trimmedBody}\n`}`;

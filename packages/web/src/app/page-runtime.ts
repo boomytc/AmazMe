@@ -6,6 +6,7 @@ import type {
 	AnswerFeedbackList,
 	GitDiff,
 	Identity,
+	McpCall,
 	PluginCallView,
 	ProjectView,
 	ResourceCatalog,
@@ -645,6 +646,35 @@ export class PageRuntime {
 				}, 3000);
 		}
 	}
+	/** Wait for one hand-called MCP tool to settle, then report it in the plugins panel. */
+	private async settleMcp(connection: ClientConnection, initial: McpCall): Promise<void> {
+		const final = new Set(["done", "denied", "unknown", "conflict"]);
+		let call = initial;
+		for (let attempt = 0; attempt < 60 && !final.has(call.phase); attempt++) {
+			await new Promise((resolve) => setTimeout(resolve, 150));
+			if (!connection.active()) return;
+			const state = await this.client.call(
+				"GET /api/v1/sessions/{session_id}/mcp",
+				{ path: { session_id: connection.sessionId }, connection },
+			);
+			call = state.calls.find((item) => item.call_id === call.call_id) ?? call;
+		}
+		this.panels.modal = undefined;
+		const label = translate(
+			this.preferences.locale,
+			call.phase === "done" && call.is_error !== true
+				? "panel.plugins.callDone"
+				: "panel.plugins.callPhase",
+			{ name: call.name, phase: call.phase },
+		);
+		const result = call.result?.trim() ?? "";
+		this.panels.notice = {
+			tone: call.phase === "done" && call.is_error !== true ? "info" : "error",
+			text: result.length === 0 ? label : `${label}\n${result.slice(0, 2000)}`,
+		};
+		await this.integrations.loadPlugins();
+		if (connection.active()) this.render();
+	}
 	private async loadUsage(connection: ClientConnection): Promise<void> {
 		const generation = ++this.usageGeneration;
 		const value = await this.client.call(
@@ -1152,6 +1182,96 @@ export class PageRuntime {
 		if (await this.automation.scheduleAction(action)) return;
 		if (await this.integrations.pluginAction(action)) return;
 		if (await this.integrations.mcpAction(action)) return;
+		if (id === P.PLUGIN_MCP_CALL_ACTION) {
+			if (!data) return;
+			const target = this.integrations.mcpCallTargets()[data];
+			if (target === undefined || target.tools.length === 0)
+				throw new Error("MCP 服务没有可调用的工具");
+			this.panels.modal = P.mcpCallModal(
+				this.preferences.locale,
+				data,
+				target.tools,
+			);
+			this.render();
+			return;
+		}
+		if (id === P.PLUGIN_MCP_CALL_MODAL) {
+			if (action.kind !== "modal-submit" || !data) return;
+			const target = this.integrations.mcpCallTargets()[data];
+			if (target === undefined) throw new Error("MCP 服务已变化，请重新读取");
+			const tool = fields.tool ?? "";
+			if (!target.tools.some((item) => item.name === tool))
+				throw new Error("请选择可用工具");
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(fields.arguments ?? "{}");
+			} catch {
+				throw new Error("参数必须是 JSON 对象");
+			}
+			if (!isRecord(parsed)) throw new Error("参数必须是 JSON 对象");
+			const connection = this.requireConnection();
+			const call = await this.client.call(
+				"POST /api/v1/sessions/{session_id}/mcp/{server_id}/calls",
+				{
+					path: {
+						session_id: connection.sessionId,
+						server_id: target.serverId,
+					},
+					body: {
+						call_id: newId(),
+						name: tool,
+						arguments: parsed,
+						origin: "manual",
+					},
+					connection,
+				},
+			);
+			if (!connection.active()) return;
+			if (call.phase === "waiting_approval") {
+				this.panels.modal = P.mcpDecisionModal(this.preferences.locale, {
+					serverId: target.serverId,
+					callId: call.call_id,
+					name: call.name,
+					digest: call.digest,
+					arguments: JSON.stringify(call.arguments ?? {}),
+				});
+				this.render();
+				return;
+			}
+			await this.settleMcp(connection, call);
+			return;
+		}
+		if (id === P.PLUGIN_MCP_DECISION_ACTION) {
+			const target: unknown = JSON.parse(data ?? "null");
+			if (
+				!isRecord(target) ||
+				typeof target.serverId !== "string" ||
+				typeof target.callId !== "string" ||
+				typeof target.digest !== "string" ||
+				typeof target.approve !== "boolean"
+			)
+				throw new Error("MCP 审批目标无效");
+			const connection = this.requireConnection();
+			const call = await this.client.call(
+				"POST /api/v1/sessions/{session_id}/mcp/{server_id}/calls/{call_id}/decision",
+				{
+					path: {
+						session_id: connection.sessionId,
+						server_id: target.serverId,
+						call_id: target.callId,
+					},
+					body: {
+						decision_id: newId(),
+						approve: target.approve,
+						digest: target.digest,
+					},
+					connection,
+				},
+			);
+			if (!connection.active()) return;
+			await this.settleMcp(connection, call);
+			return;
+		}
 		if (id === USAGE_ACTION || id === USAGE_REFRESH_ACTION) {
 			const connection = this.requireConnection();
 			this.dock.dockOpen = true;
@@ -2538,6 +2658,7 @@ export class PageRuntime {
 						connection?.ready === true,
 						this.integrations.mcpLogin,
 					),
+					callTargets: this.integrations.mcpCallTargets(),
 				},
 				automation: {
 					state: this.automation.schedules
