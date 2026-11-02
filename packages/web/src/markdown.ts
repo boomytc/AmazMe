@@ -1,8 +1,9 @@
 /**
  * Assistant formatting: an answer's text into the structure the renderer turns into DOM. The unit
- * stays small on purpose — headings, lists, emphasis, links, fenced code, tables — and it never
- * parses HTML, so model-produced markup stays text. A construct that does not parse stays literal
- * text: the answer is always shown, never dropped.
+ * stays small on purpose — headings, nested lists, quotes, rules, emphasis, links, fenced code,
+ * tables — and it never parses HTML, so model-produced markup stays text. Images degrade to links
+ * or file links; a construct that does not parse stays literal text: the answer is always shown,
+ * never dropped.
  */
 
 import { parseFileLink } from "./file-links.ts";
@@ -27,11 +28,26 @@ export interface HeadingNode {
 	readonly children: readonly InlineNode[];
 }
 
+export interface ListItem {
+	readonly children: readonly InlineNode[];
+	/** Lists nested under this item, in source order. */
+	readonly lists: readonly ListNode[];
+}
+
 export interface ListNode {
 	readonly kind: "list";
 	readonly ordered: boolean;
 	readonly start: number;
-	readonly items: readonly (readonly InlineNode[])[];
+	readonly items: readonly ListItem[];
+}
+
+export interface QuoteNode {
+	readonly kind: "quote";
+	readonly children: readonly MarkdownNode[];
+}
+
+export interface RuleNode {
+	readonly kind: "rule";
 }
 
 export interface CodeNode {
@@ -40,7 +56,7 @@ export interface CodeNode {
 	readonly text: string;
 }
 
-export type MarkdownNode = ParagraphNode | HeadingNode | ListNode | CodeNode | TableNode;
+export type MarkdownNode = ParagraphNode | HeadingNode | ListNode | QuoteNode | RuleNode | CodeNode | TableNode;
 
 /** Where a table column's cells sit. Absent means the renderer decides (numbers go right). */
 export type TableAlignment = "left" | "center" | "right";
@@ -57,8 +73,9 @@ export interface TableNode {
 const allowedLinkSchemes = new Set(["http", "https", "mailto"]);
 const fencePattern = /^ {0,3}(`{3,}|~{3,})\s*([^\s`]*)/;
 const headingPattern = /^ {0,3}(#{1,6})\s+(.*)$/;
-const bulletPattern = /^ {0,3}[-*+]\s+(.*)$/;
-const orderedPattern = /^ {0,3}(\d{1,9})[.)]\s+(.*)$/;
+const listPattern = /^(\s*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const quotePattern = /^ {0,3}> ?(.*)$/;
+const rulePattern = /^ {0,3}([-*_])(?:\s*\1){2,}\s*$/;
 const escapable = /[\\`*_[\]()#!>-]/;
 
 /**
@@ -231,6 +248,35 @@ function inline(text: string, links = true): InlineNode[] {
 				continue;
 			}
 		}
+		if (links && character === "!" && text[index + 1] === "[") {
+			// Images are not loaded from model output; keep the alt text as a link (or a file link)
+			// so the reader can still decide to open the target.
+			const labelStart = index + 2;
+			const labelEnd = text.indexOf("](", labelStart);
+			const destination =
+				labelEnd === -1 ? undefined : linkDestination(text, labelEnd + 2);
+			if (labelEnd !== -1 && destination !== undefined) {
+				const label = text.slice(labelStart, labelEnd);
+				const location = parseFileLink(destination.target);
+				const href = /^(?:https?:|mailto:|\/\/|#)/i.test(destination.target)
+					? safeHref(destination.target)
+					: undefined;
+				if (location !== undefined || href !== undefined) {
+					flush();
+					const children = (
+						label.length > 0
+							? inline(label, false)
+							: [{ kind: "text", text: destination.target } as const]
+					);
+					if (location !== undefined)
+						nodes.push({ kind: "file", location, children });
+					else if (href !== undefined)
+						nodes.push({ kind: "link", href, children });
+					index = destination.end + 1;
+					continue;
+				}
+			}
+		}
 		if (links && character === "[") {
 			const labelEnd = text.indexOf("](", index + 1);
 			const destination = labelEnd === -1 ? undefined : linkDestination(text, labelEnd + 2);
@@ -264,32 +310,66 @@ function inline(text: string, links = true): InlineNode[] {
 	return nodes;
 }
 
-interface OpenList {
+interface MutableListItem {
+	text: string;
+	lists: MutableList[];
+}
+
+interface MutableList {
 	ordered: boolean;
 	start: number;
-	items: string[];
+	items: MutableListItem[];
+}
+
+interface ListLevel {
+	readonly indent: number;
+	readonly list: MutableList;
+	/** The item that owns a nested list; undefined for a top-level list. */
+	readonly parent: MutableListItem | undefined;
 }
 
 export function formatMarkdown(text: string): MarkdownNode[] {
 	const lines = text.replaceAll("\r\n", "\n").replaceAll("\r", "\n").split("\n");
 	const nodes: MarkdownNode[] = [];
 	let paragraph: string[] = [];
-	let list: OpenList | undefined;
+	let levels: ListLevel[] = [];
 
 	const flushParagraph = (): void => {
 		if (paragraph.length === 0) return;
 		nodes.push({ kind: "paragraph", children: inline(paragraph.join("\n")) });
 		paragraph = [];
 	};
-	const flushList = (): void => {
-		if (list === undefined) return;
-		nodes.push({
+	// Lists are mutable while indentation may still add nested items; the tree is frozen once the
+	// root list closes so the renderer always sees the final shape.
+	function toListNode(list: MutableList): ListNode {
+		return {
 			kind: "list",
 			ordered: list.ordered,
 			start: list.start,
-			items: list.items.map((item) => inline(item)),
-		});
-		list = undefined;
+			items: list.items.map((item) => ({
+				children: inline(item.text),
+				lists: item.lists.map(toListNode),
+			})),
+		};
+	}
+	const closeLists = (): void => {
+		if (levels.length === 0) return;
+		const root = levels[0]?.list;
+		levels = [];
+		if (root !== undefined) nodes.push(toListNode(root));
+	};
+	const startLevel = (
+		indent: number,
+		ordered: boolean,
+		start: number,
+		parent: MutableListItem | undefined,
+		body: string,
+	): void => {
+		const list: MutableList = { ordered, start: ordered ? start : 1, items: [] };
+		const item: MutableListItem = { text: body, lists: [] };
+		list.items.push(item);
+		if (parent !== undefined) parent.lists.push(list);
+		levels.push({ indent, list, parent });
 	};
 
 	for (let index = 0; index < lines.length; ) {
@@ -297,7 +377,7 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 		const fence = fencePattern.exec(line);
 		if (fence !== null) {
 			flushParagraph();
-			flushList();
+			closeLists();
 			const marker = fence[1] ?? "```";
 			const body: string[] = [];
 			index += 1;
@@ -312,14 +392,14 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 		}
 		if (line.trim().length === 0) {
 			flushParagraph();
-			flushList();
+			closeLists();
 			index += 1;
 			continue;
 		}
 		const heading = headingPattern.exec(line);
 		if (heading !== null) {
 			flushParagraph();
-			flushList();
+			closeLists();
 			nodes.push({
 				kind: "heading",
 				level: (heading[1] ?? "#").length,
@@ -328,17 +408,59 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 			index += 1;
 			continue;
 		}
-		const bullet = bulletPattern.exec(line);
-		const ordered = orderedPattern.exec(line);
-		if (bullet !== null || ordered !== null) {
+		const quote = quotePattern.exec(line);
+		if (quote !== null) {
 			flushParagraph();
-			if (list === undefined || list.ordered !== (ordered !== null)) {
-				flushList();
-				list = { ordered: ordered !== null, start: ordered === null ? 1 : Number(ordered[1]), items: [] };
+			closeLists();
+			const body: string[] = [];
+			let cursor = index;
+			while (cursor < lines.length) {
+				const quoted = quotePattern.exec(lines[cursor] ?? "");
+				if (quoted === null) break;
+				body.push(quoted[1] ?? "");
+				cursor += 1;
 			}
-			list.items.push((bullet?.[1] ?? ordered?.[2] ?? "").trim());
+			nodes.push({ kind: "quote", children: formatMarkdown(body.join("\n")) });
+			index = cursor;
+			continue;
+		}
+		if (rulePattern.test(line)) {
+			flushParagraph();
+			closeLists();
+			nodes.push({ kind: "rule" });
 			index += 1;
 			continue;
+		}
+		const listMatch = listPattern.exec(line);
+		if (listMatch !== null) {
+			const indent = (listMatch[1] ?? "").length;
+			const ordered = /^\d/.test(listMatch[2] ?? "");
+			const body = (listMatch[3] ?? "").trim();
+			// An indented marker only nests when a list is already open; otherwise it is prose.
+			if (levels.length > 0 || indent <= 3) {
+				flushParagraph();
+				while (levels.length > 0 && indent < (levels[levels.length - 1]?.indent ?? 0)) levels.pop();
+				const top = levels[levels.length - 1];
+				if (top === undefined) {
+					startLevel(indent, ordered, ordered ? Number.parseInt(listMatch[2] ?? "1", 10) : 1, undefined, body);
+				} else if (indent === top.indent) {
+					if (ordered === top.list.ordered)
+						top.list.items.push({ text: body, lists: [] });
+					else {
+						levels.pop();
+						startLevel(indent, ordered, ordered ? Number.parseInt(listMatch[2] ?? "1", 10) : 1, top.parent, body);
+					}
+				} else {
+					// A more indented marker belongs to the current item as a nested list.
+					const parentItem = top.list.items[top.list.items.length - 1];
+					if (parentItem === undefined)
+						top.list.items.push({ text: body, lists: [] });
+					else
+						startLevel(indent, ordered, ordered ? Number.parseInt(listMatch[2] ?? "1", 10) : 1, parentItem, body);
+				}
+				index += 1;
+				continue;
+			}
 		}
 		// A table: a header row whose next line delimits the same number of columns. Everything that
 		// does not match stays text, so a stray `|` in prose is still prose.
@@ -346,7 +468,7 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 		const align = tableAlignments(lines[index + 1] ?? "");
 		if (headerCells !== undefined && align !== undefined && align.length === headerCells.length) {
 			flushParagraph();
-			flushList();
+			closeLists();
 			const rows: string[][] = [];
 			let cursor = index + 2;
 			while (cursor < lines.length) {
@@ -365,12 +487,14 @@ export function formatMarkdown(text: string): MarkdownNode[] {
 			continue;
 		}
 		// A plain line continues the open item (markdown's lazy continuation), else the paragraph.
-		if (list !== undefined) list.items[list.items.length - 1] = `${list.items[list.items.length - 1] ?? ""} ${line.trim()}`;
+		const openItem = levels[levels.length - 1]?.list.items[levels[levels.length - 1]?.list.items.length - 1];
+		if (openItem !== undefined)
+			openItem.text = openItem.text.length === 0 ? line.trim() : `${openItem.text} ${line.trim()}`;
 		else paragraph.push(line.trim());
 		index += 1;
 	}
 	flushParagraph();
-	flushList();
+	closeLists();
 	return nodes;
 }
 

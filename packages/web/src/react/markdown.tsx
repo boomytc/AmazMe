@@ -15,6 +15,7 @@ import {
 	type CodeToken,
 	formatMarkdown,
 	type InlineNode,
+	type ListNode,
 	type MarkdownNode,
 	safeHref,
 	type TableAlignment,
@@ -564,6 +565,32 @@ function MarkdownHeading({
 	}
 }
 
+function MarkdownList({
+	node,
+	onFile,
+}: {
+	readonly node: ListNode;
+	readonly onFile?: (location: FileLocation) => void;
+}): ReactElement {
+	const items = node.items.map((item, index) => (
+		<li
+			// biome-ignore lint/suspicious/noArrayIndexKey: A list item is identified by its source ordinal.
+			key={index}
+		>
+			<InlineNodes nodes={item.children} onFile={onFile} />
+			{item.lists.map((list, listIndex) => (
+				<MarkdownList
+					// biome-ignore lint/suspicious/noArrayIndexKey: A nested list keeps its source order.
+					key={listIndex}
+					node={list}
+					onFile={onFile}
+				/>
+			))}
+		</li>
+	));
+	return node.ordered ? <ol start={node.start}>{items}</ol> : <ul>{items}</ul>;
+}
+
 function MarkdownBlock({
 	node,
 	codeIndex,
@@ -582,19 +609,24 @@ function MarkdownBlock({
 			);
 		case "heading":
 			return <MarkdownHeading node={node} onFile={onFile} />;
-		case "list": {
-			const items = node.items.map((item, index) => (
-				// biome-ignore lint/suspicious/noArrayIndexKey: A list item is identified by its source ordinal.
-				<li key={index}>
-					<InlineNodes nodes={item} onFile={onFile} />
-				</li>
-			));
-			return node.ordered ? (
-				<ol start={node.start}>{items}</ol>
-			) : (
-				<ul>{items}</ul>
+		case "list":
+			return <MarkdownList node={node} onFile={onFile} />;
+		case "quote":
+			return (
+				<blockquote>
+					{node.children.map((child, index) => (
+						<MarkdownBlock
+							// biome-ignore lint/suspicious/noArrayIndexKey: Quoted blocks retain their source position.
+							key={index}
+							node={child}
+							codeIndex={index}
+							onFile={onFile}
+						/>
+					))}
+				</blockquote>
 			);
-		}
+		case "rule":
+			return <hr />;
 		case "code":
 			return (
 				<CodeBlock key={codeIndex} text={node.text} language={node.language} />

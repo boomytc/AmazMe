@@ -1877,6 +1877,30 @@ p {
 	color: var(--text-3);
 }
 
+.markdown li > ul,
+.markdown li > ol {
+	margin: 4px 0 0;
+	padding-left: 20px;
+}
+
+.markdown blockquote {
+	margin: 0 0 12px;
+	padding: 2px 0 2px 14px;
+	border-left: 2px solid var(--line-strong);
+	color: var(--text-2);
+}
+
+.markdown blockquote > :last-child {
+	margin-bottom: 0;
+}
+
+.markdown hr {
+	height: 1px;
+	margin: 16px 0;
+	border: 0;
+	background: var(--line);
+}
+
 .markdown :not(pre) > code {
 	padding: 0.1em 0.4em;
 	border: 1px solid var(--line);
