@@ -1009,7 +1009,7 @@ export class PageRuntime {
 	}
 	private async attachFiles(files: readonly File[]): Promise<void> {
 		const connection = this.requireConnection();
-		const draft = await this.drafts.attach(files);
+		const draft = await this.drafts.attach(files, this.preferences.locale);
 		if (connection.active() && this.drafts.current === draft) this.render();
 	}
 	private async command(name: string, args: string): Promise<void> {

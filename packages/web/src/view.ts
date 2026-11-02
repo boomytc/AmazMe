@@ -118,19 +118,8 @@ export interface ModelRefresh {
 	readonly busy: boolean;
 }
 
-/** The image types the page sends, and how large one may be. */
+/** The image types the page can send. Intake decodes and resizes them; see `app/images.ts`. */
 export const ATTACHMENT_TYPES: readonly string[] = ["image/png", "image/jpeg", "image/webp", "image/gif"];
-export const ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
-
-/** Why one picked image cannot be sent: the copy key that explains it. */
-export type AttachmentRejection = "composer.attachmentUnsupported" | "composer.attachmentTooLarge";
-
-/** Whether one picked image can be sent, and if not, why. */
-export function attachmentRejection(image: { readonly mediaType: string; readonly bytes: number }): AttachmentRejection | undefined {
-	if (!ATTACHMENT_TYPES.includes(image.mediaType)) return "composer.attachmentUnsupported";
-	if (image.bytes > ATTACHMENT_MAX_BYTES) return "composer.attachmentTooLarge";
-	return undefined;
-}
 
 /** A size a reader can compare at a glance: `340 KB`, `1.2 MB`. */
 export function formatBytes(bytes: number): string {
