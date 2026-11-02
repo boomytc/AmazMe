@@ -71,10 +71,8 @@ npm run typecheck
 
 ## 分支
 
-- 日常开发提交到 `dev`，不直接改 `main`。
-- 阶段性闭环后再合入 `main`。仓库没有 CI，合入和推送前按「命令」一节在本地把关。
-- 合入用 merge commit 或快进，不用 squash，保持两条分支历史一致。
-- 直接在 `main` 上的热修要合回 `dev`。
+- 只维护 `main`。日常提交直接进 `main`，不再保留 `dev`。
+- 阶段性闭环后推送到 `origin/main`；推送前按「命令」一节在本地把关（仓库没有 CI）。
 - 版本标签只在 1.0.0 的发布里从 `main` 打，并与 GitHub Release 同时产生。
 
 ## Git
