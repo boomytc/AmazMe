@@ -255,10 +255,6 @@ export interface ApprovalsStateLike {
 	}[];
 }
 
-/**
- * The pending tool calls, each with its own approve and deny. A decision is the only thing that
- * releases the call, so the card names the tool and what it would do.
- */
 /** Argument rows a reader can scan without decoding an escaped JSON string. */
 function approvalFields(detail: string): readonly ApprovalField[] {
 	let value: unknown;
@@ -279,6 +275,10 @@ function approvalFields(detail: string): readonly ApprovalField[] {
 	}));
 }
 
+/**
+ * The pending tool calls, each with its own approve and deny. A decision is the only thing that
+ * releases the call, so the card names the tool and what it would do.
+ */
 export function approvalCards(locale: Locale, state: ApprovalsStateLike | undefined): ApprovalCard[] {
 	return (state?.pending ?? []).map((request) => ({
 		id: request.id,
