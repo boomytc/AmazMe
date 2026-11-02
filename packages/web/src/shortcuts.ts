@@ -2,7 +2,7 @@
  * Keyboard shortcuts, following the convention DSH uses for its web runtime: the product keys are
  * `primary` (Meta on macOS, Control elsewhere) plus Alt, because the browser keeps the plain
  * `primary` combinations for itself. `/` focuses the composer. Stopping a turn is one chord,
- * Ctrl+C, the same key the TUI uses: Escape only closes menus.
+ * Ctrl+C; Escape only closes menus.
  *
  * One table serves both jobs: the reference the reader sees, and the matcher the renderer uses. A
  * gesture arrives with `primary` already normalized, so matching never depends on the platform.

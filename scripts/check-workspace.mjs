@@ -24,7 +24,6 @@ import { runtimePackages, workspacePackages } from "./package-artifacts.mjs";
 
 const layers = new Map([
 	["@amazme/codemode", 0],
-	["@amazme/tui", 0],
 	["@amazme/web", 3],
 	["@amazme/gui", 6],
 	["@amazme/coding-agent", 5],
@@ -38,18 +37,13 @@ const layers = new Map([
  * cannot quietly escape the model.
  */
 const codingAgentRoleRules = new Map([
-	[
-		"entry",
-		["entry", "interactive", "headless", "connection", "client", "cli", "product", "media", "presentation", "neutral"],
-	],
-	["interactive", ["interactive", "connection", "client", "cli", "media", "presentation", "neutral"]],
+	["entry", ["entry", "headless", "connection", "client", "cli", "product", "media", "neutral"]],
 	["headless", ["headless", "connection", "client", "cli", "neutral"]],
 	["connection", ["connection", "client", "neutral"]],
 	["cli", ["cli", "client", "media", "neutral"]],
 	["client", ["client", "neutral"]],
 	["product", ["product", "connection", "client", "neutral"]],
 	["media", ["media", "neutral"]],
-	["presentation", ["presentation", "media", "neutral"]],
 	["neutral", ["neutral"]],
 ]);
 
@@ -63,10 +57,7 @@ const codingAgentModuleRoles = new Map([
 		"update-manifest.ts",
 		"utils/paths.ts",
 		"utils/text.ts",
-		"utils/fs-watch.ts",
-		"utils/open-browser.ts",
 		"utils/version-check.ts",
-		"utils/wsl.ts",
 	].map((path) => [path, "neutral"]),
 	...[
 		"utils/photon.ts",
@@ -78,14 +69,6 @@ const codingAgentModuleRoles = new Map([
 		"utils/image-resize.ts",
 		"utils/mime.ts",
 	].map((path) => [path, "media"]),
-	...[
-		"utils/clipboard.ts",
-		"utils/clipboard-command.ts",
-		"utils/clipboard-paste.ts",
-		"utils/highlight-js.d.ts",
-		"utils/html.ts",
-		"utils/syntax-highlight.ts",
-	].map((path) => [path, "presentation"]),
 ]);
 
 const codingAgentRolePrefixes = [
@@ -93,7 +76,6 @@ const codingAgentRolePrefixes = [
 	["connection/", "connection"],
 	["cli/", "cli"],
 	["modes/headless/", "headless"],
-	["modes/interactive/", "interactive"],
 ];
 
 /** The role of one source path relative to the CLI package's src directory. */
@@ -414,9 +396,7 @@ export function checkVersionLiterals(repoRoot, files) {
  * scratch their owner removes, or locations that are not session output. Shrink this list; never
  * grow it for session output.
  */
-export const sourceTempDirAllowlist = {
-	"packages/tui/src/tui-main-screen.ts": "crash log fallback when no log directory is set",
-};
+export const sourceTempDirAllowlist = {};
 
 /**
  * Package sources (`packages/<pkg>/src`) may not call `tmpdir()` / `os.tmpdir()`
@@ -810,15 +790,7 @@ export async function checkEntryContracts(repoRoot) {
 				format: "esm",
 				metafile: true,
 				logLevel: "silent",
-				plugins: [
-					{
-						name: "rpc-tui-external",
-						setup(builder) {
-							builder.onResolve({ filter: /^@amazme\/tui(?:\/|$)/ }, ({ path }) => ({ path, external: true }));
-						},
-					},
-					workspaceResolver(packages, true),
-				],
+				plugins: [workspaceResolver(packages, true)],
 			});
 			const outputs = result.metafile.outputs;
 			const first = Object.entries(outputs).find(([, output]) => output.entryPoint?.replaceAll("\\", "/") === entry);
@@ -839,18 +811,12 @@ export async function checkEntryContracts(repoRoot) {
 				for (const dependency of output.imports) {
 					if (dependency.kind !== "import-statement") continue;
 					if (!dependency.external) pending.push(dependency.path);
-					else if (dependency.path === "@amazme/tui" || dependency.path.startsWith("@amazme/tui/"))
-						failures.push(`${entry}: presentation dependency in the RPC startup graph ${dependency.path}`);
 				}
 			}
 			measurements.push(`${entry}: ${sources.size}/12 startup source modules`);
 			if (sources.size > 12) failures.push(`${entry}: startup source graph ${sources.size} exceeds 12`);
 			for (const path of sources)
-				if (
-					path.includes("modes/interactive/") ||
-					path.endsWith("cli/file-processor.ts") ||
-					/utils\/(?:image-|photon)/.test(path)
-				)
+				if (path.endsWith("cli/file-processor.ts") || /utils\/(?:image-|photon)/.test(path))
 					failures.push(`${entry}: presentation or media module in the RPC entry graph ${path}`);
 		} catch (error) {
 			failures.push(`${entry}: ${error.message}`);

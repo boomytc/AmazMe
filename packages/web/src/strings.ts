@@ -3,9 +3,8 @@ export type { ScheduleRuleLike } from "./panels.ts";
 /**
  * The page's copy, in both shipped languages. Everything a reader sees comes from here: the
  * conversation, the composer, and the management panels, plus the labels for the host's settings
- * catalogue, whose ids and tokens this module turns into prose. Product copy lives in the client
- * the way the TUI's selectors keep their own, so the host publishes data and the presentation
- * publishes words. Desktop shell chrome (menus and dialogs) is the `desktop.*` keys in the same
+ * catalogue, whose ids and tokens this module turns into prose. Product copy lives in the client,
+ * so the host publishes data and the presentation publishes words. Desktop shell chrome (menus and dialogs) is the `desktop.*` keys in the same
  * dictionaries. `locale.ts` and this module are the subpath exports an Electron main process
  * imports; neither reads the DOM.
  *

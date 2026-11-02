@@ -28,7 +28,6 @@ packages/*/dist-firefox/
 .npm/
 .pi_config/
 .pi/settings.json
-tui-debug.log
 compaction-results/
 .opencode/
 syntax.jsonl

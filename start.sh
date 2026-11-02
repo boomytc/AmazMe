@@ -6,6 +6,7 @@ cd "$ROOT"
 
 usage() {
 	echo "用法：./start.sh [desktop|web|cli] [参数...]" >&2
+	echo "      cli 为一次性终端命令，不进入界面" >&2
 	echo "      ./start.sh --prepare" >&2
 }
 
@@ -62,8 +63,8 @@ case "$MODE" in
 		;;
 	cli)
 		if [[ $# -gt 0 ]]; then
-			exec npm run dev:tui -- "$@"
+			exec npm run dev:cli -- "$@"
 		fi
-		exec npm run dev:tui
+		exec npm run dev:cli
 		;;
 esac

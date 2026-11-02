@@ -777,7 +777,7 @@ export function transcriptSearchHits(
 	return entries.filter((entry) => entry.text.toLocaleLowerCase().includes(needle)).map((entry) => entry.id);
 }
 
-/** Token counts in the same widths the TUI top bar uses. */
+/** Token counts in the same widths the header uses. */
 export function formatTokens(count: number): string {
 	if (count < 1000) return count.toString();
 	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;

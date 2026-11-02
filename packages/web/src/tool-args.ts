@@ -1,5 +1,5 @@
 /** Tool summaries prioritize the requested command or file; unknown tools use bounded key=value pairs.
- * Expanded parameters retain the TUI's readable key: value layout, with raw JSON available for copying.
+ * Expanded parameters keep the readable key: value layout, with raw JSON available for copying.
  */
 import type { Locale } from "./locale.ts";
 import { translate } from "./strings.ts";

@@ -53,12 +53,6 @@
 			"typebox": [
 				"./node_modules/typebox"
 			],
-			"@amazme/tui": [
-				"./packages/tui/src/index.ts"
-			],
-			"@amazme/tui/*": [
-				"./packages/tui/src/*"
-			],
 			"@amazme/web/errors": [
 				"./packages/web/src/errors.ts"
 			]
