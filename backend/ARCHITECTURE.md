@@ -20,7 +20,7 @@
 | `workspaces` | 工作区路径、授权目录校验与文件摘要、冲突和恢复 |
 | `features` | 资源、技能、记忆、排程、插件包、产物、工具元数据与导入导出的纯规则或文件操作 |
 | `host` | profile 代际、持久投递、客户端绑定、工作区元数据、更新及完整产品用例 |
-| `interfaces` | HTTP/WS、RPC、CLI/TUI、私有进程 API 和页面 boot；解析、认证、调用与呈现 |
+| `interfaces` | HTTP/WS、RPC、CLI、私有进程 API 和页面 boot；解析、认证、调用与呈现 |
 | `sdk` | `from amazme_backend.sdk import Client`；只连接现有 Host |
 | `bootstrap` | 命令分派与 Host、worker、Supervisor 的构造、能力注入和服务启动 |
 
@@ -28,7 +28,7 @@
 
 ```mermaid
 flowchart TD
-    Clients[Web / Electron / CLI / TUI / SDK] --> Interfaces[interfaces]
+    Clients[Web / Electron / CLI / SDK] --> Interfaces[interfaces]
     Interfaces --> Host[host 产品用例]
     Host --> HostDB[(Host SQLite)]
     Host -->|持久投递 / IPC| Worker[agent 会话驱动]

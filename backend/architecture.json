@@ -586,7 +586,6 @@
         "amazme_backend.interfaces.http.application",
         "amazme_backend.interfaces.rpc",
         "amazme_backend.interfaces.supervisor",
-        "amazme_backend.interfaces.tui",
         "amazme_backend.interfaces.web.boot",
         "amazme_backend.interfaces.worker"
       ],
@@ -745,7 +744,6 @@
         "amazme_backend.interfaces.client_outbox",
         "amazme_backend.interfaces.http.application",
         "amazme_backend.interfaces.supervisor",
-        "amazme_backend.interfaces.tui",
         "amazme_backend.interfaces.worker",
         "amazme_backend.platform.identity",
         "amazme_backend.platform.ipc",

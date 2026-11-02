@@ -16,7 +16,7 @@ Python SDK 入口是 `amazme_backend.sdk.Client`，说明见 [SDK](docs/sdk.md)�
 
 `ask_user_question` 可提出 1–3 个问题，每题支持至多 8 个选项、单选、多选和自由输入。问题进入会话的 `waiting_input` 状态，不申请执行许可；用户的回答也不批准其他工具。Web 的推荐项只预选，必须显式提交；跳过会形成明确结果并提示模型不要重复提问。取消后拒绝晚到回答。无执行资源的待答请求树在普通停机时保留，重开后更新问题代次，用户重新连接后可继续回答；显式取消仍结束请求。
 
-Python CLI 用 `client questions --session ID` 查看，用 `client answer --session ID --value '<QuestionAnswer JSON>'` 回答或跳过。终端对应 `/questions`、`/answer <QuestionAnswer JSON>`，RPC 为 `question.answer`，其 `question_answer` 参数是同一 DTO。回答必须携带稳定 `decision_id`、`question_id`、`request_id`、`proposal_digest`、`generation`、`kind` 和 `answers`；`kind="skipped"` 时 `answers=[]`。同编号同内容查询原决定，不得用原编号改答案。等待回答的非交互调用退出码为 2。
+Python CLI 用 `client questions --session ID` 查看，用 `client answer --session ID --value '<QuestionAnswer JSON>'` 回答或跳过；RPC 为 `question.answer`，其 `question_answer` 参数是同一 DTO。回答必须携带稳定 `decision_id`、`question_id`、`request_id`、`proposal_digest`、`generation`、`kind` 和 `answers`；`kind="skipped"` 时 `answers=[]`。同编号同内容查询原决定，不得用原编号改答案。等待回答的非交互调用退出码为 2。
 
 本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。用户可以连接服务、
 选择工具、填写 JSON 参数并审批调用。已连接服务的工具目录也会交给模型；模型提出的调用走会话审批，
@@ -24,7 +24,7 @@ Python CLI 用 `client questions --session ID` 查看，用 `client answer --ses
 动态目录刷新及媒体回传已有定向检查；HTTP/OAuth 等其他 MCP 传输不属于当前 stdio 主路径。
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
-终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 装载这份页面；窗口关闭按桌面偏好处理，退出会停止它拥有的后端。`amazme-backend tui`、print/JSON CLI、`--mode rpc`、Python SDK 和默认 `amazme` 交互画面在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
+终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 装载这份页面；窗口关闭按桌面偏好处理，退出会停止它拥有的后端。网页、print/JSON CLI、`--mode rpc` 和 Python SDK 在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
 `amazme-backend client submit` 返回终态或待审批项，待审批退出码为 2，并给出原提案编号；退出释放本次 attachment。
 `client request --session ID --request-id ID` 查询原回执。`client decide` 必须单独给出「批准」或「拒绝」；请求审批还需 `--approval-id ID`，MCP 则指向原调用。
 重试只核对原提案，不能批准后续工具；已经结算的决定只返回原请求状态。提交文本里的「批准」不是决定。
@@ -41,7 +41,7 @@ backend/.venv/bin/python -m amazme_backend serve --profile /absolute/new-profile
 ```
 
 `serve` 输出回环 URL，浏览器直接打开即可，无需配对。页面自动设置本机连接 Cookie。
-TUI、SDK 等客户端的连接令牌用 `pair --profile /absolute/new-profile` 取得；
+CLI、SDK 等客户端的连接令牌用 `pair --profile /absolute/new-profile` 取得；
 退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
 默认修改操作需要审批。执行环境保留 PATH/HOME 等工具查找变量，不继承模型密钥和控制令牌。
 
