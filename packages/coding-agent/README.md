@@ -1,9 +1,8 @@
 # AmazMe
 
-AmazMe 是操作本机环境的桌面 AI 助手，源自 Pi packages。Python 承担业务内核；本包保留 Node CLI、终端呈现及图片 helper。Web/Electron、TUI、CLI、RPC 和 Python SDK 连接同一 Host，不启动旧 TS Host 或 Durable 会话。
+AmazMe 是操作本机环境的桌面 AI 助手，源自 Pi packages。Python 承担业务内核；本包保留 Node CLI、一次性命令、RPC 及图片 helper。Web/Electron、CLI、RPC 和 Python SDK 连接同一 Host，不启动旧 TS Host 或 Durable 会话。产品界面只由 Web/桌面提供；无参数运行 CLI 输出帮助。
 
 ```bash
-amazme
 amazme --print 'Read README.md'
 amazme web
 amazme models
@@ -27,14 +26,14 @@ npm run build --workspace @amazme/coding-agent
 
 本机 CLI 从启动目录选择对应的 Python 工作区；`--workspace NAME` 使用已登记名称。
 `amazme workspaces list` 查看目录，`workspaces add NAME /absolute/path` 显式登记。
-`--continue` 继续当前工作区最近的非归档会话；`--resume` 在 TUI 中选择，`--session ID` 指定会话。
-回执未确认时保留原请求 ID，使用 `--session ID --request ID` 或 TUI 的 `/request ID` 查询，不会自动重发。
+`--continue` 继续当前工作区最近的非归档会话，`--session ID` 指定会话。
+回执未确认时保留原请求 ID，使用 `--session ID --request ID` 查询，不会自动重发。
 
 上下文文件、技能和提示词模板由 Python 按 Pi 的目录规则加载。
 使用 `--skill PATH` / `--prompt-template PATH` 添加资源，`--no-context-files` / `--no-skills` / `--no-prompt-templates` 禁用默认发现。
-输入 `/skill:名称 参数` 或 `/模板名称 参数`；TUI 用 `/skills`、`/prompts`、`/context` 查看资源，CLI 用 `amazme resources --session ID`。
+`amazme resources --session ID` 查看已加载的技能、提示词模板和上下文文件。
 
-`--thinking off|minimal|low|medium|high|xhigh|max` 选择下一回合推理等级，TUI 中用 `/thinking LEVEL` 修改后续回合。
+`--thinking off|minimal|low|medium|high|xhigh|max` 选择下一回合推理等级。
 Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿用原回合配置。
 
 本机 `--no-session` 使用临时会话，退出时关闭其拥有的后端并清除已结算历史。
@@ -46,15 +45,14 @@ Python 按 Pi 模型能力表调整不支持的等级；重试同一请求仍沿
 `amazme web` 输出包含宿主、会话和工作区的窗口链接，不在链接中放置令牌。
 
 `--session-dir DIR` 在 `DIR/python-host` 保存独立历史，使用原账号库及锁，避免复制刷新凭据；不能与临时会话或外部 Host 混用。
-`--theme PATH` 加载显式主题，`--use-theme NAME` 选择，`--no-themes` 禁用默认用户主题发现，仍保留显式主题及内置主题。
 
 `--model provider/id` 为本次会话选择模型；`--models 'provider/*:high,other/model'` 设置候选顺序。
-TUI 用 `/model provider/id` 选择、`/model next` 按候选循环；模型和推理选项随原请求固定，重试不读取另一窗口的新选择。
+模型和推理选项随原请求固定，重试不读取另一窗口的新选择。
 
 无界面审批先用 `--session ID --request ID` 查询，再用 `--decision 批准 --request ID --approval-id ID` 指向显示的原提案。
 重试保留这些编号；已结算提案只查询，不能自动批准同一请求的下一项工具。待审批退出码为 2。
 
-模型等待结构化回答时，非交互调用也返回退出码 2。终端 `/questions` 查看问题，`/answer <QuestionAnswer JSON>` 显式回答或跳过；JSON 绑定当前 `question_id`、`request_id`、`proposal_digest`、`generation`，并包含稳定 `decision_id`、`kind` 和 `answers`。`kind="skipped"` 使用空回答数组。也可在 Web 作答，或通过 RPC `question.answer` 的 `question_answer` 参数传入同一 JSON。选择与回答不会批准工具；编号未确认时保留原内容。
+模型等待结构化回答时，非交互调用也返回退出码 2。`amazme client questions --session ID` 查看问题，`amazme client answer --session ID --value '<QuestionAnswer JSON>'` 显式回答或跳过；JSON 绑定当前 `question_id`、`request_id`、`proposal_digest`、`generation`，并包含稳定 `decision_id`、`kind` 和 `answers`。`kind="skipped"` 使用空回答数组。也可在 Web 作答，或通过 RPC `question.answer` 的 `question_answer` 参数传入同一 JSON。选择与回答不会批准工具；编号未确认时保留原内容。
 
 `--offline` 仅跳过版本检查；模型目录默认使用包内快照，供应商调用仍按配置联网。
 `--verbose` 显示 profile、构建和代际，不显示令牌。旧文件导出参数改用 `export --output PATH`；旧 TS 项目资源信任选项不再接纳，Python 插件只按显式登记加载。

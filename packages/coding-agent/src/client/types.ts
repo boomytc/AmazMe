@@ -1,4 +1,4 @@
-/** Values shared by the CLI's headless and interactive Python clients. */
+/** Values shared by the CLI's one-shot Python clients. */
 
 export interface ImageContent {
 	readonly type: "image";

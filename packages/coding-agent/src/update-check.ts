@@ -48,7 +48,7 @@ export function defaultAssetSuffix(platform = process.platform, arch = process.a
 
 /**
  * Check GitHub Releases for a newer AmazMe. Returns undefined when offline, checked within the last
- * 24 hours, up to date, or when anything fails or does not verify. Shared by CLI, TUI and the GUI.
+ * 24 hours, up to date, or when anything fails or does not verify. Shared by the CLI and the GUI.
  */
 export async function checkForUpdate(options: UpdateCheckOptions = {}): Promise<UpdateNotice | undefined> {
 	const env = options.env ?? process.env;

@@ -13,7 +13,6 @@
 	},
 	"include": [
 		"packages/web/src/**/*.ts",
-		"packages/web/src/**/*.tsx",
-		"packages/coding-agent/src/utils/highlight-js.d.ts"
+		"packages/web/src/**/*.tsx"
 	]
 }

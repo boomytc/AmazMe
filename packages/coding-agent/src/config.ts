@@ -1,4 +1,4 @@
-/** Package identity and terminal asset paths; Python owns business configuration. */
+/** Package identity; Python owns business configuration. */
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -32,18 +32,6 @@ export function getPackageDir(): string {
 	}
 
 	return findNodePackageDir(__dirname);
-}
-
-/**
- * Get path to built-in themes directory (shipped with package)
- * - For Node.js (dist/): dist/modes/interactive/theme/
- * - For source (src/): src/modes/interactive/theme/
- */
-export function getThemesDir(): string {
-	// Theme is in modes/interactive/theme/ relative to src/ or dist/
-	const packageDir = getPackageDir();
-	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
-	return join(packageDir, srcOrDist, "modes", "interactive", "theme");
 }
 
 export function getPackageJsonPath(): string {
@@ -88,8 +76,4 @@ export function getAgentDir(): string {
 		return expandTildePath(envDir);
 	}
 	return join(homedir(), CONFIG_DIR_NAME, "agent");
-}
-
-export function getCustomThemesDir(): string {
-	return join(getAgentDir(), "themes");
 }

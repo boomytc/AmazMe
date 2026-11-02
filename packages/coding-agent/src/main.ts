@@ -1,5 +1,4 @@
-/** Product presentation and input parsing; business operations belong to Python. */
-import { resolve } from "node:path";
+/** Product input parsing and one-shot/JSON/RPC presentation; business operations belong to Python. */
 import { parseCliArgs, printHelp } from "./cli/args.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
 import { preparePythonRun } from "./cli/run-options.ts";
@@ -19,6 +18,26 @@ async function pipedInput(): Promise<string | undefined> {
 	return value.trim() || undefined;
 }
 
+/** Whether the arguments ask for a host interaction rather than a bare invocation. */
+function wantsRun(parsed: ReturnType<typeof parseCliArgs>): boolean {
+	return (
+		parsed.messages.length > 0 ||
+		parsed.fileArgs.length > 0 ||
+		parsed.print === true ||
+		parsed.mode !== undefined ||
+		parsed.listModels !== undefined ||
+		parsed.continue === true ||
+		parsed.session !== undefined ||
+		parsed.pythonSession !== undefined ||
+		parsed.decision !== undefined ||
+		parsed.request !== undefined ||
+		parsed.call !== undefined ||
+		parsed.provider !== undefined ||
+		parsed.model !== undefined ||
+		parsed.apiKey !== undefined
+	);
+}
+
 export async function main(args: string[]): Promise<void> {
 	const cwd = process.cwd();
 	if (args.includes("--offline")) {
@@ -35,18 +54,15 @@ export async function main(args: string[]): Promise<void> {
 		printHelp(parsed.mode === "json" || parsed.mode === "rpc" ? process.stderr : process.stdout);
 		return;
 	}
+	if (!wantsRun(parsed) && process.stdin.isTTY && process.stdout.isTTY) {
+		printHelp();
+		return;
+	}
 	const prepared = await preparePythonRun(parsed, cwd, runPythonProductCommand);
 	if (!prepared) return;
 	const { session } = prepared;
-	const interactive = !parsed.print && parsed.mode === undefined && process.stdin.isTTY && process.stdout.isTTY;
-	const appearance = {
-		...(parsed.tuiMode ? { tuiMode: parsed.tuiMode } : {}),
-		...(parsed.useTheme ? { theme: parsed.useTheme } : {}),
-		...(parsed.noThemes ? { noThemes: true } : {}),
-		...(parsed.themes?.length ? { themes: parsed.themes.map((entry) => resolve(cwd, entry)) } : {}),
-	};
 	if (parsed.mode === "rpc" && parsed.fileArgs.length) throw new Error("RPC mode does not accept @file arguments");
-	const stdinContent = interactive || parsed.mode === "rpc" ? undefined : await pipedInput();
+	const stdinContent = parsed.mode === "rpc" ? undefined : await pipedInput();
 	const files = parsed.fileArgs.length
 		? await (await import("./cli/file-processor.ts")).processFileArguments(parsed.fileArgs, { autoResizeImages: false })
 		: undefined;
@@ -59,31 +75,6 @@ export async function main(args: string[]): Promise<void> {
 		prompt: [message.initialMessage, ...parsed.messages].filter(Boolean).join("\n"),
 		...(message.initialImages === undefined ? {} : { images: message.initialImages }),
 	};
-	if (interactive) {
-		const { runOwnedPythonInteractive, runPythonSessionTui } = await import("./modes/interactive/session.ts");
-		if (parsed.pythonUrl && parsed.pythonToken)
-			await runPythonSessionTui({
-				...prepared.runOptions,
-				...prepared.sessionOptions,
-				...initial,
-				...appearance,
-				url: parsed.pythonUrl,
-				token: parsed.pythonToken,
-				workspace: parsed.workspace || "primary",
-				...(session === undefined ? {} : { session }),
-			});
-		else
-			await runOwnedPythonInteractive({
-				...prepared.runOptions,
-				...prepared.sessionOptions,
-				...initial,
-				...appearance,
-				cwd,
-				...(parsed.workspace === undefined ? {} : { workspace: parsed.workspace }),
-				...(session === undefined ? {} : { session }),
-			});
-		return;
-	}
 
 	const { runPythonHeadless } = await import("./modes/headless/run.ts");
 	process.exitCode = await runPythonHeadless({

@@ -1,4 +1,4 @@
-/** Product commands use the same Python host as interactive and headless clients. */
+/** Product commands use the same Python host as the one-shot clients. */
 import { spawn } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
 import { HostClient } from "./client/host-client.ts";

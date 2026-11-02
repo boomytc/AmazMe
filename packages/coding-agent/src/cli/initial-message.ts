@@ -15,7 +15,7 @@ export interface InitialMessageResult {
 
 /**
  * Combine stdin content, @file text, and the first CLI message into a single
- * initial prompt shared by interactive and headless clients.
+ * initial prompt shared by every one-shot client.
  */
 export function buildInitialMessage({
 	parsed,

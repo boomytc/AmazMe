@@ -26,7 +26,7 @@ export interface PythonHeadlessOptions extends PythonRunOptions, PythonModelOpti
 	readonly images?: readonly ImageContent[];
 	readonly session?: string;
 	readonly noSession?: boolean;
-	readonly selection?: "continue" | "resume";
+	readonly selection?: "continue";
 	readonly title?: string;
 	readonly decision?: string;
 	readonly request?: string;
@@ -415,12 +415,7 @@ async function runPrompt(client: HostClient, options: PythonHeadlessOptions & {r
 		process.stderr.write("missing_prompt\n");
 		return 1;
 	}
-	if (options.selection === "resume")
-		fail("session_selection_requires_tty_use_session_id");
-	const selected = options.session ??
-		(options.selection === "continue"
-			? await client.recent(options.workspace)
-			: undefined);
+	const selected = options.session ?? (options.selection === "continue" ? await client.recent(options.workspace) : undefined);
 	const opened = selected
 		? await client.attach(selected, options.workspace)
 		: await client.open(options.workspace, options.title);

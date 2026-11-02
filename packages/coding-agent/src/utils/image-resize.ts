@@ -77,7 +77,7 @@ async function resizeImageInWorker(
 /**
  * Resize an image to fit within the specified max dimensions and encoded file size.
  * Runs Photon in a worker thread so WASM decoding, resizing, and encoding do not
- * block the TUI event loop. If the worker cannot be loaded (for example in some
+ * block the caller's event loop. If the worker cannot be loaded (for example in some
  * Bun compiled executable layouts), fall back to in-process resizing so image
  * reads still work.
  */

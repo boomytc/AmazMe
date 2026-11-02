@@ -415,7 +415,6 @@ export function checkVersionLiterals(repoRoot, files) {
  * grow it for session output.
  */
 export const sourceTempDirAllowlist = {
-	"packages/coding-agent/src/utils/clipboard.ts": "WSL clipboard hand-off file",
 	"packages/tui/src/tui-main-screen.ts": "crash log fallback when no log directory is set",
 };
 

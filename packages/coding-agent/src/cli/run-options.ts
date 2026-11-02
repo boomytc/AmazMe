@@ -57,11 +57,10 @@ export function validateTarget(parsed: Args): void {
 /** The explicit session selector after the target checks. */
 export function resolveSession(parsed: Args): string | undefined {
 	const session = parsed.pythonSession ?? parsed.session;
-	if (parsed.noSession && (parsed.continue || parsed.resume))
-		throw new Error("--no-session cannot be combined with --continue or --resume");
+	if (parsed.noSession && parsed.continue)
+		throw new Error("--no-session cannot be combined with --continue");
 	if (session !== undefined && !/^[a-f0-9]{32}$/.test(session)) throw new Error("invalid_session");
-	if (parsed.continue && parsed.resume) throw new Error("session_selector_conflict");
-	if (session !== undefined && (parsed.continue || parsed.resume || parsed.noSession))
+	if (session !== undefined && (parsed.continue || parsed.noSession))
 		throw new Error("session_selector_conflict");
 	return session;
 }
@@ -74,7 +73,7 @@ export interface SessionOptions {
 	readonly sessionDir?: string;
 	readonly extensions?: readonly string[];
 	readonly noSession?: boolean;
-	readonly selection?: "continue" | "resume";
+	readonly selection?: "continue";
 	readonly title?: string;
 }
 
@@ -87,11 +86,7 @@ export function sessionOptions(parsed: Args, cwd: string): SessionOptions {
 		...(parsed.sessionDir ? { sessionDir: resolve(cwd, parsed.sessionDir) } : {}),
 		...(parsed.extensions?.length ? { extensions: parsed.extensions.map((entry) => resolve(cwd, entry)) } : {}),
 		...(parsed.noSession ? { noSession: true } : {}),
-		...(parsed.continue
-			? { selection: "continue" as const }
-			: parsed.resume
-				? { selection: "resume" as const }
-				: {}),
+		...(parsed.continue ? { selection: "continue" as const } : {}),
 		...(parsed.name ? { title: parsed.name } : {}),
 	};
 }

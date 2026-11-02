@@ -7,7 +7,6 @@ import { APP_COMMAND, APP_NAME } from "../config.ts";
 
 import type { ThinkingLevel } from "../client/types.ts";
 export type { ThinkingLevel } from "../client/types.ts";
-export type TuiMode = "regular" | "fullscreen";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -19,7 +18,6 @@ export interface Args {
 	appendSystemPrompt?: string[];
 	thinking?: ThinkingLevel;
 	continue?: boolean;
-	resume?: boolean;
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
@@ -41,14 +39,10 @@ export interface Args {
 	skills?: string[];
 	promptTemplates?: string[];
 	noPromptTemplates?: boolean;
-	themes?: string[];
-	useTheme?: string;
-	noThemes?: boolean;
 	noContextFiles?: boolean;
 	listModels?: string | true;
 	offline?: boolean;
-	tuiMode?: TuiMode;
-	/** Explicit Python host. Interactive mode uses this instead of the old runtime. */
+	/** Explicit Python host. */
 	pythonUrl?: string;
 	pythonToken?: string;
 	pythonSession?: string;
@@ -123,8 +117,6 @@ export function parseArgs(args: string[]): Args {
 			result.mode = mode;
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
-		} else if (arg === "--resume" || arg === "-r") {
-			result.resume = true;
 		} else if (arg === "--provider" && i + 1 < args.length) {
 			result.provider = args[++i];
 		} else if (arg === "--model" && i + 1 < args.length) {
@@ -212,23 +204,10 @@ export function parseArgs(args: string[]): Args {
 		} else if (arg === "--prompt-template" && i + 1 < args.length) {
 			result.promptTemplates = result.promptTemplates ?? [];
 			result.promptTemplates.push(args[++i]);
-		} else if (arg === "--theme" && i + 1 < args.length) {
-			result.themes = result.themes ?? [];
-			result.themes.push(args[++i]);
-		} else if (arg === "--use-theme") {
-			const themeName = args[i + 1];
-			if (themeName === undefined || themeName.startsWith("-")) {
-				result.diagnostics.push({ type: "error", message: "--use-theme requires a theme name" });
-			} else {
-				result.useTheme = themeName;
-				i++;
-			}
 		} else if (arg === "--no-skills" || arg === "-ns") {
 			result.noSkills = true;
 		} else if (arg === "--no-prompt-templates" || arg === "-np") {
 			result.noPromptTemplates = true;
-		} else if (arg === "--no-themes") {
-			result.noThemes = true;
 		} else if (arg === "--no-context-files" || arg === "-nc") {
 			result.noContextFiles = true;
 		} else if (arg === "--list-models") {
@@ -237,20 +216,6 @@ export function parseArgs(args: string[]): Args {
 				result.listModels = args[++i];
 			} else {
 				result.listModels = true;
-			}
-		} else if (arg === "--tui-mode") {
-			const mode = args[i + 1];
-			if (mode === "regular" || mode === "fullscreen") {
-				result.tuiMode = mode;
-				i++;
-			} else if (mode === undefined || mode.startsWith("-")) {
-				result.diagnostics.push({ type: "error", message: "--tui-mode requires regular or fullscreen" });
-			} else {
-				i++;
-				result.diagnostics.push({
-					type: "error",
-					message: `Invalid TUI mode "${mode}". Valid values: regular, fullscreen`,
-				});
 			}
 		} else if (
 			arg === "--python-url" ||
@@ -349,6 +314,6 @@ ${desktopMcp}  export [--output 文件]            导出当前 profile 的新�
   --verbose                              显示连接身份（不含令牌）
   --help | --version                      帮助或版本
 
-交互客户端的终端和 MCP 命令保留原调用编号。离开客户端只释放绑定。
+RPC 与一次性命令保留原调用编号。离开客户端只释放绑定。
 OAuth、模型、项目和设置由 Python Host 保存。旧 JSONL 会话不迁移。\n`);
 }
