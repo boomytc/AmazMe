@@ -1922,14 +1922,9 @@ export class PageRuntime {
 			const state = this.providers.connections(),
 				provider = state.state.providers.find((item) => item.id === data);
 			if (!provider?.configured) throw new Error("请先配置供应商账号");
-			const models = (this.providers.catalog?.models ?? [])
-				.filter((item) => item.provider === provider.id)
-				.map((item) => ({
-					provider: item.provider,
-					modelId: item.model,
-					name: item.label,
-					available: true,
-				}));
+			const models = state.enabledModels.filter(
+				(item) => item.provider === provider.id,
+			);
 			const modal = providerTestModal(this.preferences.locale, models, true);
 			this.panels.modal = {
 				...modal,

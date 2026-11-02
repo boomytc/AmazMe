@@ -19,6 +19,30 @@ export interface ConnectionModelLike {
 	readonly name: string;
 	readonly available: boolean;
 }
+/** Whether this model is offered to new chats; a null list means every available model. */
+export function isModelEnabled(model: ConnectionModelLike, enabledModelIds: readonly string[] | null): boolean {
+	return enabledModelIds === null || enabledModelIds.includes(`${model.provider}/${model.modelId}`);
+}
+
+export interface ConnectionModelRow {
+	readonly model: ConnectionModelLike;
+	readonly enabled: boolean;
+}
+
+/**
+ * The model list a provider detail shows: enabled models first, then the original catalogue order.
+ * A query matches either the display name or the provider-side model id. The sort is stable so
+ * toggling one checkbox moves exactly that row and leaves the rest in place.
+ */
+export function connectionModelRows(models: readonly ConnectionModelLike[], enabledModelIds: readonly string[] | null, query: string): readonly ConnectionModelRow[] {
+	const needle = query.trim().toLocaleLowerCase();
+	return models
+		.map((model, index) => ({ model, enabled: isModelEnabled(model, enabledModelIds), index }))
+		.filter((row) => needle.length === 0 || `${row.model.name} ${row.model.modelId}`.toLocaleLowerCase().includes(needle))
+		.sort((left, right) => Number(right.enabled) - Number(left.enabled) || left.index - right.index)
+		.map(({ model, enabled }) => ({ model, enabled }));
+}
+
 export interface ModelConnectionsLike {
 	readonly state: {
 		readonly providers: readonly {

@@ -15,6 +15,8 @@ import { errorMessageCopy } from "../errors.ts";
 import type { Locale } from "../locale.ts";
 import {
 	type ConnectionModelLike,
+	connectionModelRows,
+	isModelEnabled,
 	MODEL_ENABLED_ACTION,
 	type ModelConnectionsLike,
 	PROVIDER_EDIT_ACTION,
@@ -1226,6 +1228,10 @@ function ModelConnectionsView({
 	readonly onAction: (action: PanelAction) => void;
 }) {
 	const [query, setQuery] = useState("");
+	const [modelQuery, setModelQuery] = useState("");
+	useEffect(() => {
+		setModelQuery("");
+	}, [connections.selected]);
 	const normalizedQuery = query.trim().toLocaleLowerCase();
 	const configured = connections.state.providers.filter(
 		(provider) => provider.configured,
@@ -1327,12 +1333,20 @@ function ModelConnectionsView({
 		provider !== undefined &&
 		(EDITABLE_MODEL_APIS.has(provider.api) ||
 			(authentication?.methods.length ?? 0) > 0);
-	const enabled = (model: ConnectionModelLike): boolean =>
-		connections.state.enabledModelIds === null ||
-		connections.state.enabledModelIds.includes(
-			`${model.provider}/${model.modelId}`,
-		);
-	const enabledCount = connections.models.filter(enabled).length;
+	const enabledCount = connections.models.filter((model) =>
+		isModelEnabled(model, connections.state.enabledModelIds),
+	).length;
+	const enabledModelCount =
+		provider === undefined
+			? 0
+			: connections.enabledModels.filter(
+					(model) => model.provider === provider.id,
+				).length;
+	const modelRows = connectionModelRows(
+		connections.models,
+		connections.state.enabledModelIds,
+		modelQuery,
+	);
 
 	return (
 		<div
@@ -1541,7 +1555,7 @@ function ModelConnectionsView({
 												disabled:
 													!provider.configured ||
 													connections.loading ||
-													connections.models.length === 0 ||
+													enabledModelCount === 0 ||
 													provider.verification.status === "checking",
 											}}
 											pending={panel.pending}
@@ -1581,53 +1595,83 @@ function ModelConnectionsView({
 										{connectionCopy(locale, "connections.discover")}
 									</p>
 								) : (
-									<div className="connection-model-list">
-										{connections.models.map((model) => {
-											const reference = connectionModelReference(model);
-											const pending = sameActionTarget(panel.pending, {
-												id: MODEL_ENABLED_ACTION,
-												data: reference,
-											});
-											return (
-												<div
-													key={reference}
-													className={
-														model.available
-															? "connection-model"
-															: "connection-model is-unavailable"
-													}
-												>
-													<div className="connection-model-main">
-														<label className="connection-model-label">
-															<input
-																type="checkbox"
-																checked={enabled(model)}
-																disabled={
-																	connections.disabled ||
-																	!model.available ||
-																	pending
-																}
-																onChange={(event) =>
-																	onAction({
-																		kind: "control",
-																		id: MODEL_ENABLED_ACTION,
-																		data: reference,
-																		value: String(event.currentTarget.checked),
-																	})
-																}
-															/>
-															<span className="connection-model-name">
-																{model.name}
-															</span>
-														</label>
-														<small className="connection-model-id">
-															{model.modelId}
-														</small>
-													</div>
-												</div>
-											);
-										})}
-									</div>
+									<>
+										<search className="connection-model-search">
+											<input
+												type="search"
+												className="connection-search-input"
+												autoComplete="off"
+												spellCheck={false}
+												placeholder={connectionCopy(
+													locale,
+													"connections.searchModels",
+												)}
+												aria-label={connectionCopy(
+													locale,
+													"connections.searchModels",
+												)}
+												value={modelQuery}
+												onChange={(event) =>
+													setModelQuery(event.currentTarget.value)
+												}
+											/>
+										</search>
+										{modelRows.length === 0 ? (
+											<p className="connection-empty">
+												{connectionCopy(locale, "connections.noModelMatch")}
+											</p>
+										) : (
+											<div className="connection-model-list">
+												{modelRows.map(({ model, enabled: modelEnabled }) => {
+													const reference = connectionModelReference(model);
+													const pending = sameActionTarget(panel.pending, {
+														id: MODEL_ENABLED_ACTION,
+														data: reference,
+													});
+													return (
+														<div
+															key={reference}
+															className={
+																model.available
+																	? "connection-model"
+																	: "connection-model is-unavailable"
+															}
+														>
+															<div className="connection-model-main">
+																<label className="connection-model-label">
+																	<input
+																		type="checkbox"
+																		checked={modelEnabled}
+																		disabled={
+																			connections.disabled ||
+																			!model.available ||
+																			pending
+																		}
+																		onChange={(event) =>
+																			onAction({
+																				kind: "control",
+																				id: MODEL_ENABLED_ACTION,
+																				data: reference,
+																				value: String(
+																					event.currentTarget.checked,
+																				),
+																			})
+																		}
+																	/>
+																	<span className="connection-model-name">
+																		{model.name}
+																	</span>
+																</label>
+																<small className="connection-model-id">
+																	{model.modelId}
+																</small>
+															</div>
+														</div>
+													);
+												})}
+											</div>
+										)}
+									</>
 								)}
 							</section>
 						</>
