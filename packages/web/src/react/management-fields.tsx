@@ -31,6 +31,7 @@ import { FONT_FAMILY_FIELDS, normalizeFontFamily } from "../typography.ts";
 import { CredentialSecret, CredentialToggle } from "./credential-visibility.tsx";
 
 export type IconName =
+	| "arrow-left"
 	| "arrow-up"
 	| "check"
 	| "chevron-down"

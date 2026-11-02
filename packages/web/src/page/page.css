@@ -2126,6 +2126,7 @@ p {
 }
 
 .center[data-draft="true"] .composer-dock { flex: 0 0 auto; padding-bottom: 20px; }
+
 .center[data-draft="true"] .column { justify-content: center; margin-block: auto; }
 .sidebar-new-chat { display: flex; align-items: center; gap: 10px; width: calc(100% - 16px); margin: 0 8px 12px; padding: 10px; border: 0; border-radius: 9px; color: var(--text); background: transparent; cursor: pointer; text-align: left; font: inherit; }
 .sidebar-new-chat:hover:not(:disabled) { background: var(--hover); }
@@ -3452,6 +3453,34 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	padding-top: 0;
 }
 
+.library-back {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	margin: 0 0 8px;
+	padding: 8px 10px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-2);
+	font: inherit;
+	font-size: 13px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.library-back:hover {
+	background: var(--hover);
+	color: var(--text);
+}
+
+.library-back .icon {
+	width: 16px;
+	height: 16px;
+	flex: none;
+}
+
 .library-nav[hidden] { display: none; }
 
 .library-frame > .view-body {
@@ -4283,6 +4312,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .combobox-option[data-selected] { font-weight: 500; }
 .combobox-indicator { position: absolute; inset-inline-start: 8px; top: 50%; transform: translateY(-50%); display: flex; color: var(--accent); }
 .combobox-option small { color: var(--text-3); font-size: 12px; }
+
 .combobox-dropdown > .menu-empty { display: block; }
 .modal-multiselect { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .modal-multiselect .modal-input { box-sizing: border-box; }
