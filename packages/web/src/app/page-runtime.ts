@@ -51,6 +51,7 @@ import { PromptHistory } from "./prompt-history.ts";
 import { HistoryCache } from "./history-cache.ts";
 import { Integrations } from "./integrations.ts";
 import { InterfaceSettings } from "./interface-settings.ts";
+import { Jobs } from "./jobs.ts";
 import { modelReference } from "./model-reference.ts";
 import { PanelsState } from "./panels-state.ts";
 import { newId, PendingWrites } from "./pending/writes.ts";
@@ -75,6 +76,7 @@ export class PageRuntime {
 	private readonly services: PageServices;
 	private readonly preferences: InterfaceSettings;
 	private readonly dock: WorkspaceController;
+	private readonly jobs: Jobs;
 	private readonly transcript: HistoryCache;
 	readonly renderer: PageRenderer;
 	private disposed = false;
@@ -211,6 +213,12 @@ export class PageRuntime {
 				)
 					await this.selectSession(id);
 			},
+		});
+		this.jobs = new Jobs({
+			client: this.client,
+			connection: () => this.requireConnection(),
+			changed: () => this.render(),
+			error: (error) => this.error(error),
 		});
 		this.preferences = new InterfaceSettings({
 			client: this.client,
@@ -660,6 +668,7 @@ export class PageRuntime {
 		this.integrations.mcpRuntime = undefined;
 		this.transcript.reset();
 		this.dock.reset();
+		this.jobs.reset();
 		this.panels.modal = undefined;
 		this.panels.notice = undefined;
 		this.panels.current = P.CHAT_VIEW;
@@ -1236,6 +1245,8 @@ export class PageRuntime {
 				await this.dock.openWorkspace();
 			if (this.dock.dockOpen && this.dock.dockTab === "terminal")
 				await this.dock.loadTerminal(this.requireConnection());
+			if (this.dock.dockOpen && this.dock.dockTab === "jobs")
+				await this.jobs.load();
 			this.render();
 			return;
 		}
@@ -1246,6 +1257,7 @@ export class PageRuntime {
 				await this.dock.openWorkspace();
 			if (value === "terminal")
 				await this.dock.loadTerminal(this.requireConnection(), true);
+			if (value === "jobs") await this.jobs.load();
 			this.render();
 			return;
 		}
@@ -1305,6 +1317,36 @@ export class PageRuntime {
 					digest: saved.digest.slice(0, 12),
 				}),
 			};
+			this.render();
+			return;
+		}
+		if (id === A.JOBS_REFRESH_ACTION) {
+			await this.jobs.load();
+			this.render();
+			return;
+		}
+		if (id === A.JOB_OUTPUT_ACTION) {
+			if (data) await this.jobs.select(data);
+			this.render();
+			return;
+		}
+		if (id === A.JOB_STREAM_ACTION) {
+			await this.jobs.setStream(data === "stderr" ? "stderr" : "stdout");
+			this.render();
+			return;
+		}
+		if (id === A.JOB_PAGE_ACTION) {
+			await this.jobs.loadMore();
+			this.render();
+			return;
+		}
+		if (id === A.JOB_CLOSE_ACTION) {
+			this.jobs.closeOutput();
+			this.render();
+			return;
+		}
+		if (id === A.JOB_KILL_ACTION) {
+			if (data) await this.jobs.kill(data);
 			this.render();
 			return;
 		}
@@ -2723,6 +2765,7 @@ export class PageRuntime {
 			tab: this.dock.dockTab,
 			cwd,
 			workspace: this.dock.workspace,
+			jobs: this.jobs.state,
 			terminal: terminal
 				? {
 						status: terminal.view.phase === "running" ? "running" : "done",
@@ -2876,6 +2919,7 @@ export class PageRuntime {
 		this.providers.dispose();
 		this.integrations.dispose();
 		this.dock.dispose();
+		this.jobs.reset();
 		this.transcript.reset();
 		this.client.retire();
 	}

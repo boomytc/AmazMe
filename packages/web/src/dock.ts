@@ -11,6 +11,12 @@ import {
 	CONVERSATION_FORK_ACTION,
 	CONVERSATION_SELECT_ACTION,
 	CONVERSATIONS_REFRESH_ACTION,
+	JOB_CLOSE_ACTION,
+	JOB_KILL_ACTION,
+	JOB_OUTPUT_ACTION,
+	JOB_PAGE_ACTION,
+	JOB_STREAM_ACTION,
+	JOBS_REFRESH_ACTION,
 	TASK_RETRY_ACTION,
 	CONVERSATION_RENAME_ACTION,
 	CONVERSATION_ARCHIVE_ACTION,
@@ -32,12 +38,13 @@ import type { UsageReport } from "./generated/contracts.ts";
 import { usagePanel } from "./usage.ts";
 
 /** The dock's tabs, in the order it shows them. */
-export type DockTabId = "files" | "terminal" | "conversations" | "tasks" | "changes" | "statistics";
+export type DockTabId = "files" | "terminal" | "jobs" | "conversations" | "tasks" | "changes" | "statistics";
 
-const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "conversations", "tasks", "statistics"];
+const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "jobs", "conversations", "tasks", "statistics"];
 const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
 	files: "dock.files",
 	terminal: "dock.terminal",
+	jobs: "dock.jobs",
 	conversations: "dock.conversations",
 	tasks: "dock.tasks",
 	changes: "review.tab",
@@ -95,6 +102,37 @@ export type WorkspaceViewLike =
 	| { readonly kind: "binary"; readonly path: string }
 	| { readonly kind: "missing"; readonly path: string }
 	| { readonly kind: "denied"; readonly path: string; readonly reason: string };
+
+/** One background job of the attached session, as the host publishes it. */
+export interface JobSummaryLike {
+	readonly job_id: string;
+	readonly request_id: string;
+	readonly state: "starting" | "running" | "stopping" | "succeeded" | "failed" | "cancelled" | "unknown" | "cleanup_pending";
+	readonly outcome: "pending" | "completed" | "unknown";
+	readonly resource_clean: boolean;
+	readonly cancel_requested: boolean;
+	readonly started_at_ms: number;
+	readonly finished_at_ms: number;
+	readonly exit_code?: number | null;
+	readonly stop_reason?: string;
+}
+
+export interface JobOutputStateLike {
+	readonly jobId: string;
+	readonly stream: "stdout" | "stderr";
+	readonly content: string;
+	readonly nextOffset: number;
+	readonly hasMore: boolean;
+	readonly error?: string;
+	readonly waitReason?: string;
+}
+
+export interface JobsStateLike {
+	readonly jobs: readonly JobSummaryLike[];
+	readonly truncated: boolean;
+	readonly selected?: string;
+	readonly output?: JobOutputStateLike;
+}
 
 /** What the host's terminal state carries, as this package reads it. */
 export interface TerminalStateLike {
@@ -155,6 +193,7 @@ export interface DockViewInput {
 	readonly cwd: string;
 	readonly workspace: WorkspaceStateLike | undefined;
 	readonly terminal: TerminalStateLike | undefined;
+	readonly jobs?: JobsStateLike;
 	readonly conversations: ConversationsStateLike | undefined;
 	readonly insights?: InsightsStateLike;
 	readonly reviewDiff?: string;
@@ -174,6 +213,99 @@ export interface InsightsStateLike {
 	readonly verification: readonly { readonly command: string; readonly exitCode: number | null; readonly at: number }[];
 	readonly notes: readonly string[];
 	readonly skipped: number;
+}
+
+const JOB_STATE_MESSAGES = {
+	starting: "jobs.state.starting",
+	running: "jobs.state.running",
+	stopping: "jobs.state.stopping",
+	succeeded: "jobs.state.succeeded",
+	failed: "jobs.state.failed",
+	cancelled: "jobs.state.cancelled",
+	unknown: "jobs.state.unknown",
+	cleanup_pending: "jobs.state.cleanup_pending",
+} as const satisfies Record<JobSummaryLike["state"], MessageKey>;
+
+function jobShort(jobId: string): string {
+	return jobId.length > 10 ? jobId.slice(0, 10) : jobId;
+}
+
+function jobTime(locale: Locale, milliseconds: number): string {
+	return new Date(milliseconds).toLocaleTimeString(locale === "zh" ? "zh-CN" : "en", {
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+	});
+}
+
+/**
+ * The background jobs panel: what the session's shell started, each job's state and exit, and one
+ * job's paged output with a stream switch and a stop request.
+ */
+export function jobsPanel(locale: Locale, state: JobsStateLike | undefined): PanelSpec {
+	const title = translate(locale, "dock.jobs");
+	if (state === undefined)
+		return { id: "jobs", title, description: translate(locale, "jobs.description"), notices: [], groups: [] };
+	const selected = state.jobs.find((job) => job.job_id === state.selected);
+	const rows: PanelRow[] = state.jobs.map((job) => {
+		const active = job.state === "starting" || job.state === "running" || job.state === "stopping";
+		return {
+			id: `job:${job.job_id}`,
+			title: jobShort(job.job_id),
+			description: translate(locale, "jobs.request", { request: job.request_id.slice(0, 8) }),
+			badges: [
+				translate(locale, JOB_STATE_MESSAGES[job.state]),
+				...(job.exit_code === undefined || job.exit_code === null ? [] : [translate(locale, "jobs.exitCode", { code: String(job.exit_code) })]),
+				...(job.finished_at_ms > 0 && !job.resource_clean ? [translate(locale, "jobs.unclean")] : []),
+				...(job.outcome === "unknown" ? [translate(locale, "jobs.unknownOutcome")] : []),
+			],
+			value: translate(locale, "jobs.started", { time: jobTime(locale, job.started_at_ms) }),
+			actions: [
+				{ id: JOB_OUTPUT_ACTION, label: translate(locale, "jobs.open"), weight: "text", data: job.job_id },
+				...(active && !job.cancel_requested
+					? [{ id: JOB_KILL_ACTION, label: translate(locale, "jobs.kill"), weight: "line" as const, danger: true, data: job.job_id }]
+					: []),
+			],
+		};
+	});
+	const groups: PanelGroup[] = [
+		{
+			id: "jobs:list",
+			title: translate(locale, "jobs.list"),
+			description: translate(locale, "jobs.listDescription"),
+			actions: [{ id: JOBS_REFRESH_ACTION, label: translate(locale, "jobs.refresh"), weight: "line" }],
+			rows,
+			empty: { cause: "first-use", text: translate(locale, "jobs.empty") },
+		},
+	];
+	if (selected !== undefined && state.output !== undefined) {
+		const output = state.output;
+		groups.push({
+			id: "jobs:output",
+			title: translate(locale, "jobs.outputTitle", { job: jobShort(selected.job_id) }),
+			actions: [
+				{ id: JOB_STREAM_ACTION, label: "stdout", weight: "line", data: "stdout", pressed: output.stream === "stdout" },
+				{ id: JOB_STREAM_ACTION, label: "stderr", weight: "line", data: "stderr", pressed: output.stream === "stderr" },
+				{ id: JOB_OUTPUT_ACTION, label: translate(locale, "jobs.reloadOutput"), weight: "line", data: selected.job_id },
+				...(output.hasMore ? [{ id: JOB_PAGE_ACTION, label: translate(locale, "jobs.loadMore"), weight: "line" as const, data: String(output.nextOffset) }] : []),
+				{ id: JOB_CLOSE_ACTION, label: translate(locale, "jobs.close"), weight: "text" },
+			],
+			rows: [],
+			footnote: translate(locale, JOB_STATE_MESSAGES[selected.state]),
+		});
+	}
+	return {
+		id: "jobs",
+		title,
+		description: translate(locale, "jobs.description"),
+		notices: [
+			...(state.truncated ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "jobs.truncated") }] : []),
+			...(state.output?.error ? [{ tone: "error" as const, text: translate(locale, "jobs.outputError", { error: state.output.error }) }] : []),
+			...(state.output?.waitReason ? [{ tone: "info" as const, text: translate(locale, "jobs.wait", { reason: state.output.waitReason }) }] : []),
+		],
+		groups,
+		...(state.output === undefined ? {} : { texts: [{ id: `jobs:output:${state.output.jobId}:${state.output.stream}`, text: state.output.content, empty: translate(locale, "jobs.outputEmpty") }] }),
+	};
 }
 
 export function changesPanel(locale: Locale, state: InsightsStateLike | undefined, diff?: string, file?: { readonly root: string; readonly path: string }): PanelSpec {
@@ -666,7 +798,9 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 			? filesPanel(locale, input.workspace)
 			: tab === "terminal"
 				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
-				: tab === "conversations"
+				: tab === "jobs"
+					? jobsPanel(locale, input.jobs)
+					: tab === "conversations"
 					? conversationsPanel(locale, input.conversations, input.readOnly)
 					: tab === "statistics" ? usagePanel(locale, input.usage) : tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff, input.reviewFile) : tasksPanel(locale, input.conversations);
 	return {

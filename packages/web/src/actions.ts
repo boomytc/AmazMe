@@ -52,6 +52,18 @@ export const QUESTION_ANSWER_ACTION = "question:answer";
 export const TERMINAL_RUN_ACTION = "terminal:run";
 /** Stop the running terminal command. */
 export const TERMINAL_STOP_ACTION = "terminal:stop";
+/** Re-read the attached session's background jobs. */
+export const JOBS_REFRESH_ACTION = "jobs:refresh";
+/** Open one job's output: `data` is the job id. */
+export const JOB_OUTPUT_ACTION = "jobs:output";
+/** Switch the open output between streams: `data` is `stdout` or `stderr`. */
+export const JOB_STREAM_ACTION = "jobs:stream";
+/** Read the next output page: `data` is the next byte offset. */
+export const JOB_PAGE_ACTION = "jobs:page";
+/** Close the open output, keeping the list. */
+export const JOB_CLOSE_ACTION = "jobs:close";
+/** Ask the supervisor to stop one job: `data` is the job id. */
+export const JOB_KILL_ACTION = "jobs:kill";
 
 /** Focus one conversation in the dock: `data` is the conversation id. */
 export const CONVERSATION_SELECT_ACTION = "conversation:select";

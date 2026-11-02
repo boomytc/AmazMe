@@ -85,6 +85,7 @@ export interface DockProps {
 const DOCK_ICONS: Readonly<Record<DockTabId, DockIconName>> = {
 	files: "folder",
 	terminal: "terminal",
+	jobs: "activity",
 	conversations: "message",
 	tasks: "activity",
 	changes: "git-fork",
