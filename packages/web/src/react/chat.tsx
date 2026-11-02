@@ -32,6 +32,7 @@ export type ComposerView = Pick<
 	| "transcriptScope"
 	| "attachedId"
 	| "readOnly"
+	| "connecting"
 	| "sessionDraft"
 	| "attachments"
 	| "approvals"

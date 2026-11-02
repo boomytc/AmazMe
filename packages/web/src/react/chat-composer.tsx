@@ -528,7 +528,10 @@ function PermissionPicker({
 	const policy = view.approvalPolicy ?? "mutations";
 	const selected =
 		PERMISSIONS.find((option) => option.value === policy) ?? PERMISSIONS[1];
-	const disabled = view.readOnly === true || view.attachedId === undefined;
+	const disabled =
+		view.readOnly === true ||
+		view.connecting === true ||
+		view.attachedId === undefined;
 
 	useEffect(() => {
 		if (!open) return;
@@ -639,6 +642,7 @@ function Suggestion({
 		!view.busy &&
 		view.attachedId !== undefined &&
 		view.readOnly !== true &&
+		view.connecting !== true &&
 		!view.palette.open &&
 		view.approvals.length === 0 &&
 		view.queue.length === 0 &&
@@ -917,6 +921,7 @@ export function ChatComposer({
 
 	const canCompose =
 		view.readOnly !== true &&
+		view.connecting !== true &&
 		(view.sessionDraft === undefined
 			? view.attachedId !== undefined
 			: !view.sessionDraft.disabled);
