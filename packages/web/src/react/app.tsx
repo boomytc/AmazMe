@@ -701,6 +701,9 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 						</div>
 					</div>
 					<div className="header-end">
+						{/* The in-conversation search lives in the header so it follows the
+						   centre column instead of the window when the dock opens. */}
+						<div className="header-search" id="header-search-slot" />
 						<span
 							className="approval-status"
 							id="approval-status"

@@ -865,6 +865,16 @@ p {
 	gap: 4px;
 }
 
+/* The transcript search is a header control; its slot follows the centre column, including the dock. */
+.header-search {
+	display: flex;
+	flex: 0 1 auto;
+	min-width: 0;
+}
+.header-search:empty {
+	display: none;
+}
+
 .header-titles {
 	display: flex;
 	flex: 1 1 auto;
@@ -4442,13 +4452,15 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 /* In-conversation search: a compact field in the header and an outline on the hit. */
 .transcript-search {
 	display: flex;
+	flex: 0 1 auto;
 	align-items: center;
 	gap: 4px;
+	min-width: 0;
+	max-width: 260px;
 	padding: 2px 2px 2px 8px;
 	border: 1px solid var(--line-strong);
 	border-radius: 10px;
 	background: var(--raised);
-	max-width: 260px;
 }
 .transcript-search::-webkit-search-cancel-button {
 	display: none;

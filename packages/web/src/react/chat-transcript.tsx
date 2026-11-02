@@ -12,6 +12,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
 	DOCK_TAB_ACTION,
 	HISTORY_MORE_ACTION,
@@ -1648,13 +1649,14 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 		</>
 	);
 
+	const searchSlot = searchOpen
+		? document.getElementById("header-search-slot")
+		: null;
+
 	return (
 		<>
-			{searchOpen ? (
-				<search
-					className="transcript-search"
-					style={{ position: "fixed", top: 10, right: 96, zIndex: 40 }}
-				>
+			{searchSlot === null ? null : createPortal(
+				<search className="transcript-search">
 					<input
 						ref={searchInput}
 						className="transcript-search-input"
@@ -1694,8 +1696,9 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 					>
 						<Icon name="x" />
 					</button>
-				</search>
-			) : null}
+				</search>,
+				searchSlot,
+			)}
 			<TranscriptViewport
 				scope={view.transcriptScope}
 				signature={signature}
