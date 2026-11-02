@@ -473,6 +473,12 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 	);
 
 	const [collapsed, setCollapsed] = useState(false);
+	const composerVisible =
+		view !== undefined &&
+		view.readOnly !== true &&
+		(Boolean(view.attachedId) ||
+			view.connecting === true ||
+			view.sessionDraft !== undefined);
 	const typography = view?.typography,
 		pageTitle = view?.pageTitle,
 		pendingCount = view?.approvalIndicator?.count ?? 0,
@@ -756,7 +762,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 						className="connection"
 						id="connection"
 						role={connection.kind === "error" ? "alert" : "status"}
-						hidden={connection.kind !== "error"}
+						hidden={connection.kind !== "error" || composerVisible}
 					>
 						{text}
 					</span>
@@ -778,6 +784,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 						presentation={presentation}
 						active={composerActive}
 						modelManagement={modelManagement}
+						notice={connection.kind === "error" ? text : undefined}
 					/>
 				</div>
 			</main>
@@ -795,10 +802,12 @@ function Conversation({
 	presentation,
 	active,
 	modelManagement,
+	notice,
 }: {
 	readonly presentation: Presentation;
 	readonly active: boolean;
 	readonly modelManagement: boolean;
+	readonly notice?: string;
 }) {
 	return (
 		<>
@@ -807,6 +816,7 @@ function Conversation({
 				presentation={presentation}
 				active={active}
 				modelManagement={modelManagement}
+				notice={notice}
 			/>
 		</>
 	);
@@ -834,10 +844,12 @@ function ComposerSurface({
 	presentation,
 	active,
 	modelManagement,
+	notice,
 }: {
 	readonly presentation: Presentation;
 	readonly active: boolean;
 	readonly modelManagement: boolean;
+	readonly notice?: string;
 }) {
 	const view = useSyncExternalStore(
 		presentation.composer.subscribe,
@@ -874,6 +886,7 @@ function ComposerSurface({
 				draft={draft}
 				active={active}
 				restoreFocusRequest={restoreFocusRequest}
+				notice={notice}
 			/>
 		)
 	);

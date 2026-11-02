@@ -60,6 +60,8 @@ export interface ComposerProps {
 	readonly draft: string;
 	readonly active: boolean;
 	readonly restoreFocusRequest: number;
+	/** A failed action stays beside the input that produced it. */
+	readonly notice?: string;
 }
 
 /** The conversation transcript, search, selection quoting, and empty state. */
@@ -74,6 +76,7 @@ export function Composer({
 	draft,
 	active,
 	restoreFocusRequest,
+	notice,
 }: ComposerProps) {
 	return (
 		<ChatComposer
@@ -82,6 +85,7 @@ export function Composer({
 			draft={draft}
 			active={active}
 			restoreFocusRequest={restoreFocusRequest}
+			notice={notice}
 		/>
 	);
 }

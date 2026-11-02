@@ -2127,6 +2127,20 @@ p {
 
 .center[data-draft="true"] .composer-dock { flex: 0 0 auto; padding-bottom: 20px; }
 
+/* A failed chat action is read where it happened: above the editor, not in the header's status slot. */
+.composer-notice {
+	width: 100%;
+	max-width: min(var(--column-max), calc(100cqi - 32px));
+	margin: 0 auto 6px;
+	padding: 8px 12px;
+	border-radius: var(--radius-md);
+	background: var(--danger-soft);
+	color: var(--danger);
+	font-size: 12px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+
 .center[data-draft="true"] .column { justify-content: center; margin-block: auto; }
 .sidebar-new-chat { display: flex; align-items: center; gap: 10px; width: calc(100% - 16px); margin: 0 8px 12px; padding: 10px; border: 0; border-radius: 9px; color: var(--text); background: transparent; cursor: pointer; text-align: left; font: inherit; }
 .sidebar-new-chat:hover:not(:disabled) { background: var(--hover); }
