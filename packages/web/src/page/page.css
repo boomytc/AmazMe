@@ -1801,6 +1801,12 @@ p {
 	margin: 0 0 12px;
 }
 
+.markdown h1,
+.markdown h2,
+.markdown h3 {
+	text-wrap: balance;
+}
+
 .markdown h1 {
 	margin: 24px 0 10px;
 	font-size: calc(var(--content-font-size, 15px) + 5px);
