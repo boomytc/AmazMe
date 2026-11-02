@@ -86,12 +86,12 @@ export interface CloseDialogCopy {
 
 export function closeDialogCopy(locale: Locale): CloseDialogCopy {
 	return {
-		title: translate(locale, "desktop.close.tasksTitle"),
-		message: translate(locale, "desktop.close.tasksTitle"),
-		detail: translate(locale, "desktop.close.tasksDetail"),
+		title: translate(locale, "desktop.close.title"),
+		message: translate(locale, "desktop.close.title"),
+		detail: translate(locale, "desktop.close.detail"),
 		buttons: [
 			translate(locale, "desktop.close.background"),
-			translate(locale, "desktop.close.stopQuit"),
+			translate(locale, "desktop.close.quit"),
 			translate(locale, "desktop.dialog.cancel"),
 		],
 		checkboxLabel: translate(locale, "desktop.close.remember"),

@@ -95,23 +95,17 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 	const close = async (target: Window): Promise<"done" | Intent> => {
 		if (cleanupStarted) return "cleanup";
 		let preferences: DesktopPreferences;
-		let active: boolean;
 		phase = "checking";
 		try {
 			preferences = await ports.readPreferences();
 		} catch {
 			return (await report("preferences")) === "retry" ? "close" : "done";
 		}
-		try {
-			active = (await ports.readActivity()).active;
-		} catch {
-			return (await report("activity")) === "retry" ? "close" : "done";
-		}
 		const beforePrompt = takePending();
 		if (beforePrompt !== undefined) return beforePrompt;
 		let action = preferences.closeWindow;
 		let remember = false;
-		if (active && preferences.closeWindowPrompt) {
+		if (preferences.closeWindowPrompt) {
 			phase = "asking-close";
 			const confirmation = await ports.confirmClose(target);
 			const promoted = takePending();
