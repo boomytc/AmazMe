@@ -1,6 +1,6 @@
 # 开发约定
 
-当前产品由 Python 后端与 TypeScript 客户端组成，行为移植依据来自 Pi。模块职责见 `backend/ARCHITECTURE.md`，客户端依赖见 `docs/python-backend-ts-deps.md`。产品名、包作用域和命令是 AmazMe。依赖只向下。
+当前产品由 Python 后端与 TypeScript 客户端组成，行为移植依据来自 Pi。产品形态只有 Web/桌面客户端；终端入口只做一次性命令与脚本，不维护交互式终端界面。模块职责见 `backend/ARCHITECTURE.md`，客户端依赖见 `docs/python-backend-ts-deps.md`。产品名、包作用域和命令是 AmazMe。依赖只向下。
 
 ## 对话
 

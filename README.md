@@ -1,6 +1,8 @@
 # AmazMe
 
-操作用户本机环境的桌面 AI 助手，基于 Pi packages 的行为移植到 Python。Python 管理模型与账号、会话和 SQLite、审批、文件与 shell、PTY、stdio MCP、插件及工具账本；Web/Electron、TUI、CLI、RPC 和 Python SDK 共用同一 Host。
+操作用户本机环境的桌面 AI 助手，基于 Pi packages 的行为移植到 Python。Python 管理模型与账号、会话和 SQLite、审批、文件与 shell、PTY、stdio MCP、插件及工具账本；Web/Electron、CLI、RPC 和 Python SDK 共用同一 Host。
+
+产品形态只有 Web/桌面客户端。终端入口只提供一次性命令、JSON/RPC 与脚本连接，不维护交互式终端界面。
 
 会话支持分支、压缩、子任务、记忆、定时任务、工作流、搜索、项目、产物、分享及新格式导入导出。未知副作用保留原调用 ID，不自动重放；取消受理和进程退出分别核对。本机 shell 使用当前用户权限，路径校验和审批不构成操作系统沙箱。
 
@@ -21,10 +23,10 @@
 ```bash
 ./start.sh            # 桌面
 ./start.sh web        # 浏览器页面
-./start.sh cli        # 交互终端
+./start.sh cli        # 命令行（一次性命令）
 ```
 
-准备命令只同步依赖，不打开任何界面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。`web` 和 `cli` 之后的参数会原样转给对应入口，例如 `./start.sh cli --continue`。三种模式都会把 `AMAZME_PYTHON_BACKEND` 解析成绝对路径（默认仓库内的后端，已有覆盖时保留覆盖），不需要手动 `export`。也可以直接运行 `npm run dev:desktop`、`npm run dev:web` 或 `npm run dev:tui`。
+准备命令只同步依赖，不打开任何界面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。`web` 和 `cli` 之后的参数会原样转给对应入口，例如 `./start.sh cli --continue '继续上次任务'`。三种模式都会把 `AMAZME_PYTHON_BACKEND` 解析成绝对路径（默认仓库内的后端，已有覆盖时保留覆盖），不需要手动 `export`。也可以直接运行 `npm run dev:desktop`、`npm run dev:web` 或 `npm run dev:cli`。
 
 需要打开其他项目时，使用 `AMAZME_GUI_CWD=/absolute/project ./start.sh`，或用 `AMAZME_GUI_SESSION=会话ID` 指定已有会话。
 
@@ -38,7 +40,7 @@
 
 ### 手动准备与其他客户端
 
-一键桌面不需要先执行全量构建。需要终端、RPC 或手动分步操作时，在仓库根目录执行：
+一键桌面不需要先执行全量构建。需要 CLI、RPC 或手动分步操作时，在仓库根目录执行：
 
 ```bash
 uv sync --project backend --frozen
@@ -47,7 +49,7 @@ npm run build:offline
 export AMAZME_PYTHON_BACKEND=backend/.venv/bin/amazme-backend
 ```
 
-`AMAZME_PYTHON_BACKEND` 用于终端和 Web 找到后端，`./start.sh` 的三种模式都会自动处理。继续在仓库根目录操作时可直接使用这个相对路径；离开仓库目录运行终端命令时，应改成对应入口的绝对路径。新开终端也需要重新设置该变量。
+`AMAZME_PYTHON_BACKEND` 用于 CLI 和 Web 找到后端，`./start.sh` 的三种模式都会自动处理。继续在仓库根目录操作时可直接使用这个相对路径；离开仓库目录运行 CLI 时，应改成对应入口的绝对路径。新开终端也需要重新设置该变量。
 
 构建使用仓库中的 Python 模型快照，不联网刷新；只有需要同步上游模型数据时，才显式指定 Pi 源码：
 
@@ -55,23 +57,19 @@ export AMAZME_PYTHON_BACKEND=backend/.venv/bin/amazme-backend
 npm run sync:pi-models -- --source /absolute/pi/packages/ai/src/providers/data
 ```
 
-### 交互终端与一次性命令
+### 命令行与一次性命令
 
-在仓库根目录运行时，`./start.sh cli` 直接从源码进入交互终端，参数会转给 CLI，例如 `./start.sh cli --print '说明当前项目的启动入口'`。
+在仓库根目录运行时，`./start.sh cli` 直接从源码运行 CLI，参数会原样转给入口，例如 `./start.sh cli --print '说明当前项目的启动入口'`。
 
 也可以直接使用构建后的 Node 入口：
-
-```bash
-node packages/coding-agent/dist/bundle/cli.js
-```
-
-不带参数会进入交互终端（TUI）。一次性提问或用于脚本时：
 
 ```bash
 node packages/coding-agent/dist/bundle/cli.js --print '说明当前项目的启动入口'
 ```
 
-终端入口按启动目录选择工作区，会复用仍存活的本机 Host，没有时才启动新的 Host。`--workspace NAME` 选择已登记工作区，`--continue` 继续最近的非归档会话，`--session ID` 打开指定会话；`workspaces list` 可查看登记目录。
+无参数运行时输出帮助；提交问题默认按一次性命令执行，输出结果后退出。非 TTY 调用可以只从 stdin 读取问题。
+
+终端入口按启动目录选择工作区，会复用仍存活的本机 Host，没有时才启动新的 Host。`--workspace NAME` 选择已登记工作区，`--continue` 继续最近的非归档会话（仍需同时给出问题），`--session ID` 打开指定会话；`workspaces list` 可查看登记目录。
 
 如果希望使用短命令，可在仓库根目录执行一次：
 
@@ -86,12 +84,12 @@ amazme models
 amazme auth login --provider openai-codex
 amazme auth login --provider openai --method api-key
 amazme doctor
-amazme --continue
+amazme --continue '继续上次任务'
 ```
 
 `auth login` 用于完成账号登录，`models` 查看模型目录，`doctor` 检查 Host 健康状态。API Key 也可通过隐藏的交互提示输入，不必写进命令。更多会话、技能、图片和推理参数见 [CLI 说明](packages/coding-agent/README.md)。
 
-普通持久会话在离开 TUI 或一次性命令结束后，不会因释放客户端绑定而取消已接纳的工作。`--no-session` 是临时会话，退出时按清理证明关闭其拥有的后端并清除已结算历史。
+普通持久会话在一次性命令结束后，不会因释放客户端绑定而取消已接纳的工作。`--no-session` 是临时会话，退出时按清理证明关闭其拥有的后端并清除已结算历史。
 
 ### 浏览器页面
 
@@ -107,7 +105,7 @@ amazme --continue
 
 ### 已有 Host、独立服务、RPC 与 SDK
 
-普通桌面、TUI 和 Web 使用不需要提前手动启动服务。只有需要连接已有 Host、独立管理服务，或使用 RPC/Python SDK 时，才需要以下方式。
+普通桌面和 Web 使用不需要提前手动启动服务。只有需要连接已有 Host、独立管理服务，或使用 RPC/Python SDK 时，才需要以下方式。
 
 已有初始化的 profile 时，在仓库根目录启动服务：
 
@@ -116,7 +114,7 @@ backend/.venv/bin/python -m amazme_backend serve --profile /absolute/profile
 ```
 
 保持该终端运行，直接用浏览器打开服务输出的本机 URL，无需配对。
-TUI、SDK 等客户端连接指定 Host 时，在另一个终端取得连接令牌：
+CLI、SDK 等客户端连接指定 Host 时，在另一个终端取得连接令牌：
 
 ```bash
 backend/.venv/bin/python -m amazme_backend pair --profile /absolute/profile
@@ -128,7 +126,7 @@ backend/.venv/bin/python -m amazme_backend pair --profile /absolute/profile
 node packages/coding-agent/dist/bundle/cli.js web --python-url http://127.0.0.1:PORT --python-token '配对码'
 ```
 
-`--python-url` 和 `--python-token` 必须同时提供，同样适用于 TUI、一次性命令及 `models`、`auth`、`doctor` 等命令。配对码属于本机凭据，不要提交到仓库或放进分享链接。新 profile 的初始化方式见 [Python 后端说明](backend/README.md)。
+`--python-url` 和 `--python-token` 必须同时提供，同样适用于一次性命令及 `models`、`auth`、`doctor` 等命令。配对码属于本机凭据，不要提交到仓库或放进分享链接。新 profile 的初始化方式见 [Python 后端说明](backend/README.md)。
 
 RPC 客户端使用 `--mode rpc`，通道说明见 [RPC 入口](packages/coding-agent/docs/rpc.md)；Python SDK 使用 Host URL 和配对码连接，说明与示例见 [后端 SDK 文档](backend/docs/sdk.md)。
 
@@ -142,7 +140,7 @@ backend/.venv/bin/python -m amazme_backend stop --profile /absolute/profile
 
 ## 客户端与工具
 
-Electron 加载 Python 提供的页面；Web、TUI、CLI、RPC 与 SDK 共用 Host、会话、账号和副作用账本。
+Electron 加载 Python 提供的页面；Web、CLI、RPC 与 SDK 共用 Host、会话、账号和副作用账本。
 SSH 使用系统 OpenSSH 和明确的主机密钥接纳，需要用户自己的账号，不以固定场景探针冒充产品实现。
 
 Python factory 注册会话插件工具和命令，Codemode 通过现有 QuickJS helper 调用这些工具。

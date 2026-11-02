@@ -3,8 +3,7 @@
 | 所属模块 | 当前职责 |
 | --- | --- |
 | `backend/src/amazme_backend` | 单个 Python 分发包；按业务所有权划分的 Host、会话、模型、账号、执行与入口适配 |
-| `packages/coding-agent` | Python 后端的 CLI/TUI 客户端、媒体处理和启动适配 |
-| `packages/tui` | 终端输入、布局与渲染 |
+| `packages/coding-agent` | Python 后端的 CLI 客户端、媒体处理和启动适配 |
 | `packages/web` | React Web/Electron 页面、Python HTTP/WS 连接、按窗口拥有的命令与缓存投影 |
 | `packages/gui` | Electron 窗口、后台进程生命周期、桌面更新 |
 | `packages/codemode` | Python 监督器使用的 QuickJS helper |

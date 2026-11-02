@@ -6,7 +6,7 @@ AmazMe 是主要操作用户本机环境的桌面 AI 助手。Python 继续负�
 ## 产品范围
 
 保留会话、分支、压缩、队列、子任务、审批、取消、定时任务、模型和账号、工作区与文件、
-Web/Electron/TUI/CLI/RPC/SDK、SSH 远端、MCP、插件、Codemode、记忆、工作流、
+Web/Electron/CLI/RPC/SDK、SSH 远端、MCP、插件、Codemode、记忆、工作流、
 搜索、项目、设置、产物、分享和新格式导入导出。各能力是否完成以运行证据为准。
 不承担旧 TS 接口、旧生态、历史数据兼容；不删除真实用户数据、未知资源或其他会话修改。
 版本以根 package.json 与 backend/pyproject.toml 为准，版本号、不可变 build_id、协议和存储格式分别校验。
@@ -96,7 +96,7 @@ unknown 暂停计划，原任务及子任务的进程和效果完成核对后才
 
 实施按已约定顺序持续推进，各单元只做必要即时检查，用户要求提交时按完整单元原子提交；同一份改动通过必要验收后复用结果。未接通能力继续实现，不用不可用占位宣称完成。
 C 按会话 PTY、stdio MCP、其余客户端分别形成可验收提交。PTY 输入先登记稳定 ID 再发送，
-重连查询同一终端；不确定输入不重放。协议窗口 32 KiB，重连记录最多 256 KiB。页面打开 `@xterm/xterm` 5.5.0 的 DOM 画面。原生键盘、粘贴、光标应答和已打开的鼠标跟踪共用持久输入队列和原来的监督器输入账本。队列上限 64 KiB，逐批有序发送；回执不确定时暂停，明确重试仍用原 ID，重连不自动重放。Electron、`amazme-backend tui`、print/JSON CLI、RPC、Python SDK 和默认交互画面已按各自范围验收。TUI 和默认交互画面在当前进程内沿用未确认输入。CLI 失败重试沿用代理目录里的编号。RPC 和 SDK 由调用方传入编号。Electron 页面丢回执后沿用同一输入编号。监督器冻结后不开始新的本机执行。各客户端没有重跑冻结和进程崩溃。输出游标按 UTF-16 码元计数。
+重连查询同一终端；不确定输入不重放。协议窗口 32 KiB，重连记录最多 256 KiB。页面打开 `@xterm/xterm` 5.5.0 的 DOM 画面。原生键盘、粘贴、光标应答和已打开的鼠标跟踪共用持久输入队列和原来的监督器输入账本。队列上限 64 KiB，逐批有序发送；回执不确定时暂停，明确重试仍用原 ID，重连不自动重放。Electron、print/JSON CLI、RPC 和 Python SDK 已按各自范围验收。CLI 失败重试沿用代理目录里的编号。RPC 和 SDK 由调用方传入编号。Electron 页面丢回执后沿用同一输入编号。监督器冻结后不开始新的本机执行。各客户端没有重跑冻结和进程崩溃。输出游标按 UTF-16 码元计数。
 stdio MCP 在会话本机工作目录启动，复用已验证的受管服务生命周期；不继承全部环境或凭据。
 原客户端的服务器 JSON、全局与工作区覆盖由 Host SQLite 保存；凭据取值命令只在已登记的 gate 启动中执行，不在读取配置时执行。
 配置写入和重连分别保留原操作 ID。隐蔽/停用在监督器新调用和审批放行处核对；已接受调用仍能查询原结果。
@@ -185,7 +185,7 @@ Web/Electron、SDK 和 `code.tools/run/cancel` RPC 共用此路径。脚本及 N
 每次请求的 `model_selection` 指定供应商和模型；省略时使用会话已保存的选择，再回退到 profile 默认。
 Host 首次接纳投递时在原 SQLite 事务中固定不含凭据的供应商快照，同 ID 核对不重新选择；定时投递在启动 worker 前固定。
 worker、子任务与原请求沿用该快照，真正请求供应商前才从原账号库读取凭据。
-`ModelScopeRequest` 与 HTTP `/api/v1/models/scope`、`model.scope` RPC、SDK `model_scope` 共用 Python 候选解析，CLI/TUI 只负责呈现和选择。
+`ModelScopeRequest` 与 HTTP `/api/v1/models/scope`、`model.scope` RPC、SDK `model_scope` 共用 Python 候选解析，CLI 只负责呈现和选择。
 配置中的 `provider`、`model`、`api`、`base_url` 和 `max_tokens` 对应当前原生协议；不恢复旧 models.json/TS ProviderRuntime。
 `api` 为 `openai-completions`、`openai-responses`、`openai-codex-responses`、`anthropic-messages` 或 `google-generative-ai`。
 外部模型地址要求 HTTPS；本机 `localhost` 或 IP 回环可使用 HTTP，不接纳 URL 内凭据、query 或 fragment。
