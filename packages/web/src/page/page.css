@@ -2290,7 +2290,7 @@ p {
 .connection-list { display: flex; flex-direction: column; gap: 2px; max-height: 62dvh; overflow-y: auto; padding-block: 2px; }
 .connection-row { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 8px 10px; background: transparent; border: 0; border-radius: var(--radius-md); color: var(--text); text-align: left; cursor: pointer; font: inherit; transition: background var(--dur-fast) var(--ease); }
 .connection-row:hover:not(:disabled) { background: var(--hover); }
-.connection-row.selected { background: var(--selected); }
+.connection-row.selected { background: var(--active); }
 .connection-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .connection-row:disabled { opacity: 0.45; cursor: default; }
 .connection-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; }
