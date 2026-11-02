@@ -2,7 +2,6 @@
  * CLI argument parsing and help display
  */
 
-import chalk from "chalk";
 import { APP_COMMAND, APP_NAME } from "../config.ts";
 
 import type { ThinkingLevel } from "../client/types.ts";

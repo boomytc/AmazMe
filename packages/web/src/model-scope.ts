@@ -12,7 +12,7 @@ export interface ModelScopeLike {
 	readonly enabledModelIds: readonly string[] | null;
 }
 
-/** The same host scope that the terminal configures, presented as checkboxes. */
+/** The same host scope that the CLI configures, presented as checkboxes. */
 export function modelScopeModal(
 	locale: Locale,
 	scope: ModelScopeLike,

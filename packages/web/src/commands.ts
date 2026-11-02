@@ -2,7 +2,7 @@
  * The composer's command palette, as a projection: a draft line parsed into a command and its
  * argument, the host's catalogue filtered by it, and the argument completions the host offers. The
  * catalogue carries where each command came from, so a row can say whether it is the host's own
- * command, a prompt template, or a skill — the same three sources the terminal lists.
+ * command, a prompt template, or a skill — the same three sources the CLI lists.
  */
 import type { Locale } from "./locale.ts";
 import { translate } from "./strings.ts";

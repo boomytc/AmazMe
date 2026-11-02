@@ -1,4 +1,4 @@
-"""Local CLI/TUI context; the SDK lets callers report their own IANA zone."""
+"""Local CLI context; the SDK lets callers report their own IANA zone."""
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
