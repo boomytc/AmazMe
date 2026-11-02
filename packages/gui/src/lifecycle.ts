@@ -106,6 +106,15 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 		let action = preferences.closeWindow;
 		let remember = false;
 		if (preferences.closeWindowPrompt) {
+			// Nothing to keep alive: closing an idle window is a normal quit. If the activity
+			// check itself fails, keep the dialog rather than stopping unknown work.
+			let active = true;
+			try {
+				active = (await ports.readActivity()).active;
+			} catch {
+				// Keep the confirmation below.
+			}
+			if (!active) return "cleanup";
 			phase = "asking-close";
 			const confirmation = await ports.confirmClose(target);
 			const promoted = takePending();

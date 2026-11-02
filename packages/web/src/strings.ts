@@ -2117,7 +2117,7 @@ const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, stri
 const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	display_name: { label: "Display name", description: "The name saved in your local profile." },
 	closeWindow: { label: "When closing a window", description: "Choose whether AmazMe keeps running or quits when close confirmation is disabled." },
-	closeWindowPrompt: { label: "Ask when closing a window", description: "Ask whether to keep the background service running, even when no tasks are active. When disabled, follow your close preference." },
+	closeWindowPrompt: { label: "Ask when closing a window", description: "Ask before closing while tasks are running. With no active task, closing quits AmazMe; when disabled, follow your close preference." },
 	textFont: { label: "Text font", description: "Conversation and composer fonts, separated by commas. Empty uses the built-in fonts.", placeholder: "System fonts" },
 	codeFont: { label: "Code font", description: "Code blocks, file content and diffs. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
 	terminalFont: { label: "Terminal font", description: "Terminal command output. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
@@ -2228,7 +2228,7 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	display_name: { label: "显示名称", description: "保存在本机配置中的名称。" },
 	closeWindow: { label: "关闭窗口时", description: "关闭询问后，选择关闭窗口时保持应用运行或退出应用。" },
-	closeWindowPrompt: { label: "关闭窗口时询问", description: "关闭窗口前确认是否保留后台，空闲时也会询问；关闭询问后，按关闭窗口偏好执行。" },
+	closeWindowPrompt: { label: "关闭窗口时询问", description: "有任务运行时再询问是否保留后台；没有进行中的任务时直接退出应用。关闭询问后，按关闭窗口偏好执行。" },
 	textFont: { label: "正文字体", description: "对话和输入框使用的字体，以逗号分隔；留空使用内置字体。", placeholder: "系统字体" },
 	codeFont: { label: "代码字体", description: "代码块、文件内容和差异使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
 	terminalFont: { label: "终端字体", description: "命令输出使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
