@@ -2,13 +2,47 @@
 
 本页保留历史移植与验收记录；其中测试命令和脚本路径对应当时版本，已移除的设施从 Git 历史查询。当前开发入口见 [AGENTS.md](AGENTS.md)。
 
-实现来自 [Pi](https://github.com/earendil-works/pi)。最近核对基线为 `50af8c160153e3721a18b1a046a4adf201635861`；按当前 Python 产品的职责吸收适用行为，OAuth 客户端 ID、回调和供应商请求身份保持原样。当前执行与持久化契约见 [本机方案](docs/python-backend-plan.md)，完成状态见 [任务表](docs/python-backend-completion.md)。TS 仅保留客户端、TUI、纯呈现与 QuickJS helper。
+实现来自 [Pi](https://github.com/earendil-works/pi)。最近核对基线为 `c9f4c7b9fcd0f3e6b5bbc35c7c9b6cda35580eb8`；按当前 Python 产品的职责吸收适用行为，OAuth 客户端 ID、回调和供应商请求身份保持原样。当前执行与持久化契约见 [本机方案](docs/python-backend-plan.md)，完成状态见 [任务表](docs/python-backend-completion.md)。TS 仅保留客户端、TUI、纯呈现与 QuickJS helper。
 
 旧产品线的移植记录保留在 Git 历史；当前行为以本仓源码和上述契约为准。
 
 QwenPaw 的最近核对基线为 `c26d31c0688aa9cce9bc1aef688177d2e14e25df`。它提供增量参照，不替代本仓的 Python Host 与客户端职责。
 
 deepseek-harness 的最近核对终点为 `ce7073d51254c26cd63b22a60835b8f948deb447`。按当前产品用途吸收适用能力，保留 Python 执行、SQLite 持久化和桌面客户端范围。
+
+## 2026-11-02 Pi 增量核对
+
+范围固定为 `50af8c160153e3721a18b1a046a4adf201635861..c9f4c7b9fcd0f3e6b5bbc35c7c9b6cda35580eb8`，共 69 个提交。核对本地 fetch 后的提交、差异和终点源码，按当前产品的可观察行为归并。该范围的模型目录定义没有变化，未重新生成模型快照。
+
+| Pi 提交或范围 | 处置 | 当前依据 |
+| --- | --- | --- |
+| `cc44fa216`、`e033f255f`、`c7372af42` | 吸收 | Python 搜索将完整名称命中排在最前，其后依次比较查询词覆盖率与 BM25。名称、服务元数据与正文分开计分，仅正文按长度归一化；同分保持目录顺序。MCP 服务名称、已配置描述写入本回合目录快照，旧记录缺少该字段时为空，不重新解释历史来源。 |
+| `79006f061` | 吸收 | 使用固定的 PyICU 依赖进行多语言词典分词；NFC、大小写和字母/组合标记/数字分类统一由 ICU 拥有，避免 Python 自带 Unicode 版本漏掉新字母。ASCII 保留快速拆分及英文单数化；按 ICU 的 UTF-16 坐标切片，避免非 BMP 字符错位。补齐实际使用的原生 API 类型声明。 |
+| `0f21a3319` | 吸收当前呈现组件 | Markdown 按顶层块弱引用复用换行、样式和代码高亮；缩放保留高亮，显式失效清除主题相关缓存。引用定义存在时不复用块，重复块仍按后继类型计算间距。相同文本的 Text 保留换行结果。Python TUI 当前不使用上游助手消息、write 或 Codemode 行渲染器，不恢复这些旧 TS 类，也不添加没有消费者的 CodeHighlighter。 |
+| `6454d07ec` | 吸收系统助手部分 | 剪贴板与浏览器启动器使用系统根目录，避免 WSL 的较长项目 cwd 阻断 Windows 程序，也避免助手固定项目目录。本仓没有上游外部编辑器入口，不增加空的失败提示分支。 |
+| `b4c2e92ac`、`7ef8680ab` | 吸收适用构建部分 | 全部现有 workspace 的清理、复制和可执行权限操作改用 Node 内置 API，保留原构建锁与产物位置；移除 shx 及其 ShellJS/glob 旧依赖链并刷新锁文件。本仓没有上游原生沙箱示例和 workerd 测试依赖；esbuild 的当前版本及其平台包不变。 |
+| `705d047cb`、`2a46c4208` | 已有适用语义 | 当前 Python 默认提示词已简短直接，技能说明已要求相对技能目录解析并使用绝对路径。CLI 恢复会话沿显式工作区选择和校验绑定，不引入 Pi 的 cwd 变更语义；edit_file 使用本仓的单项精确替换契约，不复制上游 edits 数组说明。 |
+| `d280e1ffa` | 保留当前模型边界 | 上游新增的是 Durable 的原始供应商请求体替换 hook。当前插件暴露类型化工具和命令，模型请求由 Python 构造；本轮不新增可任意改写供应商请求体的扩展接口。 |
+| `35dfa7573` | 保留当前调度所有权 | 上游优化同一 Durable Session 内大量 conversation 的空闲子树扫描与唤醒索引。当前每个会话由独立 worker 和 SQLite 单 writer 驱动，未采用其 context retention 或全局任务图，不移植这些索引和扫描路径。 |
+| `c2760d32c`、`8bc94b19f`、`e3da248ea`、`9376c8d17` | 保留产品边界 | 不引入 Pi 的 npm/Git 扩展包自更新、用户自定义更新命令或 TS 扩展渲染回调。AmazMe 的桌面更新沿现有签名校验，Python 插件沿会话监督器加载与重载；未知加载不因包清理失败而重试。 |
+| `25426f72a`、`6de14ec09`、`70ca8e896` | 保留上游平台问题参照 | 上游记录 Windows conhost、较旧 WezTerm 和 tmux 3.6 的终端限制。本轮没有 Windows、Linux 或这些实体终端的复现证据，不将文档说明记作 AmazMe 已修复的平台行为。 |
+| `fab2c5353`、`8ffea8a1b`、`6536f8012`、`6291b9bcc` 与其余 Chord v1/v2 提交 | 不迁入框架 | 模型工具和 Python 插件继续由 Pydantic 严格校验。剩余 TypeBox 消费者是客户端主题、键位和更新元数据，与上游本轮保留的客户端用途一致。Chord 的插件、HTTP、worker、路由和 Schema 设计不替换本仓 Python Host、监督器、公开 DTO 与 SQLite 所有权。 |
+
+有限验收使用固定 Pi 终点的搜索源码直接对照，覆盖中、日、韩、泰、俄、阿拉伯、印地语与法语、组合字符、非 BMP 字符和较新的 Unicode 字母；名称优先、词覆盖率、服务字段、描述高频词、稳定同分及 schema 元数据符合对应规则。自审查修正了 Python 字符表版本差异，并按实测返回值声明 PyICU API，不通过类型忽略绕过原生边界。
+
+构建后的 TUI 组件验证了流式追加、缩放、主题失效、引用定义增删、重复块、表格、深层引用及相同文本缓存；复制工具使用真实含空格路径验证通配符、目录、缺失源、权限和幂等删除。剪贴板助手通过真实子进程核对 cwd、启动失败与超时。没有用耗时数字宣称性能提升。
+
+六个受影响 workspace 逐包构建、TypeScript 类型、工作区结构、相关 Ruff、Pyright、契约漂移、轻量导入检查以及 Python wheel/sdist 构建通过；未运行根目录完整构建。最终本机冻结包的 build_id 为 `db129566df88e49f8b6cc8ab7e24ec4f0c0e00874524c47225fb810ac1c81370`，完整性校验通过；ICU 的扩展、动态库和数据随包携带，Mach-O 依赖使用包内 rpath。
+
+独立 profile 经真实冻结 Host、worker、Supervisor 和 stdio MCP 服务，验证名称与覆盖率排序、中文/泰文/NFC 查询、服务描述、隐藏与 allowed_tools 过滤，以及正常停机后重开、原回执查询、同 ID 重试和已加载工具不再次激活。模型使用本机 faux provider，没有调用付费模型或远端 MCP，也未手动验收 Electron 窗口、实体终端或其他操作系统。
+
+还在本轮隔离会话库中移除目录的 namespace_text 字段，构造旧记录后重新启动同一冻结包：原回执、同 ID 查询和已加载工具的排除继续生效。没有改写用户数据。
+
+对原始 `f6cc77dd` 的独立锁文件和当前锁文件分别审计，移除 glob、minimatch、shelljs、shx 四项 moderate 告警。Electron、happy-dom 和 @electron/get 下 undici 的三项 high 告警与原基线一致，未将此轮依赖清理描述为全仓安全问题已解决。
+
+临时脚本、profile、样本和验证输出已清除；清除前核对没有进程引用它们。资源普查退出码为 0，在其报告的 scope 内 `leaks=[]`、`reclaimed=true`；只保留上限内的本机候选包。
+
+实现提交：`fb9d7441`（搜索与目录契约）、`51958800`（TUI 缓存）、`46b71eca`（系统助手 cwd）、`7de3032d`（构建依赖）。约束主要落在第一层：ICU 统一 Unicode 语义、不可变字符集合和独立分词器保证并发归属，回合目录拥有服务文本，缓存由呈现组件拥有。现有类型、契约生成和架构检查负责第二层约束；没有增加重复的 AGENTS 规则或常驻测试资产。
 
 ## 2026-10-31 deepseek-harness 功能价值复核
 
