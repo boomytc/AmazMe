@@ -700,6 +700,7 @@ export const EN = {
 	"approval.deny": "Deny",
 	"approval.tool": "{tool} needs your approval",
 	"approval.hint": "Denying settles the call as a failed tool result and the turn continues.",
+	"approval.raw": "Raw arguments",
 
 	"welcome.title": "Start working with AmazMe",
 	"welcome.body":
@@ -1735,6 +1736,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"approval.deny": "拒绝",
 	"approval.tool": "{tool}需要确认",
 	"approval.hint": "拒绝会把这次调用结算成失败的工具结果，回合继续往下走。",
+	"approval.raw": "原始参数",
 
 	"welcome.title": "从一个会话开始",
 	"welcome.body":

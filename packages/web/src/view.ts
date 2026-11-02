@@ -230,11 +230,18 @@ export function feedbackControls(locale: Locale, entryId: string, rating: Messag
 }
 
 /** One tool call waiting for the reader's decision. */
+export interface ApprovalField {
+	readonly label: string;
+	readonly value: string;
+}
+
 export interface ApprovalCard {
 	readonly id: string;
 	readonly tool: string;
-	/** A one-line digest of the call. */
+	/** The raw arguments as the host recorded them; kept for the collapsible receipt. */
 	readonly detail: string;
+	/** The arguments as labelled rows when they are a JSON object; empty otherwise. */
+	readonly fields: readonly ApprovalField[];
 	readonly approve: PanelButton;
 	readonly deny: PanelButton;
 }
@@ -252,11 +259,32 @@ export interface ApprovalsStateLike {
  * The pending tool calls, each with its own approve and deny. A decision is the only thing that
  * releases the call, so the card names the tool and what it would do.
  */
+/** Argument rows a reader can scan without decoding an escaped JSON string. */
+function approvalFields(detail: string): readonly ApprovalField[] {
+	let value: unknown;
+	try {
+		value = JSON.parse(detail);
+	} catch {
+		return [];
+	}
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return [];
+	return Object.entries(value).map(([label, item]) => ({
+		label,
+		value:
+			typeof item === "string"
+				? item
+				: typeof item === "number" || typeof item === "boolean"
+					? String(item)
+					: JSON.stringify(item, null, 2) ?? "",
+	}));
+}
+
 export function approvalCards(locale: Locale, state: ApprovalsStateLike | undefined): ApprovalCard[] {
 	return (state?.pending ?? []).map((request) => ({
 		id: request.id,
 		tool: toolTitleCopy(locale, request.tool),
 		detail: request.detail,
+		fields: approvalFields(request.detail),
 		approve: {
 			id: APPROVAL_APPROVE_ACTION,
 			label: translate(locale, "approval.approve"),

@@ -114,7 +114,24 @@ function ApprovalCards({
 							{translate(view.locale, "approval.tool", { tool: card.tool })}
 						</p>
 					</div>
-					<pre className="approval-detail">{card.detail}</pre>
+					{card.fields.length === 0 ? (
+						<pre className="approval-detail">{card.detail}</pre>
+					) : (
+						<>
+							<dl className="approval-fields">
+								{card.fields.map((field) => (
+									<div className="approval-field" key={field.label}>
+										<dt>{field.label}</dt>
+										<dd>{field.value}</dd>
+									</div>
+								))}
+							</dl>
+							<details className="approval-raw">
+								<summary>{translate(view.locale, "approval.raw")}</summary>
+								<pre>{card.detail}</pre>
+							</details>
+						</>
+					)}
 					<div className="approval-actions">
 						{actionButton(card.deny, actions)}
 						{actionButton(card.approve, actions)}

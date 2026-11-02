@@ -2509,6 +2509,59 @@ p {
 	word-break: break-all;
 }
 
+/* A tool call's arguments are the evidence for the decision: rows first, raw receipt folded. */
+.approval-fields {
+	display: grid;
+	gap: 4px;
+	max-height: 220px;
+	margin: 10px 0 12px;
+	overflow: auto;
+}
+
+.approval-field {
+	display: grid;
+	grid-template-columns: minmax(72px, 140px) minmax(0, 1fr);
+	gap: 8px;
+	font-size: 13px;
+	line-height: 1.5;
+}
+
+.approval-field dt {
+	color: var(--text-3);
+	overflow-wrap: anywhere;
+}
+
+.approval-field dd {
+	margin: 0;
+	color: var(--text);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.approval-raw {
+	margin: 0 0 12px;
+	color: var(--text-2);
+	font-size: 12px;
+}
+
+.approval-raw summary {
+	cursor: pointer;
+}
+
+.approval-raw pre {
+	max-height: 160px;
+	margin: 6px 0 0;
+	padding: 8px 10px;
+	overflow: auto;
+	border-radius: var(--radius-sm);
+	background: var(--code);
+	font-family: var(--font-code, var(--font-mono));
+	font-size: 12px;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 .approval-actions {
 	display: flex;
 	justify-content: flex-end;
