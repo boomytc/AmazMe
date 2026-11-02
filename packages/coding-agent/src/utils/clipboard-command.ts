@@ -12,6 +12,8 @@ export function runClipboardCommand(
 		// (SIGTSTP to the group) does not stop the clipboard owner (#11179).
 		const child = spawn(command, args, {
 			stdio: ["pipe", options?.input === undefined ? "pipe" : "ignore", "ignore"],
+			// WSL interop can reject a long project cwd; clipboard tools do not need it.
+			cwd: "/",
 			detached: process.platform !== "win32",
 			windowsHide: true,
 		});
