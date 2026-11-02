@@ -284,6 +284,8 @@ export function printHelp(
   ${APP_COMMAND} [--print | --mode json | --mode rpc] [@文件...] [问题]
   ${APP_COMMAND} --session <会话编号> [问题]
 
+  无参数运行输出帮助；给出问题或 @文件时按一次性命令执行，输出结果后退出。
+
 命令：
   web | server [--port 0]           启动或连接本机 Python 服务并显示网页地址
   models [--search 关键词]          查看 Python 模型目录
@@ -298,9 +300,14 @@ ${desktopMcp}  export [--output 文件]            导出当前 profile 的新�
   doctor                           查看 Python Host 健康状态
   client <命令>                    使用 Python CLI；client --help 查看参数
 
-连接与输入：
+连接、会话与输出：
+  -p | --print                           一次性输出结果，不进入交互界面
+  --mode json | rpc                      输出 JSON 行或 JSON-RPC（默认文本）
   --python-url URL --python-token TOKEN  连接指定 Host
-  --python-session ID | --session ID     打开指定会话
+  --python-session ID | --session ID     在指定会话上提交问题
+  -c | --continue                        继续当前工作区最近的非归档会话（仍需问题）
+  --no-session                           临时会话，退出时清理其拥有的后端
+  --session-dir DIR                      在 DIR/python-host 保存独立历史
   --workspace NAME                       已登记工作区（本机默认按启动目录选择）
   -e | --extension PATH                  加载 Python setup(api) 插件；RPC 同时指定 --session
   --no-extensions                        禁用未显式选择的插件工具
