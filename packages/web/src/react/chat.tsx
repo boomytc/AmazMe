@@ -10,6 +10,7 @@ export type TranscriptView = Pick<
 	| "transcriptScope"
 	| "attachedId"
 	| "readOnly"
+	| "connecting"
 	| "blocks"
 	| "history"
 	| "status"

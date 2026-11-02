@@ -662,7 +662,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				className="center"
 				id="center"
 				data-state={view.emptyTranscript ? "empty" : "conversation"}
-				data-attached={Boolean(view.attachedId)}
+				data-attached={Boolean(view.attachedId) || view.connecting === true}
 				data-read-only={view.readOnly === true}
 				data-draft={view.sessionDraft !== undefined}
 			>

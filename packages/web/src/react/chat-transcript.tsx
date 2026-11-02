@@ -983,6 +983,18 @@ function EmptyState({ view, actions }: TranscriptProps) {
 			</div>
 		);
 	}
+	if (view.connecting === true) {
+		return (
+			<div className="empty-block" id="transcript-empty">
+				<h2 className="greeting">
+					{translate(view.locale, "greeting.loadingTitle")}
+				</h2>
+				<p className="greeting-hint">
+					{translate(view.locale, "greeting.loadingHint")}
+				</p>
+			</div>
+		);
+	}
 	if (view.attachedId !== undefined) {
 		const scopeEmpty =
 			view.model.empty === translate(view.locale, "model.scopeEmpty");

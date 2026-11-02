@@ -52,6 +52,7 @@ export type ShellView = Pick<
 	| "run"
 	| "lane"
 	| "readOnly"
+	| "connecting"
 	| "sessionDraft"
 > & {
 	readonly emptyTranscript: boolean;

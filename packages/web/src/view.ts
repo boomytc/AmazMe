@@ -393,6 +393,8 @@ export interface WebView {
 	/** The one archived session the reader currently has open, pinned under the projects. */
 	readonly archivedAttached?: RosterItem;
 	readonly readOnly?: boolean;
+	/** A session is selected but its snapshot is not ready yet; this is not the archived read-only state. */
+	readonly connecting?: boolean;
 	/** The filter text itself, so the input keeps what the reader typed. */
 	readonly rosterFilter: string;
 	readonly blocks: readonly TranscriptBlock[];
