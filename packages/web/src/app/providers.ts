@@ -83,12 +83,13 @@ export class Providers {
 	authentication(login = this.modalOAuth): ProviderAuthLike {
 		const ids = [
 			...new Set([
+				...(this.catalog?.providers?.map((item) => item.provider) ?? []),
 				...(this.catalog?.models.map((item) => item.provider) ?? []),
 				...Object.keys(OAUTH_METHODS),
 			]),
 		];
 		const current = this.catalog?.current;
-		const providers: ProviderAuthLike["providers"] = ids.map((id) => ({
+		const providers: ProviderAuthLike["providers"] = ids.map<ProviderAuthLike["providers"][number]>((id) => ({
 			id,
 			name:
 				this.catalog?.providers?.find((item) => item.provider === id)?.name ||
@@ -102,7 +103,7 @@ export class Providers {
 					? [{ type: "oauth" as const, label: "登录" }]
 					: []),
 			],
-		}));
+		})).sort((left, right) => left.name.localeCompare(right.name));
 		return {
 			providers,
 			login: login

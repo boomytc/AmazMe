@@ -220,12 +220,10 @@ export interface PanelSpec {
 	};
 }
 
-export interface PanelField {
+interface PanelFieldBase {
 	readonly id: string;
 	readonly label: string;
-	readonly kind: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "directories";
 	readonly inputType?: "number" | "datetime-local" | "password";
-	readonly options?: readonly { readonly value: string; readonly label: string }[];
 	/** Every condition must match. One condition stays a single rule; several are combined. */
 	readonly visibleWhen?: { readonly field: string; readonly values: readonly string[] } | readonly { readonly field: string; readonly values: readonly string[] }[];
 	readonly readOnly?: boolean;
@@ -233,6 +231,12 @@ export interface PanelField {
 	readonly value: string;
 	readonly placeholder?: string;
 }
+
+export type PanelField = PanelFieldBase & (
+	| { readonly kind: "combobox"; readonly options: readonly Pick<PanelOption, "value" | "label">[] }
+	| { readonly kind: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "directories";
+		readonly options?: readonly Pick<PanelOption, "value" | "label">[] }
+);
 
 /** The control whose host call is in flight: the action id, and the subject it acts on. */
 export interface PanelPending {

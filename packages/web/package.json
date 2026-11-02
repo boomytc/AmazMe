@@ -50,6 +50,8 @@
 		"@types/react-dom": "19.3.0"
 	},
 	"dependencies": {
+		"@base-ui/react": "1.9.0",
+		"lucide-react": "1.66.0",
 		"react": "19.3.1",
 		"react-dom": "19.3.1"
 	}

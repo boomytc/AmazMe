@@ -1257,27 +1257,36 @@ p {
 }
 
 .credential-toggle {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 24px;
+	height: 24px;
 	margin-inline-start: 4px;
-	padding: 0 4px;
+	padding: 0;
 	border: 0;
 	border-radius: var(--radius-sm);
 	background: transparent;
 	color: var(--text-3);
-	font: inherit;
-	font-size: 12px;
-	white-space: nowrap;
+	vertical-align: middle;
 	cursor: pointer;
+	transition: color var(--dur-fast) var(--ease), background var(--dur-fast) var(--ease);
 }
 
-.credential-toggle:hover {
+.credential-toggle:hover:not(:disabled) {
 	background: var(--hover);
 	color: var(--text);
 }
 
 .credential-toggle:focus-visible {
-	outline: 2px solid var(--text);
+	outline: 2px solid var(--accent);
 	outline-offset: 2px;
 }
+
+.credential-toggle:disabled { opacity: 0.45; cursor: default; }
+.password-field { position: relative; min-width: 0; }
+.password-field:has(.credential-toggle) > .modal-input { padding-inline-end: 44px; }
+.password-field > .credential-toggle { position: absolute; top: 50%; inset-inline-end: 6px; width: 28px; height: 28px; margin: 0; transform: translateY(-50%); }
 
 /* An answer is flat text on the canvas. Its actions sit under it and show on hover or focus. */
 .turn-response {
@@ -3818,7 +3827,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .panel-button {
-	height: 32px;
+	height: var(--control-height);
 	padding: 0 12px;
 	border: 1px solid transparent;
 	border-radius: var(--radius-md);
@@ -3832,7 +3841,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	overflow: hidden;
 	text-overflow: ellipsis;
 	cursor: pointer;
-	transition: background var(--dur-fast) var(--ease);
+	transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
 .panel-button:hover:not(:disabled) {
@@ -3847,6 +3856,11 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .panel-button.weight-line {
 	border-color: var(--line-strong);
 }
+
+.panel-button.weight-line:hover:not(:disabled) { border-color: var(--text-3); }
+.panel-button:active:not(:disabled) { transform: translateY(1px); }
+.panel-button:focus-visible { box-shadow: var(--focus-shadow); }
+.panel-button.pending { cursor: progress; }
 
 .panel-button.weight-filled {
 	background: var(--ink);
@@ -4154,6 +4168,22 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .modal-checkbox { flex-direction: row; align-items: center; gap: 8px; }
 .modal-checkbox input { order: -1; }
+.combobox-input { position: relative; }
+.combobox-input .modal-input { padding-right: 42px; }
+.combobox-toggle { position: absolute; top: 4px; right: 4px; bottom: 4px; display: grid; place-items: center; width: 32px; padding: 0; border: 0; border-radius: 5px; color: var(--text-2); background: transparent; cursor: pointer; }
+.combobox-toggle:hover:not(:disabled) { background: var(--hover); }
+.combobox-toggle:disabled { opacity: 0.45; cursor: default; }
+.combobox-positioner { width: var(--anchor-width); max-width: var(--available-width); z-index: 40; outline: none; }
+.combobox-dropdown { overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover); transform-origin: var(--transform-origin); transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
+.combobox-dropdown[data-starting-style], .combobox-dropdown[data-ending-style] { opacity: 0; transform: scale(0.98); }
+.combobox-list { max-height: min(280px, var(--available-height)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.combobox-list:empty { padding: 0; }
+.combobox-option { position: relative; display: flex; align-items: baseline; justify-content: space-between; gap: 16px; width: 100%; padding: 9px 12px 9px 32px; border: 0; border-radius: var(--radius-xs); color: var(--text); background: transparent; text-align: left; font-size: 14px; cursor: pointer; outline: none; }
+.combobox-option[data-highlighted] { background: var(--hover); }
+.combobox-option[data-selected] { font-weight: 500; }
+.combobox-indicator { position: absolute; inset-inline-start: 8px; top: 50%; transform: translateY(-50%); display: flex; color: var(--accent); }
+.combobox-option small { color: var(--text-3); font-size: 12px; }
+.combobox-dropdown > .menu-empty { display: block; }
 .modal-multiselect { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .modal-multiselect .modal-input { box-sizing: border-box; }
 .multiselect-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -4176,6 +4206,10 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	font-size: 14px;
 }
 
+.modal-input { height: var(--field-height); }
+.modal-input::placeholder, .modal-textarea::placeholder { color: var(--text-3); opacity: 1; }
+.modal-input:disabled, .modal-textarea:disabled { background: var(--sidebar); color: var(--text-3); cursor: default; opacity: 0.7; }
+
 .modal-textarea {
 	min-height: 200px;
 	resize: vertical;
@@ -4196,7 +4230,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .modal-textarea:focus-visible {
 	outline: none;
 	border-color: var(--accent);
-	box-shadow: 0 0 0 3px var(--accent-soft);
+	box-shadow: var(--focus-shadow);
 }
 
 .modal-notice {
@@ -4279,7 +4313,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 	/* No press movement when motion is reduced. */
 	.stop:active:not(:disabled),
-	.primary:active:not(:disabled) {
+	.primary:active:not(:disabled),
+	.panel-button:active:not(:disabled) {
 		transform: none;
 	}
 }

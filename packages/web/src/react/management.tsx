@@ -48,6 +48,7 @@ import {
 	resolveTypography,
 	type Typography,
 } from "../typography.ts";
+import { ComboboxField } from "./combobox.tsx";
 import { PanelTextReader, type ReadingState } from "./dock.tsx";
 import {
 	type ControlEdits,
@@ -1661,6 +1662,7 @@ interface ModalFieldViewProps {
 	readonly value: string;
 	readonly visible: boolean;
 	readonly disabled: boolean;
+	readonly popupContainer: RefObject<HTMLElement | null>;
 	readonly browseDirectories?: (path?: string) => Promise<DirectoryListing>;
 	readonly pickDirectories?: () => Promise<readonly string[] | undefined>;
 	readonly onChange: (value: string) => void;
@@ -1673,6 +1675,7 @@ function ModalFieldView({
 	value,
 	visible,
 	disabled,
+	popupContainer,
 	browseDirectories,
 	pickDirectories,
 	onChange,
@@ -1746,6 +1749,28 @@ function ModalFieldView({
 				/>
 				{help}
 			</label>
+		);
+	}
+	if (field.kind === "combobox") {
+		return (
+			<div className="modal-field" hidden={!visible}>
+				<label className="modal-field-label" htmlFor={field.id}>
+					{field.label}
+				</label>
+				<ComboboxField
+					id={field.id}
+					label={field.label}
+					locale={locale}
+					value={value}
+					options={field.options}
+					placeholder={field.placeholder}
+					disabled={disabled || field.readOnly === true}
+					describedBy={help === undefined ? undefined : helpId}
+					popupContainer={popupContainer}
+					onChange={onChange}
+				/>
+				{help}
+			</div>
 		);
 	}
 	if (field.kind === "select") {
@@ -1836,6 +1861,7 @@ interface ModalContentProps {
 	readonly locale: Locale;
 	readonly onAction: (action: PanelAction) => void;
 	readonly onClose: () => void;
+	readonly popupContainer: RefObject<HTMLElement | null>;
 	readonly browseDirectories?: (path?: string) => Promise<DirectoryListing>;
 	readonly pickDirectories?: () => Promise<readonly string[] | undefined>;
 }
@@ -1854,6 +1880,7 @@ function ModalContent({
 	locale,
 	onAction,
 	onClose,
+	popupContainer,
 	browseDirectories,
 	pickDirectories,
 }: ModalContentProps) {
@@ -1905,8 +1932,12 @@ function ModalContent({
 		}
 	}, [modal.danger, modal.pending]);
 
+	const incompleteSelection = modal.fields.some(
+		(field) => field.kind === "combobox" && fieldIsVisible(field, values)
+			&& !field.options.some((option) => option.value === (values[field.id] ?? field.value)),
+	);
 	const submit = (): void => {
-		if (modal.pending === true || modal.submit === undefined) return;
+		if (modal.pending === true || modal.submit === undefined || incompleteSelection) return;
 		const fields: Record<string, string> = {};
 		for (const field of modal.fields) {
 			fields[field.id] = values[field.id] ?? field.value;
@@ -1978,6 +2009,7 @@ function ModalContent({
 							value={value}
 							visible={visible}
 							disabled={modal.pending === true || !visible}
+							popupContainer={popupContainer}
 							browseDirectories={browseDirectories}
 							pickDirectories={pickDirectories}
 							onChange={(next) => {
@@ -2034,7 +2066,7 @@ function ModalContent({
 					<button
 						type="button"
 						className={`panel-button weight-filled${modal.danger === true ? " is-danger" : ""}${modal.pending === true ? " pending" : ""}`}
-						disabled={modal.pending === true}
+						disabled={modal.pending === true || incompleteSelection}
 						aria-busy={modal.pending === true || undefined}
 						onClick={submit}
 					>
@@ -2142,6 +2174,7 @@ export function ManagementModal({
 					locale={locale}
 					onAction={onAction}
 					onClose={close}
+					popupContainer={dialogRef}
 					browseDirectories={browseDirectories}
 					pickDirectories={pickDirectories}
 				/>

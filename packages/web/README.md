@@ -6,6 +6,8 @@ Web 和 Electron 共用的 React 19 + TypeScript 页面：导航、聊天、模�
 
 正式页面由 React 接管，继续复用现有 CSS、主题和文案。唯一浏览器构建链路是 `build-page.mjs` 的 esbuild；TSX 同时进入 TypeScript 检查，生产 bundle 使用 React 的 production 构建。`dist` 还包含公开 TypeScript 包导出；`./locale`、`./strings`、`./typography` 和 `./errors` 是无 React/DOM 副作用的轻量入口，Electron 主进程只使用这些入口。
 
+公共控件采用同一套灰阶、圆角、聚焦和按压状态。密码框参考 [OpenSourceUI](https://opensourceui.in/components/password-field-input) 的行内眼睛控件，输入、按钮和浮层参考 [EasyUI](https://easyui.site/docs/introduction) 的组件模式，映射到现有 `tokens.css` 和 CSS；Lucide 提供标准 Eye/EyeOff 图标。供应商搜索选择使用 Base UI Combobox 处理键盘、焦点、定位和列表语义，浮层挂入所属原生 dialog，供应商 ID 仍由 Host 目录提供。来源与许可随 [页面资产](src/page/third-party-notices.txt) 打包。
+
 `src/page.ts` 为每个窗口创建 `PageRuntime` 和 React `Presentation`。运行实例拥有 PythonClient、导航、待确认账本及页面释放；`app/` 中的草稿、历史、设置、供应商、集成、自动化和工作区模块分别拥有对应状态。页面启动在 React 生命周期之外，普通重挂载不会重新连接或写入。运行实例销毁是终态，关闭页面会使导航续体失效。
 
 `react/state.ts` 将缓存投影通过 `useSyncExternalStore` 提供给各呈现区域；一次发布先更新所有区域的快照，再通知订阅者。渲染和订阅不发命令。聊天、输入、问题表单、管理面板、Markdown 与停靠栏均为 React 组件，xterm 只拥有独立容器内部。显示组件释放不会停止后端 PTY。

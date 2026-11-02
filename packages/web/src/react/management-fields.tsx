@@ -28,6 +28,7 @@ import {
 } from "../panels.ts";
 import { translate } from "../strings.ts";
 import { FONT_FAMILY_FIELDS, normalizeFontFamily } from "../typography.ts";
+import { CredentialSecret, CredentialToggle } from "./credential-visibility.tsx";
 
 export type IconName =
 	| "arrow-up"
@@ -50,34 +51,6 @@ export function Icon({ name, className = "icon" }: IconProps) {
 		<svg className={className} viewBox="0 0 24 24" aria-hidden="true">
 			<use href={`#i-${name}`} />
 		</svg>
-	);
-}
-
-interface CredentialSecretProps {
-	readonly text: string;
-	readonly masked: string;
-	readonly locale: Locale;
-}
-
-function CredentialSecret({ text, masked, locale }: CredentialSecretProps) {
-	const [shown, setShown] = useState(false);
-	const label = translate(
-		locale,
-		shown ? "secret.hideAria" : "secret.showAria",
-	);
-	return (
-		<span className="credential-secret">
-			<span className="credential-value">{shown ? text : masked}</span>
-			<button
-				type="button"
-				className="credential-toggle"
-				aria-label={label}
-				aria-pressed={shown}
-				onClick={() => setShown((current) => !current)}
-			>
-				{translate(locale, shown ? "secret.hide" : "secret.show")}
-			</button>
-		</span>
 	);
 }
 
@@ -1225,7 +1198,7 @@ export function PasswordField({
 }: PasswordFieldProps) {
 	const [shown, setShown] = useState(false);
 	return (
-		<>
+		<div className="password-field">
 			<input
 				id={id}
 				type={shown ? "text" : "password"}
@@ -1245,20 +1218,15 @@ export function PasswordField({
 				onKeyDown={onKeyDown}
 			/>
 			{!readOnly && (
-				<button
-					type="button"
-					className="credential-toggle"
-					aria-label={translate(
-						locale,
-						shown ? "secret.hideAria" : "secret.showAria",
-					)}
-					aria-pressed={shown}
-					onClick={() => setShown((current) => !current)}
-				>
-					{translate(locale, shown ? "secret.hide" : "secret.show")}
-				</button>
+				<CredentialToggle
+					shown={shown}
+					locale={locale}
+					controls={id}
+					disabled={disabled}
+					onToggle={() => setShown((current) => !current)}
+				/>
 			)}
-		</>
+		</div>
 	);
 }
 

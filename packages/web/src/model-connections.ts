@@ -53,7 +53,7 @@ export function verificationStatusText(locale: Locale, verification: { readonly 
 const EDITABLE_APIS = ["auto", "openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"];
 type CredentialMethod = { readonly type: "api_key" | "oauth"; readonly label: string };
 
-export function providerConfigurationModal(locale: Locale, provider?: ModelConnectionsLike["state"]["providers"][number], models: readonly ConnectionModelLike[] = [], presets: readonly { readonly id: string; readonly name: string; readonly methods: readonly CredentialMethod[] }[] = [], methods: readonly CredentialMethod[] = []): PanelModal {
+export function providerConfigurationModal(locale: Locale, provider?: ModelConnectionsLike["state"]["providers"][number], models: readonly ConnectionModelLike[] = [], presets: ProviderAuthLike["providers"] = [], methods: readonly CredentialMethod[] = []): PanelModal {
 	const copy = (key: Parameters<typeof translate>[1]) => translate(locale, key);
 	if (provider === undefined) {
 		const choices = presets.filter(item => item.methods.length > 0);
@@ -61,7 +61,7 @@ export function providerConfigurationModal(locale: Locale, provider?: ModelConne
 		return {
 			id: PROVIDER_EDIT_MODAL, title: copy("connections.add"), description: copy("connections.choosePreset"), submit: copy("auth.continue"),
 			fields: [
-				{ id: "id", label: copy("connections.provider"), kind: "select", value: choices[0]?.id ?? "", options: choices.map(item => ({ value: item.id, label: item.name })) },
+				{ id: "id", label: copy("connections.provider"), kind: "combobox", value: choices[0]?.id ?? "", placeholder: copy("connections.search"), options: choices.map(item => ({ value: item.id, label: item.name })) },
 				...choices.filter(item => item.methods.length > 1).map(item => {
 					const methods = [...item.methods].sort((left, right) => credentialOrder(left.type) - credentialOrder(right.type));
 					return {

@@ -31,7 +31,7 @@ export function providerAuthModal(locale: Locale, state: ProviderAuthLike, prefe
 	const copy = (key: Parameters<typeof translate>[1]) => translate(locale, key);
 	const providers = state.providers.filter(provider => mode === "logout" ? provider.configured : provider.methods.length > 0 || provider.configured);
 	const fields: PanelField[] = [{
-		id: "provider", label: copy("auth.provider"), kind: "select",
+		id: "provider", label: copy("auth.provider"), kind: "combobox", placeholder: copy("connections.search"),
 		value: providers.find(provider => provider.id === preferred)?.id ?? providers[0]?.id ?? "",
 		options: providers.map(provider => ({ value: provider.id, label: `${provider.name}${provider.configured ? ` (${copy("auth.configured")})` : ""}` })),
 	}];
