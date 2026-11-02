@@ -419,9 +419,16 @@ class AccountOperations:
             if credential is not None
             else SecretStr("")
         )
-        configured = select_model(
-            self.lifecycle.profile.config.provider, None, document.transports, catalog=SELECTION_INDEX, providers=PROVIDERS
-        ).model_copy(
+        try:
+            selected = select_model(
+                self.lifecycle.profile.config.provider, None, document.transports, catalog=SELECTION_INDEX, providers=PROVIDERS
+            )
+        except BackendError as error:
+            if error.code != "model_not_available":
+                raise
+            # Settings must remain readable when the catalog retires the current model.
+            selected = self.lifecycle.profile.config.provider
+        configured = selected.model_copy(
             update={
                 "api_key": key,
                 "auth_type": credential.type if credential is not None else "api_key",
