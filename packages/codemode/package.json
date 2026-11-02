@@ -43,7 +43,7 @@
 	],
 	"scripts": {
 		"clean": "node ../../scripts/locked-workspace-task.mjs @amazme/codemode clean",
-		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && shx rm -rf dist",
+		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && node ../../scripts/package-files.mjs clean dist",
 		"build": "node ../../scripts/locked-workspace-task.mjs @amazme/codemode build",
 		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && tsc -p tsconfig.build.json",
 		"prepublishOnly": "npm run clean && npm run build"
@@ -69,8 +69,5 @@
 	},
 	"dependencies": {
 		"quickjs-wasi": "3.6.2"
-	},
-	"devDependencies": {
-		"shx": "0.3.4"
 	}
 }

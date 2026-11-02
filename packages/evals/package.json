@@ -4,7 +4,7 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"clean": "shx rm -rf .eval",
+		"clean": "node ../../scripts/package-files.mjs clean .eval",
 		"build": "tsc -p tsconfig.json",
 		"eval": "npm run eval:host && npm run eval:docs --",
 		"eval:host": "vitest run --config vitest.evals.config.ts --project host",
@@ -13,7 +13,6 @@
 	"devDependencies": {
 		"@types/node": "22.19.19",
 		"@vitest-evals/core": "0.15.0",
-		"shx": "0.3.4",
 		"vitest": "4.1.12",
 		"vitest-evals": "0.15.0",
 		"zod": "4.6.7"

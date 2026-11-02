@@ -40,15 +40,14 @@
 	},
 	"scripts": {
 		"clean": "node ../../scripts/locked-workspace-task.mjs @amazme/web clean",
-		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && shx rm -rf dist",
+		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && node ../../scripts/package-files.mjs clean dist",
 		"build": "node ../../scripts/locked-workspace-task.mjs @amazme/web build",
-		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && npm run clean:unlocked && tsc -p tsconfig.build.json && shx cp -r src/page dist/page && node build-page.mjs",
+		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && npm run clean:unlocked && tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs copy src/page dist && node build-page.mjs",
 		"typecheck": "tsc -p tsconfig.build.json --noEmit"
 	},
 	"devDependencies": {
 		"@types/react": "19.3.0",
-		"@types/react-dom": "19.3.0",
-		"shx": "0.3.4"
+		"@types/react-dom": "19.3.0"
 	},
 	"dependencies": {
 		"react": "19.3.1",
