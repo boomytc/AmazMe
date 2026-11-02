@@ -425,6 +425,8 @@ export interface WebView {
 	readonly connecting?: boolean;
 	/** The filter text itself, so the input keeps what the reader typed. */
 	readonly rosterFilter: string;
+	/** Prompts this session already submitted, newest last; the composer recalls them. */
+	readonly promptHistory?: readonly string[];
 	readonly blocks: readonly TranscriptBlock[];
 	readonly status: string;
 	readonly queue: readonly QueueItem[];

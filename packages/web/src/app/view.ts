@@ -104,6 +104,7 @@ export interface PresentationInput {
 	readonly connections?: ModelConnectionsLike;
 	readonly rosterFilter: string;
 	readonly draft: string;
+	readonly promptHistory?: readonly string[];
 	readonly paletteSelection: number;
 	readonly commands: readonly CommandLike[];
 	readonly attachments: readonly Attachment[];
@@ -155,6 +156,7 @@ export function pythonView(input: PresentationInput): WebView {
 		welcome: welcomeCard(locale, { show: !input.sessions.length && !input.welcomeDismissed }), newSession: { enabled: input.ready && !input.newSessionPending, pending: input.newSessionPending },
 		run: runControls(locale, input.mode, Boolean(connection?.ready), Boolean(snapshot?.requests.some(item => settled.has(item.status)))),
 		model: modelPicker(locale, models, levels, connection?.ready === true), panel: input.panel,
+		promptHistory: input.promptHistory ?? [],
 		palette: commandPalette(locale, { draft: input.draft, commands: input.commands, selected: input.paletteSelection }),
 		shortcuts: shortcuts(locale, typeof navigator === "undefined" ? "" : navigator.platform),
 		dock: input.dock ?? dockView(locale, { open: false, tab: "files", cwd, workspace: undefined, terminal: undefined, conversations: undefined }),

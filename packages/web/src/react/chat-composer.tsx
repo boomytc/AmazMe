@@ -760,6 +760,8 @@ export function ChatComposer({
 	const composingRef = useRef(false);
 	const [dragging, setDragging] = useState(false);
 	const [dismissedSuggestion, setDismissedSuggestion] = useState<string>();
+	const historyIndex = useRef<number | undefined>(undefined);
+	const historyDraft = useRef("");
 
 	const updateValue = useCallback((next: string) => {
 		valueRef.current = next;
@@ -957,6 +959,8 @@ export function ChatComposer({
 			}
 		}
 		if (text.length === 0 && pendingImages === 0) return;
+		historyIndex.current = undefined;
+		historyDraft.current = "";
 		actions.onSubmit(text);
 	};
 
@@ -965,8 +969,17 @@ export function ChatComposer({
 		submitDraft();
 	};
 
+	const applyHistory = (text: string) => {
+		updateValue(text);
+		emittedDraft.current = text;
+		actions.onDraftChange(text);
+		focusEditor({ start: text.length, end: text.length, direction: "none" });
+	};
+
 	const onInput = (event: ChangeEvent<HTMLTextAreaElement>) => {
 		const next = event.currentTarget.value;
+		historyIndex.current = undefined;
+		historyDraft.current = "";
 		updateValue(next);
 		emittedDraft.current = next;
 		rememberSelection();
@@ -997,6 +1010,48 @@ export function ChatComposer({
 					view.palette.rows.find((row) => row.selected) ?? view.palette.rows[0];
 				if (selected !== undefined) actions.onCommandPick(selected.value);
 				return;
+			}
+		}
+		if (
+			(event.key === "ArrowUp" || event.key === "ArrowDown") &&
+			!event.altKey &&
+			!event.ctrlKey &&
+			!event.metaKey &&
+			!event.shiftKey
+		) {
+			const entries = view.promptHistory ?? [];
+			if (entries.length > 0) {
+				const node = event.currentTarget;
+				const browsing = historyIndex.current !== undefined;
+				const boundary =
+					event.key === "ArrowUp"
+						? value.length === 0 ||
+							(node.selectionStart === 0 && node.selectionEnd === 0)
+						: browsing &&
+							node.selectionStart === node.value.length &&
+							node.selectionEnd === node.value.length;
+				if (event.key === "ArrowUp" && boundary) {
+					event.preventDefault();
+					if (!browsing) historyDraft.current = value;
+					const index = browsing
+						? Math.max(0, historyIndex.current! - 1)
+						: entries.length - 1;
+					historyIndex.current = index;
+					applyHistory(entries[index]!);
+					return;
+				}
+				if (event.key === "ArrowDown" && boundary) {
+					event.preventDefault();
+					const index = historyIndex.current! + 1;
+					if (index >= entries.length) {
+						historyIndex.current = undefined;
+						applyHistory(historyDraft.current);
+					} else {
+						historyIndex.current = index;
+						applyHistory(entries[index]!);
+					}
+					return;
+				}
 			}
 		}
 		if (

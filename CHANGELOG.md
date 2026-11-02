@@ -4,6 +4,7 @@
 
 ## [Unreleased]
 
+- 会话输入区支持按 ↑/↓ 召回最近 100 条已提交提示，按宿主和会话保存在本机浏览器。
 - 移除 `@amazme/tui` 包及 darwin/linux/win32 原生剪贴板构建；`start.sh cli` 改为源码一次性命令入口（`npm run dev:cli`）。
 - 移除 CLI 交互终端模式及其主题、快捷键、剪贴板和语法高亮实现；无参数运行输出帮助，提交问题按一次性命令执行，`--resume`、`--theme`、`--tui-mode` 等终端画面参数移除。
 - 移除 Python 终端客户端 `amazme-backend tui`；终端入口只保留 print/JSON、RPC 和 `client` 命令。

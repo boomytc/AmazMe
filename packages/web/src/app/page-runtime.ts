@@ -47,6 +47,7 @@ import { USAGE_ACTION, USAGE_REFRESH_ACTION } from "../usage.ts";
 import { attachments, type SubmitMode, type TranscriptBlock } from "../view.ts";
 import { Automation, scheduleRecord } from "./automation.ts";
 import { type Draft, DraftBook } from "./drafts.ts";
+import { PromptHistory } from "./prompt-history.ts";
 import { HistoryCache } from "./history-cache.ts";
 import { Integrations } from "./integrations.ts";
 import { InterfaceSettings } from "./interface-settings.ts";
@@ -105,6 +106,7 @@ export class PageRuntime {
 	private readonly panels = new PanelsState();
 	private rosterFilter = "";
 	private readonly drafts = new DraftBook();
+	private readonly promptHistory = new PromptHistory();
 	private readonly writes = new Map<string, PendingWrites>();
 	private mode: SubmitMode = "followUp";
 	private thinking = "off";
@@ -819,6 +821,7 @@ export class PageRuntime {
 			)
 			?.thinking_levels?.find((level) => level === this.thinking);
 		const steer = !review && this.mode === "steer" && root?.run_id;
+		if (!previous) this.promptHistory.record(text);
 		const record =
 			previous ??
 			ledger.prepare(
@@ -2409,6 +2412,11 @@ export class PageRuntime {
 			session = this.sessions.find(
 				(item) => item.session_id === connection?.sessionId,
 			);
+		const identity = this.client.identity;
+		if (identity && connection?.sessionId)
+			this.promptHistory.select(
+				`${identity.profile_id}:${connection.sessionId}`,
+			);
 		const directory = pythonDirectory(
 			this.sessions,
 			this.projects,
@@ -2429,6 +2437,7 @@ export class PageRuntime {
 			enabledModels: this.enabledModels,
 			rosterFilter: this.rosterFilter,
 			draft: this.drafts.current.text,
+			promptHistory: this.promptHistory.list(),
 			paletteSelection: this.paletteSelection,
 			commands: this.commands,
 			attachments: attachments(

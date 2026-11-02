@@ -39,6 +39,7 @@ export type ComposerView = Pick<
 	| "questions"
 	| "queue"
 	| "palette"
+	| "promptHistory"
 	| "run"
 	| "model"
 	| "modelPending"
