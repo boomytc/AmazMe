@@ -1368,7 +1368,7 @@ p {
 }
 .process-toggle:hover { background: var(--hover); }
 .process-title { font-weight: 500; }
-.process-meta { color: var(--text-3); font-size: 12px; }
+.process-meta { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 .process-chevron { width: 14px; height: 14px; flex: none; transform: rotate(-90deg); }
 .process-toggle[aria-expanded="true"] .process-chevron { transform: none; }
 .process-jump {
@@ -1438,6 +1438,7 @@ p {
 	min-width: 0;
 	overflow: hidden;
 	color: var(--text-3);
+	font-variant-numeric: tabular-nums;
 	font-family: var(--font-mono);
 	font-size: 12px;
 	text-overflow: ellipsis;
@@ -1512,7 +1513,7 @@ p {
 	font-size: 12px;
 	color: var(--text-3);
 }
-.tool-result-tag { padding: 2px 6px; border-radius: var(--radius-xs); background: var(--hover); }
+.tool-result-tag { padding: 2px 6px; border-radius: var(--radius-xs); background: var(--hover); font-variant-numeric: tabular-nums; }
 .tool-result-path { flex: 1; min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
 .tool-command, .tool-diff-code {
 	margin: 0 0 8px 24px; padding: 10px 12px; overflow: auto; max-height: 360px;
@@ -2016,10 +2017,9 @@ p {
 .markdown .code-line::before {
 	content: attr(data-line);
 	display: inline-block;
-	width: 3ch;
-	margin-right: 16px;
+	width: 4ch;
+	margin-right: 12px;
 	color: var(--text-3);
-	opacity: 0.65;
 	text-align: right;
 	font-variant-numeric: tabular-nums;
 	user-select: none;
@@ -2082,7 +2082,7 @@ p {
 .markdown-table {
 	width: 100%;
 	border-collapse: collapse;
-	font-size: 14px;
+	font-size: var(--content-font-size, 15px);
 }
 
 .markdown-table th,
@@ -2097,7 +2097,7 @@ p {
 	border-top: 0;
 	background: var(--hover);
 	color: var(--text-2);
-	font-size: 13px;
+	font-size: 0.87em;
 	font-weight: 600;
 }
 
