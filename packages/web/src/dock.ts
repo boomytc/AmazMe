@@ -17,6 +17,7 @@ import {
 	CONVERSATION_RESTORE_ACTION,
 	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
+	WORKSPACE_CHECKPOINT_ACTION,
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
 	WORKSPACE_RELOAD_ACTION,
@@ -69,6 +70,8 @@ export interface WorkspaceEntryLike {
 /** What the host's workspace state carries, as this package reads it. */
 export interface WorkspaceStateLike {
 	readonly cwd: string;
+	/** The workspace's registered name, which a checkpoint is saved under. */
+	readonly name: string;
 	readonly workspaces?: readonly string[];
 	readonly view: WorkspaceViewLike;
 }
@@ -438,6 +441,13 @@ function rootRow(locale: Locale, title: string, path: string, cwd: string): Pane
  * reads), or the file that was read with its text below. A refusal the host reported — outside the
  * working directory, binary, missing — is the panel's notice.
  */
+/** The client path the host uses for one file: relative for the primary workspace, prefixed for grants. */
+function clientPath(name: string, relative: string): string {
+	const inner = relative.replace(/^\.\/+/, "");
+	if (name === "primary") return inner;
+	return inner.length === 0 ? `grant/${name}` : `grant/${name}/${inner}`;
+}
+
 export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined): PanelSpec {
 	const title = translate(locale, "dock.files");
 	if (state === undefined) {
@@ -482,7 +492,18 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 				{
 					id: "files:back",
 					title: translate(locale, "dock.contents"),
-					actions: [reload],
+					actions: [
+						reload,
+						{
+							id: WORKSPACE_CHECKPOINT_ACTION,
+							label: translate(locale, "dock.checkpoint"),
+							weight: "line",
+							data: JSON.stringify({
+								workspace: state.name,
+								path: clientPath(state.name, view.path),
+							}),
+						},
+					],
 					rows: [rootRow(locale, translate(locale, "dock.backToFolder"), parent, state.cwd)],
 				},
 			],

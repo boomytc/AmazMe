@@ -118,6 +118,7 @@ export class PageRuntime {
 	private enabledModels: string[] | null = null;
 	private readonly modelScopes = new Map<string, string[] | null>();
 	private paletteSelection = 0;
+	private dockNotice?: P.PanelNotice;
 	private newSessionPending = false;
 	private permissionWrites = new Map<string, Promise<void>>();
 	private confirmedPermissions = new Map<string, ApprovalPolicy>();
@@ -1105,6 +1106,7 @@ export class PageRuntime {
 	}
 	private async action(action: P.PanelAction): Promise<void> {
 		this.panels.notice = undefined;
+		this.dockNotice = undefined;
 		if (
 			action.kind === "open" ||
 			action.kind === "modal-close" ||
@@ -1276,6 +1278,34 @@ export class PageRuntime {
 					? { kind: "file", path: target.path, preserve: true }
 					: { kind: "directory", path: target.path, offset: target.offset },
 			);
+			return;
+		}
+		if (id === A.WORKSPACE_CHECKPOINT_ACTION) {
+			const connection = this.requireConnection(),
+				target: unknown = JSON.parse(data ?? "null");
+			if (
+				!isRecord(target) ||
+				typeof target.workspace !== "string" ||
+				typeof target.path !== "string" ||
+				target.path.length === 0
+			)
+				throw new Error("检查点路径无效");
+			const saved = await this.client.call("POST /api/v1/checkpoints", {
+				body: {
+					checkpoint_id: newId(),
+					workspace: target.workspace,
+					path: target.path,
+				},
+				connection,
+			});
+			if (!connection.active()) return;
+			this.dockNotice = {
+				tone: "info",
+				text: translate(this.preferences.locale, "dock.checkpointSaved", {
+					digest: saved.digest.slice(0, 12),
+				}),
+			};
+			this.render();
 			return;
 		}
 		if (id === A.SUBMIT_MODE_ACTION) {
@@ -2688,6 +2718,7 @@ export class PageRuntime {
 		});
 		const dock = dockView(this.preferences.locale, {
 			usage: this.usage,
+			notice: this.dockNotice,
 			open: this.dock.dockOpen,
 			tab: this.dock.dockTab,
 			cwd,

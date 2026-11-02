@@ -45,6 +45,8 @@ export const WORKSPACE_PAGE_ACTION = "workspace:page";
 export const WORKSPACE_READ_ACTION = "workspace:read";
 /** Open a model-linked file using the session that owns the rendered answer. */
 export const WORKSPACE_FILE_LINK_ACTION = "workspace:file-link";
+/** Save the shown file version as a named checkpoint: `data` carries workspace and client path. */
+export const WORKSPACE_CHECKPOINT_ACTION = "workspace:checkpoint";
 export const QUESTION_ANSWER_ACTION = "question:answer";
 /** Run a terminal command: `data` is the command line. */
 export const TERMINAL_RUN_ACTION = "terminal:run";

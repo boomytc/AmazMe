@@ -284,6 +284,7 @@ export class WorkspaceController {
 			if (!matched) {
 				this.workspace = {
 					cwd: root.host_path,
+					name: root.name,
 					workspaces: roots.map((item) => item.host_path),
 					view: { kind: "denied", path, reason: "目录不属于当前项目" },
 				};
@@ -303,6 +304,7 @@ export class WorkspaceController {
 			if (!matched) {
 				this.workspace = {
 					cwd: root.host_path,
+					name: root.name,
 					workspaces: roots.map((item) => item.host_path),
 					view: { kind: "denied", path, reason: "目录不属于当前项目" },
 				};
@@ -422,6 +424,7 @@ export class WorkspaceController {
 		if (!connection.active() || generation !== this.workspaceGeneration) return;
 		this.workspace = {
 			cwd: root.host_path,
+			name: root.name,
 			workspaces: roots.map((item) => item.host_path),
 			view,
 		};
