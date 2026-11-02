@@ -3325,6 +3325,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
+	/* A tab change alters the page height; keep the reserved gutter whether or not it scrolls. */
+	scrollbar-gutter: stable;
 }
 
 .view-body {
@@ -3342,6 +3344,12 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .library-open .view-body:has(.panel-group[data-skeleton="form"]) {
 	--library-measure: 720px;
+}
+
+/* The settings tabs swap between form, record, and split-workspace panels. One measure for the
+   whole settings surface keeps the category column and the reading column still across tabs. */
+.library-open .library-frame[data-management-current="settings"] .view-body {
+	--library-measure: 840px;
 }
 
 .library-frame {
