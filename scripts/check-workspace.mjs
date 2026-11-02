@@ -817,7 +817,7 @@ export async function checkEntryContracts(repoRoot) {
 			if (sources.size > 12) failures.push(`${entry}: startup source graph ${sources.size} exceeds 12`);
 			for (const path of sources)
 				if (path.endsWith("cli/file-processor.ts") || /utils\/(?:image-|photon)/.test(path))
-					failures.push(`${entry}: presentation or media module in the RPC entry graph ${path}`);
+					failures.push(`${entry}: media or file-processing module in the RPC entry graph ${path}`);
 		} catch (error) {
 			failures.push(`${entry}: ${error.message}`);
 		}

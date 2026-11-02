@@ -127,7 +127,7 @@ function deterministicWasi(clock: VirtualClock) {
 /**
  * QuickJS writes engine diagnostics to fd 1 and 2, which the default shim
  * forwards to the host's stdout and stderr. That output belongs to the host
- * application (for example a TUI), so it is discarded. Reporting every byte as
+ * application (for example an interactive client), so it is discarded. Reporting every byte as
  * written keeps libc from retrying.
  */
 function discardOutput(memory: { readonly buffer: ArrayBufferLike }) {
