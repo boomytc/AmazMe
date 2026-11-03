@@ -308,6 +308,18 @@ ipcMain.handle("amazme:pick-directories", async event => {
 	try { return await pending; } finally { if (folderPicker === pending) folderPicker = undefined; }
 });
 
+/**
+ * Keep the native window backdrop on the canvas the page paints, so a resize or theme flip never
+ * shows a stale fill. Only a window's own main frame may ask, and the colour is a plain hex fill.
+ */
+ipcMain.on("amazme:set-window-background", (event, value: unknown) => {
+	if (typeof value !== "string" || !/^#[0-9a-fA-F]{6}$/u.test(value)) return;
+	const sender = event.sender;
+	const target = BrowserWindow.fromWebContents(sender);
+	if (target === null || target.isDestroyed() || event.senderFrame !== sender.mainFrame) return;
+	target.setBackgroundColor(value);
+});
+
 /** A hidden window cannot parent a modal. Show it before the dialog so the buttons are reachable. */
 function revealWindow(): void {
 	const current = liveWindow();
@@ -578,6 +590,11 @@ async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<
 		title: APP_NAME,
 		icon: APP_ICON,
 		autoHideMenuBar: true,
+		// The page draws its own 48px toolbar. macOS hides the native title bar and keeps the traffic
+		// lights inside that row; the renderer reserves the leading 78px, so the two values move together.
+		...(process.platform === "darwin"
+			? { titleBarStyle: "hiddenInset" as const, trafficLightPosition: { x: 16, y: 18 } }
+			: {}),
 		webPreferences: {
 			preload: fileURLToPath(new URL("./preload.cjs", import.meta.url)),
 			contextIsolation: true,

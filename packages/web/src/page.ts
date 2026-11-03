@@ -1,4 +1,5 @@
 import { PageRuntime } from "./app/page-runtime.ts";
+import { applyDesktopChrome } from "./desktop.ts";
 import { mountPresentation } from "./react/mount.tsx";
 import { Presentation } from "./react/state.ts";
 import { isRecord } from "./transport/api.ts";
@@ -6,6 +7,8 @@ import { isRecord } from "./transport/api.ts";
 let page: PageRuntime | undefined;
 function startWindow(): void {
 	if (page) return;
+	// Before React paints: the titlebar reserves the native window controls only inside a shell.
+	applyDesktopChrome(document.documentElement);
 	const boot: unknown = Reflect.get(globalThis, "__AMAZME_BOOT__");
 	const app =
 		isRecord(boot) &&

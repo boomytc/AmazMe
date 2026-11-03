@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import * as A from "../actions.ts";
 import { type CommandLike, parseCommandLine } from "../commands.ts";
+import { desktopBridge } from "../desktop.ts";
 import { dockView, parseWorkspaceAction } from "../dock.ts";
 import type {
 	AnswerFeedbackList,
@@ -403,8 +404,8 @@ export class PageRuntime {
 					}),
 				);
 		};
-		const bridge: unknown = Reflect.get(globalThis, "amazmeDesktop");
-		if (isRecord(bridge) && typeof bridge.pickDirectories === "function") {
+		const bridge = desktopBridge();
+		if (bridge !== undefined && typeof bridge.pickDirectories === "function") {
 			this.desktop = true;
 			window.addEventListener("focus", this.refreshDesktopPreferences);
 			const pick = bridge.pickDirectories.bind(bridge);

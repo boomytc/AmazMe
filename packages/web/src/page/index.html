@@ -80,7 +80,24 @@
 			</defs>
 		</svg>
 		<div id="amazme-root">
-		<nav class="app-rail" aria-label="{{sidebar.management}}">
+		<header class="titlebar" data-view="chat">
+			<div class="titlebar-leading">
+				<button class="icon-button" type="button" id="sidebar-toggle" aria-label="{{sidebar.toggle}}" title="{{sidebar.toggle}}" aria-expanded="true" aria-controls="sidebar">
+					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
+				</button>
+				<div class="titlebar-titles"><span class="crumb" id="session-title">{{header.noSession}}</span></div>
+			</div>
+			<div class="titlebar-trailing">
+				<div class="titlebar-search" id="titlebar-search-slot"></div>
+				<!-- Pending tool approvals stay visible when the transcript is empty or the cards are off screen. -->
+				<span class="approval-status" id="approval-status" hidden></span>
+				<!-- Fork and the session tools. Compaction lives on the context ring. -->
+				<div class="titlebar-actions" id="run-actions"></div>
+				<!-- Action diagnostics stay visible; connectivity is shown on the rail's brand mark. -->
+				<span class="connection" id="connection" role="status" aria-live="polite" hidden></span>
+			</div>
+		</header>
+		<nav class="app-rail" aria-label="{{nav.primary}}">
 			<div class="rail-brand" id="connection-status" data-state="connecting" tabindex="0" role="status" aria-live="polite" aria-atomic="true" aria-label="AmazMe" aria-describedby="connection-status-text">
 				<span class="brand-mark" aria-hidden="true"><svg class="pixel-logo" viewBox="0 0 10 4" aria-hidden="true"><use href="#i-logo-a" class="pixel-a"></use><use href="#i-logo-m" class="pixel-m"></use></svg><span class="connection-dot" aria-hidden="true"></span></span>
 				<span class="connection-tooltip">
@@ -102,18 +119,6 @@
 					<button class="icon-button" type="button" id="roster-filter-toggle" aria-label="{{sidebar.filter}}" title="{{sidebar.filter}}" aria-expanded="false" aria-controls="roster-filter">
 						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
 					</button>
-					<!-- An expanded sidebar owns its close control; a collapsed one leaves the toggle in the main header. -->
-					<button
-						class="icon-button"
-						type="button"
-						id="sidebar-toggle"
-						aria-label="{{sidebar.toggle}}"
-						title="{{sidebar.toggle}}"
-						aria-expanded="true"
-						aria-controls="sidebar"
-					>
-						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
-					</button>
 				</div>
 				<p class="sidebar-label">{{sidebar.sessions}}</p>
 				<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
@@ -125,29 +130,6 @@
 			</div>
 		</aside>
 		<main class="center" id="center" data-state="empty">
-			<header class="header">
-				<div class="header-start">
-					<button class="crumb-back" type="button" id="view-back" aria-label="{{header.back}}" hidden>
-						<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-arrow-left"></use></svg>
-					</button>
-					<div class="header-titles"><span class="crumb" id="session-title">{{header.noSession}}</span></div>
-				</div>
-				<div class="header-end">
-					<div class="transcript-search" id="transcript-search" role="search" hidden>
-						<input class="transcript-search-input" id="transcript-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="{{transcript.search}}" aria-label="{{transcript.searchLabel}}" />
-						<span class="transcript-search-count" id="transcript-search-count" aria-live="polite"></span>
-						<button class="icon-button transcript-search-close" type="button" id="transcript-search-close" aria-label="{{transcript.searchClose}}" title="{{transcript.searchClose}}">
-							<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg>
-						</button>
-					</div>
-					<!-- Pending tool approvals. Stays in the header when the transcript is empty or the cards are off screen. -->
-					<span class="approval-status" id="approval-status" hidden></span>
-					<!-- Fork and the session tools. Compaction lives on the context ring. -->
-					<div class="header-actions" id="run-actions"></div>
-				</div>
-				<!-- Action diagnostics stay visible; connectivity is shown on the rail's brand mark. -->
-				<span class="connection" id="connection" role="status" aria-live="polite" hidden></span>
-			</header>
 			<div class="session-warning" id="session-warning" role="alert" hidden></div>
 			<!-- The management panel: it replaces the conversation while a view other than chat is open. -->
 			<section class="view" id="view" hidden>

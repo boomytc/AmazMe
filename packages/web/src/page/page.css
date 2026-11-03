@@ -1,9 +1,11 @@
 /*
- * Page shell. A persistent icon rail, a contextual sidebar, the main page, and an optional session dock.
- * The sidebar, the page, and the dock are grid columns; the sidebar and the dock can each be closed,
- * handing their track back to the conversation. The layout targets desktop windows only, so no rule
- * here reacts to touch pointers, safe areas, or a narrow viewport. The settings page keeps its category
- * column. Colours, radii, and type sizes come from tokens.css; nothing here names a colour literal.
+ * Page shell. One window toolbar row, a persistent icon rail, a contextual sidebar, the main page,
+ * and an optional session dock. The toolbar, the rail, the sidebar, the page, and the dock are grid
+ * areas; the sidebar and the dock can each be closed, handing their track back to the conversation.
+ * The toolbar is also the desktop window's title bar: inside a shell it reserves the macOS traffic
+ * lights and doubles as the drag region. The layout targets desktop windows only, so no rule here
+ * reacts to touch pointers, safe areas, or a narrow viewport. Colours, radii, and type sizes come
+ * from tokens.css; nothing here names a colour literal.
  */
 
 :root {
@@ -13,6 +15,7 @@
 	   320px for the narrowest dock, then it grows back to 380px. */
 	--dock-width: clamp(320px, calc(100vw - var(--rail-width) - var(--sidebar-width) - 560px), 380px);
 	--column-max: 768px;
+	--titlebar-height: 48px;
 }
 
 /* A collapsed sidebar already hands its width to the conversation, so the dock can keep 380px. */
@@ -39,6 +42,10 @@ body {
 	margin: 0;
 	display: grid;
 	grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr);
+	grid-template-rows: var(--titlebar-height) minmax(0, 1fr);
+	grid-template-areas:
+		"titlebar titlebar titlebar"
+		"rail sidebar main";
 	height: 100vh;
 	height: 100dvh;
 	overflow: hidden;
@@ -98,14 +105,23 @@ body.startup-failed > :not(.startup-error) {
 
 body.dock-open {
 	grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--dock-width);
+	grid-template-areas:
+		"titlebar titlebar titlebar titlebar"
+		"rail sidebar main dock";
 }
 
 body.sidebar-collapsed {
 	grid-template-columns: var(--rail-width) minmax(0, 1fr);
+	grid-template-areas:
+		"titlebar titlebar"
+		"rail main";
 }
 
 body.sidebar-collapsed.dock-open {
 	grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--dock-width);
+	grid-template-areas:
+		"titlebar titlebar titlebar"
+		"rail main dock";
 }
 
 body.library-open,
@@ -113,17 +129,25 @@ body.library-open.sidebar-collapsed,
 body.library-open.dock-open,
 body.library-open.sidebar-collapsed.dock-open {
 	grid-template-columns: var(--rail-width) minmax(0, 1fr);
+	grid-template-areas:
+		"titlebar titlebar"
+		"rail main";
 }
 
 body.library-open .sidebar,
-body.library-open #dock,
-body.library-open .header {
+body.library-open #dock {
 	display: none;
 }
 
 body.sidebar-collapsed .sidebar {
 	display: none;
 }
+
+.titlebar { grid-area: titlebar; }
+.app-rail { grid-area: rail; }
+.sidebar { grid-area: sidebar; }
+.center { grid-area: main; }
+.dock { grid-area: dock; }
 
 .pty-surface {
 	min-width: 0;
@@ -795,45 +819,65 @@ p {
 	container-type: inline-size;
 }
 
-.header {
-	flex: none;
+/* ----------------------------------------------------------------- titlebar */
+
+/*
+ * The one window toolbar. Inside the desktop shell this is also the title bar: the whole row drags
+ * the window, the macOS traffic lights sit in the leading inset, and interactive children opt out of
+ * the drag region. The row spans every column, so the conversation's controls no longer move when
+ * the sidebar or the dock open.
+ */
+.titlebar {
 	display: flex;
 	align-items: center;
-	justify-content: space-between;
-	gap: 12px;
+	gap: 8px;
 	min-width: 0;
-	height: 52px;
-	padding: 0 var(--space-14) 0 var(--space-10);
+	height: var(--titlebar-height);
+	padding: 0 var(--space-14) 0 var(--space-12);
+	-webkit-app-region: drag;
+	user-select: none;
 }
 
-.header-start,
-.header-end {
+:root[data-desktop="darwin"] .titlebar {
+	/* Traffic lights: x 16, three 12px buttons and their gaps end inside 68px. */
+	padding-left: 78px;
+}
+
+.titlebar button,
+.titlebar input,
+.titlebar [role="search"] {
+	-webkit-app-region: no-drag;
+}
+
+.titlebar-leading,
+.titlebar-trailing {
 	display: flex;
 	align-items: center;
 	min-width: 0;
 }
 
-.header-start {
+.titlebar-leading {
 	flex: 1 1 auto;
 	gap: 4px;
 }
 
-.header-end {
+.titlebar-trailing {
 	flex: none;
 	gap: 4px;
+	margin-left: 8px;
 }
 
-/* The transcript search is a header control; its slot follows the centre column, including the dock. */
-.header-search {
+/* The transcript search is a toolbar control; its slot follows the current view, not the window. */
+.titlebar-search {
 	display: flex;
 	flex: 0 1 auto;
 	min-width: 0;
 }
-.header-search:empty {
+.titlebar-search:empty {
 	display: none;
 }
 
-.header-titles {
+.titlebar-titles {
 	display: flex;
 	flex: 1 1 auto;
 	flex-direction: column;
@@ -843,8 +887,7 @@ p {
 }
 
 .icon-button,
-.crumb-back,
-.header-action {
+.titlebar-action {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -863,8 +906,7 @@ p {
 }
 
 .icon-button:hover,
-.crumb-back:hover,
-.header-action:hover:not(:disabled) {
+.titlebar-action:hover:not(:disabled) {
 	background: var(--hover);
 	color: var(--text);
 }
@@ -901,12 +943,12 @@ p {
 	color: var(--text);
 }
 
-.header-action.pressed {
+.titlebar-action.pressed {
 	background: var(--active);
 	color: var(--text);
 }
 
-.header-action:disabled {
+.titlebar-action:disabled {
 	opacity: 0.4;
 	cursor: default;
 }
@@ -955,7 +997,7 @@ p {
 	white-space: nowrap;
 }
 
-.header-actions {
+.titlebar-actions {
 	display: flex;
 	align-items: center;
 	gap: 2px;
@@ -983,79 +1025,6 @@ p {
 	color: var(--warn);
 	font-size: 12px;
 	overflow-wrap: anywhere;
-}
-
-/* Header priority: usage contracts first, then action diagnostics, then the session name.
-   The center can be much narrower than the window when both side panels are columns. */
-@container (max-width: 880px) {
-	.connection {
-		max-width: 120px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-}
-
-@container (max-width: 680px) {
-	.header {
-		flex-wrap: wrap;
-		height: auto;
-		min-height: 52px;
-		gap: 6px 8px;
-		padding: 8px 10px 8px 8px;
-	}
-
-	/* Priority goes to the session title and primary actions before secondary controls wrap. */
-	.header-start {
-		flex: 1 1 160px;
-		min-width: 0;
-	}
-
-	.header-titles {
-		flex: 1 1 auto;
-		min-width: 0;
-	}
-
-	.crumb {
-		flex: 1 1 auto;
-		max-width: 100%;
-	}
-
-	.header-end {
-		flex: 0 1 auto;
-		flex-wrap: wrap;
-		margin-left: auto;
-		row-gap: 4px;
-	}
-
-	.lane-status,
-	.connection:not(.error) {
-		display: none;
-	}
-
-	.header-actions {
-		margin-left: auto;
-		margin-right: 0;
-		gap: 4px;
-	}
-
-	.approval-status {
-		margin-right: 2px;
-	}
-
-	.connection.error {
-		display: flex;
-		flex: 0 0 100%;
-		max-width: 100%;
-		margin-left: 0;
-		white-space: normal;
-		overflow-wrap: anywhere;
-	}
-}
-
-@container (max-width: 480px) {
-	.header-action:disabled {
-		display: none;
-	}
 }
 
 /* --------------------------------------------------------------- transcript */
@@ -1106,8 +1075,7 @@ p {
 
 /* Show the composer for attached sessions and new chat drafts. */
 .center[data-attached="false"]:not([data-draft="true"]) .composer-dock,
-.center[data-read-only="true"] .composer-dock,
-.center[data-attached="false"] .header-end { display: none; }
+.center[data-read-only="true"] .composer-dock { display: none; }
 
 .center[data-state="empty"]:not([data-draft="true"]):is([data-attached="false"], [data-read-only="true"]) .column {
 	flex: 0 0 auto;
@@ -3459,34 +3427,6 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	padding-top: 0;
 }
 
-.library-back {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	width: 100%;
-	margin: 0 0 8px;
-	padding: 8px 10px;
-	border: 0;
-	border-radius: var(--radius-sm);
-	background: transparent;
-	color: var(--text-2);
-	font: inherit;
-	font-size: 13px;
-	text-align: left;
-	cursor: pointer;
-}
-
-.library-back:hover {
-	background: var(--hover);
-	color: var(--text);
-}
-
-.library-back .icon {
-	width: 16px;
-	height: 16px;
-	flex: none;
-}
-
 .library-nav[hidden] { display: none; }
 
 .library-frame > .view-body {
@@ -4254,8 +4194,7 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 /* Icon-sized controls share the radius family and the same press transition; their size and
    placement stay with the component that owns them. */
 .icon-button,
-.crumb-back,
-.header-action,
+.titlebar-action,
 .message-action,
 .session-more,
 .modal-close,

@@ -1658,7 +1658,7 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 	);
 
 	const searchSlot = searchOpen
-		? document.getElementById("header-search-slot")
+		? document.getElementById("titlebar-search-slot")
 		: null;
 
 	return (

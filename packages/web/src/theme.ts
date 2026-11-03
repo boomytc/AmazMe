@@ -5,6 +5,7 @@
  * the settings lands without a reload. `tokens.css` keys its dark palette off `:root[data-theme="dark"]`.
  * `system` is the default, so a page with no host preference still follows the operating system live.
  */
+import { setWindowBackground } from "./desktop.ts";
 
 /** What the agent's settings store: the system's palette, or one fixed choice. */
 export type ThemePreference = "system" | "light" | "dark";
@@ -37,6 +38,10 @@ function paint(): void {
 	document.documentElement.dataset.theme = dark ? "dark" : "light";
 	// Native controls and scrollbars follow the same choice as the palette.
 	document.documentElement.style.colorScheme = preference === "system" ? "light dark" : preference;
+	// The window backdrop is visible while the window resizes; keep it on the painted canvas.
+	setWindowBackground(
+		getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim(),
+	);
 }
 
 /** Apply a preference now; every render calls this, so a switch lands without a reload. */

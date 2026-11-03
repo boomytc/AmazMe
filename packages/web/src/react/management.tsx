@@ -38,7 +38,6 @@ import {
 	type PanelSpec,
 	type PanelText,
 	type PanelView,
-	CHAT_VIEW,
 	SETTINGS_FIELD_ACTION,
 	SETTINGS_VIEW,
 	type SettingsSearchHit,
@@ -122,7 +121,6 @@ export interface ManagementNavigationProps {
 	readonly onClearSearch: () => void;
 	readonly onSelectGroup: (groupId: string) => void;
 	readonly onSelectHit: (hit: SettingsSearchHit, index: number) => void;
-	readonly onBack: () => void;
 }
 
 /**
@@ -141,15 +139,10 @@ export function ManagementNavigation({
 	onClearSearch,
 	onSelectGroup,
 	onSelectHit,
-	onBack,
 }: ManagementNavigationProps) {
 	const searching = query.trim().length > 0;
 	return (
 		<aside className="library-nav">
-			<button type="button" className="library-back" onClick={onBack}>
-				<Icon name="arrow-left" className="icon" />
-				<span>{translate(locale, "header.back")}</span>
-			</button>
 			<SearchField
 				id="management-section-search"
 				locale={locale}
@@ -1106,7 +1099,6 @@ function ManagementPanel({
 					}}
 					onSelectGroup={selectGroup}
 					onSelectHit={selectHit}
-					onBack={() => onAction({ kind: "open", panel: CHAT_VIEW })}
 				/>
 			)}
 			<div className="view-body">

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import * as A from "../actions.ts";
+import { desktopBridge } from "../desktop.ts";
 import type { Locale } from "../locale.ts";
 import { CHAT_VIEW, SETTINGS_VIEW } from "../panels.ts";
 import * as P from "../projects.ts";
@@ -26,7 +27,7 @@ import { rosterGroups, windowTitle } from "../view.ts";
 import { Composer, Transcript } from "./chat.tsx";
 import { Dock } from "./dock.tsx";
 import { Management, ManagementModal } from "./management.tsx";
-import type { Presentation, ShellView } from "./state.ts";
+import type { ConnectionNotice, Presentation, ShellView } from "./state.ts";
 
 export function Icon({ name }: { readonly name: string }) {
 	return (
@@ -233,13 +234,9 @@ function SessionRow({
 function Navigation({
 	view,
 	actions,
-	collapsed,
-	toggle,
 }: {
 	readonly view: ShellView;
 	readonly actions: PageRenderer;
-	readonly collapsed: boolean;
-	readonly toggle: () => void;
 }) {
 	const [filterOpen, setFilterOpen] = useState(view.rosterFilter.length > 0);
 	const copy = (key: Parameters<typeof translate>[1]) =>
@@ -289,18 +286,6 @@ function Navigation({
 						}}
 					>
 						<Icon name="search" />
-					</button>
-					<button
-						className="icon-button"
-						type="button"
-						id="sidebar-toggle"
-						aria-label={copy("sidebar.toggle")}
-						title={copy("sidebar.toggle")}
-						aria-expanded={!collapsed}
-						aria-controls="sidebar"
-						onClick={toggle}
-					>
-						<Icon name="panel-left" />
 					</button>
 				</div>
 				<div
@@ -497,6 +482,136 @@ export class StartupBoundary extends Component<
 	}
 }
 
+/**
+ * The window's one toolbar row. It replaces the native title bar inside the desktop shell (the
+ * traffic lights sit in the leading inset), so it carries the current view's title, the sidebar
+ * toggle or the management back control, and the conversation's own controls. A plain browser
+ * renders the same row without the window treatment.
+ */
+function Titlebar({
+	view,
+	actions,
+	collapsed,
+	toggle,
+	connection,
+	connectionText,
+	composerVisible,
+}: {
+	readonly view: ShellView;
+	readonly actions: PageRenderer;
+	readonly collapsed: boolean;
+	readonly toggle: () => void;
+	readonly connection: ConnectionNotice;
+	readonly connectionText: string;
+	readonly composerVisible: boolean;
+}) {
+	const copy = (key: Parameters<typeof translate>[1]) =>
+		translate(view.locale, key);
+	const management = view.panel.current !== CHAT_VIEW;
+	const attached = Boolean(view.attachedId) || view.connecting === true;
+	const title = management
+		? view.pageTitle
+		: (view.sessionLabel ?? copy("header.noSession"));
+	return (
+		<header className="titlebar" data-view={management ? "management" : "chat"}>
+			<div className="titlebar-leading">
+				{management ? (
+					<button
+						className="icon-button"
+						type="button"
+						aria-label={copy("header.back")}
+						title={copy("header.back")}
+						onClick={() =>
+							actions.onPanelAction({ kind: "open", panel: CHAT_VIEW })
+						}
+					>
+						<Icon name="arrow-left" />
+					</button>
+				) : (
+					<button
+						className="icon-button"
+						type="button"
+						aria-label={copy("sidebar.toggle")}
+						title={copy("sidebar.toggle")}
+						aria-expanded={!collapsed}
+						aria-controls="sidebar"
+						onClick={toggle}
+					>
+						<Icon name="panel-left" />
+					</button>
+				)}
+				<div className="titlebar-titles">
+					<span className="crumb" id="session-title">
+						{title ?? copy("header.noSession")}
+					</span>
+					{management ? null : (
+						<span className="lane-status" id="lane-status" hidden={!view.lane}>
+							{view.lane}
+						</span>
+					)}
+				</div>
+			</div>
+			<div className="titlebar-trailing">
+				{management || !attached ? null : (
+					<>
+						{/* The in-conversation search follows this column's context, not the window. */}
+						<div className="titlebar-search" id="titlebar-search-slot" />
+						<span
+							className="approval-status"
+							id="approval-status"
+							hidden={!view.approvalIndicator}
+						>
+							{view.approvalIndicator?.label}
+						</span>
+						<div className="titlebar-actions" id="run-actions">
+							<button
+								className="titlebar-action"
+								type="button"
+								aria-label={view.run.fork.label}
+								title={view.run.fork.label}
+								disabled={view.run.fork.disabled}
+								onClick={() =>
+									actions.onPanelAction({
+										kind: "command",
+										id: view.run.fork.id,
+										data: view.run.fork.data,
+									})
+								}
+							>
+								<Icon name="git-fork" />
+							</button>
+							<button
+								className={`titlebar-action${view.dock.open ? " pressed" : ""}`}
+								type="button"
+								aria-label={view.dock.toggle.label}
+								title={view.dock.toggle.label}
+								aria-expanded={view.dock.open}
+								onClick={() =>
+									actions.onPanelAction({
+										kind: "command",
+										id: A.DOCK_TOGGLE_ACTION,
+										data: undefined,
+									})
+								}
+							>
+								<Icon name="panel-right" />
+							</button>
+						</div>
+					</>
+				)}
+				<span
+					className="connection"
+					id="connection"
+					role={connection.kind === "error" ? "alert" : "status"}
+					hidden={connection.kind !== "error" || composerVisible}
+				>
+					{connectionText}
+				</span>
+			</div>
+		</header>
+	);
+}
+
 export function App({ presentation }: { readonly presentation: Presentation }) {
 	const view = useSyncExternalStore(
 		presentation.shell.subscribe,
@@ -558,7 +673,8 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 		setCollapsed(true);
 	}, [dockOpen]);
 	useEffect(() => {
-		const removeMenu = window.amazmeDesktop?.onMenuAction?.((action) => {
+		const desktop = desktopBridge() !== undefined;
+		const removeMenu = desktopBridge()?.onMenuAction?.((action) => {
 			if (action === "new-session") presentation.onShortcut("session.new");
 			else if (action === "settings")
 				presentation.onPanelAction({ kind: "open", panel: SETTINGS_VIEW });
@@ -576,7 +692,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			const font = fontSizeShortcut(
 				event,
 				navigator.platform,
-				window.amazmeDesktop !== undefined,
+				desktop,
 			);
 			if (font) {
 				event.preventDefault();
@@ -606,7 +722,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			});
 			if (
 				id &&
-				["session.new", "view.cycle", "run.stop"].includes(id) &&
+				["session.new", "dock.toggle", "run.stop"].includes(id) &&
 				(id !== "run.stop" || presentation.view?.busy === true)
 			) {
 				event.preventDefault();
@@ -636,7 +752,16 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			: connection.text;
 	return (
 		<>
-			<nav className="app-rail" aria-label={copy("sidebar.management")}>
+			<Titlebar
+				view={view}
+				actions={presentation}
+				collapsed={collapsed}
+				toggle={() => setCollapsed(!collapsed)}
+				connection={connection}
+				connectionText={text}
+				composerVisible={composerVisible}
+			/>
+			<nav className="app-rail" aria-label={copy("nav.primary")}>
 				<button
 					type="button"
 					className="rail-brand"
@@ -701,12 +826,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				</div>
 			</nav>
 			{view.panel.current === CHAT_VIEW && (
-				<Navigation
-					view={view}
-					actions={presentation}
-					collapsed={collapsed}
-					toggle={() => setCollapsed(!collapsed)}
-				/>
+				<Navigation view={view} actions={presentation} />
 			)}
 			<main
 				className="center"
@@ -716,92 +836,6 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				data-read-only={view.readOnly === true}
 				data-draft={view.sessionDraft !== undefined}
 			>
-				<header className="header">
-					<div className="header-start">
-						{collapsed && (
-							<button
-								className="icon-button"
-								type="button"
-								aria-label={copy("sidebar.toggle")}
-								onClick={() => setCollapsed(false)}
-							>
-								<Icon name="panel-left" />
-							</button>
-						)}
-						<div className="header-titles">
-							<span className="crumb" id="session-title">
-								{view.sessionLabel ?? copy("header.noSession")}
-							</span>
-							<span
-								className="lane-status"
-								id="lane-status"
-								hidden={!view.lane}
-							>
-								{view.lane}
-							</span>
-						</div>
-					</div>
-					<div className="header-end">
-						{/* The in-conversation search lives in the header so it follows the
-						   centre column instead of the window when the dock opens. */}
-						<div className="header-search" id="header-search-slot" />
-						<span
-							className="approval-status"
-							id="approval-status"
-							hidden={!view.approvalIndicator}
-						>
-							{view.approvalIndicator?.label}
-						</span>
-						<div className="header-actions" id="run-actions">
-							<button
-								className="header-action"
-								type="button"
-								aria-label={view.run.fork.label}
-								title={view.run.fork.label}
-								disabled={view.run.fork.disabled}
-								onClick={() =>
-									report({
-										kind: "command",
-										id: view.run.fork.id,
-										data: view.run.fork.data,
-									})
-								}
-							>
-								<Icon name="git-fork" />
-								<span className="sr-only header-action-label">
-									{view.run.fork.label}
-								</span>
-							</button>
-							<button
-								className={`header-action${view.dock.open ? " pressed" : ""}`}
-								type="button"
-								aria-label={view.dock.toggle.label}
-								title={view.dock.toggle.label}
-								aria-expanded={view.dock.open}
-								onClick={() =>
-									report({
-										kind: "command",
-										id: A.DOCK_TOGGLE_ACTION,
-										data: undefined,
-									})
-								}
-							>
-								<Icon name="panel-right" />
-								<span className="sr-only header-action-label">
-									{view.dock.toggle.label}
-								</span>
-							</button>
-						</div>
-					</div>
-					<span
-						className="connection"
-						id="connection"
-						role={connection.kind === "error" ? "alert" : "status"}
-						hidden={connection.kind !== "error" || composerVisible}
-					>
-						{text}
-					</span>
-				</header>
 				{view.mirrorWarning && (
 					<div className="session-warning" id="session-warning" role="alert">
 						{view.mirrorWarning.path} {view.mirrorWarning.detail}
