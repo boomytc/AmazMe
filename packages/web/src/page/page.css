@@ -632,28 +632,11 @@ p {
 .section-search-clear {
 	position: absolute;
 	right: 4px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 22px;
-	height: 22px;
-	padding: 0;
-	border: 0;
-	border-radius: var(--radius-xs);
-	background: transparent;
 	color: var(--text-3);
-	cursor: pointer;
 }
 
 .section-search-clear .icon {
 	position: static;
-	width: 14px;
-	height: 14px;
-}
-
-.section-search-clear:hover {
-	background: var(--active);
-	color: var(--text);
 }
 
 .section-search:has(.section-search-clear:not([hidden])) .roster-filter-input {
@@ -752,22 +735,7 @@ p {
 .session-more {
 	position: absolute;
 	right: 4px;
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 28px;
-	height: 28px;
-	padding: 0;
-	border: 0;
-	border-radius: var(--radius-sm);
-	background: transparent;
-	color: var(--text-2);
-	cursor: pointer;
 	opacity: 0;
-}
-.session-more .icon {
-	width: 18px;
-	height: 18px;
 }
 .session-row:hover .session-more,
 .session-row:focus-within .session-more,
@@ -778,11 +746,6 @@ p {
 .session-row:focus-within .session-age,
 .session-row:has(.session-more[aria-expanded="true"]) .session-age {
 	visibility: hidden;
-}
-.session-more:hover,
-.session-more[aria-expanded="true"] {
-	background: var(--hover);
-	color: var(--text);
 }
 .session-menu {
 	position: fixed;
@@ -913,7 +876,35 @@ p {
 	color: var(--text);
 }
 
+/* Three sizes cover every icon control: 32 for headers and panel actions, 28 for row and menu
+   actions, 22 for compact clears. */
+.icon-button--compact {
+	width: 28px;
+	height: 28px;
+}
+
+.icon-button--mini {
+	width: 22px;
+	height: 22px;
+}
+
+.icon-button--compact .icon {
+	width: 16px;
+	height: 16px;
+}
+
+.icon-button--mini .icon {
+	width: 14px;
+	height: 14px;
+}
+
+.icon-button:disabled {
+	opacity: 0.45;
+	cursor: default;
+}
+
 .icon-button[aria-expanded="true"] {
+	background: var(--hover);
 	color: var(--text);
 }
 
@@ -1327,27 +1318,7 @@ p {
 }
 
 .message-action {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	width: 28px;
-	height: 28px;
-	padding: 0;
-	border: 0;
-	border-radius: var(--radius-sm);
-	background: transparent;
 	color: var(--text-3);
-	cursor: pointer;
-}
-
-.message-action .icon {
-	width: 16px;
-	height: 16px;
-}
-
-.message-action:hover {
-	background: var(--hover);
-	color: var(--text);
 }
 
 .message-action.selected {
@@ -2859,9 +2830,7 @@ p {
 }
 .suggestion-accept kbd { padding: 0 5px; border: 1px solid var(--line); border-radius: var(--radius-xs); font: 11px/1.8 var(--font-sans); color: var(--text-2); }
 .suggestion-accept:hover kbd { border-color: var(--line-strong); color: var(--text); }
-.suggestion-dismiss { pointer-events: auto; flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--text-3); cursor: pointer; }
-.suggestion-dismiss:hover { background: var(--hover); color: var(--text); }
-.suggestion-dismiss .icon { width: 14px; height: 14px; }
+.suggestion-dismiss { pointer-events: auto; color: var(--text-3); }
 
 .composer-input {
 	display: block;
@@ -3323,22 +3292,6 @@ nav.file-breadcrumbs .file-crumb {
 nav.file-breadcrumbs button.file-crumb:hover { background: var(--hover); color: var(--text); }
 nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500; }
 .file-path-separator { color: var(--text-3); font-size: 12px; }
-.file-icon-button {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 32px;
-	height: 32px;
-	padding: 0;
-	border: 0;
-	border-radius: var(--radius-sm);
-	background: transparent;
-	color: var(--text-2);
-	cursor: pointer;
-}
-.file-icon-button:hover { background: var(--hover); color: var(--text); }
-.file-icon-button .icon { width: 15px; height: 15px; }
 .file-filter {
 	grid-column: 1 / -1;
 	display: flex;
@@ -4275,28 +4228,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	color: var(--text-2);
 	font-size: 13px;
 	line-height: 1.6;
-}
-
-.modal-close {
-	display: inline-flex;
-	align-items: center;
-	justify-content: center;
-	flex: none;
-	width: 28px;
-	height: 28px;
-	padding: 0;
-	border: 0;
-	border-radius: var(--radius-sm);
-	background: transparent;
-	color: var(--text-2);
-	cursor: pointer;
-}
-
-.modal-close:disabled { opacity: 0.45; cursor: default; }
-
-.modal-close:hover:not(:disabled) {
-	background: var(--hover);
-	color: var(--text);
 }
 
 /* Icon-sized controls share the radius family and the same press transition; their size and

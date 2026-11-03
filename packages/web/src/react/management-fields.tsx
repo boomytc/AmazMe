@@ -1267,7 +1267,7 @@ export function SearchField({
 			/>
 			<button
 				type="button"
-				className="section-search-clear"
+				className="section-search-clear icon-button icon-button--mini"
 				aria-label={translate(locale, "panel.settings.searchClear")}
 				hidden={value.length === 0}
 				onClick={onClear}

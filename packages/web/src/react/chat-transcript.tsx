@@ -92,7 +92,7 @@ function CopyButton({
 	locale,
 	text,
 	label,
-	className = "message-action",
+	className = "message-action icon-button icon-button--compact",
 	visibleLabel = false,
 }: CopyButtonProps) {
 	const [outcome, setOutcome] = useState<"idle" | "copied" | "failed">("idle");
@@ -172,7 +172,7 @@ function MessageActions({ block, locale, actions }: MessageActionsProps) {
 				locale={locale}
 				text={block.text}
 				label={ranges.length > 0 ? "copy.sensitive" : "copy.copy"}
-				className={`message-action${ranges.length > 0 ? " copy-sensitive" : ""}`}
+				className={`message-action icon-button icon-button--compact${ranges.length > 0 ? " copy-sensitive" : ""}`}
 				visibleLabel={ranges.length > 0}
 			/>
 			{ranges.length > 0 ? (
@@ -180,7 +180,7 @@ function MessageActions({ block, locale, actions }: MessageActionsProps) {
 					locale={locale}
 					text={maskedText(block.text)}
 					label="copy.masked"
-					className="message-action copy-masked"
+					className="message-action copy-masked icon-button icon-button--compact"
 					visibleLabel
 				/>
 			) : null}
@@ -188,7 +188,7 @@ function MessageActions({ block, locale, actions }: MessageActionsProps) {
 				<>
 					<button
 						type="button"
-						className={`message-action${feedback.rating === "up" ? " selected" : ""}`}
+						className={`message-action icon-button icon-button--compact${feedback.rating === "up" ? " selected" : ""}`}
 						data-action={feedback.up.id}
 						data-action-data={feedback.up.data}
 						title={feedback.up.label}
@@ -200,7 +200,7 @@ function MessageActions({ block, locale, actions }: MessageActionsProps) {
 					</button>
 					<button
 						type="button"
-						className={`message-action${feedback.rating === "down" ? " selected" : ""}`}
+						className={`message-action icon-button icon-button--compact${feedback.rating === "down" ? " selected" : ""}`}
 						data-action={feedback.down.id}
 						data-action-data={feedback.down.data}
 						title={feedback.down.label}

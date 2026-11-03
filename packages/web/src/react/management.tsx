@@ -2001,7 +2001,7 @@ function ModalContent({
 				</div>
 				<button
 					type="button"
-					className="modal-close"
+					className="modal-close icon-button icon-button--compact"
 					aria-label={translate(locale, "panel.dismiss")}
 					disabled={modal.pending === true}
 					onClick={onClose}

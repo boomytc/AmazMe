@@ -684,7 +684,7 @@ function Suggestion({
 				</button>
 				<button
 					type="button"
-					className="suggestion-dismiss"
+					className="suggestion-dismiss icon-button icon-button--compact"
 					title={translate(view.locale, "composer.dismissSuggestion")}
 					aria-label={translate(view.locale, "composer.dismissSuggestion")}
 					onClick={dismiss}

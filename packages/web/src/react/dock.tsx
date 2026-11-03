@@ -1320,7 +1320,7 @@ function FileNavigation({
 				locale={locale}
 				label={translate(locale, "dock.copyPath")}
 				text={files.breadcrumbs.at(-1)?.path ?? files.cwd}
-				className="file-icon-button"
+				className="file-icon-button icon-button"
 			/>
 			{files.filterScope === undefined ? null : (
 				<>
@@ -1359,7 +1359,7 @@ function FileNavigation({
 						/>
 						<button
 							type="button"
-							className="file-icon-button"
+							className="file-icon-button icon-button"
 							title={translate(locale, "dock.clearFilter")}
 							aria-label={translate(locale, "dock.clearFilter")}
 							hidden={query.length === 0}

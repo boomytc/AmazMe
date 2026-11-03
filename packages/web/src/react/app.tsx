@@ -97,7 +97,7 @@ function RosterMenu({
 					event.preventDefault();
 					setOpen(true);
 				}}
-				className="session-more"
+				className="session-more icon-button icon-button--compact"
 				type="button"
 				aria-label={label}
 				title={label}
@@ -330,7 +330,7 @@ function Navigation({
 					/>
 					<button
 						type="button"
-						className="section-search-clear"
+						className="section-search-clear icon-button icon-button--mini"
 						aria-label={copy("sidebar.clearFilter")}
 						title={copy("sidebar.clearFilter")}
 						hidden={view.rosterFilter.length === 0}
