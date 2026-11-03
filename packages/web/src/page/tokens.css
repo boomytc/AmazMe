@@ -86,9 +86,45 @@
 	--logo-coral: #c4604c;
 	--logo-yellow: #bd7d17;
 
-	/* The switch's knob and the shadow under it. */
 	--knob: #ffffff;
 	--shadow-knob: 0 1px 2px rgba(0, 0, 0, 0.2);
+
+	/* Surface titles: one role, one size. Body copy stays with the component that owns it. */
+	--text-greeting: 30px;
+	--line-greeting: 38px;
+	--text-welcome-title: 24px;
+	--line-welcome-title: 32px;
+	--text-page-title: 22px;
+	--line-page-title: 30px;
+	--text-section-title: 20px;
+	--line-section-title: 28px;
+	--text-modal-title: 17px;
+	--line-modal-title: 24px;
+	--text-dock-title: 15px;
+	--line-dock-title: 20px;
+	--text-group-title: 14px;
+	--line-group-title: 22px;
+
+	/* Spacing: shell gaps and paddings snap to this 2px scale. */
+	--space-2: 2px;
+	--space-4: 4px;
+	--space-6: 6px;
+	--space-8: 8px;
+	--space-10: 10px;
+	--space-12: 12px;
+	--space-14: 14px;
+	--space-16: 16px;
+	--space-20: 20px;
+	--space-24: 24px;
+
+	/* Stacking: the dock's inner jump, page overlays, then menus above both. */
+	--z-brand: 1;
+	--z-jump: 10;
+	--z-quote: 30;
+	--z-combobox: 40;
+	--z-tooltip: 1060;
+	--z-popover: 1120;
+	--z-menu: 1150;
 
 	/* Syntax highlighting tokens: calm, high-contrast ink tones on --code. */
 	--syntax-keyword: #a626a4;
@@ -141,6 +177,10 @@
 	/* The terminal's own colours on the dark surface. */
 	--logo-coral: #e48a7a;
 	--logo-yellow: #eab65d;
+
+	/* The switch knob and its shadow follow the dark surfaces. */
+	--knob: #ececec;
+	--shadow-knob: 0 1px 3px rgba(0, 0, 0, 0.55);
 
 	--syntax-keyword: #d886ff;
 	--syntax-string: #81c995;

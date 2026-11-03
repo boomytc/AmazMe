@@ -222,12 +222,12 @@ p {
 	display: flex;
 	flex-direction: column;
 	align-items: center;
-	gap: 14px;
+	gap: var(--space-14);
 	min-height: 0;
-	padding: 10px 6px 12px;
+	padding: var(--space-10) var(--space-6) var(--space-12);
 	background: var(--sidebar);
 	border-right: 1px solid var(--line);
-	z-index: 1060;
+	z-index: var(--z-tooltip);
 }
 
 .rail-brand {
@@ -269,7 +269,7 @@ p {
 	position: absolute;
 	top: 4px;
 	left: calc(100% + 8px);
-	z-index: 1;
+	z-index: var(--z-brand);
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
@@ -359,7 +359,7 @@ p {
 	min-width: 0;
 	min-height: 0;
 	overflow: hidden;
-	padding: 10px 10px 12px;
+	padding: var(--space-10) var(--space-10) var(--space-12);
 	background: var(--sidebar);
 }
 
@@ -386,9 +386,9 @@ p {
 	min-width: 0;
 	margin: 0;
 	overflow: hidden;
-	font-size: 20px;
+	font-size: var(--text-section-title);
 	font-weight: 600;
-	line-height: 32px;
+	line-height: var(--line-section-title);
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
@@ -733,7 +733,7 @@ p {
 }
 .session-menu {
 	position: fixed;
-	z-index: 1150;
+	z-index: var(--z-menu);
 	width: 212px;
 	max-width: calc(100vw - 16px);
 	padding: 5px;
@@ -794,7 +794,7 @@ p {
 	gap: 12px;
 	min-width: 0;
 	height: 52px;
-	padding: 0 14px 0 10px;
+	padding: 0 var(--space-14) 0 var(--space-10);
 }
 
 .header-start,
@@ -1119,9 +1119,9 @@ p {
 .greeting {
 	margin: 0;
 	color: var(--text);
-	font-size: 30px;
+	font-size: var(--text-greeting);
 	font-weight: 500;
-	line-height: 38px;
+	line-height: var(--line-greeting);
 	letter-spacing: -0.02em;
 }
 
@@ -1154,9 +1154,9 @@ p {
 
 .welcome-title {
 	margin: 0;
-	font-size: 24px;
+	font-size: var(--text-welcome-title);
 	font-weight: 600;
-	line-height: 32px;
+	line-height: var(--line-welcome-title);
 	letter-spacing: -0.015em;
 }
 
@@ -1641,7 +1641,7 @@ p {
 	justify-content: center;
 	height: 0;
 	overflow: visible;
-	z-index: 10;
+	z-index: var(--z-jump);
 	pointer-events: none;
 }
 
@@ -1701,7 +1701,7 @@ p {
 /* A selection in an answer offers one action: quote it into the current draft. */
 .quote-action {
 	position: fixed;
-	z-index: 30;
+	z-index: var(--z-quote);
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -2081,7 +2081,7 @@ p {
 	flex-direction: column;
 	align-items: center;
 	min-height: 0;
-	padding: 4px 16px 16px;
+	padding: var(--space-4) var(--space-16) var(--space-16);
 	/* If even the controls' minimum heights cannot fit, keep them reachable by scrolling. */
 	overflow-y: auto;
 }
@@ -2154,7 +2154,7 @@ p {
 .status-meter[data-tone="warning"] .meter-trigger { color: var(--warn); }
 .status-meter[data-tone="error"] .meter-trigger { color: var(--danger); }
 .meter-detail {
-	position: fixed; z-index: 1120; display: flex; flex-direction: column; gap: 4px;
+	position: fixed; z-index: var(--z-popover); display: flex; flex-direction: column; gap: 4px;
 	width: max-content; max-width: min(360px, calc(100vw - 16px)); padding: 12px 14px 14px;
 	border-radius: 12px; background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover);
 	font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; visibility: hidden;
@@ -3130,7 +3130,7 @@ p {
 }
 
 .dock-body .panel {
-	padding: 14px 14px 24px;
+	padding: var(--space-14) var(--space-14) var(--space-24);
 }
 
 .dock-body .panel-head {
@@ -3176,7 +3176,8 @@ p {
 }
 
 .dock-body .panel-title {
-	font-size: 15px;
+	font-size: var(--text-dock-title);
+	line-height: var(--line-dock-title);
 }
 
 .panel-input-row {
@@ -3449,8 +3450,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	display: flex;
 	align-items: flex-start;
 	justify-content: space-between;
-	gap: 16px;
-	margin-bottom: 24px;
+	gap: var(--space-16);
+	margin-bottom: var(--space-24);
 }
 
 .panel-titles { min-width: 0; }
@@ -3459,9 +3460,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .panel-title {
 	margin: 0;
-	font-size: 22px;
+	font-size: var(--text-page-title);
 	font-weight: 600;
-	line-height: 30px;
+	line-height: var(--line-page-title);
 	letter-spacing: -0.015em;
 }
 
@@ -3516,9 +3517,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .panel-group-title {
 	margin: 0;
-	font-size: 14px;
+	font-size: var(--text-group-title);
 	font-weight: 600;
-	line-height: 22px;
+	line-height: var(--line-group-title);
 }
 
 .panel-group-desc {
@@ -4180,9 +4181,9 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .modal-title {
 	margin: 0;
-	font-size: 17px;
+	font-size: var(--text-modal-title);
 	font-weight: 600;
-	line-height: 24px;
+	line-height: var(--line-modal-title);
 }
 
 .modal-desc {
@@ -4243,7 +4244,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .combobox-toggle { position: absolute; top: 4px; right: 4px; bottom: 4px; display: grid; place-items: center; width: 32px; padding: 0; border: 0; border-radius: 5px; color: var(--text-2); background: transparent; cursor: pointer; }
 .combobox-toggle:hover:not(:disabled) { background: var(--hover); }
 .combobox-toggle:disabled { opacity: 0.45; cursor: default; }
-.combobox-positioner { width: var(--anchor-width); max-width: var(--available-width); z-index: 40; outline: none; }
+.combobox-positioner { width: var(--anchor-width); max-width: var(--available-width); z-index: var(--z-combobox); outline: none; }
 .combobox-dropdown { overflow: hidden; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover); transform-origin: var(--transform-origin); transition: opacity var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease); }
 .combobox-dropdown[data-starting-style], .combobox-dropdown[data-ending-style] { opacity: 0; transform: scale(0.98); }
 .combobox-list { max-height: min(280px, var(--available-height)); overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
@@ -4464,7 +4465,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .modal-project { max-width: 640px; padding: clamp(16px, 4vw, 28px); }
 .modal-project .modal-head, .modal-project .modal-body, .modal-project .modal-foot { padding: 0; }
 .modal-project .modal-head { margin-bottom: 20px; }
-.modal-project .modal-title { font-size: 26px; font-weight: 600; }
+.modal-project .modal-title { font-size: var(--text-welcome-title); font-weight: 600; }
 .modal-project .modal-field-label { font-size: 15px; }
 .modal-project .modal-foot { margin-top: 20px; gap: 12px; }
 .modal-project .modal-notice { margin-inline: 0; padding-top: 12px; }
