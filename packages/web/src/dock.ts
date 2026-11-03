@@ -703,12 +703,18 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 	};
 }
 
+/** The panel description: the working directory, plus a status only when one is worth naming. */
+function terminalDescription(locale: Locale, state: TerminalStateLike, cwd: string): string {
+	const status = terminalStatus(locale, state);
+	return status.length === 0 ? cwd : `${cwd} · ${status}`;
+}
+
 /** One line naming what the terminal's buffer shows. */
 function terminalStatus(locale: Locale, state: TerminalStateLike): string {
 	if (state.error !== null) return translate(locale, "dock.terminalFailed", { error: state.error });
 	switch (state.status) {
 		case "idle":
-			return translate(locale, "dock.terminalIdle");
+			return "";
 		case "running":
 			return translate(locale, "dock.terminalRunning", {
 				command: state.command ?? "",
@@ -749,7 +755,7 @@ export function terminalPanel(
 	return {
 		id: "terminal",
 		title,
-		description: `${input.cwd} · ${terminalStatus(locale, state)}`,
+		description: terminalDescription(locale, state, input.cwd),
 		notices: state.truncated ? [{ tone: "info", persistence: "pinned", text: translate(locale, "dock.truncated") }] : [],
 		groups: [
 			{

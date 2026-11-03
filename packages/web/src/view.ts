@@ -137,7 +137,6 @@ export type MessageRatingLike = "up" | "down";
  */
 export interface WelcomeCard {
 	readonly title: string;
-	readonly body: string;
 	readonly steps: readonly PanelButton[];
 	readonly dismiss: PanelButton;
 	readonly note: string;
@@ -148,7 +147,6 @@ export function welcomeCard(locale: Locale, input: { readonly show: boolean }): 
 	if (!input.show) return undefined;
 	return {
 		title: translate(locale, "welcome.title"),
-		body: translate(locale, "welcome.body"),
 		steps: [
 			{
 				id: WELCOME_SESSION_ACTION,

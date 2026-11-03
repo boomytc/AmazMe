@@ -372,7 +372,7 @@ export function PanelControlView({
 		? translate(locale, "panel.settings.saving")
 		: edit.status === "saved"
 			? translate(locale, "panel.settings.saved")
-			: translate(locale, "panel.settings.commitHint");
+			: "";
 
 	if (control.kind === "switch") {
 		return (
@@ -487,7 +487,9 @@ export function PanelControlView({
 				data-control-key={key}
 				aria-label={accessibleName}
 				aria-invalid={numberError || undefined}
-				aria-describedby={numberError ? errorId : statusId}
+				aria-describedby={
+					numberError ? errorId : status.length === 0 ? undefined : statusId
+				}
 				aria-busy={isPending || undefined}
 				value={edit.value}
 				placeholder={control.placeholder}
@@ -536,7 +538,7 @@ export function PanelControlView({
 								: "hint"
 				}
 				aria-live="polite"
-				hidden={numberError}
+				hidden={numberError || status.length === 0}
 			>
 				{status}
 			</output>

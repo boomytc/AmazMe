@@ -927,7 +927,6 @@ function Welcome({ welcome, view, actions }: WelcomeProps) {
 				<Icon name="sparkles" className="icon" />
 			</span>
 			<h2 className="welcome-title">{welcome.title}</h2>
-			<p className="welcome-body">{welcome.body}</p>
 			<div className="welcome-steps">
 				{welcome.steps.map((step) => {
 					const disabled =
@@ -1008,12 +1007,11 @@ function EmptyState({ view, actions }: TranscriptProps) {
 							: "greeting.title",
 					)}
 				</h2>
-				<p className="greeting-hint">
-					{translate(
-						view.locale,
-						view.readOnly === true ? "greeting.readOnlyHint" : "greeting.hint",
-					)}
-				</p>
+				{view.readOnly === true ? (
+					<p className="greeting-hint">
+						{translate(view.locale, "greeting.readOnlyHint")}
+					</p>
+				) : null}
 				{view.readOnly === true ? (
 					<div className="welcome-steps">
 						{view.archivedAttached === undefined ? (
@@ -1080,15 +1078,13 @@ function EmptyState({ view, actions }: TranscriptProps) {
 				: "greeting.startTitle";
 	const hint = unavailable
 		? "greeting.waitHint"
-		: filtered
-			? "greeting.filterHint"
-			: hasSessions
-				? "greeting.pickHint"
-				: "greeting.startHint";
+		: undefined;
 	return (
 		<div className="empty-block" id="transcript-empty">
 			<h2 className="greeting">{translate(view.locale, title)}</h2>
-			<p className="greeting-hint">{translate(view.locale, hint)}</p>
+			{hint === undefined ? null : (
+				<p className="greeting-hint">{translate(view.locale, hint)}</p>
+			)}
 			{unavailable ? null : (
 				<div className="welcome-steps">
 					{filtered ? (
