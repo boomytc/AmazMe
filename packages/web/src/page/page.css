@@ -742,8 +742,16 @@ p {
 }
 .session-more {
 	position: absolute;
-	right: 4px;
 	opacity: 0;
+}
+/* The menu overlays the age slot: same 28px box, same inner right edge, vertically centred. */
+.session-row > .roster-menu-anchor {
+	position: static;
+}
+.session-row .session-more {
+	top: 50%;
+	right: 10px;
+	transform: translateY(-50%);
 }
 .session-row:hover .session-more,
 .session-row:focus-within .session-more,
@@ -4454,6 +4462,13 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 .project-heading:hover .project-action,
 .project-heading:focus-within .project-action,
 .project-heading:has(.project-select.selected) .project-new-session { opacity: 1; }
+/* The project menu is the heading's last trailing control: in flow after the new-session control,
+   revealed the same way instead of overlaying it. */
+.project-heading .roster-menu-anchor { display: flex; position: static; }
+.project-heading .session-more { position: static; opacity: 0; }
+.project-heading:hover .session-more,
+.project-heading:focus-within .session-more,
+.project-heading .session-more[aria-expanded="true"] { opacity: 1; }
 /* Project rows own their heading; the sessions below it start one level in. */
 .project-group > .session-row { margin-inline-start: 14px; border-radius: 12px; }
 .project-group.archived .project-heading:hover { background: transparent; }
