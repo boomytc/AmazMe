@@ -45,7 +45,6 @@ import {
 	scheduleDueCopy,
 	settingFieldCopy,
 	settingGroupCopy,
-	settingGroupDescriptionCopy,
 	settingOptionCopy,
 	settingScopeCopy,
 	skillScopeCopy,
@@ -580,7 +579,9 @@ function settingRow(locale: Locale, descriptor: SettingDescriptorLike): PanelRow
 	return {
 		id: `setting:${descriptor.id}`,
 		title: copy.label,
-		...(copy.description.length === 0 ? {} : { description: copy.description }),
+		...(copy.description === undefined || copy.description.length === 0
+			? {}
+			: { description: copy.description }),
 		...(descriptor.explicit ? {} : { badges: [translate(locale, "panel.settings.badgeDefault")] }),
 		controls: settingsControls(locale, descriptor),
 	};
@@ -640,7 +641,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		rows.push(settingRow(locale, descriptor));
 	}
 	for (const [group, rows] of rowsByGroup) {
-		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), description: settingGroupDescriptionCopy(locale, group), skeleton: "form", rows });
+		groups.push({ id: `settings:${group}`, title: settingGroupCopy(locale, group), skeleton: "form", rows });
 	}
 	if (input.archives) {
 		const archives = input.archives;

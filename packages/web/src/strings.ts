@@ -2140,7 +2140,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 /** One settings field's copy: the row's title, its one-line explanation, and a control placeholder. */
 export interface SettingCopy {
 	readonly label: string;
-	readonly description: string;
+	readonly description?: string;
 	readonly placeholder?: string;
 }
 
@@ -2170,38 +2170,25 @@ const ZH_SETTING_GROUPS: Readonly<Record<string, string>> = {
 	shell: "命令环境",
 };
 
-const SETTING_GROUP_DESCRIPTIONS: Readonly<Record<string, readonly [string, string]>> = {
-	interface: ["Choose language, appearance, fonts, next-question suggestions, and the welcome guide.", "选择界面语言、外观、字体、下一问建议和欢迎引导。"],
-	desktop: ["Set window-close behavior, idle exit, and whether running tasks require confirmation.", "设置关闭窗口、空闲退出，以及有任务运行时是否询问。"],
-	conversation: ["Manage context, in-progress messages, and turn budgets.", "管理上下文、运行中输入和每轮预算。"],
-	"models-reasoning": ["Set default reasoning and prompt cache preferences.", "设置默认思考强度和提示缓存偏好。"],
-	"skills-tools": ["Choose how skills are offered as commands.", "选择技能是否作为快捷命令提供。"],
-	approvals: ["Choose where tools can write and when they ask for confirmation.", "选择工具可写入的范围，以及何时需要你的确认。"],
-	"network-retries": ["Manage model connections, timeouts, and retries.", "设置模型连接方式、超时和重试。"],
-	"images-rendering": ["Manage images sent to models and diagrams in responses.", "设置发送给模型的图片，以及回答中的图表显示。"],
-	projects: ["Manage project trust and archive retention reminders.", "管理项目配置的信任方式和归档保留提醒。"],
-	shell: ["Choose the shell and startup commands for tool execution.", "设置命令执行时使用的 Shell 和命令前缀。"],
-};
-
 const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	display_name: { label: "Display name", description: "The name saved in your local profile." },
-	closeWindow: { label: "When closing a window", description: "With close confirmation disabled, choose whether a window closes to the background or quits while tasks are running. With Quit when idle off, this also applies to idle windows." },
-	idleQuit: { label: "Quit when idle", description: "With no active task, closing the window quits AmazMe directly. Turn this off to use the window-close preference or ask when closing an idle window." },
-	closeWindowPrompt: { label: "Ask when closing a window", description: "Ask before closing to the background while tasks are running. With Quit when idle on, idle windows close directly; when disabled, running tasks follow your close preference." },
+	closeWindow: { label: "When closing a window", description: "While tasks run, close to the background or quit. Applies to idle windows when Quit when idle is off." },
+	idleQuit: { label: "Quit when idle", description: "With no task running, closing the window quits AmazMe." },
+	closeWindowPrompt: { label: "Ask when closing a window", description: "Ask before keeping a running task in the background." },
 	textFont: { label: "Text font", description: "Conversation and composer fonts, separated by commas. Empty uses the built-in fonts.", placeholder: "System fonts" },
 	codeFont: { label: "Code font", description: "Code blocks, file content and diffs. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
 	terminalFont: { label: "Terminal font", description: "Terminal command output. Empty uses the built-in monospace fonts.", placeholder: "Monospace fonts" },
-	textSize: { label: "Text size (px)", description: "Conversation and composer size. Desktop Cmd/Ctrl +, - and 0 adjust all three sizes." },
+	textSize: { label: "Text size (px)", description: "Conversation and composer size." },
 	codeSize: { label: "Code size (px)", description: "Code-block size; compact file and tool text stays one pixel smaller." },
-	terminalSize: { label: "Terminal size (px)", description: "Independent terminal output size." },
-	executionMode: { label: "File write isolation", description: "Global Unix policy for built-in tools and shell children; reads and network remain available. Applies at the next tool start." },
+	terminalSize: { label: "Terminal size (px)" },
+	executionMode: { label: "File write isolation", description: "Constrain writes from built-in tools and shell children; reads and network stay available." },
 	repeatToolReminder: { label: "Repeat reminders", description: "Remind when identical calls return identical results; polling tools are excluded." },
 	reviewChanges: { label: "Turn change review", description: "Capture a bounded before/after workspace diff, including shell changes." },
 	contextCleanup: { label: "Clean older context", description: "Shorten large older tool results and unload older images before summarization; originals are retained." },
-	runCalls: { label: "Tool calls per turn", description: "Per conversation. Pause before the next step; 0 is unlimited." },
-	runSeconds: { label: "Turn time budget (seconds)", description: "Pause at the next safe boundary, without interrupting an admitted command; 0 is unlimited." },
-	runCost: { label: "Turn cost budget (USD)", description: "Uses reported model and tool cost per conversation; 0 is unlimited. Continue grants another budget." },
-	archiveRetentionDays: { label: "Archive retention reminder (days)", description: "Mark archives for manual review after this time. 0 keeps them indefinitely; nothing is automatically deleted." },
+	runCalls: { label: "Tool calls per turn", description: "Pause before the next step; 0 is unlimited." },
+	runSeconds: { label: "Turn time budget (seconds)", description: "Pause at the next safe boundary; running commands are not interrupted. 0 is unlimited." },
+	runCost: { label: "Turn cost budget (USD)", description: "Reported model and tool cost per conversation; 0 is unlimited." },
+	archiveRetentionDays: { label: "Archive retention reminder (days)", description: "Mark archives for manual review after this many days; 0 keeps them forever." },
 	locale: {
 		label: "Language",
 		description: "The interface language of the web page and other graphical surfaces.",
@@ -2224,7 +2211,6 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	hideThinkingBlock: {
 		label: "Hide thinking blocks",
-		description: "Fold the model's reasoning away wherever it is rendered.",
 	},
 	defaultThinkingLevel: {
 		label: "Default thinking level",
@@ -2236,13 +2222,12 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	showCacheMissNotices: {
 		label: "Cache miss notices",
-		description: "Show the cost and provider recovery notices a cache miss produces.",
 	},
 	enableSkillCommands: {
 		label: "Skills as commands",
 		description: "Register every loaded skill as a slash command.",
 	},
-	promptSuggestions: { label: "Next-question suggestions", description: "Offer one draft after an answer using a short request to the current model. May incur usage charges; never sends automatically." },
+	promptSuggestions: { label: "Next-question suggestions", description: "Draft one follow-up after an answer; never sends automatically." },
 	showWelcome: {
 		label: "Welcome guide",
 		description: "Show the short first-run guide while this host has no sessions.",
@@ -2261,11 +2246,9 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	retryEnabled: {
 		label: "Provider retries",
-		description: "Retry a provider request that failed with a retryable error.",
 	},
 	imageAutoResize: {
 		label: "Auto-resize images",
-		description: "Scale attached images down for provider compatibility.",
 	},
 	blockImages: {
 		label: "Block images",
@@ -2290,30 +2273,30 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	shellCommandPrefix: {
 		label: "Shell command prefix",
-		description: "Prepended to every bash command, for example to enable aliases.",
+		description: "Prepended to every bash command.",
 		placeholder: "None",
 	},
 };
 
 const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	display_name: { label: "显示名称", description: "保存在本机配置中的名称。" },
-	closeWindow: { label: "关闭窗口时", description: "关闭询问后，有任务运行时选择关闭窗口保持后台还是退出应用；关闭“空闲时直接退出”后，空闲时也按此选择处理。" },
-	idleQuit: { label: "空闲时直接退出", description: "没有进行中的任务时，关闭窗口直接退出应用；关闭此项后，空闲关闭改按“关闭窗口时”偏好或“关闭窗口时询问”处理。" },
-	closeWindowPrompt: { label: "关闭窗口时询问", description: "有任务运行时再询问是否保留后台；空闲时按“空闲时直接退出”设置处理。关闭询问后，有任务时按关闭窗口偏好执行。" },
+	closeWindow: { label: "关闭窗口时", description: "有任务运行时，关闭窗口是保持后台还是退出应用；关闭“空闲时直接退出”后也作用于空闲窗口。" },
+	idleQuit: { label: "空闲时直接退出", description: "没有进行中的任务时，关闭窗口直接退出应用。" },
+	closeWindowPrompt: { label: "关闭窗口时询问", description: "有任务运行时，关闭窗口前询问是否保留后台。" },
 	textFont: { label: "正文字体", description: "对话和输入框使用的字体，以逗号分隔；留空使用内置字体。", placeholder: "系统字体" },
 	codeFont: { label: "代码字体", description: "代码块、文件内容和差异使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
 	terminalFont: { label: "终端字体", description: "命令输出使用的字体；留空使用内置等宽字体。", placeholder: "等宽字体" },
-	textSize: { label: "正文字号（px）", description: "对话和输入框的字号。桌面端 Cmd/Ctrl +、-、0 可同时调整三种字号。" },
+	textSize: { label: "正文字号（px）", description: "对话和输入框的字号。" },
 	codeSize: { label: "代码字号（px）", description: "代码块的字号；紧凑文件和工具文本保持小一号。" },
-	terminalSize: { label: "终端字号（px）", description: "独立调整终端输出的字号。" },
-	executionMode: { label: "写入隔离", description: "全局 Unix 策略，约束内置工具及 shell 子进程的文件写入；读取、网络仍可用。从下一次工具启动生效。" },
+	terminalSize: { label: "终端字号（px）" },
+	executionMode: { label: "写入隔离", description: "约束内置工具和 shell 子进程的写入；读取与网络仍可用。" },
 	repeatToolReminder: { label: "重复调用提醒", description: "相同调用连续返回相同结果时提醒，轮询工具除外。" },
 	reviewChanges: { label: "记录本轮变更", description: "按限额比较工作区前后差异，也覆盖 shell 修改。" },
 	contextCleanup: { label: "清理旧上下文", description: "摘要前精简旧大工具结果、卸载历史图片，保留原始记录。" },
-	runCalls: { label: "每轮工具次数", description: "按单个对话计数，达到后在下一步执行前暂停；0 表示不限。" },
+	runCalls: { label: "每轮工具次数", description: "达到后在下一步执行前暂停；0 表示不限。" },
 	runSeconds: { label: "每轮时间预算（秒）", description: "在下一处执行边界暂停，已开始的命令不被打断；0 表示不限。" },
-	runCost: { label: "每轮费用（美元）", description: "按单个对话已报告的模型与工具费用计费；0 表示不限，继续时追加一份预算。" },
-	archiveRetentionDays: { label: "归档保留提醒（天）", description: "到期后标记供手动检查；0 表示长期保留，不自动删除。" },
+	runCost: { label: "每轮费用（美元）", description: "按已报告的模型与工具费用计；0 表示不限。" },
+	archiveRetentionDays: { label: "归档保留提醒（天）", description: "到期后标记为待检查；0 表示长期保留。" },
 	locale: {
 		label: "界面语言",
 		description: "网页及其他图形界面的语言。",
@@ -2336,7 +2319,6 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	hideThinkingBlock: {
 		label: "隐藏思考块",
-		description: "在所有呈现中折叠模型的推理内容。",
 	},
 	defaultThinkingLevel: {
 		label: "默认思考强度",
@@ -2348,13 +2330,12 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	showCacheMissNotices: {
 		label: "缓存未命中提示",
-		description: "显示缓存未命中产生的费用与供应商恢复提示。",
 	},
 	enableSkillCommands: {
 		label: "技能作为命令",
 		description: "把每个已加载的技能注册为斜杠命令。",
 	},
-	promptSuggestions: { label: "下一问建议", description: "回答结束后使用当前模型发起一次短请求，给出可接受的草稿。可能产生用量费用，不会自动发送。" },
+	promptSuggestions: { label: "下一问建议", description: "回答结束后给出一次可接受的草稿，不会自动发送。" },
 	showWelcome: {
 		label: "欢迎引导",
 		description: "在这台宿主还没有会话时，显示简短的上手引导。",
@@ -2373,11 +2354,9 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	retryEnabled: {
 		label: "供应商重试",
-		description: "对可重试的失败请求再次发起请求。",
 	},
 	imageAutoResize: {
 		label: "自动缩放图片",
-		description: "把附带的图片缩小，以提升供应商兼容性。",
 	},
 	blockImages: {
 		label: "拦截图片",
@@ -2402,7 +2381,7 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 	},
 	shellCommandPrefix: {
 		label: "Shell 命令前缀",
-		description: "附加在每个 bash 命令之前，例如用于启用别名。",
+		description: "附加在每个 bash 命令之前。",
 		placeholder: "无",
 	},
 };
@@ -2505,18 +2484,13 @@ export function translate(locale: Locale, key: MessageKey, values?: Record<strin
  */
 export function settingFieldCopy(locale: Locale, id: string): SettingCopy {
 	const table = locale === "zh" ? ZH_SETTING_FIELDS : EN_SETTING_FIELDS;
-	return table[id] ?? { label: id, description: "" };
+	return table[id] ?? { label: id };
 }
 
 /** A settings heading's name; an unknown group token shows the token itself. */
 export function settingGroupCopy(locale: Locale, group: string): string {
 	const table = locale === "zh" ? ZH_SETTING_GROUPS : EN_SETTING_GROUPS;
 	return table[group] ?? group;
-}
-
-/** A category's purpose, separate from the overall settings page introduction. */
-export function settingGroupDescriptionCopy(locale: Locale, group: string): string | undefined {
-	return SETTING_GROUP_DESCRIPTIONS[group]?.[locale === "zh" ? 1 : 0];
 }
 
 /** An enum control's name for one stored value; an unknown value shows the value itself. */
