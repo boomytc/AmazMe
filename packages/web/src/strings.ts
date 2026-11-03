@@ -662,7 +662,7 @@ export const EN = {
 	"palette.hint": "Tab completes, Enter runs.",
 
 	"shortcut.newSession": "New session",
-	"shortcut.cycleView": "Switch management view",
+	"shortcut.toggleDock": "Toggle session tools",
 	"shortcut.focusComposer": "Focus the composer",
 	"shortcut.stop": "Stop the turn",
 	"shortcut.previousPrompt": "Jump to the previous question",
@@ -1607,7 +1607,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"palette.hint": "Tab 补全，Enter 运行。",
 
 	"shortcut.newSession": "新建会话",
-	"shortcut.cycleView": "切换管理视图",
+	"shortcut.toggleDock": "切换会话工具",
 	"shortcut.focusComposer": "聚焦输入框",
 	"shortcut.stop": "停止回合",
 	"shortcut.previousPrompt": "跳到上一个提问",

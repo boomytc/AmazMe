@@ -69,6 +69,8 @@
 	--danger: #d92d20;
 	--danger-soft: rgba(217, 45, 32, 0.08);
 	--warn: #b45309;
+	/* Status colours say what a state means; diffs and connections never share one. */
+	--success: #137333;
 	--diff-add: #137333;
 	--diff-add-bg: rgba(19,115,51,.09);
 
@@ -166,6 +168,7 @@
 	--danger: #ff7a70;
 	--danger-soft: rgba(255, 122, 112, 0.1);
 	--warn: #f5b84a;
+	--success: #81c995;
 
 	--shadow-composer: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 8px 24px rgba(0, 0, 0, 0.28);
 	--shadow-composer-focus: 0 0 0 1px var(--accent), 0 0 0 4px var(--accent-soft), 0 8px 24px rgba(0, 0, 0, 0.3);

@@ -394,7 +394,7 @@ export class PageRuntime {
 						),
 					})),
 				);
-			else if (id === "view.cycle")
+			else if (id === "dock.toggle")
 				run(() =>
 					this.action({
 						kind: "command",

@@ -14,7 +14,7 @@ import type { FontSizeAction } from "./typography.ts";
 /** The actions a shortcut can trigger. */
 export type ShortcutId =
 	| "session.new"
-	| "view.cycle"
+	| "dock.toggle"
 	| "composer.focus"
 	| "run.stop"
 	| "transcript.previousPrompt"
@@ -42,7 +42,7 @@ export interface Shortcut {
 
 const TABLE: readonly { readonly id: ShortcutId; readonly gesture: ShortcutGesture; readonly message: MessageKey }[] = [
 	{ id: "session.new", gesture: { code: "KeyN", primary: true, alt: true, shift: false }, message: "shortcut.newSession" },
-	{ id: "view.cycle", gesture: { code: "KeyM", primary: true, alt: true, shift: false }, message: "shortcut.cycleView" },
+	{ id: "dock.toggle", gesture: { code: "KeyM", primary: true, alt: true, shift: false }, message: "shortcut.toggleDock" },
 	{
 		id: "composer.focus",
 		gesture: { code: "Slash", primary: false, alt: false, shift: false },

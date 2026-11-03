@@ -691,6 +691,9 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 						id="settings-button"
 						aria-label={copy("nav.settings")}
 						title={copy("nav.settings")}
+						aria-current={
+							view.panel.current === SETTINGS_VIEW ? "page" : undefined
+						}
 						onClick={() => report({ kind: "open", panel: SETTINGS_VIEW })}
 					>
 						<Icon name="settings" />
