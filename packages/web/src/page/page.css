@@ -143,8 +143,8 @@ textarea {
 }
 
 :focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 2px;
+	outline: var(--focus-ring);
+	outline-offset: var(--focus-ring-offset);
 }
 
 ::selection {
@@ -541,7 +541,7 @@ p {
 
 /* The category column is a scrollport; an outward focus ring would be clipped at its edge. */
 .section-nav .nav-row:focus-visible {
-	outline-offset: -2px;
+	outline-offset: var(--focus-ring-inset);
 }
 
 .nav-row-stack {
@@ -614,11 +614,6 @@ p {
 
 .roster-filter-input::placeholder {
 	color: var(--text-3);
-}
-
-.roster-filter-input:focus {
-	outline: none;
-	box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
 .section-sidebar:has(#section-search:not([hidden])) .section-sidebar-head {
@@ -1275,11 +1270,6 @@ p {
 	color: var(--text);
 }
 
-.credential-toggle:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 2px;
-}
-
 .credential-toggle:disabled { opacity: 0.45; cursor: default; }
 .password-field { position: relative; min-width: 0; }
 .password-field:has(.credential-toggle) > .modal-input { padding-inline-end: 44px; }
@@ -1834,7 +1824,6 @@ p {
 	cursor: pointer;
 }
 
-.markdown .md-file-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .file-source-line[data-selected="true"] { background: color-mix(in srgb, var(--accent) 14%, transparent); box-shadow: inset 3px 0 var(--accent); scroll-margin-block: 24px; }
 
 .markdown ul,
@@ -2124,7 +2113,6 @@ p {
 .project-picker { position: fixed; margin: 0; width: min(308px, calc(100vw - 16px)); max-height: min(420px, calc(100dvh - 32px)); padding: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--raised); color: var(--text); box-shadow: 0 12px 40px #0003; font-size: 13px; }
 .project-picker::backdrop { background: transparent; }
 .project-picker > input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); outline: none; background: var(--canvas); color: inherit; font: inherit; font-size: 13px; }
-.project-picker > input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .project-picker-list { max-height: min(240px, 40dvh); overflow-y: auto; padding-block: 5px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
 .project-picker-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .project-picker-option span { flex: 1; }
@@ -2267,7 +2255,7 @@ p {
 	box-shadow: var(--shadow-knob), 0 0 0 .5px color-mix(in srgb, var(--text) 10%, transparent);
 }
 :root[data-theme="dark"] .model-picker-level[aria-checked="true"] { background: color-mix(in srgb, var(--text) 16%, var(--raised)); }
-.model-picker-level:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
+.model-picker-level:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-inset); }
 
 .model-picker-manage {
 	display: flex; align-items: center; gap: 8px; flex: none; width: 100%; height: 38px; padding: 0 14px;
@@ -2301,12 +2289,11 @@ p {
 .connection-search { display: block; margin: 0; }
 .connection-search-input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--text); font: inherit; font-size: 13px; outline: none; transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
 .connection-search-input:hover:not(:disabled) { border-color: var(--text-3); }
-.connection-search-input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .connection-list { display: flex; flex-direction: column; gap: 2px; max-height: 62dvh; overflow-y: auto; padding-block: 2px; }
 .connection-row { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 8px 10px; background: transparent; border: 0; border-radius: var(--radius-md); color: var(--text); text-align: left; cursor: pointer; font: inherit; transition: background var(--dur-fast) var(--ease); }
 .connection-row:hover:not(:disabled) { background: var(--hover); }
 .connection-row.selected { background: var(--active); }
-.connection-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.connection-row:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-inset); }
 .connection-row:disabled { opacity: 0.45; cursor: default; }
 .connection-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; }
 .connection-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; line-height: 18px; }
@@ -2728,11 +2715,6 @@ p {
 	cursor: zoom-in;
 }
 
-.attachment-preview:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: 2px;
-}
-
 .attachment img {
 	width: 40px;
 	height: 40px;
@@ -2945,7 +2927,6 @@ p {
 	cursor: pointer;
 }
 .composer-select:hover:not(:disabled) { background-color: var(--hover); color: var(--text); }
-.composer-select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .composer-select:disabled { color: var(--text-3); cursor: default; }
 .composer-select option, .composer-select optgroup { color: var(--text); background: var(--raised); }
 .thinking-select { flex: none; max-width: 100px; }
@@ -3323,7 +3304,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	cursor: pointer;
 }
 .file-entry:hover:not(:disabled) { background: var(--hover); }
-.file-entry:focus-visible { outline-offset: -2px; }
+.file-entry:focus-visible { outline-offset: var(--focus-ring-inset); }
 .file-entry > .icon { flex: none; width: 16px; height: 16px; color: var(--text-3); }
 .file-entry-dir > .icon:first-child { color: var(--text-2); }
 .file-entry-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -3950,7 +3931,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 
 .panel-button.weight-line:hover:not(:disabled) { border-color: var(--text-3); }
 .panel-button:active:not(:disabled) { transform: translateY(1px); }
-.panel-button:focus-visible { box-shadow: var(--focus-shadow); }
 .panel-button.pending { cursor: progress; }
 
 .panel-button.weight-filled {
@@ -4042,10 +4022,15 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .panel-input:focus-visible,
-.panel-select:focus-visible {
+.panel-select:focus-visible,
+.modal-input:focus-visible,
+.modal-textarea:focus-visible,
+.connection-search-input:focus-visible,
+.project-picker > input:focus-visible,
+.roster-filter-input:focus-visible {
 	outline: none;
 	border-color: var(--accent);
-	box-shadow: 0 0 0 3px var(--accent-soft);
+	box-shadow: var(--focus-shadow);
 }
 
 /* A number outside the host's range: the draft stays and the border says why. */
@@ -4105,8 +4090,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .panel-switch input:focus-visible + .panel-switch-track {
-	outline: 2px solid var(--accent);
-	outline-offset: 2px;
+	outline: var(--focus-ring);
+	outline-offset: var(--focus-ring-offset);
 }
 
 .panel-input-row .panel-button {
@@ -4273,8 +4258,8 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .project-picker-option:focus-visible,
 .model-picker-option:focus-visible,
 .combobox-option:focus-visible {
-	outline: 2px solid var(--accent);
-	outline-offset: -2px;
+	outline: var(--focus-ring);
+	outline-offset: var(--focus-ring-inset);
 }
 
 .combobox-dropdown > .menu-empty { display: block; }
@@ -4287,7 +4272,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .multiselect-option:hover { background: var(--hover); }
 .multiselect-option span { overflow-wrap: anywhere; }
 .multiselect-option input { flex: none; }
-.multiselect-option input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .modal-input,
 .modal-textarea {
@@ -4318,13 +4302,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .modal-input:hover,
 .modal-textarea:hover {
 	border-color: var(--text-3);
-}
-
-.modal-input:focus-visible,
-.modal-textarea:focus-visible {
-	outline: none;
-	border-color: var(--accent);
-	box-shadow: var(--focus-shadow);
 }
 
 .modal-notice {

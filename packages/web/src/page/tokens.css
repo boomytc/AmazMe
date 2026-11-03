@@ -32,6 +32,10 @@
 	--control-height: 32px;
 	--field-height: 40px;
 	--focus-shadow: 0 0 0 3px var(--accent-soft);
+	/* One focus ring for every surface; the inset offset is for rows clipped by a scroll or popup edge. */
+	--focus-ring: 2px solid var(--accent);
+	--focus-ring-offset: 2px;
+	--focus-ring-inset: -2px;
 
 	/* Surfaces: the canvas, the sidebar one step off it, raised cards and popovers, the user's bubble. */
 	--canvas: #ffffff;
