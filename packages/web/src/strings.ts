@@ -76,8 +76,6 @@ export const EN = {
 
 	"sidebar.newSession": "New session",
 	"project.standalone": "Work outside a project",
-	"sidebar.newChat": "New chat",
-	"sidebar.chats": "Chats",
 	"project.search": "Search projects",
 	"project.noMatch": "No matching projects",
 	"project.choose": "Choose a project",
@@ -185,6 +183,7 @@ export const EN = {
 	"project.restore": "Restore session",
 	"project.empty": "No sessions yet",
 	"sidebar.filter": "Filter sessions",
+	"sidebar.clearFilter": "Clear filter",
 	"sidebar.remove": "Remove",
 	"sidebar.localSession": "terminal",
 	"sidebar.removeAria": "Remove this session",
@@ -1156,8 +1155,6 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 
 	"sidebar.newSession": "新建会话",
 	"project.standalone": "不在项目中工作",
-	"sidebar.newChat": "新聊天",
-	"sidebar.chats": "聊天",
 	"project.search": "搜索项目",
 	"project.noMatch": "没有匹配的项目",
 	"project.choose": "选择项目",
@@ -1265,6 +1262,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"project.restore": "恢复会话",
 	"project.empty": "暂无会话",
 	"sidebar.filter": "过滤会话",
+	"sidebar.clearFilter": "清除过滤条件",
 	"sidebar.remove": "删除",
 	"sidebar.localSession": "终端",
 	"sidebar.removeAria": "删除这个会话",

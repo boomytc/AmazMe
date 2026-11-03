@@ -247,68 +247,101 @@ function Navigation({
 	const report = (id: string, data?: string) =>
 		actions.onPanelAction({ kind: "command", id, data });
 	const standalone = view.roster.filter((item) => !item.projectId);
+	const filterField = useRef<HTMLInputElement>(null);
+	const filterToggle = useRef<HTMLButtonElement>(null);
+	const closeFilter = (focusToggle = false) => {
+		actions.onFilterRoster("");
+		setFilterOpen(false);
+		if (focusToggle) filterToggle.current?.focus({ preventScroll: true });
+	};
+	useEffect(() => {
+		if (filterOpen) filterField.current?.focus({ preventScroll: true });
+	}, [filterOpen]);
 	return (
 		<aside className="sidebar" id="sidebar">
 			<div className="session-sidebar" id="session-sidebar">
-				<div className="brand">
-					<div
-						className="brand-filter"
-						id="roster-filter-field"
-						data-open={filterOpen}
+				<div className="sidebar-head">
+					<button
+						type="button"
+						className="sidebar-new-chat"
+						id="new-chat"
+						title={copy("sidebar.newSession")}
+						disabled={!view.newSession.enabled || view.newSession.pending}
+						onClick={() => actions.onCreateSession()}
 					>
-						<button
-							id="roster-filter-toggle"
-							className="icon-button"
-							type="button"
-							aria-label={copy("sidebar.filter")}
-							aria-expanded={filterOpen}
-							onClick={() => {
-								if (filterOpen) actions.onFilterRoster("");
-								setFilterOpen(!filterOpen);
-							}}
-						>
-							<Icon name="search" />
-						</button>
-						<input
-							className="roster-filter-input"
-							id="roster-filter"
-							type="search"
-							aria-label={copy("sidebar.filter")}
-							placeholder={copy("sidebar.filter")}
-							hidden={!filterOpen}
-							value={view.rosterFilter}
-							onChange={(event) =>
-								actions.onFilterRoster(event.currentTarget.value)
-							}
-							onKeyDown={(event) => {
-								if (event.key === "Escape") {
-									actions.onFilterRoster("");
-									setFilterOpen(false);
-								}
-							}}
-						/>
-					</div>
+						<Icon name="square-pen" />
+						<span className="sidebar-new-chat-label">
+							{copy("sidebar.newSession")}
+						</span>
+					</button>
+					<button
+						ref={filterToggle}
+						id="roster-filter-toggle"
+						className="icon-button"
+						type="button"
+						aria-label={copy("sidebar.filter")}
+						title={copy("sidebar.filter")}
+						aria-expanded={filterOpen}
+						aria-controls="roster-filter"
+						onClick={() => {
+							if (filterOpen) closeFilter(true);
+							else setFilterOpen(true);
+						}}
+					>
+						<Icon name="search" />
+					</button>
 					<button
 						className="icon-button"
 						type="button"
 						id="sidebar-toggle"
 						aria-label={copy("sidebar.toggle")}
+						title={copy("sidebar.toggle")}
 						aria-expanded={!collapsed}
+						aria-controls="sidebar"
 						onClick={toggle}
 					>
 						<Icon name="panel-left" />
 					</button>
 				</div>
-				<button
-					type="button"
-					className="sidebar-new-chat"
-					id="new-chat"
-					disabled={!view.newSession.enabled || view.newSession.pending}
-					onClick={() => actions.onCreateSession()}
+				<div
+					className="roster-filter sidebar-filter"
+					id="roster-filter-field"
+					hidden={!filterOpen}
 				>
-					<Icon name="square-pen" />
-					{copy("sidebar.newChat")}
-				</button>
+					<Icon name="search" />
+					<input
+						ref={filterField}
+						className="roster-filter-input"
+						id="roster-filter"
+						type="search"
+						autoComplete="off"
+						spellCheck={false}
+						aria-label={copy("sidebar.filter")}
+						placeholder={copy("sidebar.filter")}
+						value={view.rosterFilter}
+						onChange={(event) =>
+							actions.onFilterRoster(event.currentTarget.value)
+						}
+						onKeyDown={(event) => {
+							if (event.key !== "Escape") return;
+							event.preventDefault();
+							closeFilter(true);
+						}}
+					/>
+					<button
+						type="button"
+						className="section-search-clear"
+						aria-label={copy("sidebar.clearFilter")}
+						title={copy("sidebar.clearFilter")}
+						hidden={view.rosterFilter.length === 0}
+						onClick={() => {
+							actions.onFilterRoster("");
+							filterField.current?.focus({ preventScroll: true });
+						}}
+					>
+						<Icon name="x" />
+					</button>
+				</div>
 				<p className="sidebar-label">
 					{copy(view.projects ? "project.projects" : "sidebar.sessions")}
 					{view.projects && (
@@ -350,7 +383,7 @@ function Navigation({
 											disabled={
 												!view.newSession.enabled || view.newSession.pending
 											}
-											aria-label={`${copy("sidebar.newChat")}: ${project.name}`}
+											aria-label={`${copy("sidebar.newSession")}: ${project.name}`}
 											onClick={() =>
 												report(P.PROJECT_NEW_SESSION_ACTION, project.id)
 											}
@@ -389,7 +422,9 @@ function Navigation({
 					{view.projects ? (
 						<>
 							{standalone.length > 0 && (
-								<p className="session-group-label">{copy("sidebar.chats")}</p>
+								<p className="session-group-label">
+									{copy("sidebar.sessions")}
+								</p>
 							)}
 							{standalone.map((item) => (
 								<SessionRow
@@ -684,15 +719,6 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 								<Icon name="panel-left" />
 							</button>
 						)}
-						<button
-							className="crumb-back"
-							id="view-back"
-							type="button"
-							hidden={view.panel.current === CHAT_VIEW}
-							onClick={() => report({ kind: "open", panel: CHAT_VIEW })}
-						>
-							<Icon name="arrow-left" />
-						</button>
 						<div className="header-titles">
 							<span className="crumb" id="session-title">
 								{view.sessionLabel ?? copy("header.noSession")}
