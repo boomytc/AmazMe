@@ -1692,9 +1692,15 @@ p {
 	display: none;
 }
 
+/* While the jump affordance shows, it takes its own row above the composer instead of covering the
+   last lines of the transcript. */
+.transcript-jump:not(:has(> [hidden])) {
+	height: 40px;
+}
+
 .transcript-latest {
 	position: absolute;
-	bottom: 8px;
+	bottom: 4px;
 	pointer-events: auto;
 	display: inline-flex;
 	align-items: center;
