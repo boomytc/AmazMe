@@ -552,6 +552,12 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 		presentation,
 	]);
 	useEffect(() => {
+		// Opening the dock at a narrow window gives the reading column back first; expanding the
+		// sidebar again while the dock stays open is the user's call, so this only runs on opening.
+		if (!dockOpen || window.innerWidth >= 1280) return;
+		setCollapsed(true);
+	}, [dockOpen]);
+	useEffect(() => {
 		const removeMenu = window.amazmeDesktop?.onMenuAction?.((action) => {
 			if (action === "new-session") presentation.onShortcut("session.new");
 			else if (action === "settings")

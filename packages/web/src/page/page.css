@@ -9,8 +9,15 @@
 :root {
 	--rail-width: 56px;
 	--sidebar-width: 268px;
-	--dock-width: 380px;
+	/* The dock yields before the reading column drops below its measure: 560px for the column,
+	   320px for the narrowest dock, then it grows back to 380px. */
+	--dock-width: clamp(320px, calc(100vw - var(--rail-width) - var(--sidebar-width) - 560px), 380px);
 	--column-max: 768px;
+}
+
+/* A collapsed sidebar already hands its width to the conversation, so the dock can keep 380px. */
+body.sidebar-collapsed {
+	--dock-width: clamp(320px, calc(100vw - var(--rail-width) - 560px), 380px);
 }
 
 [hidden] {
