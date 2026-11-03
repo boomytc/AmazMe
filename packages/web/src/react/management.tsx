@@ -13,6 +13,7 @@ import { MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION } from "../actions.ts";
 import type { DirectoryListing } from "../directories.ts";
 import { errorMessageCopy } from "../errors.ts";
 import type { Locale } from "../locale.ts";
+import { PanelHead } from "./panel-head.tsx";
 import {
 	type ConnectionModelLike,
 	connectionModelRows,
@@ -300,43 +301,6 @@ function PanelNotices({ scope, locale, notices }: PanelNoticesProps) {
 					);
 				})}
 		</>
-	);
-}
-
-function PanelHead({
-	panel,
-	locale,
-	onAction,
-}: {
-	readonly panel: PanelSpec;
-	readonly locale: Locale;
-	readonly onAction: (action: PanelAction) => void;
-}) {
-	return (
-		<header className="panel-head">
-			<div className="panel-titles">
-				<h1 className="panel-title">
-					<SensitiveText text={panel.title} locale={locale} />
-				</h1>
-				{panel.description !== undefined && (
-					<p className="panel-desc">
-						<SensitiveText text={panel.description} locale={locale} />
-					</p>
-				)}
-			</div>
-			{panel.actions !== undefined && panel.actions.length > 0 && (
-				<div className="panel-actions">
-					{panel.actions.map((action) => (
-						<PanelButtonView
-							key={`${action.id}\u0000${action.data ?? ""}`}
-							action={action}
-							pending={panel.pending}
-							onAction={onAction}
-						/>
-					))}
-				</div>
-			)}
-		</header>
 	);
 }
 

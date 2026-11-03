@@ -27,6 +27,7 @@ import type {
 	PanelText,
 } from "../panels.ts";
 import { createPtySurface, type PtyPresentation } from "../pty-surface.ts";
+import { PanelHead } from "./panel-head.tsx";
 import { translate } from "../strings.ts";
 import {
 	type ControlEdits,
@@ -1561,28 +1562,7 @@ function PanelSpecView({
 			{panel.title.length === 0 &&
 			panel.description === undefined &&
 			(panel.actions?.length ?? 0) === 0 ? null : (
-				<header className="panel-head">
-					<div className="panel-titles">
-						{panel.title.length === 0 ? null : (
-							<h1 className="panel-title">{panel.title}</h1>
-						)}
-						{panel.description === undefined ? null : (
-							<p className="panel-desc">{panel.description}</p>
-						)}
-					</div>
-					{(panel.actions?.length ?? 0) === 0 ? null : (
-						<div className="panel-actions">
-							{panel.actions?.map((action) => (
-								<PanelButtonView
-									key={`${action.id}:${action.data ?? ""}`}
-									action={action}
-									pending={panel.pending}
-									onAction={onAction}
-								/>
-							))}
-						</div>
-					)}
-				</header>
+				<PanelHead panel={panel} locale={locale} onAction={onAction} />
 			)}
 			{files === undefined ? null : (
 				<FileNavigation
