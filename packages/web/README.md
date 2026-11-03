@@ -14,7 +14,7 @@ Web 和 Electron 共用的 React 19 + TypeScript 页面：导航、聊天、模�
 
 `render.ts` 保留原公开类型、元素收集和 `createRenderer` 入口，并统一挂载同一 React 实现；同一容器只允许一个 root。旧 DOM 主渲染器及其独占控件已退役，原协议消费、生成契约、账本与纯视图转换继续复用。
 
-现行契约见 [Python 方案](../../docs/python-backend-plan.md)。
+区域职责、布局与文案规则见 [ARCHITECTURE.md](ARCHITECTURE.md)。现行契约见 [Python 方案](../../docs/python-backend-plan.md)。
 
 回答中的本地 Markdown 链接可打开文件停靠栏，如 `[源码](src/main.py:42)`、`[源码](src/main.py:42:9)` 或 `[源码](src/main.py#L42-L45)`。列号和范围定位到起始行；相对路径以会话工作区为基准，绝对路径必须属于当前项目的工作区。文件名里的字面冒号、井号用 `%3A`、`%23` 转义，含空格的目标可写成 `<src/a file.py:42>`。
 
