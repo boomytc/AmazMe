@@ -766,11 +766,20 @@ p {
 	border-top: 1px solid var(--line);
 	margin-top: 4px;
 }
-.empty-state {
+/* One inline empty message for sidebar lists, panel bodies, pickers, and connection lists. */
+.empty-state,
+.panel-empty,
+.connection-empty,
+.project-picker-empty,
+.model-picker-empty {
 	margin: 0;
-	padding: 6px 10px;
 	color: var(--text-3);
 	font-size: 13px;
+	line-height: 20px;
+}
+
+.empty-state {
+	padding: var(--space-6) var(--space-10);
 }
 
 /* ------------------------------------------------------------------- center */
@@ -2117,7 +2126,7 @@ p {
 .project-picker-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .project-picker-option span { flex: 1; }
 .project-picker-option:hover, .project-picker-option:focus-visible, .project-picker-option[aria-pressed="true"] { background: var(--hover); outline: none; }
-.project-picker-empty { padding: 8px; color: var(--text-3); }
+.project-picker-empty { padding: var(--space-8); }
 
 .composer-model-control { display: flex; align-items: center; gap: 2px; min-width: 0; }
 /* The trigger reads as a quiet label: the model in ink, the effort one step back, a small chevron. */
@@ -2232,7 +2241,7 @@ p {
 .model-picker-option-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .model-picker-option-hint { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-3); font-size: 12px; font-weight: 400; }
 .model-picker-check { width: 15px; height: 15px; margin-left: auto; color: var(--accent); stroke-width: 2.2; }
-.model-picker-empty { margin: 0; padding: 18px 8px; color: var(--text-3); text-align: center; }
+.model-picker-empty { padding: 18px var(--space-8); text-align: center; }
 .model-picker-notice { margin: 0; padding: 10px 14px; color: var(--text-2); background: var(--hover); }
 
 .model-picker-reasoning {
@@ -2334,7 +2343,7 @@ p {
 .connection-model-label input[type="checkbox"] { width: 15px; height: 15px; margin: 0; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
 .connection-model-name { min-width: 0; overflow-wrap: anywhere; }
 .connection-model-id { padding-inline-start: 23px; color: var(--text-3); font-family: var(--font-mono); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
-.connection-empty { margin: 0; padding: 16px 0; color: var(--text-3); font-size: 13px; line-height: 1.6; }
+.connection-empty { padding: var(--space-16) 0; }
 
 @container panel (max-width: 640px) {
 	.connection-workspace { grid-template-columns: 1fr; gap: 20px; }
@@ -3871,11 +3880,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 }
 
 .panel-empty {
-	margin: 0;
-	padding: 16px;
-	color: var(--text-3);
-	font-size: 14px;
-	line-height: 20px;
+	padding: var(--space-16);
 }
 
 .panel-rows:empty { display: none; }
