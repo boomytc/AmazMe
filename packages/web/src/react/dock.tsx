@@ -1755,10 +1755,11 @@ export function Dock({
 		tabs.current.get(next.id)?.focus();
 		onAction({ kind: "command", id: DOCK_TAB_ACTION, data: next.id });
 	};
+	const activeTab = view.tabs.find((tab) => tab.active);
 	const repeated = view.panel.groups.find(
 		(group) => group.title.length > 0 && group.title === view.panel.title,
 	);
-	const panel =
+	const deduped =
 		repeated === undefined
 			? view.panel
 			: {
@@ -1770,6 +1771,11 @@ export function Dock({
 							: group,
 					),
 				};
+	// The tab already names the panel; repeating it as an H1 adds a line without information.
+	const panel =
+		activeTab !== undefined && deduped.title === activeTab.label
+			? { ...deduped, title: "" }
+			: deduped;
 	return (
 		<aside
 			className="dock"
