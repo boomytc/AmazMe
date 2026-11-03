@@ -667,12 +667,6 @@ p {
 	gap: 2px;
 }
 
-.session-group {
-	display: flex;
-	flex-direction: column;
-	gap: 1px;
-}
-
 .session-group-label {
 	margin: 0 10px 4px;
 	color: var(--text-3);
@@ -719,11 +713,6 @@ p {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-.session-source {
-	margin-left: 6px;
-	color: var(--text-3);
-	font-size: 11px;
 }
 .session-age {
 	flex: 0 0 28px;
@@ -1949,7 +1938,6 @@ p {
 	opacity: 0.6;
 }
 
-.markdown .code-copy,
 .markdown .code-fold {
 	flex: none;
 	height: 24px;
@@ -1963,7 +1951,6 @@ p {
 	cursor: pointer;
 }
 
-.markdown .code-copy:hover,
 .markdown .code-fold:hover {
 	background: var(--hover);
 	color: var(--text);
@@ -2296,9 +2283,6 @@ p {
 	max-width: var(--library-measure);
 }
 .model-connections { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.connection-notices { display: flex; flex-direction: column; gap: 8px; }
-.connection-notices[hidden] { display: none; }
-.connection-notices .panel-notice { margin: 0; }
 .connection-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); }
 .connection-default-text { margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
 .connection-default-controls { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
@@ -2311,7 +2295,6 @@ p {
 	max-width: min(520px, 100%);
 	field-sizing: content;
 }
-.connection-default-refresh { flex: 0 0 auto; }
 .connection-workspace { display: grid; grid-template-columns: 232px minmax(0, 1fr); align-items: start; gap: 0; padding-top: 20px; border-top: 1px solid var(--line); }
 .connection-rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-inline-end: 20px; }
 .connection-rail-head { display: flex; flex-direction: column; gap: 8px; }
@@ -2319,7 +2302,6 @@ p {
 .connection-search-input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--text); font: inherit; font-size: 13px; outline: none; transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
 .connection-search-input:hover:not(:disabled) { border-color: var(--text-3); }
 .connection-search-input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
-.connection-add-button { display: inline-flex; align-items: center; justify-content: center; width: 100%; }
 .connection-list { display: flex; flex-direction: column; gap: 2px; max-height: 62dvh; overflow-y: auto; padding-block: 2px; }
 .connection-row { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 8px 10px; background: transparent; border: 0; border-radius: var(--radius-md); color: var(--text); text-align: left; cursor: pointer; font: inherit; transition: background var(--dur-fast) var(--ease); }
 .connection-row:hover:not(:disabled) { background: var(--hover); }
@@ -2365,9 +2347,6 @@ p {
 .connection-model-label input[type="checkbox"] { width: 15px; height: 15px; margin: 0; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
 .connection-model-name { min-width: 0; overflow-wrap: anywhere; }
 .connection-model-id { padding-inline-start: 23px; color: var(--text-3); font-family: var(--font-mono); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
-.connection-model-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; flex: 0 0 auto; }
-.connection-row-button { height: 28px; padding: 0 10px; border-color: var(--line); background: transparent; color: var(--text-2); font-size: 12px; font-weight: 400; }
-.connection-row-button:hover:not(:disabled) { border-color: var(--line-strong); background: var(--hover); color: var(--text); }
 .connection-empty { margin: 0; padding: 16px 0; color: var(--text-3); font-size: 13px; line-height: 1.6; }
 
 @container panel (max-width: 640px) {
@@ -3360,8 +3339,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .file-source { padding-top: 0; }
 .file-source-toolbar { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
 .file-source-caption { flex: 1; color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
-.file-wrap-button { font-size: 12px; font-weight: 600; }
-.file-wrap-button[aria-pressed="true"] { background: var(--active); color: var(--text); }
 .file-source-code {
 	max-height: 65vh;
 	min-width: 0;
@@ -4414,7 +4391,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	max-height: min(calc(18 * 1.65em + 28px), 45dvh); overflow-y: hidden;
 	mask-image: linear-gradient(to bottom, #000 72%, transparent 100%);
 }
-.reader-expand-bar { display: flex; width: 100%; border-radius: 0; border-top: 1px solid var(--line); min-height: 32px; }
 .turn-actions:has(.copy-sensitive) { opacity: 1; flex-wrap: wrap; height: auto; min-height: 28px; }
 .message-action.copy-sensitive, .message-action.copy-masked { width: auto; height: auto; min-height: 28px; gap: 5px; padding: 4px 7px; }
 .message-action.copy-sensitive { color: var(--warn); }
@@ -4505,7 +4481,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .project-heading:has(.project-select.selected) .project-new-session { opacity: 1; }
 /* Project rows own their heading; the sessions below it start one level in. */
 .project-group > .session-row { margin-inline-start: 14px; border-radius: 12px; }
-.project-archived-title { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; padding: 11px 10px; cursor: default; }
 .project-group.archived .project-heading:hover { background: transparent; }
 .project-group.archived .session-age { flex-basis: auto; white-space: nowrap; }
 
@@ -4516,10 +4491,6 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .modal-project .modal-field-label { font-size: 15px; }
 .modal-project .modal-foot { margin-top: 20px; gap: 12px; }
 .modal-project .modal-notice { margin-inline: 0; padding-top: 12px; }
-.modal-project .project-name-field { position: relative; }
-.modal-project .project-name-field .modal-field-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.modal-project .project-name-field > .icon { position: absolute; left: 16px; top: 19px; width: 22px; height: 22px; pointer-events: none; }
-.modal-project .project-name-field input { padding: 16px 16px 16px 52px; border-radius: 14px; font-size: 17px; }
 .directory-field { border: 1px solid var(--line-strong); border-radius: 14px; padding: 16px; }
 .directory-field.empty { min-height: 146px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .directory-selections { width: 100%; }
