@@ -4470,7 +4470,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .modal-project { max-width: 640px; padding: clamp(16px, 4vw, 28px); }
 .modal-project .modal-head, .modal-project .modal-body, .modal-project .modal-foot { padding: 0; }
 .modal-project .modal-head { margin-bottom: 20px; }
-.modal-project .modal-title { font-size: var(--text-welcome-title); font-weight: 600; }
+.modal-project .modal-title { font-size: var(--text-welcome-title); line-height: var(--line-welcome-title); font-weight: 600; }
 .modal-project .modal-field-label { font-size: 15px; }
 .modal-project .modal-foot { margin-top: 20px; gap: 12px; }
 .modal-project .modal-notice { margin-inline: 0; padding-top: 12px; }
