@@ -28,6 +28,7 @@ import type {
 } from "../panels.ts";
 import { createPtySurface, type PtyPresentation } from "../pty-surface.ts";
 import { PanelHead } from "./panel-head.tsx";
+import { Breadcrumbs } from "./breadcrumbs.tsx";
 import { translate } from "../strings.ts";
 import {
 	type ControlEdits,
@@ -1275,47 +1276,21 @@ function FileNavigation({
 	const filter = useRef<HTMLInputElement>(null);
 	return (
 		<div className="file-navigation">
-			<nav
-				className="file-breadcrumbs"
-				aria-label={translate(locale, "dock.filePath")}
-			>
-				{files.breadcrumbs.map((crumb, index) => (
-					<Fragment key={`${crumb.path}:${index}`}>
-						{index === 0 ? null : (
-							<span className="file-path-separator" aria-hidden="true">
-								/
-							</span>
-						)}
-						{crumb.current ? (
-							<span
-								className="file-crumb current"
-								title={crumb.path}
-								aria-current="page"
-							>
-								{crumb.label}
-							</span>
-						) : (
-							<button
-								type="button"
-								className="panel-button weight-text file-crumb"
-								title={crumb.path}
-								disabled={busy}
-								data-action={WORKSPACE_OPEN_ACTION}
-								data-action-data={crumb.path}
-								onClick={() => {
-									onAction({
-										kind: "command",
-										id: WORKSPACE_OPEN_ACTION,
-										data: crumb.path,
-									});
-								}}
-							>
-								{crumb.label}
-							</button>
-						)}
-					</Fragment>
-				))}
-			</nav>
+			<Breadcrumbs
+				label={translate(locale, "dock.filePath")}
+				levels={files.breadcrumbs.map((crumb) => ({
+					key: crumb.path,
+					label: crumb.label,
+				}))}
+				disabled={busy}
+				onNavigate={(path) => {
+					onAction({
+						kind: "command",
+						id: WORKSPACE_OPEN_ACTION,
+						data: path,
+					});
+				}}
+			/>
 			<CopyControl
 				locale={locale}
 				label={translate(locale, "dock.copyPath")}

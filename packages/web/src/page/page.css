@@ -3239,15 +3239,27 @@ p {
 	margin-bottom: 16px;
 }
 .file-breadcrumbs {
+	position: relative;
+	display: block;
+	min-width: 0;
+	min-height: 32px;
+	overflow: hidden;
+}
+.file-breadcrumbs-track {
 	display: flex;
 	align-items: center;
-	flex-wrap: wrap;
 	gap: 2px;
 	min-width: 0;
 	min-height: 32px;
+	flex-wrap: nowrap;
+	white-space: nowrap;
 }
 nav.file-breadcrumbs .file-crumb {
-	max-width: 100%;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	flex: none;
+	min-width: 0;
 	min-height: 30px;
 	padding: 4px 5px;
 	border: 0;
@@ -3256,12 +3268,53 @@ nav.file-breadcrumbs .file-crumb {
 	color: var(--text-2);
 	font-size: 12px;
 	line-height: 20px;
-	overflow-wrap: anywhere;
 	text-align: left;
+}
+nav.file-breadcrumbs .file-crumb .icon {
+	flex: none;
+	width: 14px;
+	height: 14px;
+	color: var(--text-3);
 }
 nav.file-breadcrumbs button.file-crumb:hover { background: var(--hover); color: var(--text); }
 nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500; }
-.file-path-separator { color: var(--text-3); font-size: 12px; }
+nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
+.file-crumb-label {
+	display: inline-block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	transition: max-width 180ms var(--ease);
+}
+/* Natural crumb widths, measured off screen; the trail never paints this copy. */
+.file-breadcrumbs-measure {
+	position: absolute;
+	top: 0;
+	left: 0;
+	display: flex;
+	height: 0;
+	overflow: hidden;
+	visibility: hidden;
+	pointer-events: none;
+}
+.file-path-separator {
+	flex: none;
+	width: 14px;
+	color: var(--text-3);
+	font-size: 12px;
+	text-align: center;
+}
+.file-path-gap {
+	flex: none;
+	width: 22px;
+	color: var(--text-3);
+	font-size: 12px;
+	text-align: center;
+	cursor: default;
+}
+@media (prefers-reduced-motion: reduce) {
+	.file-crumb-label { transition: none; }
+}
 .file-filter {
 	grid-column: 1 / -1;
 	display: flex;
