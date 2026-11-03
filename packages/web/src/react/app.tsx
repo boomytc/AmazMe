@@ -513,7 +513,7 @@ function Titlebar({
 		? view.pageTitle
 		: (view.sessionLabel ?? copy("header.noSession"));
 	return (
-		<header className="titlebar" data-view={management ? "management" : "chat"}>
+		<header className="titlebar">
 			<div className="titlebar-leading">
 				{management ? (
 					<button

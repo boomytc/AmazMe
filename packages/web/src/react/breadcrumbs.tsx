@@ -30,8 +30,6 @@ type BreadcrumbSlot =
 interface BreadcrumbPlan {
 	/** Label width allowed for each level; 0 means the level folds to its icon. */
 	readonly widths: readonly number[];
-	/** Natural label widths, restored when the pointer or focus expands a level. */
-	readonly labels: readonly number[];
 	/** Levels between `from` and `to` hide behind one ellipsis. `to` is exclusive. */
 	readonly gap: { readonly from: number; readonly to: number } | null;
 }
@@ -127,7 +125,7 @@ export function Breadcrumbs({
 
 	/** The hovered or focused level stretches into the room the plan left around it. */
 	function labelWidth(index: number): number {
-		const natural = plan.labels[index] ?? 0;
+		const natural = metrics[index]?.label ?? 0;
 		const planned = plan.widths[index] ?? natural;
 		if (expanded !== levels[index]?.key) return planned;
 		if (index !== currentIndex) return natural;
@@ -351,16 +349,16 @@ function planTrail(
 ): BreadcrumbPlan {
 	const labels = metrics.map((metric) => metric.label);
 	const count = metrics.length;
-	if (count === 0) return { widths: [], labels: [], gap: null };
+	if (count === 0) return { widths: [], gap: null };
 	const usable = available - SAFETY;
-	if (usable <= 0) return { widths: labels, labels, gap: null };
+	if (usable <= 0) return { widths: labels, gap: null };
 
 	const bases = metrics.map((metric) => Math.max(0, metric.crumb - metric.label));
 	const base =
 		bases.reduce((sum, width) => sum + width, 0) +
 		Math.max(0, count - 1) * SEPARATOR;
 	const natural = labels.reduce((sum, width) => sum + width, 0);
-	if (base + natural <= usable) return { widths: labels, labels, gap: null };
+	if (base + natural <= usable) return { widths: labels, gap: null };
 
 	const fixed = [...new Set([0, count - 2, count - 1])].filter(
 		(index) => index >= 0 && index < count,
@@ -370,9 +368,9 @@ function planTrail(
 	if (budget >= fixedNatural) {
 		const widths = labels.map(() => 0);
 		for (const index of fixed) widths[index] = labels[index] ?? 0;
-		return { widths, labels, gap: null };
+		return { widths, gap: null };
 	}
-	if (count <= 3) return { widths: shareLabels(labels, fixed, budget), labels, gap: null };
+	if (count <= 3) return { widths: shareLabels(labels, fixed, budget), gap: null };
 
 	const visible = buildSlots(count, { from: 1, to: count - 2 }).flatMap((slot) =>
 		slot.kind === "level" ? [slot.index] : [],
@@ -382,7 +380,6 @@ function planTrail(
 		usable - visibleBase - visible.length * SEPARATOR - GAP_WIDTH;
 	return {
 		widths: shareLabels(labels, visible, compactBudget),
-		labels,
 		gap: { from: 1, to: count - 2 },
 	};
 }

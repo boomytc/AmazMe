@@ -387,38 +387,11 @@ p {
 	background: var(--sidebar);
 }
 
-.session-sidebar,
-.section-sidebar {
+.session-sidebar {
 	display: flex;
 	flex: 1;
 	flex-direction: column;
 	min-height: 0;
-}
-
-.section-sidebar-head {
-	display: flex;
-	align-items: center;
-	gap: 4px;
-	flex: none;
-	height: 40px;
-	margin: 0 0 22px;
-	padding: 0 0 0 8px;
-}
-
-.section-sidebar-title {
-	flex: 1;
-	min-width: 0;
-	margin: 0;
-	overflow: hidden;
-	font-size: var(--text-section-title);
-	font-weight: 600;
-	line-height: var(--line-section-title);
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
-.section-sidebar-head .icon-button {
-	margin-left: auto;
 }
 
 .section-nav {
@@ -638,10 +611,6 @@ p {
 
 .roster-filter-input::placeholder {
 	color: var(--text-3);
-}
-
-.section-sidebar:has(#section-search:not([hidden])) .section-sidebar-head {
-	margin-bottom: 10px;
 }
 
 .section-search {
@@ -4569,7 +4538,6 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 .question-custom textarea { width: 100%; resize: vertical; font: inherit; color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
 
 #amazme-root, .react-chat { display: contents; }
-.roster-menu-anchor { position: relative; }
 
 body.startup-failed > #amazme-root { display: contents; }
 

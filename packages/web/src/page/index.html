@@ -80,9 +80,9 @@
 			</defs>
 		</svg>
 		<div id="amazme-root">
-		<header class="titlebar" data-view="chat">
+		<header class="titlebar">
 			<div class="titlebar-leading">
-				<button class="icon-button" type="button" id="sidebar-toggle" aria-label="{{sidebar.toggle}}" title="{{sidebar.toggle}}" aria-expanded="true" aria-controls="sidebar">
+				<button class="icon-button" type="button" aria-label="{{sidebar.toggle}}" title="{{sidebar.toggle}}" aria-expanded="true" aria-controls="sidebar">
 					<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-panel-left"></use></svg>
 				</button>
 				<div class="titlebar-titles"><span class="crumb" id="session-title">{{header.noSession}}</span></div>
@@ -123,30 +123,9 @@
 				<p class="sidebar-label">{{sidebar.sessions}}</p>
 				<div class="session-list" id="roster"><p class="empty-state">{{sidebar.waiting}}</p></div>
 			</div>
-			<div class="section-sidebar" id="section-sidebar" hidden>
-				<div class="section-sidebar-head">
-					<h2 class="section-sidebar-title" id="section-title">{{nav.settings}}</h2>
-				</div>
-			</div>
 		</aside>
 		<main class="center" id="center" data-state="empty">
 			<div class="session-warning" id="session-warning" role="alert" hidden></div>
-			<!-- The management panel: it replaces the conversation while a view other than chat is open. -->
-			<section class="view" id="view" hidden>
-				<div class="library-frame" id="library-frame">
-					<div class="library-nav" id="library-nav" hidden>
-						<div class="roster-filter section-search" id="section-search" hidden>
-							<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-search"></use></svg>
-							<input class="roster-filter-input" id="section-search-input" type="search" autocomplete="off" spellcheck="false" placeholder="{{panel.settings.search}}" aria-label="{{panel.settings.searchLabel}}" />
-							<button class="section-search-clear" type="button" id="section-search-clear" hidden aria-label="{{panel.settings.searchClear}}">
-								<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-x"></use></svg>
-							</button>
-						</div>
-						<nav class="section-nav" id="section-nav" aria-label="{{nav.settings}}"></nav>
-					</div>
-					<div class="view-body" id="view-body"></div>
-				</div>
-			</section>
 			<div class="transcript" id="transcript">
 				<div class="column" id="column"><p class="empty-state">{{header.noSessionAttached}}</p></div>
 			</div>
@@ -240,7 +219,7 @@
 			<div class="dock-body" id="dock-body"></div>
 		</aside>
 		<!-- The one modal host: editors and prompts render here, over the main area. -->
-		<dialog class="modal-root" id="modal-root" hidden></dialog>
+		<dialog class="modal-root" hidden></dialog>
 		</div>
 		<!--amazme-startup-guard-->
 		<script id="amazme-page-entry" type="module" src="/page.js"></script>

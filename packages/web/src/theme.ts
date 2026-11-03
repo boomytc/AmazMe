@@ -18,6 +18,8 @@ const DARK_QUERY = "(prefers-color-scheme: dark)";
 let preference: ThemePreference = "system";
 let installed = false;
 let media: MediaQueryList | undefined;
+/** The window backdrop already handed to the shell; repaints with the same canvas send nothing. */
+let paintedCanvas = "";
 
 export function isThemePreference(value: string): value is ThemePreference {
 	return (THEME_PREFERENCES as readonly string[]).includes(value);
@@ -39,9 +41,12 @@ function paint(): void {
 	// Native controls and scrollbars follow the same choice as the palette.
 	document.documentElement.style.colorScheme = preference === "system" ? "light dark" : preference;
 	// The window backdrop is visible while the window resizes; keep it on the painted canvas.
-	setWindowBackground(
-		getComputedStyle(document.documentElement).getPropertyValue("--canvas").trim(),
-	);
+	const canvas = getComputedStyle(document.documentElement)
+		.getPropertyValue("--canvas")
+		.trim();
+	if (canvas === paintedCanvas) return;
+	paintedCanvas = canvas;
+	setWindowBackground(canvas);
 }
 
 /** Apply a preference now; every render calls this, so a switch lands without a reload. */
