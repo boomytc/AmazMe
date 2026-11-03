@@ -2846,9 +2846,8 @@ p {
 }
 .suggestion-accept kbd { padding: 0 5px; border: 1px solid var(--line); border-radius: var(--radius-xs); font: 11px/1.8 var(--font-sans); color: var(--text-2); }
 .suggestion-accept:hover kbd { border-color: var(--line-strong); color: var(--text); }
-.suggestion-dismiss { pointer-events: auto; flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text-3); cursor: pointer; }
-.suggestion-dismiss:hover { color: var(--text); }
-.suggestion-dismiss:hover { background: var(--hover); }
+.suggestion-dismiss { pointer-events: auto; flex: none; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--text-3); cursor: pointer; }
+.suggestion-dismiss:hover { background: var(--hover); color: var(--text); }
 .suggestion-dismiss .icon { width: 14px; height: 14px; }
 
 .composer-input {
@@ -3178,8 +3177,7 @@ p {
 }
 
 .dock-tab.active {
-	background: var(--raised);
-	box-shadow: var(--shadow-card);
+	background: var(--active);
 	color: var(--text);
 }
 
@@ -3370,7 +3368,7 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 	min-height: 38px;
 	padding: 7px 8px;
 	border: 0;
-	border-radius: var(--radius-xs);
+	border-radius: var(--radius-sm);
 	background: transparent;
 	color: var(--text);
 	text-align: left;
@@ -4286,6 +4284,22 @@ nav.file-breadcrumbs .file-crumb.current { color: var(--text); font-weight: 500;
 .modal-close:hover:not(:disabled) {
 	background: var(--hover);
 	color: var(--text);
+}
+
+/* Icon-sized controls share the radius family and the same press transition; their size and
+   placement stay with the component that owns them. */
+.icon-button,
+.crumb-back,
+.header-action,
+.message-action,
+.session-more,
+.modal-close,
+.suggestion-dismiss,
+.file-icon-button {
+	border-radius: var(--radius-sm);
+	transition:
+		background var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease);
 }
 
 .modal-body {
