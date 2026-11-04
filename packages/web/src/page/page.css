@@ -2762,7 +2762,8 @@ p {
 .permission-label { font-size: 15px; font-weight: 500; line-height: 22px; }
 .permission-description { color: var(--text-3); font-size: 13px; line-height: 19px; }
 .permission-option[data-policy="auto"] .permission-description { color: inherit; }
-.permission-option > .permission-check { width: 18px; height: 18px; }
+.permission-option > .permission-check { visibility: hidden; width: 18px; height: 18px; }
+.permission-option[aria-checked="true"] > .permission-check { visibility: visible; }
 .permission-hint { margin: 4px 10px 6px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; line-height: 17px; }
 
 .composer-trailing {
