@@ -226,6 +226,10 @@ export interface PanelSpec {
 		readonly path: string;
 		readonly breadcrumbs: readonly { readonly label: string; readonly path: string; readonly current: boolean }[];
 		readonly filterScope?: string;
+		/** The loaded range, e.g. `1–22 / 22`, shown beside the path instead of in a list header. */
+		readonly page?: string;
+		/** The reload action belongs to the path row; the list keeps only paging controls. */
+		readonly reload?: PanelButton;
 	};
 }
 

@@ -3469,6 +3469,19 @@ body[data-dock-motion="width"] {
 	gap: 8px;
 	margin-bottom: 16px;
 }
+.file-navigation-meta {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-width: 0;
+}
+.file-page-range {
+	padding: 0 4px;
+	color: var(--text-3);
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+}
 .file-breadcrumbs {
 	position: relative;
 	display: block;

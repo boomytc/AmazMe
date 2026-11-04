@@ -693,18 +693,19 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		...(page.offset > 0 ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.previousPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: Math.max(0, page.offset - page.limit) }), weight: "line" as const }] : []),
 		...(page.offset + page.limit < page.total ? [{ id: WORKSPACE_PAGE_ACTION, label: translate(locale, "dock.nextPage"), data: JSON.stringify({ kind: "open", path: workspacePath(state.cwd, view.path), offset: page.offset + page.limit }), weight: "line" as const }] : []),
 	];
+	const pageRange = page === undefined ? undefined : translate(locale, "dock.pageRange", { from: String(page.total === 0 ? 0 : page.offset + 1), to: String(Math.min(page.offset + page.limit, page.total)), total: String(page.total) });
 	const group: PanelGroup = {
 		id: "files:entries",
-		title: translate(locale, "dock.entries"),
-		actions: [reload, ...paging],
-		...(page === undefined ? {} : { description: translate(locale, "dock.pageRange", { from: String(page.total === 0 ? 0 : page.offset + 1), to: String(Math.min(page.offset + page.limit, page.total)), total: String(page.total) }) }),
+		title: "",
+		actions: paging,
 		rows,
 		empty: { cause: page !== undefined && page.total > 0 ? "no-match" : "first-use", text: translate(locale, page !== undefined && page.total > 0 ? "dock.emptyPage" : "dock.emptyDirectory") },
 	};
 	return {
 		id: "files",
 		title,
-		files,
+		/* The path row carries the loaded range and the reload action; the list has no header row. */
+		files: { ...files, ...(pageRange === undefined ? {} : { page: pageRange }), reload },
 		notices: [],
 		groups: [...folders, group],
 	};

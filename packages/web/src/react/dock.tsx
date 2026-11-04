@@ -60,6 +60,7 @@ type DockIconName =
 	| "more"
 	| "panel-right"
 	| "plus"
+	| "refresh"
 	| "restore"
 	| "search"
 	| "square-pen"
@@ -1318,6 +1319,7 @@ function FileNavigation({
 }): ReactElement {
 	const files = panel.files;
 	const busy = pending?.id.startsWith("workspace:") === true;
+	const reload = files.reload;
 	const filter = useRef<HTMLInputElement>(null);
 	return (
 		<div className="file-navigation">
@@ -1336,12 +1338,35 @@ function FileNavigation({
 					});
 				}}
 			/>
-			<CopyControl
-				locale={locale}
-				label={translate(locale, "dock.copyPath")}
-				text={files.breadcrumbs.at(-1)?.path ?? files.cwd}
-				className="file-icon-button icon-button"
-			/>
+			<div className="file-navigation-meta">
+				{files.page === undefined ? null : (
+					<span className="file-page-range">{files.page}</span>
+				)}
+				{reload === undefined ? null : (
+					<button
+						type="button"
+						className="file-icon-button icon-button"
+						aria-label={reload.label}
+						title={reload.label}
+						disabled={busy || reload.disabled === true}
+						onClick={() =>
+							onAction({
+								kind: "command",
+								id: reload.id,
+								data: reload.data,
+							})
+						}
+					>
+						<Icon name="refresh" />
+					</button>
+				)}
+				<CopyControl
+					locale={locale}
+					label={translate(locale, "dock.copyPath")}
+					text={files.breadcrumbs.at(-1)?.path ?? files.cwd}
+					className="file-icon-button icon-button"
+				/>
+			</div>
 			{files.filterScope === undefined ? null : (
 				<>
 					<div className="file-filter">
