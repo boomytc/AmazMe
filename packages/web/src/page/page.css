@@ -3922,6 +3922,70 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	overflow-wrap: anywhere;
 }
 
+/* A title's help is a control, not a paragraph: the row keeps one line until the reader asks. The
+   icon stays out of the reading surface until the row or heading is under the pointer or focus. */
+.hint {
+	display: inline-flex;
+	align-items: center;
+	margin-left: 2px;
+	vertical-align: -3px;
+	opacity: 0;
+	transition: opacity var(--dur-fast) var(--ease);
+}
+
+.panel-row:hover .hint,
+.panel-row:focus-within .hint,
+.panel-group-head:hover .hint,
+.panel-group-head:focus-within .hint,
+.panel-title:hover .hint,
+.panel-title:focus-within .hint,
+.dock-panel-head:hover .hint,
+.dock-panel-head:focus-within .hint,
+.hint:focus-within {
+	opacity: 1;
+}
+
+.hint-trigger {
+	display: inline-grid;
+	place-items: center;
+	width: 18px;
+	height: 18px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+	color: var(--text-3);
+	cursor: help;
+}
+
+.hint-trigger .icon {
+	width: 13px;
+	height: 13px;
+}
+
+.hint-trigger:hover,
+.hint-trigger:focus-visible,
+.hint-trigger[aria-expanded="true"] {
+	background: var(--hover);
+	color: var(--text-2);
+}
+
+.hint-card {
+	position: fixed;
+	z-index: var(--z-tooltip);
+	width: max-content;
+	max-width: min(340px, calc(100vw - 16px));
+	padding: 9px 12px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--raised);
+	color: var(--text-2);
+	box-shadow: var(--shadow-popover);
+	font-size: 12.5px;
+	line-height: 18px;
+	overflow-wrap: anywhere;
+}
+
 .panel-badge {
 	flex: none;
 	padding: 0 7px;

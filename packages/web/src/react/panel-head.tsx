@@ -3,8 +3,9 @@ import type { PanelAction, PanelSpec } from "../panels.ts";
 import { PanelButtonView, SensitiveText } from "./management-fields.tsx";
 
 /**
- * The head both panel surfaces share: the title, its description, and the panel actions. A panel
- * that the dock's tab already names passes an empty title; the head then renders only the rest.
+ * The head the dock's panel shares: a title when the tab does not already name it, and the panel
+ * actions. The tab is the panel's top edge, so a panel the tab names passes an empty title. Static
+ * guidance rides on group and row titles as hints instead of taking a line here.
  */
 export function PanelHead({
 	panel,

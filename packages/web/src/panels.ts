@@ -114,7 +114,10 @@ export interface PanelRow {
 	/** Stable key for the row across renders. */
 	readonly id: string;
 	readonly title: string;
+	/** A live fact about the row. Static guidance is `hint`, so it costs no line. */
 	readonly description?: string;
+	/** Help for the title, revealed from its info control instead of occupying a paragraph. */
+	readonly hint?: string;
 	readonly badges?: readonly (string | PanelDelta)[];
 	/** A trailing value line, for a path or a settings key. */
 	readonly value?: string;
@@ -150,7 +153,10 @@ export interface PanelLead {
 export interface PanelGroup {
 	readonly id: string;
 	readonly title: string;
+	/** A live fact about the group. Static guidance is `hint`, so it costs no line. */
 	readonly description?: string;
+	/** Help for the title, revealed from its info control instead of occupying a paragraph. */
+	readonly hint?: string;
 	/** Buttons in the group header, such as New or Add. */
 	readonly actions?: readonly PanelButton[];
 	/** A band above the rows, for one task that is not itself a record. */
@@ -159,7 +165,7 @@ export interface PanelGroup {
 	readonly rows: readonly PanelRow[];
 	/** The line shown instead of rows when the group has none. */
 	readonly empty?: PanelEmpty;
-	/** One line under the rows, for where a change lands and when it applies. */
+	/** One live line under the rows, such as what a running task is doing. */
 	readonly footnote?: string;
 }
 
@@ -200,6 +206,7 @@ export interface PanelSpec {
 	/** The panel's own id; the management views use `PanelId`, the dock uses its tabs. */
 	readonly id: string;
 	readonly title: string;
+	/** A live fact about the panel. The management head is the titlebar, so only states show here. */
 	readonly description?: string;
 	/** Page-level actions, shown beside the title. */
 	readonly actions?: readonly PanelButton[];
@@ -574,7 +581,7 @@ function unavailablePanel(locale: Locale, id: PanelId, title: string, descriptio
 	};
 }
 
-/** One settings row: the field's name, its explanation, and the control the host's kind implies. */
+/** One settings row: the field's name, the help behind its info control, and its control. */
 function settingRow(locale: Locale, descriptor: SettingDescriptorLike): PanelRow {
 	const copy = settingFieldCopy(locale, descriptor.id);
 	return {
@@ -582,7 +589,7 @@ function settingRow(locale: Locale, descriptor: SettingDescriptorLike): PanelRow
 		title: copy.label,
 		...(copy.description === undefined || copy.description.length === 0
 			? {}
-			: { description: copy.description }),
+			: { hint: copy.description }),
 		...(descriptor.explicit ? {} : { badges: [translate(locale, "panel.settings.badgeDefault")] }),
 		controls: settingsControls(locale, descriptor),
 	};
@@ -600,15 +607,18 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	}
 	const groups: PanelGroup[] = [];
 	if (input.hostModels) {
-		groups.push({ id: "settings:models", title: translate(locale, "connections.title"), description: translate(locale, "connections.help"), rows: [] });
+		groups.push({ id: "settings:models", title: translate(locale, "connections.title"), hint: translate(locale, "connections.help"), rows: [] });
 	} else if (input.models !== undefined) {
 		const { picker, available, selected: hasSelected } = input.models;
 		const selected = picker.groups.flatMap(group => group.options).find(option => option.selected);
 		const scopeEmpty = picker.empty === translate(locale, "model.scopeEmpty");
 		const placeholderKey = picker.empty === undefined ? "model.choose" : scopeEmpty ? "model.configure" : "model.connectProvider";
+		const selectionNotice = picker.scopeNotice ?? picker.empty;
 		groups.push({
 			id: "settings:models", title: translate(locale, "model.manage"),
-			description: translate(locale, available ? "model.manageHelp" : "model.needsSession"),
+			...(available
+				? { hint: translate(locale, "model.manageHelp") }
+				: { description: translate(locale, "model.needsSession") }),
 			actions: [
 				{ id: REFRESH_MODELS_ACTION, label: picker.refresh.label, weight: "line", disabled: !available || picker.refresh.busy },
 				{ id: MODEL_SCOPE_ACTION, label: translate(locale, "model.scope"), weight: "line", disabled: !available },
@@ -617,7 +627,9 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 			], rows: [
 				{
 					id: "models:selection", title: translate(locale, "model.current"),
-					description: picker.scopeNotice ?? picker.empty ?? translate(locale, "model.nextRequest"),
+					...(selectionNotice === undefined
+						? { hint: translate(locale, "model.nextRequest") }
+						: { description: selectionNotice }),
 					...(picker.scopeNotice ? { value: picker.label } : {}),
 					controls: [{
 						id: MODEL_SELECT_ACTION, kind: "select", value: selected ? JSON.stringify([selected.provider, selected.modelId]) : "",
@@ -628,7 +640,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 				},
 				...(picker.levels.length <= 1 ? [] : [{
 					id: "models:thinking", title: translate(locale, "model.effort"),
-					description: translate(locale, "model.supportedLevels"),
+					hint: translate(locale, "model.supportedLevels"),
 					controls: [{ id: MODEL_THINKING_ACTION, kind: "select" as const, value: picker.levels.find(level => level.selected)?.level ?? "", disabled: !available || picker.disabled,
 						options: picker.levels.map(level => ({ value: level.level, label: level.label })) }],
 				}]),
@@ -670,19 +682,19 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 		});
 		groups.push({
 			id: "settings:archives", title: translate(locale, "project.archived"),
-			description: translate(locale, "panel.settings.archivedSessionsHelp"),
 			skeleton: "records",
 			rows,
 			...(rows.length === 0 ? { empty: { cause: "first-use" as const, text: translate(locale, "panel.settings.archivedGroupEmpty") } } : {}),
-			footnote: archives.retentionDays > 0
-				? translate(locale, "panel.settings.archivedFootnote", { days: String(archives.retentionDays) })
-				: translate(locale, "panel.settings.archivedKeepForever"),
+			...(rows.length === 0 ? {} : {
+				footnote: archives.retentionDays > 0
+					? translate(locale, "panel.settings.archivedFootnote", { days: String(archives.retentionDays) })
+					: translate(locale, "panel.settings.archivedKeepForever"),
+			}),
 		});
 	}
 	groups.push({
 		id: "settings:files",
 		title: translate(locale, "panel.settings.filesTitle"),
-		description: translate(locale, "panel.settings.filesDescription"),
 		skeleton: "form",
 		actions: [
 			{ id: SETTINGS_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), weight: "line" },
@@ -693,6 +705,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 			{
 				id: "settings:global-path",
 				title: translate(locale, "panel.settings.globalPath"),
+				hint: translate(locale, "panel.settings.footnote"),
 				value: state.paths.global,
 			},
 			{
@@ -703,12 +716,10 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 					: { value: state.paths.project }),
 			},
 		],
-		footnote: translate(locale, "panel.settings.footnote"),
 	});
 	return {
 		id: "settings",
 		title,
-		description: translate(locale, "panel.settings.description"),
 		notices: state.errors.map((error) => {
 			const scope = settingScopeCopy(locale, error.scope);
 			const message = errorMessageCopy(locale, error.message);
@@ -745,6 +756,7 @@ function groupSearchText(group: PanelGroup): string {
 	return visibleText([
 		group.title,
 		group.description,
+		group.hint,
 		group.footnote,
 		group.empty?.text,
 		...(group.actions ?? []).map((action) => action.label),
@@ -755,6 +767,7 @@ function rowSearchText(row: PanelRow): string {
 	return visibleText([
 		row.title,
 		row.description,
+		row.hint,
 		row.value,
 		...(row.badges ?? []).map((badge) => typeof badge === "string" ? badge : `+${badge.added} −${badge.removed}`),
 		...(row.actions ?? []).map((action) => action.label),
@@ -798,7 +811,6 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 	return {
 		id: "skills",
 		title,
-		description: translate(locale, "panel.skills.description"),
 		notices: state.diagnostics.map((diagnostic) => ({
 			tone: "error" as const,
 			text: `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`,
@@ -807,6 +819,7 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 			{
 				id: "skills:list",
 				title: translate(locale, "panel.skills.loaded"),
+				hint: translate(locale, "panel.skills.footnote", { directory: state.directory }),
 				skeleton: "records",
 				actions: [
 					{ id: SKILL_NEW_ACTION, label: translate(locale, "panel.skills.new"), weight: "filled" },
@@ -849,7 +862,6 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 						: {}),
 				})),
 				empty: { cause: "first-use", text: translate(locale, "panel.skills.empty") },
-				footnote: translate(locale, "panel.skills.footnote", { directory: state.directory }),
 			},
 		],
 	};
@@ -873,7 +885,6 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 	return {
 		id: "plugins",
 		title,
-		description: translate(locale, "panel.plugins.description"),
 		notices: [...new Set(runtime === undefined ? state.mcp.errors : (runtime?.errors ?? []))].map((error) => ({
 			tone: "error" as const,
 			text: error,
@@ -883,7 +894,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 				id: "plugins:packages",
 				title: translate(locale, "panel.plugins.packages"),
 				skeleton: "records",
-				description: translate(locale, "panel.plugins.packagesDescription"),
+				hint: translate(locale, "panel.plugins.packagesFootnote"),
 				actions: [
 					{ id: PLUGIN_PACKAGE_ADD_ACTION, label: translate(locale, "panel.plugins.addPackage"), weight: "filled" },
 				],
@@ -909,13 +920,12 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 					},
 				})),
 				empty: { cause: "first-use", text: translate(locale, "panel.plugins.packagesEmpty") },
-				footnote: translate(locale, "panel.plugins.packagesFootnote"),
 			},
 			{
 				id: "plugins:mcp",
 				title: translate(locale, "panel.plugins.mcp"),
 				skeleton: "records",
-				description: translate(locale, "panel.plugins.mcpDescription"),
+				hint: translate(locale, "panel.plugins.mcpFootnote", { path: state.mcp.globalPath }),
 				actions: [
 					{ id: PLUGIN_MCP_ADD_ACTION, label: translate(locale, "panel.plugins.addServer"), weight: "filled" },
 					...(runtime === undefined
@@ -1019,8 +1029,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 					: {}),
 				empty: runtime === null
 					? { cause: "unavailable" as const, text: translate(locale, "panel.plugins.mcpUnavailable") }
-					: { cause: "first-use" as const, text: translate(locale, "panel.plugins.mcpEmpty", { path: state.mcp.globalPath }) },
-				footnote: translate(locale, "panel.plugins.mcpFootnote", { path: state.mcp.globalPath }),
+					: { cause: "first-use" as const, text: translate(locale, "panel.plugins.mcpEmpty") },
 			},
 		],
 	};
@@ -1047,7 +1056,6 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 	return {
 		id: AUTOMATION_VIEW,
 		title,
-		description: translate(locale, "panel.automation.description"),
 		notices: [
 			...(state.problem ? [{ tone: "error" as const, text: state.problem }] : []),
 		],
@@ -1055,6 +1063,7 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 			{
 				id: "automation:schedules",
 				title: translate(locale, "panel.automation.schedules"),
+				hint: translate(locale, "panel.automation.footnote", { path: state.path }),
 				skeleton: "records",
 				actions: [
 					{
@@ -1119,7 +1128,6 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 					},
 				})),
 				empty: { cause: state.problem ? "failed" : "first-use", text: translate(locale, state.problem ? "panel.automation.unreadable" : "panel.automation.empty") },
-				footnote: translate(locale, "panel.automation.footnote", { path: state.path }),
 			},
 		],
 	};

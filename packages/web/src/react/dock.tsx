@@ -29,6 +29,7 @@ import type {
 	PanelText,
 } from "../panels.ts";
 import { createPtySurface, type PtyPresentation } from "../pty-surface.ts";
+import { Hint } from "./hint.tsx";
 import { PanelHead } from "./panel-head.tsx";
 import { Breadcrumbs } from "./breadcrumbs.tsx";
 import { translate } from "../strings.ts";
@@ -459,7 +460,12 @@ function PanelRowView({
 		>
 			<div className="panel-row-text">
 				<div className="panel-row-head">
-					<span className="panel-row-title">{row.title}</span>
+					<span className="panel-row-title">
+						{row.title}
+						{row.hint === undefined ? null : (
+							<Hint text={row.hint} locale={locale} />
+						)}
+					</span>
 					{records ? null : (
 						<PanelBadges badges={row.badges ?? []} locale={locale} />
 					)}
@@ -1195,11 +1201,17 @@ function PanelGroupView({
 		>
 			{group.title.length === 0 &&
 			group.description === undefined &&
+			group.hint === undefined &&
 			(group.actions?.length ?? 0) === 0 ? null : (
 				<header className="panel-group-head">
 					<div className="panel-group-titles">
 						{group.title.length === 0 ? null : (
-							<h2 className="panel-group-title">{group.title}</h2>
+							<h2 className="panel-group-title">
+								{group.title}
+								{group.hint === undefined ? null : (
+									<Hint text={group.hint} locale={locale} />
+								)}
+							</h2>
 						)}
 						{group.description === undefined ? null : (
 							<p className="panel-group-desc">{group.description}</p>

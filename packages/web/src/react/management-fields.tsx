@@ -38,6 +38,7 @@ export type IconName =
 	| "copy"
 	| "file"
 	| "folder"
+	| "info"
 	| "more"
 	| "search"
 	| "square-pen"

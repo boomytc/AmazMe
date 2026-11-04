@@ -13,7 +13,7 @@ import { MODEL_DEFAULTS_ACTION, REFRESH_MODELS_ACTION } from "../actions.ts";
 import type { DirectoryListing } from "../directories.ts";
 import { errorMessageCopy } from "../errors.ts";
 import type { Locale } from "../locale.ts";
-import { PanelHead } from "./panel-head.tsx";
+import { Hint } from "./hint.tsx";
 import {
 	type ConnectionModelLike,
 	connectionModelRows,
@@ -421,6 +421,9 @@ function PanelRowView({
 				<div className="panel-row-head">
 					<span className="panel-row-title">
 						<SensitiveText text={row.title} locale={locale} />
+						{row.hint === undefined ? null : (
+							<Hint text={row.hint} locale={locale} />
+						)}
 					</span>
 					{!records &&
 						row.badges?.map((badge, index) => (
@@ -669,7 +672,12 @@ function PanelGroupView({
 					{!hideHeading && (
 						<div className="panel-group-titles">
 							{group.title.length > 0 && (
-								<h2 className="panel-group-title">{group.title}</h2>
+								<h2 className="panel-group-title">
+									{group.title}
+									{group.hint === undefined ? null : (
+										<Hint text={group.hint} locale={locale} />
+									)}
+								</h2>
 							)}
 							{group.description !== undefined && (
 								<p className="panel-group-desc">
@@ -828,6 +836,38 @@ function PanelInputView({
 	);
 }
 
+function PanelHeadActions({
+	panel,
+	locale,
+	onAction,
+}: {
+	readonly panel: PanelSpec;
+	readonly locale: Locale;
+	readonly onAction: (action: PanelAction) => void;
+}) {
+	return (
+		<>
+			<h1 className="sr-only">
+				<SensitiveText text={panel.title} locale={locale} />
+			</h1>
+			{(panel.actions?.length ?? 0) === 0 ? null : (
+				<header className="panel-head">
+					<div className="panel-actions">
+						{panel.actions?.map((action) => (
+							<PanelButtonView
+								key={`${action.id}\u0000${action.data ?? ""}`}
+								action={action}
+								pending={panel.pending}
+								onAction={onAction}
+							/>
+						))}
+					</div>
+				</header>
+			)}
+		</>
+	);
+}
+
 interface PanelSurfaceProps {
 	readonly reading: ReadingState;
 	readonly panel: PanelSpec;
@@ -872,7 +912,7 @@ function PanelSurface({
 	}
 	return (
 		<div className="panel" data-panel-id={panel.id}>
-			<PanelHead panel={panel} locale={locale} onAction={onAction} />
+			<PanelHeadActions panel={panel} locale={locale} onAction={onAction} />
 			<PanelNotices scope={panel.id} locale={locale} notices={panel.notices} />
 			{panel.inputs?.map((input) => (
 				<PanelInputView
@@ -1309,7 +1349,7 @@ function ModelConnectionsView({
 			className="panel model-connections split-workspace"
 			data-panel-id={panel.id}
 		>
-			<PanelHead panel={panel} locale={locale} onAction={onAction} />
+			<PanelHeadActions panel={panel} locale={locale} onAction={onAction} />
 			<PanelNotices
 				scope={`${panel.id}:connections`}
 				locale={locale}
