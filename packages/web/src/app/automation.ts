@@ -22,6 +22,7 @@ interface AutomationServices extends PageServices {
 		readonly workspaces: readonly WorkspaceGrantView[];
 		readonly catalog?: ModelCatalog;
 		readonly selection?: SessionModel;
+		readonly availableProviders: ReadonlySet<string>;
 	};
 	readonly openSession: (id: string) => Promise<void>;
 }
@@ -105,7 +106,7 @@ export class Automation {
 			this.schedules = state;
 	}
 	private scheduleContext(id: string): P.ScheduleEditorContext {
-		const { sessions, workspaces, catalog, selection } =
+		const { sessions, workspaces, catalog, selection, availableProviders } =
 			this.services.context();
 		const sessionId = this.services.client.connection?.sessionId,
 			model = selection ?? catalog?.current;
@@ -120,11 +121,16 @@ export class Automation {
 				label: `${item.name} · ${item.host_path}`,
 			})),
 			models:
-				catalog?.models.map((item) => ({
-					value: JSON.stringify([item.provider, item.model]),
-					label: `${item.label} · ${item.provider}`,
-				})) ?? [],
-			model: model ? JSON.stringify([model.provider, model.model]) : "",
+				catalog?.models
+					.filter((item) => availableProviders.has(item.provider))
+					.map((item) => ({
+						value: JSON.stringify([item.provider, item.model]),
+						label: `${item.label} · ${item.provider}`,
+					})) ?? [],
+			model:
+				model && availableProviders.has(model.provider)
+					? JSON.stringify([model.provider, model.model])
+					: "",
 		};
 	}
 	async scheduleAction(action: P.PanelAction): Promise<boolean> {

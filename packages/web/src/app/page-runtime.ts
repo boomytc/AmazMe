@@ -203,6 +203,12 @@ export class PageRuntime {
 				workspaces: this.workspaces,
 				catalog: this.providers.catalog,
 				selection: this.selection,
+				availableProviders: new Set(
+					this.providers
+						.connections()
+						.state.providers.filter((provider) => provider.available)
+						.map((provider) => provider.id),
+				),
 			}),
 			openSession: async (id) => {
 				const identity = this.client.identity,
