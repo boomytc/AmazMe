@@ -2818,31 +2818,24 @@ export class PageRuntime {
 			this.dock.terminal?.connection === connection
 				? this.dock.terminal
 				: undefined;
-		/* The tab is the shell screen, so its end and a paused input ledger speak as toasts instead of
-		   a line that resizes the terminal. */
+		/* The tab is the shell screen: a toast reports its end, while unconfirmed input stays a
+		   persistent action bar in the panel head rather than a second transient copy. */
 		const terminalNoticeKey =
-			terminal === undefined
-				? ""
-				: `${terminal.id}\u0000${terminal.view.phase}\u0000${terminal.queue.paused}`;
-		if (terminalNoticeKey !== this.terminalNoticeKey) {
-			this.terminalNoticeKey = terminalNoticeKey;
-			if (terminal !== undefined) {
-				if (terminal.view.phase !== "running") {
-					this.renderer.showToast(
-						terminal.view.exit_code === null
-							? translate(this.preferences.locale, "dock.terminalNoExit")
-							: translate(this.preferences.locale, "dock.terminalDone", {
-									code: String(terminal.view.exit_code),
-								}),
-					);
-				} else if (terminal.queue.paused) {
-					this.renderer.showToast(
-						"终端输入尚未确认；请重试原输入或核对后继续。",
-						"error",
-					);
-				}
-			}
+			terminal === undefined ? "" : `${terminal.id}\u0000${terminal.view.phase}`;
+		if (
+			terminalNoticeKey !== this.terminalNoticeKey &&
+			terminal !== undefined &&
+			terminal.view.phase !== "running"
+		) {
+			this.renderer.showToast(
+				terminal.view.exit_code === null
+					? translate(this.preferences.locale, "dock.terminalNoExit")
+					: translate(this.preferences.locale, "dock.terminalDone", {
+							code: String(terminal.view.exit_code),
+						}),
+			);
 		}
+		this.terminalNoticeKey = terminalNoticeKey;
 		const commandBlocks: TranscriptBlock[] = [
 			...(this.commandResults
 				.get(`${connection?.identity.profile_id}:${connection?.sessionId}`)
