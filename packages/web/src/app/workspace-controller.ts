@@ -90,8 +90,8 @@ export class WorkspaceController {
 	set dockTab(value: DockTabId) {
 		this.openTab(value);
 	}
-	openTab(value: DockTabId, replaceGuide = false): void {
-		this.layout.openTab(value, replaceGuide);
+	openTab(value: DockTabId): void {
+		this.layout.openTab(value);
 		if (value !== "terminal") clearTimeout(this.terminalTimer);
 	}
 	closeTab(value: DockTabId): void {

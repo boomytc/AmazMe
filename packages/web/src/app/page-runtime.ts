@@ -1370,14 +1370,14 @@ export class PageRuntime {
 			this.render();
 			return;
 		}
-		if (id === A.DOCK_TAB_ACTION || id === A.DOCK_TAB_CLOSE_ACTION || id === A.DOCK_GUIDE_OPEN_ACTION) {
+		if (id === A.DOCK_TAB_ACTION || id === A.DOCK_TAB_CLOSE_ACTION) {
 			if (!isDockTabId(value)) return;
 			if (id === A.DOCK_TAB_CLOSE_ACTION) {
 				this.dock.closeTab(value);
 				/* The terminal tab owns the shell: closing it is the stop control. */
 				if (value === "terminal") await this.dock.closeTerminal();
 			} else {
-				this.dock.openTab(value, id === A.DOCK_GUIDE_OPEN_ACTION);
+				this.dock.openTab(value);
 				this.dock.dockOpen = true;
 			}
 			this.render();
