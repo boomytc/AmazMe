@@ -413,7 +413,7 @@ function PanelRowView({
 			(row.value !== undefined && path === undefined));
 	return (
 		<div
-			className={`${records ? "panel-row record-row" : "panel-row"}${located ? " panel-row-located" : ""}`}
+			className={`${records ? "panel-row record-row" : "panel-row"}${row.selected === true ? " selected" : ""}${located ? " panel-row-located" : ""}`}
 			data-row-id={row.id}
 			data-review-open={row.detail === undefined ? undefined : row.id}
 		>

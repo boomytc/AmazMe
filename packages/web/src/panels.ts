@@ -118,6 +118,8 @@ export interface PanelRow {
 	readonly description?: string;
 	/** Help for the title, revealed from its info control instead of occupying a paragraph. */
 	readonly hint?: string;
+	/** The row names the item the panel currently shows, so the row carries the active background. */
+	readonly selected?: boolean;
 	readonly badges?: readonly (string | PanelDelta)[];
 	/** A trailing value line, for a path or a settings key. */
 	readonly value?: string;

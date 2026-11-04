@@ -341,10 +341,9 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 		const conversation = state.conversations.find(item => item.id === id);
 		return conversation ? conversationTitle(locale, conversation).trim() : translate(locale, "dock.untitled");
 	};
-	const rows: PanelRow[] = state.conversations.map((conversation) => ({
-		id: `conversation:${conversation.id}`,
-		title: conversationTitle(locale, conversation),
-		description:
+	const rows: PanelRow[] = state.conversations.map((conversation) => {
+		const selected = conversation.id === state.selected;
+		const owner =
 			conversation.ownerConversationId !== undefined && conversation.ownerTaskId !== undefined
 				? translate(locale, "dock.owner", {
 						task: taskKindCopy(locale, state.tasks.find(task => task.id === conversation.ownerTaskId)?.kind ?? ""),
@@ -354,48 +353,60 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 					? translate(locale, "dock.forkedFrom", {
 							conversation: nameOf(conversation.parentConversationId),
 						})
-					: conversation.root || conversation.role === "main" ? translate(locale, "dock.mainHelp") : undefined,
-		badges: [
-			translate(locale, conversation.role === "fork" ? "dock.fork" : conversation.role === "subagent" || !conversation.root ? "dock.child" : "dock.main"),
-			...(conversation.children > 0
-				? [
-						translate(locale, "dock.children", {
-							count: String(conversation.children),
-						}),
-					]
-				: []),
-			...(conversation.id === state.selected ? [translate(locale, "dock.selected")] : []),
-			...(conversation.readOnly || conversation.archivedAt !== undefined ? [translate(locale, "project.archived")] : []),
-			...(conversation.run && conversation.run !== "idle" ? [translate(locale, conversation.run === "compacting" ? "dock.summarizing" : conversation.run === "tool" ? "dock.runningTool" : `lane.${conversation.run}`)] : []),
-			...((conversation.queued ?? 0) > 0 ? [translate(locale, "dock.queuedCount", { count: String(conversation.queued) })] : []),
-		],
-		menu: {
-			label: translate(locale, "dock.sessionActions"),
-			data: conversation.id,
-			actions: sessionMenuItems(locale, {
-				archived: conversation.archivedAt !== undefined || conversation.readOnly === true,
-			}).map((item) => ({
-				id: item.id,
-				label: item.label,
-				weight: "text" as const,
+					: undefined;
+		const role =
+			conversation.role === "fork" ? "dock.fork"
+				: conversation.role === "subagent" || !conversation.root ? "dock.child" : undefined;
+		const activeRow = conversation.root || conversation.role === "main";
+		return {
+			id: `conversation:${conversation.id}`,
+			title: conversationTitle(locale, conversation),
+			selected,
+			/* The live relationship is a fact; the root's explanation is help behind the title. */
+			...(owner === undefined
+				? activeRow ? { hint: translate(locale, "dock.mainHelp") } : {}
+				: { description: owner }),
+			badges: [
+				...(role === undefined ? [] : [translate(locale, role)]),
+				...(conversation.children > 0
+					? [
+							translate(locale, "dock.children", {
+								count: String(conversation.children),
+							}),
+						]
+					: []),
+				...(conversation.readOnly || conversation.archivedAt !== undefined ? [translate(locale, "project.archived")] : []),
+				...(conversation.run && conversation.run !== "idle" ? [translate(locale, conversation.run === "compacting" ? "dock.summarizing" : conversation.run === "tool" ? "dock.runningTool" : `lane.${conversation.run}`)] : []),
+				...((conversation.queued ?? 0) > 0 ? [translate(locale, "dock.queuedCount", { count: String(conversation.queued) })] : []),
+			],
+			menu: {
+				label: translate(locale, "dock.sessionActions"),
 				data: conversation.id,
-				glyph: item.glyph,
-				...(item.danger === true ? { danger: true } : {}),
-			})),
-		},
-		actions: [
-			{
-				id: CONVERSATION_SELECT_ACTION,
-				label: translate(locale, "dock.select"),
-				weight: "text" as const,
-				data: conversation.id,
+				actions: sessionMenuItems(locale, {
+					archived: conversation.archivedAt !== undefined || conversation.readOnly === true,
+				}).map((item) => ({
+					id: item.id,
+					label: item.label,
+					weight: "text" as const,
+					data: conversation.id,
+					glyph: item.glyph,
+					...(item.danger === true ? { danger: true } : {}),
+				})),
 			},
-			...(conversation.readOnly || conversation.archivedAt !== undefined ? [] : [{
-				id: CONVERSATION_FORK_ACTION, label: translate(locale, "header.fork"), weight: "text" as const,
-				data: conversation.id, disabled: !conversation.hasEntries,
-			}]),
-		],
-	}));
+			actions: [
+				...(selected ? [] : [{
+					id: CONVERSATION_SELECT_ACTION,
+					label: translate(locale, "dock.select"),
+					weight: "text" as const,
+					data: conversation.id,
+				}]),
+				...(conversation.readOnly || conversation.archivedAt !== undefined ? [] : [{
+					id: CONVERSATION_FORK_ACTION, label: translate(locale, "header.fork"), weight: "text" as const,
+					data: conversation.id, disabled: !conversation.hasEntries,
+				}]),
+			],
+		};
+	});
 	return {
 		id: "conversations",
 		title,
@@ -404,6 +415,7 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 			{
 				id: "conversations:list",
 				title: translate(locale, state.conversations.some(item => item.readOnly || item.archivedAt !== undefined) ? "dock.activeConversations" : "dock.conversations"),
+				hint: translate(locale, "dock.forkSharedFiles"),
 				actions: [
 					{
 						id: CONVERSATIONS_REFRESH_ACTION,
@@ -413,7 +425,6 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 				],
 				rows: rows.filter((_, index) => !state.conversations[index]?.readOnly && state.conversations[index]?.archivedAt === undefined),
 				empty: { cause: "first-use", text: translate(locale, "dock.noConversations") },
-				footnote: translate(locale, "dock.forkSharedFiles"),
 			},
 			...(state.conversations.some(item => item.readOnly || item.archivedAt !== undefined) ? [{
 				id: "conversations:archived", title: translate(locale, "dock.archivedForks"),

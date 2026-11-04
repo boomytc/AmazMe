@@ -3874,6 +3874,9 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	padding: 12px 16px;
 }
 
+/* The row for the conversation the panel is showing carries the active fill, so no "current" badge. */
+.panel-row.selected { background: var(--active); }
+
 .panel-row + .panel-row,
 .review-detail + .panel-row {
 	border-top: 1px solid var(--line);
