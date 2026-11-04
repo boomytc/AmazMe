@@ -137,7 +137,7 @@ export interface PanelRow {
 	readonly menu?: {
 		readonly label: string;
 		readonly data: string;
-		readonly actions: readonly (PanelButton & { readonly glyph: "square-pen" | "folder" | "x" | "copy" | "git-fork" })[];
+		readonly actions: readonly (PanelButton & { readonly glyph: "square-pen" | "folder" | "x" | "copy" | "git-fork" | "play" | "clock" })[];
 	};
 }
 
@@ -1137,12 +1137,12 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 									label: translate(locale, "panel.automation.run"),
 									data: schedule.id,
 									weight: "text" as const,
-									glyph: "folder" as const,
+									glyph: "play" as const,
 								},
 								...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, weight: "text" as const, danger: true, glyph: "x" as const }]),
 								{ id: SCHEDULE_EDIT_ACTION, label: translate(locale, "panel.automation.edit"), data: schedule.id, weight: "text" as const, glyph: "square-pen" as const,
 									...(state.problem || schedule.pending !== null ? { disabled: true } : {}) },
-								{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, weight: "text" as const, glyph: "folder" as const,
+								{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, weight: "text" as const, glyph: "clock" as const,
 									...(schedule.history.length === 0 ? { disabled: true } : {}) },
 								{
 									id: SCHEDULE_REMOVE_ACTION,
