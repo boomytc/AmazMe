@@ -1479,7 +1479,9 @@ function ModelConnectionsView({
 											·{" "}
 										</span>
 										<span className="connection-row-count">
-											{item.modelCount}
+											{connectionCopy(locale, "connections.modelCount", {
+												count: String(item.modelCount),
+											})}
 										</span>
 									</small>
 								</button>
@@ -1657,9 +1659,11 @@ function ModelConnectionsView({
 																		{model.name}
 																	</span>
 																</label>
-																<small className="connection-model-id">
-																	{model.modelId}
-																</small>
+																{model.modelId === model.name ? null : (
+																	<small className="connection-model-id">
+																		{model.modelId}
+																	</small>
+																)}
 															</div>
 														</div>
 													);
