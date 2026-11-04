@@ -141,7 +141,7 @@ export class PageRuntime {
 			{ name: "model", description: "模型与连接", source: "builtin" },
 			{ name: "settings", description: "设置", source: "builtin" },
 			{ name: "compact", description: "压缩上下文", source: "builtin" },
-			{ name: "fork", description: "创建分支", source: "builtin" },
+			{ name: "fork", description: "分叉会话", source: "builtin" },
 			{ name: "export", description: "导出会话", source: "builtin" },
 			{
 				name: "diff",
@@ -734,7 +734,7 @@ export class PageRuntime {
 		const session = this.sessions.find((item) => item.session_id === id);
 		if (!session) throw new Error("会话不存在");
 		if (session.prepared === false)
-			throw new Error("分支仍在准备，请先重试原创建请求");
+			throw new Error("分叉仍在准备，请先重试原创建请求");
 		this.selectedProject = session.project_id || undefined;
 		if (
 			this.selectedProject &&
@@ -1110,7 +1110,7 @@ export class PageRuntime {
 					"POST /api/v1/sessions/{session}/branches",
 				);
 				if (expectedBranch && record?.id !== expectedBranch)
-					throw new Error("原分支请求已变化，请核对当前记录");
+					throw new Error("原分叉请求已变化，请核对当前记录");
 				if (!record) {
 					const snapshot =
 						this.client.connection?.sessionId === sessionId
@@ -1733,7 +1733,7 @@ export class PageRuntime {
 			return;
 		}
 		if (id === A.WRITE_RETRY_BRANCH_ACTION) {
-			if (!data) throw new Error("缺少原分支编号");
+			if (!data) throw new Error("缺少原分叉编号");
 			await this.fork(this.requireConnection().sessionId, data);
 			return;
 		}
@@ -2931,11 +2931,11 @@ export class PageRuntime {
 					? [
 							{
 								id: branchPending,
-								text: "分支创建尚未确认",
+								text: "分叉创建尚未确认",
 								retry: {
 									id: A.WRITE_RETRY_BRANCH_ACTION,
 									data: branchPending,
-									label: "重试原分支",
+									label: "重试原分叉",
 									weight: "line" as const,
 								},
 							},
