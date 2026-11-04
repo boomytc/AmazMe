@@ -314,7 +314,7 @@ class SessionOperations:
             if source.archived:
                 raise BackendError("session_archived")
             await self.lifecycle.require_workspace(source.workspace)
-            title = value.title.strip() or f"分支：{source.title}"
+            title = value.title.strip() or f"分叉：{source.title}"
             await self.lifecycle.store.create_branch(
                 child_id, parent, value.request_id, title[:100], request_key
             )
