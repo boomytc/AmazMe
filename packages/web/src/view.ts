@@ -472,6 +472,7 @@ export interface WebView {
 	readonly capabilities: SessionCapabilities;
 	/** A session is selected but its snapshot is not ready yet; this is not the archived read-only state. */
 	readonly connecting?: boolean;
+	readonly connectionIssue?: { readonly sessionId: string; readonly message: string };
 	/** The filter text itself, so the input keeps what the reader typed. */
 	readonly rosterFilter: string;
 	/** Prompts this session already submitted, newest last; the composer recalls them. */

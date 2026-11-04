@@ -29,6 +29,7 @@ export const MODEL_SCOPE_MODAL = "run:model-scope-submit";
 export const MODEL_SELECT_ACTION = "run:model-select";
 export const MODEL_THINKING_ACTION = "run:model-thinking";
 export const MODEL_DEFAULTS_ACTION = "run:model-defaults";
+export const SESSION_RECONNECT_ACTION = "session:reconnect";
 export const SESSION_RELOAD_ACTION = "session:reload-resources";
 /** How the next submit is applied while a turn runs: `data` is `steer` or `followUp`. */
 export const SUBMIT_MODE_ACTION = "run:submit-mode";

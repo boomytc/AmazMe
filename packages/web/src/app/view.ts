@@ -1,3 +1,4 @@
+import { errorMessageCopy } from "../errors.ts";
 import * as actions from "../actions.ts";
 import { commandPalette, type CommandLike } from "../commands.ts";
 import { dockView, type DockView } from "../dock.ts";
@@ -157,6 +158,11 @@ export function pythonView(input: PresentationInput): WebView {
 	const base = failureView(locale, "");
 	const readOnly = session?.archived === true;
 	const capabilities = sessionCapabilities(readOnly);
+	const unavailable = connection?.failure !== undefined
+		? errorMessageCopy(locale, connection.failure)
+		: !readOnly && snapshot && ["blocked", "frozen", "stopping"].includes(snapshot.state)
+			? translate(locale, snapshot.state === "blocked" ? "greeting.blocked" : snapshot.state === "frozen" ? "greeting.frozen" : "greeting.stopping")
+			: undefined;
 	return { ...base, typography: input.typography, modelConnections: input.connections, roster, approvalPolicy: input.approvalPolicy,
 		projects: projectGroups(directory, roster, input.selectedProject, input.rosterFilter, input.expandedProjects),
 		archivedAttached: session?.archived ? rosterItems(locale, directory, connection?.sessionId, Date.now(), "", true).find(item => item.id === connection?.sessionId) : undefined,
@@ -164,6 +170,7 @@ export function pythonView(input: PresentationInput): WebView {
 		attachedId: connection?.ready ? connection.sessionId : undefined, sessionLabel: session?.title,
 		readOnly: !capabilities.chat,
 		capabilities,
+		connectionIssue: connection && unavailable !== undefined ? { sessionId: connection.sessionId, message: unavailable } : undefined,
 		connecting: session?.archived !== true && connection !== undefined && (!connection.ready || !input.ready || snapshot?.state !== "ready"),
 		blocks: [...(input.history?.truncated ? [{ id: "history:truncated", kind: "notice" as const, title: locale === "zh" ? "历史记录" : "History", text: locale === "zh" ? "部分工具输出超过展示上限；原始记录仍保存在本机。" : "Some tool output exceeds the display limit. Original records remain stored locally.", tone: "muted" as const, running: false }] : []), ...transcriptBlocks(locale, withHistory(snapshot, input.history), input.feedback)], history: { blocks: [], more: input.historyMore ?? false, loading: input.historyLoading ?? false }, status: snapshot?.state === "ready" ? pending.length ? requestStatus[pending[0].status] : "" : snapshot?.state ?? "",
 		queue: [...pending.filter(item => item.status === "queued" || item.status === "waiting_time").map(item => ({ id: item.request_id, text: item.text,

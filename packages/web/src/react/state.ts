@@ -123,6 +123,8 @@ export class Presentation implements PageRenderer {
 			"transcriptScope",
 			"attachedId",
 			"readOnly",
+			"connecting",
+			"connectionIssue",
 			"blocks",
 			"history",
 			"status",

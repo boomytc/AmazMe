@@ -18,6 +18,7 @@ import {
 	HISTORY_MORE_ACTION,
 	MODEL_CONNECTIONS_ACTION,
 	MODEL_SCOPE_ACTION,
+	SESSION_RECONNECT_ACTION,
 	TRANSCRIPT_SEARCH_ACTION,
 	WELCOME_SESSION_ACTION,
 	WORKSPACE_FILE_LINK_ACTION,
@@ -982,6 +983,19 @@ function EmptyState({ view, actions }: TranscriptProps) {
 								name: view.sessionDraft.label,
 							})}
 				</h2>
+			</div>
+		);
+	}
+	if (view.connectionIssue !== undefined) {
+		const issue = view.connectionIssue;
+		return (
+			<div className="empty-block" id="transcript-empty">
+				<h2 className="greeting">{translate(view.locale, "greeting.unavailable")}</h2>
+				<p className="greeting-hint" role="status">{issue.message}</p>
+				<button type="button" className="panel-button weight-line"
+					onClick={() => command(actions, SESSION_RECONNECT_ACTION, issue.sessionId)}>
+					{translate(view.locale, "connection.retry")}
+				</button>
 			</div>
 		);
 	}

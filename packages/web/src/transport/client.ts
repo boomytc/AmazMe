@@ -18,6 +18,7 @@ export interface ClientConnection {
 	attachment?: Attachment;
 	snapshot?: Snapshot;
 	ready: boolean;
+	failure?: string;
 	socket?: WebSocket;
 	active(): boolean;
 }
@@ -128,21 +129,32 @@ export class PythonClient {
 			socket.onclose = event => {
 				if (!connection.active()) return;
 				const reason = event.reason.trim();
-				if ((event.code === 1008 || event.code === 1009) && reason.length > 0) {
+				if (event.code === 1008 || event.code === 1009) {
 					// The host refuses this stream with a policy error (for example an exhausted
 					// worker restart budget). Retrying would loop forever and hide the reason.
 					clearTimeout(this.helloTimer);
+					clearTimeout(this.timer);
+					this.timer = undefined;
 					this.onStatus("disconnected");
-					this.onError(new Error(reason));
+					connection.ready = false;
+					connection.failure = reason || `WebSocket ${event.code}`;
+					this.onChange();
+					this.onError(new Error(connection.failure));
 					return;
 				}
 				this.reconnect(connection);
 			};
 		} catch (error) {
 			if (generation !== this.generation) return;
+			const terminal = error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
+			if (terminal && this.connection) {
+				this.connection.ready = false;
+				this.connection.failure = error.message;
+				this.onChange();
+			}
 			this.onError(error);
 			this.onStatus("disconnected");
-			if (!(error instanceof ApiError && error.status === 401)) this.timer = setTimeout(() => {
+			if (!terminal) this.timer = setTimeout(() => {
 				this.timer = undefined;
 				if (generation === this.generation) void this.connect(sessionId, true);
 			}, 1000);

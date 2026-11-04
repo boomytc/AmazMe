@@ -11,6 +11,7 @@ export type TranscriptView = Pick<
 	| "attachedId"
 	| "readOnly"
 	| "connecting"
+	| "connectionIssue"
 	| "blocks"
 	| "history"
 	| "status"

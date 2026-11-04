@@ -1292,6 +1292,11 @@ export class PageRuntime {
 				this.renderer.refreshTranscriptSearch();
 			return;
 		}
+		if (id === A.SESSION_RECONNECT_ACTION) {
+			if (data && this.client.connection?.sessionId === data)
+				await this.selectSession(data);
+			return;
+		}
 		if (id === A.WELCOME_SESSION_ACTION || id === A.SESSION_NEW_ACTION) {
 			await this.createSession();
 			return;
