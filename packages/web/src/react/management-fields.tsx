@@ -38,6 +38,7 @@ export type IconName =
 	| "copy"
 	| "file"
 	| "folder"
+	| "git-fork"
 	| "info"
 	| "more"
 	| "search"

@@ -381,16 +381,27 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 			menu: {
 				label: translate(locale, "dock.sessionActions"),
 				data: conversation.id,
-				actions: sessionMenuItems(locale, {
-					archived: conversation.archivedAt !== undefined || conversation.readOnly === true,
-				}).map((item) => ({
-					id: item.id,
-					label: item.label,
-					weight: "text" as const,
-					data: conversation.id,
-					glyph: item.glyph,
-					...(item.danger === true ? { danger: true } : {}),
-				})),
+				actions: [
+					/* Forking another conversation is secondary; the row keeps only Open and the menu. */
+					...(conversation.readOnly || conversation.archivedAt !== undefined ? [] : [{
+						id: CONVERSATION_FORK_ACTION,
+						label: translate(locale, "header.fork"),
+						weight: "text" as const,
+						data: conversation.id,
+						glyph: "git-fork" as const,
+						disabled: !conversation.hasEntries,
+					}]),
+					...sessionMenuItems(locale, {
+						archived: conversation.archivedAt !== undefined || conversation.readOnly === true,
+					}).map((item) => ({
+						id: item.id,
+						label: item.label,
+						weight: "text" as const,
+						data: conversation.id,
+						glyph: item.glyph,
+						...(item.danger === true ? { danger: true } : {}),
+					})),
+				],
 			},
 			actions: [
 				...(selected ? [] : [{
@@ -398,10 +409,6 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 					label: translate(locale, "dock.select"),
 					weight: "text" as const,
 					data: conversation.id,
-				}]),
-				...(conversation.readOnly || conversation.archivedAt !== undefined ? [] : [{
-					id: CONVERSATION_FORK_ACTION, label: translate(locale, "header.fork"), weight: "text" as const,
-					data: conversation.id, disabled: !conversation.hasEntries,
 				}]),
 			],
 		};
