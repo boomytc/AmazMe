@@ -27,6 +27,7 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 	if (!snapshot) return [];
 	const blocks: TranscriptBlock[] = [];
 	for (const receipt of snapshot.requests) {
+		const receiptStart = blocks.length;
 		const rating = feedback?.session_id === snapshot.session_id ? feedback.records?.find(item => item.request_id === receipt.request_id) : undefined;
 		const controls = feedback?.session_id === snapshot.session_id && receipt.kind === "root" && receipt.status === "succeeded" && receipt.answer ? feedbackControls(locale, JSON.stringify([snapshot.session_id, receipt.request_id, rating?.rating ?? null, rating?.revision ?? 0]), rating?.rating ?? null) : undefined;
 		if (receipt.text || receipt.image_count) blocks.push({ id: `${receipt.request_id}:user`, kind: receipt.input_origin === "job" ? "notice" : "user", title: receipt.input_origin === "job" ? (locale === "zh" ? "后台作业" : "Background job") : (locale === "zh" ? "你" : "You"), text: receipt.text, tone: "plain", running: false,
@@ -80,8 +81,13 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 		blocks.push(...tools.values());
 		const preview = snapshot.previews?.find(item => item.request_id === receipt.request_id && item.run_id === receipt.run_id && item.generation === receipt.generation);
 		const review = !finalMessage ? executedResult(receipt.answer ?? "")?.repository_diff : undefined;
+		/* A direct tool call has no model answer: its result block is the turn's outcome. */
+		const produced = blocks.slice(receiptStart);
+		const toolBlocks = produced.flatMap((block, index) => block.kind === "tool" ? [{ block, index: receiptStart + index }] : []);
+		const direct = !finalMessage && !review && toolBlocks.length === 1 && !produced.some(block => block.kind === "assistant" && block.text.trim().length > 0) && (receipt.answer ?? "").length > 0;
+		if (direct) blocks[toolBlocks[0]!.index] = { ...toolBlocks[0]!.block, open: true };
 		const text = !settled.has(receipt.status) && preview?.text ? preview.text : !finalMessage ? review ? gitReviewSummary(locale, review) : receipt.answer : undefined;
-		if (text) blocks.push({ id: `${receipt.request_id}:answer`, kind: "assistant", title: "AmazMe", text, tone: "plain", running: !settled.has(receipt.status), interrupted: receipt.status === "interrupted" || receipt.status === "cancelled", feedback: controls });
+		if (text && !direct) blocks.push({ id: `${receipt.request_id}:answer`, kind: "assistant", title: "AmazMe", text, tone: "plain", running: !settled.has(receipt.status), interrupted: receipt.status === "interrupted" || receipt.status === "cancelled", feedback: controls });
 		if (receipt.error || ["failed", "unknown", "interrupted", "cancelled"].includes(receipt.status)) blocks.push({ id: `${receipt.request_id}:status`, kind: "notice", title: requestStatus[receipt.status], text: receipt.error ?? requestStatus[receipt.status], tone: receipt.status === "failed" ? "error" : "muted", running: false });
 	}
 	return blocks;

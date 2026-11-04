@@ -726,7 +726,7 @@ function ProcessRow({
 						<ToolBlock
 							block={block}
 							locale={locale}
-							open={openBlocks.get(block.id) ?? block.running}
+							open={openBlocks.get(block.id) ?? (block.running || block.open === true)}
 							rawOpen={openBlocks.get(`${block.id}:raw`) ?? false}
 							searchHit={searchHits.has(block.id)}
 							key={block.id}
@@ -819,7 +819,7 @@ function TranscriptEntries({
 					area={area}
 					answerId={answerId}
 					locale={locale}
-					open={openBlocks.get(`process:${area}:${item.id}`) ?? false}
+					open={openBlocks.get(`process:${area}:${item.id}`) ?? item.open === true}
 					openBlocks={openBlocks}
 					searchHits={searchHits}
 					key={`process:${area}:${item.id}`}

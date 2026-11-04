@@ -48,6 +48,8 @@ export interface TranscriptBlock {
 	readonly running: boolean;
 	/** A committed interruption, never inferred from localized output text. */
 	readonly interrupted?: boolean;
+	/** A direct tool call's result is the turn's outcome, so it opens without a click. */
+	readonly open?: boolean;
 }
 
 /** One row-menu entry for a session, shared by every surface that lists sessions. */

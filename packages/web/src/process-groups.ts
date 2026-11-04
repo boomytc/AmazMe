@@ -11,6 +11,8 @@ export interface ProcessGroup {
 	/** Every recorded failure remains discoverable; later success does not prove a repair. */
 	readonly failures: readonly TranscriptBlock[];
 	readonly activity: TranscriptBlock | undefined;
+	/** One direct tool call is the whole turn, so its result opens without a click. */
+	readonly open?: boolean;
 }
 
 export type TranscriptItem = ProcessGroup | { readonly kind: "block"; readonly block: TranscriptBlock };
@@ -34,6 +36,7 @@ export function processGroups(blocks: readonly TranscriptBlock[], busy = false):
 			tools: pending.filter(block => block.kind === "tool").length,
 			thoughts: pending.filter(block => block.kind === "thinking").length,
 			failures: pending.filter(failed), activity: active ?? pending.at(-1),
+			...(pending.length === 1 && pending[0]!.kind === "tool" && pending[0]!.open === true ? { open: true } : {}),
 		});
 		pending = [];
 	};
