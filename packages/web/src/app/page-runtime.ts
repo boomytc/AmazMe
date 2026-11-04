@@ -373,7 +373,13 @@ export class PageRuntime {
 		};
 		this.renderer.onTerminalResize = (id, cols, rows) => {
 			const terminal = this.dock.terminal;
-			if (terminal && terminal.id === id && terminal.connection.active()) {
+			/* An ended shell has no grid to resize; its screen still reports layout changes. */
+			if (
+				terminal &&
+				terminal.id === id &&
+				terminal.connection.active() &&
+				terminal.view.phase === "running"
+			) {
 				terminal.desiredSize = { cols, rows };
 				run(() => this.dock.resizeTerminal(terminal));
 			}
@@ -1646,18 +1652,6 @@ export class PageRuntime {
 			}
 			return;
 		}
-		if (id === A.TERMINAL_RUN_ACTION) {
-			const connection = this.requireConnection();
-			if (
-				!this.dock.terminal ||
-				this.dock.terminal.connection !== connection ||
-				this.dock.terminal.view.phase !== "running"
-			)
-				await this.dock.loadTerminal(connection, true);
-			if (value.trim() && this.dock.terminal?.connection === connection)
-				this.dock.terminal.queue.enqueue(value + "\r");
-			return;
-		}
 		if (id === A.TERMINAL_STOP_ACTION && this.dock.terminal) {
 			const terminal = this.dock.terminal;
 			const view = await this.client.call(
@@ -2898,12 +2892,8 @@ export class PageRuntime {
 			jobs: this.jobs.state,
 			terminal: terminal
 				? {
-						status: terminal.view.phase === "running" ? "running" : "done",
-						command: "/bin/zsh -il",
+						running: terminal.view.phase === "running",
 						exitCode: terminal.view.exit_code ?? null,
-						output: "",
-						truncated: false,
-						error: null,
 					}
 				: undefined,
 			conversations: {
@@ -2989,33 +2979,37 @@ export class PageRuntime {
 				terminal && this.dock.dockTab === "terminal"
 					? {
 							...dock,
+							/* Unconfirmed input pauses the screen; retrying or confirming it is the only way on. */
 							panel: {
 								...dock.panel,
-								texts: [],
-								notices: terminal.queue.paused
-									? [
-											{
-												tone: "warning",
-												text: "终端输入尚未确认；请重试原输入或核对后继续。",
-											},
-										]
-									: dock.panel.notices,
-								actions: [
-									{
-										id: "terminal:retry",
-										label: "重试原输入",
-										weight: "line",
-										disabled:
-											terminal.queue.busy || !terminal.queue.items.length,
-									},
-									{
-										id: "terminal:confirm",
-										label: "核对后继续",
-										weight: "text",
-										disabled:
-											terminal.queue.busy || !terminal.queue.items.length,
-									},
-								],
+								...(!terminal.queue.paused
+									? {}
+									: {
+											notices: [
+												{
+													tone: "warning" as const,
+													text: "终端输入尚未确认；请重试原输入或核对后继续。",
+												},
+											],
+											actions: [
+												{
+													id: "terminal:retry",
+													label: "重试原输入",
+													weight: "line" as const,
+													disabled:
+														terminal.queue.busy ||
+														!terminal.queue.items.length,
+												},
+												{
+													id: "terminal:confirm",
+													label: "核对后继续",
+													weight: "text" as const,
+													disabled:
+														terminal.queue.busy ||
+														!terminal.queue.items.length,
+												},
+											],
+										}),
 							},
 							pty: {
 								id: terminal.id,

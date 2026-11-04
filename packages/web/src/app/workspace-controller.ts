@@ -249,7 +249,8 @@ export class WorkspaceController {
 			while (
 				terminal.desiredSize &&
 				terminal.connection.active() &&
-				this.terminal === terminal
+				this.terminal === terminal &&
+				terminal.view.phase === "running"
 			) {
 				const size = terminal.desiredSize;
 				terminal.desiredSize = undefined;
@@ -270,9 +271,12 @@ export class WorkspaceController {
 				}
 			}
 		} catch (error) {
-			if (this.terminalVisible(terminal)) this.services.error(error);
+			/* A shell that ended mid-request has no grid to resize; that is not a page error. */
+			if (this.terminalVisible(terminal) && terminal.view.phase === "running")
+				this.services.error(error);
 		} finally {
 			terminal.resizing = false;
+			if (terminal.view.phase !== "running") terminal.desiredSize = undefined;
 		}
 	}
 	async openWorkspace(

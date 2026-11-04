@@ -2130,28 +2130,43 @@ export function Dock({
 								/>
 							</div>
 						) : null}
-						<div className="dock-scroll">
-							{panel.description === undefined ? null : (
-								<p className="dock-panel-desc">
-									<SensitiveText
-										text={panel.description}
-										locale={locale}
-									/>
-								</p>
-							)}
-							{view.pty === undefined ? (
-								panelView
-							) : (
-								<>
-									<div className="pty-chrome">{panelView}</div>
-									{visible ? <DockPtySurface
-										view={view.pty}
-										onTerminalInput={onTerminalInput}
-										onTerminalResize={onTerminalResize}
-									/> : null}
-								</>
-							)}
-						</div>
+						{view.pty === undefined ? (
+							<div className="dock-scroll">
+								{panel.description === undefined ? null : (
+									<p className="dock-panel-desc">
+										<SensitiveText
+											text={panel.description}
+											locale={locale}
+										/>
+									</p>
+								)}
+								{panelView}
+							</div>
+						) : (
+							<>
+								{panel.notices.length === 0 ? null : (
+									<div className="dock-terminal-notices">
+										{panel.notices.map((notice, index) => (
+											<PanelNoticeView
+												key={`${notice.tone}:${notice.text}:${index}`}
+												notice={notice}
+												locale={locale}
+											/>
+										))}
+									</div>
+								)}
+								{/* The tab is the shell's screen: the terminal takes every pixel left in the panel. */}
+								<div className="dock-terminal">
+									{visible ? (
+										<DockPtySurface
+											view={view.pty}
+											onTerminalInput={onTerminalInput}
+											onTerminalResize={onTerminalResize}
+										/>
+									) : null}
+								</div>
+							</>
+						)}
 					</>
 				)}
 			</div>

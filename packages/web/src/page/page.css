@@ -3377,6 +3377,36 @@ body[data-dock-motion="width"] {
 	overscroll-behavior: contain;
 }
 
+/* A terminal tab is its screen: an ended-shell notice sits above it, the screen takes the rest. */
+.dock-terminal-notices {
+	flex: none;
+	padding: var(--space-14) var(--space-14) 0;
+}
+
+.dock-terminal-notices .panel-notice {
+	margin: 0;
+}
+
+.dock-terminal {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.dock-terminal .pty-host {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.dock-terminal .pty-surface {
+	flex: 1 1 auto;
+	height: auto;
+	min-height: 0;
+}
+
 .dock-body .panel {
 	padding: var(--space-14) var(--space-14) var(--space-24);
 }

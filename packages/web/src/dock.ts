@@ -20,7 +20,6 @@ import {
 	CONVERSATION_RENAME_ACTION,
 	CONVERSATION_ARCHIVE_ACTION,
 	CONVERSATION_RESTORE_ACTION,
-	TERMINAL_RUN_ACTION,
 	TERMINAL_STOP_ACTION,
 	WORKSPACE_CHECKPOINT_ACTION,
 	WORKSPACE_OPEN_ACTION,
@@ -139,12 +138,8 @@ export interface JobsStateLike {
 
 /** What the host's terminal state carries, as this package reads it. */
 export interface TerminalStateLike {
-	readonly status: "idle" | "running" | "done" | "cancelled";
-	readonly command: string | null;
+	readonly running: boolean;
 	readonly exitCode: number | null;
-	readonly output: string;
-	readonly truncated: boolean;
-	readonly error: string | null;
 }
 
 /** One conversation of the session, as the host publishes it. */
@@ -707,35 +702,10 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 	};
 }
 
-/** The panel description: the working directory, plus a status only when one is worth naming. */
-function terminalDescription(locale: Locale, state: TerminalStateLike, cwd: string): string {
-	const status = terminalStatus(locale, state);
-	return status.length === 0 ? cwd : `${cwd} · ${status}`;
-}
-
-/** One line naming what the terminal's buffer shows. */
-function terminalStatus(locale: Locale, state: TerminalStateLike): string {
-	if (state.error !== null) return translate(locale, "dock.terminalFailed", { error: state.error });
-	switch (state.status) {
-		case "idle":
-			return "";
-		case "running":
-			return translate(locale, "dock.terminalRunning", {
-				command: state.command ?? "",
-			});
-		case "cancelled":
-			return translate(locale, "dock.terminalCancelled");
-		case "done":
-			// A run that ended without a code (for example after a signal) must not claim exit 0.
-			return state.exitCode === null
-				? translate(locale, "dock.terminalNoExit")
-				: translate(locale, "dock.terminalDone", {
-						code: String(state.exitCode),
-					});
-	}
-}
-
-/** The terminal panel: one command line, the run and stop controls, and the output below. */
+/**
+ * The terminal tab is the shell's own screen: the tab title already names it, the prompt reports the
+ * working directory, and the screen carries the output. Only an ended shell needs a line of its own.
+ */
 export function terminalPanel(
 	locale: Locale,
 	input: {
@@ -752,51 +722,36 @@ export function terminalPanel(
 			description: input.cwd,
 			notices: [],
 			groups: [],
-			texts: [],
 		};
 	}
-	const running = state.status === "running";
 	return {
 		id: "terminal",
 		title,
-		description: terminalDescription(locale, state, input.cwd),
-		notices: state.truncated ? [{ tone: "info", persistence: "pinned", text: translate(locale, "dock.truncated") }] : [],
-		groups: [
-			{
-				id: "terminal:controls",
-				title: translate(locale, "dock.command"),
-				rows: [],
-				actions: [
+		notices: state.running
+			? []
+			: [
+					{
+						tone: "info",
+						persistence: "pinned",
+						// A run that ended without a code (for example after a signal) must not claim exit 0.
+						text: state.exitCode === null
+							? translate(locale, "dock.terminalNoExit")
+							: translate(locale, "dock.terminalDone", {
+									code: String(state.exitCode),
+								}),
+					},
+				],
+		groups: [],
+		actions: state.running
+			? [
 					{
 						id: TERMINAL_STOP_ACTION,
 						label: translate(locale, "dock.stop"),
 						weight: "line",
 						danger: true,
-						disabled: !running,
 					},
-				],
-			},
-		],
-		inputs: [
-			{
-				id: "terminal:line",
-				placeholder: translate(locale, "dock.runPlaceholder"),
-				value: "",
-				submit: {
-					id: TERMINAL_RUN_ACTION,
-					label: translate(locale, "dock.run"),
-					weight: "filled",
-					disabled: running,
-				},
-			},
-		],
-		texts: [
-			{
-				id: "terminal:output",
-				text: state.output,
-				empty: translate(locale, "dock.noOutput"),
-			},
-		],
+				]
+			: [],
 	};
 }
 
@@ -819,7 +774,8 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 		open: input.open,
 		tabs: dockTabs(locale, tab, input.tabs ?? [tab]),
 		availableTabs: dockTabs(locale, tab, [...TAB_IDS, ...(input.insights ? ["changes" as const] : [])]),
-		panel: { ...(input.readOnly && tab === "terminal" ? { ...panel, inputs: panel.inputs?.map(item => ({ ...item, submit: { ...item.submit, disabled: true } })) } : panel),
+		panel: {
+			...panel,
 			...(input.pending === undefined ? {} : { pending: input.pending }),
 			...(input.notice === undefined ? {} : { notices: [...panel.notices, input.notice] }),
 		},

@@ -4,7 +4,7 @@ Web 和 Electron 共用的 React 19 + TypeScript 页面：导航、聊天、模�
 
 窗口顶部只有一条 48px `titlebar`：标题、运行态势、侧栏开关或管理返回、会话内搜索、分叉、展开停靠栏和审批提醒都在这一行。停靠栏是贴靠窗口右缘的整高面板（列宽默认视口 45%，300px 起、最多 70vw），面板顶边就是它自己的 48px 页签条：28px 页签胶囊、发丝分隔、条末的全屏与收起控件；面板主体紧接条下，仅在有上下文或操作时保留工具行，不重复页签标题。`push` 形态让会话为面板让出列宽，`fullscreen` 覆盖整个窗口而底层列宽不变；收起后整条面板滑出右缘、不占宽度，唯一入口是标题栏右端的展开按钮。开合与全屏共用一条 300ms 曲线并遵守系统减少动效设置；打开时焦点落到当前页签，收起时回到展开按钮。宽度可拖左缘 8px 隐形抓手或用方向键（16px 步进）调整、双击复位，宽度与呈现形态都按浏览器记住（`amazme.dock.width`、`amazme.dock.presentation`）；`⌘⌥Enter` / `Ctrl+Alt+Enter` 在面板可见时切换全屏。桌面壳在 macOS 上以 `hiddenInset` 隐藏原生标题栏，页面通过 `window.amazmeDesktop` 的 `platform` 在 `:root[data-desktop="darwin"]` 预留红绿灯内嵌并把整行作为拖拽区；浏览器或 Windows/Linux 下同一行退化为普通工具条，停靠栏页签条同样是窗口拖拽区，全屏时按红绿灯宽度内缩。窗口原生外观归 `@amazme/gui`，页面不探测 Electron 版本。
 
-停靠栏按需打开标签：初始显示工具入口页，点 `+` 打开新标签页，选择工具后替换入口页；已有工具只定位一次，不重复创建。标签可独立关闭，关闭当前标签选中相邻标签，关闭最后一个工具标签收起停靠栏，下次展开回到入口页。左右方向键及 Home/End 移动标签焦点，Enter/Space 选择，Delete 关闭。标签集合与当前选择按 profile/会话保存在本窗口的 `sessionStorage`，刷新和切换会话可恢复。关闭终端标签只关闭显示，正在运行的 shell 保留，再次打开仍连接它；终止命令使用终端内的「停止」。
+停靠栏按需打开标签：初始显示工具入口页，点 `+` 打开新标签页，选择工具后替换入口页；已有工具只定位一次，不重复创建。标签可独立关闭，关闭当前标签选中相邻标签，关闭最后一个工具标签收起停靠栏，下次展开回到入口页。左右方向键及 Home/End 移动标签焦点，Enter/Space 选择，Delete 关闭。标签集合与当前选择按 profile/会话保存在本窗口的 `sessionStorage`，刷新和切换会话可恢复。终端标签页直接显示可交互的 shell，不再另设命令行输入；关闭终端标签只关闭显示，正在运行的 shell 保留，再次打开仍连接它，终止 shell 使用终端页的「停止」。shell 结束后标签页显示退出码。
 
 `npm run build --workspace @amazme/web` 生成 `dist/page`。Python Host 在源码模式读取该目录，冻结包将同一目录装入资源；`npm run dev:web` 会先构建客户端。HTTP/事件类型及运行时校验由 `backend/tools/export_contracts.py` 从 Python 生成到 `src/generated/`（`contracts.ts`、`schema.json`），`--check` 检查漂移。
 
