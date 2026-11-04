@@ -2,6 +2,7 @@ import {
 	type FormEvent,
 	Fragment,
 	type KeyboardEvent,
+	type PointerEvent as ReactPointerEvent,
 	type ReactElement,
 	type ReactNode,
 	type RefCallback,
@@ -11,7 +12,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { DOCK_TAB_ACTION, WORKSPACE_OPEN_ACTION } from "../actions.ts";
+import { DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, WORKSPACE_OPEN_ACTION } from "../actions.ts";
 import type { DockTabId, DockView } from "../dock.ts";
 import { errorMessageCopy } from "../errors.ts";
 import type { Locale } from "../locale.ts";
@@ -36,6 +37,7 @@ import {
 	PanelButtonView,
 	PanelControlView,
 	PanelRowMenu,
+	SensitiveText,
 	sameActionTarget,
 	type UpdateControlEdit,
 } from "./management-fields.tsx";
@@ -52,6 +54,7 @@ type DockIconName =
 	| "git-fork"
 	| "message"
 	| "more"
+	| "panel-right"
 	| "search"
 	| "square-pen"
 	| "terminal"
@@ -93,6 +96,46 @@ const DOCK_ICONS: Readonly<Record<DockTabId, DockIconName>> = {
 	changes: "git-fork",
 	statistics: "activity",
 };
+
+/* The reader's dock width. The page clamps it to what the window can spare (page.css), so these
+   bounds only describe the dock's own range; the default is where a fresh window opens it. */
+const DOCK_WIDTH_KEY = "amazme.dock.width";
+const DOCK_WIDTH_MIN = 320;
+const DOCK_WIDTH_MAX = 560;
+const DOCK_WIDTH_DEFAULT = 380;
+
+function clampDockWidth(width: number): number {
+	return Math.round(Math.min(DOCK_WIDTH_MAX, Math.max(DOCK_WIDTH_MIN, width)));
+}
+
+function readDockWidth(): number {
+	try {
+		const stored = Number(localStorage.getItem(DOCK_WIDTH_KEY));
+		return Number.isFinite(stored) && stored > 0
+			? clampDockWidth(stored)
+			: DOCK_WIDTH_DEFAULT;
+	} catch {
+		/* Storage refused (private mode, disabled site data): keep the default for this window. */
+		return DOCK_WIDTH_DEFAULT;
+	}
+}
+
+function applyDockWidth(width: number): void {
+	document.documentElement.style.setProperty(
+		"--dock-preferred-width",
+		`${clampDockWidth(width)}px`,
+	);
+}
+
+function storeDockWidth(width: number): void {
+	try {
+		if (width === DOCK_WIDTH_DEFAULT)
+			localStorage.removeItem(DOCK_WIDTH_KEY);
+		else localStorage.setItem(DOCK_WIDTH_KEY, String(width));
+	} catch {
+		/* A browser that refuses storage simply forgets the width. */
+	}
+}
 
 function Icon({
 	name,
@@ -1055,7 +1098,7 @@ function ReviewDetail({
 			return;
 		rendered.current = { scope, id: text.id, text: text.text };
 		const detail = root.current;
-		const body = detail?.closest<HTMLElement>(".dock-body");
+		const body = detail?.closest<HTMLElement>(".dock-scroll");
 		const row = detail?.previousElementSibling;
 		if (
 			detail === null ||
@@ -1474,6 +1517,7 @@ function PanelSpecView({
 	onAction,
 	reading,
 	inputDrafts,
+	head = true,
 }: {
 	readonly panel: PanelSpec;
 	readonly scope: string;
@@ -1481,6 +1525,8 @@ function PanelSpecView({
 	readonly onAction: (action: PanelAction) => void;
 	readonly reading: ReadingState;
 	readonly inputDrafts: Map<string, string>;
+	/** The dock pins the head above its scroller and renders it itself, so it asks for the body only. */
+	readonly head?: boolean;
 }): ReactElement {
 	const files = panel.files;
 	const filterScope = `${scope}\u0000${files?.filterScope ?? ""}`;
@@ -1534,9 +1580,10 @@ function PanelSpecView({
 				panel.pending?.id.startsWith("workspace:") === true || undefined
 			}
 		>
-			{panel.title.length === 0 &&
-			panel.description === undefined &&
-			(panel.actions?.length ?? 0) === 0 ? null : (
+			{head === false ||
+			(panel.title.length === 0 &&
+				panel.description === undefined &&
+				(panel.actions?.length ?? 0) === 0) ? null : (
 				<PanelHead panel={panel} locale={locale} onAction={onAction} />
 			)}
 			{files === undefined ? null : (
@@ -1673,6 +1720,25 @@ export function Dock({
 		sourcePositions: new Map(),
 	});
 	const inputDrafts = useRef(new Map<string, string>());
+	const dock = useRef<HTMLElement>(null);
+	const tabRow = useRef<HTMLDivElement>(null);
+	/* The stored preference, read once per mounted dock; the page clamps it again for the window. */
+	const preferred = useRef<number | null>(null);
+	const resize = useRef<{
+		readonly pointerId: number;
+		readonly startX: number;
+		readonly startWidth: number;
+	} | null>(null);
+	const [overflow, setOverflow] = useState<"start" | "end" | "both" | "none">(
+		"none",
+	);
+	const widthPreference = (): number => {
+		if (preferred.current === null) preferred.current = readDockWidth();
+		return preferred.current;
+	};
+	useLayoutEffect(() => {
+		applyDockWidth(widthPreference());
+	}, []);
 	const active = view.tabs.find((tab) => tab.active)?.id ?? view.tabs[0]?.id;
 	useEffect(() => {
 		document.body.classList.toggle("dock-open", view.open);
@@ -1680,12 +1746,85 @@ export function Dock({
 			document.body.classList.remove("dock-open");
 		};
 	}, [view.open]);
+	/* Which ends of the tab strip are scrolled out of view; the row fades exactly those ends. */
+	const syncOverflow = useCallback(() => {
+		const row = tabRow.current;
+		if (row === null) return;
+		const start = row.scrollLeft > 1;
+		const end = row.scrollLeft + row.clientWidth < row.scrollWidth - 1;
+		const next = start && end ? "both" : start ? "start" : end ? "end" : "none";
+		setOverflow((current) => (current === next ? current : next));
+	}, []);
+	useEffect(() => {
+		if (!view.open) return;
+		const row = tabRow.current;
+		if (row === null) return;
+		syncOverflow();
+		row.addEventListener("scroll", syncOverflow, { passive: true });
+		const observer = new ResizeObserver(syncOverflow);
+		observer.observe(row);
+		return () => {
+			row.removeEventListener("scroll", syncOverflow);
+			observer.disconnect();
+		};
+	}, [view.open, view.tabs, locale, syncOverflow]);
 	useEffect(() => {
 		if (active !== undefined && view.open)
 			tabs.current
 				.get(active)
 				?.scrollIntoView({ block: "nearest", inline: "nearest" });
 	}, [active, view.open]);
+	const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const element = dock.current;
+		if (event.button !== 0 || element === null) return;
+		resize.current = {
+			pointerId: event.pointerId,
+			startX: event.clientX,
+			startWidth: element.getBoundingClientRect().width,
+		};
+		event.currentTarget.setPointerCapture(event.pointerId);
+		document.body.classList.add("dock-resizing");
+	};
+	const moveResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const state = resize.current;
+		if (state === null || state.pointerId !== event.pointerId) return;
+		const width = clampDockWidth(
+			state.startWidth - (event.clientX - state.startX),
+		);
+		preferred.current = width;
+		applyDockWidth(width);
+	};
+	const endResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		const state = resize.current;
+		if (state === null || state.pointerId !== event.pointerId) return;
+		resize.current = null;
+		document.body.classList.remove("dock-resizing");
+		storeDockWidth(preferred.current ?? DOCK_WIDTH_DEFAULT);
+	};
+	/* A double click on the grip hands the dock back its default share, with one track transition. */
+	const resetWidth = (): void => {
+		const width = DOCK_WIDTH_DEFAULT;
+		preferred.current = width;
+		applyDockWidth(width);
+		storeDockWidth(width);
+		document.body.classList.add("dock-animating");
+		window.setTimeout(
+			() => document.body.classList.remove("dock-animating"),
+			240,
+		);
+	};
+	/* Arrow keys move the grip in 16px steps, so the width is not a pointer-only control. */
+	const stepWidth = (event: KeyboardEvent<HTMLDivElement>): void => {
+		if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+		event.preventDefault();
+		const current = preferred.current ?? readDockWidth();
+		const width = clampDockWidth(
+			current + (event.key === "ArrowLeft" ? 16 : -16),
+		);
+		preferred.current = width;
+		applyDockWidth(width);
+		storeDockWidth(width);
+	};
 	const moveTab = (
 		event: KeyboardEvent<HTMLButtonElement>,
 		current: DockTabId,
@@ -1731,8 +1870,23 @@ export function Dock({
 		activeTab !== undefined && deduped.title === activeTab.label
 			? { ...deduped, title: "" }
 			: deduped;
+	const pinnedHead =
+		panel.title.length > 0 || (panel.actions?.length ?? 0) > 0;
+	const panelView = (
+		<PanelSpecView
+			key={`${scope}\u0000${panel.id}`}
+			panel={panel}
+			scope={scope}
+			locale={locale}
+			onAction={onAction}
+			reading={reading.current}
+			inputDrafts={inputDrafts.current}
+			head={false}
+		/>
+	);
 	return (
 		<aside
+			ref={dock}
 			className="dock"
 			id="dock"
 			aria-label={translate(locale, "dock.toggle")}
@@ -1741,7 +1895,12 @@ export function Dock({
 			{view.open ? (
 				<>
 					<div className="dock-head" id="dock-tabs">
-						<div className="dock-tab-row" role="tablist">
+						<div
+							ref={tabRow}
+							className="dock-tab-row"
+							role="tablist"
+							data-overflow={overflow === "none" ? undefined : overflow}
+						>
 							{view.tabs.map((tab) => (
 								<button
 									key={tab.id}
@@ -1774,6 +1933,23 @@ export function Dock({
 								</button>
 							))}
 						</div>
+						<button
+							className="icon-button icon-button--compact"
+							type="button"
+							aria-label={view.toggle.label}
+							title={view.toggle.label}
+							aria-expanded={true}
+							aria-controls="dock-body"
+							onClick={() => {
+								onAction({
+									kind: "command",
+									id: DOCK_TOGGLE_ACTION,
+									data: undefined,
+								});
+							}}
+						>
+							<Icon name="panel-right" />
+						</button>
 					</div>
 					<div
 						className="dock-body"
@@ -1783,37 +1959,51 @@ export function Dock({
 							active === undefined ? undefined : `dock-tab-${active}`
 						}
 					>
-						{view.pty === undefined ? (
-							<PanelSpecView
-								key={`${scope}\u0000${panel.id}`}
-								panel={panel}
-								scope={scope}
-								locale={locale}
-								onAction={onAction}
-								reading={reading.current}
-								inputDrafts={inputDrafts.current}
-							/>
-						) : (
-							<>
-								<div className="pty-chrome">
-									<PanelSpecView
-										key={`${scope}\u0000${panel.id}`}
-										panel={panel}
-										scope={scope}
-										locale={locale}
-										onAction={onAction}
-										reading={reading.current}
-										inputDrafts={inputDrafts.current}
-									/>
-								</div>
-								<DockPtySurface
-									view={view.pty}
-									onTerminalInput={onTerminalInput}
-									onTerminalResize={onTerminalResize}
+						{pinnedHead ? (
+							<div className="dock-panel-head">
+								<PanelHead
+									panel={{ ...panel, description: undefined }}
+									locale={locale}
+									onAction={onAction}
 								/>
-							</>
-						)}
+							</div>
+						) : null}
+						<div className="dock-scroll">
+							{panel.description === undefined ? null : (
+								<p className="dock-panel-desc">
+									<SensitiveText
+										text={panel.description}
+										locale={locale}
+									/>
+								</p>
+							)}
+							{view.pty === undefined ? (
+								panelView
+							) : (
+								<>
+									<div className="pty-chrome">{panelView}</div>
+									<DockPtySurface
+										view={view.pty}
+										onTerminalInput={onTerminalInput}
+										onTerminalResize={onTerminalResize}
+									/>
+								</>
+							)}
+						</div>
 					</div>
+					<div
+						className="dock-resize"
+						role="separator"
+						aria-orientation="vertical"
+						aria-label={translate(locale, "dock.resize")}
+						tabIndex={0}
+						onKeyDown={stepWidth}
+						onPointerDown={startResize}
+						onPointerMove={moveResize}
+						onPointerUp={endResize}
+						onPointerCancel={endResize}
+						onDoubleClick={resetWidth}
+					/>
 				</>
 			) : null}
 		</aside>

@@ -3,24 +3,38 @@
  * and an optional session dock. The toolbar, the rail, the sidebar, the page, and the dock are grid
  * areas; the sidebar and the dock can each be closed, handing their track back to the conversation.
  * The toolbar is also the desktop window's title bar: inside a shell it reserves the macOS traffic
- * lights and doubles as the drag region. The layout targets desktop windows only, so no rule here
- * reacts to touch pointers, safe areas, or a narrow viewport. Colours, radii, and type sizes come
+ * lights and doubles as the drag region. When the dock is open its tab strip takes over the right end
+ * of that same row, so the right column starts at the toolbar's bottom edge like every other column
+ * instead of adding a second header below it. The layout targets desktop windows only, so no rule
+ * here reacts to touch pointers, safe areas, or a narrow viewport. Colours, radii, and type sizes come
  * from tokens.css; nothing here names a colour literal.
  */
 
 :root {
 	--rail-width: 56px;
 	--sidebar-width: 268px;
-	/* The dock yields before the reading column drops below its measure: 560px for the column,
-	   320px for the narrowest dock, then it grows back to 380px. */
-	--dock-width: clamp(320px, calc(100vw - var(--rail-width) - var(--sidebar-width) - 560px), 380px);
+	/* The dock is the reader's to size within a range: 320px is the narrowest dock, 560px keeps it
+	   a companion rather than the page, and 380px is where a fresh window opens it. The window still
+	   wins: the track yields before the reading column drops below its 560px measure. */
+	--dock-min-width: 320px;
+	--dock-max-width: 560px;
+	--dock-preferred-width: 380px;
+	--dock-width: clamp(
+		var(--dock-min-width),
+		min(var(--dock-preferred-width), calc(100vw - var(--rail-width) - var(--sidebar-width) - 560px)),
+		var(--dock-max-width)
+	);
 	--column-max: 768px;
 	--titlebar-height: 48px;
 }
 
-/* A collapsed sidebar already hands its width to the conversation, so the dock can keep 380px. */
+/* A collapsed sidebar already hands its width to the conversation, so the dock keeps its own width. */
 body.sidebar-collapsed {
-	--dock-width: clamp(320px, calc(100vw - var(--rail-width) - 560px), 380px);
+	--dock-width: clamp(
+		var(--dock-min-width),
+		min(var(--dock-preferred-width), calc(100vw - var(--rail-width) - 560px)),
+		var(--dock-max-width)
+	);
 }
 
 [hidden] {
@@ -106,7 +120,7 @@ body.startup-failed > :not(.startup-error) {
 body.dock-open {
 	grid-template-columns: var(--rail-width) var(--sidebar-width) minmax(0, 1fr) var(--dock-width);
 	grid-template-areas:
-		"titlebar titlebar titlebar titlebar"
+		"titlebar titlebar titlebar dock"
 		"rail sidebar main dock";
 }
 
@@ -120,7 +134,7 @@ body.sidebar-collapsed {
 body.sidebar-collapsed.dock-open {
 	grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--dock-width);
 	grid-template-areas:
-		"titlebar titlebar titlebar"
+		"titlebar titlebar dock"
 		"rail main dock";
 }
 
@@ -801,8 +815,8 @@ p {
 /*
  * The one window toolbar. Inside the desktop shell this is also the title bar: the whole row drags
  * the window, the macOS traffic lights sit in the leading inset, and interactive children opt out of
- * the drag region. The row spans every column, so the conversation's controls no longer move when
- * the sidebar or the dock open.
+ * the drag region. With the dock open the row spans the three left columns and the dock's tab strip
+ * continues it over the fourth, so the two shares of the band end on one rule.
  */
 .titlebar {
 	display: flex;
@@ -811,6 +825,7 @@ p {
 	min-width: 0;
 	height: var(--titlebar-height);
 	padding: 0 var(--space-14) 0 var(--space-12);
+	border-bottom: 1px solid var(--line);
 	-webkit-app-region: drag;
 	user-select: none;
 }
@@ -917,11 +932,6 @@ p {
 
 .icon-button[aria-expanded="true"] {
 	background: var(--hover);
-	color: var(--text);
-}
-
-.titlebar-action.pressed {
-	background: var(--active);
 	color: var(--text);
 }
 
@@ -3017,7 +3027,14 @@ p {
 
 /* ------------------------------------------------------------------- dock */
 
+/*
+ * The dock is the right column, spanning the toolbar row and the content row: its tab strip shares
+ * the 48px toolbar band with the titlebar on its left, and its panel starts on the same line as the
+ * conversation. Tabs are flat text with hairline separators; the selected one is the filled chip,
+ * the same selected state as a row or a navigation entry.
+ */
 .dock {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
@@ -3025,39 +3042,103 @@ p {
 	overflow: hidden;
 	border-left: 1px solid var(--line);
 	background: var(--canvas);
+	animation: dock-enter var(--dur) var(--ease);
+}
+
+@keyframes dock-enter {
+	from {
+		opacity: 0;
+		transform: translateX(6px);
+	}
+	to {
+		opacity: 1;
+		transform: none;
+	}
 }
 
 .dock-head {
 	flex: none;
-	padding: 10px 12px;
+	display: flex;
+	align-items: center;
+	gap: var(--space-8);
+	height: var(--titlebar-height);
+	padding: 0 var(--space-14);
 	border-bottom: 1px solid var(--line);
+	-webkit-app-region: drag;
 }
 
+.dock-head button {
+	-webkit-app-region: no-drag;
+}
+
+/* The chips scroll when the dock is too narrow for every tab. A hidden scrollbar and 24px fades on
+   the overflowing sides are the only cue the strip gives; the active tab is kept scrolled into
+   view, and the strip's own control stays outside the scrolling part. */
 .dock-tab-row {
-	min-width: 0;
+	flex: 1 1 auto;
 	display: flex;
-	gap: 2px;
-	padding: 3px;
-	border-radius: var(--radius-md);
-	background: var(--hover);
+	align-items: center;
+	min-width: 0;
+	height: 28px;
 	overflow-x: auto;
+	overflow-y: hidden;
+	scroll-behavior: smooth;
+	scrollbar-width: none;
+}
+
+.dock-tab-row::-webkit-scrollbar {
+	display: none;
+}
+
+.dock-tab-row[data-overflow="start"] {
+	mask-image: linear-gradient(to right, transparent, black 24px);
+}
+
+.dock-tab-row[data-overflow="end"] {
+	mask-image: linear-gradient(to left, transparent, black 24px);
+}
+
+.dock-tab-row[data-overflow="both"] {
+	mask-image: linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent);
 }
 
 .dock-tab {
+	position: relative;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	flex: 1 0 auto;
-	gap: 6px;
+	gap: var(--space-6);
 	min-width: 62px;
 	height: 28px;
-	padding: 0 8px;
+	padding: 0 var(--space-10);
 	border: 0;
 	border-radius: var(--radius-sm);
 	background: transparent;
 	color: var(--text-2);
 	font-size: 13px;
 	cursor: pointer;
+	transition:
+		background var(--dur-fast) var(--ease),
+		color var(--dur-fast) var(--ease);
+}
+
+/* The separator sits on the boundary between two chips; it clears beside the filled one, so the
+   row reads as a filled tab between bare chips rather than a segmented control. */
+.dock-tab + .dock-tab::before {
+	content: "";
+	position: absolute;
+	left: 0;
+	top: 50%;
+	width: 1px;
+	height: 14px;
+	margin-top: -7px;
+	background: var(--line);
+}
+
+.dock-tab.active::before,
+.dock-tab.active + .dock-tab::before {
+	background: transparent;
 }
 
 .dock-tab .icon {
@@ -3069,6 +3150,7 @@ p {
 .dock-tab-label { white-space: nowrap; }
 
 .dock-tab:hover:not(.active) {
+	background: var(--hover);
 	color: var(--text);
 }
 
@@ -3077,22 +3159,101 @@ p {
 	color: var(--text);
 }
 
+/* The dock's own width grip: 4px on its leading edge, over the border and below the toolbar. */
+.dock-resize {
+	position: absolute;
+	top: var(--titlebar-height);
+	bottom: 0;
+	left: 0;
+	width: 4px;
+	cursor: col-resize;
+	z-index: var(--z-jump);
+}
+
+.dock-resize:hover {
+	background: var(--line);
+}
+
+body.dock-resizing {
+	cursor: col-resize;
+	user-select: none;
+}
+
+/* Only a deliberate width change animates the tracks; window resizes stay immediate. */
+body.dock-animating {
+	transition: grid-template-columns var(--dur) var(--ease);
+}
+
 .dock-body {
+	flex: 1 1 auto;
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+}
+
+/* A panel's title and actions keep one row at the top of the panel; its description and groups
+   scroll beneath it, so the head never scrolls away and never wraps an action under the text. */
+.dock-panel-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	min-height: 38px;
+	padding: 0 var(--space-14);
+	border-bottom: 1px solid var(--line);
+}
+
+.dock-panel-head .panel-head {
+	width: 100%;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 8px 12px;
+	margin: 0;
+}
+
+.dock-panel-head .panel-titles {
+	display: flex;
+	flex: 1 1 auto;
+	flex-wrap: nowrap;
+	align-items: baseline;
+	gap: 2px 8px;
+	min-width: 0;
+}
+
+.dock-panel-head .panel-title {
+	flex: 0 0 auto;
+	font-size: var(--text-dock-title);
+	line-height: var(--line-dock-title);
+}
+
+.dock-panel-head .panel-head > .panel-actions {
+	flex: 0 0 auto;
+	flex-wrap: nowrap;
+	margin-left: auto;
+	padding-top: 0;
+}
+
+/* The head already names the panel; the description is the first line of what it shows. */
+.dock-panel-desc {
+	margin: 0;
+	padding: var(--space-14) var(--space-14) 0;
+	color: var(--text-2);
+	font-size: 14px;
+	line-height: 1.6;
+}
+
+.dock-scroll {
 	flex: 1 1 auto;
 	min-height: 0;
 	overflow-y: auto;
+	overscroll-behavior: contain;
 }
 
 .dock-body .panel {
 	padding: var(--space-14) var(--space-14) var(--space-24);
 }
 
-.dock-body .panel-head {
-	margin-bottom: 12px;
-}
-
-/* The dock is narrow, but a short title, its note, and its actions still belong on one line. */
-.dock-body .panel-head,
+/* The dock is narrow, so a group's title, note, and actions stay in one wrapping row. */
 .dock-body .panel-group-head {
 	flex-direction: row;
 	flex-wrap: wrap;
@@ -3100,7 +3261,6 @@ p {
 	gap: 8px 12px;
 }
 
-.dock-body .panel-titles,
 .dock-body .panel-group-titles {
 	display: flex;
 	flex: 1 1 auto;
@@ -3110,28 +3270,20 @@ p {
 	min-width: 0;
 }
 
-.dock-body .panel-title,
 .dock-body .panel-group-title {
 	flex: 0 0 auto;
 }
 
-.dock-body .panel-desc,
 .dock-body .panel-group-desc {
 	flex: 1 1 12em;
 	min-width: 0;
 	margin: 0;
 }
 
-.dock-body .panel-head > .panel-actions,
 .dock-body .panel-group-head > .panel-actions {
 	flex: 0 0 auto;
 	margin-left: auto;
 	padding-top: 0;
-}
-
-.dock-body .panel-title {
-	font-size: var(--text-dock-title);
-	line-height: var(--line-dock-title);
 }
 
 .panel-input-row {
@@ -3175,7 +3327,6 @@ p {
 }
 
 /* File navigation: one reading line, one action per row, metadata aligned at the trailing edge. */
-.dock-body [data-panel-id="files"] .panel-head { margin-bottom: 8px; }
 .file-navigation {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) auto;

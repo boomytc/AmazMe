@@ -580,22 +580,26 @@ function Titlebar({
 							>
 								<Icon name="git-fork" />
 							</button>
-							<button
-								className={`titlebar-action${view.dock.open ? " pressed" : ""}`}
-								type="button"
-								aria-label={view.dock.toggle.label}
-								title={view.dock.toggle.label}
-								aria-expanded={view.dock.open}
-								onClick={() =>
-									actions.onPanelAction({
-										kind: "command",
-										id: A.DOCK_TOGGLE_ACTION,
-										data: undefined,
-									})
-								}
-							>
-								<Icon name="panel-right" />
-							</button>
+							{/* While the dock is open its own strip head carries the collapse control, so this
+							    row keeps only the control that opens it. */}
+							{view.dock.open ? null : (
+								<button
+									className="titlebar-action"
+									type="button"
+									aria-label={view.dock.toggle.label}
+									title={view.dock.toggle.label}
+									aria-expanded={false}
+									onClick={() =>
+										actions.onPanelAction({
+											kind: "command",
+											id: A.DOCK_TOGGLE_ACTION,
+											data: undefined,
+										})
+									}
+								>
+									<Icon name="panel-right" />
+								</button>
+							)}
 						</div>
 					</>
 				)}
