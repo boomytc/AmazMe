@@ -29,10 +29,10 @@ export function usagePanel(locale: Locale, report: UsageReport | undefined): Pan
 	const title = copy("stats.title");
 	if (!report) return { id: "statistics", title, notices: [], groups: [], description: copy("stats.loading") };
 	const row = (id: string, title: string, value: string, description?: string): PanelRow => ({ id, title, value, description });
-	return { id: "statistics", title, description: copy("stats.scope"),
+	return { id: "statistics", title,
 		actions: [{ id: USAGE_REFRESH_ACTION, label: copy("dock.reload"), weight: "line" }],
 		notices: [...((report.unmeasured_compactions ?? 0) > 0 ? [{ tone: "info" as const, text: copy("stats.unmeasuredCompactions", { count: number(report.unmeasured_compactions ?? 0) }) }] : [])],
-		groups: [{ id: "stats:totals", title: copy("stats.totals"), rows: [
+		groups: [{ id: "stats:totals", title: copy("stats.totals"), hint: copy("stats.scope"), skeleton: "records", rows: [
 			row("stats:requests", copy("stats.turns"), number(report.request_count ?? 0), copy("stats.requestOutcomes", { failed: number(report.failed_requests ?? 0), cancelled: number(report.cancelled_requests ?? 0) })),
 			row("stats:calls", copy("stats.modelCalls"), calls(report), copy("stats.steps", { steps: number(report.steps ?? 0), unknown: number(report.unknown_steps ?? 0), failed: number(report.failed_tool_calls ?? 0) })),
 			row("stats:input", copy("stats.input"), number(prompt(report)), copy("stats.inputBreakdown", { fresh: number(report.input_tokens ?? 0), read: number(report.cache_read_tokens ?? 0), write: number(report.cache_write_tokens ?? 0) })),
@@ -44,8 +44,8 @@ export function usagePanel(locale: Locale, report: UsageReport | undefined): Pan
 			row("stats:tool-time", copy("stats.toolTime"), duration(report.tool_ms ?? 0, report.timed_tool_calls ?? 0), copy("stats.measured", { count: number(report.timed_tool_calls ?? 0) })),
 			row("stats:first-text", copy("stats.firstText"), duration((report.first_text_ms ?? 0) / Math.max(1, report.first_text_calls ?? 0), report.first_text_calls ?? 0), copy("stats.measured", { count: number(report.first_text_calls ?? 0) })),
 			row("stats:compactions", copy("stats.compactions"), number(report.compaction_calls ?? 0)),
-		] }, { id: "stats:models", title: copy("stats.models"), rows: (report.models ?? []).map(model => row(`stats:model:${model.provider}:${model.model}`, `${model.provider} · ${model.model}`, cost(model), `${calls(model)} · ${tokens(model)}`)) },
-		{ id: "stats:recent", title: copy("stats.recent"), description: copy("stats.recentScope", { shown: number(report.recent?.length ?? 0), total: number(report.request_count ?? 0) }),
+		] }, { id: "stats:models", title: copy("stats.models"), skeleton: "records", rows: (report.models ?? []).map(model => row(`stats:model:${model.provider}:${model.model}`, `${model.provider} · ${model.model}`, cost(model), `${calls(model)} · ${tokens(model)}`)) },
+		{ id: "stats:recent", title: copy("stats.recent"), skeleton: "records", description: copy("stats.recentScope", { shown: number(report.recent?.length ?? 0), total: number(report.request_count ?? 0) }),
 			rows: (report.recent ?? []).map(item => row(`stats:request:${item.request_id}`, item.text || item.request_id, `${cost(item)} · ${duration(item.model_ms ?? 0, item.timed_model_calls ?? 0)}`,
 				`${copy(REQUEST_LABELS[item.status])} · ${calls(item)} · ${tokens(item)} · ${item.request_id}`)) }],
 	};

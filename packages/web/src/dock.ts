@@ -259,7 +259,7 @@ export function jobsPanel(locale: Locale, state: JobsStateLike | undefined): Pan
 		{
 			id: "jobs:list",
 			title: translate(locale, "jobs.list"),
-			description: translate(locale, "jobs.listDescription"),
+			hint: translate(locale, "jobs.listDescription"),
 			actions: [{ id: JOBS_REFRESH_ACTION, label: translate(locale, "jobs.refresh"), weight: "line" }],
 			rows,
 			empty: { cause: "first-use", text: translate(locale, "jobs.empty") },
@@ -284,7 +284,6 @@ export function jobsPanel(locale: Locale, state: JobsStateLike | undefined): Pan
 	return {
 		id: "jobs",
 		title,
-		description: translate(locale, "jobs.description"),
 		notices: [
 			...(state.truncated ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "jobs.truncated") }] : []),
 			...(state.output?.error ? [{ tone: "error" as const, text: translate(locale, "jobs.outputError", { error: state.output.error }) }] : []),
@@ -301,11 +300,11 @@ export function changesPanel(locale: Locale, state: InsightsStateLike | undefine
 	const open = file !== undefined && diff !== undefined && state.files.some(item => item.root === file.root && item.path === file.path);
 	const showing = (item: InsightsStateLike["files"][number]): boolean =>
 		open && file !== undefined && diff !== undefined && item.root === file.root && item.path === file.path;
-	return { id: "changes", title, description: translate(locale, "review.description"),
+	return { id: "changes", title,
 		notices: [...(state.paused ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, `review.paused.${state.paused}`) }] : []),
 			...state.notes.map(text => ({ tone: "info" as const, text })), ...(state.skipped ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "review.skipped", { count: String(state.skipped) }) }] : []),
 			...(state.cleanup.tools || state.cleanup.images ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "review.cleanup", { tools: String(state.cleanup.tools), images: String(state.cleanup.images) }) }] : [])],
-		groups: [{ id: "changes:files", title: translate(locale, "dock.files"), actions: [
+		groups: [{ id: "changes:files", title: translate(locale, "dock.files"), hint: translate(locale, "review.description"), actions: [
 			{ id: "insights:refresh", label: translate(locale, "dock.reload"), weight: "line" as const },
 			...(state.paused ? [{ id: "insights:resume", data: state.conversationId, label: translate(locale, "review.resume"), weight: "filled" as const }] : []),
 		], rows: state.files.map(item => ({ id: `change:${item.root}/${item.path}`, title: item.path, description: item.root,
@@ -447,7 +446,7 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 	};
 	const rows: PanelRow[] = state.tasks.map((task) => ({
 		id: `task:${task.id}`,
-		title: `${taskKindCopy(locale, task.kind)} #${task.id}`,
+		title: `${taskKindCopy(locale, task.kind)} #${task.id.slice(0, 8)}`,
 		description: `${taskPhaseCopy(locale, task.phase)} · ${conversationName(task.conversationId)}`,
 		badges: [
 			task.blocked !== undefined
