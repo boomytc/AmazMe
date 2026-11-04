@@ -441,7 +441,9 @@ function ToolBlock({
 						/>
 					</span>
 					<span className="disclosure-title">{block.title}</span>
-					<span className="disclosure-summary">{summary}</span>
+					{open ? null : (
+						<span className="disclosure-summary">{summary}</span>
+					)}
 					<Icon name="chevron-down" className="icon disclosure-chevron" />
 				</summary>
 				{block.toolArgs !== undefined && block.toolArgs.expanded.length > 0 ? (
