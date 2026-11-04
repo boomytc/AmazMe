@@ -10,7 +10,7 @@ import type { Locale } from "../locale.ts";
 import { translate } from "../strings.ts";
 import { ApiError } from "../transport/api.ts";
 import type { ClientConnection, PythonClient } from "../transport/client.ts";
-import { DockTabs } from "./dock-tabs.ts";
+import { DockLayout } from "./dock-layout.ts";
 import { TerminalInputQueue } from "./pending/terminal.ts";
 import type { PendingWrites } from "./pending/writes.ts";
 
@@ -49,19 +49,22 @@ interface WorkspaceServices {
 }
 
 export class WorkspaceController {
-	private open = false;
-	private readonly sessionTabs = new Map<string, DockTabs>();
-	private readonly detachedTabs = new DockTabs();
-	private get tabState(): DockTabs {
+	private readonly sessionLayouts = new Map<string, DockLayout>();
+	private readonly detachedLayout = new DockLayout();
+	/* One computed owner: the arrangement of the session the connection currently shows. */
+	private get layout(): DockLayout {
 		const connection = this.services.client.connection;
-		if (!connection) return this.detachedTabs;
-		const key = `amazme:dock-tabs:${JSON.stringify([connection.identity.profile_id, connection.sessionId])}`;
-		let state = this.sessionTabs.get(key);
-		if (!state) {
-			state = new DockTabs(key);
-			this.sessionTabs.set(key, state);
+		if (!connection) return this.detachedLayout;
+		const key = DockLayout.keyFor(
+			connection.identity.profile_id,
+			connection.sessionId,
+		);
+		let layout = this.sessionLayouts.get(key);
+		if (!layout) {
+			layout = new DockLayout(key);
+			this.sessionLayouts.set(key, layout);
 		}
-		return state;
+		return layout;
 	}
 	workspace?: WorkspaceStateLike;
 	terminal?: ActiveTerminal;
@@ -74,25 +77,25 @@ export class WorkspaceController {
 		this.services = services;
 	}
 	get dockOpen(): boolean {
-		return this.open;
+		return this.layout.open;
 	}
 	set dockOpen(value: boolean) {
-		this.open = value;
+		this.layout.open = value;
 		if (!value) clearTimeout(this.terminalTimer);
 	}
-	get dockTabs(): readonly DockTabId[] { return this.tabState.tabs; }
+	get dockTabs(): readonly DockTabId[] { return this.layout.tabs; }
 	get dockTab(): DockTabId {
-		return this.tabState.active;
+		return this.layout.active;
 	}
 	set dockTab(value: DockTabId) {
 		this.openTab(value);
 	}
 	openTab(value: DockTabId, replaceGuide = false): void {
-		this.tabState.open(value, replaceGuide);
+		this.layout.openTab(value, replaceGuide);
 		if (value !== "terminal") clearTimeout(this.terminalTimer);
 	}
 	closeTab(value: DockTabId): void {
-		if (this.tabState.close(value)) this.dockOpen = false;
+		this.layout.close(value);
 		if (this.dockTab !== "terminal") clearTimeout(this.terminalTimer);
 	}
 	/** The tab owns the shell: closing it ends the process instead of leaving a hidden session behind. */
