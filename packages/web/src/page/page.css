@@ -3959,6 +3959,8 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 .panel-title:focus-within .hint,
 .dock-panel-head:hover .hint,
 .dock-panel-head:focus-within .hint,
+.modal-title:hover .hint,
+.modal-title:focus-within .hint,
 .modal-field-label:hover .hint,
 .modal-field-label:focus-within .hint,
 .hint:focus-within {

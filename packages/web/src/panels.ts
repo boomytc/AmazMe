@@ -258,7 +258,10 @@ export interface PanelModal {
 	/** The action id a submit reports. */
 	readonly id: string;
 	readonly title: string;
+	/** A fact that must stay visible, such as what a destructive submit deletes. */
 	readonly description?: string;
+	/** Teaching copy for the title, revealed from its info control instead of a line under the title. */
+	readonly hint?: string;
 	readonly fields: readonly PanelField[];
 	readonly submit?: string;
 	/** Optional footer actions, reported through the same command path as panel buttons. */
@@ -1216,7 +1219,6 @@ export function newSkillModal(locale: Locale): PanelModal {
 	return {
 		id: SKILL_CREATE_MODAL,
 		title: translate(locale, "modal.skillNew.title"),
-		description: translate(locale, "modal.skillNew.description"),
 		fields: [
 			{
 				id: "name",
@@ -1231,6 +1233,7 @@ export function newSkillModal(locale: Locale): PanelModal {
 				kind: "text",
 				value: "",
 				placeholder: translate(locale, "modal.skillNew.descriptionPlaceholder"),
+				hint: translate(locale, "modal.skillNew.description"),
 			},
 			{
 				id: "body",
@@ -1249,7 +1252,7 @@ export function skillModal(locale: Locale, name: string, content: string, editab
 	return {
 		id: editable ? SKILL_EDIT_MODAL : SKILL_VIEW_MODAL,
 		title: editable ? translate(locale, "modal.skillEdit.title", { name }) : name,
-		description: translate(locale, editable ? "modal.skillEdit.description" : "modal.skillView.description"),
+		hint: translate(locale, editable ? "modal.skillEdit.description" : "modal.skillView.description"),
 		fields: [
 			{ id: "content", label: translate(locale, "modal.skillFile"), kind: "textarea", value: content },
 		],
@@ -1303,7 +1306,7 @@ export function compactModal(locale: Locale): PanelModal {
 	return {
 		id: COMPACT_MODAL,
 		title: translate(locale, "modal.compact.title"),
-		description: translate(locale, "modal.compact.description"),
+		hint: translate(locale, "modal.compact.description"),
 		fields: [
 			{
 				id: "instructions",
@@ -1321,7 +1324,7 @@ export function importSkillModal(locale: Locale): PanelModal {
 	return {
 		id: SKILL_IMPORT_MODAL,
 		title: translate(locale, "modal.import.title"),
-		description: translate(locale, "modal.import.description"),
+		hint: translate(locale, "modal.import.description"),
 		fields: [
 			{
 				id: "path",
@@ -1339,7 +1342,7 @@ export function addPackageModal(locale: Locale): PanelModal {
 	return {
 		id: PLUGIN_PACKAGE_MODAL,
 		title: translate(locale, "modal.package.title"),
-		description: translate(locale, "modal.package.description"),
+		hint: translate(locale, "modal.package.description"),
 		fields: [
 			{
 				id: "path",
@@ -1357,7 +1360,7 @@ export function addMcpServerModal(locale: Locale): PanelModal {
 	return {
 		id: PLUGIN_MCP_MODAL,
 		title: translate(locale, "modal.mcp.title"),
-		description: translate(locale, "modal.mcp.description"),
+		hint: translate(locale, "modal.mcp.description"),
 		fields: [
 			{
 				id: "name",
@@ -1383,7 +1386,7 @@ export function mcpProjectModal(locale: Locale, server: { readonly name: string;
 		id: PLUGIN_MCP_PROJECT_MODAL,
 		data: server.name,
 		title: translate(locale, "panel.plugins.projectSettings"),
-		description: translate(locale, "panel.plugins.projectSettingsHelp", { server: server.name }),
+		hint: translate(locale, "panel.plugins.projectSettingsHelp", { server: server.name }),
 		fields: [
 			{ id: "enabled", label: translate(locale, "panel.plugins.enabled"), kind: "checkbox", value: String(server.enabled) },
 			{ id: "exposure", label: translate(locale, "panel.plugins.exposure"), kind: "select", value: server.exposure, options: mcpExposures(locale) },
@@ -1426,7 +1429,7 @@ function scheduleModal(locale: Locale, context: ScheduleEditorContext, record?: 
 	return {
 		id: SCHEDULE_ADD_MODAL,
 		title: translate(locale, record === undefined ? "modal.scheduleAdd.title" : "modal.scheduleAdd.editTitle"),
-		description: translate(locale, "modal.scheduleAdd.description"),
+		hint: translate(locale, "modal.scheduleAdd.description"),
 		data: JSON.stringify({ id: context.id, sessionId: context.sessionId ?? "", projectId: target?.kind === "new_session" ? target.projectId : "", ...(record === undefined ? {} : { expectedGeneration: record.generation }) }),
 		fields: [
 			{ id: "targetKind", label: translate(locale, "modal.scheduleAdd.target"), kind: "select", value: target?.kind ?? "new_session", options: [{ value: "new_session", label: translate(locale, "modal.scheduleAdd.newSession") }, ...(context.sessionId ? [{ value: "session", label: `${translate(locale, "modal.scheduleAdd.existingSession")} · ${context.sessionId}` }] : [])] },
@@ -1481,7 +1484,7 @@ export function mcpCallModal(locale: Locale, server: string, tools: readonly Mcp
 	return {
 		id: PLUGIN_MCP_CALL_MODAL,
 		title: translate(locale, "panel.plugins.callTitle", { server }),
-		description: translate(locale, "panel.plugins.callDescription"),
+		hint: translate(locale, "panel.plugins.callDescription"),
 		data: server,
 		fields: [
 			{

@@ -2021,6 +2021,9 @@ function ModalContent({
 				<div className="modal-titles">
 					<h2 id="management-modal-title" className="modal-title">
 						{modal.title}
+						{modal.hint === undefined ? null : (
+							<Hint text={modal.hint} locale={locale} />
+						)}
 					</h2>
 					{modal.description !== undefined && (
 						<p id="management-modal-description" className="modal-desc">
