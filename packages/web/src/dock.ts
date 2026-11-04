@@ -1,7 +1,7 @@
 /**
  * The session dock's view model: the tabs it offers and the panel each one shows. A dock panel is
- * built from the same vocabulary the management panels use — groups of rows, text blocks, and one
- * input line for the terminal — so the renderer treats both alike, and a new dock tab is another
+ * built from the same vocabulary the management panels use — groups of rows, text blocks, inputs,
+ * and the terminal's own screen — so the renderer treats them alike, and a new dock tab is another
  * pure builder here.
  *
  * The guide lists available tools; the workspace controller owns which tabs are open and selected.
@@ -20,7 +20,6 @@ import {
 	CONVERSATION_RENAME_ACTION,
 	CONVERSATION_ARCHIVE_ACTION,
 	CONVERSATION_RESTORE_ACTION,
-	TERMINAL_STOP_ACTION,
 	WORKSPACE_CHECKPOINT_ACTION,
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
@@ -136,11 +135,6 @@ export interface JobsStateLike {
 	readonly output?: JobOutputStateLike;
 }
 
-/** What the host's terminal state carries, as this package reads it. */
-export interface TerminalStateLike {
-	readonly running: boolean;
-}
-
 /** One conversation of the session, as the host publishes it. */
 export interface ConversationSummaryLike {
 	readonly id: string;
@@ -190,7 +184,6 @@ export interface DockViewInput {
 	/** The session's working directory, which both dock surfaces live in. */
 	readonly cwd: string;
 	readonly workspace: WorkspaceStateLike | undefined;
-	readonly terminal: TerminalStateLike | undefined;
 	readonly jobs?: JobsStateLike;
 	readonly conversations: ConversationsStateLike | undefined;
 	readonly insights?: InsightsStateLike;
@@ -704,41 +697,15 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 /**
  * The terminal tab is the shell's own screen: the tab title already names it and the prompt reports
  * the working directory. The screen carries the output, and an ended shell speaks through the page's
- * toast layer instead of a line that would resize the terminal.
+ * toast layer instead of a line that would resize the terminal. Closing the tab ends the shell.
  */
-export function terminalPanel(
-	locale: Locale,
-	input: {
-		readonly cwd: string;
-		readonly state: TerminalStateLike | undefined;
-	},
-): PanelSpec {
-	const title = translate(locale, "dock.terminal");
-	const state = input.state;
-	if (state === undefined) {
-		return {
-			id: "terminal",
-			title,
-			description: input.cwd,
-			notices: [],
-			groups: [],
-		};
-	}
+export function terminalPanel(locale: Locale, input: { readonly cwd: string }): PanelSpec {
 	return {
 		id: "terminal",
-		title,
+		title: translate(locale, "dock.terminal"),
+		description: input.cwd,
 		notices: [],
 		groups: [],
-		actions: state.running
-			? [
-					{
-						id: TERMINAL_STOP_ACTION,
-						label: translate(locale, "dock.stop"),
-						weight: "line",
-						danger: true,
-					},
-				]
-			: [],
 	};
 }
 
@@ -751,7 +718,7 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 			: tab === "files"
 			? filesPanel(locale, input.workspace)
 			: tab === "terminal"
-				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
+				? terminalPanel(locale, { cwd: input.cwd })
 				: tab === "jobs"
 					? jobsPanel(locale, input.jobs)
 					: tab === "conversations"

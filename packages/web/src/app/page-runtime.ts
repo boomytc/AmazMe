@@ -1383,8 +1383,11 @@ export class PageRuntime {
 		}
 		if (id === A.DOCK_TAB_ACTION || id === A.DOCK_TAB_CLOSE_ACTION || id === A.DOCK_GUIDE_OPEN_ACTION) {
 			if (!isDockTabId(value)) return;
-			if (id === A.DOCK_TAB_CLOSE_ACTION) this.dock.closeTab(value);
-			else {
+			if (id === A.DOCK_TAB_CLOSE_ACTION) {
+				this.dock.closeTab(value);
+				/* The terminal tab owns the shell: closing it is the stop control. */
+				if (value === "terminal") await this.dock.closeTerminal();
+			} else {
 				this.dock.openTab(value, id === A.DOCK_GUIDE_OPEN_ACTION);
 				this.dock.dockOpen = true;
 			}
@@ -1647,24 +1650,6 @@ export class PageRuntime {
 					session_id: connection.sessionId,
 					records: [result],
 				});
-				this.render();
-			}
-			return;
-		}
-		if (id === A.TERMINAL_STOP_ACTION && this.dock.terminal) {
-			const terminal = this.dock.terminal;
-			const view = await this.client.call(
-				"POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/close",
-				{
-					path: {
-						session_id: terminal.connection.sessionId,
-						terminal_id: terminal.id,
-					},
-					connection: terminal.connection,
-				},
-			);
-			if (terminal.connection.active() && this.dock.terminal === terminal) {
-				this.dock.observeTerminal(terminal, view);
 				this.render();
 			}
 			return;
@@ -2914,9 +2899,6 @@ export class PageRuntime {
 			cwd,
 			workspace: this.dock.workspace,
 			jobs: this.jobs.state,
-			terminal: terminal
-				? { running: terminal.view.phase === "running" }
-				: undefined,
 			conversations: {
 				selected: connection?.sessionId ?? "",
 				conversations: this.sessions

@@ -460,7 +460,7 @@ export const EN = {
 	"dock.newTab": "New tab",
 	"dock.closeTab": "Close {name} tab",
 	"dock.guideHint": "Choose a tool to open in this tab",
-	"dock.closeTerminalTab": "Close Terminal tab (shell keeps running)",
+	"dock.closeTerminalTab": "Close Terminal tab and stop its shell",
 	"dock.fullscreen": "Full screen",
 	"dock.exitFullscreen": "Exit full screen",
 	"dock.conversations": "Conversations",
@@ -628,7 +628,6 @@ export const EN = {
 	"dock.truncated": "Only part of this text is shown.",
 	"dock.fileChanged": "The file changed while it was being read. Open it again.",
 	"dock.lineUnavailable": "This preview does not include line {line}.",
-	"dock.stop": "Stop",
 	"dock.terminalDone": "Terminal ended with exit code {code}",
 	"dock.terminalNoExit": "Terminal ended.",
 
@@ -1411,7 +1410,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.newTab": "新标签页",
 	"dock.closeTab": "关闭标签页：{name}",
 	"dock.guideHint": "选择要在此标签页打开的工具",
-	"dock.closeTerminalTab": "关闭终端标签页（终端继续运行）",
+	"dock.closeTerminalTab": "关闭终端标签页并停止终端",
 	"dock.fullscreen": "全屏",
 	"dock.exitFullscreen": "退出全屏",
 	"dock.conversations": "对话",
@@ -1579,7 +1578,6 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.truncated": "这里只显示部分文本。",
 	"dock.fileChanged": "文件在读取期间发生变化，请重新打开。",
 	"dock.lineUnavailable": "当前预览未包含第 {line} 行。",
-	"dock.stop": "停止",
 	"dock.terminalDone": "终端已结束，退出码 {code}",
 	"dock.terminalNoExit": "终端已结束。",
 

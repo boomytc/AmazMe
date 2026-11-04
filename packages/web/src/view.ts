@@ -851,7 +851,6 @@ export function failureView(locale: Locale, text: string): WebView {
 			tab: "files",
 			cwd: "",
 			workspace: undefined,
-			terminal: undefined,
 			conversations: undefined,
 		}),
 	};

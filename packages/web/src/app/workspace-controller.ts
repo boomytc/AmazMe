@@ -95,6 +95,28 @@ export class WorkspaceController {
 		if (this.tabState.close(value)) this.dockOpen = false;
 		if (this.dockTab !== "terminal") clearTimeout(this.terminalTimer);
 	}
+	/** The tab owns the shell: closing it ends the process instead of leaving a hidden session behind. */
+	async closeTerminal(): Promise<void> {
+		const terminal = this.terminal;
+		this.terminal = undefined;
+		this.terminalLoadGeneration++;
+		clearTimeout(this.terminalTimer);
+		if (terminal === undefined || !terminal.connection.active()) return;
+		try {
+			await this.services.client.call(
+				"POST /api/v1/sessions/{session_id}/terminals/{terminal_id}/close",
+				{
+					path: {
+						session_id: terminal.connection.sessionId,
+						terminal_id: terminal.id,
+					},
+					connection: terminal.connection,
+				},
+			);
+		} catch (error) {
+			if (terminal.connection.active()) this.services.error(error);
+		}
+	}
 	reset(): void {
 		this.terminal = undefined;
 		this.terminalLoadGeneration++;

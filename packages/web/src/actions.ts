@@ -50,8 +50,6 @@ export const WORKSPACE_FILE_LINK_ACTION = "workspace:file-link";
 /** Save the shown file version as a named checkpoint: `data` carries workspace and client path. */
 export const WORKSPACE_CHECKPOINT_ACTION = "workspace:checkpoint";
 export const QUESTION_ANSWER_ACTION = "question:answer";
-/** Stop the running terminal shell. */
-export const TERMINAL_STOP_ACTION = "terminal:stop";
 /** Re-read the attached session's background jobs. */
 export const JOBS_REFRESH_ACTION = "jobs:refresh";
 /** Open one job's output: `data` is the job id. */
