@@ -149,7 +149,7 @@ body.library-open.sidebar-collapsed.dock-open {
 }
 
 body.library-open .sidebar,
-body.library-open #dock {
+body.library-open .dock {
 	display: none;
 }
 
@@ -3159,6 +3159,11 @@ p {
 	color: var(--text);
 }
 
+/* The strip clips its scrolling chips, so a focused tab draws its ring inside its own box. */
+.dock-tab:focus-visible {
+	outline-offset: var(--focus-ring-inset);
+}
+
 /* The dock's own width grip: 4px on its leading edge, over the border and below the toolbar. */
 .dock-resize {
 	position: absolute;
@@ -3172,6 +3177,12 @@ p {
 
 .dock-resize:hover {
 	background: var(--line);
+}
+
+/* The grip sits inside the dock's clipped box, where an outset focus ring would be cut off. */
+.dock-resize:focus-visible {
+	outline: none;
+	background: var(--accent);
 }
 
 body.dock-resizing {
@@ -3221,7 +3232,11 @@ body.dock-animating {
 }
 
 .dock-panel-head .panel-title {
-	flex: 0 0 auto;
+	flex: 0 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 	font-size: var(--text-dock-title);
 	line-height: var(--line-dock-title);
 }

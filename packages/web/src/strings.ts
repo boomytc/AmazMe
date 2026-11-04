@@ -10,8 +10,7 @@ export type { ScheduleRuleLike } from "./panels.ts";
  *
  * `en` is the source of truth: `zh` is typed as a complete record of its keys, so a missing
  * translation is a compile error. The identity maps (settings fields, groups, options, scopes)
- * cannot be checked that way, so `strings.test.ts` and the coding-agent's catalogue test assert
- * that both languages carry the same identities.
+ * cannot be checked that way, so a new identity goes into both languages by hand.
  */
 import { type Locale, documentLanguage } from "./locale.ts";
 

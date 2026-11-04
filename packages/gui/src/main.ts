@@ -583,7 +583,7 @@ async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<
 	const created = new BrowserWindow({
 		width: 1440,
 		height: 920,
-		// Rail + sidebar + dock + a 480px main column: both panels stay usable at the minimum.
+		// Rail 56 + sidebar 268 + the dock's 320px floor leaves 540px for the conversation here.
 		minWidth: 1184,
 		minHeight: 640,
 		show: false,

@@ -1729,6 +1729,7 @@ export function Dock({
 		readonly startX: number;
 		readonly startWidth: number;
 	} | null>(null);
+	const trackTimer = useRef<number | null>(null);
 	const [overflow, setOverflow] = useState<"start" | "end" | "both" | "none">(
 		"none",
 	);
@@ -1740,12 +1741,27 @@ export function Dock({
 		applyDockWidth(widthPreference());
 	}, []);
 	const active = view.tabs.find((tab) => tab.active)?.id ?? view.tabs[0]?.id;
+	/* The grip reports the rendered width, not the preference: the window can clamp either side. */
+	const [splitterWidth, setSplitterWidth] = useState(DOCK_WIDTH_DEFAULT);
+	const measureSplitter = useCallback(() => {
+		const element = dock.current;
+		if (element === null) return;
+		const width = Math.round(element.getBoundingClientRect().width);
+		setSplitterWidth((current) => (current === width ? current : width));
+	}, []);
 	useEffect(() => {
-		document.body.classList.toggle("dock-open", view.open);
-		return () => {
-			document.body.classList.remove("dock-open");
+		if (!view.open) return;
+		const element = dock.current;
+		if (element === null) return;
+		const sync = (): void => {
+			// A drag reports its final width on release; between moves the size is the pointer's.
+			if (resize.current === null) measureSplitter();
 		};
-	}, [view.open]);
+		sync();
+		const observer = new ResizeObserver(sync);
+		observer.observe(element);
+		return () => observer.disconnect();
+	}, [view.open, measureSplitter]);
 	/* Which ends of the tab strip are scrolled out of view; the row fades exactly those ends. */
 	const syncOverflow = useCallback(() => {
 		const row = tabRow.current;
@@ -1800,18 +1816,33 @@ export function Dock({
 		resize.current = null;
 		document.body.classList.remove("dock-resizing");
 		storeDockWidth(preferred.current ?? DOCK_WIDTH_DEFAULT);
+		measureSplitter();
 	};
+	/* A track change animates only when the transition exists in the style before the new width does;
+	   the forced reflow publishes the class first, so one double click plays the one transition. */
+	const animateTrack = useCallback((apply: () => void): void => {
+		document.body.classList.add("dock-animating");
+		void document.body.offsetWidth;
+		apply();
+		if (trackTimer.current !== null) window.clearTimeout(trackTimer.current);
+		trackTimer.current = window.setTimeout(() => {
+			trackTimer.current = null;
+			document.body.classList.remove("dock-animating");
+		}, 240);
+	}, []);
+	useEffect(
+		() => () => {
+			if (trackTimer.current !== null) window.clearTimeout(trackTimer.current);
+			document.body.classList.remove("dock-animating");
+		},
+		[],
+	);
 	/* A double click on the grip hands the dock back its default share, with one track transition. */
 	const resetWidth = (): void => {
 		const width = DOCK_WIDTH_DEFAULT;
 		preferred.current = width;
-		applyDockWidth(width);
 		storeDockWidth(width);
-		document.body.classList.add("dock-animating");
-		window.setTimeout(
-			() => document.body.classList.remove("dock-animating"),
-			240,
-		);
+		animateTrack(() => applyDockWidth(width));
 	};
 	/* Arrow keys move the grip in 16px steps, so the width is not a pointer-only control. */
 	const stepWidth = (event: KeyboardEvent<HTMLDivElement>): void => {
@@ -1894,7 +1925,7 @@ export function Dock({
 		>
 			{view.open ? (
 				<>
-					<div className="dock-head" id="dock-tabs">
+					<div className="dock-head">
 						<div
 							ref={tabRow}
 							className="dock-tab-row"
@@ -1939,7 +1970,7 @@ export function Dock({
 							aria-label={view.toggle.label}
 							title={view.toggle.label}
 							aria-expanded={true}
-							aria-controls="dock-body"
+							aria-controls="dock"
 							onClick={() => {
 								onAction({
 									kind: "command",
@@ -1996,6 +2027,9 @@ export function Dock({
 						role="separator"
 						aria-orientation="vertical"
 						aria-label={translate(locale, "dock.resize")}
+						aria-valuemin={DOCK_WIDTH_MIN}
+						aria-valuemax={DOCK_WIDTH_MAX}
+						aria-valuenow={splitterWidth}
 						tabIndex={0}
 						onKeyDown={stepWidth}
 						onPointerDown={startResize}

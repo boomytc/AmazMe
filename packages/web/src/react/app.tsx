@@ -588,6 +588,7 @@ function Titlebar({
 									type="button"
 									aria-label={view.dock.toggle.label}
 									title={view.dock.toggle.label}
+									aria-controls="dock"
 									aria-expanded={false}
 									onClick={() =>
 										actions.onPanelAction({
@@ -642,7 +643,9 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 		modelManagement =
 			currentPanel === SETTINGS_VIEW &&
 			view?.panel.settingsSection?.id === "settings:models";
-	useEffect(() => {
+	/* Layout effect: the body classes decide the shell grid, so they must land before the frame that
+	   shows the dock or the sidebar state is painted. */
+	useLayoutEffect(() => {
 		if (!typography) return;
 		applyTypography(document.documentElement.style, typography);
 		document.title = windowTitle({
@@ -670,7 +673,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 		collapsed,
 		presentation,
 	]);
-	useEffect(() => {
+	useLayoutEffect(() => {
 		// Opening the dock at a narrow window gives the reading column back first; expanding the
 		// sidebar again while the dock stays open is the user's call, so this only runs on opening.
 		if (!dockOpen || window.innerWidth >= 1280) return;
