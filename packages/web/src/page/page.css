@@ -2474,6 +2474,10 @@ p {
 	overflow-y: auto;
 }
 
+.palette-rows[hidden] {
+	display: none;
+}
+
 .palette-row {
 	display: flex;
 	align-items: center;

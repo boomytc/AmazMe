@@ -203,7 +203,7 @@ function Palette({
 				{view.palette.empty === undefined ? null : (
 					<p className="palette-empty">{view.palette.empty}</p>
 				)}
-				<div className="palette-rows">
+				<div className="palette-rows" hidden={view.palette.rows.length === 0}>
 					{view.palette.rows.map((row, index) => (
 						<button
 							ref={row.selected ? selected : undefined}
@@ -223,7 +223,9 @@ function Palette({
 						</button>
 					))}
 				</div>
-				<p className="palette-foot">{translate(view.locale, "palette.hint")}</p>
+				{view.palette.rows.length === 0 ? null : (
+					<p className="palette-foot">{translate(view.locale, "palette.hint")}</p>
+				)}
 			</div>
 		</div>
 	);

@@ -112,6 +112,7 @@ export function commandPalette(
 	const title = translate(locale, "palette.title");
 	if (options.draft.includes(" ")) {
 		const completions = options.completions ?? [];
+		const known = options.commands.some((command) => command.name === line.name);
 		return {
 			open: true,
 			title,
@@ -121,7 +122,9 @@ export function commandPalette(
 				description: completion.description ?? "",
 				selected: index === selected,
 			})),
-			...(completions.length === 0 ? { empty: translate(locale, "palette.noCompletions") } : {}),
+			...(completions.length === 0
+				? { empty: translate(locale, known ? "palette.noCompletions" : "palette.noCommands") }
+				: {}),
 		};
 	}
 	const rows = options.commands
