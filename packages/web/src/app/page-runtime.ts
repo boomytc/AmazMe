@@ -127,6 +127,8 @@ export class PageRuntime {
 	private permissionWrites = new Map<string, Promise<void>>();
 	private confirmedPermissions = new Map<string, ApprovalPolicy>();
 	private ready = false;
+	/* The terminal state whose change already reached the toast layer, so one transition speaks once. */
+	private terminalNoticeKey = "";
 	private healthTimer?: ReturnType<typeof setTimeout>;
 	private metadataConnection?: ClientConnection;
 	private navigationGeneration = 0;
@@ -430,10 +432,7 @@ export class PageRuntime {
 	}
 	private error(error: unknown): void {
 		const message = error instanceof Error ? error.message : String(error);
-		this.panels.notice = { tone: "error", text: message };
-		if (this.panels.modal)
-			this.panels.modal = { ...this.panels.modal, notice: this.panels.notice };
-		this.renderer.setConnection(message, "error");
+		this.renderer.showToast(message, "error");
 		this.render();
 	}
 	private requireConnection(): ClientConnection {
@@ -2827,6 +2826,31 @@ export class PageRuntime {
 			this.dock.terminal?.connection === connection
 				? this.dock.terminal
 				: undefined;
+		/* The tab is the shell screen, so its end and a paused input ledger speak as toasts instead of
+		   a line that resizes the terminal. */
+		const terminalNoticeKey =
+			terminal === undefined
+				? ""
+				: `${terminal.id}\u0000${terminal.view.phase}\u0000${terminal.queue.paused}`;
+		if (terminalNoticeKey !== this.terminalNoticeKey) {
+			this.terminalNoticeKey = terminalNoticeKey;
+			if (terminal !== undefined) {
+				if (terminal.view.phase !== "running") {
+					this.renderer.showToast(
+						terminal.view.exit_code === null
+							? translate(this.preferences.locale, "dock.terminalNoExit")
+							: translate(this.preferences.locale, "dock.terminalDone", {
+									code: String(terminal.view.exit_code),
+								}),
+					);
+				} else if (terminal.queue.paused) {
+					this.renderer.showToast(
+						"终端输入尚未确认；请重试原输入或核对后继续。",
+						"error",
+					);
+				}
+			}
+		}
 		const commandBlocks: TranscriptBlock[] = [
 			...(this.commandResults
 				.get(`${connection?.identity.profile_id}:${connection?.sessionId}`)
@@ -2891,10 +2915,7 @@ export class PageRuntime {
 			workspace: this.dock.workspace,
 			jobs: this.jobs.state,
 			terminal: terminal
-				? {
-						running: terminal.view.phase === "running",
-						exitCode: terminal.view.exit_code ?? null,
-					}
+				? { running: terminal.view.phase === "running" }
 				: undefined,
 			conversations: {
 				selected: connection?.sessionId ?? "",
@@ -2985,12 +3006,6 @@ export class PageRuntime {
 								...(!terminal.queue.paused
 									? {}
 									: {
-											notices: [
-												{
-													tone: "warning" as const,
-													text: "终端输入尚未确认；请重试原输入或核对后继续。",
-												},
-											],
 											actions: [
 												{
 													id: "terminal:retry",
@@ -3028,7 +3043,7 @@ export class PageRuntime {
 						}
 					: dock,
 		});
-		if (pendingError) this.renderer.setConnection(pendingError, "error");
+		if (pendingError) this.renderer.showToast(pendingError, "error");
 	}
 	dispose(): void {
 		if (this.disposed) return;

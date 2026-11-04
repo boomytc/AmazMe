@@ -23,14 +23,12 @@ function startWindow(): void {
 	const runtime = new PageRuntime(presentation);
 	page = runtime;
 	mountPresentation(presentation, container);
-	void runtime
-		.start()
-		.catch((error) =>
-			presentation.setConnection(
-				error instanceof Error ? error.message : String(error),
-				"error",
-			),
-		);
+	void runtime.start().catch((error) =>
+		presentation.showToast(
+			error instanceof Error ? error.message : String(error),
+			"error",
+		),
+	);
 }
 window.addEventListener("pagehide", () => {
 	page?.dispose();

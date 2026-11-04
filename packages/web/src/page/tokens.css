@@ -132,6 +132,8 @@
 	--z-dock: 1100;
 	--z-popover: 1120;
 	--z-menu: 1150;
+	/* Transient messages ride above every page layer, including an open menu. */
+	--z-toast: 1200;
 
 	/* Syntax highlighting tokens: calm, high-contrast ink tones on --code. */
 	--syntax-keyword: #a626a4;

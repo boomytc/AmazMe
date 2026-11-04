@@ -19,15 +19,21 @@ export interface WindowApp {
 type ConnectionText = string | ((locale: Locale) => string);
 type ConnectionState = "connecting" | "connected" | "disconnected";
 
+/** A transient message's weight in the top-right toast layer. */
+export type ToastTone = "info" | "error";
+
 export interface PageRenderer {
 	syncDraft?(text: string): void;
 	dispose?(): void;
 	onTerminalInput?: (id: string, data: string) => void;
 	onTerminalResize?: (id: string, cols: number, rows: number) => void;
 	render(view: WebView): void;
-	/** Show an action diagnostic without changing the rail's connectivity indicator. */
-	setConnection(text: ConnectionText, kind: "state" | "error", label?: ConnectionText): void;
-	/** Show connectivity on the brand mark and clear stale action diagnostics. */
+	/**
+	 * Post a transient message in the window's top-right layer. It never occupies page layout, and a
+	 * repeated text reuses the standing card instead of stacking or restarting its clock.
+	 */
+	showToast(text: string, tone?: ToastTone): void;
+	/** Show connectivity on the brand mark. */
 	setConnectionState(text: ConnectionText, state: ConnectionState): void;
 	/** Handlers the page entry fills in once it can drive the host. */
 	onSelect: (sessionId: string) => void;

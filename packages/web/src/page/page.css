@@ -977,29 +977,6 @@ p {
 	margin-right: 4px;
 }
 
-.connection {
-	display: inline-flex;
-	align-items: center;
-	flex: none;
-	margin-left: 4px;
-	color: var(--text-3);
-	font-size: 12px;
-	white-space: nowrap;
-}
-
-.connection.error {
-	color: var(--danger);
-}
-
-.session-warning {
-	flex: none;
-	padding: 8px 14px;
-	border-bottom: 1px solid var(--line);
-	color: var(--warn);
-	font-size: 12px;
-	overflow-wrap: anywhere;
-}
-
 /* --------------------------------------------------------------- transcript */
 
 .transcript {
@@ -2037,20 +2014,6 @@ p {
 }
 
 .center[data-draft="true"] .composer-dock { flex: 0 0 auto; padding-bottom: 20px; }
-
-/* A failed chat action is read where it happened: above the editor, not in the header's status slot. */
-.composer-notice {
-	width: 100%;
-	max-width: min(var(--column-max), calc(100cqi - 32px));
-	margin: 0 auto 6px;
-	padding: 8px 12px;
-	border-radius: var(--radius-md);
-	background: var(--danger-soft);
-	color: var(--danger);
-	font-size: 12px;
-	line-height: 1.5;
-	overflow-wrap: anywhere;
-}
 
 .center[data-draft="true"] .column { justify-content: center; margin-block: auto; }
 .composer-context { display: flex; align-items: center; width: 100%; max-width: var(--column-max); padding: 7px 12px 11px; margin-bottom: -5px; background: var(--raised); border-radius: 14px 14px 0 0; }
@@ -3377,16 +3340,7 @@ body[data-dock-motion="width"] {
 	overscroll-behavior: contain;
 }
 
-/* A terminal tab is its screen: an ended-shell notice sits above it, the screen takes the rest. */
-.dock-terminal-notices {
-	flex: none;
-	padding: var(--space-14) var(--space-14) 0;
-}
-
-.dock-terminal-notices .panel-notice {
-	margin: 0;
-}
-
+/* A terminal tab is its screen: the terminal takes every pixel left in the panel. */
 .dock-terminal {
 	flex: 1 1 auto;
 	display: flex;
@@ -4865,3 +4819,42 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 body.startup-failed > #amazme-root { display: contents; }
 
 .rail-brand { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; }
+
+/* --------------------------------------------------------------- toasts */
+
+/* Transient messages float above the page: their cards take no layout height, so posting or
+   retiring one never shifts what is underneath. The stack anchors to the window's top right,
+   under the titlebar, newest first. */
+.toast-layer {
+	position: fixed;
+	top: calc(48px + var(--space-8));
+	right: var(--space-16);
+	z-index: var(--z-toast);
+	display: flex;
+	flex-direction: column;
+	gap: var(--space-8);
+	width: min(360px, calc(100vw - 32px));
+}
+
+.toast-card {
+	margin: 0;
+	padding: 10px var(--space-14);
+	border-radius: var(--radius-md);
+	background: var(--raised);
+	color: var(--text);
+	box-shadow: var(--shadow-popover);
+	font-size: 13px;
+	line-height: 1.6;
+	overflow-wrap: anywhere;
+	animation: toast-in var(--dur-fast) var(--ease);
+}
+
+.toast-card.error {
+	background: var(--danger-soft);
+	color: var(--danger);
+}
+
+@keyframes toast-in {
+	from { opacity: 0; transform: translateY(-4px); }
+	to { opacity: 1; transform: none; }
+}

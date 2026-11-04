@@ -2143,29 +2143,16 @@ export function Dock({
 								{panelView}
 							</div>
 						) : (
-							<>
-								{panel.notices.length === 0 ? null : (
-									<div className="dock-terminal-notices">
-										{panel.notices.map((notice, index) => (
-											<PanelNoticeView
-												key={`${notice.tone}:${notice.text}:${index}`}
-												notice={notice}
-												locale={locale}
-											/>
-										))}
-									</div>
-								)}
-								{/* The tab is the shell's screen: the terminal takes every pixel left in the panel. */}
-								<div className="dock-terminal">
-									{visible ? (
-										<DockPtySurface
-											view={view.pty}
-											onTerminalInput={onTerminalInput}
-											onTerminalResize={onTerminalResize}
-										/>
-									) : null}
-								</div>
-							</>
+							/* The tab is the shell's screen: the terminal takes every pixel left in the panel. */
+							<div className="dock-terminal">
+								{visible ? (
+									<DockPtySurface
+										view={view.pty}
+										onTerminalInput={onTerminalInput}
+										onTerminalResize={onTerminalResize}
+									/>
+								) : null}
+							</div>
 						)}
 					</>
 				)}

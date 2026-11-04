@@ -212,6 +212,8 @@ export const EN = {
 	"connection.stateConnected": "connected",
 	"connection.stateDisconnected": "disconnected",
 
+	"toast.region": "Notifications",
+
 	"composer.placeholder": "Ask a question or describe the next step…",
 	"composer.promptLabel": "Message",
 	"composer.acceptSuggestion": "Accept suggestion",
@@ -1160,6 +1162,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"connection.connecting": "连接中…",
 	"connection.stateConnected": "已连接",
 	"connection.stateDisconnected": "已断开",
+
+	"toast.region": "通知",
 
 	"composer.placeholder": "继续提问或描述下一步…",
 	"composer.promptLabel": "消息",

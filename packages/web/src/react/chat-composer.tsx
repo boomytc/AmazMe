@@ -743,7 +743,6 @@ export function ChatComposer({
 	draft,
 	active,
 	restoreFocusRequest,
-	notice,
 }: ComposerProps) {
 	const editor = useRef<HTMLTextAreaElement>(null);
 	const fileInput = useRef<HTMLInputElement>(null);
@@ -1109,11 +1108,6 @@ export function ChatComposer({
 	const questionSessionId = view.attachedId;
 	return (
 		<div className="composer-dock" id="composer-dock">
-			{notice === undefined ? null : (
-				<p className="composer-notice" role="alert">
-					{notice}
-				</p>
-			)}
 			{!extras ? null : (
 				<div className="composer-extras" id="composer-extras">
 					<ApprovalCards view={view} actions={actions} />

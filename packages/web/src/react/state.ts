@@ -1,4 +1,4 @@
-import type { PageRenderer, WindowApp } from "../render.ts";
+import type { PageRenderer, ToastTone, WindowApp } from "../render.ts";
 import { translate } from "../strings.ts";
 import type { WebView } from "../view.ts";
 import { sameViewValue } from "../view-equality.ts";
@@ -48,7 +48,6 @@ export type ShellView = Pick<
 	| "attachedId"
 	| "sessionLabel"
 	| "approvalIndicator"
-	| "mirrorWarning"
 	| "status"
 	| "run"
 	| "lane"
@@ -76,9 +75,18 @@ function fields<T extends object>(
 
 export interface ConnectionNotice {
 	readonly text: string | ((locale: WebView["locale"]) => string);
-	readonly kind: "state" | "error";
 	readonly state: "connecting" | "connected" | "disconnected";
 }
+
+/** One transient message awaiting its top-right card. */
+export interface ToastMessage {
+	readonly id: number;
+	readonly text: string;
+	readonly tone: ToastTone;
+}
+
+/** At most five cards stand at once; an identical message reuses its card instead of stacking. */
+const MAX_TOASTS = 5;
 
 /** Window-owned projection. Publishing never waits for a React commit or starts a command. */
 export class Presentation implements PageRenderer {
@@ -97,7 +105,6 @@ export class Presentation implements PageRenderer {
 			"attachedId",
 			"sessionLabel",
 			"approvalIndicator",
-			"mirrorWarning",
 			"status",
 			"run",
 			"lane",
@@ -167,12 +174,16 @@ export class Presentation implements PageRenderer {
 	readonly draft = new Snapshot("");
 	readonly connection = new Snapshot<ConnectionNotice>({
 		text: (locale) => translate(locale, "connection.starting"),
-		kind: "state",
 		state: "connecting",
 	});
+	readonly toasts = new Snapshot<readonly ToastMessage[]>(
+		[],
+		(left, right) => left === right,
+	);
 	readonly app: WindowApp;
 	private disposed = false;
 	private pendingDraft = "";
+	private toastId = 0;
 	private unmount?: () => void;
 	onSelect: PageRenderer["onSelect"] = () => {};
 	onCreateSession: PageRenderer["onCreateSession"] = () => {};
@@ -242,15 +253,27 @@ export class Presentation implements PageRenderer {
 		stage(this.composer, view);
 		for (const notify of notifications) notify();
 	}
-	setConnection(text: ConnectionNotice["text"], kind: "state" | "error"): void {
-		if (!this.disposed)
-			this.connection.publish({ ...this.connection.getSnapshot(), text, kind });
+	showToast(text: string, tone: ToastTone = "info"): void {
+		if (this.disposed || text.trim().length === 0) return;
+		const current = this.toasts.getSnapshot();
+		/* A repeating identical diagnostic keeps the standing card and its original clock. */
+		if (current.some((item) => item.text === text && item.tone === tone)) return;
+		this.toastId += 1;
+		this.toasts.publish([
+			{ id: this.toastId, text, tone },
+			...current,
+		].slice(0, MAX_TOASTS));
+	}
+	dismissToast(id: number): void {
+		const current = this.toasts.getSnapshot();
+		const remaining = current.filter((item) => item.id !== id);
+		if (remaining.length !== current.length) this.toasts.publish(remaining);
 	}
 	setConnectionState(
 		text: ConnectionNotice["text"],
 		state: ConnectionNotice["state"],
 	): void {
-		if (!this.disposed) this.connection.publish({ text, state, kind: "state" });
+		if (!this.disposed) this.connection.publish({ text, state });
 	}
 	syncDraft(text: string): void {
 		if (!this.disposed) this.pendingDraft = text;
@@ -292,5 +315,6 @@ export class Presentation implements PageRenderer {
 		this.dock.clear();
 		this.draft.clear();
 		this.connection.clear();
+		this.toasts.clear();
 	}
 }

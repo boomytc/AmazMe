@@ -139,7 +139,6 @@ export interface JobsStateLike {
 /** What the host's terminal state carries, as this package reads it. */
 export interface TerminalStateLike {
 	readonly running: boolean;
-	readonly exitCode: number | null;
 }
 
 /** One conversation of the session, as the host publishes it. */
@@ -703,8 +702,9 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 }
 
 /**
- * The terminal tab is the shell's own screen: the tab title already names it, the prompt reports the
- * working directory, and the screen carries the output. Only an ended shell needs a line of its own.
+ * The terminal tab is the shell's own screen: the tab title already names it and the prompt reports
+ * the working directory. The screen carries the output, and an ended shell speaks through the page's
+ * toast layer instead of a line that would resize the terminal.
  */
 export function terminalPanel(
 	locale: Locale,
@@ -727,20 +727,7 @@ export function terminalPanel(
 	return {
 		id: "terminal",
 		title,
-		notices: state.running
-			? []
-			: [
-					{
-						tone: "info",
-						persistence: "pinned",
-						// A run that ended without a code (for example after a signal) must not claim exit 0.
-						text: state.exitCode === null
-							? translate(locale, "dock.terminalNoExit")
-							: translate(locale, "dock.terminalDone", {
-									code: String(state.exitCode),
-								}),
-					},
-				],
+		notices: [],
 		groups: [],
 		actions: state.running
 			? [

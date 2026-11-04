@@ -33,7 +33,8 @@ import { rosterGroups, windowTitle } from "../view.ts";
 import { Composer, Transcript } from "./chat.tsx";
 import { Dock } from "./dock.tsx";
 import { Management, ManagementModal } from "./management.tsx";
-import type { ConnectionNotice, Presentation, ShellView } from "./state.ts";
+import type { Presentation, ShellView } from "./state.ts";
+import { ToastLayer } from "./toast.tsx";
 
 export function Icon({ name }: { readonly name: string }) {
 	return (
@@ -499,17 +500,11 @@ function Titlebar({
 	actions,
 	collapsed,
 	toggle,
-	connection,
-	connectionText,
-	composerVisible,
 }: {
 	readonly view: ShellView;
 	readonly actions: PageRenderer;
 	readonly collapsed: boolean;
 	readonly toggle: () => void;
-	readonly connection: ConnectionNotice;
-	readonly connectionText: string;
-	readonly composerVisible: boolean;
 }) {
 	const copy = (key: Parameters<typeof translate>[1]) =>
 		translate(view.locale, key);
@@ -610,14 +605,6 @@ function Titlebar({
 						</div>
 					</>
 				)}
-				<span
-					className="connection"
-					id="connection"
-					role={connection.kind === "error" ? "alert" : "status"}
-					hidden={connection.kind !== "error" || composerVisible}
-				>
-					{connectionText}
-				</span>
 			</div>
 		</header>
 	);
@@ -658,12 +645,6 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			setDockPresentation((current) => current === "fullscreen" ? "push" : "fullscreen");
 		});
 	}, [animateDock]);
-	const composerVisible =
-		view !== undefined &&
-		view.readOnly !== true &&
-		(Boolean(view.attachedId) ||
-			view.connecting === true ||
-			view.sessionDraft !== undefined);
 	const typography = view?.typography,
 		pageTitle = view?.pageTitle,
 		pendingCount = view?.approvalIndicator?.count ?? 0,
@@ -806,9 +787,6 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				actions={presentation}
 				collapsed={collapsed}
 				toggle={() => setCollapsed(!collapsed)}
-				connection={connection}
-				connectionText={text}
-				composerVisible={composerVisible}
 			/>
 			<nav className="app-rail" aria-label={copy("nav.primary")}>
 				<button
@@ -885,11 +863,6 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				data-read-only={view.readOnly === true}
 				data-draft={view.sessionDraft !== undefined}
 			>
-				{view.mirrorWarning && (
-					<div className="session-warning" id="session-warning" role="alert">
-						{view.mirrorWarning.path} {view.mirrorWarning.detail}
-					</div>
-				)}
 				<section
 					className="view"
 					id="view"
@@ -902,7 +875,6 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 						presentation={presentation}
 						active={composerActive}
 						modelManagement={modelManagement}
-						notice={connection.kind === "error" ? text : undefined}
 					/>
 				</div>
 			</main>
@@ -917,6 +889,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				onToggleFullscreen={toggleDockFullscreen}
 			/>
 			<ModalSurface presentation={presentation} />
+			<ToastLayer presentation={presentation} />
 		</>
 	);
 }
@@ -925,12 +898,10 @@ function Conversation({
 	presentation,
 	active,
 	modelManagement,
-	notice,
 }: {
 	readonly presentation: Presentation;
 	readonly active: boolean;
 	readonly modelManagement: boolean;
-	readonly notice?: string;
 }) {
 	return (
 		<>
@@ -939,7 +910,6 @@ function Conversation({
 				presentation={presentation}
 				active={active}
 				modelManagement={modelManagement}
-				notice={notice}
 			/>
 		</>
 	);
@@ -967,12 +937,10 @@ function ComposerSurface({
 	presentation,
 	active,
 	modelManagement,
-	notice,
 }: {
 	readonly presentation: Presentation;
 	readonly active: boolean;
 	readonly modelManagement: boolean;
-	readonly notice?: string;
 }) {
 	const view = useSyncExternalStore(
 		presentation.composer.subscribe,
@@ -1009,7 +977,6 @@ function ComposerSurface({
 				draft={draft}
 				active={active}
 				restoreFocusRequest={restoreFocusRequest}
-				notice={notice}
 			/>
 		)
 	);
