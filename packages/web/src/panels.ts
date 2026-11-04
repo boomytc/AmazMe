@@ -100,6 +100,8 @@ export interface PanelButton {
 	readonly disabled?: boolean;
 	/** Set on a control that opens and closes the same thing. */
 	readonly pressed?: boolean;
+	/** An icon-only action may move into the dock strip when the tab already names the panel. */
+	readonly stripIcon?: "refresh";
 	/** A footer action sits on the leading edge; the others stay with cancel and submit. */
 	readonly placement?: "start";
 }

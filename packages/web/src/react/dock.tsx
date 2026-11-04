@@ -2115,8 +2115,16 @@ export function Dock({
 		activeTab !== undefined && deduped.title === activeTab.label
 			? { ...deduped, title: "" }
 			: deduped;
-	const pinnedHead =
-		panel.title.length > 0 || (panel.actions?.length ?? 0) > 0;
+	const panelActions = panel.actions ?? [];
+	/* A tab-named panel keeps icon actions in the strip; any labeled action still needs a head row. */
+	const stripActions =
+		panel.title.length === 0
+			? panelActions.filter((action) => action.stripIcon !== undefined)
+			: [];
+	const headActions = panelActions.filter(
+		(action) => !stripActions.includes(action),
+	);
+	const pinnedHead = panel.title.length > 0 || headActions.length > 0;
 	const panelView = (
 		<PanelSpecView
 			key={`${scope}\u0000${panel.id}`}
@@ -2223,6 +2231,29 @@ export function Dock({
 					onOpenTab={openTab}
 				/>
 				<span className="dock-strip-fill" />
+				{stripActions.length === 0 ? null : (
+					<div className="dock-chrome">
+						{stripActions.map((action) => (
+							<button
+								key={`${action.id}\u0000${action.data ?? ""}`}
+								className="icon-button icon-button--compact"
+								type="button"
+								aria-label={action.label}
+								title={action.label}
+								disabled={action.disabled === true}
+								onClick={() =>
+									onAction({
+										kind: "command",
+										id: action.id,
+										data: action.data,
+									})
+								}
+							>
+								<Icon name={action.stripIcon ?? "refresh"} />
+							</button>
+						))}
+					</div>
+				)}
 				<div className="dock-chrome">
 					<button
 						className="icon-button icon-button--compact"
@@ -2272,7 +2303,7 @@ export function Dock({
 					{pinnedHead ? (
 						<div className="dock-panel-head">
 							<PanelHead
-								panel={{ ...panel, description: undefined }}
+								panel={{ ...panel, description: undefined, actions: headActions }}
 								locale={locale}
 								onAction={onAction}
 							/>
