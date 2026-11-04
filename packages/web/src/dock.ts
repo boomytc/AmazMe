@@ -17,9 +17,6 @@ import {
 	JOB_STREAM_ACTION,
 	JOBS_REFRESH_ACTION,
 	TASK_RETRY_ACTION,
-	SESSION_RENAME_ACTION,
-	SESSION_ARCHIVE_ACTION,
-	SESSION_RESTORE_ACTION,
 	WORKSPACE_CHECKPOINT_ACTION,
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
@@ -30,6 +27,7 @@ import type { Locale } from "./locale.ts";
 import type { PanelGroup, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
 import { taskBlockedCopy, taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
+import { sessionMenuItems } from "./view.ts";
 import type { PtyPresentation } from "./pty-surface.ts";
 import type { UsageReport } from "./generated/contracts.ts";
 import { usagePanel } from "./usage.ts";
@@ -337,7 +335,7 @@ function conversationTitle(locale: Locale, conversation: ConversationSummaryLike
  * The conversations panel: every conversation of the session, the root named in the reader's language,
  * a subagent's child naming the task and conversation that made it, and the focused one marked as selected.
  */
-export function conversationsPanel(locale: Locale, state: ConversationsStateLike | undefined, sessionReadOnly = false): PanelSpec {
+export function conversationsPanel(locale: Locale, state: ConversationsStateLike | undefined): PanelSpec {
 	const title = translate(locale, "dock.conversations");
 	if (state === undefined) return { id: "conversations", title, notices: [], groups: [] };
 	const nameOf = (id: string): string => {
@@ -372,13 +370,20 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 			...(conversation.run && conversation.run !== "idle" ? [translate(locale, conversation.run === "compacting" ? "dock.summarizing" : conversation.run === "tool" ? "dock.runningTool" : `lane.${conversation.run}`)] : []),
 			...((conversation.queued ?? 0) > 0 ? [translate(locale, "dock.queuedCount", { count: String(conversation.queued) })] : []),
 		],
-		...(conversation.role !== "fork" || conversation.archivedAt !== undefined ? {} : { menu: {
-			label: translate(locale, "dock.forkActions"), data: conversation.id,
-			actions: [
-				{ id: SESSION_RENAME_ACTION, label: translate(locale, "sidebar.rename"), weight: "text" as const, data: conversation.id, glyph: "square-pen" as const, disabled: sessionReadOnly },
-				{ id: SESSION_ARCHIVE_ACTION, label: translate(locale, "project.archive"), weight: "text" as const, danger: true, data: conversation.id, glyph: "folder" as const, disabled: sessionReadOnly },
-			],
-		} }),
+		menu: {
+			label: translate(locale, "dock.sessionActions"),
+			data: conversation.id,
+			actions: sessionMenuItems(locale, {
+				archived: conversation.archivedAt !== undefined || conversation.readOnly === true,
+			}).map((item) => ({
+				id: item.id,
+				label: item.label,
+				weight: "text" as const,
+				data: conversation.id,
+				glyph: item.glyph,
+				...(item.danger === true ? { danger: true } : {}),
+			})),
+		},
 		actions: [
 			{
 				id: CONVERSATION_SELECT_ACTION,
@@ -388,12 +393,8 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 			},
 			...(conversation.readOnly || conversation.archivedAt !== undefined ? [] : [{
 				id: CONVERSATION_FORK_ACTION, label: translate(locale, "header.fork"), weight: "text" as const,
-				data: conversation.id, disabled: sessionReadOnly || !conversation.hasEntries,
+				data: conversation.id, disabled: !conversation.hasEntries,
 			}]),
-			...(conversation.role === "fork" && conversation.archivedAt !== undefined ? [{
-				id: SESSION_RESTORE_ACTION, label: translate(locale, "dock.restoreFork"), weight: "text" as const,
-				data: conversation.id, disabled: sessionReadOnly,
-			}] : []),
 		],
 	}));
 	return {
@@ -721,7 +722,7 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 				: tab === "jobs"
 					? jobsPanel(locale, input.jobs)
 					: tab === "conversations"
-					? conversationsPanel(locale, input.conversations, input.readOnly)
+					? conversationsPanel(locale, input.conversations)
 					: tab === "statistics" ? usagePanel(locale, input.usage) : tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff, input.reviewFile) : tasksPanel(locale, input.conversations);
 	return {
 		open: input.open,

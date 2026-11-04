@@ -14,7 +14,7 @@ import { errorMessageCopy } from "./errors.ts";
 import type { ToolResultView } from "./tool-results.ts";
 import type { QuestionView } from "./generated/contracts.ts";
 import * as actions from "./actions.ts";
-const {APPROVAL_APPROVE_ACTION, APPROVAL_DENY_ACTION, ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, CONVERSATION_FORK_ACTION, FEEDBACK_DOWN_ACTION, FEEDBACK_UP_ACTION, QUEUE_CANCEL_ACTION, SESSION_REMOVE_ACTION, WELCOME_DISMISS_ACTION, WELCOME_SESSION_ACTION, WELCOME_SETTINGS_ACTION} = actions;
+const {APPROVAL_APPROVE_ACTION, APPROVAL_DENY_ACTION, ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, CONVERSATION_FORK_ACTION, FEEDBACK_DOWN_ACTION, FEEDBACK_UP_ACTION, QUEUE_CANCEL_ACTION, WELCOME_DISMISS_ACTION, WELCOME_SESSION_ACTION, WELCOME_SETTINGS_ACTION} = actions;
 export type BlockTone = "plain" | "muted" | "error";
 
 export interface TranscriptBlock {
@@ -50,6 +50,53 @@ export interface TranscriptBlock {
 	readonly interrupted?: boolean;
 }
 
+/** One row-menu entry for a session, shared by every surface that lists sessions. */
+export interface SessionMenuEntry {
+	readonly id: string;
+	readonly label: string;
+	readonly danger?: boolean;
+	readonly glyph: "square-pen" | "folder" | "copy" | "x";
+}
+
+/**
+ * The management menu a session row offers, whichever surface draws it. Read-only governs the
+ * session's content; metadata management stays available so a reader can always get back out.
+ */
+export function sessionMenuItems(
+	locale: Locale,
+	target: { readonly archived?: boolean },
+): readonly SessionMenuEntry[] {
+	return [
+		{
+			id: actions.SESSION_RENAME_ACTION,
+			label: translate(locale, "sidebar.rename"),
+			glyph: "square-pen",
+		},
+		target.archived === true
+			? {
+					id: actions.SESSION_RESTORE_ACTION,
+					label: translate(locale, "project.restore"),
+					glyph: "folder",
+				}
+			: {
+					id: actions.SESSION_ARCHIVE_ACTION,
+					label: translate(locale, "project.archive"),
+					glyph: "folder",
+				},
+		{
+			id: actions.SESSION_COPY_ID_ACTION,
+			label: translate(locale, "sidebar.copyId"),
+			glyph: "copy",
+		},
+		{
+			id: actions.SESSION_REMOVE_ACTION,
+			label: translate(locale, "sidebar.remove"),
+			danger: true,
+			glyph: "x",
+		},
+	];
+}
+
 export interface RosterItem {
 	readonly id: string;
 	readonly projectId?: string | null;
@@ -65,8 +112,6 @@ export interface RosterItem {
 	readonly source: "host" | "local";
 	/** The time bucket the roster lists the session under. */
 	readonly group: RosterGroupId;
-	/** The control that asks to remove this session; the page confirms first. */
-	readonly remove: PanelButton;
 }
 
 /** One catalog entry the picker offers. */
@@ -657,13 +702,6 @@ export function rosterItems(locale: Locale, state: SessionDirectoryLike | undefi
 			attached: attachedId === session.sessionId,
 			source: session.source ?? "host",
 			group: rosterGroupOf(session.createdAt, now),
-			remove: {
-				id: SESSION_REMOVE_ACTION,
-				label: translate(locale, "sidebar.remove"),
-				weight: "text",
-				danger: true,
-				data: session.sessionId,
-			},
 		}));
 }
 

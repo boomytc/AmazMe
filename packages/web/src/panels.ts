@@ -128,7 +128,7 @@ export interface PanelRow {
 	readonly menu?: {
 		readonly label: string;
 		readonly data: string;
-		readonly actions: readonly (PanelButton & { readonly glyph: "square-pen" | "folder" | "x" })[];
+		readonly actions: readonly (PanelButton & { readonly glyph: "square-pen" | "folder" | "x" | "copy" })[];
 	};
 }
 

@@ -35,6 +35,7 @@ export type IconName =
 	| "arrow-up"
 	| "check"
 	| "chevron-down"
+	| "copy"
 	| "file"
 	| "folder"
 	| "more"

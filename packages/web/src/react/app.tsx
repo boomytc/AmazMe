@@ -29,7 +29,7 @@ import {
 import { translate } from "../strings.ts";
 import { applyTypography } from "../typography.ts";
 import type { RosterItem } from "../view.ts";
-import { rosterGroups, windowTitle } from "../view.ts";
+import { rosterGroups, sessionMenuItems, windowTitle } from "../view.ts";
 import { Composer, Transcript } from "./chat.tsx";
 import { Dock } from "./dock.tsx";
 import { Management, ManagementModal } from "./management.tsx";
@@ -213,17 +213,7 @@ function SessionRow({
 			</button>
 			<RosterMenu
 				label={`${copy("sidebar.more")}: ${item.label}`}
-				items={[
-					{ id: A.SESSION_RENAME_ACTION, label: copy("sidebar.rename") },
-					{
-						id: item.archived
-							? A.SESSION_RESTORE_ACTION
-							: A.SESSION_ARCHIVE_ACTION,
-						label: copy(item.archived ? "project.restore" : "project.archive"),
-					},
-					{ id: A.SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId") },
-					{ id: item.remove.id, label: item.remove.label, danger: true },
-				]}
+				items={sessionMenuItems(locale, { archived: item.archived === true })}
 				run={(id) => actions.onPanelAction({ kind: "command", id, data: item.id })}
 			/>
 		</div>
