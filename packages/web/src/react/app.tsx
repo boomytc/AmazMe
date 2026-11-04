@@ -571,22 +571,23 @@ function Titlebar({
 							{view.approvalIndicator?.label}
 						</span>
 						<div className="titlebar-actions" id="run-actions">
-							<button
-								className="titlebar-action"
-								type="button"
-								aria-label={view.run.fork.label}
-								title={view.run.fork.label}
-								disabled={view.run.fork.disabled}
-								onClick={() =>
-									actions.onPanelAction({
-										kind: "command",
-										id: view.run.fork.id,
-										data: view.run.fork.data,
-									})
-								}
-							>
-								<Icon name="git-fork" />
-							</button>
+							{view.run.fork.disabled ? null : (
+								<button
+									className="titlebar-action"
+									type="button"
+									aria-label={view.run.fork.label}
+									title={view.run.fork.label}
+									onClick={() =>
+										actions.onPanelAction({
+											kind: "command",
+											id: view.run.fork.id,
+											data: view.run.fork.data,
+										})
+									}
+								>
+									<Icon name="git-fork" />
+								</button>
+							)}
 							{/* The way back into a hidden dock is the conversation header's corner, past the
 							    utilities' right edge — the same corner the right panel's strip collapses to. */}
 							{view.dock.open ? null : (
