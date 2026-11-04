@@ -823,7 +823,7 @@ export function DirectoryField({
 
 	const browse = async (directory?: string): Promise<void> => {
 		if (browseDirectories === undefined) {
-			setError(translate(locale, "project.folderFailed"));
+			setError(translate(locale, "project.pickerUnavailable"));
 			return;
 		}
 		const revision = ++browseRevision.current;
@@ -845,6 +845,10 @@ export function DirectoryField({
 	};
 
 	const pick = async (): Promise<void> => {
+		if (pickDirectories === undefined && browseDirectories === undefined) {
+			setError(translate(locale, "project.pickerUnavailable"));
+			return;
+		}
 		const revision = ++operation.current;
 		setError("");
 		setBusy(true);
