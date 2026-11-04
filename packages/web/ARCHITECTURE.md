@@ -61,7 +61,7 @@
 - 选中态统一用 `--active` 底：停靠栏页签、导航行、会话行与对话面板的当前行一致；展开态、悬停态各自用 `--hover`，不叠加卡片阴影。「当前对话」用行底色表达，不再加文字徽标。
 - 卡片：`--radius-xl` 加发丝线或 `--shadow-card`；浮层用 `--raised`、`--shadow-popover`、`--radius-md`。
 - 输入：常规 32、筛选 30、设置字段 40。宽度随栏宽，控件高度不随内容变化。
-- 状态色只表达语义：`--danger` 失败、`--warn` 需要注意、`--success` 已连接或已保存；不让 `--diff-add` 兼任状态色。
+- 状态色只表达语义：`--danger` 失败、`--warn` 需要注意、`--success` 已连接或已保存；不让 `--diff-add` 兼任状态色。`--danger` 只留给不可恢复的删除或失败，归档等可恢复操作的确认按钮用中性实心。
 - 标题栏是一条不可换行的工具条：标题单行省略，状态在标题下方；桌面壳内整行可拖拽，交互控件标记 `no-drag`。
 - 焦点环只有一套：`--focus-ring`、`--focus-ring-offset`，被滚动或浮层裁切的行走 `--focus-ring-inset`；字段聚焦是强调边框加 `--focus-shadow`。
 - 间距按 `--space-2` 到 `--space-24` 的 2px 尺度；层级按 `--z-brand`、`--z-jump`、`--z-quote`、`--z-combobox`、`--z-tooltip`、`--z-dock`、`--z-popover`、`--z-menu` 命名。

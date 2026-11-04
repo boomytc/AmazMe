@@ -74,5 +74,5 @@ export function removeProjectModal(locale: Locale, id: string, name: string): Pa
 }
 
 export function archiveSessionModal(locale: Locale, id: string): PanelModal {
-	return { id: SESSION_ARCHIVE_MODAL, title: translate(locale, "project.archive"), data: id, description: translate(locale, "project.archiveHint"), fields: [], submit: translate(locale, "project.archive"), danger: true };
+	return { id: SESSION_ARCHIVE_MODAL, title: translate(locale, "project.archive"), data: id, description: translate(locale, "project.archiveHint"), fields: [], submit: translate(locale, "project.archive") };
 }
