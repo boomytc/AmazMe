@@ -3697,6 +3697,10 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 }
 
 .library-nav {
+	position: sticky;
+	top: 16px;
+	max-height: calc(100dvh - 80px);
+	overflow-y: auto;
 	flex: 0 0 220px;
 	min-width: 0;
 	padding-top: 0;
