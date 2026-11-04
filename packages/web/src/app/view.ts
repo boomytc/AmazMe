@@ -17,6 +17,15 @@ import { gitReviewSummary, toolResultView } from "../tool-results.ts";
 import type { Typography } from "../typography.ts";
 import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, sessionCapabilities, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
 
+/**
+ * The host writes a job notice as a status line followed by model instructions; only the status
+ * line is meant for the conversation.
+ */
+function jobNoticeText(text: string): string {
+	const line = text.split("\n", 1)[0]?.trim() ?? "";
+	return line.length > 0 ? line : text;
+}
+
 function executedResult(value: string): ToolResult | undefined {
 	try { return parseContract("ToolResult", JSON.parse(value)); }
 	catch { return undefined; }
@@ -30,7 +39,7 @@ export function transcriptBlocks(locale: Locale, snapshot: Snapshot | undefined,
 		const receiptStart = blocks.length;
 		const rating = feedback?.session_id === snapshot.session_id ? feedback.records?.find(item => item.request_id === receipt.request_id) : undefined;
 		const controls = feedback?.session_id === snapshot.session_id && receipt.kind === "root" && receipt.status === "succeeded" && receipt.answer ? feedbackControls(locale, JSON.stringify([snapshot.session_id, receipt.request_id, rating?.rating ?? null, rating?.revision ?? 0]), rating?.rating ?? null) : undefined;
-		if (receipt.text || receipt.image_count) blocks.push({ id: `${receipt.request_id}:user`, kind: receipt.input_origin === "job" ? "notice" : "user", title: receipt.input_origin === "job" ? (locale === "zh" ? "后台作业" : "Background job") : (locale === "zh" ? "你" : "You"), text: receipt.text, tone: "plain", running: false,
+		if (receipt.text || receipt.image_count) blocks.push({ id: `${receipt.request_id}:user`, kind: receipt.input_origin === "job" ? "notice" : "user", title: receipt.input_origin === "job" ? (locale === "zh" ? "后台作业" : "Background job") : (locale === "zh" ? "你" : "You"), text: receipt.input_origin === "job" ? jobNoticeText(receipt.text) : receipt.text, tone: "plain", running: false,
 			images: Array.from({ length: receipt.image_count ?? 0 }, (_, index) => ({ dataUrl: `/api/v1/sessions/${encodeURIComponent(snapshot.session_id)}/requests/${encodeURIComponent(receipt.request_id)}/images/${index}`, alt: `${locale === "zh" ? "图片" : "Image"} ${index + 1}` })) });
 		const tools = new Map<string, TranscriptBlock>();
 		for (const event of snapshot.events.filter(event => event.request_id === receipt.request_id && event.kind === "tool")) {

@@ -12,6 +12,7 @@ _DEFAULT_PROMPT = 'You are AmazMe. Use the provided tools when asked to inspect 
 
 
 def job_completion_text(value: JobNotice) -> str:
+    """The first line is the user-facing status; later lines are instructions for the model."""
     exit_code = "none" if value.exit_code is None else str(value.exit_code)
     stop = f" stop={value.stop_reason}" if value.stop_reason else ""
     return (f"Background job completion (system event, not new user authorization): job {value.job_id} "
