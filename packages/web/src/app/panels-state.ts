@@ -5,7 +5,8 @@ export class PanelsState {
 	current = CHAT_VIEW;
 	settingsSection?: PanelView["settingsSection"];
 	modal?: PanelModal;
-	notice?: PanelNotice;
+	/** An operation result rendered inside the management page, never a transient hint. */
+	inlineResult?: PanelNotice;
 	pendingModal?: PanelModal;
 	generation = 0;
 	get modalPending(): boolean {

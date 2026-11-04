@@ -122,7 +122,6 @@ export class PageRuntime {
 	private enabledModels: string[] | null = null;
 	private readonly modelScopes = new Map<string, string[] | null>();
 	private paletteSelection = 0;
-	private dockNotice?: P.PanelNotice;
 	private newSessionPending = false;
 	private permissionWrites = new Map<string, Promise<void>>();
 	private confirmedPermissions = new Map<string, ApprovalPolicy>();
@@ -687,7 +686,7 @@ export class PageRuntime {
 			{ name: call.name, phase: call.phase },
 		);
 		const result = call.result?.trim() ?? "";
-		this.panels.notice = {
+		this.panels.inlineResult = {
 			tone: call.phase === "done" && call.is_error !== true ? "info" : "error",
 			text: result.length === 0 ? label : `${label}\n${result.slice(0, 2000)}`,
 		};
@@ -719,7 +718,7 @@ export class PageRuntime {
 		this.dock.reset();
 		this.jobs.reset();
 		this.panels.modal = undefined;
-		this.panels.notice = undefined;
+		this.panels.inlineResult = undefined;
 		this.panels.current = P.CHAT_VIEW;
 		this.panels.settingsSection = undefined;
 	}
@@ -1163,8 +1162,7 @@ export class PageRuntime {
 			await this.selectSession(session.session_id);
 	}
 	private async action(action: P.PanelAction): Promise<void> {
-		this.panels.notice = undefined;
-		this.dockNotice = undefined;
+		this.panels.inlineResult = undefined;
 		if (
 			action.kind === "open" ||
 			action.kind === "modal-close" ||
@@ -1447,12 +1445,11 @@ export class PageRuntime {
 				connection,
 			});
 			if (!connection.active()) return;
-			this.dockNotice = {
-				tone: "info",
-				text: translate(this.preferences.locale, "dock.checkpointSaved", {
+			this.renderer.showToast(
+				translate(this.preferences.locale, "dock.checkpointSaved", {
 					digest: saved.digest.slice(0, 12),
 				}),
-			};
+			);
 			this.render();
 			return;
 		}
@@ -2169,7 +2166,16 @@ export class PageRuntime {
 		const session = this.sessions.find((item) => item.session_id === data);
 		const project = this.projects.find((item) => item.project_id === data);
 		if (id === A.SESSION_COPY_ID_ACTION && data) {
-			await navigator.clipboard.writeText(data);
+			try {
+				await navigator.clipboard.writeText(data);
+			} catch {
+				/* Browsers can refuse the clipboard without a user gesture or permission. */
+				this.renderer.showToast(
+					translate(this.preferences.locale, "copy.failed"),
+					"error",
+				);
+				this.render();
+			}
 			return true;
 		}
 		if (id === A.SESSION_REMOVE_ACTION) {
@@ -2629,7 +2635,7 @@ export class PageRuntime {
 				settingsSection: this.panels.settingsSection,
 				modal: this.panels.modal,
 				modalPending: this.panels.modalPending,
-				notice: this.panels.notice,
+				notice: this.panels.inlineResult,
 				plugins: {
 					state: this.integrations.pluginPanelState(
 						this.integrations.pluginPackages,
@@ -2892,7 +2898,6 @@ export class PageRuntime {
 		});
 		const dock = dockView(this.preferences.locale, {
 			usage: this.usage,
-			notice: this.dockNotice,
 			open: this.dock.dockOpen,
 			tab: this.dock.dockTab,
 			tabs: this.dock.dockTabs,

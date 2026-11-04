@@ -194,7 +194,6 @@ function SessionRow({
 	readonly actions: PageRenderer;
 }) {
 	const copy = (key: Parameters<typeof translate>[1]) => translate(locale, key);
-	const [copyError, setCopyError] = useState("");
 	return (
 		<div
 			className={`session-row${item.attached ? " attached" : ""}`}
@@ -225,15 +224,8 @@ function SessionRow({
 					{ id: A.SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId") },
 					{ id: item.remove.id, label: item.remove.label, danger: true },
 				]}
-				run={(id) => {
-					if (id === A.SESSION_COPY_ID_ACTION) {
-						void navigator.clipboard
-							.writeText(item.id)
-							.catch(() => setCopyError(copy("copy.failed")));
-					} else actions.onPanelAction({ kind: "command", id, data: item.id });
-				}}
+				run={(id) => actions.onPanelAction({ kind: "command", id, data: item.id })}
 			/>
-			{copyError && <span role="alert">{copyError}</span>}
 		</div>
 	);
 }

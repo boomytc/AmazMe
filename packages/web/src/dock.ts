@@ -27,7 +27,7 @@ import {
 	WORKSPACE_PAGE_ACTION,
 } from "./actions.ts";
 import type { Locale } from "./locale.ts";
-import type { PanelGroup, PanelNotice, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
+import type { PanelGroup, PanelPending, PanelRow, PanelSpec } from "./panels.ts";
 import type { MessageKey } from "./strings.ts";
 import { taskBlockedCopy, taskKindCopy, taskPhaseCopy, taskStatusCopy, translate } from "./strings.ts";
 import type { PtyPresentation } from "./pty-surface.ts";
@@ -192,7 +192,6 @@ export interface DockViewInput {
 	readonly reviewFile?: { readonly root: string; readonly path: string };
 	readonly readOnly?: boolean;
 	readonly pending?: PanelPending;
-	readonly notice?: PanelNotice;
 }
 
 export interface InsightsStateLike {
@@ -731,7 +730,6 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 		panel: {
 			...panel,
 			...(input.pending === undefined ? {} : { pending: input.pending }),
-			...(input.notice === undefined ? {} : { notices: [...panel.notices, input.notice] }),
 		},
 	};
 }
