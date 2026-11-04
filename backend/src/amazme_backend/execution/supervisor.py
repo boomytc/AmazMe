@@ -131,6 +131,10 @@ class Supervisor:
                 except Exception as error:
                     await self._set_blocked(failure_reason(error))
             await self.db.call(lambda db: db.execute("UPDATE control SET owner=? WHERE id=1", (self.instance,)), write=True)
+            # A supervisor restart is a new execution attempt. The restart budget protects one
+            # supervisor lifetime from a crash loop; keeping it across runs turned a transient
+            # worker startup failure into a session that could never open again.
+            await self.db.call(lambda db: db.execute("UPDATE budgets SET attempts=0"), write=True)
         self.monitor_task = asyncio.create_task(self.monitor())
 
     async def _set_blocked(self, reason: str) -> None:
