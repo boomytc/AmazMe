@@ -234,6 +234,7 @@ function Navigation({
 	const report = (id: string, data?: string) =>
 		actions.onPanelAction({ kind: "command", id, data });
 	const standalone = view.roster.filter((item) => !item.projectId);
+	const groups = rosterGroups(view.locale, standalone);
 	const hasProjects = (view.projects?.length ?? 0) > 0;
 	const filterField = useRef<HTMLInputElement>(null);
 	const filterToggle = useRef<HTMLButtonElement>(null);
@@ -422,8 +423,8 @@ function Navigation({
 								/>
 							))}
 						</>
-					) : (
-						rosterGroups(view.locale, standalone).map((group) => (
+					) : groups.length > 1 ? (
+						groups.map((group) => (
 							<section className="roster-group" key={group.id}>
 								<p className="roster-group-title">{group.label}</p>
 								{group.items.map((item) => (
@@ -435,6 +436,16 @@ function Navigation({
 									/>
 								))}
 							</section>
+						))
+					) : (
+						/* One time bucket is not a grouping: the section label already says Sessions. */
+						(groups[0]?.items ?? []).map((item) => (
+							<SessionRow
+								key={item.id}
+								item={item}
+								locale={view.locale}
+								actions={actions}
+							/>
 						))
 					)}
 					{view.archivedAttached && (
