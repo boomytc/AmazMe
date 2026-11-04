@@ -4,8 +4,7 @@
  * input line for the terminal — so the renderer treats both alike, and a new dock tab is another
  * pure builder here.
  *
- * Two surfaces live in the dock: the attached session's working directory (browse it, read a file)
- * and a shell in that directory (run a command, watch its output, stop it).
+ * The guide lists available tools; the workspace controller owns which tabs are open and selected.
  */
 import {
 	CONVERSATION_FORK_ACTION,
@@ -37,11 +36,12 @@ import type { PtyPresentation } from "./pty-surface.ts";
 import type { UsageReport } from "./generated/contracts.ts";
 import { usagePanel } from "./usage.ts";
 
-/** The dock's tabs, in the order it shows them. */
-export type DockTabId = "files" | "terminal" | "jobs" | "conversations" | "tasks" | "changes" | "statistics";
+/** Tool kinds and the guide shared by state, projection, and rendering. */
+export type DockTabId = "guide" | "files" | "terminal" | "jobs" | "conversations" | "tasks" | "changes" | "statistics";
 
 const TAB_IDS: readonly DockTabId[] = ["files", "terminal", "jobs", "conversations", "tasks", "statistics"];
 const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
+	guide: "dock.newTab",
 	files: "dock.files",
 	terminal: "dock.terminal",
 	jobs: "dock.jobs",
@@ -50,6 +50,10 @@ const TAB_MESSAGES: Readonly<Record<DockTabId, MessageKey>> = {
 	changes: "review.tab",
 	statistics: "stats.title",
 };
+
+export function isDockTabId(value: unknown): value is DockTabId {
+	return typeof value === "string" && Object.hasOwn(TAB_MESSAGES, value);
+}
 
 export interface DockTab {
 	readonly id: DockTabId;
@@ -61,6 +65,7 @@ export interface DockView {
 	readonly pty?: PtyPresentation;
 	readonly open: boolean;
 	readonly tabs: readonly DockTab[];
+	readonly availableTabs: readonly DockTab[];
 	/** The open tab's panel. */
 	readonly panel: PanelSpec;
 }
@@ -186,7 +191,8 @@ export interface ConversationsStateLike {
 export interface DockViewInput {
 	readonly usage?: UsageReport;
 	readonly open: boolean;
-	readonly tab: string;
+	readonly tab: DockTabId;
+	readonly tabs?: readonly DockTabId[];
 	/** The session's working directory, which both dock surfaces live in. */
 	readonly cwd: string;
 	readonly workspace: WorkspaceStateLike | undefined;
@@ -503,8 +509,8 @@ export function tasksPanel(locale: Locale, state: ConversationsStateLike | undef
 	};
 }
 
-export function dockTabs(locale: Locale, current: string): DockTab[] {
-	return TAB_IDS.map((id) => ({
+export function dockTabs(locale: Locale, current: DockTabId, ids: readonly DockTabId[] = TAB_IDS): DockTab[] {
+	return ids.map((id) => ({
 		id,
 		label: translate(locale, TAB_MESSAGES[id]),
 		active: id === current,
@@ -796,9 +802,11 @@ export function terminalPanel(
 
 /** The dock the main area shows beside the conversation. */
 export function dockView(locale: Locale, input: DockViewInput): DockView {
-	const tab = input.tab === "changes" && input.insights ? "changes" : (TAB_IDS as readonly string[]).includes(input.tab) ? (input.tab as DockTabId) : "files";
+	const tab = input.tab;
 	const panel =
-		tab === "files"
+		tab === "guide"
+			? { id: "guide", title: "", groups: [], notices: [] }
+			: tab === "files"
 			? filesPanel(locale, input.workspace)
 			: tab === "terminal"
 				? terminalPanel(locale, { cwd: input.cwd, state: input.terminal })
@@ -809,7 +817,8 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 					: tab === "statistics" ? usagePanel(locale, input.usage) : tab === "changes" ? changesPanel(locale, input.insights, input.reviewDiff, input.reviewFile) : tasksPanel(locale, input.conversations);
 	return {
 		open: input.open,
-		tabs: [...dockTabs(locale, tab), ...(input.insights ? [{ id: "changes" as const, label: translate(locale, "review.tab"), active: tab === "changes" }] : [])],
+		tabs: dockTabs(locale, tab, input.tabs ?? [tab]),
+		availableTabs: dockTabs(locale, tab, [...TAB_IDS, ...(input.insights ? ["changes" as const] : [])]),
 		panel: { ...(input.readOnly && tab === "terminal" ? { ...panel, inputs: panel.inputs?.map(item => ({ ...item, submit: { ...item.submit, disabled: true } })) } : panel),
 			...(input.pending === undefined ? {} : { pending: input.pending }),
 			...(input.notice === undefined ? {} : { notices: [...panel.notices, input.notice] }),

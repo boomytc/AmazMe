@@ -1,4 +1,4 @@
-import type { WorkspaceStateLike } from "../dock.ts";
+import type { DockTabId, WorkspaceStateLike } from "../dock.ts";
 import { readFilePreview } from "../file-preview.ts";
 import type {
 	ProjectView,
@@ -10,6 +10,7 @@ import type { Locale } from "../locale.ts";
 import { translate } from "../strings.ts";
 import { ApiError } from "../transport/api.ts";
 import type { ClientConnection, PythonClient } from "../transport/client.ts";
+import { DockTabs } from "./dock-tabs.ts";
 import { TerminalInputQueue } from "./pending/terminal.ts";
 import type { PendingWrites } from "./pending/writes.ts";
 
@@ -49,7 +50,19 @@ interface WorkspaceServices {
 
 export class WorkspaceController {
 	private open = false;
-	private tab = "files";
+	private readonly sessionTabs = new Map<string, DockTabs>();
+	private readonly detachedTabs = new DockTabs();
+	private get tabState(): DockTabs {
+		const connection = this.services.client.connection;
+		if (!connection) return this.detachedTabs;
+		const key = `amazme:dock-tabs:${JSON.stringify([connection.identity.profile_id, connection.sessionId])}`;
+		let state = this.sessionTabs.get(key);
+		if (!state) {
+			state = new DockTabs(key);
+			this.sessionTabs.set(key, state);
+		}
+		return state;
+	}
 	workspace?: WorkspaceStateLike;
 	terminal?: ActiveTerminal;
 	private terminalTimer?: ReturnType<typeof setTimeout>;
@@ -67,12 +80,20 @@ export class WorkspaceController {
 		this.open = value;
 		if (!value) clearTimeout(this.terminalTimer);
 	}
-	get dockTab(): string {
-		return this.tab;
+	get dockTabs(): readonly DockTabId[] { return this.tabState.tabs; }
+	get dockTab(): DockTabId {
+		return this.tabState.active;
 	}
-	set dockTab(value: string) {
-		this.tab = value;
+	set dockTab(value: DockTabId) {
+		this.openTab(value);
+	}
+	openTab(value: DockTabId, replaceGuide = false): void {
+		this.tabState.open(value, replaceGuide);
 		if (value !== "terminal") clearTimeout(this.terminalTimer);
+	}
+	closeTab(value: DockTabId): void {
+		if (this.tabState.close(value)) this.dockOpen = false;
+		if (this.dockTab !== "terminal") clearTimeout(this.terminalTimer);
 	}
 	reset(): void {
 		this.terminal = undefined;
@@ -110,6 +131,7 @@ export class WorkspaceController {
 		if (
 			!connection.active() ||
 			generation !== this.terminalLoadGeneration ||
+			!this.dockOpen ||
 			this.dockTab !== "terminal"
 		)
 			return;

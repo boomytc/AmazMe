@@ -35,6 +35,8 @@ export const SUBMIT_MODE_ACTION = "run:submit-mode";
 export const DOCK_TOGGLE_ACTION = "dock:toggle";
 /** Switch the dock to one tab: `data` is the tab id. */
 export const DOCK_TAB_ACTION = "dock:tab";
+export const DOCK_TAB_CLOSE_ACTION = "dock:tab-close";
+export const DOCK_GUIDE_OPEN_ACTION = "dock:guide-open";
 /** List a directory: `data` is the absolute path bound to the displayed project folder. */
 export const WORKSPACE_OPEN_ACTION = "workspace:open";
 /** Reload a displayed directory or file: `data` encodes its kind and absolute path. */

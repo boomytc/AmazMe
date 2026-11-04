@@ -3135,22 +3135,21 @@ body[data-dock-motion="presentation"] .dock {
 	background: var(--line);
 }
 
-.dock-tab.active + .dock-slot::before,
-.dock-slot:has(+ .dock-tab.active)::before {
+.dock-chip.active + .dock-slot::before,
+.dock-slot:has(+ .dock-chip.active)::before {
 	background: transparent;
 }
 
 /* The chip: a 28px capsule carrying the tab's glyph and title. The active one is the filled tab; the
    rest are bare text with a hover fill. */
-.dock-tab {
+.dock-chip {
 	display: flex;
-	flex: 0 1 auto;
+	flex: 0 0 auto;
 	align-items: center;
-	gap: 5px;
 	min-width: 80px;
-	max-width: 170px;
+	max-width: 190px;
 	height: 28px;
-	padding: 0 var(--space-10);
+	padding-right: 3px;
 	border: 0;
 	border-radius: var(--radius-sm);
 	background: transparent;
@@ -3162,6 +3161,69 @@ body[data-dock-motion="presentation"] .dock {
 		background var(--dur-fast) var(--ease),
 		color var(--dur-fast) var(--ease);
 }
+
+.dock-tab {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	min-width: 0;
+	height: 28px;
+	padding: 0 7px 0 10px;
+	border: 0;
+	border-radius: inherit;
+	background: transparent;
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
+}
+
+.dock-tab-close {
+	display: grid;
+	place-items: center;
+	flex: none;
+	width: 22px;
+	height: 22px;
+	padding: 3px;
+	border: 0;
+	border-radius: var(--radius-sm);
+	background: transparent;
+	color: var(--text-3);
+	opacity: 0;
+	cursor: pointer;
+}
+
+.dock-chip:is(.active, :hover, :focus-within) .dock-tab-close { opacity: 1; }
+.dock-tab-close:hover { background: var(--hover); color: var(--text); }
+.dock-tab-close .icon { width: 14px; height: 14px; }
+.dock-add-tab { flex: none; }
+
+.dock-guide {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 24px;
+}
+.dock-guide-icon { width: 44px; height: 44px; color: var(--text-3); flex: none; }
+.dock-guide-hint { margin: 18px 0 24px; color: var(--text-3); font-size: 13px; }
+.dock-guide-entries { display: grid; gap: 8px; width: min(100%, 300px); }
+.dock-guide-entry {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	padding: 12px 16px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: transparent;
+	color: var(--text-2);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+.dock-guide-entry:hover { background: var(--hover); color: var(--text); }
 
 /* A 16px glyph centred on the title's line, keeping one distance from it. */
 .dock-tab-icon {
@@ -3182,12 +3244,12 @@ body[data-dock-motion="presentation"] .dock {
 	mask-image: linear-gradient(to right, black calc(100% - 16px), transparent);
 }
 
-.dock-tab:hover:not(.active) {
+.dock-chip:hover:not(.active) {
 	background: var(--hover);
 	color: var(--text);
 }
 
-.dock-tab.active {
+.dock-chip.active {
 	background: var(--active);
 	color: var(--text);
 }

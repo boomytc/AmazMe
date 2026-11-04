@@ -12,7 +12,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, WORKSPACE_OPEN_ACTION } from "../actions.ts";
+import { DOCK_GUIDE_OPEN_ACTION, DOCK_TAB_ACTION, DOCK_TAB_CLOSE_ACTION, DOCK_TOGGLE_ACTION, WORKSPACE_OPEN_ACTION } from "../actions.ts";
 import { readDockWidth, storeDockWidth } from "../app/dock-preferences.ts";
 import type { DockTabId, DockView } from "../dock.ts";
 import { errorMessageCopy } from "../errors.ts";
@@ -57,6 +57,7 @@ type DockIconName =
 	| "message"
 	| "more"
 	| "panel-right"
+	| "plus"
 	| "restore"
 	| "search"
 	| "square-pen"
@@ -97,6 +98,7 @@ export interface DockProps {
 }
 
 const DOCK_ICONS: Readonly<Record<DockTabId, DockIconName>> = {
+	guide: "plus",
 	files: "folder",
 	terminal: "terminal",
 	jobs: "activity",
@@ -1711,6 +1713,7 @@ export function Dock({
 	/* Opening moves focus into the revealed panel; collapsing hands it back to the header's button. */
 	const restoreFocus = useRef(false);
 	const previousOpen = useRef(view.open);
+	const focusAfterNavigation = useRef(false);
 	/* The stored preference, read once per mounted dock; the page clamps it again for the window. */
 	const preferred = useRef<number | null>(null);
 	const resize = useRef<{
@@ -1728,6 +1731,11 @@ export function Dock({
 		return () => applyDockWidth(null);
 	}, []);
 	const active = view.tabs.find((tab) => tab.active)?.id ?? view.tabs[0]?.id;
+	useLayoutEffect(() => {
+		if (!focusAfterNavigation.current) return;
+		focusAfterNavigation.current = false;
+		if (view.open && active !== undefined) tabs.current.get(active)?.focus({ preventScroll: true });
+	}, [view.tabs, view.open, active]);
 	/* The grip reports the rendered width, not the preference: the window can clamp either side. */
 	const [splitter, setSplitter] = useState({ width: 0, minimum: 0, maximum: 0 });
 	const measureSplitter = useCallback(() => {
@@ -1773,7 +1781,7 @@ export function Dock({
 		const row = tabRow.current;
 		const tab = active === undefined ? undefined : tabs.current.get(active);
 		if (row !== null && tab !== undefined) {
-			const box = tab.getBoundingClientRect();
+			const box = (tab.closest(".dock-chip") ?? tab).getBoundingClientRect();
 			const left = row.scrollLeft + box.left - row.getBoundingClientRect().left;
 			if (left < row.scrollLeft) row.scrollTo({ left });
 			else if (left + box.width > row.scrollLeft + row.clientWidth)
@@ -1890,6 +1898,11 @@ export function Dock({
 	): void => {
 		if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey)
 			return;
+		if (event.key === "Delete" && !(current === "guide" && view.tabs.length === 1)) {
+			event.preventDefault();
+			closeTab(current);
+			return;
+		}
 		if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
 		const index = view.tabs.findIndex((tab) => tab.id === current);
 		const next =
@@ -1906,6 +1919,14 @@ export function Dock({
 		if (next === undefined) return;
 		event.preventDefault();
 		tabs.current.get(next.id)?.focus();
+	};
+	const closeTab = (id: DockTabId): void => {
+		focusAfterNavigation.current = true;
+		onAction({ kind: "command", id: DOCK_TAB_CLOSE_ACTION, data: id });
+	};
+	const openTab = (id: DockTabId, fromGuide = false): void => {
+		focusAfterNavigation.current = true;
+		onAction({ kind: "command", id: fromGuide ? DOCK_GUIDE_OPEN_ACTION : DOCK_TAB_ACTION, data: id });
 	};
 	const activeTab = view.tabs.find((tab) => tab.active);
 	const repeated = view.panel.groups.find(
@@ -1977,48 +1998,68 @@ export function Dock({
 							{index > 0 ? (
 								<span className="dock-slot" aria-hidden="true" />
 							) : null}
-							<button
-								ref={(node) => {
-									if (node === null) tabs.current.delete(tab.id);
-									else tabs.current.set(tab.id, node);
-								}}
-								type="button"
-								className={`dock-tab${tab.active ? " active" : ""}`}
-								id={`dock-tab-${tab.id}`}
-								role="tab"
-								aria-selected={tab.active}
-								aria-controls="dock-body"
-								tabIndex={tab.active ? 0 : -1}
-								title={tab.label}
-								data-tab={tab.id}
-								onClick={() => {
-									onAction({
-										kind: "command",
-										id: DOCK_TAB_ACTION,
-										data: tab.id,
-									});
-								}}
-								onKeyDown={(event) => {
-									moveTab(event, tab.id);
-								}}
-							>
-								<Icon
-									name={DOCK_ICONS[tab.id]}
-									className="icon dock-tab-icon"
-								/>
-								<span
-									className="dock-tab-label"
+							<div className={`dock-chip${tab.active ? " active" : ""}`} role="presentation">
+								<button
 									ref={(node) => {
-										if (node === null) tabLabels.current.delete(tab.id);
-										else tabLabels.current.set(tab.id, node);
+										if (node === null) tabs.current.delete(tab.id);
+										else tabs.current.set(tab.id, node);
+									}}
+									type="button"
+									className={`dock-tab${tab.active ? " active" : ""}`}
+									id={`dock-tab-${tab.id}`}
+									role="tab"
+									aria-selected={tab.active}
+									aria-controls="dock-body"
+									tabIndex={tab.active ? 0 : -1}
+									title={tab.label}
+									data-tab={tab.id}
+									onClick={() => {
+										onAction({
+											kind: "command",
+											id: DOCK_TAB_ACTION,
+											data: tab.id,
+										});
+									}}
+									onKeyDown={(event) => {
+										moveTab(event, tab.id);
 									}}
 								>
-									{tab.label}
-								</span>
-							</button>
+									<Icon
+										name={DOCK_ICONS[tab.id]}
+										className="icon dock-tab-icon"
+									/>
+									<span
+										className="dock-tab-label"
+										ref={(node) => {
+											if (node === null) tabLabels.current.delete(tab.id);
+											else tabLabels.current.set(tab.id, node);
+										}}
+									>
+										{tab.label}
+									</span>
+								</button>
+								{tab.id === "guide" && view.tabs.length === 1 ? null : (
+									<button
+										type="button"
+										className="dock-tab-close"
+										tabIndex={tab.active ? 0 : -1}
+										aria-label={translate(locale, tab.id === "terminal" ? "dock.closeTerminalTab" : "dock.closeTab", { name: tab.label })}
+										title={translate(locale, tab.id === "terminal" ? "dock.closeTerminalTab" : "dock.closeTab", { name: tab.label })}
+										onClick={() => closeTab(tab.id)}
+									><Icon name="x" /></button>
+								)}
+							</div>
 						</Fragment>
 					))}
 				</div>
+				<button
+					type="button"
+					className="icon-button icon-button--compact dock-add-tab"
+					aria-label={translate(locale, "dock.newTab")}
+					title={translate(locale, "dock.newTab")}
+					disabled={active === "guide"}
+					onClick={() => openTab("guide")}
+				><Icon name="plus" /></button>
 				<span className="dock-strip-fill" />
 				<div className="dock-chrome">
 					<button
@@ -2065,37 +2106,54 @@ export function Dock({
 					active === undefined ? undefined : `dock-tab-${active}`
 				}
 			>
-				{pinnedHead ? (
-					<div className="dock-panel-head">
-						<PanelHead
-							panel={{ ...panel, description: undefined }}
-							locale={locale}
-							onAction={onAction}
-						/>
+				{active === "guide" ? (
+					<div className="dock-guide">
+						<Icon name="panel-right" className="icon dock-guide-icon" />
+						<p className="dock-guide-hint">{translate(locale, "dock.guideHint")}</p>
+						<div className="dock-guide-entries">
+							{view.availableTabs.map(tab => (
+								<button type="button" className="dock-guide-entry" key={tab.id}
+									onClick={() => openTab(tab.id, true)}>
+									<Icon name={DOCK_ICONS[tab.id]} /><span>{tab.label}</span>
+								</button>
+							))}
+						</div>
 					</div>
-				) : null}
-				<div className="dock-scroll">
-					{panel.description === undefined ? null : (
-						<p className="dock-panel-desc">
-							<SensitiveText
-								text={panel.description}
-								locale={locale}
-							/>
-						</p>
-					)}
-					{view.pty === undefined ? (
-						panelView
-					) : (
-						<>
-							<div className="pty-chrome">{panelView}</div>
-							{visible ? <DockPtySurface
-								view={view.pty}
-								onTerminalInput={onTerminalInput}
-								onTerminalResize={onTerminalResize}
-							/> : null}
-						</>
-					)}
-				</div>
+				) : (
+					<>
+						{pinnedHead ? (
+							<div className="dock-panel-head">
+								<PanelHead
+									panel={{ ...panel, description: undefined }}
+									locale={locale}
+									onAction={onAction}
+								/>
+							</div>
+						) : null}
+						<div className="dock-scroll">
+							{panel.description === undefined ? null : (
+								<p className="dock-panel-desc">
+									<SensitiveText
+										text={panel.description}
+										locale={locale}
+									/>
+								</p>
+							)}
+							{view.pty === undefined ? (
+								panelView
+							) : (
+								<>
+									<div className="pty-chrome">{panelView}</div>
+									{visible ? <DockPtySurface
+										view={view.pty}
+										onTerminalInput={onTerminalInput}
+										onTerminalResize={onTerminalResize}
+									/> : null}
+								</>
+							)}
+						</div>
+					</>
+				)}
 			</div>
 			<div
 				className="dock-resize"

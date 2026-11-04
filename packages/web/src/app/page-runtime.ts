@@ -2,7 +2,7 @@
 import * as A from "../actions.ts";
 import { type CommandLike, parseCommandLine } from "../commands.ts";
 import { desktopBridge } from "../desktop.ts";
-import { dockView, parseWorkspaceAction } from "../dock.ts";
+import { dockView, isDockTabId, parseWorkspaceAction } from "../dock.ts";
 import type {
 	AnswerFeedbackList,
 	GitDiff,
@@ -601,14 +601,27 @@ export class PageRuntime {
 		}
 		await this.transcript.loadHistory(connection, false);
 		if (!connection.active()) return;
-		if (this.dock.dockOpen && this.dock.dockTab === "terminal")
-			await this.dock.loadTerminal(connection);
+		await this.loadDock(connection);
 		if (!connection.active()) return;
 		this.render();
 		clearTimeout(this.healthTimer);
 		this.healthTimer = setTimeout(() => {
 			void this.poll(connection);
 		}, 3000);
+	}
+	private async loadDock(connection: ClientConnection, createTerminal = false): Promise<void> {
+		if (!connection.active() || !this.dock.dockOpen) return;
+		switch (this.dock.dockTab) {
+			case "files":
+				if (!this.dock.workspace) await this.dock.openWorkspace();
+				break;
+			case "terminal":
+				await this.dock.loadTerminal(connection, createTerminal);
+				break;
+			case "jobs":
+				await this.jobs.load();
+				break;
+		}
 	}
 	private async poll(connection: ClientConnection): Promise<void> {
 		if (!connection.active()) return;
@@ -1358,27 +1371,21 @@ export class PageRuntime {
 		}
 		if (id === A.DOCK_TOGGLE_ACTION) {
 			this.dock.dockOpen = !this.dock.dockOpen;
-			if (
-				this.dock.dockOpen &&
-				this.dock.dockTab === "files" &&
-				!this.dock.workspace
-			)
-				await this.dock.openWorkspace();
-			if (this.dock.dockOpen && this.dock.dockTab === "terminal")
-				await this.dock.loadTerminal(this.requireConnection());
-			if (this.dock.dockOpen && this.dock.dockTab === "jobs")
-				await this.jobs.load();
+			this.render();
+			if (this.dock.dockOpen) await this.loadDock(this.requireConnection());
 			this.render();
 			return;
 		}
-		if (id === A.DOCK_TAB_ACTION) {
-			this.dock.dockTab = value;
-			this.dock.dockOpen = true;
-			if (value === "files" && !this.dock.workspace)
-				await this.dock.openWorkspace();
-			if (value === "terminal")
-				await this.dock.loadTerminal(this.requireConnection(), true);
-			if (value === "jobs") await this.jobs.load();
+		if (id === A.DOCK_TAB_ACTION || id === A.DOCK_TAB_CLOSE_ACTION || id === A.DOCK_GUIDE_OPEN_ACTION) {
+			if (!isDockTabId(value)) return;
+			if (id === A.DOCK_TAB_CLOSE_ACTION) this.dock.closeTab(value);
+			else {
+				this.dock.openTab(value, id === A.DOCK_GUIDE_OPEN_ACTION);
+				this.dock.dockOpen = true;
+			}
+			this.render();
+			if (!this.dock.dockOpen) return;
+			await this.loadDock(this.requireConnection(), id !== A.DOCK_TAB_CLOSE_ACTION);
 			this.render();
 			return;
 		}
@@ -2885,6 +2892,7 @@ export class PageRuntime {
 			notice: this.dockNotice,
 			open: this.dock.dockOpen,
 			tab: this.dock.dockTab,
+			tabs: this.dock.dockTabs,
 			cwd,
 			workspace: this.dock.workspace,
 			jobs: this.jobs.state,
