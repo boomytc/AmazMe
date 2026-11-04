@@ -1090,11 +1090,20 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 				],
 				rows: state.schedules.map((schedule) => {
 					const summary = summarize(schedule.prompt, 90);
+					const defaultTitle = translate(locale, "automation.defaultTitle");
+					/* The host's legacy default is Chinese; it is a placeholder in every language. */
+					const customTitle =
+						schedule.target.kind === "new_session" &&
+						schedule.target.title.trim().length > 0 &&
+						schedule.target.title !== defaultTitle &&
+						schedule.target.title !== "计划"
+							? schedule.target.title.trim()
+							: "";
 					const title =
 						summary.length > 0
 							? summary
 							: schedule.target.kind === "new_session"
-								? schedule.target.title
+								? customTitle || schedule.target.title
 								: schedule.target.sessionId.slice(0, 8);
 					const target =
 						schedule.target.kind === "new_session"
@@ -1109,7 +1118,7 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 						hint: [translate(locale, schedule.busy === "queue" ? "panel.automation.busyQueue" : "panel.automation.busySkip"),
 							translate(locale, schedule.missed === "latest" ? "panel.automation.missedLatest" : "panel.automation.missedSkip"),
 							translate(locale, "panel.automation.timeout", { seconds: String(schedule.timeoutSeconds) })].join(" · "),
-						badges: [target, ...(schedule.nextRunAt === null ? [translate(locale, "panel.automation.finished")] : schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
+						badges: [...(customTitle.length > 0 ? [customTitle] : []), target, ...(schedule.nextRunAt === null ? [translate(locale, "panel.automation.finished")] : schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
 						value: [
 							translate(locale, "panel.automation.next", {
 								when: scheduleDueCopy(locale, schedule.nextRunAt, now),
