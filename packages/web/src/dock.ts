@@ -617,10 +617,20 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 	if (view.kind === "text") {
 		// The file's own directory is the parent of its path, so the reader can step back out.
 		const parent = segments.slice(0, -1).join("/") || ".";
+		const checkpoint = !readOnly ? [{
+			id: WORKSPACE_CHECKPOINT_ACTION,
+			label: translate(locale, "dock.checkpoint"),
+			weight: "line" as const,
+			data: JSON.stringify({
+				workspace: state.name,
+				path: clientPath(state.name, view.path),
+			}),
+		}] : [];
 		return {
 			id: "files",
 			title: segments.at(-1) ?? view.path,
-			files,
+			files: { ...files, reload },
+			actions: checkpoint,
 			notices: [
 				...(view.truncated ? [{ tone: "info" as const, persistence: "pinned" as const, text: translate(locale, "dock.truncated") }] : []),
 				...(view.selection && (view.selection.line < view.startLine || view.selection.line >= view.startLine + (view.text ? view.text.split("\n").length - Number(view.text.endsWith("\n")) : 0))
@@ -630,19 +640,7 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 				...folders,
 				{
 					id: "files:back",
-					title: translate(locale, "dock.contents"),
-					actions: [
-						reload,
-						...(!readOnly ? [{
-							id: WORKSPACE_CHECKPOINT_ACTION,
-							label: translate(locale, "dock.checkpoint"),
-							weight: "line" as const,
-							data: JSON.stringify({
-								workspace: state.name,
-								path: clientPath(state.name, view.path),
-							}),
-						}] : []),
-					],
+					title: "",
 					rows: [rootRow(locale, translate(locale, "dock.backToFolder"), parent, state.cwd)],
 				},
 			],
@@ -654,14 +652,13 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 		return {
 			id: "files",
 			title: segments.at(-1) ?? title,
-			files,
+			files: { ...files, reload },
 			notices: [{ tone: view.kind === "denied" ? "error" : "info", text: notice }],
 			groups: [
 				...folders,
 				{
 					id: "files:back",
-					title: translate(locale, "dock.contents"),
-					actions: [reload],
+					title: "",
 					rows: [rootRow(locale, translate(locale, "dock.cwd"), ".", state.cwd)],
 				},
 			],
