@@ -2136,16 +2136,23 @@ export class PageRuntime {
 			) {
 				this.panels.modal = {
 					id: "diagnostics:close",
-					title: "诊断",
+					title: translate(
+						this.preferences.locale,
+						"panel.settings.diagnosticsTitle",
+					),
 					fields: [
 						{
 							id: "report",
-							label: "会话诊断",
+							label: translate(
+								this.preferences.locale,
+								"panel.settings.diagnosticsReport",
+							),
 							kind: "textarea",
 							readOnly: true,
 							value: JSON.stringify(report, null, 2),
 						},
 					],
+					dismiss: translate(this.preferences.locale, "panel.dismiss"),
 				};
 				this.render();
 			}
