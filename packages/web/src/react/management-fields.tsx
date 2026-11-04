@@ -41,6 +41,7 @@ export type IconName =
 	| "git-fork"
 	| "info"
 	| "more"
+	| "refresh"
 	| "search"
 	| "square-pen"
 	| "x";
@@ -122,10 +123,11 @@ export function PanelButtonView({
 	return (
 		<button
 			type="button"
-			className={`${panelButtonClass(action)}${action.placement === "start" ? " is-footer-start" : ""}${isPending ? " pending" : ""}${className.length === 0 ? "" : ` ${className}`}`}
+			className={`${panelButtonClass(action)}${action.placement === "start" ? " is-footer-start" : ""}${action.icon === undefined ? "" : " is-icon"}${isPending ? " pending" : ""}${className.length === 0 ? "" : ` ${className}`}`}
 			data-action={action.id}
 			data-action-data={action.data}
 			title={action.label}
+			aria-label={action.icon === undefined ? undefined : action.label}
 			aria-pressed={action.pressed}
 			aria-busy={isPending || undefined}
 			disabled={action.disabled === true || isPending || forceDisabled}
@@ -133,7 +135,14 @@ export function PanelButtonView({
 				onAction({ kind: "command", id: action.id, data: action.data })
 			}
 		>
-			{action.label}
+			{action.icon === undefined ? (
+				action.label
+			) : (
+				<>
+					<Icon name={action.icon} />
+					<span className="sr-only">{action.label}</span>
+				</>
+			)}
 		</button>
 	);
 }

@@ -102,6 +102,8 @@ export interface PanelButton {
 	readonly pressed?: boolean;
 	/** An icon-only action may move into the dock strip when the tab already names the panel. */
 	readonly stripIcon?: "refresh";
+	/** A group-level action with a well-known glyph renders as an icon button. */
+	readonly icon?: "refresh" | "x";
 	/** A footer action sits on the leading edge; the others stay with cancel and submit. */
 	readonly placement?: "start";
 }

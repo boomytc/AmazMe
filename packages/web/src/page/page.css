@@ -4262,6 +4262,14 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease), transform var(--dur-fast) var(--ease);
 }
 
+.panel-button.is-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--control-height);
+	padding: 0;
+}
+
 .panel-button:hover:not(:disabled) {
 	background: var(--hover);
 }
