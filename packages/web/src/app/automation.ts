@@ -8,7 +8,9 @@ import type {
 	SessionModel,
 	WorkspaceGrantView,
 } from "../generated/contracts.ts";
+import type { Locale } from "../locale.ts";
 import * as P from "../panels.ts";
+import { translate } from "../strings.ts";
 import { isRecord } from "../transport/api.ts";
 import { modelReference } from "./model-reference.ts";
 import { newId } from "./pending/writes.ts";
@@ -24,7 +26,7 @@ interface AutomationServices extends PageServices {
 	readonly openSession: (id: string) => Promise<void>;
 }
 
-export function scheduleRecord(row: ScheduleView): P.ScheduleRecordLike {
+export function scheduleRecord(row: ScheduleView, locale: Locale): P.ScheduleRecordLike {
 	const target = row.target;
 	return {
 		id: row.schedule_id,
@@ -35,7 +37,7 @@ export function scheduleRecord(row: ScheduleView): P.ScheduleRecordLike {
 				: {
 						kind: "new_session",
 						workspace: target.workspace ?? "primary",
-						title: target.title ?? "定时任务",
+						title: target.title ?? translate(locale, "automation.defaultTitle"),
 						projectId: target.project_id ?? "",
 						model: target.model_selection
 							? JSON.stringify([
@@ -138,7 +140,8 @@ export class Automation {
 				row?.pending?.session_id ||
 				[...(row?.history ?? [])].reverse().find((item) => item.session_id)
 					?.session_id;
-			if (!sessionId) throw new Error("该任务还没有运行会话");
+			if (!sessionId)
+				throw new Error(translate(this.services.locale(), "automation.missingSession"));
 			await this.services.openSession(sessionId);
 			return true;
 		}
@@ -159,7 +162,7 @@ export class Automation {
 		)
 			return false;
 		const identity = this.services.client.identity;
-		if (!identity) throw new Error("请先连接后端");
+		if (!identity) throw new Error(translate(this.services.locale(), "automation.connectFirst"));
 		const ledger = this.services.hostLedger(identity);
 		if (id === A.SCHEDULE_RELOAD_ACTION) {
 			await this.loadSchedules();
@@ -181,7 +184,9 @@ export class Automation {
 				const values: Readonly<Record<string, string>> = {
 					targetKind: target.kind,
 					title:
-						target.kind === "new_session" ? (target.title ?? "定时任务") : "",
+						target.kind === "new_session"
+							? (target.title ?? translate(this.services.locale(), "automation.defaultTitle"))
+							: "",
 					workspace:
 						target.kind === "new_session"
 							? (target.workspace ?? "primary")
@@ -228,8 +233,8 @@ export class Automation {
 				A.SCHEDULE_HISTORY_ACTION,
 			].includes(id)
 		) {
-			if (!row) throw new Error("定时计划不存在");
-			const record = scheduleRecord(row);
+			if (!row) throw new Error(translate(this.services.locale(), "automation.planNotFound"));
+			const record = scheduleRecord(row, this.services.locale());
 			this.services.panels.modal =
 				id === A.SCHEDULE_EDIT_ACTION
 					? P.editScheduleModal(
@@ -265,7 +270,7 @@ export class Automation {
 				typeof target.id !== "string" ||
 				typeof target.sessionId !== "string"
 			)
-				throw new Error("定时计划归属损坏");
+				throw new Error(translate(this.services.locale(), "automation.brokenTarget"));
 			const scheduleId = target.id;
 			const kind = fields.kind;
 			const rule: ScheduleInput["rule"] =
@@ -282,12 +287,12 @@ export class Automation {
 				(fields.busy !== "queue" && fields.busy !== "skip") ||
 				(fields.missed !== "latest" && fields.missed !== "skip")
 			)
-				throw new Error("请选择运行策略");
+				throw new Error(translate(this.services.locale(), "automation.invalidPolicy"));
 			if (
 				fields.targetKind !== "session" &&
 				fields.targetKind !== "new_session"
 			)
-				throw new Error("请选择运行位置");
+				throw new Error(translate(this.services.locale(), "automation.invalidTarget"));
 			const body: ScheduleInput = {
 				schedule_id: scheduleId,
 				target:
@@ -296,7 +301,7 @@ export class Automation {
 						: {
 								kind: "new_session",
 								workspace: fields.workspace ?? "primary",
-								title: fields.title?.trim() || "定时任务",
+								title: fields.title?.trim() || translate(this.services.locale(), "automation.defaultTitle"),
 								project_id:
 									typeof target.projectId === "string" ? target.projectId : "",
 								model_selection: fields.model
@@ -335,7 +340,7 @@ export class Automation {
 				typeof target.generation !== "number" ||
 				typeof target.request_id !== "string"
 			)
-				throw new Error("定时计划归属损坏");
+				throw new Error(translate(this.services.locale(), "automation.brokenTarget"));
 			await this.services.client.call(
 				"POST /api/v1/schedules/{schedule_id}/remove",
 				{
@@ -353,7 +358,7 @@ export class Automation {
 				A.SCHEDULE_ENABLED_ACTION,
 			].includes(id)
 		) {
-			if (!row) throw new Error("定时计划不存在");
+			if (!row) throw new Error(translate(this.services.locale(), "automation.planNotFound"));
 			if (id === A.SCHEDULE_RUN_ACTION) {
 				const key = `schedule:run:${row.schedule_id}`;
 				await ledger.send(

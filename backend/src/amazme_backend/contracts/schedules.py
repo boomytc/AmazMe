@@ -36,7 +36,7 @@ class SessionScheduleTarget(Model):
 class NewSessionScheduleTarget(Model):
     kind: Literal["new_session"]
     workspace: str = Field(default="primary", min_length=1, max_length=128)
-    title: str = Field(default="定时任务", min_length=1, max_length=100)
+    title: str = Field(default="计划", min_length=1, max_length=100)
     project_id: str = ""
     model_selection: ModelSelection | None = None
 

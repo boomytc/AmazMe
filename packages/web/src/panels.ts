@@ -1080,59 +1080,75 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 					},
 					...(state.problem ? [{ id: SCHEDULE_RELOAD_ACTION, label: translate(locale, "panel.settings.reload"), weight: "line" as const }] : []),
 				],
-				rows: state.schedules.map((schedule) => ({
-					id: `schedule:${schedule.id}`,
-					title: summarize(schedule.target.kind === "new_session" ? schedule.target.title : schedule.prompt, 90),
-					description: [scheduleRuleCopy(locale, schedule.rule), translate(locale, schedule.busy === "queue" ? "panel.automation.busyQueue" : "panel.automation.busySkip"),
-						translate(locale, schedule.missed === "latest" ? "panel.automation.missedLatest" : "panel.automation.missedSkip"),
-						translate(locale, "panel.automation.timeout", { seconds: String(schedule.timeoutSeconds) })].join(" · "),
-					badges: [schedule.target.kind === "session" ? schedule.target.sessionId : translate(locale, "modal.scheduleAdd.newSession"), ...(schedule.nextRunAt === null ? [translate(locale, "panel.automation.finished")] : schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
-					value: [
-						translate(locale, "panel.automation.next", {
-							when: scheduleDueCopy(locale, schedule.nextRunAt, now),
-						}),
-						...(schedule.history.length === 0 ? [] : [scheduleOutcomeCopy(locale, schedule.history.at(-1)!)]),
-						...(schedule.pending === null ? [] : [state.problem ? translate(locale, "panel.automation.recoveryPending") : schedule.pending.problem ?? translate(locale, schedule.pending.cancelReason !== null ? "panel.automation.cancelling" : "panel.automation.running")]),
-					].join(" · "),
-					controls: [
-						{
-							id: SCHEDULE_ENABLED_ACTION,
-							...(state.problem || schedule.nextRunAt === null ? { disabled: true } : {}),
-							kind: "switch" as const,
-							data: schedule.id,
-							value: String(schedule.enabled),
-						},
-					],
-					menu: {
-						label: translate(locale, "panel.rowActions"),
-						data: schedule.id,
-						actions: [
-							...(schedule.pending?.sessionId || schedule.history.some(item => item.sessionId) ? [{ id: "schedule:open-session", label: translate(locale, "panel.automation.openResult"), weight: "text" as const, glyph: "folder" as const }] : []),
+				rows: state.schedules.map((schedule) => {
+					const summary = summarize(schedule.prompt, 90);
+					const title =
+						summary.length > 0
+							? summary
+							: schedule.target.kind === "new_session"
+								? schedule.target.title
+								: schedule.target.sessionId.slice(0, 8);
+					const target =
+						schedule.target.kind === "new_session"
+							? translate(locale, "modal.scheduleAdd.newSession")
+							: schedule.target.sessionId === input.sessionId
+								? translate(locale, "panel.automation.currentSession")
+								: schedule.target.sessionId.slice(0, 8);
+					return {
+						id: `schedule:${schedule.id}`,
+						title,
+						description: scheduleRuleCopy(locale, schedule.rule),
+						hint: [translate(locale, schedule.busy === "queue" ? "panel.automation.busyQueue" : "panel.automation.busySkip"),
+							translate(locale, schedule.missed === "latest" ? "panel.automation.missedLatest" : "panel.automation.missedSkip"),
+							translate(locale, "panel.automation.timeout", { seconds: String(schedule.timeoutSeconds) })].join(" · "),
+						badges: [target, ...(schedule.nextRunAt === null ? [translate(locale, "panel.automation.finished")] : schedule.enabled ? [] : [translate(locale, "panel.automation.paused")])],
+						value: [
+							translate(locale, "panel.automation.next", {
+								when: scheduleDueCopy(locale, schedule.nextRunAt, now),
+							}),
+							...(schedule.history.length === 0 ? [] : [scheduleOutcomeCopy(locale, schedule.history.at(-1)!)]),
+							...(schedule.pending === null ? [] : [state.problem ? translate(locale, "panel.automation.recoveryPending") : schedule.pending.problem ?? translate(locale, schedule.pending.cancelReason !== null ? "panel.automation.cancelling" : "panel.automation.running")]),
+						].join(" · "),
+						controls: [
 							{
-								id: SCHEDULE_RUN_ACTION,
-								...(state.problem || schedule.pending !== null ? { disabled: true } : {}),
-								label: translate(locale, "panel.automation.run"),
+								id: SCHEDULE_ENABLED_ACTION,
+								...(state.problem || schedule.nextRunAt === null ? { disabled: true } : {}),
+								kind: "switch" as const,
 								data: schedule.id,
-								weight: "text" as const,
-								glyph: "folder" as const,
-							},
-							...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, weight: "text" as const, danger: true, glyph: "x" as const }]),
-							{ id: SCHEDULE_EDIT_ACTION, label: translate(locale, "panel.automation.edit"), data: schedule.id, weight: "text" as const, glyph: "square-pen" as const,
-								...(state.problem || schedule.pending !== null ? { disabled: true } : {}) },
-							{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, weight: "text" as const, glyph: "folder" as const,
-								...(schedule.history.length === 0 ? { disabled: true } : {}) },
-							{
-								id: SCHEDULE_REMOVE_ACTION,
-								...(state.problem ? { disabled: true } : {}),
-								label: translate(locale, "panel.automation.remove"),
-								data: schedule.id,
-								weight: "text" as const,
-								danger: true,
-								glyph: "x" as const,
+								value: String(schedule.enabled),
 							},
 						],
-					},
-				})),
+						menu: {
+							label: translate(locale, "panel.rowActions"),
+							data: schedule.id,
+							actions: [
+								...(schedule.pending?.sessionId || schedule.history.some(item => item.sessionId) ? [{ id: "schedule:open-session", label: translate(locale, "panel.automation.openResult"), weight: "text" as const, glyph: "folder" as const }] : []),
+								{
+									id: SCHEDULE_RUN_ACTION,
+									...(state.problem || schedule.pending !== null ? { disabled: true } : {}),
+									label: translate(locale, "panel.automation.run"),
+									data: schedule.id,
+									weight: "text" as const,
+									glyph: "folder" as const,
+								},
+								...(schedule.pending === null ? [] : [{ id: SCHEDULE_CANCEL_ACTION, label: translate(locale, "panel.automation.cancel"), data: schedule.id, weight: "text" as const, danger: true, glyph: "x" as const }]),
+								{ id: SCHEDULE_EDIT_ACTION, label: translate(locale, "panel.automation.edit"), data: schedule.id, weight: "text" as const, glyph: "square-pen" as const,
+									...(state.problem || schedule.pending !== null ? { disabled: true } : {}) },
+								{ id: SCHEDULE_HISTORY_ACTION, label: translate(locale, "panel.automation.history"), data: schedule.id, weight: "text" as const, glyph: "folder" as const,
+									...(schedule.history.length === 0 ? { disabled: true } : {}) },
+								{
+									id: SCHEDULE_REMOVE_ACTION,
+									...(state.problem ? { disabled: true } : {}),
+									label: translate(locale, "panel.automation.remove"),
+									data: schedule.id,
+									weight: "text" as const,
+									danger: true,
+									glyph: "x" as const,
+								},
+							],
+						},
+					};
+				}),
 				empty: { cause: state.problem ? "failed" : "first-use", text: translate(locale, state.problem ? "panel.automation.unreadable" : "panel.automation.empty") },
 			},
 		],

@@ -2643,7 +2643,9 @@ export class PageRuntime {
 								path: this.automation.schedules.path,
 								tickMs: this.automation.schedules.tick_ms ?? 5000,
 								schedules:
-									this.automation.schedules.schedules.map(scheduleRecord),
+									this.automation.schedules.schedules.map((schedule) =>
+										scheduleRecord(schedule, this.preferences.locale),
+									),
 							}
 						: undefined,
 					sessionId: connection?.sessionId,
