@@ -650,7 +650,6 @@ export const EN = {
 	"transcript.searchNone": "No matches",
 	"transcript.searchClose": "Close search",
 
-	"approval.title": "Waiting for your decision",
 	"approval.approve": "Approve",
 	"approval.deny": "Deny",
 	"approval.tool": "{tool} needs your approval",
@@ -1600,7 +1599,6 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"transcript.searchNone": "没有匹配",
 	"transcript.searchClose": "关闭搜索",
 
-	"approval.title": "等待你的决定",
 	"approval.approve": "通过",
 	"approval.deny": "拒绝",
 	"approval.tool": "{tool}需要确认",

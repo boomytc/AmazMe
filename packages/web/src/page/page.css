@@ -2348,18 +2348,11 @@ p {
 .approval-head {
 	display: flex;
 	align-items: baseline;
-	justify-content: space-between;
 	gap: 8px;
 }
 
-.approval-title {
-	margin: 0;
-	color: var(--text-3);
-	font-size: 12px;
-}
-
 .approval-tool {
-	margin: 2px 0 0;
+	margin: 0;
 	font-size: 14px;
 	font-weight: 600;
 }
@@ -2439,11 +2432,6 @@ p {
 	gap: 8px;
 }
 
-.approval-hint {
-	margin: 8px 0 0;
-	color: var(--text-3);
-	font-size: 12px;
-}
 
 /* The command palette: a popover above the composer, one row per command. */
 .command-palette {

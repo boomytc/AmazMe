@@ -32,6 +32,7 @@ import {
 	ComposerStatusMeter,
 } from "./chat-controls.tsx";
 import { CredentialText } from "./chat-credential.tsx";
+import { Hint } from "./hint.tsx";
 import { QuestionForm } from "./questions.tsx";
 
 type IconName =
@@ -107,11 +108,12 @@ function ApprovalCards({
 			{view.approvals.map((card) => (
 				<div className="approval-card" data-approval-id={card.id} key={card.id}>
 					<div className="approval-head">
-						<p className="approval-title">
-							{translate(view.locale, "approval.title")}
-						</p>
 						<p className="approval-tool">
 							{translate(view.locale, "approval.tool", { tool: card.tool })}
+							<Hint
+								text={translate(view.locale, "approval.hint")}
+								locale={view.locale}
+							/>
 						</p>
 					</div>
 					{card.fields.length === 0 ? (
@@ -136,9 +138,6 @@ function ApprovalCards({
 						{actionButton(card.deny, actions)}
 						{actionButton(card.approve, actions)}
 					</div>
-					<p className="approval-hint">
-						{translate(view.locale, "approval.hint")}
-					</p>
 				</div>
 			))}
 		</div>
