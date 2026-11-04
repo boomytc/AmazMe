@@ -125,8 +125,19 @@ export class PythonClient {
 					socket.send(JSON.stringify({ kind: "ack", binding_id: attachment.attachment_id, stream_id: frame.stream_id, seq: connection.snapshot.seq }));
 				} catch (error) { this.onError(error); this.reconnect(connection, true); }
 			};
-			socket.onclose = () => this.reconnect(connection);
-			socket.onerror = () => this.reconnect(connection);
+			socket.onclose = event => {
+				if (!connection.active()) return;
+				const reason = event.reason.trim();
+				if ((event.code === 1008 || event.code === 1009) && reason.length > 0) {
+					// The host refuses this stream with a policy error (for example an exhausted
+					// worker restart budget). Retrying would loop forever and hide the reason.
+					clearTimeout(this.helloTimer);
+					this.onStatus("disconnected");
+					this.onError(new Error(reason));
+					return;
+				}
+				this.reconnect(connection);
+			};
 		} catch (error) {
 			if (generation !== this.generation) return;
 			this.onError(error);

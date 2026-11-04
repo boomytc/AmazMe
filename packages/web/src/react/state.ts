@@ -1,4 +1,5 @@
 import type { PageRenderer, WindowApp } from "../render.ts";
+import { translate } from "../strings.ts";
 import type { WebView } from "../view.ts";
 import { sameViewValue } from "../view-equality.ts";
 import type { ComposerView, TranscriptView } from "./chat.tsx";
@@ -165,7 +166,7 @@ export class Presentation implements PageRenderer {
 	readonly dock = new Snapshot<WebView["dock"] | undefined>(undefined);
 	readonly draft = new Snapshot("");
 	readonly connection = new Snapshot<ConnectionNotice>({
-		text: "正在连接",
+		text: (locale) => translate(locale, "connection.starting"),
 		kind: "state",
 		state: "connecting",
 	});
