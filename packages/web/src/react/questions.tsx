@@ -1,5 +1,5 @@
 import type { FormEvent } from "react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { QUESTION_ANSWER_ACTION } from "../actions.ts";
 import type {
 	QuestionAnswer,
@@ -8,6 +8,7 @@ import type {
 } from "../generated/contracts.ts";
 import type { Locale } from "../locale.ts";
 import type { PageRenderer } from "../render.ts";
+import { translate } from "../strings.ts";
 
 type Answer = Pick<QuestionAnswer, "kind" | "answers">;
 type DraftAnswer = {
@@ -60,26 +61,10 @@ export function QuestionForm({
 	actions,
 }: QuestionFormProps) {
 	const [drafts, setDrafts] = useState(() => initialDrafts(question));
+	const [customOpen, setCustomOpen] = useState<Record<string, boolean>>({});
 	const [error, setError] = useState("");
-	const copy = useMemo(
-		() =>
-			locale === "zh"
-				? {
-						title: "需要你回答",
-						custom: "补充或填写自己的回答",
-						skip: "跳过",
-						submit: "提交回答",
-						required: "请回答每个问题，或选择跳过。",
-					}
-				: {
-						title: "Your input is needed",
-						custom: "Add details or your own answer",
-						skip: "Skip",
-						submit: "Submit answer",
-						required: "Answer each question or choose Skip.",
-					},
-		[locale],
-	);
+	const copy = (key: Parameters<typeof translate>[1]) =>
+		translate(locale, key);
 
 	const setChoice = (
 		questionId: string,
@@ -145,7 +130,7 @@ export function QuestionForm({
 					(item.custom?.trim().length ?? 0) === 0,
 			)
 		) {
-			setError(copy.required);
+			setError(copy("question.required"));
 			return;
 		}
 		setError("");
@@ -155,10 +140,10 @@ export function QuestionForm({
 	return (
 		<form
 			className="question-card"
-			aria-label={locale === "zh" ? "等待回答" : "Awaiting your answer"}
+			aria-label={copy("question.aria")}
 			onSubmit={submit}
 		>
-			<h3>{copy.title}</h3>
+			<h3>{copy("question.title")}</h3>
 			{question.questions.map((item, index) => {
 				const draft = drafts[item.id] ?? { selected: [], custom: "" };
 				return (
@@ -191,8 +176,17 @@ export function QuestionForm({
 								</span>
 							</label>
 						))}
-						<label className="question-custom">
-							{copy.custom}
+						<details
+							className="question-custom"
+							open={customOpen[item.id] === true || draft.custom.length > 0}
+							onToggle={(event) =>
+								setCustomOpen((current) => ({
+									...current,
+									[item.id]: event.currentTarget.open,
+								}))
+							}
+						>
+							<summary>{copy("question.custom")}</summary>
 							<textarea
 								name={`custom-${index}`}
 								maxLength={8000}
@@ -203,28 +197,28 @@ export function QuestionForm({
 									setCustom(item.id, event.currentTarget.value)
 								}
 							/>
-						</label>
+						</details>
 					</fieldset>
 				);
 			})}
 			<p role="alert" hidden={error.length === 0}>
 				{error}
 			</p>
-			<div className="approval-actions">
+			<div className="approval-actions question-actions">
 				<button
 					type="button"
 					className="panel-button weight-line"
 					disabled={readOnly}
 					onClick={() => answer({ kind: "skipped", answers: [] })}
 				>
-					{copy.skip}
+					{copy("question.skip")}
 				</button>
 				<button
 					type="submit"
 					className="panel-button weight-filled"
 					disabled={readOnly}
 				>
-					{copy.submit}
+					{copy("question.submit")}
 				</button>
 			</div>
 		</form>
