@@ -3959,6 +3959,8 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 .panel-title:focus-within .hint,
 .dock-panel-head:hover .hint,
 .dock-panel-head:focus-within .hint,
+.modal-field-label:hover .hint,
+.modal-field-label:focus-within .hint,
 .hint:focus-within {
 	opacity: 1;
 }
@@ -4779,8 +4781,6 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	}
 }
 
-.modal-field-help { color: var(--text-2); font-size: 12px; line-height: 1.55; }
-
 .project-add, .project-action { border: 0; background: transparent; color: var(--text-3); padding: 4px; cursor: pointer; border-radius: 5px; }
 .project-add .icon, .project-action .icon { width: 15px; height: 15px; }
 .project-heading { display: flex; align-items: center; gap: 2px; padding-right: 6px; border-radius: 12px; }
@@ -4812,7 +4812,7 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 .modal-project .modal-foot { margin-top: 20px; gap: 12px; }
 .modal-project .modal-notice { margin-inline: 0; padding-top: 12px; }
 .directory-field { border: 1px solid var(--line-strong); border-radius: 14px; padding: 16px; }
-.directory-field.empty { min-height: 146px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.directory-field.empty { min-height: 112px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .directory-selections { width: 100%; }
 .directory-selection { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
 .directory-primary { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; text-align: left; padding: 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; }
@@ -4820,11 +4820,9 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 .directory-primary .icon { flex-shrink: 0; }
 .directory-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
 .directory-text span, .directory-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.directory-text small, .directory-help { color: var(--text-3); font-size: 12px; }
+.directory-text small { color: var(--text-3); font-size: 12px; }
 .directory-default { font-size: 11px; color: var(--text-3); }
 .directory-remove { border: 0; background: transparent; color: var(--text-3); font-size: 23px; cursor: pointer; padding: 4px 8px; }
-.directory-help { margin: 8px 0 14px; line-height: 1.6; }
-.directory-field.empty .directory-help { max-width: 320px; text-align: center; }
 .directory-add { display: inline-flex; align-items: center; gap: 8px; border: 0; border-radius: 24px; padding: 8px 14px; background: var(--hover); color: var(--text); font: inherit; cursor: pointer; }
 .directory-add .icon { width: 17px; height: 17px; }
 .directory-browser { margin-top: 16px; width: 100%; border-top: 1px solid var(--line); padding-top: 14px; }

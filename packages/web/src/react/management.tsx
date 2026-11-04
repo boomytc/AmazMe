@@ -3,7 +3,6 @@ import {
 	Fragment,
 	useCallback,
 	useEffect,
-	useId,
 	useLayoutEffect,
 	useMemo,
 	useRef,
@@ -1717,6 +1716,16 @@ interface ModalFieldViewProps {
 	readonly onSubmit: () => void;
 }
 
+/** The field's name, with its explanation behind an info control beside the label. */
+function ModalFieldLabel({ field, locale }: { readonly field: PanelField; readonly locale: Locale }) {
+	return (
+		<>
+			{field.label}
+			{field.hint === undefined ? null : <Hint text={field.hint} locale={locale} />}
+		</>
+	);
+}
+
 function ModalFieldView({
 	field,
 	locale,
@@ -1729,13 +1738,6 @@ function ModalFieldView({
 	onChange,
 	onSubmit,
 }: ModalFieldViewProps) {
-	const helpId = `modal-help-${useId().replaceAll(":", "")}`;
-	const help =
-		field.description === undefined ? undefined : (
-			<small id={helpId} className="modal-field-help">
-				<SensitiveText text={field.description} locale={locale} />
-			</small>
-		);
 	const enter = (event: ReactKeyboardEvent<HTMLInputElement>): void => {
 		if (
 			event.key !== "Enter" ||
@@ -1750,7 +1752,9 @@ function ModalFieldView({
 	if (field.kind === "directories") {
 		return (
 			<div className="modal-field" hidden={!visible}>
-				<span className="modal-field-label">{field.label}</span>
+				<span className="modal-field-label">
+					<ModalFieldLabel field={field} locale={locale} />
+				</span>
 				<DirectoryField
 					id={field.id}
 					locale={locale}
@@ -1760,14 +1764,15 @@ function ModalFieldView({
 					browseDirectories={browseDirectories}
 					pickDirectories={pickDirectories}
 				/>
-				{help}
 			</div>
 		);
 	}
 	if (field.kind === "multiselect") {
 		return (
 			<div className="modal-field" hidden={!visible}>
-				<span className="modal-field-label">{field.label}</span>
+				<span className="modal-field-label">
+					<ModalFieldLabel field={field} locale={locale} />
+				</span>
 				<MultiselectField
 					fieldId={field.id}
 					locale={locale}
@@ -1775,18 +1780,15 @@ function ModalFieldView({
 					options={field.options ?? []}
 					onValueChange={onChange}
 				/>
-				{help}
 			</div>
 		);
 	}
 	if (field.kind === "checkbox") {
 		return (
-			<label
-				className="modal-field modal-checkbox"
-				hidden={!visible}
-				aria-describedby={helpId}
-			>
-				<span className="modal-field-label">{field.label}</span>
+			<label className="modal-field modal-checkbox" hidden={!visible}>
+				<span className="modal-field-label">
+					<ModalFieldLabel field={field} locale={locale} />
+				</span>
 				<input
 					type="checkbox"
 					className="modal-check"
@@ -1795,7 +1797,6 @@ function ModalFieldView({
 					onChange={(event) => onChange(String(event.currentTarget.checked))}
 					onKeyDown={enter}
 				/>
-				{help}
 			</label>
 		);
 	}
@@ -1803,7 +1804,7 @@ function ModalFieldView({
 		return (
 			<div className="modal-field" hidden={!visible}>
 				<label className="modal-field-label" htmlFor={field.id}>
-					{field.label}
+					<ModalFieldLabel field={field} locale={locale} />
 				</label>
 				<ComboboxField
 					id={field.id}
@@ -1813,23 +1814,22 @@ function ModalFieldView({
 					options={field.options}
 					placeholder={field.placeholder}
 					disabled={disabled || field.readOnly === true}
-					describedBy={help === undefined ? undefined : helpId}
 					popupContainer={popupContainer}
 					onChange={onChange}
 				/>
-				{help}
 			</div>
 		);
 	}
 	if (field.kind === "select") {
 		return (
 			<label className="modal-field" hidden={!visible}>
-				<span className="modal-field-label">{field.label}</span>
+				<span className="modal-field-label">
+					<ModalFieldLabel field={field} locale={locale} />
+				</span>
 				<select
 					className="modal-input"
 					value={value}
 					disabled={disabled || field.readOnly === true}
-					aria-describedby={helpId}
 					onChange={(event) => onChange(event.currentTarget.value)}
 				>
 					{field.options?.map((option) => (
@@ -1838,24 +1838,23 @@ function ModalFieldView({
 						</option>
 					))}
 				</select>
-				{help}
 			</label>
 		);
 	}
 	if (field.kind === "textarea") {
 		return (
 			<label className="modal-field" hidden={!visible}>
-				<span className="modal-field-label">{field.label}</span>
+				<span className="modal-field-label">
+					<ModalFieldLabel field={field} locale={locale} />
+				</span>
 				<textarea
 					className={`modal-textarea${field.id === "content" || field.id === "entry" ? " code" : ""}`}
 					value={value}
 					placeholder={field.placeholder}
 					readOnly={field.readOnly === true}
 					disabled={disabled}
-					aria-describedby={helpId}
 					onChange={(event) => onChange(event.currentTarget.value)}
 				/>
-				{help}
 			</label>
 		);
 	}
@@ -1863,7 +1862,7 @@ function ModalFieldView({
 		return (
 			<div className="modal-field" hidden={!visible}>
 				<label className="modal-field-label" htmlFor={field.id}>
-					{field.label}
+					<ModalFieldLabel field={field} locale={locale} />
 				</label>
 				<PasswordField
 					id={field.id}
@@ -1872,17 +1871,17 @@ function ModalFieldView({
 					placeholder={field.placeholder}
 					readOnly={field.readOnly === true}
 					disabled={disabled}
-					describedBy={helpId}
 					onChange={field.readOnly === true ? undefined : onChange}
 					onKeyDown={enter}
 				/>
-				{help}
 			</div>
 		);
 	}
 	return (
 		<label className="modal-field" hidden={!visible}>
-			<span className="modal-field-label">{field.label}</span>
+			<span className="modal-field-label">
+				<ModalFieldLabel field={field} locale={locale} />
+			</span>
 			<input
 				type={field.inputType ?? "text"}
 				className="modal-input"
@@ -1895,11 +1894,9 @@ function ModalFieldView({
 						? 1
 						: undefined
 				}
-				aria-describedby={helpId}
 				onChange={(event) => onChange(event.currentTarget.value)}
 				onKeyDown={enter}
 			/>
-			{help}
 		</label>
 	);
 }

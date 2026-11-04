@@ -933,9 +933,6 @@ export function DirectoryField({
 					</div>
 				))}
 			</div>
-			<p className="directory-help">
-				{translate(locale, "project.folderHint")}
-			</p>
 			<button
 				ref={addRef}
 				type="button"

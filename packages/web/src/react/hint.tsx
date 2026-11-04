@@ -119,7 +119,8 @@ export function Hint({
 						>
 							<SensitiveText text={text} locale={locale} />
 						</div>,
-						document.body,
+						/* A modal is in the top layer, above anything portalled to the body. */
+						trigger.current?.closest("dialog") ?? document.body,
 					)
 				: null}
 		</span>

@@ -236,7 +236,8 @@ interface PanelFieldBase {
 	/** Every condition must match. One condition stays a single rule; several are combined. */
 	readonly visibleWhen?: { readonly field: string; readonly values: readonly string[] } | readonly { readonly field: string; readonly values: readonly string[] }[];
 	readonly readOnly?: boolean;
-	readonly description?: string;
+	/** Help for the label, revealed from its info control instead of a line under the field. */
+	readonly hint?: string;
 	readonly value: string;
 	readonly placeholder?: string;
 }
@@ -1436,8 +1437,8 @@ function scheduleModal(locale: Locale, context: ScheduleEditorContext, record?: 
 			{ id: "kind", label: translate(locale, "modal.scheduleAdd.kind"), kind: "select", value: kind, options: options(["interval", "once", "cron"]) },
 			{ id: "everyMinutes", label: translate(locale, "modal.scheduleAdd.every"), kind: "text", inputType: "number", value: rule?.kind === "interval" ? String(rule.everyMinutes) : "15", visibleWhen: { field: "kind", values: ["interval"] } },
 			{ id: "at", label: translate(locale, "modal.scheduleAdd.at"), kind: "text", inputType: "datetime-local", value: rule?.kind === "once" ? rule.at : "", visibleWhen: { field: "kind", values: ["once"] } },
-			{ id: "expression", label: translate(locale, "modal.scheduleAdd.expression"), kind: "text", value: rule?.kind === "cron" ? rule.expression : "0 9 * * 1-5", description: translate(locale, "modal.scheduleAdd.cronHelp"), visibleWhen: { field: "kind", values: ["cron"] } },
-			{ id: "timeZone", label: translate(locale, "modal.scheduleAdd.timeZone"), kind: "text", value: timeZone, description: translate(locale, "modal.scheduleAdd.zoneHelp"), visibleWhen: { field: "kind", values: ["once", "cron"] } },
+			{ id: "expression", label: translate(locale, "modal.scheduleAdd.expression"), kind: "text", value: rule?.kind === "cron" ? rule.expression : "0 9 * * 1-5", hint: translate(locale, "modal.scheduleAdd.cronHelp"), visibleWhen: { field: "kind", values: ["cron"] } },
+			{ id: "timeZone", label: translate(locale, "modal.scheduleAdd.timeZone"), kind: "text", value: timeZone, hint: translate(locale, "modal.scheduleAdd.zoneHelp"), visibleWhen: { field: "kind", values: ["once", "cron"] } },
 			{ id: "busy", label: translate(locale, "modal.scheduleAdd.busy"), kind: "select", value: record?.busy ?? "queue", options: options(["queue", "skip"]), visibleWhen: { field: "targetKind", values: ["session"] } },
 			{ id: "missed", label: translate(locale, "modal.scheduleAdd.missed"), kind: "select", value: record?.missed ?? "latest", options: options(["latest", "skip"]) },
 			{ id: "graceMinutes", label: translate(locale, "modal.scheduleAdd.grace"), kind: "text", inputType: "number", value: String(record?.graceMinutes ?? 10) },

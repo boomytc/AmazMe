@@ -52,14 +52,14 @@ export function projectGroups(directory: SessionDirectoryLike | undefined, items
 export function addProjectModal(locale: Locale): PanelModal {
 	return { id: PROJECT_ADD_MODAL, title: translate(locale, "project.create"),
 		fields: [{ id: "name", label: translate(locale, "project.name"), placeholder: translate(locale, "project.name"), kind: "text", value: "" },
-			{ id: "workspaces", label: translate(locale, "project.folders"), kind: "directories", value: "[]" }],
+			{ id: "workspaces", label: translate(locale, "project.folders"), kind: "directories", value: "[]", hint: translate(locale, "project.folderHint") }],
 		submit: translate(locale, "project.create") };
 }
 
 export function editProjectModal(locale: Locale, project: { id: string; name: string; cwd: string; workspaces?: readonly string[] }): PanelModal {
 	return { ...addProjectModal(locale), id: PROJECT_EDIT_MODAL, title: translate(locale, "project.edit"), data: project.id,
 		fields: [{ id: "name", label: translate(locale, "project.name"), placeholder: translate(locale, "project.name"), kind: "text", value: project.name },
-			{ id: "workspaces", label: translate(locale, "project.folders"), kind: "directories", value: JSON.stringify(project.workspaces ?? [project.cwd]) }],
+			{ id: "workspaces", label: translate(locale, "project.folders"), kind: "directories", value: JSON.stringify(project.workspaces ?? [project.cwd]), hint: translate(locale, "project.folderHint") }],
 		submit: translate(locale, "modal.save") };
 }
 
