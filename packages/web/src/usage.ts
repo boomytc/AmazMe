@@ -30,9 +30,8 @@ export function usagePanel(locale: Locale, report: UsageReport | undefined): Pan
 	if (!report) return { id: "statistics", title, notices: [], groups: [], description: copy("stats.loading") };
 	const row = (id: string, title: string, value: string, description?: string): PanelRow => ({ id, title, value, description });
 	return { id: "statistics", title,
-		actions: [{ id: USAGE_REFRESH_ACTION, label: copy("dock.reload"), weight: "line" }],
 		notices: [...((report.unmeasured_compactions ?? 0) > 0 ? [{ tone: "info" as const, text: copy("stats.unmeasuredCompactions", { count: number(report.unmeasured_compactions ?? 0) }) }] : [])],
-		groups: [{ id: "stats:totals", title: copy("stats.totals"), hint: copy("stats.scope"), skeleton: "records", rows: [
+		groups: [{ id: "stats:totals", title: copy("stats.totals"), hint: copy("stats.scope"), skeleton: "records", actions: [{ id: USAGE_REFRESH_ACTION, label: copy("dock.reload"), weight: "line" }], rows: [
 			row("stats:requests", copy("stats.turns"), number(report.request_count ?? 0), copy("stats.requestOutcomes", { failed: number(report.failed_requests ?? 0), cancelled: number(report.cancelled_requests ?? 0) })),
 			row("stats:calls", copy("stats.modelCalls"), calls(report), copy("stats.steps", { steps: number(report.steps ?? 0), unknown: number(report.unknown_steps ?? 0), failed: number(report.failed_tool_calls ?? 0) })),
 			row("stats:input", copy("stats.input"), number(prompt(report)), copy("stats.inputBreakdown", { fresh: number(report.input_tokens ?? 0), read: number(report.cache_read_tokens ?? 0), write: number(report.cache_write_tokens ?? 0) })),
