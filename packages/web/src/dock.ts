@@ -17,9 +17,9 @@ import {
 	JOB_STREAM_ACTION,
 	JOBS_REFRESH_ACTION,
 	TASK_RETRY_ACTION,
-	CONVERSATION_RENAME_ACTION,
-	CONVERSATION_ARCHIVE_ACTION,
-	CONVERSATION_RESTORE_ACTION,
+	SESSION_RENAME_ACTION,
+	SESSION_ARCHIVE_ACTION,
+	SESSION_RESTORE_ACTION,
 	WORKSPACE_CHECKPOINT_ACTION,
 	WORKSPACE_OPEN_ACTION,
 	WORKSPACE_READ_ACTION,
@@ -375,8 +375,8 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 		...(conversation.role !== "fork" || conversation.archivedAt !== undefined ? {} : { menu: {
 			label: translate(locale, "dock.forkActions"), data: conversation.id,
 			actions: [
-				{ id: CONVERSATION_RENAME_ACTION, label: translate(locale, "sidebar.rename"), weight: "text" as const, data: conversation.id, glyph: "square-pen" as const, disabled: sessionReadOnly },
-				{ id: CONVERSATION_ARCHIVE_ACTION, label: translate(locale, "project.archive"), weight: "text" as const, danger: true, data: conversation.id, glyph: "folder" as const, disabled: sessionReadOnly },
+				{ id: SESSION_RENAME_ACTION, label: translate(locale, "sidebar.rename"), weight: "text" as const, data: conversation.id, glyph: "square-pen" as const, disabled: sessionReadOnly },
+				{ id: SESSION_ARCHIVE_ACTION, label: translate(locale, "project.archive"), weight: "text" as const, danger: true, data: conversation.id, glyph: "folder" as const, disabled: sessionReadOnly },
 			],
 		} }),
 		actions: [
@@ -391,7 +391,7 @@ export function conversationsPanel(locale: Locale, state: ConversationsStateLike
 				data: conversation.id, disabled: sessionReadOnly || !conversation.hasEntries,
 			}]),
 			...(conversation.role === "fork" && conversation.archivedAt !== undefined ? [{
-				id: CONVERSATION_RESTORE_ACTION, label: translate(locale, "dock.restoreFork"), weight: "text" as const,
+				id: SESSION_RESTORE_ACTION, label: translate(locale, "dock.restoreFork"), weight: "text" as const,
 				data: conversation.id, disabled: sessionReadOnly,
 			}] : []),
 		],

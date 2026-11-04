@@ -28,14 +28,15 @@ import {
 	SCHEDULE_HISTORY_MODAL,
 	SCHEDULE_CANCEL_ACTION,
 	SCHEDULE_RELOAD_ACTION,
+	SESSION_ARCHIVE_OPEN_ACTION,
 	SESSION_REMOVE_MODAL,
 	SESSION_RENAME_MODAL,
+	SESSION_RESTORE_ACTION,
 } from "./actions.ts";
 import type { ModelPicker, SessionDirectoryLike } from "./view.ts";
 import { rosterItems } from "./view.ts";
 import type { Locale } from "./locale.ts";
 import { errorMessageCopy } from "./errors.ts";
-import { SESSION_ARCHIVE_OPEN_ACTION, SESSION_RESTORE_ACTION } from "./projects.ts";
 import {
 	type MessageKey,
 	mcpExposureCopy,

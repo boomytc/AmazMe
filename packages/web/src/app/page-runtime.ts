@@ -2231,7 +2231,7 @@ export class PageRuntime {
 			this.render();
 			return true;
 		}
-		if (id === A.SESSION_RENAME_ACTION || id === A.CONVERSATION_RENAME_ACTION) {
+		if (id === A.SESSION_RENAME_ACTION) {
 			if (!session) throw new Error("会话不存在");
 			this.sessionEdit = session;
 			this.panels.modal = P.renameSessionModal(
@@ -2259,10 +2259,7 @@ export class PageRuntime {
 			this.render();
 			return true;
 		}
-		if (
-			id === Projects.SESSION_ARCHIVE_ACTION ||
-			id === A.CONVERSATION_ARCHIVE_ACTION
-		) {
+		if (id === A.SESSION_ARCHIVE_ACTION) {
 			if (!session) throw new Error("会话不存在");
 			this.panels.modal = Projects.archiveSessionModal(
 				this.preferences.locale,
@@ -2271,17 +2268,13 @@ export class PageRuntime {
 			this.render();
 			return true;
 		}
-		if (
-			id === Projects.SESSION_ARCHIVE_MODAL ||
-			id === Projects.SESSION_RESTORE_ACTION ||
-			id === A.CONVERSATION_RESTORE_ACTION
-		) {
+		if (id === A.SESSION_ARCHIVE_MODAL || id === A.SESSION_RESTORE_ACTION) {
 			if (!session) throw new Error("会话不存在");
 			const modal = this.panels.modal;
 			await this.client.withSession(session.session_id, (connection) =>
 				this.client.call("POST /api/v1/sessions/{session}/archive", {
 					path: { session: session.session_id },
-					body: { archived: id === Projects.SESSION_ARCHIVE_MODAL },
+					body: { archived: id === A.SESSION_ARCHIVE_MODAL },
 					connection,
 				}),
 			);
@@ -2290,10 +2283,7 @@ export class PageRuntime {
 			this.render();
 			return true;
 		}
-		if (
-			id === Projects.SESSION_ARCHIVE_OPEN_ACTION ||
-			id === A.CONVERSATION_SELECT_ACTION
-		) {
+		if (id === A.SESSION_ARCHIVE_OPEN_ACTION || id === A.CONVERSATION_SELECT_ACTION) {
 			if (data) await this.selectSession(data);
 			return true;
 		}

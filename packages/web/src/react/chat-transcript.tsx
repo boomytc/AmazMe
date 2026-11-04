@@ -28,7 +28,7 @@ import type { FileLocation } from "../file-links.ts";
 import type { Locale } from "../locale.ts";
 import type { PanelButton } from "../panels.ts";
 import { type ProcessGroup, processGroups } from "../process-groups.ts";
-import { SESSION_RESTORE_ACTION } from "../projects.ts";
+import { SESSION_RESTORE_ACTION } from "../actions.ts";
 import { quotedDraft } from "../quote.ts";
 import type { PageRenderer } from "../render.ts";
 import { type MessageKey, translate } from "../strings.ts";

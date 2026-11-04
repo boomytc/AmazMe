@@ -1,6 +1,7 @@
 import type { Locale } from "./locale.ts";
 import type { PanelModal } from "./panels.ts";
 import { translate } from "./strings.ts";
+import { SESSION_ARCHIVE_MODAL } from "./actions.ts";
 import type { RosterItem, SessionDirectoryLike } from "./view.ts";
 
 export const PROJECT_ADD_ACTION = "project:add";
@@ -15,11 +16,6 @@ export const PROJECT_RENAME_ACTION = "project:rename";
 export const PROJECT_RENAME_MODAL = "project:rename-submit";
 export const PROJECT_REMOVE_ACTION = "project:remove";
 export const PROJECT_REMOVE_MODAL = "project:remove-confirm";
-export const SESSION_ARCHIVE_OPEN_ACTION = "session:open-archived";
-export const SESSION_ARCHIVE_ACTION = "session:archive";
-export const SESSION_ARCHIVE_MODAL = "session:archive-confirm";
-export const SESSION_RESTORE_ACTION = "session:restore";
-
 export interface ProjectGroup {
 	readonly id: string;
 	readonly name: string;

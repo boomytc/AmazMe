@@ -71,10 +71,6 @@ export const CONVERSATION_FORK_ACTION = "conversation:fork";
 export const CONVERSATIONS_REFRESH_ACTION = "conversation:refresh";
 /** Retry a task parked after repeated process interruptions: `data` is the task id. */
 export const TASK_RETRY_ACTION = "task:retry";
-/** Metadata-only management of manual forks, never the main line or task-owned children. */
-export const CONVERSATION_RENAME_ACTION = "conversation:rename";
-export const CONVERSATION_ARCHIVE_ACTION = "conversation:archive";
-export const CONVERSATION_RESTORE_ACTION = "conversation:restore";
 /** Approve one pending tool call: `data` is the approval id. */
 export const APPROVAL_APPROVE_ACTION = "approval:approve";
 /** Deny one pending tool call: `data` is the approval id. */
@@ -118,11 +114,18 @@ export const SCHEDULE_ENABLED_ACTION = "schedule:enabled";
 
 /** Drop one pending image before it is sent: `data` is the attachment id. */
 export const ATTACHMENT_REMOVE_ACTION = "composer:attachment-remove";
+/** Metadata-only management of sessions and their forks, never the main line's content. */
+export const SESSION_RENAME_ACTION = "session:rename";
+export const SESSION_ARCHIVE_ACTION = "session:archive";
+/** The confirmation an archive opens: `data` is the session id. */
+export const SESSION_ARCHIVE_MODAL = "session:archive-confirm";
+export const SESSION_RESTORE_ACTION = "session:restore";
+/** Open one archived session for reading: `data` is the session id. */
+export const SESSION_ARCHIVE_OPEN_ACTION = "session:open-archived";
 /** Remove one session: `data` is the session id; the page confirms before the host call. */
 export const SESSION_REMOVE_ACTION = "session:remove";
 /** The confirmation a session's remove opens; `data` is the session id. */
 export const SESSION_REMOVE_MODAL = "session:remove-confirm";
-/** Session row menu and its rename dialog. */
-export const SESSION_RENAME_ACTION = "session:rename";
+/** The rename dialog's submit: `fields.name` is the new title. */
 export const SESSION_RENAME_MODAL = "session:rename-submit";
 export const SESSION_COPY_ID_ACTION = "session:copy-id";

@@ -217,8 +217,8 @@ function SessionRow({
 					{ id: A.SESSION_RENAME_ACTION, label: copy("sidebar.rename") },
 					{
 						id: item.archived
-							? P.SESSION_RESTORE_ACTION
-							: P.SESSION_ARCHIVE_ACTION,
+							? A.SESSION_RESTORE_ACTION
+							: A.SESSION_ARCHIVE_ACTION,
 						label: copy(item.archived ? "project.restore" : "project.archive"),
 					},
 					{ id: A.SESSION_COPY_ID_ACTION, label: copy("sidebar.copyId") },
