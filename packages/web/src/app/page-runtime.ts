@@ -44,7 +44,7 @@ import { toolResultView } from "../tool-results.ts";
 import { ApiError, isRecord, parseContract } from "../transport/api.ts";
 import { type ClientConnection, PythonClient } from "../transport/client.ts";
 import { settled } from "../transport/stream.ts";
-import { adjustedFontSizes, resolveTypography } from "../typography.ts";
+import { adjustedFontSizes, resolveTypography, type FontSizeAction } from "../typography.ts";
 import { USAGE_ACTION, USAGE_REFRESH_ACTION } from "../usage.ts";
 import { attachments, sessionCapabilities, type SubmitMode, type TranscriptBlock } from "../view.ts";
 import { Automation, scheduleRecord } from "./automation.ts";
@@ -386,23 +386,21 @@ export class PageRuntime {
 			}
 		};
 		this.renderer.onShortcut = (id) => {
-			if (id === "session.new") run(() => this.createSession());
-			else if (id === "run.stop") run(() => this.cancel());
-			else if (id.startsWith("font."))
+			if (id === A.SESSION_NEW_ACTION) run(() => this.createSession());
+			else if (id === A.RUN_STOP_ACTION) run(() => this.cancel());
+			else if (id.startsWith("font:")) {
+				const size: FontSizeAction = id.endsWith("increase")
+					? "increase"
+					: id.endsWith("decrease")
+						? "decrease"
+						: "reset";
 				run(() =>
 					this.preferences.updatePreferences((preferences) => ({
 						...preferences,
-						...adjustedFontSizes(
-							resolveTypography(preferences),
-							id === "font.increase"
-								? "increase"
-								: id === "font.decrease"
-									? "decrease"
-									: "reset",
-						),
+						...adjustedFontSizes(resolveTypography(preferences), size),
 					})),
 				);
-			else if (id === "dock.toggle")
+			} else if (id === A.DOCK_TOGGLE_ACTION)
 				run(() =>
 					this.action({
 						kind: "command",
@@ -1077,45 +1075,18 @@ export class PageRuntime {
 		if (connection.active() && this.drafts.current === draft) this.render();
 	}
 	private async command(name: string, args: string): Promise<void> {
-		switch (name) {
-			case "new":
-				await this.createSession();
-				break;
-			case "model":
-				this.panels.settingsSection = {
-					id: "settings:models",
-					generation: ++this.panels.generation,
-				};
-				this.panels.current = P.SETTINGS_VIEW;
-				this.render();
-				break;
-			case "settings":
-				this.panels.settingsSection = undefined;
-				this.panels.current = P.SETTINGS_VIEW;
-				this.render();
-				break;
-			case "compact":
-				await this.action({
-					kind: "command",
-					id: A.COMPACT_ACTION,
-					data: undefined,
-				});
-				break;
-			case "fork":
-				await this.fork();
-				break;
-			case "export": {
-				const data = await this.client.call("GET /api/v1/export");
-				this.download(
-					JSON.stringify(data, null, 2),
-					"amazme-export.json",
-					"application/json",
-				);
-				break;
-			}
-			default:
-				throw new Error(`未识别的命令：/${name} ${args}`);
-		}
+		/* The reader types these words; inside the page every one resolves to an action id. */
+		const alias: Readonly<Record<string, string>> = {
+			new: A.SESSION_NEW_ACTION,
+			model: A.MODEL_CONNECTIONS_ACTION,
+			settings: A.SETTINGS_OPEN_ACTION,
+			compact: A.COMPACT_ACTION,
+			fork: A.CONVERSATION_FORK_ACTION,
+			export: A.SESSION_EXPORT_ACTION,
+		};
+		const id = alias[name];
+		if (id === undefined) throw new Error(`未识别的命令：/${name} ${args}`);
+		await this.action({ kind: "command", id, data: undefined });
 	}
 	private download(data: string, name: string, type: string): void {
 		const url = URL.createObjectURL(new Blob([data], { type }));
@@ -1315,11 +1286,24 @@ export class PageRuntime {
 				this.renderer.refreshTranscriptSearch();
 			return;
 		}
-		if (id === A.WELCOME_SESSION_ACTION) {
+		if (id === A.WELCOME_SESSION_ACTION || id === A.SESSION_NEW_ACTION) {
 			await this.createSession();
 			return;
 		}
-		if (id === A.WELCOME_SETTINGS_ACTION || id === A.MODEL_CONNECTIONS_ACTION) {
+		if (id === A.SESSION_EXPORT_ACTION) {
+			const data = await this.client.call("GET /api/v1/export");
+			this.download(
+				JSON.stringify(data, null, 2),
+				"amazme-export.json",
+				"application/json",
+			);
+			return;
+		}
+		if (
+			id === A.WELCOME_SETTINGS_ACTION ||
+			id === A.MODEL_CONNECTIONS_ACTION ||
+			id === A.SETTINGS_OPEN_ACTION
+		) {
 			this.panels.settingsSection =
 				id === A.MODEL_CONNECTIONS_ACTION
 					? {
@@ -1511,7 +1495,7 @@ export class PageRuntime {
 			await this.cancel(data);
 			return;
 		}
-		if (id === "effect:cleanup") {
+		if (id === A.EFFECT_CLEANUP_ACTION) {
 			const connection = this.requireConnection(),
 				target: unknown = JSON.parse(data ?? "null");
 			if (
@@ -1544,7 +1528,7 @@ export class PageRuntime {
 			if (connection.active()) this.render();
 			return;
 		}
-		if (id === "effect:review" || id === "effect:resolve") {
+		if (id === A.EFFECT_REVIEW_ACTION || id === A.EFFECT_RESOLVE_ACTION) {
 			const connection = this.requireConnection(),
 				target: unknown = JSON.parse(data ?? "null");
 			if (
@@ -1559,9 +1543,9 @@ export class PageRuntime {
 			);
 			if (!hold || !hold.resource_clean)
 				throw new Error("请先等待原资源退出并核对当前状态");
-			if (id === "effect:review") {
+			if (id === A.EFFECT_REVIEW_ACTION) {
 				this.panels.modal = {
-					id: "effect:resolve",
+					id: A.EFFECT_RESOLVE_ACTION,
 					data,
 					title: "核对执行效果",
 					description:
@@ -1617,7 +1601,7 @@ export class PageRuntime {
 		if (
 			id === A.FEEDBACK_UP_ACTION ||
 			id === A.FEEDBACK_DOWN_ACTION ||
-			id === "write:retry-feedback"
+			id === A.WRITE_RETRY_FEEDBACK_ACTION
 		) {
 			const connection = this.requireConnection(),
 				target: unknown = JSON.parse(data ?? "null");
@@ -1630,7 +1614,7 @@ export class PageRuntime {
 			const ledger = this.ledger(connection),
 				key = `feedback:${target[1]}`;
 			let record = ledger.read(key, "POST /api/v1/sessions/{session}/feedback");
-			if (id === "write:retry-feedback") {
+			if (id === A.WRITE_RETRY_FEEDBACK_ACTION) {
 				if (target.length !== 3 || !record || record.id !== target[2])
 					throw new Error("原反馈请求已变化，请核对当前记录");
 			} else {
@@ -1662,13 +1646,13 @@ export class PageRuntime {
 			}
 			return;
 		}
-		if (id === "terminal:retry") {
+		if (id === A.TERMINAL_RETRY_ACTION) {
 			this.dock.terminal?.queue.retry();
 			return;
 		}
-		if (id === "terminal:confirm") {
+		if (id === A.TERMINAL_CONFIRM_ACTION) {
 			this.panels.modal = {
-				id: "terminal:confirm-submit",
+				id: A.TERMINAL_CONFIRM_MODAL,
 				title: "核对终端输入",
 				description:
 					"确认已经核对终端内容后，清除这些未确认输入；不会重新发送它们。",
@@ -1680,7 +1664,7 @@ export class PageRuntime {
 			return;
 		}
 		if (
-			id === "terminal:confirm-submit" &&
+			id === A.TERMINAL_CONFIRM_MODAL &&
 			this.dock.terminal &&
 			data === this.dock.terminal.id
 		) {
@@ -1689,17 +1673,17 @@ export class PageRuntime {
 			this.render();
 			return;
 		}
-		if (id === "write:retry-submit") {
+		if (id === A.WRITE_RETRY_SUBMIT_ACTION) {
 			if (!data) throw new Error("缺少原请求编号");
 			await this.submit(this.drafts.current.text, data);
 			return;
 		}
-		if (id === "write:retry-command") {
+		if (id === A.WRITE_RETRY_COMMAND_ACTION) {
 			if (!data) throw new Error("缺少原命令编号");
 			await this.runPluginCommand("", "", data);
 			return;
 		}
-		if (id === "write:cancel-command") {
+		if (id === A.WRITE_CANCEL_COMMAND_ACTION) {
 			const connection = this.requireConnection(),
 				ledger = this.ledger(connection),
 				record = ledger.read(
@@ -1729,7 +1713,7 @@ export class PageRuntime {
 			if (connection.active()) this.render();
 			return;
 		}
-		if (id === "write:cancel-submit") {
+		if (id === A.WRITE_CANCEL_SUBMIT_ACTION) {
 			const connection = this.requireConnection(),
 				ledger = this.ledger(connection);
 			const record = ledger.read(
@@ -1748,7 +1732,7 @@ export class PageRuntime {
 			await this.fork(data);
 			return;
 		}
-		if (id === "write:retry-branch") {
+		if (id === A.WRITE_RETRY_BRANCH_ACTION) {
 			if (!data) throw new Error("缺少原分支编号");
 			await this.fork(this.requireConnection().sessionId, data);
 			return;
@@ -2763,13 +2747,13 @@ export class PageRuntime {
 					id: command.id,
 					text: `插件命令尚未确认：/${command.body.name}`,
 					retry: {
-						id: "write:retry-command",
+						id: A.WRITE_RETRY_COMMAND_ACTION,
 						data: command.id,
 						label: "重试原命令",
 						weight: "line",
 					},
 					cancel: {
-						id: "write:cancel-command",
+						id: A.WRITE_CANCEL_COMMAND_ACTION,
 						data: command.id,
 						label: "取消原命令",
 						weight: "text",
@@ -2800,7 +2784,7 @@ export class PageRuntime {
 							id: record.id,
 							text: "答案反馈尚未确认",
 							retry: {
-								id: "write:retry-feedback",
+								id: A.WRITE_RETRY_FEEDBACK_ACTION,
 								data: JSON.stringify([
 									connection.sessionId,
 									request,
@@ -2949,7 +2933,7 @@ export class PageRuntime {
 								id: branchPending,
 								text: "分支创建尚未确认",
 								retry: {
-									id: "write:retry-branch",
+									id: A.WRITE_RETRY_BRANCH_ACTION,
 									data: branchPending,
 									label: "重试原分支",
 									weight: "line" as const,
@@ -2963,13 +2947,13 @@ export class PageRuntime {
 								id: pending.id,
 								text: `请求尚未确认：${pending.body.text}`,
 								retry: {
-									id: "write:retry-submit",
+									id: A.WRITE_RETRY_SUBMIT_ACTION,
 									data: pending.id,
 									label: "重试原请求",
 									weight: "line" as const,
 								},
 								cancel: {
-									id: "write:cancel-submit",
+									id: A.WRITE_CANCEL_SUBMIT_ACTION,
 									data: pending.id,
 									label: "取消原请求",
 									weight: "text" as const,
@@ -2990,7 +2974,7 @@ export class PageRuntime {
 									: {
 											actions: [
 												{
-													id: "terminal:retry",
+													id: A.TERMINAL_RETRY_ACTION,
 													label: "重试原输入",
 													weight: "line" as const,
 													disabled:
@@ -2998,7 +2982,7 @@ export class PageRuntime {
 														!terminal.queue.items.length,
 												},
 												{
-													id: "terminal:confirm",
+													id: A.TERMINAL_CONFIRM_ACTION,
 													label: "核对后继续",
 													weight: "text" as const,
 													disabled:

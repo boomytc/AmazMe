@@ -1,11 +1,12 @@
 /**
- * The action ids the page's own controls report. Panels carry their ids in `panels.ts`; these are
- * the run controls around the conversation — the queue strips, the composer's submit mode, the
- * header's compaction control, and the model card's refresh — which are reported through the same
- * generic `command` action the panels use, so the page entry has one dispatch path.
+ * The page's command catalog. Every id a page control, keyboard shortcut, or command-line alias
+ * reports lives here; panels keep only their own layout ids in `panels.ts`. They all arrive through
+ * the same generic `command` action, so the page entry has one dispatch path.
  *
  * A control is a `PanelButton` whose id is one of these and whose `data` is its subject (a queued
- * entry id, a submit mode), so the renderer stays free of feature knowledge.
+ * entry id, a submit mode, a session id), so the renderer stays free of feature knowledge. The
+ * command line keeps its typed words (`/new`, `/export`) as the reader-facing syntax and resolves
+ * them to these ids before dispatch.
  */
 
 /** Withdraw one queued input: `data` is the inbox submission id. */
@@ -71,6 +72,35 @@ export const CONVERSATION_FORK_ACTION = "conversation:fork";
 export const CONVERSATIONS_REFRESH_ACTION = "conversation:refresh";
 /** Retry a task parked after repeated process interruptions: `data` is the task id. */
 export const TASK_RETRY_ACTION = "task:retry";
+/* Unconfirmed writes report the ids below; each payload names the ledger record to replay or drop. */
+export const WRITE_RETRY_SUBMIT_ACTION = "write:retry-submit";
+export const WRITE_CANCEL_SUBMIT_ACTION = "write:cancel-submit";
+export const WRITE_RETRY_COMMAND_ACTION = "write:retry-command";
+export const WRITE_CANCEL_COMMAND_ACTION = "write:cancel-command";
+export const WRITE_RETRY_BRANCH_ACTION = "write:retry-branch";
+export const WRITE_RETRY_FEEDBACK_ACTION = "write:retry-feedback";
+/** Reconcile an unknown execution effect; the data carries the session and call id. */
+export const EFFECT_CLEANUP_ACTION = "effect:cleanup";
+export const EFFECT_REVIEW_ACTION = "effect:review";
+export const EFFECT_RESOLVE_ACTION = "effect:resolve";
+/** Recover terminal input that could not be confirmed. */
+export const TERMINAL_RETRY_ACTION = "terminal:retry";
+export const TERMINAL_CONFIRM_ACTION = "terminal:confirm";
+/** The confirmation a terminal's pending input opens: `data` is the terminal id. */
+export const TERMINAL_CONFIRM_MODAL = "terminal:confirm-submit";
+
+/* Commands with a keyboard binding; the shortcut table reports these ids, not its own names. */
+export const SESSION_NEW_ACTION = "session:new";
+export const RUN_STOP_ACTION = "run:stop";
+export const DOCK_FULLSCREEN_ACTION = "dock:fullscreen";
+export const COMPOSER_FOCUS_ACTION = "composer:focus";
+export const TRANSCRIPT_PREVIOUS_PROMPT_ACTION = "transcript:previous-prompt";
+export const TRANSCRIPT_NEXT_PROMPT_ACTION = "transcript:next-prompt";
+/** Open settings without a section: the command-line alias behind `/settings`. */
+export const SETTINGS_OPEN_ACTION = "settings:open";
+/** Download the session export JSON; the command-line alias behind `/export`. */
+export const SESSION_EXPORT_ACTION = "session:export";
+
 /** Approve one pending tool call: `data` is the approval id. */
 export const APPROVAL_APPROVE_ACTION = "approval:approve";
 /** Deny one pending tool call: `data` is the approval id. */

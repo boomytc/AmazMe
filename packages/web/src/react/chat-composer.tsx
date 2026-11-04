@@ -13,7 +13,7 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { SUBMIT_MODE_ACTION } from "../actions.ts";
+import { RUN_STOP_ACTION, SUBMIT_MODE_ACTION } from "../actions.ts";
 import type { Locale } from "../locale.ts";
 import type { PanelButton } from "../panels.ts";
 import type { ApprovalPolicy } from "../permission-picker.ts";
@@ -1265,7 +1265,7 @@ export function ChatComposer({
 								className="stop"
 								aria-label={translate(view.locale, "composer.stop")}
 								title={
-									view.shortcuts.find((row) => row.id === "run.stop")?.keys ??
+									view.shortcuts.find((row) => row.id === RUN_STOP_ACTION)?.keys ??
 									translate(view.locale, "composer.stop")
 								}
 								onClick={() => actions.onAbort()}

@@ -4,23 +4,38 @@
  * `primary` combinations for itself. `/` focuses the composer. Stopping a turn is one chord,
  * Ctrl+C; Escape only closes menus.
  *
- * One table serves both jobs: the reference the reader sees, and the matcher the renderer uses. A
+ * One table serves both jobs: the reference the reader sees, and the matcher the renderer uses.
+ * Each row's id is the action id it reports, so a shortcut never needs a private command name. A
  * gesture arrives with `primary` already normalized, so matching never depends on the platform.
  */
+import {
+	COMPOSER_FOCUS_ACTION,
+	DOCK_FULLSCREEN_ACTION,
+	DOCK_TOGGLE_ACTION,
+	RUN_STOP_ACTION,
+	SESSION_NEW_ACTION,
+	TRANSCRIPT_NEXT_PROMPT_ACTION,
+	TRANSCRIPT_PREVIOUS_PROMPT_ACTION,
+} from "./actions.ts";
 import type { Locale } from "./locale.ts";
 import { type MessageKey, translate } from "./strings.ts";
 import type { FontSizeAction } from "./typography.ts";
 
-/** The actions a shortcut can trigger. */
+/** The action ids a shortcut can trigger; font sizing carries the adjustment after `font:`. */
 export type ShortcutId =
-	| "session.new"
-	| "dock.toggle"
-	| "dock.fullscreen"
-	| "composer.focus"
-	| "run.stop"
-	| "transcript.previousPrompt"
-	| "transcript.nextPrompt"
-	| `font.${FontSizeAction}`;
+	| typeof SESSION_NEW_ACTION
+	| typeof DOCK_TOGGLE_ACTION
+	| typeof DOCK_FULLSCREEN_ACTION
+	| typeof COMPOSER_FOCUS_ACTION
+	| typeof RUN_STOP_ACTION
+	| typeof TRANSCRIPT_PREVIOUS_PROMPT_ACTION
+	| typeof TRANSCRIPT_NEXT_PROMPT_ACTION
+	| `font:${FontSizeAction}`;
+
+/** The command id one font adjustment reports. */
+export function fontCommand(action: FontSizeAction): `font:${FontSizeAction}` {
+	return `font:${action}`;
+}
 
 export interface ShortcutGesture {
 	/** The physical key, e.g. `KeyM`, `Slash`, `Escape`. */
@@ -42,22 +57,22 @@ export interface Shortcut {
 }
 
 const TABLE: readonly { readonly id: ShortcutId; readonly gesture: ShortcutGesture; readonly message: MessageKey }[] = [
-	{ id: "session.new", gesture: { code: "KeyN", primary: true, alt: true, shift: false }, message: "shortcut.newSession" },
-	{ id: "dock.toggle", gesture: { code: "KeyM", primary: true, alt: true, shift: false }, message: "shortcut.toggleDock" },
-	{ id: "dock.fullscreen", gesture: { code: "Enter", primary: true, alt: true, shift: false }, message: "shortcut.toggleFullscreen" },
+	{ id: SESSION_NEW_ACTION, gesture: { code: "KeyN", primary: true, alt: true, shift: false }, message: "shortcut.newSession" },
+	{ id: DOCK_TOGGLE_ACTION, gesture: { code: "KeyM", primary: true, alt: true, shift: false }, message: "shortcut.toggleDock" },
+	{ id: DOCK_FULLSCREEN_ACTION, gesture: { code: "Enter", primary: true, alt: true, shift: false }, message: "shortcut.toggleFullscreen" },
 	{
-		id: "composer.focus",
+		id: COMPOSER_FOCUS_ACTION,
 		gesture: { code: "Slash", primary: false, alt: false, shift: false },
 		message: "shortcut.focusComposer",
 	},
-	{ id: "run.stop", gesture: { code: "KeyC", primary: false, alt: false, shift: false, control: true }, message: "shortcut.stop" },
+	{ id: RUN_STOP_ACTION, gesture: { code: "KeyC", primary: false, alt: false, shift: false, control: true }, message: "shortcut.stop" },
 	{
-		id: "transcript.previousPrompt",
+		id: TRANSCRIPT_PREVIOUS_PROMPT_ACTION,
 		gesture: { code: "ArrowUp", primary: false, alt: true, shift: false },
 		message: "shortcut.previousPrompt",
 	},
 	{
-		id: "transcript.nextPrompt",
+		id: TRANSCRIPT_NEXT_PROMPT_ACTION,
 		gesture: { code: "ArrowDown", primary: false, alt: true, shift: false },
 		message: "shortcut.nextPrompt",
 	},
@@ -102,9 +117,9 @@ export function gestureKeys(gesture: ShortcutGesture, platform: string): string 
 /** The table in the reader's language, with the keys as this platform writes them. */
 export function shortcuts(locale: Locale, platform: string, desktop = false): Shortcut[] {
 	const fontRows = desktop ? [
-		{ id: "font.increase" as const, gesture: { code: "Equal", primary: true, alt: false, shift: false }, message: "shortcut.fontIncrease" as const },
-		{ id: "font.decrease" as const, gesture: { code: "Minus", primary: true, alt: false, shift: false }, message: "shortcut.fontDecrease" as const },
-		{ id: "font.reset" as const, gesture: { code: "Digit0", primary: true, alt: false, shift: false }, message: "shortcut.fontReset" as const },
+		{ id: fontCommand("increase"), gesture: { code: "Equal", primary: true, alt: false, shift: false }, message: "shortcut.fontIncrease" as const },
+		{ id: fontCommand("decrease"), gesture: { code: "Minus", primary: true, alt: false, shift: false }, message: "shortcut.fontDecrease" as const },
+		{ id: fontCommand("reset"), gesture: { code: "Digit0", primary: true, alt: false, shift: false }, message: "shortcut.fontReset" as const },
 	] : [];
 	return [...TABLE, ...fontRows].map((row) => ({
 		id: row.id,

@@ -21,6 +21,7 @@ import { CHAT_VIEW, SETTINGS_VIEW } from "../panels.ts";
 import * as P from "../projects.ts";
 import type { PageRenderer } from "../render.ts";
 import {
+	fontCommand,
 	fontSizeShortcut,
 	isApplePlatform,
 	isStopChord,
@@ -678,7 +679,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 	useEffect(() => {
 		const desktop = desktopBridge() !== undefined;
 		const removeMenu = desktopBridge()?.onMenuAction?.((action) => {
-			if (action === "new-session") presentation.onShortcut("session.new");
+			if (action === "new-session") presentation.onShortcut(A.SESSION_NEW_ACTION);
 			else if (action === "settings")
 				presentation.onPanelAction({ kind: "open", panel: SETTINGS_VIEW });
 		});
@@ -699,7 +700,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			);
 			if (font) {
 				event.preventDefault();
-				presentation.onShortcut(`font.${font}`);
+				presentation.onShortcut(fontCommand(font));
 				return;
 			}
 			const control = isStopChord(event),
@@ -723,7 +724,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				shift: event.shiftKey,
 				control,
 			});
-			if (id === "dock.fullscreen") {
+			if (id === A.DOCK_FULLSCREEN_ACTION) {
 				// Fullscreen is a presentation of a panel that is on screen; a hidden dock has none.
 				const current = presentation.view;
 				if (current?.dock.open !== true || current.panel.current !== CHAT_VIEW)
@@ -734,8 +735,8 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			}
 			if (
 				id &&
-				["session.new", "dock.toggle", "run.stop"].includes(id) &&
-				(id !== "run.stop" || presentation.view?.busy === true)
+				[A.SESSION_NEW_ACTION, A.DOCK_TOGGLE_ACTION, A.RUN_STOP_ACTION].includes(id) &&
+				(id !== A.RUN_STOP_ACTION || presentation.view?.busy === true)
 			) {
 				event.preventDefault();
 				presentation.onShortcut(id);
