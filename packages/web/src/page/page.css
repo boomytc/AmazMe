@@ -3661,6 +3661,12 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	--library-measure: 720px;
 }
 
+/* Record surfaces use the wider column: a row carries a title, a live fact line, and a value, so the
+   reading measure follows the widest list instead of leaving the right half of a wide window empty. */
+.library-open .library-frame:not([data-management-current="settings"]) .view-body:has(.panel-group[data-skeleton="records"]) {
+	--library-measure: 960px;
+}
+
 /* The settings tabs swap between form, record, and split-workspace panels. One measure for the
    whole settings surface keeps the category column and the reading column still across tabs. */
 .library-open .library-frame[data-management-current="settings"] .view-body {
@@ -4212,6 +4218,8 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	border: 1px dashed var(--line-strong);
 	background: transparent;
 	box-shadow: none;
+	/* An empty group says one line; the dashed box hugs it instead of stretching to the list width. */
+	max-width: 560px;
 }
 
 .panel-rows > .panel-empty:only-child {
