@@ -29,6 +29,10 @@
 	--ease: cubic-bezier(0.2, 0.7, 0.2, 1);
 	--dur-fast: 120ms;
 	--dur: 180ms;
+	/* The frame's own curve for a panel edge that travels with a column boundary; slower than a
+	   control transition because the whole column moves. */
+	--ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+	--dur-slow: 300ms;
 	--control-height: 32px;
 	--field-height: 40px;
 	--focus-shadow: 0 0 0 3px var(--accent-soft);
@@ -117,12 +121,15 @@
 	--space-20: 20px;
 	--space-24: 24px;
 
-	/* Stacking: the dock's inner jump, page overlays, then menus above both. */
+	/* Stacking: the dock's inner jump, page overlays, then menus above both. The right panel covers
+	   the page as a column (and the whole window in fullscreen), so it sits above the rail's tooltip
+	   layer and below tooltips, popovers, and menus portalled over it. */
 	--z-brand: 1;
 	--z-jump: 10;
 	--z-quote: 30;
 	--z-combobox: 40;
 	--z-tooltip: 1060;
+	--z-dock: 1100;
 	--z-popover: 1120;
 	--z-menu: 1150;
 

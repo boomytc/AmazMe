@@ -63,8 +63,6 @@ export interface DockView {
 	readonly tabs: readonly DockTab[];
 	/** The open tab's panel. */
 	readonly panel: PanelSpec;
-	/** The label of the control that shows or hides the dock. */
-	readonly toggle: { readonly label: string };
 }
 
 /** One entry of the host's workspace listing. */
@@ -816,6 +814,5 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 			...(input.pending === undefined ? {} : { pending: input.pending }),
 			...(input.notice === undefined ? {} : { notices: [...panel.notices, input.notice] }),
 		},
-		toggle: { label: translate(locale, "dock.toggle") },
 	};
 }

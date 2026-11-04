@@ -58,7 +58,7 @@ export type ShellView = Pick<
 > & {
 	readonly emptyTranscript: boolean;
 	readonly pageTitle?: string;
-	readonly dock: Pick<WebView["dock"], "open" | "toggle">;
+	readonly dock: Pick<WebView["dock"], "open">;
 	readonly panel: Pick<
 		WebView["panel"],
 		"nav" | "current" | "settingsSection"
@@ -229,7 +229,7 @@ export class Presentation implements PageRenderer {
 				view.panel.current === "chat"
 					? view.sessionLabel
 					: view.panel.panel?.title,
-			dock: { open: view.dock.open, toggle: view.dock.toggle },
+			dock: { open: view.dock.open },
 			panel: {
 				nav: view.panel.nav,
 				current: view.panel.current,

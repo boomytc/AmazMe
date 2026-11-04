@@ -13,6 +13,7 @@ import {
 	useState,
 } from "react";
 import { DOCK_TAB_ACTION, DOCK_TOGGLE_ACTION, WORKSPACE_OPEN_ACTION } from "../actions.ts";
+import { readDockWidth, storeDockWidth } from "../app/dock-preferences.ts";
 import type { DockTabId, DockView } from "../dock.ts";
 import { errorMessageCopy } from "../errors.ts";
 import type { Locale } from "../locale.ts";
@@ -51,10 +52,12 @@ type DockIconName =
 	| "copy"
 	| "file"
 	| "folder"
+	| "fullscreen"
 	| "git-fork"
 	| "message"
 	| "more"
 	| "panel-right"
+	| "restore"
 	| "search"
 	| "square-pen"
 	| "terminal"
@@ -82,6 +85,12 @@ export interface DockProps {
 	readonly scope: string;
 	readonly view: DockView;
 	readonly locale: Locale;
+	/** Over the whole viewport instead of pushed into the right column. */
+	readonly fullscreen: boolean;
+	readonly visible: boolean;
+	readonly onAnimateWidth: (apply: () => void) => void;
+	readonly onResizeStart: () => void;
+	readonly onToggleFullscreen: () => void;
 	readonly onAction: (action: PanelAction) => void;
 	readonly onTerminalInput?: (id: string, data: string) => void;
 	readonly onTerminalResize?: (id: string, cols: number, rows: number) => void;
@@ -97,44 +106,23 @@ const DOCK_ICONS: Readonly<Record<DockTabId, DockIconName>> = {
 	statistics: "activity",
 };
 
-/* The reader's dock width. The page clamps it to what the window can spare (page.css), so these
-   bounds only describe the dock's own range; the default is where a fresh window opens it. */
-const DOCK_WIDTH_KEY = "amazme.dock.width";
-const DOCK_WIDTH_MIN = 320;
-const DOCK_WIDTH_MAX = 560;
-const DOCK_WIDTH_DEFAULT = 380;
-
-function clampDockWidth(width: number): number {
-	return Math.round(Math.min(DOCK_WIDTH_MAX, Math.max(DOCK_WIDTH_MIN, width)));
+function dockBounds(element: HTMLElement): { minimum: number; maximum: number } {
+	const style = getComputedStyle(element);
+	return {
+		minimum: parseFloat(style.getPropertyValue("--dock-min-width")),
+		maximum: parseFloat(style.getPropertyValue("--dock-limit")),
+	};
 }
 
-function readDockWidth(): number {
-	try {
-		const stored = Number(localStorage.getItem(DOCK_WIDTH_KEY));
-		return Number.isFinite(stored) && stored > 0
-			? clampDockWidth(stored)
-			: DOCK_WIDTH_DEFAULT;
-	} catch {
-		/* Storage refused (private mode, disabled site data): keep the default for this window. */
-		return DOCK_WIDTH_DEFAULT;
-	}
+function clampDockWidth(element: HTMLElement, width: number): number {
+	const { minimum, maximum } = dockBounds(element);
+	return Math.min(maximum, Math.max(minimum, Math.round(width)));
 }
 
-function applyDockWidth(width: number): void {
-	document.documentElement.style.setProperty(
-		"--dock-preferred-width",
-		`${clampDockWidth(width)}px`,
-	);
-}
-
-function storeDockWidth(width: number): void {
-	try {
-		if (width === DOCK_WIDTH_DEFAULT)
-			localStorage.removeItem(DOCK_WIDTH_KEY);
-		else localStorage.setItem(DOCK_WIDTH_KEY, String(width));
-	} catch {
-		/* A browser that refuses storage simply forgets the width. */
-	}
+function applyDockWidth(width: number | null): void {
+	const style = document.documentElement.style;
+	if (width === null) style.removeProperty("--dock-preferred-width");
+	else style.setProperty("--dock-preferred-width", `${width}px`);
 }
 
 function Icon({
@@ -1517,7 +1505,6 @@ function PanelSpecView({
 	onAction,
 	reading,
 	inputDrafts,
-	head = true,
 }: {
 	readonly panel: PanelSpec;
 	readonly scope: string;
@@ -1525,8 +1512,6 @@ function PanelSpecView({
 	readonly onAction: (action: PanelAction) => void;
 	readonly reading: ReadingState;
 	readonly inputDrafts: Map<string, string>;
-	/** The dock pins the head above its scroller and renders it itself, so it asks for the body only. */
-	readonly head?: boolean;
 }): ReactElement {
 	const files = panel.files;
 	const filterScope = `${scope}\u0000${files?.filterScope ?? ""}`;
@@ -1580,12 +1565,6 @@ function PanelSpecView({
 				panel.pending?.id.startsWith("workspace:") === true || undefined
 			}
 		>
-			{head === false ||
-			(panel.title.length === 0 &&
-				panel.description === undefined &&
-				(panel.actions?.length ?? 0) === 0) ? null : (
-				<PanelHead panel={panel} locale={locale} onAction={onAction} />
-			)}
 			{files === undefined ? null : (
 				<FileNavigation
 					panel={{ ...panel, files }}
@@ -1709,6 +1688,11 @@ export function Dock({
 	scope,
 	view,
 	locale,
+	fullscreen,
+	visible,
+	onAnimateWidth,
+	onResizeStart,
+	onToggleFullscreen,
 	onAction,
 	onTerminalInput,
 	onTerminalResize,
@@ -1722,35 +1706,40 @@ export function Dock({
 	const inputDrafts = useRef(new Map<string, string>());
 	const dock = useRef<HTMLElement>(null);
 	const tabRow = useRef<HTMLDivElement>(null);
+	/* The chips whose titles are wider than their box, so only those fade at the clipped edge. */
+	const tabLabels = useRef(new Map<string, HTMLSpanElement>());
+	/* Opening moves focus into the revealed panel; collapsing hands it back to the header's button. */
+	const restoreFocus = useRef(false);
+	const previousOpen = useRef(view.open);
 	/* The stored preference, read once per mounted dock; the page clamps it again for the window. */
 	const preferred = useRef<number | null>(null);
 	const resize = useRef<{
+		readonly target: HTMLDivElement;
 		readonly pointerId: number;
 		readonly startX: number;
 		readonly startWidth: number;
 	} | null>(null);
-	const trackTimer = useRef<number | null>(null);
 	const [overflow, setOverflow] = useState<"start" | "end" | "both" | "none">(
 		"none",
 	);
-	const widthPreference = (): number => {
-		if (preferred.current === null) preferred.current = readDockWidth();
-		return preferred.current;
-	};
 	useLayoutEffect(() => {
-		applyDockWidth(widthPreference());
+		preferred.current = readDockWidth();
+		applyDockWidth(preferred.current);
+		return () => applyDockWidth(null);
 	}, []);
 	const active = view.tabs.find((tab) => tab.active)?.id ?? view.tabs[0]?.id;
 	/* The grip reports the rendered width, not the preference: the window can clamp either side. */
-	const [splitterWidth, setSplitterWidth] = useState(DOCK_WIDTH_DEFAULT);
+	const [splitter, setSplitter] = useState({ width: 0, minimum: 0, maximum: 0 });
 	const measureSplitter = useCallback(() => {
 		const element = dock.current;
 		if (element === null) return;
 		const width = Math.round(element.getBoundingClientRect().width);
-		setSplitterWidth((current) => (current === width ? current : width));
+		const { minimum, maximum } = dockBounds(element);
+		setSplitter((current) => current.width === width && current.minimum === minimum && current.maximum === maximum
+			? current : { width, minimum, maximum });
 	}, []);
-	useEffect(() => {
-		if (!view.open) return;
+	useLayoutEffect(() => {
+		if (!visible || fullscreen) return;
 		const element = dock.current;
 		if (element === null) return;
 		const sync = (): void => {
@@ -1760,8 +1749,12 @@ export function Dock({
 		sync();
 		const observer = new ResizeObserver(sync);
 		observer.observe(element);
-		return () => observer.disconnect();
-	}, [view.open, measureSplitter]);
+		window.addEventListener("resize", sync);
+		return () => {
+			observer.disconnect();
+			window.removeEventListener("resize", sync);
+		};
+	}, [visible, fullscreen, measureSplitter]);
 	/* Which ends of the tab strip are scrolled out of view; the row fades exactly those ends. */
 	const syncOverflow = useCallback(() => {
 		const row = tabRow.current;
@@ -1771,29 +1764,67 @@ export function Dock({
 		const next = start && end ? "both" : start ? "start" : end ? "end" : "none";
 		setOverflow((current) => (current === next ? current : next));
 	}, []);
+	/* Keep the active chip visible without scrolling the page while the dock itself slides. */
+	const syncTabLayout = useCallback(() => {
+		for (const node of tabLabels.current.values()) {
+			if (node.scrollWidth > node.clientWidth + 1) node.dataset.clipped = "";
+			else delete node.dataset.clipped;
+		}
+		const row = tabRow.current;
+		const tab = active === undefined ? undefined : tabs.current.get(active);
+		if (row !== null && tab !== undefined) {
+			const box = tab.getBoundingClientRect();
+			const left = row.scrollLeft + box.left - row.getBoundingClientRect().left;
+			if (left < row.scrollLeft) row.scrollTo({ left });
+			else if (left + box.width > row.scrollLeft + row.clientWidth)
+				row.scrollTo({ left: left + box.width - row.clientWidth });
+		}
+		syncOverflow();
+	}, [active, syncOverflow]);
+	useLayoutEffect(() => {
+		if (visible) syncTabLayout();
+	}, [view.tabs, locale, visible, syncTabLayout]);
 	useEffect(() => {
-		if (!view.open) return;
+		if (!visible) return;
 		const row = tabRow.current;
 		if (row === null) return;
-		syncOverflow();
 		row.addEventListener("scroll", syncOverflow, { passive: true });
-		const observer = new ResizeObserver(syncOverflow);
+		const observer = new ResizeObserver(syncTabLayout);
 		observer.observe(row);
 		return () => {
 			row.removeEventListener("scroll", syncOverflow);
 			observer.disconnect();
 		};
-	}, [view.open, view.tabs, locale, syncOverflow]);
+	}, [visible, syncOverflow, syncTabLayout]);
+	/* A panel that opens takes focus to its selected tab; a panel that closes gives it back to the
+	   conversation header's expand button instead of leaving it on hidden content. A panel mounted
+	   while open does not steal focus from the page. This runs after paint because the panel is
+	   still visibility:hidden while its opening commit's layout effects run (the frame owns that
+	   class), and a hidden element cannot take focus. */
 	useEffect(() => {
-		if (active !== undefined && view.open)
-			tabs.current
-				.get(active)
-				?.scrollIntoView({ block: "nearest", inline: "nearest" });
-	}, [active, view.open]);
+		if (previousOpen.current === view.open) return;
+		previousOpen.current = view.open;
+		if (view.open) {
+			if (active === undefined) return;
+			tabs.current.get(active)?.focus({ preventScroll: true });
+		} else if (restoreFocus.current) {
+			restoreFocus.current = false;
+			if (
+				document.activeElement === document.body ||
+				dock.current?.contains(document.activeElement)
+			)
+				document
+					.querySelector<HTMLElement>("[data-dock-expand]")
+					?.focus({ preventScroll: true });
+		}
+	}, [view.open, active]);
 	const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
 		const element = dock.current;
 		if (event.button !== 0 || element === null) return;
+		event.preventDefault();
+		onResizeStart();
 		resize.current = {
+			target: event.currentTarget,
 			pointerId: event.pointerId,
 			startX: event.clientX,
 			startWidth: element.getBoundingClientRect().width,
@@ -1803,59 +1834,56 @@ export function Dock({
 	};
 	const moveResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
 		const state = resize.current;
-		if (state === null || state.pointerId !== event.pointerId) return;
+		const element = dock.current;
+		if (state === null || state.pointerId !== event.pointerId || element === null) return;
 		const width = clampDockWidth(
+			element,
 			state.startWidth - (event.clientX - state.startX),
 		);
 		preferred.current = width;
 		applyDockWidth(width);
 	};
-	const endResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+	const finishResize = useCallback((): void => {
 		const state = resize.current;
-		if (state === null || state.pointerId !== event.pointerId) return;
+		if (state === null) return;
 		resize.current = null;
+		if (state.target.hasPointerCapture(state.pointerId)) state.target.releasePointerCapture(state.pointerId);
 		document.body.classList.remove("dock-resizing");
-		storeDockWidth(preferred.current ?? DOCK_WIDTH_DEFAULT);
+		storeDockWidth(preferred.current);
 		measureSplitter();
+	}, [measureSplitter]);
+	const endResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
+		if (resize.current?.pointerId === event.pointerId) finishResize();
 	};
-	/* A track change animates only when the transition exists in the style before the new width does;
-	   the forced reflow publishes the class first, so one double click plays the one transition. */
-	const animateTrack = useCallback((apply: () => void): void => {
-		document.body.classList.add("dock-animating");
-		void document.body.offsetWidth;
-		apply();
-		if (trackTimer.current !== null) window.clearTimeout(trackTimer.current);
-		trackTimer.current = window.setTimeout(() => {
-			trackTimer.current = null;
-			document.body.classList.remove("dock-animating");
-		}, 240);
-	}, []);
-	useEffect(
-		() => () => {
-			if (trackTimer.current !== null) window.clearTimeout(trackTimer.current);
-			document.body.classList.remove("dock-animating");
-		},
-		[],
-	);
-	/* A double click on the grip hands the dock back its default share, with one track transition. */
+	useEffect(() => {
+		if (!visible || fullscreen) finishResize();
+	}, [visible, fullscreen, finishResize]);
+	useEffect(() => () => finishResize(), [finishResize]);
 	const resetWidth = (): void => {
-		const width = DOCK_WIDTH_DEFAULT;
-		preferred.current = width;
-		storeDockWidth(width);
-		animateTrack(() => applyDockWidth(width));
+		preferred.current = null;
+		storeDockWidth(null);
+		onAnimateWidth(() => applyDockWidth(null));
 	};
-	/* Arrow keys move the grip in 16px steps, so the width is not a pointer-only control. */
+	/* Arrow keys move the grip in 16px steps, so the width is not a pointer-only control. The step
+	   starts from the rendered width, like the drag does: a window-clamped panel would otherwise
+	   spend its first presses moving a preference the render cannot show. */
 	const stepWidth = (event: KeyboardEvent<HTMLDivElement>): void => {
 		if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
 		event.preventDefault();
-		const current = preferred.current ?? readDockWidth();
+		const element = dock.current;
+		if (element === null) return;
+		onResizeStart();
+		const current = element.getBoundingClientRect().width;
 		const width = clampDockWidth(
+			element,
 			current + (event.key === "ArrowLeft" ? 16 : -16),
 		);
 		preferred.current = width;
 		applyDockWidth(width);
 		storeDockWidth(width);
 	};
+	/* Arrow keys move focus through the strip; selecting stays a separate Enter, Space, or click, the
+	   WAI-ARIA tabs pattern with manual activation. */
 	const moveTab = (
 		event: KeyboardEvent<HTMLButtonElement>,
 		current: DockTabId,
@@ -1878,7 +1906,6 @@ export function Dock({
 		if (next === undefined) return;
 		event.preventDefault();
 		tabs.current.get(next.id)?.focus();
-		onAction({ kind: "command", id: DOCK_TAB_ACTION, data: next.id });
 	};
 	const activeTab = view.tabs.find((tab) => tab.active);
 	const repeated = view.panel.groups.find(
@@ -1912,7 +1939,6 @@ export function Dock({
 			onAction={onAction}
 			reading={reading.current}
 			inputDrafts={inputDrafts.current}
-			head={false}
 		/>
 	);
 	return (
@@ -1921,125 +1947,173 @@ export function Dock({
 			className="dock"
 			id="dock"
 			aria-label={translate(locale, "dock.toggle")}
-			hidden={!view.open}
+			data-open={visible ? "true" : undefined}
+			data-presentation={fullscreen ? "fullscreen" : "push"}
+			aria-hidden={visible ? undefined : true}
+			inert={!visible}
+			onFocusCapture={() => {
+				restoreFocus.current = true;
+			}}
+			onBlurCapture={(event) => {
+				if (
+					event.relatedTarget instanceof Node &&
+					!event.currentTarget.contains(event.relatedTarget)
+				)
+					restoreFocus.current = false;
+			}}
 		>
-			{view.open ? (
-				<>
-					<div className="dock-head">
-						<div
-							ref={tabRow}
-							className="dock-tab-row"
-							role="tablist"
-							data-overflow={overflow === "none" ? undefined : overflow}
-						>
-							{view.tabs.map((tab) => (
-								<button
-									key={tab.id}
+			{/* The strip is the panel's whole top edge: the tab chips, then the two panel controls at
+			    its far end. A tab click selects; the arrows only move focus between chips. */}
+			<div className="dock-strip">
+				<div
+					ref={tabRow}
+					className="dock-chips"
+					role="tablist"
+					aria-label={translate(locale, "dock.toggle")}
+					data-overflow={overflow === "none" ? undefined : overflow}
+				>
+					{view.tabs.map((tab, index) => (
+						<Fragment key={tab.id}>
+							{index > 0 ? (
+								<span className="dock-slot" aria-hidden="true" />
+							) : null}
+							<button
+								ref={(node) => {
+									if (node === null) tabs.current.delete(tab.id);
+									else tabs.current.set(tab.id, node);
+								}}
+								type="button"
+								className={`dock-tab${tab.active ? " active" : ""}`}
+								id={`dock-tab-${tab.id}`}
+								role="tab"
+								aria-selected={tab.active}
+								aria-controls="dock-body"
+								tabIndex={tab.active ? 0 : -1}
+								title={tab.label}
+								data-tab={tab.id}
+								onClick={() => {
+									onAction({
+										kind: "command",
+										id: DOCK_TAB_ACTION,
+										data: tab.id,
+									});
+								}}
+								onKeyDown={(event) => {
+									moveTab(event, tab.id);
+								}}
+							>
+								<Icon
+									name={DOCK_ICONS[tab.id]}
+									className="icon dock-tab-icon"
+								/>
+								<span
+									className="dock-tab-label"
 									ref={(node) => {
-										if (node === null) tabs.current.delete(tab.id);
-										else tabs.current.set(tab.id, node);
-									}}
-									type="button"
-									className={`dock-tab${tab.active ? " active" : ""}`}
-									id={`dock-tab-${tab.id}`}
-									role="tab"
-									aria-selected={tab.active}
-									aria-controls="dock-body"
-									tabIndex={tab.active ? 0 : -1}
-									title={tab.label}
-									data-tab={tab.id}
-									onClick={() => {
-										onAction({
-											kind: "command",
-											id: DOCK_TAB_ACTION,
-											data: tab.id,
-										});
-									}}
-									onKeyDown={(event) => {
-										moveTab(event, tab.id);
+										if (node === null) tabLabels.current.delete(tab.id);
+										else tabLabels.current.set(tab.id, node);
 									}}
 								>
-									<Icon name={DOCK_ICONS[tab.id]} />
-									<span className="dock-tab-label">{tab.label}</span>
-								</button>
-							))}
-						</div>
-						<button
-							className="icon-button icon-button--compact"
-							type="button"
-							aria-label={view.toggle.label}
-							title={view.toggle.label}
-							aria-expanded={true}
-							aria-controls="dock"
-							onClick={() => {
-								onAction({
-									kind: "command",
-									id: DOCK_TOGGLE_ACTION,
-									data: undefined,
-								});
-							}}
-						>
-							<Icon name="panel-right" />
-						</button>
-					</div>
-					<div
-						className="dock-body"
-						id="dock-body"
-						role="tabpanel"
-						aria-labelledby={
-							active === undefined ? undefined : `dock-tab-${active}`
-						}
+									{tab.label}
+								</span>
+							</button>
+						</Fragment>
+					))}
+				</div>
+				<span className="dock-strip-fill" />
+				<div className="dock-chrome">
+					<button
+						className="icon-button icon-button--compact"
+						type="button"
+						aria-label={translate(
+							locale,
+							fullscreen ? "dock.exitFullscreen" : "dock.fullscreen",
+						)}
+						title={translate(
+							locale,
+							fullscreen ? "dock.exitFullscreen" : "dock.fullscreen",
+						)}
+						aria-pressed={fullscreen}
+						data-dock-fullscreen
+						onClick={onToggleFullscreen}
 					>
-						{pinnedHead ? (
-							<div className="dock-panel-head">
-								<PanelHead
-									panel={{ ...panel, description: undefined }}
-									locale={locale}
-									onAction={onAction}
-								/>
-							</div>
-						) : null}
-						<div className="dock-scroll">
-							{panel.description === undefined ? null : (
-								<p className="dock-panel-desc">
-									<SensitiveText
-										text={panel.description}
-										locale={locale}
-									/>
-								</p>
-							)}
-							{view.pty === undefined ? (
-								panelView
-							) : (
-								<>
-									<div className="pty-chrome">{panelView}</div>
-									<DockPtySurface
-										view={view.pty}
-										onTerminalInput={onTerminalInput}
-										onTerminalResize={onTerminalResize}
-									/>
-								</>
-							)}
-						</div>
+						<Icon name={fullscreen ? "restore" : "fullscreen"} />
+					</button>
+					<button
+						className="icon-button icon-button--compact"
+						type="button"
+						aria-label={translate(locale, "dock.collapse")}
+						title={translate(locale, "dock.collapse")}
+						aria-controls="dock"
+						data-dock-collapse
+						onClick={() => {
+							onAction({
+								kind: "command",
+								id: DOCK_TOGGLE_ACTION,
+								data: undefined,
+							});
+						}}
+					>
+						<Icon name="panel-right" />
+					</button>
+				</div>
+			</div>
+			<div
+				className="dock-body"
+				id="dock-body"
+				role="tabpanel"
+				aria-labelledby={
+					active === undefined ? undefined : `dock-tab-${active}`
+				}
+			>
+				{pinnedHead ? (
+					<div className="dock-panel-head">
+						<PanelHead
+							panel={{ ...panel, description: undefined }}
+							locale={locale}
+							onAction={onAction}
+						/>
 					</div>
-					<div
-						className="dock-resize"
-						role="separator"
-						aria-orientation="vertical"
-						aria-label={translate(locale, "dock.resize")}
-						aria-valuemin={DOCK_WIDTH_MIN}
-						aria-valuemax={DOCK_WIDTH_MAX}
-						aria-valuenow={splitterWidth}
-						tabIndex={0}
-						onKeyDown={stepWidth}
-						onPointerDown={startResize}
-						onPointerMove={moveResize}
-						onPointerUp={endResize}
-						onPointerCancel={endResize}
-						onDoubleClick={resetWidth}
-					/>
-				</>
-			) : null}
+				) : null}
+				<div className="dock-scroll">
+					{panel.description === undefined ? null : (
+						<p className="dock-panel-desc">
+							<SensitiveText
+								text={panel.description}
+								locale={locale}
+							/>
+						</p>
+					)}
+					{view.pty === undefined ? (
+						panelView
+					) : (
+						<>
+							<div className="pty-chrome">{panelView}</div>
+							{visible ? <DockPtySurface
+								view={view.pty}
+								onTerminalInput={onTerminalInput}
+								onTerminalResize={onTerminalResize}
+							/> : null}
+						</>
+					)}
+				</div>
+			</div>
+			<div
+				className="dock-resize"
+				role="separator"
+				aria-orientation="vertical"
+				aria-label={translate(locale, "dock.resize")}
+				aria-valuemin={splitter.minimum}
+				aria-valuemax={splitter.maximum}
+				aria-valuenow={splitter.width}
+				tabIndex={0}
+				onKeyDown={stepWidth}
+				onPointerDown={startResize}
+				onPointerMove={moveResize}
+				onPointerUp={endResize}
+				onPointerCancel={endResize}
+				onLostPointerCapture={endResize}
+				onDoubleClick={resetWidth}
+			/>
 		</aside>
 	);
 }

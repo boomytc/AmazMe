@@ -15,6 +15,7 @@ import type { FontSizeAction } from "./typography.ts";
 export type ShortcutId =
 	| "session.new"
 	| "dock.toggle"
+	| "dock.fullscreen"
 	| "composer.focus"
 	| "run.stop"
 	| "transcript.previousPrompt"
@@ -43,6 +44,7 @@ export interface Shortcut {
 const TABLE: readonly { readonly id: ShortcutId; readonly gesture: ShortcutGesture; readonly message: MessageKey }[] = [
 	{ id: "session.new", gesture: { code: "KeyN", primary: true, alt: true, shift: false }, message: "shortcut.newSession" },
 	{ id: "dock.toggle", gesture: { code: "KeyM", primary: true, alt: true, shift: false }, message: "shortcut.toggleDock" },
+	{ id: "dock.fullscreen", gesture: { code: "Enter", primary: true, alt: true, shift: false }, message: "shortcut.toggleFullscreen" },
 	{
 		id: "composer.focus",
 		gesture: { code: "Slash", primary: false, alt: false, shift: false },

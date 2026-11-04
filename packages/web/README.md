@@ -2,7 +2,7 @@
 
 Web 和 Electron 共用的 React 19 + TypeScript 页面：导航、聊天、模型连接、管理面板和会话停靠栏。会话、账号与执行状态归 Python Host 所有；本包保留草稿、界面偏好和按宿主/会话绑定的未确认操作编号，不加载旧 Durable 运行时。
 
-窗口顶部只有一条 48px `titlebar`：标题、运行态势、侧栏开关或管理返回、会话内搜索、分叉、打开停靠栏和审批提醒都在这一行。停靠栏打开时这一行只占左侧三列，右端由停靠栏页签条接续，两段共用同一条下边框；停靠栏的收起按钮在页签条末端。页面不把停靠栏做成第二层头部，面板与主列从同一条线开始。停靠栏宽度可拖拽（320–560，双击复位）并按浏览器记住。桌面壳在 macOS 上以 `hiddenInset` 隐藏原生标题栏，页面通过 `window.amazmeDesktop` 的 `platform` 在 `:root[data-desktop="darwin"]` 预留红绿灯内嵌并把整行作为拖拽区；浏览器或 Windows/Linux 下同一行退化为普通工具条。窗口原生外观归 `@amazme/gui`，页面不探测 Electron 版本。
+窗口顶部只有一条 48px `titlebar`：标题、运行态势、侧栏开关或管理返回、会话内搜索、分叉、展开停靠栏和审批提醒都在这一行。停靠栏是贴靠窗口右缘的整高面板（列宽默认视口 45%，300px 起、最多 70vw），面板顶边就是它自己的 48px 页签条：28px 页签胶囊、发丝分隔、条末的全屏与收起控件；面板主体紧接条下，仅在有上下文或操作时保留工具行，不重复页签标题。`push` 形态让会话为面板让出列宽，`fullscreen` 覆盖整个窗口而底层列宽不变；收起后整条面板滑出右缘、不占宽度，唯一入口是标题栏右端的展开按钮。开合与全屏共用一条 300ms 曲线并遵守系统减少动效设置；打开时焦点落到当前页签，收起时回到展开按钮。宽度可拖左缘 8px 隐形抓手或用方向键（16px 步进）调整、双击复位，宽度与呈现形态都按浏览器记住（`amazme.dock.width`、`amazme.dock.presentation`）；`⌘⌥Enter` / `Ctrl+Alt+Enter` 在面板可见时切换全屏。桌面壳在 macOS 上以 `hiddenInset` 隐藏原生标题栏，页面通过 `window.amazmeDesktop` 的 `platform` 在 `:root[data-desktop="darwin"]` 预留红绿灯内嵌并把整行作为拖拽区；浏览器或 Windows/Linux 下同一行退化为普通工具条，停靠栏页签条同样是窗口拖拽区，全屏时按红绿灯宽度内缩。窗口原生外观归 `@amazme/gui`，页面不探测 Electron 版本。
 
 `npm run build --workspace @amazme/web` 生成 `dist/page`。Python Host 在源码模式读取该目录，冻结包将同一目录装入资源；`npm run dev:web` 会先构建客户端。HTTP/事件类型及运行时校验由 `backend/tools/export_contracts.py` 从 Python 生成到 `src/generated/`（`contracts.ts`、`schema.json`），`--check` 检查漂移。
 

@@ -453,6 +453,10 @@ export const EN = {
 
 	"dock.toggle": "Session tools",
 	"dock.resize": "Resize session tools",
+	"dock.expand": "Open session tools",
+	"dock.collapse": "Collapse session tools",
+	"dock.fullscreen": "Full screen",
+	"dock.exitFullscreen": "Exit full screen",
 	"dock.conversations": "Conversations",
 	"dock.tasks": "Tasks",
 	"review.title": "Changes",
@@ -664,6 +668,7 @@ export const EN = {
 
 	"shortcut.newSession": "New session",
 	"shortcut.toggleDock": "Toggle session tools",
+	"shortcut.toggleFullscreen": "Toggle session tools full screen",
 	"shortcut.focusComposer": "Focus the composer",
 	"shortcut.stop": "Stop the turn",
 	"shortcut.previousPrompt": "Jump to the previous question",
@@ -1400,6 +1405,10 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 
 	"dock.toggle": "会话工具",
 	"dock.resize": "调整会话工具宽度",
+	"dock.expand": "打开会话工具",
+	"dock.collapse": "收起会话工具",
+	"dock.fullscreen": "全屏",
+	"dock.exitFullscreen": "退出全屏",
 	"dock.conversations": "对话",
 	"dock.tasks": "任务",
 	"review.title": "本轮变更",
@@ -1611,6 +1620,7 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 
 	"shortcut.newSession": "新建会话",
 	"shortcut.toggleDock": "切换会话工具",
+	"shortcut.toggleFullscreen": "切换会话工具全屏",
 	"shortcut.focusComposer": "聚焦输入框",
 	"shortcut.stop": "停止回合",
 	"shortcut.previousPrompt": "跳到上一个提问",

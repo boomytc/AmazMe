@@ -1,6 +1,7 @@
 import type { ErrorInfo, ReactNode } from "react";
 import {
 	Component,
+	useCallback,
 	useEffect,
 	useLayoutEffect,
 	useRef,
@@ -9,6 +10,11 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import * as A from "../actions.ts";
+import type { DockPresentation } from "../app/dock-preferences.ts";
+import {
+	readDockPresentation,
+	storeDockPresentation,
+} from "../app/dock-preferences.ts";
 import { desktopBridge } from "../desktop.ts";
 import type { Locale } from "../locale.ts";
 import { CHAT_VIEW, SETTINGS_VIEW } from "../panels.ts";
@@ -580,16 +586,16 @@ function Titlebar({
 							>
 								<Icon name="git-fork" />
 							</button>
-							{/* While the dock is open its own strip head carries the collapse control, so this
-							    row keeps only the control that opens it. */}
+							{/* The way back into a hidden dock is the conversation header's corner, past the
+							    utilities' right edge — the same corner the right panel's strip collapses to. */}
 							{view.dock.open ? null : (
 								<button
 									className="titlebar-action"
 									type="button"
-									aria-label={view.dock.toggle.label}
-									title={view.dock.toggle.label}
+									data-dock-expand
+									aria-label={copy("dock.expand")}
+									title={copy("dock.expand")}
 									aria-controls="dock"
-									aria-expanded={false}
 									onClick={() =>
 										actions.onPanelAction({
 											kind: "command",
@@ -628,6 +634,30 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 	);
 
 	const [collapsed, setCollapsed] = useState(false);
+	const [dockPresentation, setDockPresentation] = useState<DockPresentation>(
+		readDockPresentation,
+	);
+	const dockMotionTimer = useRef<number | undefined>(undefined);
+	const stopDockMotion = useCallback(() => {
+		window.clearTimeout(dockMotionTimer.current);
+		dockMotionTimer.current = undefined;
+		delete document.body.dataset.dockMotion;
+	}, []);
+	const animateDock = useCallback((motion: "width" | "presentation", apply: () => void) => {
+		stopDockMotion();
+		document.body.dataset.dockMotion = motion;
+		void document.body.offsetWidth;
+		apply();
+		dockMotionTimer.current = window.setTimeout(stopDockMotion, 340);
+	}, [stopDockMotion]);
+	const animateDockWidth = useCallback((apply: () => void) => {
+		animateDock("width", apply);
+	}, [animateDock]);
+	const toggleDockFullscreen = useCallback(() => {
+		animateDock("presentation", () => {
+			setDockPresentation((current) => current === "fullscreen" ? "push" : "fullscreen");
+		});
+	}, [animateDock]);
 	const composerVisible =
 		view !== undefined &&
 		view.readOnly !== true &&
@@ -643,8 +673,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 		modelManagement =
 			currentPanel === SETTINGS_VIEW &&
 			view?.panel.settingsSection?.id === "settings:models";
-	/* Layout effect: the body classes decide the shell grid, so they must land before the frame that
-	   shows the dock or the sidebar state is painted. */
+	/* Layout effect: typography and the window title land before the frame paints. */
 	useLayoutEffect(() => {
 		if (!typography) return;
 		applyTypography(document.documentElement.style, typography);
@@ -654,31 +683,35 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			sessionName: pageTitle,
 			pendingCount,
 		});
-		document.body.classList.toggle("dock-open", dockOpen);
-		document.body.classList.toggle("library-open", currentPanel !== CHAT_VIEW);
-		document.body.classList.toggle("sidebar-collapsed", collapsed);
-		return () => {
+	}, [typography, pageTitle, pendingCount, presentation]);
+	/* CSS derives the track and panel position from the same reveal fraction. */
+	useLayoutEffect(() => {
+		const body = document.body;
+		const narrowOpening = dockOpen && !body.classList.contains("dock-open") && window.innerWidth < 1280;
+		if (narrowOpening) setCollapsed(true);
+		if (currentPanel !== CHAT_VIEW) stopDockMotion();
+		body.classList.toggle("library-open", currentPanel !== CHAT_VIEW);
+		body.classList.toggle("sidebar-collapsed", collapsed || narrowOpening);
+		body.classList.toggle("dock-open", dockOpen);
+	}, [dockOpen, currentPanel, collapsed, stopDockMotion]);
+	useLayoutEffect(
+		() => () => {
+			stopDockMotion();
 			document.body.classList.remove(
 				"dock-open",
 				"library-open",
 				"sidebar-collapsed",
 			);
-		};
-	}, [
-		typography,
-		pageTitle,
-		pendingCount,
-		dockOpen,
-		currentPanel,
-		collapsed,
-		presentation,
-	]);
-	useLayoutEffect(() => {
-		// Opening the dock at a narrow window gives the reading column back first; expanding the
-		// sidebar again while the dock stays open is the user's call, so this only runs on opening.
-		if (!dockOpen || window.innerWidth >= 1280) return;
-		setCollapsed(true);
-	}, [dockOpen]);
+		},
+		[stopDockMotion],
+	);
+	useEffect(() => {
+		storeDockPresentation(dockPresentation);
+	}, [dockPresentation]);
+	useEffect(() => {
+		window.addEventListener("resize", stopDockMotion);
+		return () => window.removeEventListener("resize", stopDockMotion);
+	}, [stopDockMotion]);
 	useEffect(() => {
 		const desktop = desktopBridge() !== undefined;
 		const removeMenu = desktopBridge()?.onMenuAction?.((action) => {
@@ -727,6 +760,15 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				shift: event.shiftKey,
 				control,
 			});
+			if (id === "dock.fullscreen") {
+				// Fullscreen is a presentation of a panel that is on screen; a hidden dock has none.
+				const current = presentation.view;
+				if (current?.dock.open !== true || current.panel.current !== CHAT_VIEW)
+					return;
+				event.preventDefault();
+				toggleDockFullscreen();
+				return;
+			}
 			if (
 				id &&
 				["session.new", "dock.toggle", "run.stop"].includes(id) &&
@@ -741,7 +783,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			removeMenu?.();
 			document.removeEventListener("keydown", key);
 		};
-	}, [presentation]);
+	}, [presentation, toggleDockFullscreen]);
 	if (!view) return <p className="empty-state">AmazMe</p>;
 	const copy = (key: Parameters<typeof translate>[1]) =>
 		translate(view.locale, key);
@@ -868,6 +910,11 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				presentation={presentation}
 				locale={view.locale}
 				scope={view.transcriptScope ?? view.attachedId ?? ""}
+				fullscreen={dockPresentation === "fullscreen"}
+				visible={composerActive && dockOpen}
+				onAnimateWidth={animateDockWidth}
+				onResizeStart={stopDockMotion}
+				onToggleFullscreen={toggleDockFullscreen}
 			/>
 			<ModalSurface presentation={presentation} />
 		</>
@@ -1032,10 +1079,20 @@ function DockSurface({
 	presentation,
 	locale,
 	scope,
+	fullscreen,
+	visible,
+	onAnimateWidth,
+	onResizeStart,
+	onToggleFullscreen,
 }: {
 	readonly presentation: Presentation;
 	readonly locale: Locale;
 	readonly scope: string;
+	readonly fullscreen: boolean;
+	readonly visible: boolean;
+	readonly onAnimateWidth: (apply: () => void) => void;
+	readonly onResizeStart: () => void;
+	readonly onToggleFullscreen: () => void;
 }) {
 	const view = useSyncExternalStore(
 		presentation.dock.subscribe,
@@ -1047,6 +1104,11 @@ function DockSurface({
 				view={view}
 				locale={locale}
 				scope={scope}
+				fullscreen={fullscreen}
+				visible={visible}
+				onAnimateWidth={onAnimateWidth}
+				onResizeStart={onResizeStart}
+				onToggleFullscreen={onToggleFullscreen}
 				onAction={presentation.dispatchPanelAction}
 				onTerminalInput={presentation.dispatchTerminalInput}
 				onTerminalResize={presentation.dispatchTerminalResize}
