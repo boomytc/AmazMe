@@ -4112,12 +4112,14 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 
 	.panel-head > .panel-actions { padding-top: 0; }
 
-	.panel-row:has(.panel-select, .panel-field, .panel-actions) {
+	.panel-row:has(.panel-select, .panel-field),
+	.panel-row:has(> .panel-actions > .panel-button:not(.panel-more)) {
 		flex-wrap: wrap;
 		gap: 12px;
 	}
 
-	.panel-row:has(.panel-select, .panel-field, .panel-actions) > .panel-row-text {
+	.panel-row:has(.panel-select, .panel-field) > .panel-row-text,
+	.panel-row:has(> .panel-actions > .panel-button:not(.panel-more)) > .panel-row-text {
 		flex-basis: 100%;
 	}
 
