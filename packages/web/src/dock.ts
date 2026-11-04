@@ -571,7 +571,7 @@ function clientPath(name: string, relative: string): string {
 	return inner.length === 0 ? `grant/${name}` : `grant/${name}/${inner}`;
 }
 
-export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined): PanelSpec {
+export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined, readOnly = false): PanelSpec {
 	const title = translate(locale, "dock.files");
 	if (state === undefined) {
 		return { id: "files", title, notices: [], groups: [] };
@@ -617,15 +617,15 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
 					title: translate(locale, "dock.contents"),
 					actions: [
 						reload,
-						{
+						...(!readOnly ? [{
 							id: WORKSPACE_CHECKPOINT_ACTION,
 							label: translate(locale, "dock.checkpoint"),
-							weight: "line",
+							weight: "line" as const,
 							data: JSON.stringify({
 								workspace: state.name,
 								path: clientPath(state.name, view.path),
 							}),
-						},
+						}] : []),
 					],
 					rows: [rootRow(locale, translate(locale, "dock.backToFolder"), parent, state.cwd)],
 				},
@@ -699,12 +699,23 @@ export function filesPanel(locale: Locale, state: WorkspaceStateLike | undefined
  * the working directory. The screen carries the output, and an ended shell speaks through the page's
  * toast layer instead of a line that would resize the terminal. Closing the tab ends the shell.
  */
-export function terminalPanel(locale: Locale, input: { readonly cwd: string }): PanelSpec {
+export function terminalPanel(
+	locale: Locale,
+	input: { readonly cwd: string; readonly readOnly: boolean },
+): PanelSpec {
 	return {
 		id: "terminal",
 		title: translate(locale, "dock.terminal"),
 		description: input.cwd,
-		notices: [],
+		notices: input.readOnly
+			? [
+					{
+						tone: "info",
+						persistence: "pinned",
+						text: translate(locale, "dock.terminalReadOnly"),
+					},
+				]
+			: [],
 		groups: [],
 	};
 }
@@ -716,9 +727,9 @@ export function dockView(locale: Locale, input: DockViewInput): DockView {
 		tab === "guide"
 			? { id: "guide", title: "", groups: [], notices: [] }
 			: tab === "files"
-			? filesPanel(locale, input.workspace)
+			? filesPanel(locale, input.workspace, input.readOnly === true)
 			: tab === "terminal"
-				? terminalPanel(locale, { cwd: input.cwd })
+				? terminalPanel(locale, { cwd: input.cwd, readOnly: input.readOnly === true })
 				: tab === "jobs"
 					? jobsPanel(locale, input.jobs)
 					: tab === "conversations"

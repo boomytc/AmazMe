@@ -46,7 +46,7 @@ import { type ClientConnection, PythonClient } from "../transport/client.ts";
 import { settled } from "../transport/stream.ts";
 import { adjustedFontSizes, resolveTypography } from "../typography.ts";
 import { USAGE_ACTION, USAGE_REFRESH_ACTION } from "../usage.ts";
-import { attachments, type SubmitMode, type TranscriptBlock } from "../view.ts";
+import { attachments, sessionCapabilities, type SubmitMode, type TranscriptBlock } from "../view.ts";
 import { Automation, scheduleRecord } from "./automation.ts";
 import { type Draft, DraftBook } from "./drafts.ts";
 import { PromptHistory } from "./prompt-history.ts";
@@ -613,6 +613,11 @@ export class PageRuntime {
 			void this.poll(connection);
 		}, 3000);
 	}
+	private attachedReadOnly(): boolean {
+		const sessionId = this.client.connection?.sessionId;
+		if (sessionId === undefined) return false;
+		return this.sessions.find((item) => item.session_id === sessionId)?.archived === true;
+	}
 	private async loadDock(connection: ClientConnection, createTerminal = false): Promise<void> {
 		if (!connection.active() || !this.dock.dockOpen) return;
 		switch (this.dock.dockTab) {
@@ -620,7 +625,9 @@ export class PageRuntime {
 				if (!this.dock.workspace) await this.dock.openWorkspace();
 				break;
 			case "terminal":
-				await this.dock.loadTerminal(connection, createTerminal);
+				/* A read-only session has no shell; the terminal tab explains it instead. */
+				if (sessionCapabilities(this.attachedReadOnly()).terminal)
+					await this.dock.loadTerminal(connection, createTerminal);
 				break;
 			case "jobs":
 				await this.jobs.load();
@@ -1427,6 +1434,10 @@ export class PageRuntime {
 			return;
 		}
 		if (id === A.WORKSPACE_CHECKPOINT_ACTION) {
+			if (!sessionCapabilities(this.attachedReadOnly()).workspaceWrite)
+				throw new Error(
+					translate(this.preferences.locale, "dock.checkpointReadOnly"),
+				);
 			const connection = this.requireConnection(),
 				target: unknown = JSON.parse(data ?? "null");
 			if (
@@ -2894,6 +2905,7 @@ export class PageRuntime {
 			cwd,
 			workspace: this.dock.workspace,
 			jobs: this.jobs.state,
+			readOnly: picker.readOnly || Boolean(pendingError),
 			conversations: {
 				selected: connection?.sessionId ?? "",
 				conversations: this.sessions
@@ -3013,6 +3025,8 @@ export class PageRuntime {
 								fontFamily: this.preferences.typography.terminalFont,
 								fontSize: this.preferences.typography.terminalSize,
 								inputEnabled:
+									picker.capabilities.terminal &&
+									!pendingError &&
 									connection?.ready === true &&
 									terminal.view.phase === "running" &&
 									!terminal.queue.paused,

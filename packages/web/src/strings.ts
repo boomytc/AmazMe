@@ -629,6 +629,8 @@ export const EN = {
 	"dock.lineUnavailable": "This preview does not include line {line}.",
 	"dock.terminalDone": "Terminal ended with exit code {code}",
 	"dock.terminalNoExit": "Terminal ended.",
+	"dock.terminalReadOnly": "Read-only sessions do not open a shell.",
+	"dock.checkpointReadOnly": "Read-only sessions cannot save a checkpoint.",
 
 	"feedback.up": "Helpful",
 	"feedback.down": "Not helpful",
@@ -1578,6 +1580,8 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"dock.lineUnavailable": "当前预览未包含第 {line} 行。",
 	"dock.terminalDone": "终端已结束，退出码 {code}",
 	"dock.terminalNoExit": "终端已结束。",
+	"dock.terminalReadOnly": "只读会话不打开终端。",
+	"dock.checkpointReadOnly": "只读会话不能保存文件检查点。",
 
 	"feedback.up": "有帮助",
 	"feedback.down": "没帮助",

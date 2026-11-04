@@ -10,6 +10,8 @@ Web 和 Electron 共用的 React 19 + TypeScript 页面：导航、聊天、模�
 
 `npm run build --workspace @amazme/web` 生成 `dist/page`。Python Host 在源码模式读取该目录，冻结包将同一目录装入资源；`npm run dev:web` 会先构建客户端。HTTP/事件类型及运行时校验由 `backend/tools/export_contracts.py` 从 Python 生成到 `src/generated/`（`contracts.ts`、`schema.json`），`--check` 检查漂移。
 
+归档会话只读：发送、分叉、终端创建与输入、文件检查点都按 `sessionCapabilities` 统一关闭，只保留历史浏览和只读文件查看。
+
 正式页面由 React 接管，继续复用现有 CSS、主题和文案。唯一浏览器构建链路是 `build-page.mjs` 的 esbuild；TSX 同时进入 TypeScript 检查，生产 bundle 使用 React 的 production 构建。`dist` 还包含公开 TypeScript 包导出；`./locale`、`./strings`、`./typography` 和 `./errors` 是无 React/DOM 副作用的轻量入口，Electron 主进程只使用这些入口。
 
 公共控件采用同一套灰阶、圆角、聚焦和按压状态。密码框参考 [OpenSourceUI](https://opensourceui.in/components/password-field-input) 的行内眼睛控件，输入、按钮和浮层参考 [EasyUI](https://easyui.site/docs/introduction) 的组件模式，映射到现有 `tokens.css` 和 CSS；Lucide 提供标准 Eye/EyeOff 图标。供应商搜索选择使用 Base UI Combobox 处理键盘、焦点、定位和列表语义，浮层挂入所属原生 dialog，供应商 ID 仍由 Host 目录提供。来源与许可随 [页面资产](src/page/third-party-notices.txt) 打包。

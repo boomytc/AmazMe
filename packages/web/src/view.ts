@@ -440,6 +440,19 @@ export interface NewSessionAffordance {
 	readonly pending?: boolean;
 }
 
+/** What the attached session lets the page do; a read-only session only renders. */
+export interface SessionCapabilities {
+	readonly chat: boolean;
+	readonly terminal: boolean;
+	readonly workspaceWrite: boolean;
+}
+
+export function sessionCapabilities(readOnly: boolean): SessionCapabilities {
+	return readOnly
+		? { chat: false, terminal: false, workspaceWrite: false }
+		: { chat: true, terminal: true, workspaceWrite: true };
+}
+
 export interface WebView {
 	readonly modelConnections?: ModelConnectionsLike;
 	readonly typography: Typography;
@@ -452,7 +465,10 @@ export interface WebView {
 	readonly projects?: readonly ProjectGroup[];
 	/** The one archived session the reader currently has open, pinned under the projects. */
 	readonly archivedAttached?: RosterItem;
+	/** The chat projection of `capabilities.chat`; other surfaces read `capabilities` directly. */
 	readonly readOnly?: boolean;
+	/** One authority for what the attached session may do, derived from its archived state. */
+	readonly capabilities: SessionCapabilities;
 	/** A session is selected but its snapshot is not ready yet; this is not the archived read-only state. */
 	readonly connecting?: boolean;
 	/** The filter text itself, so the input keeps what the reader typed. */
@@ -860,6 +876,7 @@ export function failureView(locale: Locale, text: string): WebView {
 	return {
 		locale,
 		typography: { ...DEFAULT_TYPOGRAPHY },
+		capabilities: sessionCapabilities(true),
 		roster: [],
 		rosterFilter: "",
 		focus: undefined,

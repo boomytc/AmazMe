@@ -15,7 +15,7 @@ import { translate } from "../strings.ts";
 import { toolArguments } from "../tool-args.ts";
 import { gitReviewSummary, toolResultView } from "../tool-results.ts";
 import type { Typography } from "../typography.ts";
-import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
+import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, sessionCapabilities, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
 
 function executedResult(value: string): ToolResult | undefined {
 	try { return parseContract("ToolResult", JSON.parse(value)); }
@@ -140,12 +140,15 @@ export function pythonView(input: PresentationInput): WebView {
 	const approvalState = { pending: (snapshot?.approvals ?? []).filter(item => item.state === "pending").map(item => ({ id: item.approval_id, tool: item.call.name, detail: item.call.arguments })) };
 	const approvals = approvalCards(locale, approvalState);
 	const base = failureView(locale, "");
+	const readOnly = session?.archived === true;
+	const capabilities = sessionCapabilities(readOnly);
 	return { ...base, typography: input.typography, modelConnections: input.connections, roster, approvalPolicy: input.approvalPolicy,
 		projects: projectGroups(directory, roster, input.selectedProject, input.rosterFilter, input.expandedProjects),
 		archivedAttached: session?.archived ? rosterItems(locale, directory, connection?.sessionId, Date.now(), "", true).find(item => item.id === connection?.sessionId) : undefined,
 		rosterFilter: input.rosterFilter, transcriptScope: connection ? `${connection.identity.profile_id}:${connection.sessionId}` : undefined,
 		attachedId: connection?.ready ? connection.sessionId : undefined, sessionLabel: session?.title,
-		readOnly: session?.archived === true,
+		readOnly: !capabilities.chat,
+		capabilities,
 		connecting: session?.archived !== true && connection !== undefined && (!connection.ready || !input.ready || snapshot?.state !== "ready"),
 		blocks: [...(input.history?.truncated ? [{ id: "history:truncated", kind: "notice" as const, title: locale === "zh" ? "历史记录" : "History", text: locale === "zh" ? "部分工具输出超过展示上限；原始记录仍保存在本机。" : "Some tool output exceeds the display limit. Original records remain stored locally.", tone: "muted" as const, running: false }] : []), ...transcriptBlocks(locale, withHistory(snapshot, input.history), input.feedback)], history: { blocks: [], more: input.historyMore ?? false, loading: input.historyLoading ?? false }, status: snapshot?.state === "ready" ? pending.length ? requestStatus[pending[0].status] : "" : snapshot?.state ?? "",
 		queue: [...pending.filter(item => item.status === "queued" || item.status === "waiting_time").map(item => ({ id: item.request_id, text: item.text,
