@@ -951,17 +951,18 @@ function Welcome({ welcome, view, actions }: WelcomeProps) {
 						</button>
 					);
 				})}
+				<button
+					type="button"
+					className="icon-button icon-button--compact welcome-dismiss"
+					aria-label={welcome.dismiss.label}
+					title={welcome.dismiss.label}
+					onClick={() =>
+						command(actions, welcome.dismiss.id, welcome.dismiss.data)
+					}
+				>
+					<Icon name="x" />
+				</button>
 			</div>
-			<p className="welcome-note">{welcome.note}</p>
-			<button
-				type="button"
-				className="panel-button weight-text welcome-dismiss"
-				onClick={() =>
-					command(actions, welcome.dismiss.id, welcome.dismiss.data)
-				}
-			>
-				{welcome.dismiss.label}
-			</button>
 		</div>
 	);
 }

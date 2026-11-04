@@ -653,7 +653,6 @@ export const EN = {
 	"welcome.step.session": "Create a session",
 	"welcome.step.settings": "Open the settings",
 	"welcome.dismiss": "Dismiss",
-	"welcome.note": "The guide comes back through Settings → Interface → Welcome guide.",
 
 	"palette.title": "Commands",
 	"palette.tagTemplate": "template",
@@ -1596,7 +1595,6 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"welcome.step.session": "新建会话",
 	"welcome.step.settings": "打开设置",
 	"welcome.dismiss": "不再显示",
-	"welcome.note": "引导可以在「设置 → 界面 → 欢迎引导」里重新打开。",
 
 	"palette.title": "命令",
 	"palette.tagTemplate": "模板",

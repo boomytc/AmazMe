@@ -1063,7 +1063,7 @@ p {
 	margin-top: 14px;
 }
 
-/* The first-run guide: a mark, one title, the reasons to continue, and the three starting points. */
+/* The first-run guide: a mark, one title, the two starting points, and a quiet dismiss icon. */
 .welcome-card {
 	display: flex;
 	flex-direction: column;
@@ -1115,28 +1115,14 @@ p {
 	font-size: 13px;
 }
 
-.welcome-note {
-	margin: 16px 0 0;
+/* The dismiss control rides beside the steps as an icon, so the card ends on its actions. */
+.welcome-steps .welcome-dismiss {
+	width: 36px;
+	height: 36px;
 	color: var(--text-3);
-	font-size: 12px;
 }
 
-.welcome-dismiss {
-	height: 26px;
-	margin-top: 4px;
-	padding: 0 10px;
-	border: 0;
-	border-radius: var(--radius-sm);
-	background: transparent;
-	color: var(--text-3);
-	font-size: 12px;
-	cursor: pointer;
-}
-
-.welcome-dismiss:hover {
-	background: var(--hover);
-	color: var(--text);
-}
+.welcome-steps .welcome-dismiss:hover { color: var(--text); }
 
 /* A user turn: one bubble at the trailing edge, at most a little past half the column. */
 .turn-user {

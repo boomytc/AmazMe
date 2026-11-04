@@ -183,8 +183,8 @@ export type MessageRatingLike = "up" | "down";
 export interface WelcomeCard {
 	readonly title: string;
 	readonly steps: readonly PanelButton[];
+	/** A quiet close control beside the steps; its label is also its accessible name. */
 	readonly dismiss: PanelButton;
-	readonly note: string;
 }
 
 /** The guide, or undefined when it should not be shown. */
@@ -209,7 +209,6 @@ export function welcomeCard(locale: Locale, input: { readonly show: boolean }): 
 			label: translate(locale, "welcome.dismiss"),
 			weight: "text",
 		},
-		note: translate(locale, "welcome.note"),
 	};
 }
 
