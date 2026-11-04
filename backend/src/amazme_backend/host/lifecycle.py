@@ -71,6 +71,10 @@ class HostLifecycle:
         self.fence.host_epoch = await self.store.initialize(self.instance, self.build, self.process_lease)
         self.initialized = True
         private_write(self.profile.path / "initialized", "2\n")
+        # A new host process is a user restart. Supervisor restart protection is scoped to one
+        # host lifetime; a persisted block here would make the app unusable until someone with
+        # database access cleared it.
+        await self.store.allow_restart(explicit=True)
         for lease in await self.store.source_hosts(self.instance):
             await wait_exited(lease)
         active = await self.store.active_update()

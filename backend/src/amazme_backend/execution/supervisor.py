@@ -856,7 +856,10 @@ class Supervisor:
                             continue
                         dead = worker.process_lease is not None and exited(worker.process_lease)
                         last = self.heartbeats.setdefault(worker.worker_id, time.monotonic())
-                        if dead or time.monotonic() - last > 15:
+                        # Initialization includes session storage recovery: give a starting worker
+                        # longer than the steady-state heartbeat before calling it hung.
+                        grace = 60 if worker.state == "starting" else 15
+                        if dead or time.monotonic() - last > grace:
                             try:
                                 await self.retire_worker(worker, "recovery", failed=self._unexpected_worker_exit(worker))
                             except Exception:
