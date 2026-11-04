@@ -234,6 +234,7 @@ function Navigation({
 	const report = (id: string, data?: string) =>
 		actions.onPanelAction({ kind: "command", id, data });
 	const standalone = view.roster.filter((item) => !item.projectId);
+	const hasProjects = (view.projects?.length ?? 0) > 0;
 	const filterField = useRef<HTMLInputElement>(null);
 	const filterToggle = useRef<HTMLButtonElement>(null);
 	const closeFilter = (focusToggle = false) => {
@@ -277,6 +278,17 @@ function Navigation({
 					>
 						<Icon name="search" />
 					</button>
+					{hasProjects ? null : (
+						<button
+							type="button"
+							className="icon-button"
+							aria-label={copy("project.add")}
+							title={copy("project.add")}
+							onClick={() => report(P.PROJECT_ADD_ACTION)}
+						>
+							<Icon name="plus" />
+						</button>
+					)}
 				</div>
 				<div
 					className="roster-filter sidebar-filter"
@@ -318,8 +330,8 @@ function Navigation({
 					</button>
 				</div>
 				<p className="sidebar-label">
-					{copy(view.projects ? "project.projects" : "sidebar.sessions")}
-					{view.projects && (
+					{copy(hasProjects ? "project.projects" : "sidebar.sessions")}
+					{hasProjects && (
 						<button
 							type="button"
 							className="project-add"
@@ -332,9 +344,9 @@ function Navigation({
 					)}
 				</p>
 				<div className="session-list" id="roster">
-					{view.projects && (
+					{hasProjects && (
 						<>
-							{view.projects.map((project) => (
+							{(view.projects ?? []).map((project) => (
 								<section
 									className={`project-group${project.selected ? " selected" : ""}`}
 									key={project.id}
@@ -394,7 +406,7 @@ function Navigation({
 							))}
 						</>
 					)}
-					{view.projects ? (
+					{hasProjects ? (
 						<>
 							{standalone.length > 0 && (
 								<p className="session-group-label">
