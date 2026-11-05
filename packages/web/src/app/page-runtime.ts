@@ -502,7 +502,7 @@ export class PageRuntime {
 		else {
 			const last = this.sessions.find((item) => !item.archived);
 			if (last) await this.selectSession(last.session_id);
-			else this.renderer.setConnectionState(connectedCopy, "connected");
+			else await this.createSession();
 		}
 		this.render();
 	}
@@ -779,7 +779,7 @@ export class PageRuntime {
 			)?.workspace ??
 			new URLSearchParams(location.search).get("workspace") ??
 			"primary";
-		const key = `amazme:create:${identity.profile_id}:${projectId ?? ""}:${workspace}`;
+		const key = `amazme:create:${identity.profile_id}:${project?.project_id ?? ""}:${workspace}`;
 		const id = sessionStorage.getItem(key) ?? newId();
 		sessionStorage.setItem(key, id);
 		this.newSessionPending = true;
@@ -790,7 +790,7 @@ export class PageRuntime {
 					session_id: id,
 					title: "新会话",
 					workspace,
-					project_id: projectId ?? "",
+					project_id: project?.project_id ?? "",
 					reuse_empty: true,
 				},
 				identity,
@@ -1297,7 +1297,7 @@ export class PageRuntime {
 				await this.selectSession(data);
 			return;
 		}
-		if (id === A.WELCOME_SESSION_ACTION || id === A.SESSION_NEW_ACTION) {
+		if (id === A.SESSION_NEW_ACTION) {
 			await this.createSession();
 			return;
 		}
@@ -1311,7 +1311,6 @@ export class PageRuntime {
 			return;
 		}
 		if (
-			id === A.WELCOME_SETTINGS_ACTION ||
 			id === A.MODEL_CONNECTIONS_ACTION ||
 			id === A.SETTINGS_OPEN_ACTION
 		) {
@@ -1368,10 +1367,6 @@ export class PageRuntime {
 				throw new Error("原回答尚未确认，请先核对或重试原回答。");
 			}
 			await ledger.send(key, record, this.client, connection);
-			return;
-		}
-		if (id === A.WELCOME_DISMISS_ACTION) {
-			await this.preferences.setPreference("showWelcome", "false");
 			return;
 		}
 		if (id === A.DOCK_TOGGLE_ACTION) {
@@ -2240,6 +2235,7 @@ export class PageRuntime {
 					(item) => !item.archived && item.project_id === session?.project_id,
 				);
 				if (next) await this.selectSession(next.session_id);
+				else await this.createSession();
 			}
 			this.render();
 			return true;
@@ -2716,8 +2712,6 @@ export class PageRuntime {
 						this.transcript.latestTranscriptRevision(connection) >
 							this.transcript.historyLatestRevision,
 				),
-			welcomeDismissed:
-				this.preferences.settings?.preferences?.showWelcome === false,
 			newSessionPending: this.newSessionPending,
 			ready: this.ready,
 		});

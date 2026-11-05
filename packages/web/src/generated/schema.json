@@ -2408,11 +2408,6 @@
           "title": "Locale",
           "default": "auto"
         },
-        "showWelcome": {
-          "type": "boolean",
-          "title": "Showwelcome",
-          "default": true
-        },
         "closeWindow": {
           "type": "string",
           "enum": [

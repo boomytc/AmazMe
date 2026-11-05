@@ -14,7 +14,7 @@ import { errorMessageCopy } from "./errors.ts";
 import type { ToolResultView } from "./tool-results.ts";
 import type { QuestionView } from "./generated/contracts.ts";
 import * as actions from "./actions.ts";
-const {APPROVAL_APPROVE_ACTION, APPROVAL_DENY_ACTION, ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, CONVERSATION_FORK_ACTION, FEEDBACK_DOWN_ACTION, FEEDBACK_UP_ACTION, QUEUE_CANCEL_ACTION, WELCOME_DISMISS_ACTION, WELCOME_SESSION_ACTION, WELCOME_SETTINGS_ACTION} = actions;
+const {APPROVAL_APPROVE_ACTION, APPROVAL_DENY_ACTION, ATTACHMENT_REMOVE_ACTION, COMPACT_ACTION, CONVERSATION_FORK_ACTION, FEEDBACK_DOWN_ACTION, FEEDBACK_UP_ACTION, QUEUE_CANCEL_ACTION} = actions;
 export type BlockTone = "plain" | "muted" | "error";
 
 export interface TranscriptBlock {
@@ -179,42 +179,6 @@ export function formatBytes(bytes: number): string {
 
 /** How the reader rated one answer, as the transcript shows it. */
 export type MessageRatingLike = "up" | "down";
-
-/**
- * The first-run guide: create a session or configure the interface. It is offered
- * while the host has no sessions and the reader has not dismissed it.
- */
-export interface WelcomeCard {
-	readonly title: string;
-	readonly steps: readonly PanelButton[];
-	/** A quiet close control beside the steps; its label is also its accessible name. */
-	readonly dismiss: PanelButton;
-}
-
-/** The guide, or undefined when it should not be shown. */
-export function welcomeCard(locale: Locale, input: { readonly show: boolean }): WelcomeCard | undefined {
-	if (!input.show) return undefined;
-	return {
-		title: translate(locale, "welcome.title"),
-		steps: [
-			{
-				id: WELCOME_SESSION_ACTION,
-				label: translate(locale, "welcome.step.session"),
-				weight: "filled",
-			},
-			{
-				id: WELCOME_SETTINGS_ACTION,
-				label: translate(locale, "welcome.step.settings"),
-				weight: "line",
-			},
-		],
-		dismiss: {
-			id: WELCOME_DISMISS_ACTION,
-			label: translate(locale, "welcome.dismiss"),
-			weight: "text",
-		},
-	};
-}
 
 /** The controls under one answer: both ratings, and which one is already set. */
 export interface FeedbackControls {
@@ -489,8 +453,6 @@ export interface WebView {
 	readonly questions?: readonly QuestionView[];
 	/** Pending approvals the header keeps visible. Absent when the queue is empty. */
 	readonly approvalIndicator: ApprovalIndicator | undefined;
-	/** The first-run guide, while the host has no sessions and it is not dismissed. */
-	readonly welcome: WelcomeCard | undefined;
 	readonly run: RunControls;
 	/** The command palette for the current draft. */
 	readonly palette: CommandPalette;
@@ -907,7 +869,6 @@ export function failureView(locale: Locale, text: string): WebView {
 		attachments: [],
 		approvals: [],
 		approvalIndicator: undefined,
-		welcome: undefined,
 		run: runControls(locale, "followUp", false, false),
 		attachedId: undefined,
 		sessionLabel: undefined,

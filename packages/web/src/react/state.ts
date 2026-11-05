@@ -129,7 +129,6 @@ export class Presentation implements PageRenderer {
 			"history",
 			"status",
 			"busy",
-			"welcome",
 			"roster",
 			"rosterFilter",
 			"newSession",

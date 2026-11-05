@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from amazme_backend.shared.model import Model
 
@@ -14,7 +14,6 @@ class InterfacePreferences(Model):
     enabledModels: list[Annotated[str, Field(min_length=1, max_length=193)]] | None = Field(default=None, max_length=4096)
     appearance: Literal["system", "light", "dark"] = "system"
     locale: Literal["auto", "zh", "en"] = "auto"
-    showWelcome: bool = True
     closeWindow: Literal["background", "quit"] = "background"
     closeWindowPrompt: bool = True
     # An idle window has nothing to keep alive; closing it quits directly unless the reader opts out.
@@ -25,6 +24,13 @@ class InterfacePreferences(Model):
     textSize: int = Field(default=15, ge=10, le=22)
     codeSize: int = Field(default=13, ge=10, le=16)
     terminalSize: int = Field(default=12, ge=10, le=20)
+
+    @model_validator(mode="before")
+    @classmethod
+    def discard_welcome_preference(cls, value: object) -> object:
+        if isinstance(value, dict) and "showWelcome" in value:
+            return {key: item for key, item in value.items() if key != "showWelcome"}
+        return value
 
     @field_validator("textFont", "codeFont", "terminalFont")
     @classmethod

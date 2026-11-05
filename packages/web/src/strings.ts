@@ -670,11 +670,6 @@ export const EN = {
 	"question.required": "Answer each question or choose Skip.",
 	"question.aria": "Awaiting your answer",
 
-	"welcome.title": "Start working with AmazMe",
-	"welcome.step.session": "Create a session",
-	"welcome.step.settings": "Open the settings",
-	"welcome.dismiss": "Dismiss",
-
 	"palette.title": "Commands",
 	"palette.tagTemplate": "template",
 	"palette.tagSkill": "skill",
@@ -1598,11 +1593,6 @@ export const ZH: Readonly<Record<MessageKey, string>> = {
 	"question.required": "请回答每个问题，或选择跳过。",
 	"question.aria": "等待回答",
 
-	"welcome.title": "从一个会话开始",
-	"welcome.step.session": "新建会话",
-	"welcome.step.settings": "打开设置",
-	"welcome.dismiss": "不再显示",
-
 	"palette.title": "命令",
 	"palette.tagTemplate": "模板",
 	"palette.tagSkill": "技能",
@@ -1944,10 +1934,6 @@ const EN_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 		description: "Register every loaded skill as a slash command.",
 	},
 	promptSuggestions: { label: "Next-question suggestions", description: "Draft one follow-up after an answer; never sends automatically." },
-	showWelcome: {
-		label: "Welcome guide",
-		description: "Show the short first-run guide while this host has no sessions.",
-	},
 	toolApproval: {
 		label: "Tool confirmation",
 		description: "Which tool calls wait for a decision before they run.",
@@ -2052,10 +2038,6 @@ const ZH_SETTING_FIELDS: Readonly<Record<string, SettingCopy>> = {
 		description: "把每个已加载的技能注册为斜杠命令。",
 	},
 	promptSuggestions: { label: "下一问建议", description: "回答结束后给出一次可接受的草稿，不会自动发送。" },
-	showWelcome: {
-		label: "欢迎引导",
-		description: "在这台宿主还没有会话时，显示简短的上手引导。",
-	},
 	toolApproval: {
 		label: "工具确认",
 		description: "哪些工具调用在运行前等待确认。",

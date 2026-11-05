@@ -12,6 +12,8 @@ Web 和 Electron 共用的 React 19 + TypeScript 页面：导航、聊天、模�
 
 会话事件连接被明确拒绝时停止自动重试，空会话正文保留失败原因与重新连接入口；已收到冻结、阻塞或停止状态时显示实际状态，不再承诺正在载入。重新连接只重新绑定与读取，不重放业务请求。
 
+启动直接进入对话主界面：优先恢复已有会话，没有可恢复会话时创建并打开一个新会话。删除当前会话后，优先打开同项目的其他会话，否则创建一个新会话。空会话沿用现有复用规则，刷新不会重复创建。
+
 归档会话只读：发送、分叉、终端创建与输入、文件检查点都按 `sessionCapabilities` 统一关闭，只保留历史浏览和只读文件查看。
 
 正式页面由 React 接管，继续复用现有 CSS、主题和文案。唯一浏览器构建链路是 `build-page.mjs` 的 esbuild；TSX 同时进入 TypeScript 检查，生产 bundle 使用 React 的 production 构建。`dist` 还包含公开 TypeScript 包导出；`./locale`、`./strings`、`./typography` 和 `./errors` 是无 React/DOM 副作用的轻量入口，Electron 主进程只使用这些入口。

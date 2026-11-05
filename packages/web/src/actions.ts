@@ -106,12 +106,6 @@ export const APPROVAL_APPROVE_ACTION = "approval:approve";
 /** Deny one pending tool call: `data` is the approval id. */
 export const APPROVAL_DENY_ACTION = "approval:deny";
 
-/** The first-run guide's steps: create a session or open settings. */
-export const WELCOME_SESSION_ACTION = "welcome:session";
-export const WELCOME_SETTINGS_ACTION = "welcome:settings";
-/** Stop offering the guide until the reader turns it back on in the settings. */
-export const WELCOME_DISMISS_ACTION = "welcome:dismiss";
-
 /** Rate one answer as helpful: `data` is the entry id the answer belongs to. */
 export const FEEDBACK_UP_ACTION = "feedback:up";
 /** Rate one answer as not helpful; rating it again withdraws the rating. */

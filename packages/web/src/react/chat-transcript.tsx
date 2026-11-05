@@ -20,23 +20,21 @@ import {
 	MODEL_SCOPE_ACTION,
 	SESSION_RECONNECT_ACTION,
 	TRANSCRIPT_SEARCH_ACTION,
-	WELCOME_SESSION_ACTION,
 	WORKSPACE_FILE_LINK_ACTION,
 } from "../actions.ts";
 import { credentialRanges } from "../credentials.ts";
 import { errorMessageCopy } from "../errors.ts";
 import type { FileLocation } from "../file-links.ts";
 import type { Locale } from "../locale.ts";
-import type { PanelButton } from "../panels.ts";
 import { type ProcessGroup, processGroups } from "../process-groups.ts";
 import { SESSION_RESTORE_ACTION } from "../actions.ts";
 import { quotedDraft } from "../quote.ts";
 import type { PageRenderer } from "../render.ts";
 import { type MessageKey, translate } from "../strings.ts";
 import { transcriptPosition } from "../transcript-position.ts";
-import type { TranscriptBlock, WelcomeCard } from "../view.ts";
+import type { TranscriptBlock } from "../view.ts";
 import { transcriptSearchHits } from "../view.ts";
-import type { TranscriptProps, TranscriptView } from "./chat.tsx";
+import type { TranscriptProps } from "./chat.tsx";
 import { CredentialText } from "./chat-credential.tsx";
 import { Markdown } from "./markdown.tsx";
 
@@ -75,10 +73,6 @@ function Icon({ name, className = "icon" }: IconProps) {
 
 function command(actions: PageRenderer, id: string, data?: string) {
 	actions.onPanelAction({ kind: "command", id, data });
-}
-
-function panelButtonClass(action: PanelButton): string {
-	return `panel-button weight-${action.weight}${action.danger === true ? " is-danger" : ""}`;
 }
 
 interface CopyButtonProps {
@@ -916,63 +910,7 @@ function TranscriptEntries({
 	});
 }
 
-interface WelcomeProps {
-	readonly welcome: WelcomeCard;
-	readonly view: TranscriptView;
-	readonly actions: PageRenderer;
-}
-
-function Welcome({ welcome, view, actions }: WelcomeProps) {
-	const pending = view.newSession.pending === true;
-	return (
-		<div className="welcome-card">
-			<span className="brand-mark welcome-mark">
-				<Icon name="sparkles" className="icon" />
-			</span>
-			<h2 className="welcome-title">{welcome.title}</h2>
-			<div className="welcome-steps">
-				{welcome.steps.map((step) => {
-					const disabled =
-						step.disabled === true || !view.newSession.enabled || pending;
-					return (
-						<button
-							type="button"
-							className={panelButtonClass(step)}
-							disabled={disabled}
-							aria-busy={pending}
-							key={step.id}
-							onClick={() => {
-								if (step.id === WELCOME_SESSION_ACTION)
-									actions.onCreateSession();
-								else command(actions, step.id, step.data);
-							}}
-						>
-							{pending ? <Icon name="spinner" className="icon spin" /> : null}
-							{pending
-								? translate(view.locale, "sidebar.creating")
-								: step.label}
-						</button>
-					);
-				})}
-				<button
-					type="button"
-					className="icon-button icon-button--compact welcome-dismiss"
-					aria-label={welcome.dismiss.label}
-					title={welcome.dismiss.label}
-					onClick={() =>
-						command(actions, welcome.dismiss.id, welcome.dismiss.data)
-					}
-				>
-					<Icon name="x" />
-				</button>
-			</div>
-		</div>
-	);
-}
-
 function EmptyState({ view, actions }: TranscriptProps) {
-	if (view.welcome !== undefined)
-		return <Welcome welcome={view.welcome} view={view} actions={actions} />;
 	if (view.sessionDraft !== undefined) {
 		return (
 			<div className="empty-block" id="transcript-empty">
@@ -1030,7 +968,7 @@ function EmptyState({ view, actions }: TranscriptProps) {
 					</p>
 				) : null}
 				{view.readOnly === true ? (
-					<div className="welcome-steps">
+					<div className="empty-actions">
 						{view.archivedAttached === undefined ? (
 							<button
 								type="button"
@@ -1056,7 +994,7 @@ function EmptyState({ view, actions }: TranscriptProps) {
 				) : view.model.empty !== undefined ? (
 					<>
 						<p className="greeting-hint">{view.model.empty}</p>
-						<div className="welcome-steps">
+						<div className="empty-actions">
 							{scopeEmpty ? (
 								<button
 									type="button"
@@ -1103,7 +1041,7 @@ function EmptyState({ view, actions }: TranscriptProps) {
 				<p className="greeting-hint">{translate(view.locale, hint)}</p>
 			)}
 			{unavailable ? null : (
-				<div className="welcome-steps">
+				<div className="empty-actions">
 					{filtered ? (
 						<button
 							type="button"

@@ -144,7 +144,7 @@ export class InterfaceSettings {
 			return;
 		}
 		const typed =
-			id === "showWelcome" || id === "closeWindowPrompt" || id === "idleQuit"
+			id === "closeWindowPrompt" || id === "idleQuit"
 				? value === "true"
 				: FONT_SIZE_FIELDS.some((field) => field === id)
 					? Number(value)
@@ -190,13 +190,6 @@ export class InterfaceSettings {
 				...FONT_SIZE_LIMITS[field],
 				step: 1,
 			})),
-			{
-				...descriptor,
-				id: "showWelcome",
-				field: "showWelcome",
-				kind: "boolean",
-				value: String(preferences.showWelcome ?? true),
-			},
 			{
 				...descriptor,
 				id: "display_name",

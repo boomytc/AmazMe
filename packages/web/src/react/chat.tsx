@@ -16,7 +16,6 @@ export type TranscriptView = Pick<
 	| "history"
 	| "status"
 	| "busy"
-	| "welcome"
 	| "roster"
 	| "rosterFilter"
 	| "newSession"

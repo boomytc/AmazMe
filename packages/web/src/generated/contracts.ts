@@ -476,7 +476,6 @@ export type InterfacePreferences = {
   "enabledModels"?: Array<string> | null;
   "appearance"?: "system" | "light" | "dark";
   "locale"?: "auto" | "zh" | "en";
-  "showWelcome"?: boolean;
   "closeWindow"?: "background" | "quit";
   "closeWindowPrompt"?: boolean;
   "idleQuit"?: boolean;

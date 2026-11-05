@@ -16,7 +16,7 @@ import { translate } from "../strings.ts";
 import { toolArguments } from "../tool-args.ts";
 import { gitReviewSummary, toolResultView } from "../tool-results.ts";
 import type { Typography } from "../typography.ts";
-import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, sessionCapabilities, statusMeter, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
+import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, sessionCapabilities, statusMeter, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
 
 /**
  * The host writes a job notice as a status line followed by model instructions; only the status
@@ -132,7 +132,6 @@ export interface PresentationInput {
 	readonly feedback?: AnswerFeedbackList;
 	readonly historyMore?: boolean;
 	readonly historyLoading?: boolean;
-	readonly welcomeDismissed: boolean;
 	readonly newSessionPending: boolean;
 	readonly ready: boolean;
 }
@@ -178,7 +177,7 @@ export function pythonView(input: PresentationInput): WebView {
 			...(snapshot?.effects ?? []).filter(item => !item.reconciled).map(item => ({ id: `effect:${item.call_id}`, text: `${item.resource_clean ? "未知副作用待核对" : "等待资源退出后核对"}：${item.reason}`,
 				retry: { id: item.reason === "codemode_outcome_unknown" && !item.resource_clean ? actions.EFFECT_CLEANUP_ACTION : actions.EFFECT_REVIEW_ACTION, data: JSON.stringify([snapshot?.session_id, item.call_id]), label: item.reason === "codemode_outcome_unknown" && !item.resource_clean ? "核对脚本退出" : "核对执行效果", weight: "line" as const, disabled: !connection?.ready || !item.resource_clean && item.reason !== "codemode_outcome_unknown" } }))],
 		attachments: input.attachments, approvals, questions: snapshot?.questions?.filter(question => question.state === "pending"), approvalIndicator: approvalIndicator(locale, approvalState), busy: pending.some(item => item.status !== "queued"),
-		welcome: welcomeCard(locale, { show: !input.sessions.length && !input.welcomeDismissed }), newSession: { enabled: input.ready && !input.newSessionPending, pending: input.newSessionPending },
+		newSession: { enabled: input.ready && !input.newSessionPending, pending: input.newSessionPending },
 		run: runControls(locale, input.mode, Boolean(connection?.ready), Boolean(snapshot?.requests.some(item => settled.has(item.status)))),
 		model: modelPicker(locale, models, levels, connection?.ready === true), panel: input.panel,
 		promptHistory: input.promptHistory ?? [],

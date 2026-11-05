@@ -98,8 +98,8 @@
 	/* Surface titles: one role, one size. Body copy stays with the component that owns it. */
 	--text-greeting: 30px;
 	--line-greeting: 38px;
-	--text-welcome-title: 24px;
-	--line-welcome-title: 32px;
+	--text-project-title: 24px;
+	--line-project-title: 32px;
 	--text-page-title: 22px;
 	--line-page-title: 30px;
 	--text-modal-title: 17px;
