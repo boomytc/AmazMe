@@ -9,6 +9,7 @@ from pydantic import Field
 from amazme_backend.accounts.oauth.identity import COPILOT_HEADERS
 from amazme_backend.contracts.models import (
     CatalogModel,
+    ModelOptions,
     ModelSelection,
     ModelSettings,
     ProviderApi,
@@ -39,6 +40,15 @@ class ProviderTransport(Model):
     base_url: str = ""
     api: ProviderApi | None = None
     model_ids: list[str] | None = None
+    model_options: dict[str, ModelOptions] = Field(default_factory=dict)
+
+
+def configured_catalog_model(model: CatalogModel, options: ModelOptions | None) -> CatalogModel:
+    if options is None:
+        return model
+    return model.model_copy(update={"overrides": options,
+        **({"context_window": options.context_window} if options.context_window is not None else {}),
+        **({"thinking_levels": options.thinking_levels} if options.thinking_levels is not None else {})})
 
 
 def _normalize_proxy(current: str, requested: str) -> str:
@@ -138,4 +148,4 @@ def select_model(config: ProviderConfig, selection: ModelSelection | None, trans
     if transport:
         chosen = chosen.model_copy(update={**({"base_url": transport.base_url} if transport.base_url else {}),
             **({"api": transport.api} if transport.api else {})})
-    return chosen
+    return chosen.model_copy(update={"model_options": transport.model_options.get(selected.model) if transport else None})

@@ -73,6 +73,19 @@ export class InterfaceSettings {
 		applyTheme(resolveThemePreference(preferences.appearance));
 		this.services.applied();
 	}
+	setProviderModels(provider: string, models: readonly string[], identity: Identity): Promise<void> {
+		return this.updateSettings(async current => {
+			if (!this.services.active(identity)) throw new Error("后端连接已变化，请重新选择模型");
+			const catalog = this.services.catalog();
+			const enabled = await this.resolveModelIds(current.preferences?.enabledModels ?? null, identity, catalog)
+				?? catalog?.models.map(model => `${model.provider}/${model.model}`) ?? [];
+			const preferences = parseContract("InterfacePreferences", { ...current.preferences,
+				enabledModels: [...enabled.filter(id => !id.startsWith(`${provider}/`)), ...models.map(id => `${provider}/${id}`)] });
+			return this.services.client.call("PUT /api/v1/settings/preferences", {
+				body: { preferences, expected_revision: current.revision ?? 0 }, identity,
+			});
+		});
+	}
 	updateSettings(
 		update: (
 			current: ProductSettings,

@@ -31,9 +31,10 @@ def selected_provider(config: ProviderConfig, selection: ModelSelection | None, 
     if selection is None or (config.provider, config.model) == (selection.provider, selection.model):
         return stored_provider(config)
     if selection.provider == "faux" and selection.model == "faux":
-        return stored_provider(config.model_copy(update={"provider":"faux", "model":"faux", "base_url":""}))
+        return stored_provider(config.model_copy(update={"provider":"faux", "model":"faux", "base_url":"", "model_options":None}))
     model = catalog.get((selection.provider, selection.model))
     if model is None:
         raise BackendError("model_not_available")
     return stored_provider(config.model_copy(update={"provider":model.provider, "model":model.model,
-        "api":model.api, "base_url":model.base_url, "auth_type":"api_key", "proxy":"", "headers":{}}))
+        "api":model.api, "base_url":model.base_url, "auth_type":"api_key", "proxy":"", "headers":{},
+        "model_options":model.overrides}))

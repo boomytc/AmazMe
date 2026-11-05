@@ -22,6 +22,7 @@ from amazme_backend.accounts.oauth.flow import OAuthCredential, refresh
 from amazme_backend.contracts.accounts import (
     AccountInfo,
     AccountsView,
+    ConfigureModel,
     ConfigureProvider,
     OAuthStart,
     OAuthView,
@@ -129,7 +130,7 @@ class AccountStore:
             document.transports[config.provider] = updated
             self.write(document)
 
-    async def configure_provider(self, value: ConfigureProvider, guard: Callable[[], Awaitable[None]]) -> ProviderConfigured:
+    async def configure(self, value: ConfigureProvider | ConfigureModel, guard: Callable[[], Awaitable[None]]) -> ProviderConfigured:
         async with self.locked():
             await guard()
             document = self.read()
@@ -140,7 +141,18 @@ class AccountStore:
                     raise BackendError("provider_configuration_conflict")
                 return previous.view
             current = document.transports.get(value.provider, ProviderTransport())
-            updated = current.model_copy(update=value.model_dump(exclude={"provider", "expected_revision", "operation_id"}))
+            if isinstance(value, ConfigureModel):
+                options = dict(current.model_options)
+                if value.options.context_window is None and value.options.thinking_levels is None:
+                    options.pop(value.model, None)
+                else:
+                    options[value.model] = value.options
+                if len(options) > 4096:
+                    raise BackendError("provider_configuration_capacity", status=429)
+                updated = current.model_copy(update={"model_options": options})
+            else:
+                updated = ProviderTransport.model_validate({**current.model_dump(),
+                    **value.model_dump(exclude_unset=True, exclude={"provider", "expected_revision", "operation_id"})})
             if document.configuration_revision != value.expected_revision:
                 raise BackendError("provider_configuration_conflict")
             if len(document.configuration_receipts) >= 4096:
@@ -156,7 +168,8 @@ class AccountStore:
     def provider_definitions(self, document: AccountDocument | None = None) -> list[ProviderDefinition]:
         document = document if document is not None else self.read()
         return [ProviderDefinition(provider=name, name=value.name, base_url=value.base_url, api=value.api,
-                model_ids=value.model_ids) for name, value in document.transports.items() if value.base_url]
+                model_ids=value.model_ids, model_options=value.model_options)
+                for name, value in document.transports.items() if value.base_url]
 
     def view(self) -> AccountsView:
         return self._view(self.read())

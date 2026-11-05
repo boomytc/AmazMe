@@ -4,7 +4,7 @@ from typing import Literal
 
 from pydantic import Field, SecretStr
 
-from amazme_backend.contracts.models import ProviderApi
+from amazme_backend.contracts.models import ModelOptions, ProviderApi
 from amazme_backend.contracts.sessions import ApprovalPolicy, RunOptions
 from amazme_backend.shared.model import Model
 
@@ -19,6 +19,7 @@ class ProviderConfig(RunOptions):
     max_tokens: int = Field(default=2048, ge=32, le=8192)
     proxy: str = ""
     headers: dict[str, str] = Field(default_factory=dict)
+    model_options: ModelOptions | None = None
 
 
 class ProfileConfig(Model):

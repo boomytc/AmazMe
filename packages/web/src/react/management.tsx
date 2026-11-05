@@ -15,11 +15,12 @@ import type { Locale } from "../locale.ts";
 import { Hint } from "./hint.tsx";
 import {
 	type ConnectionModelLike,
-	connectionModelRows,
 	isModelEnabled,
 	MODEL_ENABLED_ACTION,
+	MODEL_OPTIONS_ACTION,
 	type ModelConnectionsLike,
 	PROVIDER_EDIT_ACTION,
+	PROVIDER_MODELS_ACTION,
 	PROVIDER_SELECT_ACTION,
 	PROVIDER_TEST_ACTION,
 	verificationStatusText,
@@ -1241,8 +1242,6 @@ function ConnectionProviderCard({
 	readonly onToggle: () => void;
 	readonly onAction: (action: PanelAction) => void;
 }) {
-	const [modelQuery, setModelQuery] = useState("");
-	useEffect(() => setModelQuery(""), [provider.id]);
 	const methods = authentication.providers.find((item) => item.id === provider.id)?.methods ?? [];
 	const canConfigure = EDITABLE_MODEL_APIS.has(provider.api) || methods.length > 0;
 	const status = connectionCopy(
@@ -1253,8 +1252,7 @@ function ConnectionProviderCard({
 				? "connections.configured"
 				: "connections.loginRequired",
 	);
-	const modelRows = connectionModelRows(models, enabledModelIds, modelQuery);
-	const enabledCount = models.filter((model) => isModelEnabled(model, enabledModelIds)).length;
+	const modelRows = models.filter(model => isModelEnabled(model, enabledModelIds));
 
 	return (
 		<section className={expanded ? "connection-card expanded" : "connection-card"}>
@@ -1277,7 +1275,7 @@ function ConnectionProviderCard({
 							/>
 						</span>
 						<span className="connection-card-meta">
-							{status} · {connectionCopy(locale, "connections.modelCount", { count: String(provider.modelCount) })}
+							{status} · {connectionCopy(locale, "connections.modelCount", { count: String(enabledModelCount) })}
 						</span>
 					</span>
 				</button>
@@ -1325,72 +1323,45 @@ function ConnectionProviderCard({
 					</output>
 					<section className="connection-models-section">
 						<header className="connection-models-head">
-							<h3 className="connection-models-title">
-								{connectionCopy(locale, "connections.models")}
-							</h3>
-							{!loading && models.length > 0 && (
-								<span className="connection-models-count">{enabledCount} / {models.length}</span>
-							)}
+							<h3 className="connection-models-title">{connectionCopy(locale, "connections.models")}</h3>
+							<PanelButtonView action={{ id: PROVIDER_MODELS_ACTION, data: provider.id,
+								label: connectionCopy(locale, "connections.fetchModels"), weight: "line",
+								disabled: disabled || loading || !provider.available }} pending={pending} onAction={onAction} />
 						</header>
 						{loading ? (
 							<p className="connection-empty">{connectionCopy(locale, "connection.starting")}</p>
-						) : models.length === 0 ? (
-							<p className="connection-empty">{connectionCopy(locale, "connections.discover")}</p>
+						) : modelRows.length === 0 ? (
+							<p className="connection-empty">{connectionCopy(locale, "connections.noSelectedModels")}</p>
 						) : (
-							<>
-								<search className="connection-model-search">
-									<input
-										type="search"
-										className="connection-search-input"
-										autoComplete="off"
-										spellCheck={false}
-										placeholder={connectionCopy(locale, "connections.searchModels")}
-										aria-label={connectionCopy(locale, "connections.searchModels")}
-										value={modelQuery}
-										onChange={(event) => setModelQuery(event.currentTarget.value)}
-									/>
-								</search>
-								{modelRows.length === 0 ? (
-									<p className="connection-empty">{connectionCopy(locale, "connections.noModelMatch")}</p>
-								) : (
-									<div className="connection-model-list">
-										{modelRows.map(({ model, enabled: modelEnabled }) => {
-											const reference = connectionModelReference(model);
-											const modelPending = sameActionTarget(pending, {
-												id: MODEL_ENABLED_ACTION,
-												data: reference,
-											});
-											return (
-												<label
-													key={reference}
-													className={model.available ? "connection-model" : "connection-model is-unavailable"}
-												>
-													<input
-														type="checkbox"
-														checked={modelEnabled}
-														disabled={disabled || !model.available || modelPending}
-														aria-busy={modelPending || undefined}
-														onChange={(event) =>
-															onAction({
-																kind: "control",
-																id: MODEL_ENABLED_ACTION,
-																data: reference,
-																value: String(event.currentTarget.checked),
-															})
-														}
-													/>
-													<span className="connection-model-main">
-														<span className="connection-model-name">{model.name}</span>
-														{model.modelId !== model.name && (
-															<small className="connection-model-id">{model.modelId}</small>
-														)}
-													</span>
-												</label>
-											);
-										})}
-									</div>
-								)}
-							</>
+							<div className="connection-model-list">
+								{modelRows.map(model => {
+									const reference = connectionModelReference(model);
+									const modelPending = sameActionTarget(pending, { id: MODEL_ENABLED_ACTION, data: reference });
+									return (
+										<div key={reference} className={model.available ? "connection-model" : "connection-model is-unavailable"}>
+											<div className="connection-model-main">
+												<span className="connection-model-name">{model.name}</span>
+												{model.modelId !== model.name && <small className="connection-model-id">{model.modelId}</small>}
+												<span className="connection-model-info">
+													{model.contextWindow != null && <span>{model.contextWindow.toLocaleString(locale)} tokens</span>}
+													{model.thinkingLevels?.some(level => level !== "off") && <span>{model.thinkingLevels?.join(" / ")}</span>}
+												</span>
+											</div>
+											<div className="connection-model-actions">
+												<PanelButtonView action={{ id: MODEL_OPTIONS_ACTION, data: reference,
+													label: connectionCopy(locale, "connections.modelSettings"), weight: "line",
+													disabled: disabled || provider.id === "faux" }} pending={pending} onAction={onAction} />
+												<button type="button" className="panel-button weight-line connection-remove-model"
+													aria-label={connectionCopy(locale, "connections.removeModel", { model: model.name })}
+													disabled={disabled || modelPending} aria-busy={modelPending || undefined}
+													onClick={() => onAction({ kind: "control", id: MODEL_ENABLED_ACTION, data: reference, value: "false" })}>
+													<Icon name="x" />
+												</button>
+											</div>
+										</div>
+									);
+								})}
+							</div>
 						)}
 					</section>
 				</div>
@@ -1701,6 +1672,8 @@ function ModalFieldView({
 					locale={locale}
 					value={value}
 					options={field.options ?? []}
+					disabled={disabled || field.readOnly === true || !visible}
+					searchable={field.searchable}
 					onValueChange={onChange}
 				/>
 			</div>
@@ -1807,6 +1780,7 @@ function ModalFieldView({
 			</span>
 			<input
 				type={field.inputType ?? "text"}
+				aria-label={field.label}
 				className="modal-input"
 				value={value}
 				placeholder={field.placeholder}

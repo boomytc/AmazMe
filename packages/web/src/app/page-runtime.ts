@@ -20,10 +20,14 @@ import type {
 import { documentLanguage, type Locale } from "../locale.ts";
 import {
 	MODEL_ENABLED_ACTION,
+	MODEL_OPTIONS_ACTION,
+	MODEL_OPTIONS_MODAL,
 	PROVIDER_EDIT_ACTION,
 	PROVIDER_EDIT_MODAL,
 	PROVIDER_LOGOUT_ACTION,
 	PROVIDER_LOGOUT_MODAL,
+	PROVIDER_MODELS_ACTION,
+	PROVIDER_MODELS_MODAL,
 	PROVIDER_SELECT_ACTION,
 	PROVIDER_TEST_ACTION,
 	PROVIDER_TEST_ALL_ACTION,
@@ -195,6 +199,7 @@ export class PageRuntime {
 			refresh: () => this.loadGlobal(),
 			ready: () => this.ready,
 			globalModels: () => this.preferences.globalModelIds,
+			setProviderModels: (provider, models, identity) => this.preferences.setProviderModels(provider, models, identity),
 		});
 		this.automation = new Automation({
 			...this.services,
@@ -1929,6 +1934,21 @@ export class PageRuntime {
 		if (id === PROVIDER_SELECT_ACTION) {
 			this.providers.selectedProvider = data;
 			this.render();
+			return;
+		}
+		if (id === PROVIDER_MODELS_ACTION) {
+			if (data) await this.providers.openModelSelection(data);
+			return;
+		}
+		if (id === PROVIDER_MODELS_MODAL || id === MODEL_OPTIONS_MODAL) {
+			if (this.panels.modal?.id !== id || this.panels.modal.data !== data) return;
+			if (id === PROVIDER_MODELS_MODAL) await this.providers.saveModelSelection(fields);
+			else await this.providers.saveModelOptions(fields);
+			return;
+		}
+		if (id === MODEL_OPTIONS_ACTION) {
+			const reference = modelReference(data ?? "");
+			this.providers.openModelOptions(reference.provider, reference.model);
 			return;
 		}
 		if (id === PROVIDER_EDIT_ACTION) {

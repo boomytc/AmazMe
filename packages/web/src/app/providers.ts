@@ -1,5 +1,7 @@
 import type {
 	AccountsView,
+	CatalogModel,
+	ConfigureModel,
 	ConfigureProvider,
 	CredentialUpdate,
 	Identity,
@@ -10,6 +12,9 @@ import type {
 import type { ModelConnectionsLike } from "../model-connections.ts";
 import {
 	PROVIDER_TEST_MODAL,
+	THINKING_LEVELS,
+	modelOptionsModal,
+	providerModelsModal,
 	verificationStatusText,
 } from "../model-connections.ts";
 import type { ProviderAuthLike } from "../provider-auth.ts";
@@ -23,6 +28,26 @@ interface ProviderServices extends PageServices {
 	readonly refresh: () => Promise<void>;
 	readonly ready: () => boolean;
 	readonly globalModels: () => string[] | null;
+	readonly setProviderModels: (provider: string, models: readonly string[], identity: Identity) => Promise<void>;
+}
+
+interface ModelSelectionOperation {
+	readonly identity: Identity;
+	readonly generation: number;
+	readonly provider: string;
+	readonly revision: number;
+	models: readonly CatalogModel[];
+	modal: PanelModal;
+	configuration?: ConfigureProvider;
+}
+
+interface ModelEditOperation {
+	readonly identity: Identity;
+	readonly generation: number;
+	readonly model: CatalogModel;
+	readonly modal: PanelModal;
+	readonly revision: number;
+	configuration?: ConfigureModel;
 }
 
 interface OAuthOperation {
@@ -64,11 +89,15 @@ export class Providers {
 	};
 	private readonly oauthOperations = new Map<string, OAuthOperation>();
 	private displayedOAuth?: OAuthOperation;
+	private modelSelection?: ModelSelectionOperation;
+	private modelEdit?: ModelEditOperation;
 	private readonly services: ProviderServices;
 	constructor(services: ProviderServices) {
 		this.services = services;
 	}
 	dispose(): void {
+		this.modelSelection = undefined;
+		this.modelEdit = undefined;
 		for (const operation of this.oauthOperations.values())
 			clearTimeout(operation.timer);
 		this.oauthOperations.clear();
@@ -163,6 +192,8 @@ export class Providers {
 				modelId: item.model,
 				name: item.label,
 				available: availableProviders.has(item.provider),
+				contextWindow: item.context_window,
+				thinkingLevels: item.thinking_levels,
 			})) ?? [];
 		const selected = authentication.providers.some(
 			(provider) =>
@@ -227,6 +258,130 @@ export class Providers {
 			disabled: !this.services.ready(),
 		};
 	}
+	private modelModalActive(operation: { readonly identity: Identity; readonly generation: number; readonly modal: PanelModal }): boolean {
+		return this.services.hostActive(operation.identity) && operation.generation === this.services.panels.generation
+			&& this.services.panels.modal === operation.modal;
+	}
+
+	async openModelSelection(provider: string): Promise<void> {
+		const identity = this.services.client.identity;
+		if (!identity || !this.services.hostActive(identity)) return;
+		const known = this.catalog?.models.filter(model => model.provider === provider) ?? [];
+		const enabled = this.services.globalModels();
+		const selected = (models: readonly CatalogModel[]) => models.filter(model => enabled === null
+			? known.some(item => item.model === model.model)
+			: enabled.includes(`${provider}/${model.model}`)).map(model => model.model);
+		const modal: PanelModal = { ...providerModelsModal(this.services.locale(), provider, known, selected(known)),
+			submit: undefined, fields: [], notice: { tone: "info", text: "正在获取供应商模型列表…" } };
+		const operation: ModelSelectionOperation = { identity, provider, generation: this.services.panels.generation,
+			revision: this.catalog?.configuration_revision ?? 0, models: known, modal };
+		this.modelSelection = operation;
+		this.services.panels.modal = modal;
+		this.services.changed();
+		let failure = false;
+		try {
+			const result = await this.services.client.call("POST /api/v1/providers/{provider}/models/discover", {
+				path: { provider }, identity,
+			});
+			if (result.provider !== provider) throw new Error("模型列表归属不匹配");
+			if (!this.modelModalActive(operation)) return;
+			const retained = new Set(selected(known));
+			const models = new Map(known.filter(model => retained.has(model.model)).map(model => [model.model, model]));
+			for (const model of result.models) models.set(model.model, model);
+			operation.models = [...models.values()];
+		} catch {
+			if (!this.modelModalActive(operation)) return;
+			failure = true;
+		}
+		if (!this.modelModalActive(operation)) return;
+		operation.modal = { ...providerModelsModal(this.services.locale(), provider, operation.models, selected(operation.models)),
+			...(failure ? { notice: { tone: "warning", text: "无法获取供应商模型列表，当前显示已有目录。可稍后重新获取。" } } : {}) };
+		this.services.panels.modal = operation.modal;
+		this.services.changed();
+	}
+
+	async saveModelSelection(fields: Readonly<Record<string, string>>): Promise<void> {
+		const operation = this.modelSelection;
+		if (!operation || !this.modelModalActive(operation) || this.services.panels.modalPending) return;
+		const { provider, identity } = operation;
+		const parsed = parseContract("InterfacePreferences", { enabledModels: JSON.parse(fields.models ?? "[]") }).enabledModels;
+		const selected = parsed ?? operation.models.map(model => model.model);
+		if (selected.some(id => !operation.models.some(model => model.model === id))) throw new Error("请选择列表中的模型");
+		const known = this.catalog?.models.filter(model => model.provider === provider) ?? [];
+		const added = operation.models.filter(model => selected.includes(model.model) && !known.some(item => item.model === model.model));
+		this.services.panels.pendingModal = operation.modal;
+		this.services.changed();
+		try {
+			await this.services.refresh();
+			if (!this.services.hostActive(identity)) return;
+			if (!operation.configuration && (this.catalog?.configuration_revision ?? 0) !== operation.revision)
+				throw new Error("供应商配置已变化，请重新获取模型列表。");
+			if (added.length > 0 || operation.configuration) {
+				const current = this.connections(provider).state.providers.find(item => item.id === provider);
+				if (!current || current.api === "auto") throw new Error("请先为供应商选择 API 协议，再启用新增模型。");
+				operation.configuration ??= parseContract("ConfigureProvider", {
+					provider, operation_id: newId(), expected_revision: operation.revision,
+					name: current.name, base_url: current.baseUrl, api: current.api,
+					model_ids: [...new Set([...known.map(model => model.model), ...added.map(model => model.model)])],
+				});
+				if (selected.some(id => !operation.configuration?.model_ids?.includes(id)))
+					throw new Error("上次目录保存尚待确认，请先重试原选择，或重新获取模型列表。");
+				const result = await this.services.client.call("PUT /api/v1/providers/{provider}", {
+					path: { provider }, identity, body: operation.configuration,
+				});
+				if (result.operation_id !== operation.configuration.operation_id || result.provider !== provider)
+					throw new Error("模型目录保存回执不匹配");
+				if (!this.services.hostActive(identity)) return;
+				await this.services.refresh();
+			}
+			if (!this.services.hostActive(identity)) return;
+			await this.services.setProviderModels(provider, selected, identity);
+			if (this.modelModalActive(operation)) this.services.panels.modal = undefined;
+			this.modelSelection = undefined;
+		} finally {
+			if (this.services.panels.pendingModal === operation.modal) this.services.panels.pendingModal = undefined;
+			if (this.services.hostActive(identity)) this.services.changed();
+		}
+	}
+
+	openModelOptions(provider: string, modelId: string): void {
+		const identity = this.services.client.identity;
+		const model = this.catalog?.models.find(item => item.provider === provider && item.model === modelId);
+		if (!identity || !model || provider === "faux") return;
+		const modal = modelOptionsModal(this.services.locale(), model);
+		this.modelEdit = { identity, model, modal, generation: this.services.panels.generation,
+			revision: this.catalog?.configuration_revision ?? 0 };
+		this.services.panels.modal = modal;
+		this.services.changed();
+	}
+
+	async saveModelOptions(fields: Readonly<Record<string, string>>): Promise<void> {
+		const operation = this.modelEdit;
+		if (!operation || !this.modelModalActive(operation) || this.services.panels.modalPending) return;
+		const { identity, model } = operation;
+		operation.configuration ??= parseContract("ConfigureModel", {
+			provider: model.provider, model: model.model, operation_id: newId(), expected_revision: operation.revision,
+			options: { context_window: fields.contextWindow?.trim() ? Number(fields.contextWindow) : null,
+				thinking_levels: fields.thinkingMode === "custom" ? (JSON.parse(fields.thinkingLevels ?? "[]") ?? THINKING_LEVELS) : null },
+		});
+		this.services.panels.pendingModal = operation.modal;
+		this.services.changed();
+		try {
+			const result = await this.services.client.call("PUT /api/v1/providers/{provider}/models/options", {
+				path: { provider: model.provider }, identity, body: operation.configuration,
+			});
+			if (result.operation_id !== operation.configuration.operation_id || result.provider !== model.provider)
+				throw new Error("模型参数保存回执不匹配");
+			if (!this.services.hostActive(identity)) return;
+			await this.services.refresh();
+			if (this.modelModalActive(operation)) this.services.panels.modal = undefined;
+			this.modelEdit = undefined;
+		} finally {
+			if (this.services.panels.pendingModal === operation.modal) this.services.panels.pendingModal = undefined;
+			if (this.services.hostActive(identity)) this.services.changed();
+		}
+	}
+
 	private verification(
 		provider: string,
 	): ModelConnectionsLike["state"]["providers"][number]["verification"] {

@@ -1,7 +1,9 @@
 """Public data contracts. This package does not load backend services."""
 
+from amazme_backend.contracts.accounts import ConfigureModel as ConfigureModel
 from amazme_backend.contracts.accounts import ConfigureProvider as ConfigureProvider
 from amazme_backend.contracts.accounts import CredentialUpdate as CredentialUpdate
+from amazme_backend.contracts.accounts import DiscoveredModels as DiscoveredModels
 from amazme_backend.contracts.accounts import ProviderCheck as ProviderCheck
 from amazme_backend.contracts.accounts import ProviderCheckRequest as ProviderCheckRequest
 from amazme_backend.contracts.accounts import ProviderConfigured as ProviderConfigured
@@ -146,6 +148,7 @@ from amazme_backend.contracts.models import ImagePart as ImagePart
 from amazme_backend.contracts.models import Message as Message
 from amazme_backend.contracts.models import ModelCallUsage as ModelCallUsage
 from amazme_backend.contracts.models import ModelCatalog as ModelCatalog
+from amazme_backend.contracts.models import ModelOptions as ModelOptions
 from amazme_backend.contracts.models import ModelScope as ModelScope
 from amazme_backend.contracts.models import ModelScopeRequest as ModelScopeRequest
 from amazme_backend.contracts.models import ModelSelection as ModelSelection

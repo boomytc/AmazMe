@@ -534,6 +534,9 @@
             }
           ],
           "title": "Context Window"
+        },
+        "overrides": {
+          "$ref": "#/components/schemas/ModelOptions"
         }
       },
       "additionalProperties": false,
@@ -1192,6 +1195,45 @@
       ],
       "title": "CompleteUpdate"
     },
+    "ConfigureModel": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+          "title": "Provider"
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[\\w./:@~+-]+$",
+          "title": "Model"
+        },
+        "operation_id": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{32}$",
+          "title": "Operation Id"
+        },
+        "expected_revision": {
+          "type": "integer",
+          "minimum": 0.0,
+          "title": "Expected Revision"
+        },
+        "options": {
+          "$ref": "#/components/schemas/ModelOptions"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "model",
+        "operation_id",
+        "expected_revision",
+        "options"
+      ],
+      "title": "ConfigureModel"
+    },
     "ConfigureProvider": {
       "properties": {
         "provider": {
@@ -1235,7 +1277,7 @@
                 "type": "string"
               },
               "type": "array",
-              "maxItems": 256
+              "maxItems": 4096
             },
             {
               "type": "null"
@@ -1386,6 +1428,28 @@
       ],
       "title": "Decision",
       "type": "object"
+    },
+    "DiscoveredModels": {
+      "properties": {
+        "provider": {
+          "type": "string",
+          "title": "Provider"
+        },
+        "models": {
+          "items": {
+            "$ref": "#/components/schemas/CatalogModel"
+          },
+          "type": "array",
+          "title": "Models"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "provider",
+        "models"
+      ],
+      "title": "DiscoveredModels"
     },
     "EditFile": {
       "properties": {
@@ -3763,6 +3827,51 @@
       ],
       "title": "ModelCatalog"
     },
+    "ModelOptions": {
+      "properties": {
+        "context_window": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "maximum": 2147483647.0,
+              "exclusiveMinimum": 0.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Context Window"
+        },
+        "thinking_levels": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh",
+                  "max"
+                ]
+              },
+              "type": "array",
+              "maxItems": 7,
+              "minItems": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Thinking Levels"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "title": "ModelOptions"
+    },
     "ModelScope": {
       "properties": {
         "models": {
@@ -5558,13 +5667,21 @@
                 "type": "string"
               },
               "type": "array",
-              "maxItems": 256
+              "maxItems": 4096
             },
             {
               "type": "null"
             }
           ],
           "title": "Model Ids"
+        },
+        "model_options": {
+          "additionalProperties": {
+            "$ref": "#/components/schemas/ModelOptions"
+          },
+          "type": "object",
+          "maxProperties": 4096,
+          "title": "Model Options"
         }
       },
       "additionalProperties": false,
@@ -10714,6 +10831,20 @@
       },
       "body": {
         "$ref": "#/components/schemas/ProviderCheckRequest"
+      }
+    },
+    "POST /api/v1/providers/{provider}/models/discover": {
+      "response": {
+        "$ref": "#/components/schemas/DiscoveredModels"
+      },
+      "body": null
+    },
+    "PUT /api/v1/providers/{provider}/models/options": {
+      "response": {
+        "$ref": "#/components/schemas/ProviderConfigured"
+      },
+      "body": {
+        "$ref": "#/components/schemas/ConfigureModel"
       }
     },
     "POST /api/v1/models/scope": {

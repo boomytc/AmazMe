@@ -3631,6 +3631,94 @@
         }
       }
     },
+    "/api/v1/providers/{provider}/models/discover": {
+      "post": {
+        "summary": "Discover Models",
+        "operationId": "discover_models_api_v1_providers__provider__models_discover_post",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoveredModels"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/providers/{provider}/models/options": {
+      "put": {
+        "summary": "Configure Model",
+        "operationId": "configure_model_api_v1_providers__provider__models_options_put",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigureModel"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderConfigured"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/models/scope": {
       "post": {
         "summary": "Model Scope",
@@ -6903,6 +6991,9 @@
               }
             ],
             "title": "Context Window"
+          },
+          "overrides": {
+            "$ref": "#/components/schemas/ModelOptions"
           }
         },
         "additionalProperties": false,
@@ -7561,6 +7652,45 @@
         ],
         "title": "CompleteUpdate"
       },
+      "ConfigureModel": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9._-]{0,63}$",
+            "title": "Provider"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[\\w./:@~+-]+$",
+            "title": "Model"
+          },
+          "operation_id": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{32}$",
+            "title": "Operation Id"
+          },
+          "expected_revision": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Expected Revision"
+          },
+          "options": {
+            "$ref": "#/components/schemas/ModelOptions"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "model",
+          "operation_id",
+          "expected_revision",
+          "options"
+        ],
+        "title": "ConfigureModel"
+      },
       "ConfigureProvider": {
         "properties": {
           "provider": {
@@ -7604,7 +7734,7 @@
                   "type": "string"
                 },
                 "type": "array",
-                "maxItems": 256
+                "maxItems": 4096
               },
               {
                 "type": "null"
@@ -7755,6 +7885,28 @@
           "status"
         ],
         "title": "Decision"
+      },
+      "DiscoveredModels": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogModel"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "models"
+        ],
+        "title": "DiscoveredModels"
       },
       "EditFile": {
         "properties": {
@@ -10127,6 +10279,51 @@
         ],
         "title": "ModelCatalog"
       },
+      "ModelOptions": {
+        "properties": {
+          "context_window": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 2147483647.0,
+                "exclusiveMinimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Context Window"
+          },
+          "thinking_levels": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "off",
+                    "minimal",
+                    "low",
+                    "medium",
+                    "high",
+                    "xhigh",
+                    "max"
+                  ]
+                },
+                "type": "array",
+                "maxItems": 7,
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thinking Levels"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ModelOptions"
+      },
       "ModelScope": {
         "properties": {
           "models": {
@@ -11922,13 +12119,21 @@
                   "type": "string"
                 },
                 "type": "array",
-                "maxItems": 256
+                "maxItems": 4096
               },
               {
                 "type": "null"
               }
             ],
             "title": "Model Ids"
+          },
+          "model_options": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ModelOptions"
+            },
+            "type": "object",
+            "maxProperties": 4096,
+            "title": "Model Options"
           }
         },
         "additionalProperties": false,

@@ -10,8 +10,10 @@ from pydantic import JsonValue
 
 from amazme_backend.contracts.accounts import (
     AccountsView,
+    ConfigureModel,
     ConfigureProvider,
     CredentialUpdate,
+    DiscoveredModels,
     OAuthInput,
     OAuthStart,
     OAuthView,
@@ -242,6 +244,15 @@ class Client:
     async def configure_provider(self, value: ConfigureProvider) -> ProviderConfigured:
         return ProviderConfigured.model_validate(await self._send("PUT", "/api/v1/providers/" + quote(value.provider, safe=""),
             json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def configure_model(self, value: ConfigureModel) -> ProviderConfigured:
+        return ProviderConfigured.model_validate(await self._send("PUT",
+            "/api/v1/providers/" + quote(value.provider, safe="") + "/models/options",
+            json_body=value.model_dump(mode="json"), headers=self._write()))
+
+    async def discover_models(self, provider: str) -> DiscoveredModels:
+        return DiscoveredModels.model_validate(await self._send("POST",
+            "/api/v1/providers/" + quote(provider, safe="") + "/models/discover", headers=self._write()))
 
     async def schedules(self) -> SchedulesView:
         return SchedulesView.model_validate(await self._send("GET", "/api/v1/schedules"))

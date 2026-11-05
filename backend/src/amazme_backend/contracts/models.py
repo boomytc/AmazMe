@@ -42,6 +42,18 @@ class ModelCallUsage(Model):
     finished_at_ms: int | None = None
 
 
+class ModelOptions(Model):
+    context_window: int | None = Field(default=None, gt=0, le=2_147_483_647)
+    thinking_levels: list[ThinkingLevel] | None = Field(default=None, min_length=1, max_length=7)
+
+    @field_validator("thinking_levels")
+    @classmethod
+    def unique_levels(cls, value: list[ThinkingLevel] | None) -> list[ThinkingLevel] | None:
+        if value is not None and len(set(value)) != len(value):
+            raise ValueError("thinking levels must be unique")
+        return value
+
+
 class CatalogModel(Model):
     api: ProviderApi = "openai-completions"
     base_url: str = ""
@@ -51,6 +63,7 @@ class CatalogModel(Model):
     endpoint_editable: bool
     thinking_levels: list[ThinkingLevel] = Field(default_factory=lambda: ["off"])
     context_window: int | None = Field(default=None, gt=0)
+    overrides: ModelOptions = Field(default_factory=ModelOptions)
 
 
 class ModelSettings(Model):
@@ -67,14 +80,13 @@ class ModelSettings(Model):
     thinking: ThinkingLevel = "off"
 
 
-class ProviderDefinition(Model):
+class ProviderConnection(Model):
     provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     name: str = Field(default="", max_length=100)
     base_url: str = Field(max_length=300)
     # None keeps each catalog model's protocol instead of replacing the whole provider's API.
     api: ProviderApi | None
-    model_ids: list[str] | None = Field(default=None, max_length=256)
-
+    model_ids: list[str] | None = Field(default=None, max_length=4096)
     @field_validator("model_ids")
     @classmethod
     def checked_model_ids(cls, value: list[str] | None) -> list[str] | None:
@@ -83,6 +95,17 @@ class ProviderDefinition(Model):
                 raise ValueError("model ids must be nonempty and unique")
             for name in value:
                 ModelSelection(provider="custom", model=name)
+        return value
+
+
+class ProviderDefinition(ProviderConnection):
+    model_options: dict[str, ModelOptions] = Field(default_factory=dict, max_length=4096)
+
+    @field_validator("model_options")
+    @classmethod
+    def checked_options(cls, value: dict[str, ModelOptions]) -> dict[str, ModelOptions]:
+        for name in value:
+            ModelSelection(provider="custom", model=name)
         return value
 
 

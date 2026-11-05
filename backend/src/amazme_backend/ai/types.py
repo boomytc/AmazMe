@@ -7,7 +7,13 @@ from typing import Literal
 
 from pydantic import Field, JsonValue, SecretStr, model_validator
 
-from amazme_backend.contracts.models import IMAGE_MAX_COUNT, ImagePart, ProviderApi, ThinkingLevel
+from amazme_backend.contracts.models import (
+    IMAGE_MAX_COUNT,
+    ImagePart,
+    ModelOptions,
+    ProviderApi,
+    ThinkingLevel,
+)
 from amazme_backend.shared.errors import BackendError
 from amazme_backend.shared.model import Model
 
@@ -19,6 +25,7 @@ class ModelSpec(Model):
     base_url: str
     max_tokens: int = 2048
     thinking: ThinkingLevel | None = None
+    model_options: ModelOptions | None = None
 
 
 class Auth(Model):

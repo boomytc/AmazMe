@@ -14,8 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from amazme_backend.ai.classification.types import ClassifierCatalog
 from amazme_backend.contracts.accounts import (
     AccountsView,
+    ConfigureModel,
     ConfigureProvider,
     CredentialUpdate,
+    DiscoveredModels,
     OAuthInput,
     OAuthStart,
     OAuthView,
@@ -590,6 +592,16 @@ def application(owner: Host) -> FastAPI:
         if provider != value.provider:
             raise BackendError("provider_mismatch")
         return await owner.accounts.check_provider(value)
+
+    @app.post("/api/v1/providers/{provider}/models/discover")
+    async def discover_models(provider: str) -> DiscoveredModels:
+        return await owner.accounts.discover_models(provider)
+
+    @app.put("/api/v1/providers/{provider}/models/options")
+    async def configure_model(provider: str, value: ConfigureModel) -> ProviderConfigured:
+        if provider != value.provider:
+            raise BackendError("provider_mismatch")
+        return await owner.accounts.configure_model(value)
 
     @app.post("/api/v1/models/scope")
     async def model_scope(value: ModelScopeRequest) -> ModelScope:

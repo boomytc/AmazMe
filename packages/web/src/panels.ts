@@ -252,7 +252,8 @@ interface PanelFieldBase {
 
 export type PanelField = PanelFieldBase & (
 	| { readonly kind: "combobox"; readonly options: readonly Pick<PanelOption, "value" | "label">[] }
-	| { readonly kind: "text" | "textarea" | "select" | "checkbox" | "multiselect" | "directories";
+	| { readonly kind: "multiselect"; readonly options?: readonly Pick<PanelOption, "value" | "label">[]; readonly searchable?: boolean }
+	| { readonly kind: "text" | "textarea" | "select" | "checkbox" | "directories";
 		readonly options?: readonly Pick<PanelOption, "value" | "label">[] }
 );
 

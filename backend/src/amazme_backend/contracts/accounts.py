@@ -4,13 +4,24 @@ from typing import Literal
 
 from pydantic import Field, SecretStr
 
-from amazme_backend.contracts.models import ProviderDefinition
+from amazme_backend.contracts.models import CatalogModel, ModelOptions, ModelSelection, ProviderConnection
 from amazme_backend.shared.model import Model
 
 
-class ConfigureProvider(ProviderDefinition):
+class ConfigureProvider(ProviderConnection):
     operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     expected_revision: int = Field(ge=0)
+
+
+class ConfigureModel(ModelSelection):
+    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    expected_revision: int = Field(ge=0)
+    options: ModelOptions
+
+
+class DiscoveredModels(Model):
+    provider: str
+    models: list[CatalogModel]
 
 
 class ProviderConfigured(Model):

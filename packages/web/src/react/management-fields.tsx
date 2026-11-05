@@ -1064,6 +1064,8 @@ export interface MultiselectFieldProps {
 	readonly fieldId: string;
 	readonly locale: Locale;
 	readonly value: string;
+	readonly disabled?: boolean;
+	readonly searchable?: boolean;
 	readonly options: readonly {
 		readonly value: string;
 		readonly label: string;
@@ -1075,6 +1077,8 @@ export function MultiselectField({
 	fieldId,
 	locale,
 	value,
+	disabled = false,
+	searchable = true,
 	options,
 	onValueChange,
 }: MultiselectFieldProps) {
@@ -1116,19 +1120,23 @@ export function MultiselectField({
 
 	return (
 		<div className="modal-multiselect" data-multiselect={fieldId}>
+			{searchable && (
 			<input
 				type="search"
 				className="modal-input"
 				placeholder={translate(locale, "model.search")}
 				aria-label={translate(locale, "model.search")}
+				disabled={disabled}
 				value={query}
 				onChange={(event) => setQuery(event.currentTarget.value)}
 			/>
+			)}
 			<div className="multiselect-controls">
 				<button
 					type="button"
 					className="panel-button weight-line"
 					onClick={() => setVisible(true)}
+					disabled={disabled}
 				>
 					{translate(
 						locale,
@@ -1141,6 +1149,7 @@ export function MultiselectField({
 					type="button"
 					className="panel-button weight-line"
 					onClick={() => setVisible(false)}
+					disabled={disabled}
 				>
 					{translate(
 						locale,
@@ -1173,6 +1182,7 @@ export function MultiselectField({
 								type="checkbox"
 								value={option.value}
 								checked={selected.has(option.value)}
+								disabled={disabled}
 								onChange={(event) => {
 									const next = new Set(selected);
 									if (event.currentTarget.checked) next.add(option.value);

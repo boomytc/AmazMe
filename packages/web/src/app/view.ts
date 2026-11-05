@@ -148,7 +148,7 @@ export function pythonView(input: PresentationInput): WebView {
 	const enabledModelIds = (input.connections?.enabledModels ?? []).map(model => `${model.provider}/${model.modelId}`)
 		.filter(id => input.enabledModels === null || input.enabledModels.includes(id));
 	const models: ModelsStateLike | undefined = catalog ? { catalog: { revision: 0, enabledModelIds,
-		availableModels: catalog.models.filter(item => availableProviders.has(item.provider)).map(item => ({ provider: item.provider, modelId: item.model, name: item.label, reasoning: (item.thinking_levels?.length ?? 0) > 1, ...(item.context_window ? { contextWindow: item.context_window } : {}) })) },
+		availableModels: catalog.models.filter(item => availableProviders.has(item.provider)).map(item => ({ provider: item.provider, modelId: item.model, name: item.label, reasoning: item.thinking_levels?.some(level => level !== "off") ?? false, ...(item.context_window ? { contextWindow: item.context_window } : {}) })) },
 		configuration: { model: selected ? { provider: selected.provider, modelId: selected.model } : null, thinkingLevel: input.thinking }, refresh: { status: "idle" } } : undefined;
 	const levels = catalog?.models.find(item => item.provider === selected?.provider && item.model === selected.model)?.thinking_levels;
 	const pending = snapshot?.requests.filter(item => !settled.has(item.status)) ?? [];

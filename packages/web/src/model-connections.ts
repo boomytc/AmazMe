@@ -1,4 +1,5 @@
 import type { Locale } from "./locale.ts";
+import type { CatalogModel } from "./generated/contracts.ts";
 import type { PanelModal } from "./panels.ts";
 import type { ProviderAuthLike } from "./provider-auth.ts";
 import { translate } from "./strings.ts";
@@ -12,35 +13,25 @@ export const PROVIDER_TEST_ACTION = "models:test";
 export const PROVIDER_TEST_MODAL = "models:test-models";
 export const PROVIDER_TEST_ALL_ACTION = "models:test-all";
 export const MODEL_ENABLED_ACTION = "models:enabled";
+export const PROVIDER_MODELS_ACTION = "models:discover";
+export const PROVIDER_MODELS_MODAL = "models:choose";
+export const MODEL_OPTIONS_ACTION = "models:options";
+export const MODEL_OPTIONS_MODAL = "models:save-options";
+
+export type ThinkingLevel = NonNullable<CatalogModel["thinking_levels"]>[number];
+export const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export interface ConnectionModelLike {
 	readonly provider: string;
 	readonly modelId: string;
 	readonly name: string;
 	readonly available: boolean;
+	readonly contextWindow?: number | null;
+	readonly thinkingLevels?: readonly ThinkingLevel[];
 }
 /** Whether this model is offered to new chats; a null list means every available model. */
 export function isModelEnabled(model: ConnectionModelLike, enabledModelIds: readonly string[] | null): boolean {
 	return enabledModelIds === null || enabledModelIds.includes(`${model.provider}/${model.modelId}`);
-}
-
-export interface ConnectionModelRow {
-	readonly model: ConnectionModelLike;
-	readonly enabled: boolean;
-}
-
-/**
- * The model list a provider detail shows: enabled models first, then the original catalogue order.
- * A query matches either the display name or the provider-side model id. The sort is stable so
- * toggling one checkbox moves exactly that row and leaves the rest in place.
- */
-export function connectionModelRows(models: readonly ConnectionModelLike[], enabledModelIds: readonly string[] | null, query: string): readonly ConnectionModelRow[] {
-	const needle = query.trim().toLocaleLowerCase();
-	return models
-		.map((model, index) => ({ model, enabled: isModelEnabled(model, enabledModelIds), index }))
-		.filter((row) => needle.length === 0 || `${row.model.name} ${row.model.modelId}`.toLocaleLowerCase().includes(needle))
-		.sort((left, right) => Number(right.enabled) - Number(left.enabled) || left.index - right.index)
-		.map(({ model, enabled }) => ({ model, enabled }));
 }
 
 export interface ModelConnectionsLike {
@@ -149,6 +140,37 @@ export function providerTestModal(locale: Locale, models: readonly ConnectionMod
 		fields: [
 			{ id: "model", label: copy("connections.testModel"), kind: "select", value: models[0]?.modelId ?? "", options: models.map(model => ({ value: model.modelId, label: model.name })) },
 			{ id: "key", label: copy("connections.apiKey"), kind: "text", readOnly: true, value: configured ? "••••••••" : copy("connections.keyMissing") },
+		],
+	};
+}
+
+export function providerModelsModal(locale: Locale, provider: string, models: readonly CatalogModel[], selected: readonly string[]): PanelModal {
+	return {
+		id: PROVIDER_MODELS_MODAL, data: provider, title: translate(locale, "connections.fetchModels"),
+		submit: translate(locale, "modal.save"),
+		fields: [{ id: "models", label: translate(locale, "connections.chooseModels"), kind: "multiselect",
+			value: JSON.stringify(selected), options: models.map(model => ({ value: model.model, label: model.label })) }],
+	};
+}
+
+export function modelOptionsModal(locale: Locale, model: CatalogModel): PanelModal {
+	const levels = model.overrides?.thinking_levels;
+	return {
+		id: MODEL_OPTIONS_MODAL, data: JSON.stringify([model.provider, model.model]),
+		title: translate(locale, "connections.modelSettings"), description: model.label,
+		submit: translate(locale, "modal.save"),
+		fields: [
+			{ id: "contextWindow", label: translate(locale, "connections.contextWindow"), kind: "text", inputType: "number",
+				value: model.overrides?.context_window?.toString() ?? "",
+				placeholder: model.context_window?.toString() ?? "", hint: translate(locale, "connections.contextWindowHelp") },
+			{ id: "thinkingMode", label: translate(locale, "connections.thinkingLevels"), kind: "select", value: levels == null ? "preset" : "custom",
+				options: [{ value: "preset", label: translate(locale, "connections.usePreset") },
+					{ value: "custom", label: translate(locale, "connections.customThinking") }] },
+			{ id: "thinkingLevels", label: translate(locale, "connections.supportedLevels"), kind: "multiselect",
+				searchable: false,
+				value: JSON.stringify(levels ?? model.thinking_levels ?? ["off"]),
+				options: THINKING_LEVELS.map(level => ({ value: level, label: level })),
+				visibleWhen: { field: "thinkingMode", values: ["custom"] } },
 		],
 	};
 }

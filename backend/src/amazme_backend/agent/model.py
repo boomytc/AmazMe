@@ -23,11 +23,15 @@ CATALOG = [CatalogModel(provider="faux", model="faux", label="本地确定性", 
 
 def model_spec(config: ProviderConfig) -> ModelSpec:
     return ModelSpec(provider=config.provider, model=config.model, api=config.api, base_url=config.base_url,
-                     max_tokens=config.max_tokens, thinking=config.thinking)
+                     max_tokens=config.max_tokens, thinking=config.thinking, model_options=config.model_options)
 
 
 def model_transport(config: ProviderConfig) -> RequestTransport:
     return RequestTransport(proxy=config.proxy, headers=dict(config.headers))
+
+
+async def discover_models(config: ProviderConfig, auth: Auth) -> list[CatalogModel]:
+    return await client.discover_models(model_spec(config), auth, model_transport(config))
 
 
 def model_request(config: ProviderConfig, messages: Sequence[Message], offers: Sequence[McpOffer] | None = None,

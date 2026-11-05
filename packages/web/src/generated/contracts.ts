@@ -105,6 +105,7 @@ export type CatalogModel = {
   "endpoint_editable": boolean;
   "thinking_levels"?: Array<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
   "context_window"?: number | null;
+  "overrides"?: ModelOptions;
 };
 
 export type CheckpointCreate = {
@@ -241,6 +242,14 @@ export type CompleteUpdate = {
   "expected_revision": string;
 };
 
+export type ConfigureModel = {
+  "provider": string;
+  "model": string;
+  "operation_id": string;
+  "expected_revision": number;
+  "options": ModelOptions;
+};
+
 export type ConfigureProvider = {
   "provider": string;
   "name"?: string;
@@ -275,6 +284,11 @@ export type Decision = {
   "status": "succeeded" | "cancelled" | "interrupted" | "failed" | "unknown";
   "answer"?: string;
   "error"?: string;
+};
+
+export type DiscoveredModels = {
+  "provider": string;
+  "models": Array<CatalogModel>;
 };
 
 export type EditFile = {
@@ -716,6 +730,11 @@ export type ModelCatalog = {
   "configuration_revision"?: number;
 };
 
+export type ModelOptions = {
+  "context_window"?: number | null;
+  "thinking_levels"?: Array<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"> | null;
+};
+
 export type ModelScope = {
   "models": Array<ScopedModel>;
   "diagnostics"?: Array<string>;
@@ -1061,6 +1080,7 @@ export type ProviderDefinition = {
   "base_url": string;
   "api": "openai-completions" | "openai-responses" | "openai-codex-responses" | "anthropic-messages" | "google-generative-ai" | null;
   "model_ids"?: Array<string> | null;
+  "model_options"?: Record<string, ModelOptions>;
 };
 
 export type QuestionAnswer = {
@@ -1883,11 +1903,13 @@ export interface ApiModels {
   CompactSession: CompactSession;
   Compaction: Compaction;
   CompleteUpdate: CompleteUpdate;
+  ConfigureModel: ConfigureModel;
   ConfigureProvider: ConfigureProvider;
   CreateSession: CreateSession;
   CredentialUpdate: CredentialUpdate;
   CronRule: CronRule;
   Decision: Decision;
+  DiscoveredModels: DiscoveredModels;
   EditFile: EditFile;
   EffectHold: EffectHold;
   EffectResolution: EffectResolution;
@@ -1941,6 +1963,7 @@ export interface ApiModels {
   MemoryWrite: MemoryWrite;
   ModelCallUsage: ModelCallUsage;
   ModelCatalog: ModelCatalog;
+  ModelOptions: ModelOptions;
   ModelScope: ModelScope;
   ModelScopeRequest: ModelScopeRequest;
   ModelSelection: ModelSelection;
@@ -2316,6 +2339,12 @@ export interface HttpOperations {
   "POST /api/v1/providers/{provider}/check": { response: ProviderCheck; path: {
   "provider": string;
 }; query: Record<string, unknown>; body: ProviderCheckRequest };
+  "POST /api/v1/providers/{provider}/models/discover": { response: DiscoveredModels; path: {
+  "provider": string;
+}; query: Record<string, unknown>; body: undefined };
+  "PUT /api/v1/providers/{provider}/models/options": { response: ProviderConfigured; path: {
+  "provider": string;
+}; query: Record<string, unknown>; body: ConfigureModel };
   "POST /api/v1/models/scope": { response: ModelScope; path: Record<string, unknown>; query: Record<string, unknown>; body: ModelScopeRequest };
   "GET /api/v1/accounts": { response: AccountsView; path: Record<string, unknown>; query: Record<string, unknown>; body: undefined };
   "POST /api/v1/accounts/oauth": { response: OAuthView; path: Record<string, unknown>; query: Record<string, unknown>; body: OAuthStart };

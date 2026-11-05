@@ -16,9 +16,17 @@ BUDGETS = {"minimal": 1024, "low": 2048, "medium": 8192, "high": 16384, "xhigh":
 
 def level_for(config: ModelSpec) -> tuple[PiModel | None, ThinkingLevel]:
     model = INDEX.get((config.provider, config.model))
+    levels = config.model_options.thinking_levels if config.model_options else None
+    if levels is not None:
+        if model is None:
+            model = PiModel(id=config.model, provider=config.provider, name=config.model, api=config.api,
+                            baseUrl=config.base_url, maxTokens=max(16384, config.max_tokens))
+        model = model.model_copy(update={"reasoning": model.reasoning or any(level != "off" for level in levels),
+            "thinking_level_map": {**model.thinking_level_map,
+                **{level: model.thinking_level_map.get(level) or level for level in levels if level != "off"}}})
     if model is None:
         return None, config.thinking or "off"
-    available = model.thinking_levels()
+    available = levels if levels is not None else model.thinking_levels()
     requested = config.thinking or "off"
     if requested in available:
         return model, requested

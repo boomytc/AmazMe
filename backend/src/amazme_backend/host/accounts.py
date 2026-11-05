@@ -10,6 +10,7 @@ from pydantic import SecretStr
 from amazme_backend.accounts.configuration import (
     checked_model_endpoint,
     choose_model,
+    configured_catalog_model,
     provider_transport,
     public_settings,
     request_identity,
@@ -18,15 +19,17 @@ from amazme_backend.accounts.configuration import (
 from amazme_backend.accounts.oauth.flow import BROWSER, DEVICE
 from amazme_backend.accounts.oauth.flow import Login as OAuthLogin
 from amazme_backend.accounts.store import AccountDocument, AccountStore, ApiKeyCredential
-from amazme_backend.agent.model import CATALOG, stream
+from amazme_backend.agent.model import CATALOG, discover_models, stream
 from amazme_backend.ai.catalog import PROVIDERS, SELECTION_INDEX
 from amazme_backend.ai.classification.catalog import MODELS as CLASSIFIER_MODELS
 from amazme_backend.ai.classification.types import ClassifierCatalog
 from amazme_backend.ai.types import Auth, Completion
 from amazme_backend.contracts.accounts import (
     AccountsView,
+    ConfigureModel,
     ConfigureProvider,
     CredentialUpdate,
+    DiscoveredModels,
     OAuthInput,
     OAuthStart,
     OAuthView,
@@ -269,6 +272,8 @@ class AccountOperations:
                     endpoint_editable=True,
                 )
             )
+        models = [configured_catalog_model(item, document.transports[item.provider].model_options.get(item.model))
+                  if item.provider in document.transports else item for item in models]
         return ModelCatalog(
             models=models,
             current=current,
@@ -304,7 +309,38 @@ class AccountOperations:
                     and (self.lifecycle.profile.config.provider.model not in value.model_ids)
                 ):
                     raise BackendError("default_model_not_available")
-            return await self.accounts.configure_provider(value, self.write_guard)
+            return await self.accounts.configure(value, self.write_guard)
+
+    async def configure_model(self, value: ConfigureModel) -> ProviderConfigured:
+        async with self.provider_lock:
+            catalog = self.model_catalog()
+            if value.provider == "faux" or not any(
+                item.provider == value.provider and item.model == value.model for item in catalog.models
+            ):
+                raise BackendError("model_not_available")
+            return await self.accounts.configure(value, self.write_guard)
+
+    async def discover_models(self, provider: str) -> DiscoveredModels:
+        catalog = self.model_catalog()
+        known = {item.model: item for item in catalog.models if item.provider == provider}
+        if provider == "faux":
+            return DiscoveredModels(provider=provider, models=list(known.values()))
+        first = next(iter(known.values()), None)
+        if first is None:
+            raise BackendError("provider_not_configured")
+        document = self.accounts.read()
+        selected = select_model(self.lifecycle.profile.config.provider,
+            ModelSelection(provider=provider, model=first.model), document.transports,
+            catalog=SELECTION_INDEX, providers=PROVIDERS)
+        configured = await self.accounts.configured(selected)
+        auth = Auth(api_key=configured.api_key, auth_type=configured.auth_type,
+                    headers=request_identity(provider))
+        found = await discover_models(configured, auth)
+        await self.write_guard()
+        latest = self.accounts.read()
+        if (latest.configuration_revision, latest.revision) != (document.configuration_revision, document.revision):
+            raise BackendError("provider_configuration_conflict")
+        return DiscoveredModels(provider=provider, models=[known.get(item.model, item) for item in found])
 
     async def check_provider(self, value: ProviderCheckRequest) -> ProviderCheck:
         self.lifecycle.admit()
