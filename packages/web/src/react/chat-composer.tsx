@@ -13,6 +13,7 @@ import {
 	useRef,
 	useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { RUN_STOP_ACTION, SUBMIT_MODE_ACTION } from "../actions.ts";
 import type { Locale } from "../locale.ts";
 import type { PanelButton } from "../panels.ts";
@@ -516,6 +517,48 @@ const PERMISSIONS = [
 	},
 ] satisfies readonly PermissionOption[];
 
+const POPOVER_MARGIN = 8;
+const POPOVER_GAP = 6;
+
+/**
+ * Place a popover inside the viewport, above the anchor when the space below cannot hold it.
+ * The menu is portalled to the body: its old static position sits under the composer and runs
+ * past the bottom of the window, and a menu left in the page paints under the dock.
+ */
+function anchoredPopoverBox(
+	anchor: Pick<DOMRect, "top" | "bottom" | "left">,
+	size: { readonly width: number; readonly height: number },
+	viewport: { readonly width: number; readonly height: number },
+): { readonly left: number; readonly top: number; readonly maxHeight: number } {
+	const roomAbove = anchor.top - POPOVER_MARGIN;
+	const roomBelow = viewport.height - anchor.bottom - POPOVER_MARGIN;
+	const openAbove =
+		roomBelow < size.height + POPOVER_GAP && roomAbove > roomBelow;
+	const room = (openAbove ? roomAbove : roomBelow) - POPOVER_GAP;
+	const maxHeight = Math.max(
+		0,
+		Math.floor(
+			Math.min(
+				size.height,
+				room > 0 ? room : viewport.height - POPOVER_MARGIN * 2,
+			),
+		),
+	);
+	const used = Math.min(size.height, maxHeight);
+	const unclampedTop = openAbove
+		? anchor.top - POPOVER_GAP - used
+		: anchor.bottom + POPOVER_GAP;
+	const top = Math.min(
+		Math.max(POPOVER_MARGIN, unclampedTop),
+		Math.max(POPOVER_MARGIN, viewport.height - POPOVER_MARGIN - used),
+	);
+	const left = Math.min(
+		Math.max(POPOVER_MARGIN, anchor.left),
+		Math.max(POPOVER_MARGIN, viewport.width - POPOVER_MARGIN - size.width),
+	);
+	return { left: Math.round(left), top: Math.round(top), maxHeight };
+}
+
 function PermissionPicker({
 	view,
 	actions,
@@ -526,6 +569,7 @@ function PermissionPicker({
 	const [open, setOpen] = useState(false);
 	const root = useRef<HTMLDivElement>(null);
 	const trigger = useRef<HTMLButtonElement>(null);
+	const menu = useRef<HTMLDivElement>(null);
 	const policy = view.approvalPolicy ?? "mutations";
 	const selected =
 		PERMISSIONS.find((option) => option.value === policy) ?? PERMISSIONS[1];
@@ -537,15 +581,51 @@ function PermissionPicker({
 	useEffect(() => {
 		if (!open) return;
 		const close = (event: PointerEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node)) return;
 			if (
-				event.target instanceof Node &&
-				root.current?.contains(event.target) === true
+				root.current?.contains(target) === true ||
+				menu.current?.contains(target) === true
 			)
 				return;
 			setOpen(false);
 		};
 		document.addEventListener("pointerdown", close);
 		return () => document.removeEventListener("pointerdown", close);
+	}, [open]);
+	useLayoutEffect(() => {
+		if (!open) return;
+		const place = () => {
+			const anchor = trigger.current?.getBoundingClientRect();
+			const node = menu.current;
+			if (anchor === undefined || node === null) return;
+			node.style.maxHeight = "none";
+			const box = anchoredPopoverBox(
+				anchor,
+				{ width: node.offsetWidth, height: node.offsetHeight },
+				{ width: window.innerWidth, height: window.innerHeight },
+			);
+			node.style.left = `${box.left}px`;
+			node.style.top = `${box.top}px`;
+			node.style.maxHeight = `${box.maxHeight}px`;
+		};
+		const onScroll = (event: Event) => {
+			const node = menu.current;
+			if (
+				node !== null &&
+				event.target instanceof Node &&
+				node.contains(event.target)
+			)
+				return;
+			place();
+		};
+		place();
+		window.addEventListener("resize", place);
+		window.addEventListener("scroll", onScroll, true);
+		return () => {
+			window.removeEventListener("resize", place);
+			window.removeEventListener("scroll", onScroll, true);
+		};
 	}, [open]);
 
 	return (
@@ -566,51 +646,55 @@ function PermissionPicker({
 				{translate(view.locale, selected.label)}
 				<Icon name="chevron-down" />
 			</button>
-			{!open ? null : (
-				<div
-					className="permission-menu"
-					role="dialog"
-					aria-label={translate(view.locale, "permission.heading")}
-					onKeyDown={(event) => {
-						if (event.key !== "Escape") return;
-						event.preventDefault();
-						setOpen(false);
-						trigger.current?.focus({ preventScroll: true });
-					}}
-				>
-					<div role="menu">
-						{PERMISSIONS.map((option) => (
-							<button
-								type="button"
-								className="permission-option"
-								data-policy={option.value}
-								role="menuitemradio"
-								aria-checked={option.value === policy}
-								key={option.value}
-								onClick={() => {
-									setOpen(false);
-									actions.onSelectPermission(option.value);
-									trigger.current?.focus({ preventScroll: true });
-								}}
-							>
-								<Icon name={option.icon} />
-								<span className="permission-copy">
-									<span className="permission-label">
-										{translate(view.locale, option.label)}
-									</span>
-									<span className="permission-description">
-										{translate(view.locale, option.description)}
-									</span>
-								</span>
-								<Icon name="check" className="icon permission-check" />
-							</button>
-						))}
-					</div>
-					<p className="permission-hint">
-						{translate(view.locale, "permission.nextRequest")}
-					</p>
-				</div>
-			)}
+			{open
+				? createPortal(
+						<div
+							ref={menu}
+							className="permission-menu"
+							role="dialog"
+							aria-label={translate(view.locale, "permission.heading")}
+							onKeyDown={(event) => {
+								if (event.key !== "Escape") return;
+								event.preventDefault();
+								setOpen(false);
+								trigger.current?.focus({ preventScroll: true });
+							}}
+						>
+							<div role="menu">
+								{PERMISSIONS.map((option) => (
+									<button
+										type="button"
+										className="permission-option"
+										data-policy={option.value}
+										role="menuitemradio"
+										aria-checked={option.value === policy}
+										key={option.value}
+										onClick={() => {
+											setOpen(false);
+											actions.onSelectPermission(option.value);
+											trigger.current?.focus({ preventScroll: true });
+										}}
+									>
+										<Icon name={option.icon} />
+										<span className="permission-copy">
+											<span className="permission-label">
+												{translate(view.locale, option.label)}
+											</span>
+											<span className="permission-description">
+												{translate(view.locale, option.description)}
+											</span>
+										</span>
+										<Icon name="check" className="icon permission-check" />
+									</button>
+								))}
+							</div>
+							<p className="permission-hint">
+								{translate(view.locale, "permission.nextRequest")}
+							</p>
+						</div>,
+						document.body,
+					)
+				: null}
 		</div>
 	);
 }
