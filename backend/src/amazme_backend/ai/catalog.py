@@ -40,9 +40,14 @@ def _load(resource: str) -> list[PiModel]:
     return TypeAdapter(list[PiModel]).validate_python(records)
 
 
+_MODELBEST = ProviderDefinition(provider="modelbest", name="ModelBest",
+    base_url="https://api.modelbest.cn/v1", api="openai-completions")
 MODELS = [model for resource in ('models', 'command_code_models') for model in _load(resource)]
+MODELS.append(PiModel(id="MiniCPM-V-4.7-35B-A3B", name="MiniCPM-V-4.7-35B-A3B",
+    provider=_MODELBEST.provider, api="openai-completions", baseUrl=_MODELBEST.base_url,
+    contextWindow=256000, maxTokens=0, input=["text", "image"]))
 PROVIDERS = {"command-code": ProviderDefinition(provider="command-code", name="Command Code",
-    base_url="https://api.commandcode.ai/provider/v1", api=None)}
+    base_url="https://api.commandcode.ai/provider/v1", api=None), _MODELBEST.provider: _MODELBEST}
 INDEX = {(model.provider, model.id): model for model in MODELS}
 CATALOG = [
     CatalogModel(provider=model.provider, model=model.id, label=f'{model.provider} · {model.name}',
