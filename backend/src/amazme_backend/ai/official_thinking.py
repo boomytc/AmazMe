@@ -8,8 +8,9 @@ on this gateway accept ``off|low|medium|high|xhigh|max``; ``none`` is sent as
 
 from __future__ import annotations
 
-import json
 import re
+
+from pydantic import TypeAdapter
 
 from amazme_backend.platform.resources import package_resource
 
@@ -30,11 +31,17 @@ _VENDORS = {
     "qwen": "qwen-token-plan",
     "nvidia": "nvidia",
 }
+_CATALOG = TypeAdapter(list[dict[str, object]])
+_DICTIONARY = TypeAdapter(dict[str, object])
+
+
+def _dictionary(value: object) -> dict[str, object]:
+    return _DICTIONARY.validate_python(value) if isinstance(value, dict) else {}
 
 
 def align_command_code_models(records: list[dict[str, object]]) -> None:
     grouped: dict[str, list[dict[str, object]]] = {}
-    for model in json.loads(package_resource("models").read_bytes()):
+    for model in _CATALOG.validate_json(package_resource("models").read_bytes()):
         provider = model.get("provider")
         if isinstance(provider, str):
             grouped.setdefault(provider, []).append(model)
@@ -45,18 +52,15 @@ def align_command_code_models(records: list[dict[str, object]]) -> None:
 
 
 def _apply(record: dict[str, object], official: dict[str, object]) -> None:
-    official_map = official.get("thinkingLevelMap")
-    mapping = official_map if isinstance(official_map, dict) else {}
-    compat = official.get("compat")
-    official_compat = compat if isinstance(compat, dict) else {}
+    mapping = _dictionary(official.get("thinkingLevelMap"))
+    official_compat = _dictionary(official.get("compat"))
     effort_disabled = official_compat.get("supportsReasoningEffort") is False
     adaptive = official_compat.get("forceAdaptiveThinking") is True
     if not mapping and not effort_disabled and not adaptive:
         return
     cc_api = record.get("api")
     official_api = official.get("api")
-    record_compat = record.get("compat")
-    merged = dict(record_compat) if isinstance(record_compat, dict) else {}
+    merged = _dictionary(record.get("compat"))
     if cc_api == official_api == "anthropic-messages":
         if mapping:
             record["thinkingLevelMap"] = dict(mapping)
@@ -85,8 +89,7 @@ def _apply(record: dict[str, object], official: dict[str, object]) -> None:
 
 
 def _completions_map(official: dict[str, object]) -> dict[str, str | None]:
-    raw = official.get("thinkingLevelMap")
-    mapping = raw if isinstance(raw, dict) else {}
+    mapping = _dictionary(official.get("thinkingLevelMap"))
     available = set(_levels(official))
     resolved: dict[str, str | None] = {}
     for level in _LEVELS:
@@ -103,8 +106,7 @@ def _completions_map(official: dict[str, object]) -> dict[str, str | None]:
 def _levels(record: dict[str, object]) -> list[str]:
     if not record.get("reasoning"):
         return ["off"]
-    raw = record.get("thinkingLevelMap")
-    mapping = raw if isinstance(raw, dict) else {}
+    mapping = _dictionary(record.get("thinkingLevelMap"))
     return [level for level in _LEVELS if mapping.get(level, "") is not None
             and (level not in {"xhigh", "max"} or level in mapping)]
 
