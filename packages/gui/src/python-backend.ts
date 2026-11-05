@@ -1,10 +1,10 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const BUILD_ID = /^[a-f0-9]{64}$/u;
 const CONTROL_TOKEN = /^[0-9a-f]{64}$/u;
 
-/** Identity the packaged backend prints once, before it accepts product calls. */
+/** Authenticated identity returned by the local Python connector. */
 export interface PythonReady {
 	readonly pageUrl: string;
 	readonly origin: string;
@@ -13,24 +13,15 @@ export interface PythonReady {
 	readonly profileId: string;
 }
 
-/** Packaged onedir, or the explicit path a developer pointed at. Never a system `python`. */
-export function resolvePythonBackend(env: NodeJS.ProcessEnv, resourcesPath: string | undefined): string | undefined {
-	const override = env.AMAZME_PYTHON_BACKEND;
-	if (override !== undefined && override.length > 0) return override;
-	if (resourcesPath === undefined || resourcesPath.length === 0) return undefined;
-	const packaged = join(resourcesPath, "amazme-backend", "amazme-backend");
-	return existsSync(packaged) ? packaged : undefined;
-}
-
 /** The desktop has no other host. A missing backend is a startup failure, not a fallback. */
 export function requirePythonBackend(executable: string | undefined): string {
 	if (executable === undefined || executable.length === 0) {
-		throw new Error("桌面需要包内的 Python 后端");
+		throw new Error("请通过 ./start.sh 启动桌面，以选择项目的 Python 后端");
 	}
 	return executable;
 }
 
-/** One stdout line from `amazme-backend serve`. Other lines are ignored. */
+/** The local connector returns one JSON readiness record. */
 export function parsePythonReadyLine(line: string): PythonReady | undefined {
 	const trimmed = line.replace(/\r$/u, "").trim();
 	if (!trimmed.startsWith("{")) return undefined;
@@ -87,182 +78,8 @@ export function parsePythonReadyLine(line: string): PythonReady | undefined {
 	};
 }
 
-function distinctTokens(controlToken: string, webToken: string): void {
-	if (!CONTROL_TOKEN.test(controlToken) || controlToken === webToken) {
-		throw new Error("desktop control token must be the profile control token");
-	}
-}
-
 export function readControlToken(profile: string): string {
 	const token = readFileSync(join(profile, "control.token"), "utf8").trim();
 	if (!CONTROL_TOKEN.test(token)) throw new Error("desktop control token is missing");
 	return token;
-}
-
-export function pythonPrepareUpdateRequest(
-	ready: PythonReady,
-	controlToken: string,
-	webToken: string,
-	updateId: string,
-	targetBuild: string,
-): {
-	readonly url: string;
-	readonly headers: { readonly Authorization: string; readonly "content-type": "application/json" };
-	readonly body: string;
-} {
-	distinctTokens(controlToken, webToken);
-	if (updateId.length === 0 || !BUILD_ID.test(targetBuild)) {
-		throw new Error("desktop update prepare needs an id and the target build");
-	}
-	return {
-		url: `${ready.origin}/control/updates/prepare`,
-		headers: { Authorization: `Bearer ${controlToken}`, "content-type": "application/json" },
-		body: JSON.stringify({ update_id: updateId, target_build: targetBuild, cancel_work: false }),
-	};
-}
-
-export function pythonCompleteUpdateRequest(
-	ready: PythonReady,
-	controlToken: string,
-	webToken: string,
-	updateId: string,
-	expectedRevision: string,
-): {
-	readonly url: string;
-	readonly headers: { readonly Authorization: string; readonly "content-type": "application/json" };
-	readonly body: string;
-} {
-	distinctTokens(controlToken, webToken);
-	if (!/^[A-Za-z0-9._-]{1,128}$/u.test(updateId) || expectedRevision.length === 0) {
-		throw new Error("desktop update activate needs the prepared id and revision");
-	}
-	return {
-		url: `${ready.origin}/control/updates/complete`,
-		headers: { Authorization: `Bearer ${controlToken}`, "content-type": "application/json" },
-		body: JSON.stringify({ update_id: updateId, expected_revision: expectedRevision }),
-	};
-}
-
-export interface PythonUpdateRecord {
-	readonly updateId: string;
-	readonly sourceBuild: string;
-	readonly targetBuild: string;
-	readonly phase: string;
-	readonly revision: string;
-	readonly activated: boolean;
-	readonly validationPurpose: string;
-}
-
-export function parsePythonUpdateRecord(value: unknown): PythonUpdateRecord | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	const record = value as Record<string, unknown>;
-	if (typeof record.update_id !== "string" || typeof record.source_build !== "string" || typeof record.target_build !== "string") return undefined;
-	if (typeof record.phase !== "string" || typeof record.revision !== "string" || typeof record.activated !== "boolean") return undefined;
-	const validation = record.validation;
-	const purpose = typeof validation === "object" && validation !== null && typeof (validation as { readonly purpose?: unknown }).purpose === "string"
-		? (validation as { readonly purpose: string }).purpose
-		: "";
-	return {
-		updateId: record.update_id,
-		sourceBuild: record.source_build,
-		targetBuild: record.target_build,
-		phase: record.phase,
-		revision: record.revision,
-		activated: record.activated,
-		validationPurpose: purpose,
-	};
-}
-
-/** Running the old build must not activate. Only the target build verifies, then activates. */
-export function pythonUpdateAction(runningBuild: string, record: {
-	readonly source_build: string;
-	readonly target_build: string;
-	readonly activated: boolean;
-	readonly phase: string;
-}): "hold" | "verify" | "activate" {
-	if (record.activated || runningBuild !== record.target_build) return "hold";
-	if (record.phase === "validating" || record.phase === "completed") return "activate";
-	return "verify";
-}
-
-/** The Host owns update admission, including replacements made outside the installer. */
-export async function settlePythonBackendUpdate(ready: PythonReady, controlToken: string, webToken: string): Promise<PythonUpdateRecord | undefined> {
-	distinctTokens(controlToken, webToken);
-	async function call(path: string, method: "GET" | "POST", body?: string): Promise<unknown> {
-		const response = await fetch(`${ready.origin}${path}`, {
-			method, redirect: "error", signal: AbortSignal.timeout(120_000),
-			headers: { Authorization: `Bearer ${path.startsWith("/control/") ? controlToken : webToken}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-			...(body === undefined ? {} : { body }),
-		});
-		if (!response.ok) {
-			const failure: unknown = await response.json().catch(() => undefined);
-			const code = typeof failure === "object" && failure !== null && "code" in failure
-				&& typeof failure.code === "string" && /^[a-z][a-z0-9_]{0,127}$/u.test(failure.code) ? failure.code : "";
-			throw new Error(`后端更新核对失败（${response.status}${code ? `，${code}` : ""}），已保留冻结状态。`);
-		}
-		return response.json();
-	}
-	const health = await call("/api/v1/health", "GET");
-	if (typeof health !== "object" || health === null || !("identity" in health)) throw new Error("后端更新状态无效");
-	const identity = health.identity;
-	if (typeof identity !== "object" || identity === null || !("profile_id" in identity) || identity.profile_id !== ready.profileId
-		|| !("build_id" in identity) || identity.build_id !== ready.buildId || !("host_epoch" in identity) || identity.host_epoch !== ready.hostEpoch) throw new Error("后端更新身份不匹配");
-	if (!("update" in health)) throw new Error("后端更新记录缺失");
-	if (health.update === null) return undefined;
-	let record = parsePythonUpdateRecord(health.update);
-	if (!record) throw new Error("后端更新记录无效");
-	const action = pythonUpdateAction(ready.buildId, { source_build: record.sourceBuild, target_build: record.targetBuild, activated: record.activated, phase: record.phase });
-	if (action === "hold") throw new Error("后端已冻结，请启动该更新的目标构建。");
-	if (action === "verify") {
-		const request = pythonResumeUpdateRequest(ready, controlToken, webToken, record.updateId);
-		const resumed = parsePythonUpdateRecord(await call(new URL(request.url).pathname, "POST"));
-		if (!resumed || resumed.updateId !== record.updateId || resumed.targetBuild !== ready.buildId) throw new Error("后端更新核对回执不匹配");
-		record = resumed;
-	}
-	if (record.activated) return record;
-	if (record.phase !== "validating" && record.phase !== "completed") throw new Error("后端更新核对尚未完成，已保留冻结状态。");
-	const request = pythonCompleteUpdateRequest(ready, controlToken, webToken, record.updateId, record.revision);
-	const activated = parsePythonUpdateRecord(await call(new URL(request.url).pathname, "POST", request.body));
-	if (!activated?.activated || activated.updateId !== record.updateId || activated.targetBuild !== ready.buildId) throw new Error("后端更新尚未激活，已保留原更新记录。");
-	return activated;
-}
-
-export function pythonUpdateStatePath(userData: string): string {
-	return join(userData, "updates", "python-update.json");
-}
-
-/** The staged app or onedir names the build the running host must become before it can thaw. */
-export function readPythonBuildId(root: string): string | undefined {
-	const candidates = [
-		join(root, "build.json"),
-		join(root, "amazme-backend", "build.json"),
-		join(root, "AmazMe.app", "Contents", "Resources", "amazme-backend", "build.json"),
-		join(root, "Contents", "Resources", "amazme-backend", "build.json"),
-	];
-	for (const path of candidates) {
-		if (!existsSync(path)) continue;
-		try {
-			const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-			if (typeof parsed !== "object" || parsed === null) continue;
-			const buildId = (parsed as { readonly build_id?: unknown }).build_id;
-			if (typeof buildId === "string" && BUILD_ID.test(buildId)) return buildId;
-		} catch {
-			continue;
-		}
-	}
-	return undefined;
-}
-
-export function pythonResumeUpdateRequest(ready: PythonReady, controlToken: string, webToken: string, updateId: string): {
-	readonly url: string;
-	readonly headers: { readonly Authorization: string };
-	readonly body: "";
-} {
-	distinctTokens(controlToken, webToken);
-	if (!/^[A-Za-z0-9._-]{1,128}$/u.test(updateId)) throw new Error("desktop update resume needs the prepared id");
-	return {
-		url: `${ready.origin}/control/updates/${updateId}/resume`,
-		headers: { Authorization: `Bearer ${controlToken}` },
-		body: "",
-	};
 }

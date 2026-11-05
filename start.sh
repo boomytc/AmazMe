@@ -22,6 +22,7 @@ if [[ "${1:-}" == "--prepare" ]]; then
 	fi
 	uv sync --project backend --frozen
 	npm install --ignore-scripts
+	node node_modules/electron/install.js
 	exit 0
 fi
 

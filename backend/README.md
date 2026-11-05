@@ -6,7 +6,7 @@ AmazMe 按 [本机优先方案](../docs/python-backend-plan.md) 使用 Python sh
 Python SDK 入口是 `amazme_backend.sdk.Client`，说明见 [SDK](docs/sdk.md)，可运行示例在 [examples/sdk](examples/sdk/README.md)。
 
 本机 shell 具有当前用户权限，文件 API 的路径检查和命令审批不构成操作系统沙箱。
-不自动把后端令牌、模型密钥传给工具；继续保留签名、公证和系统权限要求。
+不自动把后端令牌、模型密钥传给工具；保留本机系统权限要求。
 
 模型可用 `glob(pattern, path=".")` 发现工作区文件，`**` 跨目录、无 `/` 的模式匹配任意深度的文件名，支持 `{a,b}`。字面目录前缀会缩小遍历范围；最多返回已遍历匹配中最新的 100 个路径，包含隐藏和忽略文件并排除 VCS 元数据。`grep(pattern, path=".", include="", ignore_case=False)` 使用 Python 正则返回路径、行号和预览，遵循嵌套 `.gitignore` 并排除隐藏、二进制和符号链接。空 `include` 不限制类型；非空值是一个正向 glob。两者都沿会话执行账本按只读调用运行，不要求 shell 修改审批，也不依赖额外搜索二进制。
 
@@ -47,7 +47,7 @@ CLI、SDK 等客户端的连接令牌用 `pair --profile /absolute/new-profile` 
 退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
 默认修改操作需要审批。执行环境保留 PATH/HOME 等工具查找变量，不继承模型密钥和控制令牌。
 
-工具搜索通过 PyICU 使用 ICU 的多语言词典分词。源码安装前需准备 ICU 开发库与 `pkg-config`：macOS 用 `brew install pkg-config icu4c`，并将 `$(brew --prefix icu4c)/lib/pkgconfig` 加入 `PKG_CONFIG_PATH`；Debian/Ubuntu 用 `apt install pkg-config libicu-dev`。详见 [PyICU 安装说明](https://pypi.org/project/pyicu/)。本机冻结包包含所需动态库，运行时不读取 Homebrew 安装目录。
+工具搜索通过 PyICU 使用 ICU 的多语言词典分词。源码安装前需准备 ICU 开发库与 `pkg-config`：macOS 用 `brew install pkg-config icu4c`，并将 `$(brew --prefix icu4c)/lib/pkgconfig` 加入 `PKG_CONFIG_PATH`；Debian/Ubuntu 用 `apt install pkg-config libicu-dev`。详见 [PyICU 安装说明](https://pypi.org/project/pyicu/)。通过项目虚拟环境运行，使用本机安装的 ICU 开发库。
 
 开发采用 `confident-development-conventions`，从状态归属、类型与模块边界保证逻辑闭环。按本次改动选择必要检查：
 
@@ -60,9 +60,9 @@ backend/.venv/bin/python backend/tools/verify_imports.py
 backend/.venv/bin/python backend/tools/export_contracts.py --check
 ```
 
-行为改动使用独立 profile 对受影响的实际入口做有限验收；临时脚本、样本和报告在完成后清理，不保留常驻测试套件。模型评测由 `npm run eval` 显式运行，说明见 [evals](../packages/evals/README.md)。产品连接检查、会话诊断、资源普查与冻结包完整性校验继续保留。
+行为改动使用独立 profile 对受影响的实际入口做有限验收；临时脚本、样本和报告在完成后清理，不保留常驻测试套件。模型评测由 `npm run eval` 显式运行，说明见 [evals](../packages/evals/README.md)。产品连接检查、会话诊断、资源普查继续保留。
 
 用新隔离 profile 验收，不读取、迁移或删除用户历史库。禁止恢复 VM 链路、运行 prepare_runtime/bootstrap_resources，
-以及反复打包积累磁盘。普通开发先做源码验证，需要安装验证时仅保留一份本轮包。
+以及任何安装包或冻结后端构建。当前阶段仅通过启动脚本运行源码。
 历史 VM 安装命令与报告保留在 Git 历史，不能用于当前本机验收。
 当前候选、提交和证据见 [完成台账](../docs/python-backend-completion.md)；执行约束见 [实施入口](../docs/python-backend-native-next.md)。

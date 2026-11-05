@@ -19,7 +19,7 @@ export interface CloseConfirmation {
 }
 
 export type LifecyclePhase = "open" | "checking" | "asking-close" | "closing" | "quitting" | "failed" | "exited";
-export type LifecycleError = "activity" | "preferences" | "cleanup";
+export type LifecycleError = "activity" | "preferences";
 
 export interface LifecyclePorts<Window> {
 	readPreferences(): Promise<DesktopPreferences>;
@@ -29,7 +29,6 @@ export interface LifecyclePorts<Window> {
 	reportError(kind: LifecycleError): Promise<boolean>;
 	hideWindow(target: Window): void;
 	applicationWillQuit(): void;
-	cleanup(): Promise<void>;
 	releaseQuit(): void;
 }
 
@@ -70,22 +69,15 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 	};
 
 	const cleanup = async (): Promise<"done"> => {
-		for (;;) {
-			phase = "quitting";
-			cleanupStarted = true;
-			if (!quitNotified) {
-				quitNotified = true;
-				ports.applicationWillQuit();
-			}
-			try {
-				await ports.cleanup();
-				phase = "exited";
-				ports.releaseQuit();
-				return "done";
-			} catch {
-				if (await report("cleanup") === "done") return "done";
-			}
+		phase = "quitting";
+		cleanupStarted = true;
+		if (!quitNotified) {
+			quitNotified = true;
+			ports.applicationWillQuit();
 		}
+		phase = "exited";
+		ports.releaseQuit();
+		return "done";
 	};
 
 	const takePending = (): Intent | undefined => {

@@ -20,7 +20,7 @@ import {
 	isStringLiteral,
 } from "typescript/unstable/ast/is";
 import { API } from "typescript/unstable/sync";
-import { runtimePackages, workspacePackages } from "./package-artifacts.mjs";
+import { runtimePackages, workspacePackages } from "./workspace-packages.mjs";
 
 const layers = new Map([
 	["@amazme/codemode", 0],
@@ -53,11 +53,8 @@ const codingAgentModuleRoles = new Map([
 	...[
 		"config.ts",
 		"source-resolver.ts",
-		"update-check.ts",
-		"update-manifest.ts",
 		"utils/paths.ts",
 		"utils/text.ts",
-		"utils/version-check.ts",
 	].map((path) => [path, "neutral"]),
 	...[
 		"utils/photon.ts",

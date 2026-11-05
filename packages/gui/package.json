@@ -3,19 +3,18 @@
 	"version": "0.1.0",
 	"private": true,
 	"type": "module",
-	"description": "Electron window for the packaged AmazMe Python backend",
+	"description": "Electron window for the local AmazMe Python backend",
 	"main": "./dist/main.js",
 	"scripts": {
 		"clean": "node ../../scripts/locked-workspace-task.mjs @amazme/gui clean",
 		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && node ../../scripts/package-files.mjs clean dist",
 		"build": "node ../../scripts/locked-workspace-task.mjs @amazme/gui build",
-		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs copy src/preload.cjs dist && node ../../scripts/package-files.mjs copy src/updates/update-preload.cjs src/updates/update-window.html src/updates/update-window.js dist/updates && node ../../scripts/build-update-helper.mjs",
+		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && node ../../scripts/package-files.mjs clean dist && tsc -p tsconfig.build.json && node ../../scripts/package-files.mjs copy src/preload.cjs dist",
 		"start": "node dist/start.js",
 		"typecheck": "tsc -p tsconfig.build.json --noEmit"
 	},
 	"dependencies": {
-		"@amazme/web": "0.1.0",
-		"semver": "7.8.5"
+		"@amazme/web": "0.1.0"
 	},
 	"devDependencies": {
 		"electron": "44.6.0"

@@ -13,7 +13,6 @@ export interface ApplicationMenuActions {
 	readonly newWindow: () => void;
 	readonly stop: () => void;
 	readonly settings: () => void;
-	readonly updates?: () => void;
 }
 
 /** Keep Electron's standard platform roles, but leave content sizing to the page's Settings commands. */
@@ -34,7 +33,6 @@ export function applicationMenuTemplate(
 		{ role: "windowMenu" },
 	];
 	if (locale !== undefined && actions !== undefined) {
-		if (actions.updates !== undefined) menu.push({ label: translate(locale, "desktop.update.heading"), submenu: [{ label: translate(locale, "desktop.update.check"), click: actions.updates }] });
 		menu.splice(platform === "darwin" ? 1 : 0, 0, {
 			label: translate(locale, "desktop.menu.session"),
 			submenu: [

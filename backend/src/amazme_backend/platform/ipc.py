@@ -25,8 +25,6 @@ def unix_listener(path: Path) -> socket.socket:
 
 
 def child_command(*args: str) -> list[str]:
-    if getattr(sys, "frozen", False):
-        return [sys.executable, *args]
     return [sys.executable, "-m", "amazme_backend", *args]
 
 

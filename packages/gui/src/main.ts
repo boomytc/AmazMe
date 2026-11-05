@@ -1,6 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { randomBytes } from "node:crypto";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PAGE_DIRECTORY } from "@amazme/web/assets";
 import {
@@ -30,26 +28,14 @@ import { withWindowTarget, type WindowAddress } from "./deep-link.ts";
 import { attentionOnTitle } from "./title.ts";
 import { trayMenuTemplate } from "./tray.ts";
 import { translate } from "@amazme/web/strings";
-import { createDesktopUpdates } from "./updates/desktop-updates.ts";
-import { markUpdatedDesktopHealthy } from "./updates/update-helper.ts";
-import { mayStartInstalledApp, shouldStartDesktopUpdates } from "./updates/update-launch.ts";
-import { recoverStaleUpdateLock, updateLockState } from "./updates/update-lock.ts";
-import {
-	parsePythonUpdateRecord,
-	pythonPrepareUpdateRequest,
-	pythonUpdateStatePath,
-	readControlToken,
-	requirePythonBackend,
-	resolvePythonBackend,
-	settlePythonBackendUpdate,
-} from "./python-backend.ts";
+import { readControlToken, requirePythonBackend } from "./python-backend.ts";
 
 const APP_NAME = "AmazMe";
 const APP_ICON = join(PAGE_DIRECTORY, "app-icon.png");
 const TRAY_ICON = fileURLToPath(new URL("../assets/tray-icon.png", import.meta.url));
 app.setName(APP_NAME);
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
-app.setPath("userData", desktopDataDirectory(app.getPath("userData"), process.env));
+app.setPath("userData", desktopDataDirectory(process.env));
 if (SMOKE && !process.env.AMAZME_PROFILE && !process.env.AMAZME_CODING_AGENT_DIR && !process.env.AMAZME_HOME) throw new Error("desktop smoke requires an isolated profile");
 
 const SMOKE_EXPRESSION = `({
@@ -82,91 +68,9 @@ let tray: Tray | undefined;
 let notices: ShellController;
 let lifecycle: DesktopLifecycle<BrowserWindow>;
 let desktopApi: PythonDesktopApi;
-let updates: ReturnType<typeof createDesktopUpdates> | undefined;
 let pythonProfile = "";
 let pythonWebToken = "";
 let selectedWorkspace = "primary";
-
-function pythonUpdateFile(): string {
-	return pythonUpdateStatePath(app.getPath("userData"));
-}
-
-function readPendingPythonUpdate(): { readonly updateId?: string; readonly targetBuild?: string } | undefined {
-	const path = pythonUpdateFile();
-	if (!existsSync(path)) return undefined;
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-		if (typeof parsed !== "object" || parsed === null) return undefined;
-		const record = parsed as { readonly update_id?: unknown; readonly target_build?: unknown };
-		return {
-			...(typeof record.update_id === "string" ? { updateId: record.update_id } : {}),
-			...(typeof record.target_build === "string" ? { targetBuild: record.target_build } : {}),
-		};
-	} catch {
-		return undefined;
-	}
-}
-
-function writePendingPythonUpdate(value: { readonly updateId?: string; readonly targetBuild: string }): void {
-	const path = pythonUpdateFile();
-	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-	writeFileSync(path, JSON.stringify({
-		...(value.updateId === undefined ? {} : { update_id: value.updateId }),
-		target_build: value.targetBuild,
-	}), { mode: 0o600 });
-}
-
-function clearPendingPythonUpdate(): void {
-	const path = pythonUpdateFile();
-	if (existsSync(path)) unlinkSync(path);
-}
-
-async function controlCall(path: string, method: string, body?: string): Promise<{ readonly ok: boolean; readonly status: number; readonly value: unknown }> {
-	const ready = host?.pythonReady();
-	if (ready === undefined || pythonProfile.length === 0) return { ok: false, status: 0, value: undefined };
-	const response = await fetch(`${ready.origin}${path}`, {
-		method,
-		redirect: "error",
-		headers: {
-			Authorization: `Bearer ${readControlToken(pythonProfile)}`,
-			...(body === undefined ? {} : { "content-type": "application/json" }),
-		},
-		...(body === undefined ? {} : { body }),
-		signal: AbortSignal.timeout(120_000),
-	});
-	const text = await response.text();
-	let value: unknown;
-	if (text.length > 0) {
-		try { value = JSON.parse(text) as unknown; } catch { value = undefined; }
-	}
-	return { ok: response.ok, status: response.status, value };
-}
-
-/** Verify on the target build, then activate. The source build is left frozen. */
-async function settlePythonUpdate(): Promise<void> {
-	const ready = host?.pythonReady();
-	if (ready === undefined) return;
-	await settlePythonBackendUpdate(ready, readControlToken(pythonProfile), pythonWebToken);
-	if (readPendingPythonUpdate()?.updateId !== undefined) clearPendingPythonUpdate();
-}
-
-async function prepareHostUpdate(): Promise<boolean> {
-	const ready = host?.pythonReady();
-	if (ready === undefined || pythonWebToken.length === 0 || pythonProfile.length === 0) return false;
-	try {
-		const target = readPendingPythonUpdate()?.targetBuild ?? process.env.AMAZME_PYTHON_TARGET_BUILD ?? "";
-		const updateId = randomBytes(8).toString("hex");
-		const request = pythonPrepareUpdateRequest(ready, readControlToken(pythonProfile), pythonWebToken, updateId, target);
-		const response = await controlCall(new URL(request.url).pathname, "POST", request.body);
-		const prepared = parsePythonUpdateRecord(response.value);
-		if (!response.ok || prepared === undefined || prepared.activated || prepared.phase !== "prepared") return false;
-		writePendingPythonUpdate({ updateId: prepared.updateId, targetBuild: prepared.targetBuild });
-		return true;
-	} catch (error: unknown) {
-		console.error(`desktop python update failed: ${error instanceof Error ? error.message : "request failed"}`);
-		return false;
-	}
-}
 
 function readinessTimeout(): number | undefined {
 	const raw = process.env.AMAZME_GUI_READY_TIMEOUT_MS;
@@ -258,7 +162,6 @@ async function refreshApplicationMenu(): Promise<void> {
 						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: selectedWorkspace, fresh: true }));
 					},
 					settings: () => send("settings"),
-					...(updates === undefined ? {} : { updates: () => { void updates?.show(); } }),
 				}),
 			),
 		);
@@ -499,9 +402,6 @@ lifecycle = createDesktopLifecycle<BrowserWindow>({
 		target.hide();
 	},
 	applicationWillQuit: () => notices.applicationWillQuit(),
-	cleanup: async () => {
-		await updates?.dispose();
-	},
 	releaseQuit: () => app.quit(),
 });
 
@@ -663,7 +563,7 @@ async function openWindow(pageUrl: string, target: WindowAddress = {}): Promise<
 
 async function boot(): Promise<void> {
 	app.dock?.setIcon(APP_ICON);
-	const pythonExecutable = requirePythonBackend(resolvePythonBackend(process.env, process.resourcesPath));
+	const pythonExecutable = requirePythonBackend(process.env.AMAZME_PYTHON_BACKEND);
 	const cwd = hostWorkingDirectory(process.env, process.cwd());
     host = createHostConnection({
         executable: pythonExecutable, cwd, env: process.env,
@@ -677,52 +577,12 @@ async function boot(): Promise<void> {
     pythonWebToken = connection.webToken;
     selectedWorkspace = connection.workspace;
     if (pythonWebToken === readControlToken(pythonProfile)) throw new Error("desktop control token is not distinct");
-	await settlePythonUpdate();
 	const namedSession = deepLinkSession?.trim();
 	await openWindow(pageUrl, pythonWindow(namedSession ? { sessionId: namedSession, workspace: selectedWorkspace } : { workspace: selectedWorkspace }));
-	const installedRelease = app.isPackaged && existsSync(join(process.resourcesPath, "release-manifest.json"));
-	if (!SMOKE && !notices.quitting && shouldStartDesktopUpdates(installedRelease, app.getVersion())) {
-		const target = dirname(dirname(dirname(process.execPath)));
-		if (process.argv.includes("--amazme-update-job")) {
-			const deadline = Date.now() + 30_000;
-			while (Date.now() < deadline) {
-				const current = liveWindow();
-				const ready = current && readiedWindows.has(current.id) && await current.webContents.executeJavaScript("document.getElementById('connection-status')?.dataset.state === 'connected'").catch(() => false);
-				if (ready) { await markUpdatedDesktopHealthy(process.argv, target, app.getVersion()); break; }
-				await new Promise<void>(resolve => setTimeout(resolve, 100));
-			}
-		}
-		updates = createDesktopUpdates({ version: app.getVersion(), executable: process.execPath, userData: app.getPath("userData"), locale: currentLocale,
-			confirmQuit: async () => {
-				if (showingDialog || lifecycle.quitting || totalPendingApprovals() > 0) throw new Error("busy");
-				showingDialog = true; showWindow();
-				try {
-					const locale = await currentLocale();
-					const confirmed = await ask({ type: "question", message: translate(locale, "desktop.update.installConfirm"), detail: translate(locale, "desktop.update.installDetail"),
-						buttons: [translate(locale, "desktop.update.later"), translate(locale, "desktop.update.installAction")], defaultId: 0, cancelId: 0, noLink: true }) === 1;
-					if (!confirmed) return false;
-					return true;
-				} finally { showingDialog = false; }
-			},
-			prepareHost: prepareHostUpdate,
-			quit: async () => { await shutdownHost(); await lifecycle.quitImmediately(); },
-			resumeHost: async () => { await settlePythonUpdate(); },
-		});
-		await updates.start();
-		await refreshApplicationMenu();
-	}
 }
 
 async function initializeDesktop(): Promise<void> {
-	const target = dirname(dirname(dirname(process.execPath)));
-	if (!mayStartInstalledApp(target, app.getVersion(), process.argv)) {
-		// Gate-only launches never keep an app-named dialog/process alive during replacement.
-		if (updateLockState(target) !== "stale") { process.stdout.write("desktop update startup blocked\n"); app.exit(0); return; }
-		if (!app.requestSingleInstanceLock()) { app.quit(); return; }
-		const recovery = await recoverStaleUpdateLock(target, app.getVersion(), process.arch);
-		if (recovery !== "recovered") { app.releaseSingleInstanceLock(); process.stdout.write("desktop update startup blocked\n"); app.exit(0); return; }
-		process.stdout.write("desktop update stale lock recovered\n");
-	} else if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+	if (!app.requestSingleInstanceLock()) { app.quit(); return; }
 
 	app.on("second-instance", (_event, argv) => {
 		const fresh = argv.some((arg) => arg === "--amazme-new-window");

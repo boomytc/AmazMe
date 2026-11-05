@@ -8,4 +8,3 @@ export { connectPythonHost } from "./connection/connection.ts";
 export { APP_NAME, CONFIG_DIR_NAME, VERSION, getAgentDir } from "./config.ts";
 export { convertImageBytesToPng } from "./utils/image-convert.ts";
 export { resizeImage, type ResizedImage } from "./utils/image-resize.ts";
-export { checkForUpdate, formatUpdateNotice, type UpdateNotice } from "./update-check.ts";

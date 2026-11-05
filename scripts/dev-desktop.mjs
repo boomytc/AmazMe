@@ -6,7 +6,7 @@ import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileS
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { workspaceBuildPlan } from "./build-workspace-dependencies.mjs";
-import { workspacePackages } from "./package-artifacts.mjs";
+import { workspacePackages } from "./workspace-packages.mjs";
 import { heldWorkspaceLock, lockStdio, runWithWorkspaceLock } from "./workspace-lock.mjs";
 
 function hashFile(hash, root, path) {
@@ -26,7 +26,7 @@ function hashDirectory(hash, root, directory) {
 
 export function desktopBuildFingerprint(root, plan) {
 	const hash = createHash("sha256");
-	for (const name of ["package.json", "package-lock.json", "node_modules/.package-lock.json", "tsconfig.base.json", "tsconfig.browser.json", "tsconfig.node.json", "scripts/build-update-helper.mjs", "scripts/build-workspace-dependencies.mjs", "scripts/dev-desktop.mjs", "scripts/package-artifacts.mjs"]) {
+	for (const name of ["package.json", "package-lock.json", "node_modules/.package-lock.json", "tsconfig.base.json", "tsconfig.browser.json", "tsconfig.node.json", "scripts/build-workspace-dependencies.mjs", "scripts/dev-desktop.mjs", "scripts/workspace-packages.mjs"]) {
 		const path = join(root, name);
 		if (existsSync(path)) hashFile(hash, root, path);
 	}
@@ -59,7 +59,7 @@ export function desktopOutputFingerprint(output) {
 }
 
 export function desktopBuildOutputs(root) {
-	const outputs = ["main.js", "start.js", "preload.cjs", "updates/update-preload.cjs", "updates/update-window.html", "updates/update-window.js"]
+	const outputs = ["main.js", "start.js", "preload.cjs"]
 		.map(name => join(root, "packages", "gui", "dist", name));
 	outputs.push(...["index.html", "page.js", "page.css"].map(name => join(root, "packages", "web", "dist", "page", name)));
 	outputs.push(join(root, "packages", "gui", "dist"), join(root, "packages", "web", "dist", "page"));

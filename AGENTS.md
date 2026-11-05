@@ -19,7 +19,7 @@
 
 ## 资源
 
-持续打包、生命周期跑分，以及阶段结束、上下文压缩、进程退出、Goal 暂停或准备写「清理完成」之前，运行：
+连续运行、生命周期跑分，以及阶段结束、上下文压缩、进程退出、Goal 暂停或准备写「清理完成」之前，运行：
 
 ```bash
 backend/.venv/bin/python backend/tools/resource_census.py
@@ -29,7 +29,7 @@ backend/.venv/bin/python backend/tools/resource_census.py
 
 `reclaimed` 只对应该次输出的 `scope`。测试 passed、某次 cleanup 字符串、或只匹配 `amazme_backend serve` 的 pgrep，都不是资源已经收回。
 
-普查命令只报告，不删除目录。打包可以在锁内去掉产物根下没有进程引用、超出保留份数的旧 `package-*`。运行器达到自己的目录上限时，先去掉最旧且没有进程引用的那一份，不提高上限。VM 目录要先确认 owner；不要为了清理去安装或启动虚拟机。
+普查命令只报告，不删除目录。运行器达到自己的目录上限时，先去掉最旧且没有进程引用的那一份，不提高上限。VM 目录要先确认 owner；不要为了清理去安装或启动虚拟机。
 
 台账在 `.artifacts/resource-ledger.jsonl`。
 
@@ -57,23 +57,17 @@ npm run typecheck
 
 临时脚本、样本及验证输出放在系统临时目录或 `.artifacts` 等已有忽略目录，完成或中断后清理本轮资产。模型评测、连接测试、自检、诊断与产物完整性检查按实际用途保留；只读清单校验不代表真实运行通过。
 
-## 发布
+## 启动与交付
 
-- 标签和 GitHub Release 一起处理。没有明确要求发布时，两者都不做。
-- 1.0.0 之前不打 `v*` 标签，也不创建 GitHub Release。版本记在 `package.json` 和 `CHANGELOG.md`。本地验证和本地构建即可。`dist-release` 只保留正在构建的那一个版本。
-- 1.0.0 之前只做本机自用构建。不提交公证，不查询公证历史，也不为了 Gatekeeper 反复重试。公证留到明确要求发布 1.0.0 时。
-- `npm run release` 在版本低于 1.0.0 时直接拒绝。到 1.0.0 且明确要求发布时，才用它同时打标签、签名、公证并上传 GitHub Release。不单独打标签。
-- 不新增 `.github/workflows`。发版检查和构建都在本机完成。
-- 对外分发的 DMG 必须用 Developer ID 签名并公证：否则 Gatekeeper 拒绝打开，应用内更新也靠签名团队和 staple 确认更新来自同一发布者。不要为了省事削弱签名、公证或更新校验。
-- 签名和公证凭证只留在本机：钥匙串、`.p8` 和 `~/.config/amazme/release.env`。不写进仓库，不放回 GitHub secret。
-- 1.0.0 的发布步骤和公证排错见 `packages/gui/README.md` 的「DMG 与 GitHub Release」。
-- 不手工打 `v*` 标签或建 Release。低于 1.0.0 时 `scripts/notarize-macos.mjs` 在读取凭据或访问公证服务之前拒绝。1.0.0 且明确要求发布之后，公证失败再用只读的 `--history-only` 或 `notarytool log <id>` 定位，不要为了试错反复发布。
+- 当前阶段只通过 `./start.sh` 启动桌面，`./start.sh web` 启动 Web，`./start.sh cli` 执行一次性终端命令；`./start.sh --prepare` 准备本机依赖。
+- 保留运行必需的 TypeScript、页面和 helper 编译，以及类型、依赖和资源检查。启动脚本按源码与产物指纹自动编译所需 workspace。
+- 不生成独立应用、DMG 或冻结 Python 后端，不复制或签名 Electron 应用缓存，不执行公证、标签、GitHub Release 或安装包更新。仓库不维护这些流程。
+- 版本仍记录在 `package.json` 和 `CHANGELOG.md`。不新增 `.github/workflows`。
 
 ## 分支
 
 - 只维护 `main`。日常提交直接进 `main`，不再保留 `dev`。
 - 阶段性闭环后推送到 `origin/main`；推送前按「命令」一节在本地把关（仓库没有 CI）。
-- 版本标签只在 1.0.0 的发布里从 `main` 打，并与 GitHub Release 同时产生。
 
 ## Git
 

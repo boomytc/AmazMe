@@ -15,6 +15,6 @@ Web 的 React 挂载不拥有业务连接或持久状态；`PageRuntime` 与功�
 
 Python SDK 的正式入口是 `amazme_backend.sdk.Client`，参数使用 `amazme_backend.contracts`。SDK 的导入闭包只含客户端传输与轻量数据；插件 factory 使用 `amazme_backend.plugin_api`。模型调用由 `agent` 装配 prompt、工具和认证值后进入 `ai`；各客户端复用同一 Host 和真实会话/监督器 IPC。
 
-构建输入由 `scripts/package-artifacts.mjs` 管理。Python 源码、gate、helper、快照及静态资源的定位与冻结清单统一在 `backend/src/amazme_backend/platform/resource_manifest.py`。打包读取同一描述，不依赖源文件原来的目录深度。
+workspace 依赖闭包由 `scripts/workspace-packages.mjs` 管理。Python 源码、gate、helper、快照及静态资源的定位统一在 `backend/src/amazme_backend/platform/resource_manifest.py`。启动脚本编译所需依赖后直接运行本机 Python 与 Electron，不生成安装包。
 
 `npm run check:workspace` 同时检查 TypeScript 依赖方向、产品版本与 Python [模块清单](../backend/architecture.json)。完整所有权和调用路径见[后端架构](../backend/ARCHITECTURE.md)。

@@ -7,7 +7,6 @@ import json
 import os
 import socket
 import subprocess
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -74,8 +73,8 @@ def _finish(outcome: CodemodeOutcome, code: int | None, cancel: threading.Event 
 
 
 def bundled_node() -> Path:
-    """Frozen builds use their own Node; source launches may explicitly supply their runtime."""
-    source_node = os.environ.get("AMAZME_NODE") if not getattr(sys, "frozen", False) else None
+    """Use the Node runtime selected by the source launcher."""
+    source_node = os.environ.get("AMAZME_NODE")
     root = resource_root().resolve()
     candidate = Path(source_node) if source_node else root / "node" / "bin" / "node"
     if not candidate.is_absolute() or candidate.is_symlink() or not candidate.is_file() or not os.access(candidate, os.X_OK):

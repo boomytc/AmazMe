@@ -1,5 +1,5 @@
 import { resolve } from "node:path";
-import { workspaceDependencyPackages, workspacePackages } from "./package-artifacts.mjs";
+import { workspaceDependencyPackages, workspacePackages } from "./workspace-packages.mjs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { heldWorkspaceLock, lockStdio, runWithWorkspaceLock } from "./workspace-lock.mjs";

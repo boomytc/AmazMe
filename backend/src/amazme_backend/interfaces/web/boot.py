@@ -5,7 +5,6 @@ import hashlib
 import json
 import re
 import secrets
-import sys
 
 from amazme_backend.contracts.identity import Identity
 from amazme_backend.contracts.settings import InterfacePreferences
@@ -26,7 +25,7 @@ def transport_url(origin: str) -> str:
 def boot_manifest(identity: Identity, origin: str, preferences: InterfacePreferences | None = None) -> dict[str, object]:
     return {
         "app": {"name": "AmazMe", "version": identity.version},
-        "mode": "installed" if getattr(sys, "frozen", False) else "source",
+        "mode": "source",
         "protocol": identity.protocol,
         "server": {"id": identity.profile_id},
         "transport": {"url": transport_url(origin), "path": "/api/v1/events"},

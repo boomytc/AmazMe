@@ -4,6 +4,8 @@
 
 产品形态只有 Web/桌面客户端。终端入口只提供一次性命令、JSON/RPC 与脚本连接，不维护交互式终端界面。
 
+当前阶段只通过仓库启动脚本使用，采用源码运行方式。启动时自动编译必要的客户端与 helper，不生成独立安装包或冻结 Python 后端，也不维护公证、发布和安装包更新流程。更新源码后先停止共享后台，再重新运行启动脚本。
+
 会话支持分支、压缩、子任务、记忆、定时任务、工作流、搜索、项目、产物、分享及新格式导入导出。未知副作用保留原调用 ID，不自动重放；取消受理和进程退出分别核对。本机 shell 使用当前用户权限，路径校验和审批不构成操作系统沙箱。
 
 ## 从源码安装与使用
@@ -26,7 +28,7 @@
 ./start.sh cli        # 命令行（一次性命令）
 ```
 
-准备命令只同步依赖，不打开任何界面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。`web` 和 `cli` 之后的参数会原样转给对应入口，例如 `./start.sh cli --continue '继续上次任务'`。三种模式都会把 `AMAZME_PYTHON_BACKEND` 解析成绝对路径（默认仓库内的后端，已有覆盖时保留覆盖），不需要手动 `export`。也可以直接运行 `npm run dev:desktop`、`npm run dev:web` 或 `npm run dev:cli`。
+准备命令只同步依赖，不打开任何界面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。`web` 和 `cli` 之后的参数会原样转给对应入口，例如 `./start.sh cli --continue '继续上次任务'`。三种模式都会把 `AMAZME_PYTHON_BACKEND` 解析成绝对路径（默认仓库内的后端，已有覆盖时保留覆盖），不需要手动 `export`。
 
 需要打开其他项目时，使用 `AMAZME_GUI_CWD=/absolute/project ./start.sh`，或用 `AMAZME_GUI_SESSION=会话ID` 指定已有会话。
 
@@ -40,7 +42,7 @@ Web、Desktop 和 CLI 默认共用 `~/.amazme/agent/python-host`。Host 按需�
 
 ### 统一数据目录与迁移
 
-默认产品数据根是 `~/.amazme`。账号、会话、产品设置和执行账本在 `agent/python-host`，技能和模板在 `agent`，Electron 壳数据与更新状态在 `desktop`。浏览器的面板布局、输入历史和待发送草稿仍属于各窗口。
+默认产品数据根是 `~/.amazme`。账号、会话、产品设置和执行账本在 `agent/python-host`，技能和模板在 `agent`，Electron 壳数据在 `desktop`。浏览器的面板布局、输入历史和待发送草稿仍属于各窗口。
 
 `AMAZME_HOME` 改变产品根目录。`AMAZME_CODING_AGENT_DIR` 可覆盖 agent 目录，`AMAZME_PROFILE` 可单独选择业务 profile；显式 `--profile` 优先。`AMAZME_GUI_USER_DATA_DIR` 只选择桌面壳目录，不再隐式选择业务数据。
 
@@ -58,7 +60,7 @@ backend/.venv/bin/amazme-backend migrate-profile --source-profile "$HOME/Library
 
 迁移保留来源 profile 的身份、工作区、凭据、会话和执行账本，在旧桌面路径留下迁移标记。旧目录仅在事务期间暂存，校验成功后自动删除，不保留备份。目标已有业务数据、外部账号库链接或未结算副作用时拒绝迁移。中断后用相同参数重跑，工具根据事务记录恢复；已启用的新库不会被旧快照覆盖。事务中的旧目录禁止作为运行 profile。
 
-两个入口都调用 Python 的 `connect`，并发启动只产生一个 Host。构建切换后的冻结校验和激活也由这个入口完成，只有正在运行的目标构建可以激活；校验失败时保持冻结。旧 Host 缺少共享连接能力时返回 `host_upgrade_required`；停止旧后端后再启动新版，不会另建一份数据。源码工具的 Node 由启动器显式传入；冻结后端始终使用包内 Node。
+两个入口都调用 Python 的 `connect`，并发启动只产生一个 Host。构建切换后的冻结校验和激活也由这个入口完成，只有正在运行的目标构建可以激活；校验失败时保持冻结。旧 Host 缺少共享连接能力时返回 `host_upgrade_required`；停止旧后端后再启动新版，不会另建一份数据。源码工具的 Node 由启动器显式传入。
 
 ### 手动准备与其他客户端
 
@@ -197,6 +199,6 @@ curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash
 | 上游移植依据 | [UPSTREAM](UPSTREAM.md) |
 
 开发采用 `confident-development-conventions`，代码逻辑正确性优先。改包后构建该包，按影响选择 Ruff、Pyright、TypeScript 类型与 `check:workspace` 检查，以及受影响的实际使用路径；必要验收通过后交付，同一份改动不重复验证。临时验证资产完成即清理，真实模型评测仍由 `npm run eval` 显式启动。不要主动运行根目录完整构建。
-资源阈值由 `backend/tools/resource_census.py` 统一报告。1.0.0 前只做本地自用构建，不公证、不发布、不打标签。
+资源阈值由 `backend/tools/resource_census.py` 统一报告。当前阶段仅通过启动脚本运行源码；保留启动所需编译和类型检查，不生成安装包或冻结后端，不签名、公证、打标签或发布。
 
 AmazMe 保留 Pi 的 MIT 许可证和版权归属，见 [LICENSE](LICENSE)。

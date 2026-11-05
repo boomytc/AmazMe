@@ -22,7 +22,7 @@ npm run build --workspace @amazme/coding-agent
 
 构建对 CLI 的模块闭包检查，拒绝旧 JS 业务运行时。开发按 `confident-development-conventions` 做有限验收，临时验证资产完成即清理。
 
-1.0.0 前仅本机构建、自用，不公证、不发布。MIT 许可证与上游来源归属保持原样。
+当前阶段通过 `./start.sh cli` 运行源码，不生成独立安装包、不公证、不发布。MIT 许可证与上游来源归属保持原样。
 
 本机 CLI 从启动目录选择对应的 Python 工作区；`--workspace NAME` 使用已登记名称。
 `amazme workspaces list` 查看目录，`workspaces add NAME /absolute/path` 显式登记。

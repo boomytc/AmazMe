@@ -28,7 +28,6 @@ build-backend = "hatchling.build"
 dev = [
     "ruff==0.17.2",
     "pyright",
-    "pyinstaller==6.22.3",
     "types-PyYAML",
     "types-psutil>=7.2.2.20260906",
 ]

@@ -32,9 +32,6 @@
 			"@amazme/coding-agent/rpc-entry": [
 				"./packages/coding-agent/src/rpc-entry.ts"
 			],
-			"@amazme/coding-agent/update-manifest": [
-				"./packages/coding-agent/src/update-manifest.ts"
-			],
 			"@amazme/web": [
 				"./packages/web/dist/index.d.ts"
 			],
