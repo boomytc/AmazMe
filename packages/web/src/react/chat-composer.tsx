@@ -32,6 +32,7 @@ import {
 	ComposerModelControls,
 	ComposerStatusMeter,
 } from "./chat-controls.tsx";
+import { useComposerPopover } from "./composer-popover.ts";
 import { CredentialText } from "./chat-credential.tsx";
 import { Hint } from "./hint.tsx";
 import { QuestionForm } from "./questions.tsx";
@@ -519,48 +520,6 @@ const PERMISSIONS = [
 	},
 ] satisfies readonly PermissionOption[];
 
-const POPOVER_MARGIN = 8;
-const POPOVER_GAP = 6;
-
-/**
- * Place a popover inside the viewport, above the anchor when the space below cannot hold it.
- * The menu is portalled to the body: its old static position sits under the composer and runs
- * past the bottom of the window, and a menu left in the page paints under the dock.
- */
-function anchoredPopoverBox(
-	anchor: Pick<DOMRect, "top" | "bottom" | "left">,
-	size: { readonly width: number; readonly height: number },
-	viewport: { readonly width: number; readonly height: number },
-): { readonly left: number; readonly top: number; readonly maxHeight: number } {
-	const roomAbove = anchor.top - POPOVER_MARGIN;
-	const roomBelow = viewport.height - anchor.bottom - POPOVER_MARGIN;
-	const openAbove =
-		roomBelow < size.height + POPOVER_GAP && roomAbove > roomBelow;
-	const room = (openAbove ? roomAbove : roomBelow) - POPOVER_GAP;
-	const maxHeight = Math.max(
-		0,
-		Math.floor(
-			Math.min(
-				size.height,
-				room > 0 ? room : viewport.height - POPOVER_MARGIN * 2,
-			),
-		),
-	);
-	const used = Math.min(size.height, maxHeight);
-	const unclampedTop = openAbove
-		? anchor.top - POPOVER_GAP - used
-		: anchor.bottom + POPOVER_GAP;
-	const top = Math.min(
-		Math.max(POPOVER_MARGIN, unclampedTop),
-		Math.max(POPOVER_MARGIN, viewport.height - POPOVER_MARGIN - used),
-	);
-	const left = Math.min(
-		Math.max(POPOVER_MARGIN, anchor.left),
-		Math.max(POPOVER_MARGIN, viewport.width - POPOVER_MARGIN - size.width),
-	);
-	return { left: Math.round(left), top: Math.round(top), maxHeight };
-}
-
 function PermissionPicker({
 	view,
 	actions,
@@ -595,40 +554,7 @@ function PermissionPicker({
 		document.addEventListener("pointerdown", close);
 		return () => document.removeEventListener("pointerdown", close);
 	}, [open]);
-	useLayoutEffect(() => {
-		if (!open) return;
-		const place = () => {
-			const anchor = trigger.current?.getBoundingClientRect();
-			const node = menu.current;
-			if (anchor === undefined || node === null) return;
-			node.style.maxHeight = "none";
-			const box = anchoredPopoverBox(
-				anchor,
-				{ width: node.offsetWidth, height: node.offsetHeight },
-				{ width: window.innerWidth, height: window.innerHeight },
-			);
-			node.style.left = `${box.left}px`;
-			node.style.top = `${box.top}px`;
-			node.style.maxHeight = `${box.maxHeight}px`;
-		};
-		const onScroll = (event: Event) => {
-			const node = menu.current;
-			if (
-				node !== null &&
-				event.target instanceof Node &&
-				node.contains(event.target)
-			)
-				return;
-			place();
-		};
-		place();
-		window.addEventListener("resize", place);
-		window.addEventListener("scroll", onScroll, true);
-		return () => {
-			window.removeEventListener("resize", place);
-			window.removeEventListener("scroll", onScroll, true);
-		};
-	}, [open]);
+	useComposerPopover(open, trigger, menu, "top-start");
 
 	return (
 		<div ref={root} className="permission-control">

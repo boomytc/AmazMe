@@ -2010,10 +2010,14 @@ p {
 .status-meter[data-meter="empty"] .meter-ring-value { opacity: 0; }
 .status-meter[data-tone="warning"] .meter-trigger { color: var(--warn); }
 .status-meter[data-tone="error"] .meter-trigger { color: var(--danger); }
+.permission-menu, .meter-detail, .model-picker-menu {
+	position: fixed; inset: auto; margin: 0; padding: 0;
+	border: 0; border-radius: var(--radius-md); background: var(--raised); color: var(--text);
+	box-shadow: var(--shadow-popover); font-size: 13px; line-height: 18px;
+}
 .meter-detail {
-	position: fixed; z-index: var(--z-popover); display: flex; flex-direction: column; gap: 4px;
-	width: max-content; max-width: min(360px, calc(100vw - 16px)); padding: 12px 14px 14px;
-	border-radius: 12px; background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover);
+	z-index: var(--z-popover); display: flex; flex-direction: column; gap: 4px;
+	width: max-content; max-width: min(360px, calc(100vw - 16px)); padding: 10px 12px;
 	font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; visibility: hidden;
 	transition: opacity var(--dur-fast) var(--ease), visibility var(--dur-fast) var(--ease);
 }
@@ -2052,10 +2056,8 @@ p {
 
 /* One popover above the composer: search, the catalog, thinking levels, then the way out to settings. */
 .model-picker-menu {
-	position: fixed; inset: auto; margin: 0; width: min(320px, calc(100vw - 16px));
-	display: none; flex-direction: column; overflow: hidden; padding: 0;
-	border: 0; border-radius: var(--radius-lg); background: var(--raised); color: var(--text);
-	box-shadow: var(--shadow-popover); font-size: 13px; line-height: 18px;
+	width: min(320px, calc(100vw - 16px));
+	display: none; flex-direction: column; overflow: auto;
 }
 .model-picker-menu[open] { display: flex; animation: model-picker-in var(--dur) var(--ease); }
 .model-picker-menu::backdrop { background: transparent; }
@@ -2063,7 +2065,7 @@ p {
 @media (prefers-reduced-motion: reduce) { .model-picker-menu[open] { animation: none; } }
 
 .model-picker-search {
-	display: flex; align-items: center; gap: 8px; flex: none; height: 42px; padding: 0 14px;
+	display: flex; align-items: center; gap: 8px; flex: none; height: 36px; padding: 0 12px;
 	border-bottom: 1px solid var(--line); color: var(--text-3); cursor: text;
 }
 .model-picker-search-icon { width: 15px; height: 15px; stroke-width: 2; }
@@ -2076,7 +2078,7 @@ p {
 
 .model-picker-list { flex: 1 1 auto; min-height: 0; max-height: 340px; overflow-y: auto; padding: 4px 6px 6px; scroll-padding-block: 6px; }
 .model-picker-heading {
-	margin: 0; padding: 10px 8px 4px; color: var(--text-3); font-size: 11.5px; font-weight: 500; line-height: 16px;
+	margin: 0; padding: 6px 8px 2px; color: var(--text-3); font-size: 11.5px; font-weight: 500; line-height: 16px;
 }
 .model-picker-option {
 	display: flex; align-items: center; gap: 8px; width: 100%; height: 32px; padding: 0 8px;
@@ -2093,7 +2095,7 @@ p {
 .model-picker-notice { margin: 0; padding: 10px 14px; color: var(--text-2); background: var(--hover); }
 
 .model-picker-reasoning {
-	display: flex; align-items: center; gap: 12px; flex: none; padding: 10px 10px 10px 14px; border-top: 1px solid var(--line);
+	display: flex; align-items: center; gap: 12px; flex: none; padding: 7px 10px 7px 12px; border-top: 1px solid var(--line);
 }
 .model-picker-reasoning[hidden] { display: none; }
 .model-picker-section { flex: none; color: var(--text-2); font-size: 12px; }
@@ -2115,7 +2117,7 @@ p {
 .model-picker-level:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-inset); }
 
 .model-picker-manage {
-	display: flex; align-items: center; gap: 8px; flex: none; width: 100%; height: 38px; padding: 0 14px;
+	display: flex; align-items: center; gap: 8px; flex: none; width: 100%; height: 32px; padding: 0 12px;
 	border: 0; border-top: 1px solid var(--line); background: transparent; color: var(--text-2);
 	font: inherit; font-size: 12.5px; text-align: left; cursor: pointer; outline: none;
 	transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
@@ -2738,26 +2740,23 @@ p {
 :root[data-theme="light"] .permission-trigger[data-policy="auto"],
 :root[data-theme="light"] .permission-option[data-policy="auto"] { color: #b94e16; }
 .permission-menu {
-	position: fixed; z-index: var(--z-menu); inset: auto; margin: 0;
-	width: min(440px, calc(100vw - 16px)); max-height: calc(100dvh - 16px);
-	padding: 6px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-lg);
-	background: var(--raised); color: var(--text); box-shadow: var(--shadow-popover);
+	z-index: var(--z-menu); width: min(336px, calc(100vw - 16px));
+	padding: 4px; overflow-y: auto;
 }
-.permission-menu::backdrop { background: transparent; }
 .permission-option {
-	display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 10px;
+	display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px;
 	border: 0; border-radius: var(--radius-md); background: transparent; color: var(--text);
 	font: inherit; text-align: left; cursor: pointer;
 }
 .permission-option:hover, .permission-option:focus-visible { background: var(--hover); }
-.permission-option > .icon { flex: none; width: 22px; height: 22px; }
-.permission-copy { display: grid; gap: 3px; flex: 1; min-width: 0; }
-.permission-label { font-size: 15px; font-weight: 500; line-height: 22px; }
-.permission-description { color: var(--text-3); font-size: 13px; line-height: 19px; }
+.permission-option > .icon { flex: none; width: 16px; height: 16px; }
+.permission-copy { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.permission-label { font-size: 13px; font-weight: 500; line-height: 18px; }
+.permission-description { color: var(--text-3); font-size: 12px; line-height: 16px; text-wrap: balance; }
 .permission-option[data-policy="auto"] .permission-description { color: inherit; }
-.permission-option > .permission-check { visibility: hidden; width: 18px; height: 18px; }
+.permission-option > .permission-check { visibility: hidden; width: 14px; height: 14px; }
 .permission-option[aria-checked="true"] > .permission-check { visibility: visible; }
-.permission-hint { margin: 4px 10px 6px; padding-top: 10px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; line-height: 17px; }
+.permission-hint { margin: 3px 8px 4px; padding-top: 6px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11px; line-height: 17px; }
 
 .composer-trailing {
 	position: relative;

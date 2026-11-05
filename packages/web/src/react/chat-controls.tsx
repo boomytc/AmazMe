@@ -14,6 +14,7 @@ import { translate } from "../strings.ts";
 import { USAGE_ACTION } from "../usage.ts";
 import type { ModelOption } from "../view.ts";
 import type { ComposerView } from "./chat.tsx";
+import { useComposerPopover } from "./composer-popover.ts";
 
 const RECENT_KEY = "amazme.recent-models";
 const RECENT_STORED = 6;
@@ -180,17 +181,6 @@ function ModelPicker({
 		const node = dialog.current;
 		if (!open || node === null) return;
 		if (!node.open) node.showModal();
-		const place = () => {
-			const anchor = trigger.current?.getBoundingClientRect();
-			if (anchor === undefined) return;
-			const ceiling =
-				trigger.current?.closest("form")?.getBoundingClientRect().top ??
-				anchor.top;
-			node.style.right = `${Math.round(Math.max(8, Math.min(window.innerWidth - anchor.right, window.innerWidth - node.offsetWidth - 8)))}px`;
-			node.style.bottom = `${Math.round(window.innerHeight - ceiling + 8)}px`;
-			node.style.maxHeight = `${Math.round(Math.max(160, ceiling - 24))}px`;
-		};
-		place();
 		search.current?.focus({ preventScroll: true });
 		node
 			.querySelector<HTMLButtonElement>(
@@ -201,6 +191,8 @@ function ModelPicker({
 			if (node.open) node.close();
 		};
 	}, [open]);
+
+	useComposerPopover(open, trigger, dialog, "top-end");
 
 	const choose = (option: ModelOption) => {
 		const key = optionKey(option);
@@ -487,19 +479,7 @@ export function ComposerStatusMeter({
 		},
 		[],
 	);
-	useLayoutEffect(() => {
-		if (!open) return;
-		const anchor = trigger.current?.getBoundingClientRect();
-		const card = detail.current;
-		if (anchor === undefined || card === null) return;
-		const left = Math.min(
-			Math.max(8, anchor.left + anchor.width / 2 - card.offsetWidth / 2),
-			window.innerWidth - card.offsetWidth - 8,
-		);
-		const above = anchor.top - card.offsetHeight - 8;
-		card.style.left = `${Math.round(left)}px`;
-		card.style.top = `${Math.round(above >= 8 ? above : anchor.bottom + 8)}px`;
-	});
+	useComposerPopover(open && known && view.attachedId !== undefined, trigger, detail, "top");
 
 	if (view.attachedId === undefined || !known) return null;
 	return (
@@ -574,13 +554,9 @@ export function ComposerStatusMeter({
 							{translate(view.locale, "header.meterTitle")}
 						</p>
 						<p className="meter-detail-percent">
-							<span>
-								{hasContext
-									? translate(view.locale, "header.meterContext")
-									: hasTokens
-										? translate(view.locale, "header.meterTokens")
-										: translate(view.locale, "header.meterCost")}
-							</span>
+							{!hasContext && (
+								<span>{translate(view.locale, hasTokens ? "header.meterTokens" : "header.meterCost")}</span>
+							)}
 							<strong id="meter-context">
 								{hasContext
 									? view.meter.context
