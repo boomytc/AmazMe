@@ -253,7 +253,7 @@ export type ConfigureProvider = {
 };
 
 export type CreateSession = {
-  "title"?: string;
+  "title"?: string | null;
   "workspace"?: string;
   "project_id"?: string;
   "session_id"?: string;

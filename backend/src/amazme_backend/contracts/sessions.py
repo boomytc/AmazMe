@@ -243,7 +243,8 @@ class Compaction(Model):
 
 
 class CreateSession(Model):
-    title: str = Field(default="新会话", min_length=1, max_length=100)
+    title: str | None = Field(default=None, min_length=1, max_length=100,
+                              description="Omit for a model-generated title after the first exchange; explicit titles stay fixed.")
     workspace: str = "primary"
     project_id: str = ""
     session_id: str = ""

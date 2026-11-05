@@ -15,7 +15,7 @@ def session_row(row: sqlite3.Row) -> Session:
     project_id = str(row["project_id"]) if "project_id" in keys else ""
     return Session(
         session_id=str(row["id"]),
-        title=str(row["title"]),
+        title=str(row["title"]) or "新会话",
         parent_id=str(row["parent_id"]),
         fork_request_id=str(row["fork_request_id"]),
         archived=bool(row["archived"]),

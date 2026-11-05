@@ -136,6 +136,7 @@ export class PageRuntime {
 	private metadataConnection?: ClientConnection;
 	private navigationGeneration = 0;
 	private globalLoadGeneration = 0;
+	private sessionListGeneration = 0;
 	private resourceGeneration = 0;
 	private interactionGeneration = 0;
 	private selectionGeneration = 0;
@@ -518,6 +519,13 @@ export class PageRuntime {
 		}
 		this.render();
 	}
+	private async loadSessionList(): Promise<void> {
+		const generation = ++this.sessionListGeneration;
+		const identity = this.client.identity;
+		const list = await this.client.call("GET /api/v1/sessions");
+		if (identity && this.hostActive(identity) && generation === this.sessionListGeneration)
+			this.sessions = list.sessions;
+	}
 	private async loadGlobal(): Promise<void> {
 		if (this.disposed) return;
 		const generation = ++this.globalLoadGeneration;
@@ -525,7 +533,6 @@ export class PageRuntime {
 		const connection = this.client.connection,
 			resourcesGeneration = ++this.resourceGeneration;
 		const [
-			sessions,
 			workspaces,
 			catalog,
 			accounts,
@@ -533,7 +540,6 @@ export class PageRuntime {
 			projects,
 			resources,
 		] = await Promise.all([
-			this.client.call("GET /api/v1/sessions"),
 			this.client.call("GET /api/v1/workspaces"),
 			this.client.call("GET /api/v1/models"),
 			this.client.call("GET /api/v1/accounts"),
@@ -542,6 +548,7 @@ export class PageRuntime {
 			this.client.call("GET /api/v1/skills", {
 				query: { session_id: connection?.sessionId ?? "" },
 			}),
+			this.loadSessionList(),
 		]);
 		if (!identity || !this.hostActive(identity)) return;
 		const globalModelIds = identity
@@ -556,7 +563,6 @@ export class PageRuntime {
 			identity &&
 			this.hostActive(identity)
 		) {
-			this.sessions = sessions.sessions;
 			this.workspaces = workspaces.workspaces;
 			this.providers.catalog = catalog;
 			this.providers.accounts = accounts;
@@ -669,6 +675,7 @@ export class PageRuntime {
 					path: { session: connection.sessionId },
 				}),
 				this.loadUsage(connection),
+				this.loadSessionList(),
 			]);
 			if (!connection.active()) return;
 			this.mergeFeedback(feedback);
@@ -799,7 +806,6 @@ export class PageRuntime {
 			const session = await this.client.call("POST /api/v1/sessions", {
 				body: {
 					session_id: id,
-					title: "新会话",
 					workspace,
 					project_id: project?.project_id ?? "",
 					reuse_empty: true,
@@ -2231,6 +2237,7 @@ export class PageRuntime {
 				identity,
 			});
 			if (!this.hostActive(identity)) return true;
+			this.sessionListGeneration++;
 			this.globalLoadGeneration++;
 			this.sessions = this.sessions.filter((item) => item.session_id !== data);
 			this.drafts.delete(data);
@@ -3056,6 +3063,7 @@ export class PageRuntime {
 		if (this.disposed) return;
 		this.disposed = true;
 		this.navigationGeneration++;
+		this.sessionListGeneration++;
 		this.globalLoadGeneration++;
 		this.interactionGeneration++;
 		this.stopTheme();

@@ -7579,11 +7579,18 @@
       "CreateSession": {
         "properties": {
           "title": {
-            "type": "string",
-            "maxLength": 100,
-            "minLength": 1,
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Title",
-            "default": "新会话"
+            "description": "Omit for a model-generated title after the first exchange; explicit titles stay fixed."
           },
           "workspace": {
             "type": "string",

@@ -4,6 +4,7 @@ import sqlite3
 import time
 
 from amazme_backend.contracts.ipc.worker import WorkerActivity
+from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.sessions import CreateSession, Session, SessionList, SessionModel
 from amazme_backend.host.keys import now_ms
 from amazme_backend.host.persistence import content, rows
@@ -93,7 +94,7 @@ async def record_reuse(self: PersistenceOwner, session_id: str, value: CreateSes
                 raise BackendError("session_conflict")
             return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
         row = db.execute(rows.session_sql(
-            "WHERE s.id=? AND s.empty_draft=1 AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? "
+            "WHERE s.id=? AND s.empty_draft=1 AND s.title='' AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? "
             "AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) "
             "AND NOT EXISTS (SELECT 1 FROM session_removals r WHERE r.session=s.id)"
         ), (target, value.workspace or "primary", value.project_id)).fetchone()
@@ -131,7 +132,7 @@ def create(db: sqlite3.Connection, session_id: str, value: CreateSession) -> Ses
         ).fetchone()
         stored_project = "" if linked is None else str(linked[0])
         if (
-            str(row[0]) != value.title
+            str(row[0]) != (value.title or "")
             or str(row[1] or "primary") != workspace
             or stored_project != project_id
         ):
@@ -149,9 +150,9 @@ def create(db: sqlite3.Connection, session_id: str, value: CreateSession) -> Ses
         )
         if workspace not in project.workspaces:
             raise BackendError("project_workspace_mismatch")
-    if value.reuse_empty:
+    if value.reuse_empty and value.title is None:
         reusable = db.execute(rows.session_sql(
-            "WHERE s.empty_draft=1 AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) ORDER BY s.updated_ms DESC,s.rowid DESC LIMIT 1"
+            "WHERE s.empty_draft=1 AND s.title='' AND s.archived=0 AND s.workspace=? AND coalesce(p.project,'')=? AND NOT EXISTS (SELECT 1 FROM deliveries d WHERE d.session=s.id) ORDER BY s.updated_ms DESC,s.rowid DESC LIMIT 1"
         ), (workspace, project_id)).fetchone()
         if reusable is not None:
             return rows.session_row(reusable)
@@ -159,7 +160,7 @@ def create(db: sqlite3.Connection, session_id: str, value: CreateSession) -> Ses
         raise BackendError("session_capacity", status=429)
     db.execute(
         "INSERT INTO sessions(id,title,workspace,updated_ms,create_digest,empty_draft) VALUES(?,?,?,?,?,?)",
-        (session_id, value.title, workspace, time.time_ns() // 1000000, creation, int(value.reuse_empty)),
+        (session_id, value.title or "", workspace, time.time_ns() // 1000000, creation, int(value.reuse_empty and value.title is None)),
     )
     if project_id:
         db.execute("INSERT INTO project_sessions(session,project) VALUES(?,?)", (session_id, project_id))
@@ -293,9 +294,9 @@ async def rename_session(self: PersistenceOwner, session_id: str, title: str, ex
         row = db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone()
         if row is None:
             raise BackendError("session_not_found", status=404)
-        if str(row["title"]) not in {expected, title}:
+        if rows.session_row(row).title not in {expected, title}:
             raise BackendError("session_conflict", status=409)
-        db.execute("UPDATE sessions SET title=? WHERE id=?", (title, session_id))
+        db.execute("UPDATE sessions SET title=?,empty_draft=0 WHERE id=?", (title, session_id))
         return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
 
     return await self.transaction(operation)
@@ -387,3 +388,22 @@ async def due(self: PersistenceOwner) -> list[str]:
             )
         ]
     )
+
+
+async def title_source(self: PersistenceOwner, session: str) -> tuple[str, ProviderConfig] | None:
+    def operation(db: sqlite3.Connection) -> tuple[str, ProviderConfig] | None:
+        row = db.execute(
+            "SELECT json_extract(d.receipt,'$.request_id'), d.provider FROM sessions s "
+            "JOIN deliveries d ON s.id=d.session WHERE s.id=? AND s.title='' AND s.archived=0 "
+            "AND d.kind='submit' AND d.state='delivered' AND json_extract(d.receipt,'$.kind')='root' "
+            "AND json_extract(d.payload,'$.tool_call') IS NULL AND NOT EXISTS "
+            "(SELECT 1 FROM schedule_runs r WHERE r.request=json_extract(d.receipt,'$.request_id')) "
+            "ORDER BY d.ordinal LIMIT 1", (session,),
+        ).fetchone()
+        return (str(row[0]), ProviderConfig.model_validate_json(row[1])) if row else None
+    return await self.call(operation)
+
+async def finish_title(self: PersistenceOwner, session: str, title: str) -> None:
+    await self.call(lambda db: db.execute(
+        "UPDATE sessions SET title=? WHERE id=? AND title='' AND archived=0", (title, session)
+    ))

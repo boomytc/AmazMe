@@ -321,7 +321,7 @@ class Client:
             raise BackendError("session_not_found", status=404)
         return found
 
-    async def create_session(self, *, title: str, workspace: str, session_id: str = "") -> Session:
+    async def create_session(self, *, title: str | None = None, workspace: str, session_id: str = "") -> Session:
         if not workspace:
             raise BackendError("workspace_required")
         payload = await self._send("POST", "/api/v1/sessions", json_body={"title": title, "workspace": workspace, "session_id": session_id},

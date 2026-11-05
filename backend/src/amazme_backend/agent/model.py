@@ -1,4 +1,5 @@
 """Product-to-model boundary: prompts, tool selection, faux routing and public DTO validation."""
+import json
 import time
 from collections.abc import AsyncGenerator, Sequence
 from contextlib import aclosing
@@ -115,3 +116,20 @@ async def summarize(config: ProviderConfig, messages: list[Message], instruction
         raise BackendError("compaction_empty")
     return SummaryResult(summary.strip()[:16000], call_usage(call_id, config.provider, config.model, completion,
         started_at_ms=started, first_text_at_ms=first_text, finished_at_ms=time.time_ns() // 1000000))
+
+
+async def conversation_title(config: ProviderConfig, question: str, answer: str, *, auth: Auth) -> str:
+    if config.provider == "faux":
+        # The deterministic provider has no language model.
+        return ""
+    request = ModelRequest(
+        system_prompt="根据所给首轮对话概括主题，使用用户的语言，只输出一个简短的单行标题。不要回答问题、加引号或前缀。",
+        messages=[ModelMessage(role="user", content=json.dumps(
+            {"user": question[:4096], "assistant": answer[:4096]}, ensure_ascii=False,
+        ))],
+    )
+    async with aclosing(client.stream(model_spec(config), request, auth, transport=model_transport(config))) as response:
+        async for item in response:
+            if not isinstance(item, str) and not item.message.tool_calls:
+                return " ".join(item.message.content.split()).strip('“”"')[:100].strip()
+    return ""

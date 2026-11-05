@@ -42,3 +42,5 @@ SDK 只加载 HTTP 客户端和轻量数据契约；导入不会进入 Host、�
 `Client.model_scope(patterns, provider=...)` 使用 Python 的候选解析。
 `submit(..., model_selection=ModelSelection(provider=..., model=...))` 可固定本次模型；省略时使用会话选择。
 Host 投递、worker 接纳与子任务保存同一公开模型配置，凭据仍只在实际请求前从原账号库解析。
+
+创建会话时可省略 `title`：首轮成功回答后，后台使用该轮模型概括标题。显式标题或手动改名不会被覆盖；命名失败保留「新会话」，不会反复调用模型。

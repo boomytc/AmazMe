@@ -180,6 +180,12 @@ class HostStore:
         return await sessions.create_session(self, session_id, value)
 
 
+    async def title_source(self, session: str) -> tuple[str, ProviderConfig] | None:
+        return await sessions.title_source(self, session)
+
+    async def finish_title(self, session: str, title: str) -> None:
+        await sessions.finish_title(self, session, title)
+
     async def lookup_reused(self, session_id: str, value: CreateSession) -> Session | None:
         return await sessions.lookup_reused(self, session_id, value)
 

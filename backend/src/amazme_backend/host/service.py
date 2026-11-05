@@ -18,6 +18,7 @@ from amazme_backend.host.jobs import JobOperations
 from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.host.scheduling import Scheduling
 from amazme_backend.host.session_access import WorkerSessions
+from amazme_backend.host.session_titles import SessionTitles
 from amazme_backend.host.sessions import SessionOperations
 from amazme_backend.host.workspaces import WorkspaceOperations
 from amazme_backend.profiles.layout import session_database
@@ -35,6 +36,7 @@ class Host:
         self.integrations = IntegrationOperations(self.accounts, self.lifecycle)
         self.access = WorkerSessions(self.integrations, self.lifecycle)
         self.sessions = SessionOperations(self.access, self.accounts, self.lifecycle)
+        self.titles = SessionTitles(self.lifecycle, self.access, self.accounts)
         self.workspaces = WorkspaceOperations(self.lifecycle)
         self.jobs = JobOperations(self.lifecycle)
         self.content = ContentOperations(self.access, self.accounts, self.lifecycle, self.sessions)
@@ -58,6 +60,7 @@ class Host:
                     await self.lifecycle.store.activity(
                         session, await peer.call("GET", "/activity", WorkerActivity)
                     )
+                await self.titles.consider(session)
             except sqlite3.Error:
                 self.lifecycle.storage_failed = True
             except (BackendError, httpx.TransportError, TimeoutError):
@@ -71,6 +74,7 @@ class Host:
                         task.result()
                         del tasks[session]
                 try:
+                    self.titles.reap()
                     self.lifecycle.admit()
                     await self.scheduling.tick_schedules()
                     await self.lifecycle.ensure_supervisor()
@@ -88,6 +92,7 @@ class Host:
             for task in tasks.values():
                 task.cancel()
             await asyncio.gather(*tasks.values(), return_exceptions=True)
+            await self.titles.close()
 
     async def task_activity(self) -> TaskActivity:
         sessions = (await self.lifecycle.store.sessions()).sessions
@@ -105,7 +110,7 @@ class Host:
             for service in await self.lifecycle.store.services():
                 if service.state != "stopped" and (not exited(service.process_lease)):
                     raise BackendError("activity_unavailable", status=503)
-        tasks += len(self.accounts.provider_checks) + len(self.sessions.compacting)
+        tasks += len(self.accounts.provider_checks) + len(self.sessions.compacting) + len(self.titles.tasks)
         tasks += len(self.integrations.mcp_signins.active)
         tasks += sum((login.view.phase == "pending" for login in self.accounts.oauth_logins.values()))
         return TaskActivity(active=tasks > 0, tasks=tasks)

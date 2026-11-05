@@ -263,7 +263,7 @@ async def _dispatch(owner: Host, method: str, params: RpcParams) -> Model:
         return await owner.workspaces.workspaces()
     if method == "session.create":
         _require_workspace(params)
-        return await owner.sessions.create_session(CreateSession(title=params.title or "新会话", workspace=params.workspace, session_id=params.session_id))
+        return await owner.sessions.create_session(CreateSession(title=params.title or None, workspace=params.workspace, session_id=params.session_id))
     if method == "session.attach":
         _require_workspace(params)
         if not params.session_id:
