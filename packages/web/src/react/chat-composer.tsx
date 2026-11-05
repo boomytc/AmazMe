@@ -214,12 +214,14 @@ function Palette({
 							onPointerEnter={() => actions.onPaletteSelection(index)}
 							onClick={() => actions.onCommandPick(row.value)}
 						>
-							<span className="palette-tag">{row.tag ?? ""}</span>
 							<span className="palette-name">{row.label}</span>
 							{row.hint === undefined ? null : (
 								<span className="palette-hint">{row.hint}</span>
 							)}
 							<span className="palette-desc">{row.description}</span>
+							{row.tag === undefined ? null : (
+								<span className="palette-tag">{row.tag}</span>
+							)}
 						</button>
 					))}
 				</div>
@@ -1185,16 +1187,20 @@ export function ChatComposer({
 		attachFiles(files);
 	};
 
-	const extras =
+	const hasPendingExtras =
 		view.approvals.length > 0 ||
 		(view.questions?.length ?? 0) > 0 ||
-		view.queue.length > 0 ||
-		view.palette.open;
+		view.queue.length > 0;
+	const paletteOnly = view.palette.open && !hasPendingExtras;
+	const extras = hasPendingExtras || view.palette.open;
 	const questionSessionId = view.attachedId;
 	return (
 		<div className="composer-dock" id="composer-dock">
 			{!extras ? null : (
-				<div className="composer-extras" id="composer-extras">
+				<div
+					className={`composer-extras${paletteOnly ? " palette-only" : ""}`}
+					id="composer-extras"
+				>
 					<ApprovalCards view={view} actions={actions} />
 					{(view.questions?.length ?? 0) === 0 ||
 					questionSessionId === undefined ? null : (

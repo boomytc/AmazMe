@@ -2193,8 +2193,8 @@ p {
 	.connection-default-controls > .connection-default-select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
 	.connection-card-body { padding: 12px; }
 }
-/* Approvals, the queued inputs and the command palette share one scrollable block: a long draft plus
-   several cards cannot push the composer off the bottom of a short window. */
+/* Approvals, queued inputs and the command palette share a bounded block. A lone palette scrolls
+   its rows instead, keeping its title and shortcut footer visible without a second scrollbar. */
 .composer-extras {
 	display: flex;
 	flex-direction: column;
@@ -2392,7 +2392,20 @@ p {
 	margin-bottom: 10px;
 }
 
+.composer-extras.palette-only {
+	overflow: hidden;
+}
+
+.composer-extras.palette-only > .command-palette {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
 .palette-card {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
 	overflow: hidden;
 	padding: 6px;
 	border-radius: var(--radius-xl);
@@ -2401,17 +2414,24 @@ p {
 }
 
 .palette-title {
-	margin: 6px 10px 4px;
+	flex: none;
+	margin: 4px 10px 6px;
 	color: var(--text-3);
 	font-size: 12px;
 	font-weight: 500;
+	line-height: 18px;
 }
 
 .palette-rows {
 	display: flex;
+	flex: 1 1 auto;
 	flex-direction: column;
+	min-height: 0;
 	max-height: 280px;
 	overflow-y: auto;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+	scrollbar-width: thin;
 }
 
 .palette-rows[hidden] {
@@ -2420,6 +2440,7 @@ p {
 
 .palette-row {
 	display: flex;
+	flex: none;
 	align-items: center;
 	gap: 10px;
 	width: 100%;
@@ -2438,44 +2459,62 @@ p {
 	background: var(--hover);
 }
 
+.palette-row:focus-visible {
+	outline: var(--focus-ring);
+	outline-offset: var(--focus-ring-inset);
+}
+
 .palette-tag {
 	flex: none;
-	min-width: 56px;
+	padding: 2px 6px;
+	border-radius: var(--radius-xs);
+	background: var(--hover);
 	color: var(--text-3);
 	font-size: 11px;
+	line-height: 16px;
 	white-space: nowrap;
 }
 
 .palette-name {
-	flex: none;
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 48%;
+	overflow: hidden;
 	font-family: var(--font-mono);
 	font-size: 13px;
 	font-weight: 500;
-	white-space: nowrap;
-}
-
-.palette-hint {
-	flex: none;
-	color: var(--text-3);
-	font-family: var(--font-mono);
-	font-size: 12px;
-	white-space: nowrap;
-}
-
-.palette-desc {
-	flex: 1 1 auto;
-	min-width: 0;
-	overflow: hidden;
-	color: var(--text-3);
-	font-size: 13px;
+	line-height: 20px;
 	text-overflow: ellipsis;
 	white-space: nowrap;
 }
 
+.palette-hint {
+	flex: 0 1 auto;
+	min-width: 0;
+	max-width: 38%;
+	overflow: hidden;
+	color: var(--text-3);
+	font-family: var(--font-mono);
+	font-size: 12px;
+	line-height: 20px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 
+.palette-desc {
+	flex: 1 1 0;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--text-3);
+	font-size: 13px;
+	line-height: 20px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
 
 .palette-empty,
 .palette-foot {
+	flex: none;
 	margin: 0;
 	padding: 6px 10px;
 	color: var(--text-3);
@@ -2486,6 +2525,7 @@ p {
 	margin: 4px 4px 0;
 	padding: 8px 6px 4px;
 	border-top: 1px solid var(--line);
+	line-height: 16px;
 }
 
 /* The composer card: one rounded surface with the draft, and a toolbar under it. The focus ring is
