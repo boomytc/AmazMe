@@ -93,7 +93,7 @@ class SessionOperations:
         return await self.lifecycle.store.sessions()
 
     async def dispatch_code_tool(self, value: CodeToolDispatch, *, cancel: bool = False) -> CodeToolReceipt:
-        if value.build_id != self.lifecycle.build or value.host_epoch != self.lifecycle.fence.host_epoch:
+        if (value.host_epoch != self.lifecycle.fence.host_epoch):
             raise BackendError("stale_host_epoch")
         await self.lifecycle.require_session(value.session_id)
         binding = await self.lifecycle.supervisor.call(
@@ -236,7 +236,7 @@ class SessionOperations:
         async def operation(store: SessionOps) -> WorkflowView:
             view = await store.workflow(workflow_id)
             await store.cancel(
-                view.parent_id, HostFence(host_epoch=await store.host_epoch(), build_id=self.lifecycle.build)
+                view.parent_id, HostFence(host_epoch=await store.host_epoch())
             )
             return await store.workflow(workflow_id)
 
@@ -291,7 +291,7 @@ class SessionOperations:
         )
 
     async def branch_session(self, parent: str, value: BranchSession) -> Session:
-        async with self.lifecycle.update_lock:
+        async with self.lifecycle.management_lock:
             self.lifecycle.admit()
             child_id = value.branch_id or secrets.token_hex(16)
             request_key = hashlib.sha256(
@@ -422,7 +422,7 @@ class SessionOperations:
 
     async def remove_session(self, session: str) -> None:
         async with self.session_management_locks.setdefault(session, asyncio.Lock()):
-            async with self.lifecycle.update_lock:
+            async with self.lifecycle.management_lock:
                 self.lifecycle.admit()
                 directory = session_database(self.lifecycle.profile.path, session).parent
                 if directory.is_symlink() or directory.parent.is_symlink():
@@ -464,7 +464,7 @@ class SessionOperations:
             return
 
         async def operation(store: SessionOps) -> None:
-            fence = HostFence(host_epoch=await store.host_epoch(), build_id=self.lifecycle.build)
+            fence = HostFence(host_epoch=await store.host_epoch())
             for receipt in (await store.snapshot()).requests:
                 if (
                     receipt.kind == "root"
@@ -485,8 +485,6 @@ class SessionOperations:
             self.compacting.discard(value.compaction_id)
 
     async def _compact_session(self, session: str, value: CompactSession) -> Compaction:
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         if not await self.lifecycle.store.exists(session):
             raise BackendError("session_not_found", status=404)
         source = next((item for item in (await self.sessions()).sessions if item.session_id == session))
@@ -564,10 +562,7 @@ class SessionOperations:
         if len(self.attachments) >= 128:
             raise BackendError("attachment_capacity", status=429)
         value = Attachment(
-            attachment_id=secrets.token_hex(16),
-            session_id=session,
-            host_epoch=self.lifecycle.fence.host_epoch,
-            build_id=self.lifecycle.build,
+            attachment_id=secrets.token_hex(16), session_id=session, host_epoch=self.lifecycle.fence.host_epoch,
         )
         self.attachments[value.attachment_id] = value
         self.attachment_seen[value.attachment_id] = time.monotonic()
@@ -593,11 +588,7 @@ class SessionOperations:
     def check_attachment(self, identity: str, session: str) -> Attachment:
         value = self.attachments.get(identity)
         if (
-            value is None
-            or value.session_id != session
-            or value.host_epoch != self.lifecycle.fence.host_epoch
-            or (value.build_id != self.lifecycle.build)
-            or (time.monotonic() - self.attachment_seen.get(identity, 0) > 300)
+            (value is None) or (value.session_id != session) or (value.host_epoch != self.lifecycle.fence.host_epoch) or (time.monotonic() - self.attachment_seen.get(identity, 0) > 300)
         ):
             raise BackendError("stale_client_binding")
         self.attachment_seen[identity] = time.monotonic()

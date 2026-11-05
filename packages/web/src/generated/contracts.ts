@@ -37,7 +37,6 @@ export type Approval = {
   "run_id": string;
   "call_id": string;
   "call": ToolCall;
-  "build_id": string;
   "proposal_digest": string;
   "revision": string;
   "state": "pending" | "approved" | "denied" | "consumed" | "expired";
@@ -87,7 +86,6 @@ export type Attachment = {
   "attachment_id": string;
   "session_id": string;
   "host_epoch": number;
-  "build_id": string;
 };
 
 export type BranchSession = {
@@ -191,7 +189,6 @@ export type CodeText = {
 
 export type CodeToolDispatch = {
   "host_epoch": number;
-  "build_id": string;
   "session_id": string;
   "run_id": string;
   "sequence": number;
@@ -235,11 +232,6 @@ export type Compaction = {
   "summary": string;
   "instructions"?: string;
   "usage"?: ModelCallUsage | null;
-};
-
-export type CompleteUpdate = {
-  "update_id": string;
-  "expected_revision": string;
 };
 
 export type ConfigureModel = {
@@ -324,7 +316,7 @@ export type EpochHealth = {
 
 export type Event = {
   "seq": string;
-  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction" | "question";
+  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "compaction" | "question";
   "request_id": string;
   "text": string;
   "message"?: TranscriptMessage | null;
@@ -438,9 +430,8 @@ export type HTTPValidationError = {
 
 export type Health = {
   "identity": Identity;
-  "state": "ready" | "recovering" | "frozen" | "blocked";
+  "state": "ready" | "recovering" | "blocked";
   "supervisor"?: SupervisorHealth | null;
-  "update"?: UpdateRecord | null;
   "pending_deliveries"?: number;
   "errors"?: Array<string>;
   "supervisors"?: Array<ServiceInfo>;
@@ -457,20 +448,17 @@ export type HistoryPage = {
 
 export type HostFence = {
   "host_epoch": number;
-  "build_id": string;
 };
 
 export type Identity = {
   "version"?: string;
   "protocol"?: string;
-  "build_id": string;
   "profile_id": string;
   "instance_id": string;
   "pid": number;
   "host_epoch"?: number;
   "role"?: "host" | "supervisor" | "worker";
   "state"?: string;
-  "fingerprint"?: string;
   "storage_format"?: 2;
   "approval_policy"?: "auto" | "mutations" | "all";
 };
@@ -963,7 +951,6 @@ export type PrepareFileWrite = {
   "session_id": string;
   "worker_id": string;
   "execution_epoch": number;
-  "build_id": string;
   "supervisor_id"?: string;
   "host_epoch": number;
   "call_id": string;
@@ -976,17 +963,10 @@ export type PreparePatch = {
   "session_id": string;
   "worker_id": string;
   "execution_epoch": number;
-  "build_id": string;
   "supervisor_id"?: string;
   "host_epoch": number;
   "call_id": string;
   "observations"?: Array<FilePresent | FileAbsent>;
-};
-
-export type PrepareUpdate = {
-  "update_id": string;
-  "target_build": string;
-  "cancel_work"?: boolean;
 };
 
 export type PreparedFileWrite = {
@@ -1130,7 +1110,6 @@ export type Receipt = {
 
 export type Recovery = {
   "host_epoch": number;
-  "build_id": string;
   "recovery_id": string;
   "session_id"?: string;
 };
@@ -1415,7 +1394,6 @@ export type SearchResults = {
 
 export type ServiceInfo = {
   "instance_id": string;
-  "build_id": string;
   "process_lease": ProcessLease;
   "state": "starting" | "running" | "stopping" | "stopped" | "unknown";
   "pid"?: number;
@@ -1440,7 +1418,7 @@ export type SessionApprovalPolicy = {
 export type SessionDiagnostic = {
   "session_id": string;
   "present": boolean;
-  "state": "absent" | "ready" | "blocked" | "stopping" | "frozen";
+  "state": "absent" | "ready" | "blocked" | "stopping";
   "blocked_code"?: string;
   "failed"?: number;
   "unknown"?: number;
@@ -1510,7 +1488,7 @@ export type Snapshot = {
   "session_id": string;
   "stream_id": string;
   "seq": string;
-  "state": "recovering" | "ready" | "blocked" | "stopping" | "frozen";
+  "state": "recovering" | "ready" | "blocked" | "stopping";
   "requests": Array<Receipt>;
   "events": Array<Event>;
   "approvals"?: Array<Approval>;
@@ -1552,7 +1530,6 @@ export type SupervisorHealth = {
   "terminals"?: Array<TerminalView>;
   "identity": Identity;
   "registry_revision": string;
-  "freeze_id"?: string;
   "workers": Array<WorkerInfo>;
   "epochs": Array<EpochHealth>;
   "effects"?: Array<EffectHold>;
@@ -1629,19 +1606,6 @@ export type UpdateModelSettings = {
   "proxy"?: string;
   "headers"?: Record<string, string>;
   "thinking"?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | null;
-};
-
-export type UpdateRecord = {
-  "update_id": string;
-  "source_build": string;
-  "target_build": string;
-  "phase": "freezing" | "retiring" | "prepared" | "validating" | "completed";
-  "revision": string;
-  "cancel_work": boolean;
-  "error"?: string;
-  "roster"?: Array<WorkerInfo>;
-  "validation"?: WorkerInfo | null;
-  "activated"?: boolean;
 };
 
 export type UsageReport = {
@@ -1730,11 +1694,9 @@ export type WorkerInfo = {
   "worker_id": string;
   "pid": number;
   "socket": string;
-  "build_id": string;
   "process_lease"?: ProcessLease | null;
-  "state"?: "starting" | "ready" | "frozen" | "stopping" | "stopped" | "blocked" | "unknown";
+  "state"?: "starting" | "ready" | "stopping" | "stopped" | "blocked" | "unknown";
   "execution_epoch"?: number;
-  "fingerprint"?: string;
   "plugin_fingerprint"?: string;
   "purpose"?: "business" | "validation";
   "host_epoch"?: number;
@@ -1809,7 +1771,6 @@ export type Stream = {
   "batches"?: Array<CommitBatch>;
   "stream_id"?: string;
   "binding_id"?: string;
-  "build_id"?: string;
   "resync"?: string;
 };
 
@@ -1902,7 +1863,6 @@ export interface ApiModels {
   CodeView: CodeView;
   CompactSession: CompactSession;
   Compaction: Compaction;
-  CompleteUpdate: CompleteUpdate;
   ConfigureModel: ConfigureModel;
   ConfigureProvider: ConfigureProvider;
   CreateSession: CreateSession;
@@ -1994,7 +1954,6 @@ export interface ApiModels {
   PreferencesUpdate: PreferencesUpdate;
   PrepareFileWrite: PrepareFileWrite;
   PreparePatch: PreparePatch;
-  PrepareUpdate: PrepareUpdate;
   PreparedFileWrite: PreparedFileWrite;
   PreparedPatch: PreparedPatch;
   Preview: Preview;
@@ -2065,7 +2024,6 @@ export interface ApiModels {
   ToolCall: ToolCall;
   TranscriptMessage: TranscriptMessage;
   UpdateModelSettings: UpdateModelSettings;
-  UpdateRecord: UpdateRecord;
   UsageReport: UsageReport;
   UserAnswer: UserAnswer;
   UserQuestion: UserQuestion;

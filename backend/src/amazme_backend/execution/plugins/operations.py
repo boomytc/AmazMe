@@ -106,7 +106,7 @@ class PluginOperations:
                     raise BackendError("plugin_reload_blocked", status=409) from error
                 if identity.state != "ready" or identity.host_epoch != self.owner.host_epoch:
                     raise BackendError("plugin_reload_blocked", status=409)
-                worker.state, worker.fingerprint, worker.host_epoch = "ready", identity.fingerprint, identity.host_epoch
+                (worker.state, worker.host_epoch) = ("ready", identity.host_epoch)
                 await self.owner.save_worker(worker)
             if worker.state != "ready" or worker.process_lease is None:
                 raise BackendError("plugin_reload_blocked", status=409)
@@ -114,12 +114,10 @@ class PluginOperations:
             # either remains active and rejects this change, or observes stopping and keeps its ID.
             try:
                 await self.owner.peer_identity(worker, "POST", "/stop", StopWorker(
-                    build_id=worker.build_id, host_epoch=self.owner.host_epoch, session_id=session_id,
-                    worker_id=worker.worker_id, execution_epoch=worker.execution_epoch,
-                    reason="update", require_idle=True))
+                    host_epoch=self.owner.host_epoch, session_id=session_id, worker_id=worker.worker_id, execution_epoch=worker.execution_epoch, reason="maintenance", require_idle=True))
             except (BackendError, httpx.TransportError, TimeoutError) as error:
                 raise BackendError("plugin_reload_blocked", status=409) from error
-            proof = await self.owner.retire_worker(worker, "update")
+            proof = await self.owner.retire_worker(worker, "maintenance")
             if proof.state != "clean":
                 raise BackendError("execution_cleanup_pending", status=503)
 
@@ -193,7 +191,7 @@ class PluginOperations:
             self.owner.admit()
             config = validate_config(value.config)
             load_id = "register:" + value.plugin_id
-            identity = hashlib.sha256(json.dumps(value.model_dump(mode="json", exclude={"host_epoch", "build_id"}), sort_keys=True).encode()).hexdigest()
+            identity = hashlib.sha256(json.dumps(value.model_dump(mode="json", exclude={"host_epoch"}), sort_keys=True).encode()).hexdigest()
             existing = await self.owner.db.call(lambda db: db.execute("SELECT * FROM plugins WHERE id=?", (value.plugin_id,)).fetchone())
             if existing is not None:
                 previous = await self.owner.db.call(lambda db: db.execute("SELECT * FROM plugin_loads WHERE id=?", (load_id,)).fetchone())
@@ -225,7 +223,7 @@ class PluginOperations:
             if str(current["session"]) != value.session_id:
                 raise BackendError("plugin_session_mismatch")
             # Pin retries to the request bytes, before observing a possibly changed entry file.
-            identity = hashlib.sha256(json.dumps(value.model_dump(mode="json", exclude={"host_epoch", "build_id"}), sort_keys=True).encode()).hexdigest()
+            identity = hashlib.sha256(json.dumps(value.model_dump(mode="json", exclude={"host_epoch"}), sort_keys=True).encode()).hexdigest()
             load_id = "reload:" + value.reload_id
             previous = await self.owner.db.call(lambda db: db.execute("SELECT * FROM plugin_loads WHERE id=?", (load_id,)).fetchone())
             if previous is not None:
@@ -282,7 +280,7 @@ class PluginOperations:
             if str(plugin["session"]) != value.session_id:
                 raise BackendError("plugin_session_mismatch")
             if value.origin == "model":
-                worker = await self.owner.validate_worker(WorkerRequest(session_id=value.session_id,worker_id=value.worker_id,build_id=value.build_id))
+                worker = await self.owner.validate_worker(WorkerRequest(session_id=value.session_id, worker_id=value.worker_id))
                 if (worker.purpose == "validation" or value.kind != "tool" or not value.request_id or len(value.step_id) != 64
                         or value.call_id != value.step_id[:32]):
                     raise BackendError("plugin_model_identity")

@@ -159,8 +159,8 @@ export function pythonView(input: PresentationInput): WebView {
 	const capabilities = sessionCapabilities(readOnly);
 	const unavailable = connection?.failure !== undefined
 		? errorMessageCopy(locale, connection.failure)
-		: !readOnly && snapshot && ["blocked", "frozen", "stopping"].includes(snapshot.state)
-			? translate(locale, snapshot.state === "blocked" ? "greeting.blocked" : snapshot.state === "frozen" ? "greeting.frozen" : "greeting.stopping")
+		: !readOnly && snapshot && ["blocked", "stopping"].includes(snapshot.state)
+			? translate(locale, snapshot.state === "blocked" ? "greeting.blocked" : "greeting.stopping")
 			: undefined;
 	return { ...base, typography: input.typography, modelConnections: input.connections, roster, approvalPolicy: input.approvalPolicy,
 		projects: projectGroups(directory, roster, input.selectedProject, input.rosterFilter, input.expandedProjects),

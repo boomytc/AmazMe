@@ -47,7 +47,7 @@ class WorkerSessions:
 
     async def read[T](self, session: str, operation: Callable[[SessionView], Awaitable[T]]) -> T:
         async with read_session(
-            session_database(self.lifecycle.profile.path, session), session, build=self.lifecycle.build
+            session_database(self.lifecycle.profile.path, session), session
         ) as store:
             return await operation(store)
 
@@ -60,8 +60,6 @@ class WorkerSessions:
         write: bool = True,
     ) -> T:
         self.lifecycle.admit()
-        if require_active and await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         source = await self.lifecycle.store.session(session)
         if source is None:
             raise BackendError("session_not_found", status=404)
@@ -80,10 +78,9 @@ class WorkerSessions:
         self.lifecycle.admit()
         async with self.worker_locks.setdefault(session, asyncio.Lock()):
             await self.lifecycle.require_session(session)
-            active = await self.lifecycle.store.active_update()
             service = await self.lifecycle.store.service()
             if service and (not exited(service.process_lease)):
-                if service.state in {"stopping", "stopped"} or service.build_id != self.lifecycle.build:
+                if (service.state in {"stopping", "stopped"}):
                     raise BackendError("supervisor_retirement_pending", status=503)
                 health = await self.lifecycle.supervisor.call("GET", "/health", SupervisorHealth)
                 self.lifecycle.check_supervisor(health.identity, service, fenced=True)
@@ -95,12 +92,7 @@ class WorkerSessions:
                 if owners:
                     info = owners[0]
                     if (
-                        info.build_id != self.lifecycle.build
-                        or info.host_epoch != self.lifecycle.fence.host_epoch
-                        or info.fingerprint != self.lifecycle.build
-                        or (info.process_lease is None)
-                        or exited(info.process_lease)
-                        or (info.state == "stopping")
+                        (info.host_epoch != self.lifecycle.fence.host_epoch) or (info.process_lease is None) or (exited(info.process_lease)) or (info.state == "stopping")
                     ):
                         raise BackendError("worker_identity_mismatch", status=503)
                     cached = self.worker_peers.get(session)
@@ -111,18 +103,10 @@ class WorkerSessions:
                     peer = cached[1] if cached else Peer(Path(info.socket), self.lifecycle.profile.token)
                     try:
                         identity = await wait_peer(
-                            peer,
-                            self.lifecycle.build,
-                            timeout=3,
-                            instance=info.worker_id,
-                            profile=self.lifecycle.profile.config.profile_id,
+                            peer, timeout=3, instance=info.worker_id, profile=self.lifecycle.profile.config.profile_id,
                         )
                         if (
-                            identity.role != "worker"
-                            or identity.fingerprint != self.lifecycle.build
-                            or identity.host_epoch != self.lifecycle.fence.host_epoch
-                            or (identity.state == "stopping")
-                            or exited(info.process_lease)
+                            (identity.role != "worker") or (identity.host_epoch != self.lifecycle.fence.host_epoch) or (identity.state == "stopping") or (exited(info.process_lease))
                         ):
                             raise BackendError("worker_identity_mismatch", status=503)
                     except BaseException:
@@ -136,66 +120,30 @@ class WorkerSessions:
                     raise BackendError("worker_restart_budget_exhausted", status=503)
                 if failures or health.blocked or health.identity.state == "blocked":
                     raise BackendError("diagnostic_worker_unavailable", status=503)
-            if active:
-                raise BackendError("update_frozen", status=503)
         return ReadPeer(await self.worker(session))
 
-    async def worker(
-        self, session: str, *, maintenance: bool = False, validation_probe: bool = False, update_id: str = ""
-    ) -> Peer:
+    async def worker(self, session: str, *, maintenance: bool = False) -> Peer:
         self.lifecycle.admit()
-        if maintenance and (not update_id) and (not validation_probe):
+        if maintenance:
             return await self.reader(session)
         async with self.worker_locks.setdefault(session, asyncio.Lock()):
-            if not validation_probe:
-                await self.lifecycle.require_session(session)
-            active = await self.lifecycle.store.active_update()
-            if active and (not maintenance or update_id != active.update_id):
-                raise BackendError("update_frozen", status=503)
-            if validation_probe and (active is None or not update_id):
-                raise BackendError("validation_requires_update")
+            await self.lifecycle.require_session(session)
             await self.lifecycle.ensure_supervisor()
-            active = await self.lifecycle.store.active_update()
-            if active and (not maintenance or update_id != active.update_id):
-                raise BackendError("update_frozen", status=503)
-            purpose = "validation" if active else "business"
-            if not active and (not validation_probe):
-                health = await self.lifecycle.supervisor.call("GET", "/health", SupervisorHealth)
-                service = await self.lifecycle.store.service()
-                if service is None:
-                    raise BackendError("supervisor_unavailable", status=503)
-                self.lifecycle.check_supervisor(health.identity, service, fenced=True)
-                if "worker_restart_budget_exhausted" in health.session_errors.get(session, []):
-                    raise BackendError("worker_restart_budget_exhausted", status=503)
-                if (
-                    health.freeze_id
-                    or health.blocked
-                    or health.session_errors.get(session)
-                    or (health.identity.state != "ready")
-                ):
-                    raise BackendError("execution_blocked", status=503)
-                await self.integrations.sync_plugin_packages(session)
-                await self.integrations.sync_mcp_configuration(session)
-            info = await self.lifecycle.supervisor.call(
-                "POST",
-                "/workers/ensure",
-                WorkerInfo,
-                WorkerSpec(
-                    **self.lifecycle.fence.model_dump(),
-                    session_id=session,
-                    frozen=active is not None,
-                    purpose=purpose,
-                ),
-            )
-            if (
-                info.session_id != session
-                or info.build_id != self.lifecycle.build
-                or info.purpose != purpose
-                or (info.process_lease is None)
-                or exited(info.process_lease)
-                or (info.fingerprint not in {"", self.lifecycle.build})
-                or (info.state not in {"starting", "ready", "frozen"})
-            ):
+            health = await self.lifecycle.supervisor.call("GET", "/health", SupervisorHealth)
+            service = await self.lifecycle.store.service()
+            if service is None:
+                raise BackendError("supervisor_unavailable", status=503)
+            self.lifecycle.check_supervisor(health.identity, service, fenced=True)
+            if "worker_restart_budget_exhausted" in health.session_errors.get(session, []):
+                raise BackendError("worker_restart_budget_exhausted", status=503)
+            if health.blocked or health.session_errors.get(session) or health.identity.state != "ready":
+                raise BackendError("execution_blocked", status=503)
+            await self.integrations.sync_plugin_packages(session)
+            await self.integrations.sync_mcp_configuration(session)
+            info = await self.lifecycle.supervisor.call("POST", "/workers/ensure", WorkerInfo,
+                WorkerSpec(**self.lifecycle.fence.model_dump(), session_id=session))
+            if (info.session_id != session or info.purpose != "business" or info.process_lease is None
+                    or exited(info.process_lease) or info.state not in {"starting", "ready"}):
                 raise BackendError("worker_identity_mismatch", status=503)
             cached = self.worker_peers.get(session)
             if cached and cached[0] == info.worker_id:
@@ -204,23 +152,10 @@ class WorkerSessions:
                 await cached[1].close()
             peer = Peer(Path(info.socket), self.lifecycle.profile.token)
             try:
-                identity = await wait_peer(
-                    peer,
-                    self.lifecycle.build,
-                    timeout=30,
-                    instance=info.worker_id,
-                    profile=self.lifecycle.profile.config.profile_id,
-                )
-                if (
-                    identity.role != "worker"
-                    or identity.fingerprint != self.lifecycle.build
-                    or identity.host_epoch != self.lifecycle.fence.host_epoch
-                ):
+                identity = await wait_peer(peer, timeout=30, instance=info.worker_id,
+                    profile=self.lifecycle.profile.config.profile_id)
+                if identity.role != "worker" or identity.host_epoch != self.lifecycle.fence.host_epoch:
                     raise BackendError("worker_identity_mismatch", status=503)
-                if active:
-                    await self.lifecycle.update_health(
-                        active, await self.lifecycle.supervisor.call("GET", "/health", SupervisorHealth)
-                    )
             except BaseException:
                 await peer.close()
                 raise
@@ -234,8 +169,6 @@ class WorkerSessions:
         async with self.worker_locks.setdefault(session, asyncio.Lock()):
             if not closing:
                 self.lifecycle.admit()
-                if await self.lifecycle.store.active_update():
-                    raise BackendError("update_frozen", status=503)
                 await self.lifecycle.ensure_supervisor()
             else:
                 await self.lifecycle.ensure_supervisor(for_shutdown=True)
@@ -255,17 +188,14 @@ class WorkerSessions:
                     "/workers/ensure",
                     WorkerInfo,
                     WorkerSpec(
-                        **self.lifecycle.fence.model_dump(),
-                        session_id=session,
-                        frozen=False,
-                        purpose="validation",
+                        **self.lifecycle.fence.model_dump(), session_id=session, purpose="validation",
                     ),
                 )
             )
             if (
                 info.process_lease is None
                 or exited(info.process_lease)
-                or info.state not in {"starting", "ready", "frozen"}
+                or info.state not in {"starting", "ready"}
             ):
                 raise BackendError("worker_identity_mismatch", status=503)
             if not closing and not allow_business and info.purpose != "validation":
@@ -273,16 +203,10 @@ class WorkerSessions:
             peer = Peer(Path(info.socket), self.lifecycle.profile.token)
             try:
                 identity = await wait_peer(
-                    peer,
-                    self.lifecycle.build,
-                    timeout=30,
-                    instance=info.worker_id,
-                    profile=self.lifecycle.profile.config.profile_id,
+                    peer, timeout=30, instance=info.worker_id, profile=self.lifecycle.profile.config.profile_id,
                 )
                 if (
-                    identity.role != "worker"
-                    or identity.host_epoch != self.lifecycle.fence.host_epoch
-                    or identity.fingerprint != self.lifecycle.build
+                    (identity.role != "worker") or (identity.host_epoch != self.lifecycle.fence.host_epoch)
                 ):
                     raise BackendError("worker_identity_mismatch", status=503)
                 yield SessionRelay(peer)
@@ -304,7 +228,7 @@ class WorkerSessions:
                                 session_id=session,
                                 worker_id=owner.worker_id,
                                 execution_epoch=owner.execution_epoch,
-                                reason="update",
+                                reason="maintenance",
                             ),
                         )
                         if (

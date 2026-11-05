@@ -1,14 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const BUILD_ID = /^[a-f0-9]{64}$/u;
 const CONTROL_TOKEN = /^[0-9a-f]{64}$/u;
 
 /** Authenticated identity returned by the local Python connector. */
 export interface PythonReady {
 	readonly pageUrl: string;
 	readonly origin: string;
-	readonly buildId: string;
 	readonly hostEpoch: number;
 	readonly profileId: string;
 }
@@ -57,9 +55,6 @@ export function parsePythonReadyLine(line: string): PythonReady | undefined {
 	) {
 		throw new Error(`desktop python backend launch URL must be loopback HTTP: ${record.url}`);
 	}
-	if (typeof record.build_id !== "string" || !BUILD_ID.test(record.build_id)) {
-		throw new Error("desktop python backend readiness is missing build_id");
-	}
 	if (typeof record.host_epoch !== "number" || !Number.isInteger(record.host_epoch) || record.host_epoch < 0) {
 		throw new Error("desktop python backend readiness is missing host_epoch");
 	}
@@ -72,7 +67,6 @@ export function parsePythonReadyLine(line: string): PythonReady | undefined {
 	return {
 		pageUrl: url.href,
 		origin: `${url.protocol}//${url.host}`,
-		buildId: record.build_id,
 		hostEpoch: record.host_epoch,
 		profileId: record.profile_id,
 	};

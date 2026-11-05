@@ -30,8 +30,6 @@ async def workspace_grants(self: PersistenceOwner) -> list[tuple[str, str]]:
 async def add_workspace_grant(self: PersistenceOwner, name: str, host_path: str) -> None:
 
     def operation(db: sqlite3.Connection) -> None:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         current = db.execute("SELECT host_path FROM workspace_grants WHERE name=?", (name,)).fetchone()
         if current is not None and str(current[0]) != host_path:
             raise BackendError("workspace_conflict")
@@ -53,8 +51,6 @@ async def add_workspace_grant(self: PersistenceOwner, name: str, host_path: str)
 async def remove_workspace_grant(self: PersistenceOwner, name: str) -> None:
 
     def operation(db: sqlite3.Connection) -> None:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         if db.execute("DELETE FROM workspace_grants WHERE name=?", (name,)).rowcount != 1:
             raise BackendError("workspace_not_found", status=404)
 

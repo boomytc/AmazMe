@@ -106,7 +106,6 @@ class Client:
         self.base_url = base_url.rstrip("/")
         self.token = token
         self._http = httpx.AsyncClient(base_url=self.base_url, timeout=30)
-        self.build_id = ""
         self.host_epoch = 0
 
     async def __aenter__(self) -> "Client":
@@ -120,7 +119,7 @@ class Client:
         return {"Authorization": f"Bearer {self.token}"}
 
     def _write(self, attachment_id: str = "") -> dict[str, str]:
-        headers = {**self._auth(), "x-amazme-build": self.build_id, "x-amazme-epoch": str(self.host_epoch)}
+        headers = {**self._auth(), "x-amazme-epoch": str(self.host_epoch)}
         if attachment_id:
             headers["x-amazme-attachment"] = attachment_id
         return headers
@@ -138,7 +137,6 @@ class Client:
 
     async def bootstrap(self) -> Identity:
         identity = Identity.model_validate(await self._send("GET", "/api/v1/bootstrap"))
-        self.build_id = identity.build_id
         self.host_epoch = identity.host_epoch
         return identity
 

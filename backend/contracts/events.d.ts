@@ -5,7 +5,6 @@ export type Approval = {
   "run_id": string;
   "call_id": string;
   "call": ToolCall;
-  "build_id": string;
   "proposal_digest": string;
   "revision": string;
   "state": "pending" | "approved" | "denied" | "consumed" | "expired";
@@ -36,7 +35,7 @@ export type EffectHold = {
 
 export type Event = {
   "seq": string;
-  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "freeze" | "compaction" | "question";
+  "kind": "accepted" | "status" | "preview" | "message" | "tool" | "cleanup" | "approval" | "children" | "effect" | "compaction" | "question";
   "request_id": string;
   "text": string;
   "message"?: TranscriptMessage | null;
@@ -93,7 +92,7 @@ export type Snapshot = {
   "session_id": string;
   "stream_id": string;
   "seq": string;
-  "state": "recovering" | "ready" | "blocked" | "stopping" | "frozen";
+  "state": "recovering" | "ready" | "blocked" | "stopping";
   "requests": Array<Receipt>;
   "events": Array<Event>;
   "approvals"?: Array<Approval>;
@@ -132,6 +131,5 @@ export type Stream = {
   "batches"?: Array<CommitBatch>;
   "stream_id"?: string;
   "binding_id"?: string;
-  "build_id"?: string;
   "resync"?: string;
 };

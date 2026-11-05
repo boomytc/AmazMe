@@ -129,7 +129,6 @@ class SubmitRemote(OpenRemote):
 class WorkerSpec(HostFence):
     session_id: str = Field(pattern=r"^[a-f0-9]{32}$")
     purpose: Literal["business", "validation"] = "business"
-    frozen: bool = False
 
 
 class RunTool(Lease, Command):
@@ -188,7 +187,7 @@ class PluginCallEnvelope(PluginCallRequest, HostFence):
 
 
     def intent_payload(self) -> str:
-        return json.dumps(self.model_dump(mode="json", exclude={"host_epoch", "build_id", "worker_id"}),
+        return json.dumps(self.model_dump(mode="json", exclude={"host_epoch", "worker_id"}),
                           sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
@@ -204,14 +203,13 @@ class CancelPlugin(ClosePlugin):
 class WorkerRequest(Model):
     session_id: str
     worker_id: str
-    build_id: str
     storage_ready: bool = False
 
 
 class StopWorker(WorkerSpec):
     worker_id: str
     execution_epoch: int = 0
-    reason: Literal["shutdown", "recovery", "update"] = "shutdown"
+    reason: Literal["shutdown", "recovery", "maintenance"] = "shutdown"
     require_idle: bool = False
 
 
@@ -226,15 +224,6 @@ class ToolLookup(WorkerRequest):
 class TaskActivity(Model):
     active: bool
     tasks: int = 0
-
-
-class FreezeSupervisor(HostFence):
-    freeze_id: str
-    expected_revision: str = ""
-
-
-class RetireSupervisor(HostFence):
-    freeze_id: str
 
 
 class Recovery(HostFence):

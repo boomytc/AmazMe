@@ -95,7 +95,6 @@ def _kimi_cu_ready(item: mcp_management.Configured) -> bool:
 
 class McpFence(TypedDict):
     host_epoch: int
-    build_id: str
     session_id: str
 
 
@@ -111,30 +110,18 @@ class IntegrationOperations:
 
     def _terminal_fence(self, session_id: str, terminal_id: str) -> TerminalQuery:
         return TerminalQuery(
-            host_epoch=self.lifecycle.fence.host_epoch,
-            build_id=self.lifecycle.build,
-            session_id=session_id,
-            terminal_id=terminal_id,
+            host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, terminal_id=terminal_id,
         )
 
     async def open_terminal(self, session_id: str, value: TerminalOpen) -> TerminalView:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self.lifecycle.require_session(session_id)
         return await self.lifecycle.supervisor.call(
             "POST",
             "/pty/open",
             TerminalView,
             OpenTerminal(
-                host_epoch=self.lifecycle.fence.host_epoch,
-                build_id=self.lifecycle.build,
-                session_id=session_id,
-                terminal_id=value.terminal_id,
-                command=value.command,
-                cols=value.cols,
-                rows=value.rows,
-                workspace=value.workspace,
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, terminal_id=value.terminal_id, command=value.command, cols=value.cols, rows=value.rows, workspace=value.workspace,
             ),
         )
 
@@ -177,9 +164,7 @@ class IntegrationOperations:
             "/pty/list",
             TerminalList,
             TerminalSession(
-                host_epoch=self.lifecycle.fence.host_epoch,
-                build_id=self.lifecycle.build,
-                session_id=session_id,
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id,
             ),
         )
 
@@ -192,8 +177,7 @@ class IntegrationOperations:
     def _mcp_fence(self, session_id: str) -> McpFence:
         return {
             "host_epoch": self.lifecycle.fence.host_epoch,
-            "build_id": self.lifecycle.build,
-            "session_id": session_id,
+                        "session_id": session_id,
         }
 
     async def mcp_configuration(self, session: str) -> McpConfiguration:
@@ -300,15 +284,11 @@ class IntegrationOperations:
     async def reload_mcp_configuration(self, session: str) -> McpState:
         self.lifecycle.admit()
         await self.lifecycle.require_session(session)
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self.lifecycle.ensure_supervisor()
         return await self.sync_mcp_configuration(session)
 
     async def open_mcp(self, session_id: str, value: McpOpen) -> McpView:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self.lifecycle.require_session(session_id)
         return await self.lifecycle.supervisor.call(
             "POST", "/mcp/open", McpView, OpenMcp(**self._mcp_fence(session_id), **value.model_dump())
@@ -321,9 +301,7 @@ class IntegrationOperations:
             "/mcp/state",
             McpState,
             McpSession(
-                build_id=self.lifecycle.build,
-                host_epoch=self.lifecycle.fence.host_epoch,
-                session_id=session_id,
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id,
             ),
         )
 
@@ -351,11 +329,7 @@ class IntegrationOperations:
 
     def _remote_body(self, session_id: str, value: RemoteOpen) -> OpenRemote:
         return OpenRemote(
-            host_epoch=self.lifecycle.fence.host_epoch,
-            build_id=self.lifecycle.build,
-            session_id=session_id,
-            **value.model_dump(include=set(RemoteOpen.model_fields)),
-            daemon_id=daemon_identity(),
+            host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, **value.model_dump(include=set(RemoteOpen.model_fields)), daemon_id=daemon_identity(),
         )
 
     async def code_tools(self, session_id: str) -> CodeTools:
@@ -365,22 +339,14 @@ class IntegrationOperations:
     async def run_code(self, session_id: str, value: CodeRun) -> CodeView:
         self.lifecycle.admit()
         await self.lifecycle.require_session(session_id)
-        frozen = await self.lifecycle.update_matches_supervisor()
-        try:
-            return await self.lifecycle.supervisor.call(
-                "POST",
-                "/code/run",
-                CodeView,
-                OpenCode(
-                    host_epoch=self.lifecycle.fence.host_epoch,
-                    build_id=self.lifecycle.build,
-                    session_id=session_id,
-                    run_id=value.run_id,
-                    source=value.source,
-                ),
-            )
-        except BackendError as error:
-            self.lifecycle.stored_during_update(frozen, error)
+        return await self.lifecycle.supervisor.call(
+            "POST",
+            "/code/run",
+            CodeView,
+            OpenCode(
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, run_id=value.run_id, source=value.source,
+            ),
+        )
 
     async def cancel_code(self, session_id: str, run_id: str) -> CodeView:
         self.lifecycle.admit()
@@ -389,10 +355,7 @@ class IntegrationOperations:
             "/code/cancel",
             CodeView,
             CancelCode(
-                host_epoch=self.lifecycle.fence.host_epoch,
-                build_id=self.lifecycle.build,
-                session_id=session_id,
-                run_id=run_id,
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, run_id=run_id,
             ),
         )
 
@@ -406,8 +369,6 @@ class IntegrationOperations:
 
     async def open_remote(self, session_id: str, value: RemoteOpen) -> RemoteView:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self.lifecycle.require_session(session_id)
         return await self.lifecycle.supervisor.call(
             "POST", "/remotes/open", RemoteView, self._remote_body(session_id, value)
@@ -444,10 +405,7 @@ class IntegrationOperations:
             "/mcp/cancel",
             McpView,
             McpQuery(
-                build_id=self.lifecycle.build,
-                host_epoch=self.lifecycle.fence.host_epoch,
-                session_id=session_id,
-                server_id=server_id,
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, server_id=server_id,
             ),
         )
 
@@ -471,7 +429,7 @@ class IntegrationOperations:
             path = session_database(self.lifecycle.profile.path, session.session_id)
             if not path.is_file():
                 continue
-            async with read_session(path, session.session_id, build=self.lifecycle.build) as store:
+            async with read_session(path, session.session_id) as store:
                 snapshot = await store.snapshot()
             if any((item.status not in TERMINAL for item in snapshot.requests)):
                 return True
@@ -568,8 +526,6 @@ class IntegrationOperations:
     async def load_plugin_packages(self, session: str) -> PluginList:
         self.lifecycle.admit()
         await self.lifecycle.require_session(session)
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self.lifecycle.ensure_supervisor()
         await self.sync_plugin_packages(session)
         return await self.plugins(session)
@@ -578,8 +534,6 @@ class IntegrationOperations:
         self.lifecycle.admit()
         if contains_secret(value.model_dump_json(), self.accounts.secrets()):
             raise BackendError("plugin_secret")
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self.lifecycle.require_session(value.session_id)
         if await self._plugin_work_pending(value.session_id):
             raise BackendError("plugin_reload_blocked", status=409)
@@ -588,13 +542,7 @@ class IntegrationOperations:
             "/plugins/register",
             PluginView,
             OpenPlugin(
-                host_epoch=self.lifecycle.fence.host_epoch,
-                build_id=self.lifecycle.build,
-                plugin_id=value.plugin_id,
-                name=value.name,
-                entry=value.entry,
-                session_id=value.session_id,
-                config=value.config,
+                host_epoch=self.lifecycle.fence.host_epoch, plugin_id=value.plugin_id, name=value.name, entry=value.entry, session_id=value.session_id, config=value.config,
             ),
         )
 
@@ -602,8 +550,6 @@ class IntegrationOperations:
         self.lifecycle.admit()
         if contains_secret(value.model_dump_json(), self.accounts.secrets()):
             raise BackendError("plugin_secret")
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         await self.lifecycle.require_session(value.session_id)
         if await self._plugin_work_pending(value.session_id):
             raise BackendError("plugin_reload_blocked", status=409)
@@ -612,13 +558,7 @@ class IntegrationOperations:
             "/plugins/reload",
             PluginView,
             ReloadPlugin(
-                host_epoch=self.lifecycle.fence.host_epoch,
-                build_id=self.lifecycle.build,
-                plugin_id=plugin_id,
-                reload_id=value.reload_id,
-                session_id=value.session_id,
-                entry=value.entry,
-                config=value.config,
+                host_epoch=self.lifecycle.fence.host_epoch, plugin_id=plugin_id, reload_id=value.reload_id, session_id=value.session_id, entry=value.entry, config=value.config,
             ),
         )
 
@@ -632,30 +572,16 @@ class IntegrationOperations:
                 if item.session_id == session_id
             )
         )
-        frozen = await self.lifecycle.update_matches_supervisor()
         if contains_secret(value.model_dump_json(), self.accounts.secrets()):
             raise BackendError("plugin_secret")
-        try:
-            return await self.lifecycle.supervisor.call(
-                "POST",
-                "/plugins/call",
-                PluginCallView,
-                PluginCallEnvelope(
-                    host_epoch=self.lifecycle.fence.host_epoch,
-                    build_id=self.lifecycle.build,
-                    session_id=session_id,
-                    plugin_id=plugin_id,
-                    call_id=value.call_id,
-                    name=value.name,
-                    arguments=value.arguments,
-                    kind=value.kind,
-                    expected_fingerprint=value.expected_fingerprint,
-                    expected_load_id=value.expected_load_id,
-                    workspace=session.workspace,
-                ),
-            )
-        except BackendError as error:
-            self.lifecycle.stored_during_update(frozen, error)
+        return await self.lifecycle.supervisor.call(
+            "POST",
+            "/plugins/call",
+            PluginCallView,
+            PluginCallEnvelope(
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, plugin_id=plugin_id, call_id=value.call_id, name=value.name, arguments=value.arguments, kind=value.kind, expected_fingerprint=value.expected_fingerprint, expected_load_id=value.expected_load_id, workspace=session.workspace,
+            ),
+        )
 
     async def close_plugin(self, session_id: str, plugin_id: str) -> PluginView:
         await self.lifecycle.require_session(session_id)
@@ -664,10 +590,7 @@ class IntegrationOperations:
             "/plugins/close",
             PluginView,
             ClosePlugin(
-                host_epoch=self.lifecycle.fence.host_epoch,
-                build_id=self.lifecycle.build,
-                session_id=session_id,
-                plugin_id=plugin_id,
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, plugin_id=plugin_id,
             ),
         )
 
@@ -678,10 +601,6 @@ class IntegrationOperations:
             "/plugins/cancel",
             PluginCallView,
             CancelPlugin(
-                host_epoch=self.lifecycle.fence.host_epoch,
-                build_id=self.lifecycle.build,
-                session_id=session_id,
-                plugin_id=plugin_id,
-                call_id=call_id,
+                host_epoch=self.lifecycle.fence.host_epoch, session_id=session_id, plugin_id=plugin_id, call_id=call_id,
             ),
         )

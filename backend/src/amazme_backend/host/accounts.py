@@ -62,8 +62,6 @@ class AccountOperations:
 
     async def write_guard(self) -> None:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
 
     def account_list(self) -> AccountsView:
         return self.accounts.view()
@@ -432,8 +430,6 @@ class AccountOperations:
     async def save_session_model(self, value: SessionModel) -> SessionModel:
         self.lifecycle.admit()
         async with self.provider_lock:
-            if await self.lifecycle.store.active_update():
-                raise BackendError("update_frozen", status=503)
             self.lifecycle.profile.reload_provider()
             select_model(
                 self.lifecycle.profile.config.provider,
@@ -477,8 +473,6 @@ class AccountOperations:
     async def update_model(self, value: UpdateModelSettings) -> ModelSettings:
         self.lifecycle.admit()
         async with self.provider_lock:
-            if await self.lifecycle.store.active_update():
-                raise BackendError("update_frozen", status=503)
             self.lifecycle.profile.reload_provider()
             document = self.accounts.read()
             transport = provider_transport(value.provider, document.transports, PROVIDERS)
@@ -517,8 +511,6 @@ class AccountOperations:
         elif not key or len(key) > 512 or any((character in key for character in "\r\n\x00")):
             raise BackendError("invalid_credential")
         async with self.provider_lock:
-            if await self.lifecycle.store.active_update():
-                raise BackendError("update_frozen", status=503)
             self.lifecycle.profile.reload_provider()
             saved = await self.accounts.set(
                 self.lifecycle.profile.config.provider.provider,

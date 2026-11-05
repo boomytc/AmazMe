@@ -6,8 +6,9 @@ import sqlite3
 
 import httpx
 
-from amazme_backend.contracts.execution import ProcessLease
-from amazme_backend.contracts.ipc.supervisor import TaskActivity
+from amazme_backend.contracts.execution import ProcessLease, SupervisorHealth
+from amazme_backend.contracts.host import Health
+from amazme_backend.contracts.ipc.supervisor import Recovery, TaskActivity
 from amazme_backend.contracts.ipc.worker import WorkerActivity
 from amazme_backend.execution.processes import exited
 from amazme_backend.host.accounts import AccountOperations
@@ -18,7 +19,6 @@ from amazme_backend.host.lifecycle import HostLifecycle
 from amazme_backend.host.scheduling import Scheduling
 from amazme_backend.host.session_access import WorkerSessions
 from amazme_backend.host.sessions import SessionOperations
-from amazme_backend.host.updates import UpdateOperations
 from amazme_backend.host.workspaces import WorkspaceOperations
 from amazme_backend.profiles.layout import session_database
 from amazme_backend.profiles.profile import Profile
@@ -39,7 +39,6 @@ class Host:
         self.jobs = JobOperations(self.lifecycle)
         self.content = ContentOperations(self.access, self.accounts, self.lifecycle, self.sessions)
         self.scheduling = Scheduling(self.access, self.accounts, self.lifecycle, self.sessions)
-        self.updates = UpdateOperations(self.access, self.lifecycle)
         self.background: asyncio.Task[None] | None = None
         self.web_token = (profile.path / "web.token").read_text().strip()
         self.origin = ""
@@ -74,13 +73,12 @@ class Host:
                 try:
                     self.lifecycle.admit()
                     await self.scheduling.tick_schedules()
-                    if await self.lifecycle.store.active_update() is None:
-                        await self.lifecycle.ensure_supervisor()
-                        await self.jobs.deliver_completions()
-                        sessions = {d.session_id for d in await self.lifecycle.store.pending()}
-                        sessions.update(await self.lifecycle.store.due())
-                        for session in sorted(sessions - tasks.keys()):
-                            tasks[session] = asyncio.create_task(dispatch_session(session))
+                    await self.lifecycle.ensure_supervisor()
+                    await self.jobs.deliver_completions()
+                    sessions = {d.session_id for d in await self.lifecycle.store.pending()}
+                    sessions.update(await self.lifecycle.store.due())
+                    for session in sorted(sessions - tasks.keys()):
+                        tasks[session] = asyncio.create_task(dispatch_session(session))
                 except sqlite3.Error:
                     self.lifecycle.storage_failed = True
                 except (BackendError, httpx.TransportError, TimeoutError):
@@ -112,17 +110,16 @@ class Host:
         tasks += sum((login.view.phase == "pending" for login in self.accounts.oauth_logins.values()))
         return TaskActivity(active=tasks > 0, tasks=tasks)
 
-    async def retire_idle(self) -> None:
-        async with self.lifecycle.update_lock:
-            self.lifecycle.admit()
-            self.lifecycle.closing = True
-            try:
-                if self.lifecycle.mutating_requests or (await self.task_activity()).active:
-                    raise BackendError("local_host_tasks_running", "后端仍有运行中的任务，请结束任务后重新启动。")
-            except BaseException:
-                self.lifecycle.closing = False
-                raise
-            self.lifecycle.stop.set()
+
+    async def recover(self, value: Recovery) -> Health:
+        self.lifecycle.admit()
+        if value.host_epoch != self.lifecycle.fence.host_epoch:
+            raise BackendError("stale_host_epoch")
+        await self.lifecycle.store.allow_restart(explicit=True)
+        await self.lifecycle.ensure_supervisor()
+        await self.lifecycle.supervisor.call("POST", "/recover", SupervisorHealth, value)
+        await self.lifecycle.store.demand(value.session_id)
+        return await self.lifecycle.health()
 
     async def shutdown(self) -> None:
         self.lifecycle.closing = True

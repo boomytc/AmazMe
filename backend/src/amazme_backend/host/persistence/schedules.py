@@ -66,13 +66,7 @@ def target_workspace(db: sqlite3.Connection, value: ScheduleInput) -> str | None
     return target.workspace
 
 
-def check_open(db: sqlite3.Connection) -> None:
-    if db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]:
-        raise BackendError("update_frozen", status=503)
-
-
 def save(db: sqlite3.Connection, value: ScheduleInput, now: int, secrets: tuple[str, ...]) -> ScheduleView:
-    check_open(db)
     value = value.model_copy(update={"text": value.text.strip(), "rule": normalize(value.rule)})
     if not value.text or contains_secret(value.text, secrets):
         raise BackendError("schedule_text")
@@ -149,7 +143,6 @@ def claim(
     busy: bool = False,
     transports: dict[str, ProviderTransport] | None = None,
 ) -> ScheduleView:
-    check_open(db)
     record = load(db, schedule_id)
     occurrence = None if operation_id else latest_due(record.rule, record.next_run_at or now, now)
     request_id = hashlib.sha256(
@@ -248,8 +241,6 @@ def control(
     value: ScheduleControl,
     action: Literal["enabled", "cancel", "remove"],
 ) -> ScheduleView:
-    if action == "enabled":
-        check_open(db)
     removed = db.execute("SELECT payload FROM schedules WHERE id=? AND deleted=1", (schedule_id,)).fetchone()
     record = (
         ScheduleView.model_validate_json(removed[0])

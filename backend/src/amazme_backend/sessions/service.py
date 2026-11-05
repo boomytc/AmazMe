@@ -145,17 +145,10 @@ from amazme_backend.shared.model import Model
 class SessionStore:
     """Complete session operations; one private writer commits their durable intents and events."""
 
-    def __init__(self, path: Path, session_id: str, *, build: str,
-                 config: ProviderConfig | None = None, approval_policy: str = 'mutations',
-                 require_existing: bool = False, read_only: bool = False,
-                 instance: str = '', model_catalog: Mapping[tuple[str, str], CatalogModel] | None = None,
-                 expand_resources: ResourceExpander | None = None, secret_source: SecretSource | None = None):
+    def __init__(self, path: Path, session_id: str, *, config: ProviderConfig | None = None, approval_policy: str = 'mutations', require_existing: bool = False, read_only: bool = False, instance: str = '', model_catalog: Mapping[tuple[str, str], CatalogModel] | None = None, expand_resources: ResourceExpander | None = None, secret_source: SecretSource | None = None):
         if expand_resources is not None and secret_source is None:
             raise ValueError('Resource expansion requires a fresh secret source')
-        self._state = SessionContext(session_id, build, config or ProviderConfig(provider='faux'),
-            approval_policy, instance or secrets.token_hex(16),
-            {} if model_catalog is None else model_catalog, expand_resources,
-            (lambda: ()) if secret_source is None else secret_source)
+        self._state = SessionContext(session_id, config or ProviderConfig(provider='faux'), approval_policy, instance or secrets.token_hex(16), {} if model_catalog is None else model_catalog, expand_resources, (lambda: ()) if secret_source is None else secret_source)
         self._store = SessionTransactions(path, require_existing=require_existing, read_only=read_only)
 
     @property
@@ -185,8 +178,6 @@ class SessionStore:
 
     async def fence(self, value: HostFence) -> int:
         def operation(db: sqlite3.Connection, c: Changes) -> int:
-            if value.build_id != self._state.build:
-                raise BackendError("build_mismatch")
             previous = int(metadata_value(db, "host_epoch"))
             if value.host_epoch < previous:
                 raise BackendError("stale_host_epoch")
@@ -207,8 +198,8 @@ class SessionStore:
                 if row[0] != digest(value.model_dump_json()):
                     raise BackendError("request_conflict")
                 return Receipt.model_validate_json(row[1])
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen")
+            if (metadata_value(db, "stopping")):
+                raise BackendError("worker_stopping")
             if metadata_value(db, "blocked"):
                 raise BackendError("worker_blocked", status=503)
             pending = pending_request_ids(db)
@@ -263,8 +254,8 @@ class SessionStore:
                 if str(old[0]) != key or load_run(db, value.request_id).input_origin != "job":
                     raise BackendError("request_conflict")
                 return Receipt.model_validate_json(str(old[1]))
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping") or metadata_value(db, "blocked"):
-                raise BackendError("worker_frozen")
+            if (metadata_value(db, "stopping")) or (metadata_value(db, "blocked")):
+                raise BackendError("worker_stopping")
             if len(pending_request_ids(db)) >= PENDING_LIMIT:
                 raise BackendError("queue_full")
             parent = load_run(db, value.parent_request_id)
@@ -327,8 +318,8 @@ class SessionStore:
                 if str(row[0]) != key:
                     raise BackendError("workflow_conflict")
                 return refresh_workflow(db, WorkflowView.model_validate_json(row[1]))
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen")
+            if (metadata_value(db, "stopping")):
+                raise BackendError("worker_stopping")
             if metadata_value(db, "blocked"):
                 raise BackendError("worker_blocked", status=503)
             if len(pending_request_ids(db)) + 2 > PENDING_LIMIT:
@@ -429,8 +420,8 @@ class SessionStore:
 
     async def save_web_policy(self, value: WebPolicy) -> WebPolicy:
         def operation(db: sqlite3.Connection, _changes: Changes) -> WebPolicy:
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen")
+            if (metadata_value(db, "stopping")):
+                raise BackendError("worker_stopping")
             payload = value.model_dump_json()
             db.execute(
                 "INSERT INTO web_policies(id,digest,payload) VALUES('policy',?,?) "
@@ -448,8 +439,8 @@ class SessionStore:
                 if str(row[0]) != key:
                     raise BackendError("web_call_conflict")
                 return WebCallView.model_validate_json(row[1]), False
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen")
+            if (metadata_value(db, "stopping")):
+                raise BackendError("worker_stopping")
             view = WebCallView(call_id=call_id, session_id=self._state.session_id, kind=kind, phase="unknown")
             db.execute("INSERT INTO web_calls(id,digest,payload) VALUES(?,?,?)",
                        (call_id, key, view.model_dump_json()))
@@ -496,8 +487,8 @@ class SessionStore:
                 if old[0] != key:
                     raise BackendError("approval_decision_conflict")
                 return load_request(db, old[1])
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen")
+            if (metadata_value(db, "stopping")):
+                raise BackendError("worker_stopping")
             if metadata_value(db, "blocked"):
                 raise BackendError("worker_blocked", status=503)
             row = db.execute("SELECT payload FROM approvals WHERE id=?", (value.approval_id,)).fetchone()
@@ -505,10 +496,7 @@ class SessionStore:
                 raise BackendError("approval_not_found", status=404)
             approval = Approval.model_validate_json(row[0])
             request = load_request(db, approval.request_id)
-            if (approval.state != "pending" or approval.build_id != self._state.build or request.cancel_requested
-                    or request.decision or approval.revision != value.expected_revision
-                    or approval.proposal_digest != value.proposal_digest
-                    or approval_binding(self._state, db, request.request_id, approval.call) != approval.proposal_digest):
+            if ((approval.state != "pending") or (request.cancel_requested) or (request.decision) or (approval.revision != value.expected_revision) or (approval.proposal_digest != value.proposal_digest) or (approval_binding(self._state, db, request.request_id, approval.call) != approval.proposal_digest)):
                 raise BackendError("stale_approval")
             approval.state = "approved" if value.approve else "denied"
             db.execute("UPDATE approvals SET payload=? WHERE id=?", (approval.model_dump_json(), approval.approval_id))
@@ -525,8 +513,8 @@ class SessionStore:
 
     async def set_approval_policy(self, value: SessionApprovalPolicy) -> SessionApprovalPolicy:
         def operation(db: sqlite3.Connection, c: Changes) -> SessionApprovalPolicy:
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen", status=503)
+            if (metadata_value(db, "stopping")):
+                raise BackendError("worker_stopping", status=503)
             if metadata_value(db, "blocked"):
                 raise BackendError("worker_blocked", status=503)
             for request in list_requests(db):
@@ -572,8 +560,8 @@ class SessionStore:
                 if str(existing[0]) != digest(submitted.model_dump_json()) or receipt.parent_id != value.parent_request_id:
                     raise BackendError("codemode_tool_conflict")
                 return receipt
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping") or metadata_value(db, "blocked"):
-                raise BackendError("worker_frozen", status=503)
+            if (metadata_value(db, "stopping")) or (metadata_value(db, "blocked")):
+                raise BackendError("worker_stopping", status=503)
             parent = load_request(db, value.parent_request_id)
             step = load_step(db, value.parent_step_id)
             run = load_run(db, parent.request_id)
@@ -640,8 +628,8 @@ class SessionStore:
                 if row[0] != key:
                     raise BackendError("resolution_conflict")
                 return load_request(db, row[1])
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                raise BackendError("worker_frozen")
+            if (metadata_value(db, "stopping")):
+                raise BackendError("worker_stopping")
             if metadata_value(db, "blocked"):
                 raise BackendError("worker_blocked", status=503)
             row = db.execute("SELECT payload FROM effects WHERE id=?", (value.call_id,)).fetchone()
@@ -658,8 +646,7 @@ class SessionStore:
             return load_request(db, hold.request_id)
         return await self._store.transact(operation)
 
-    async def recover(self, *, frozen: bool = False, initial_cleanup: Cleanup | None = None,
-                      validation: bool = False) -> None:
+    async def recover(self, *, initial_cleanup: Cleanup | None = None, validation: bool = False) -> None:
         def operation(db: sqlite3.Connection, c: Changes) -> None:
             if initial_cleanup and (initial_cleanup.session_id != self._state.session_id
                                     or initial_cleanup.state != "clean" or not initial_cleanup.proof_id):
@@ -672,9 +659,6 @@ class SessionStore:
                 set_metadata_value(db, "execution_epoch", "0")
             if initial_cleanup:
                 set_metadata_value(db, "execution_epoch", str(initial_cleanup.execution_epoch))
-            if frozen and not metadata_value(db, "freeze_id"):
-                set_metadata_value(db, "freeze_id", "startup")
-                c.emit("freeze", text="startup")
             if validation:
                 return
             db.execute("DELETE FROM previews")
@@ -699,7 +683,7 @@ class SessionStore:
                 for row in db.execute("SELECT payload FROM approvals WHERE request_id=?", (r.request_id,)).fetchall():
                     approval = Approval.model_validate_json(row[0])
                     if approval.state in {"pending", "approved"} and (
-                        approval.build_id != self._state.build or approval.proposal_digest != approval_binding(self._state, db, r.request_id, approval.call)
+                        (approval.proposal_digest != approval_binding(self._state, db, r.request_id, approval.call))
                     ):
                         expire_approvals(db, c, r.request_id)
                         break
@@ -716,14 +700,13 @@ class SessionStore:
             if metadata_value(db, "blocked"):
                 return Park("blocked")
             resolution = db.execute("SELECT request_id,payload FROM resolutions WHERE result='' ORDER BY rowid LIMIT 1").fetchone()
-            if resolution and not metadata_value(db, "freeze_id") and not metadata_value(db, "stopping"):
+            if (resolution) and (not metadata_value(db, "stopping")):
                 return ReconcileEffect(resolution[0], EffectResolution.model_validate_json(resolution[1]))
             requests = [r for r in list_requests(db) if r.status not in TERMINAL and r.kind != "steer"]
-            # Clean every owned lease before selecting more business work, including when frozen.
+            # Clean every owned lease before selecting more business work, including while stopping.
             for request in requests:
                 run = load_run(db, request.request_id)
-                if run.lease and (run.cleanup_required or request.decision or request.status in {"waiting_approval", "waiting_children"}
-                                  or metadata_value(db, "freeze_id") or metadata_value(db, "stopping")):
+                if run.lease and ((run.cleanup_required) or (request.decision) or (request.status in {"waiting_approval", "waiting_children"}) or (metadata_value(db, "stopping"))):
                     return CloseEpoch(request.request_id, run.lease)
             for request in requests:
                 if request.status == "waiting_children":
@@ -763,7 +746,7 @@ class SessionStore:
                     return action
                 if action.reason in {"approval", "children"}:
                     return action
-            return Park("frozen" if metadata_value(db, "freeze_id") else "idle", wake)
+            return Park("idle", wake)
         return await self._store.transact(operation)
 
     async def begin_compaction(self, compaction_id: str, through_request_id: str, instructions: str = "") -> Compaction | None:
@@ -844,32 +827,6 @@ class SessionStore:
             return record
         return await self._store.transact(operation)
 
-    async def freeze(self, fence: HostFence, freeze_id: str, *, cancel_work: bool = False) -> None:
-        def operation(db: sqlite3.Connection, c: Changes) -> None:
-            check_fence(self._state, db, fence)
-            existing = metadata_value(db, "freeze_id")
-            if existing and existing not in {freeze_id, "startup"}:
-                raise BackendError("freeze_conflict")
-            if not freeze_id:
-                raise BackendError("invalid_freeze_id")
-            set_metadata_value(db, "freeze_id", freeze_id)
-            c.emit("freeze", text=freeze_id)
-            if cancel_work:
-                for r in list_requests(db):
-                    if r.kind == "root" and r.status not in TERMINAL:
-                        cancel_request_tree(db, c, r.request_id)
-        await self._store.transact(operation)
-
-    async def thaw(self, fence: HostFence, freeze_id: str) -> None:
-        def operation(db: sqlite3.Connection, c: Changes) -> None:
-            check_fence(self._state, db, fence)
-            if metadata_value(db, "freeze_id") != freeze_id or not freeze_id:
-                raise BackendError("freeze_conflict")
-            if metadata_value(db, "blocked") or metadata_value(db, "stopping"):
-                raise BackendError("worker_blocked")
-            set_metadata_value(db, "freeze_id", "")
-            c.emit("freeze", text="thawed:" + freeze_id)
-        await self._store.transact(operation)
 
     async def stopping(self, fence: HostFence, execution_epoch: int | None = None, *,
                        cancel_work: bool = True, require_idle: bool = False) -> None:
@@ -1049,13 +1006,11 @@ class SessionStore:
 
         def operation(db: sqlite3.Connection) -> SessionDiagnostic:
             blocked_raw = metadata_value(db, "blocked")
-            state: Literal["ready", "blocked", "stopping", "frozen"]
+            state: Literal["ready", "blocked", "stopping"]
             if blocked_raw:
                 state = "blocked"
             elif metadata_value(db, "stopping"):
                 state = "stopping"
-            elif metadata_value(db, "freeze_id"):
-                state = "frozen"
             else:
                 state = "ready"
             failed = 0
@@ -1334,9 +1289,9 @@ class SessionOps(Protocol):
 
 
 @asynccontextmanager
-async def read_session(path: Path, session_id: str, *, build: str) -> AsyncGenerator[SessionStore]:
+async def read_session(path: Path, session_id: str) -> AsyncGenerator[SessionStore]:
     """A short-lived read-only session owner; never acquires a writer or starts an agent."""
-    store = SessionStore(path, session_id, build=build, require_existing=True, read_only=True)
+    store = SessionStore(path, session_id, require_existing=True, read_only=True)
     try:
         await store.initialize()
         yield store

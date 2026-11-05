@@ -169,7 +169,7 @@ class SessionDiagnostic(Model):
 
     session_id: str
     present: bool
-    state: Literal["absent", "ready", "blocked", "stopping", "frozen"]
+    state: Literal["absent", "ready", "blocked", "stopping"]
     blocked_code: str = ""
     failed: int = Field(default=0, ge=0)
     unknown: int = Field(default=0, ge=0)
@@ -188,7 +188,7 @@ class TranscriptMessage(Model):
     tool_calls: list[str] = Field(default_factory=list)
 
 
-WorkerState = Literal["recovering", "ready", "blocked", "stopping", "frozen"]
+WorkerState = Literal["recovering", "ready", "blocked", "stopping"]
 
 
 class Session(Model):
@@ -294,7 +294,6 @@ class Approval(Model):
     run_id: str
     call_id: str
     call: ToolCall
-    build_id: str
     proposal_digest: str
     revision: str
     state: Literal["pending", "approved", "denied", "consumed", "expired"]
@@ -312,4 +311,3 @@ class Attachment(Model):
     attachment_id: str
     session_id: str
     host_epoch: int
-    build_id: str

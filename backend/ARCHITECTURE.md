@@ -2,7 +2,7 @@
 
 后端通过仓库内的 `amazme-backend` 源码运行。执行契约见[本机方案](../docs/python-backend-plan.md)，客户端职责见[依赖说明](../docs/python-backend-ts-deps.md)。业务状态与持久化由 Python 拥有。
 
-`profiles.locations` 统一解析产品根、用户资源和默认 profile。`bootstrap.local` 是所有本机客户端唯一的初始化与 start-or-attach 入口，Host 独占同一规范目录并独立于客户端寿命。Web 启动直接使用 Python `web` 入口，终端只保留后台管理命令，业务自动化由 HTTP/WS 与 Python SDK 承担。本地连接入口在目标构建上完成冻结校验与激活，客户端不会把冻结状态误判为另起 Host 的理由。产品面向个人本机使用，不提供旧目录、旧字段或旧格式的迁移兼容。运行资源由当前后端定位，不存入产品 profile。账号库只归当前 profile 所有，初始化时显式创建；缺失时拒绝读取，不从旧配置重建。
+`profiles.locations` 统一解析产品根、用户资源和默认 profile。`bootstrap.local` 是所有本机客户端唯一的初始化与 start-or-attach 入口，Host 独占同一规范目录。桌面选择后台运行时保留窗口进程与 Host，明确退出或空闲关闭时等待 Host 和受管进程停止；Web 与 SDK 可连接显式启动的后台。Web 启动直接使用 Python `web` 入口，终端只保留后台管理命令，业务自动化由 HTTP/WS 与 Python SDK 承担。运行时只使用当前源码，不捕获或协商构建版本。连接入口只核对 profile、进程实例和实际就绪状态；源码修改通过停止后台后重新启动生效。产品面向个人本机使用，不提供旧目录、旧字段或旧格式的迁移兼容。运行资源由当前后端定位，不存入产品 profile。账号库只归当前 profile 所有，初始化时显式创建；缺失时拒绝读取，不从旧配置重建。
 
 模型目录读取和价格快照属于 `ai.pricing`；已保存单价的纯计算属于 `ai.usage`。会话统计由 `sessions.policy.usage` 对完整持久记录汇总，客户端只呈现结果。该纯闭包由结构检查约束，不能经目录读取进入文件 I/O。
 
@@ -13,7 +13,7 @@ Host、会话和执行库直接使用各自的完整 DDL 建库。`platform.sqli
 | 模块 | 职责与入口 |
 | --- | --- |
 | `shared` | 无业务含义的严格模型基类、错误和值语义 |
-| `platform` | 私有文件与锁、UDS 传输、资源定位、构建身份；资源描述在 `resource_manifest.py` |
+| `platform` | 私有文件与锁、UDS 传输、资源定位；资源描述在 `resource_manifest.py` |
 | `profiles` | profile 身份、配置和路径；定位会话库不加载存储实现 |
 | `contracts` | 按数据域拆分的公开 DTO 与真实 IPC envelope；不加载服务、目录快照或数据库 |
 | `ai` | 中立请求、模型目录、定价、推理与供应商协议；认证使用调用方提供的值 |
@@ -23,7 +23,7 @@ Host、会话和执行库直接使用各自的完整 DDL 建库。`platform.sqli
 | `execution` | Supervisor、唯一执行库、进程归属与回收；协议操作共享同一监督器和准入锁 |
 | `workspaces` | 工作区路径、授权目录校验与文件摘要、冲突和恢复 |
 | `features` | 资源、技能、记忆、排程、插件包、产物、工具元数据与导入导出的纯规则或文件操作 |
-| `host` | profile 代际、持久投递、客户端绑定、工作区元数据、更新及完整产品用例 |
+| `host` | profile 代际、持久投递、客户端绑定、工作区元数据及完整产品用例 |
 | `interfaces` | HTTP/WS、HTTP RPC、私有进程 API 和页面 boot；解析、认证、调用与呈现 |
 | `sdk` | `from amazme_backend.sdk import Client`；只连接现有 Host |
 | `bootstrap` | 命令分派与 Host、worker、Supervisor 的构造、能力注入和服务启动 |
@@ -59,11 +59,11 @@ worker 从会话操作取得下一动作。产品层使用已绑定的 MCP/插�
 
 ## 状态与资源
 
-Host、会话 worker、Supervisor 分别拥有自己的数据库。保留稳定请求/调用 ID、参数摘要、`host_epoch`、`worker_id`、`execution_epoch`、`build_id` 和更新冻结。unknown 不自动重放，同 ID 查询不再次执行，迟到结果不能改写新代际或未知事实。
+Host、会话 worker、Supervisor 分别拥有自己的数据库。保留稳定请求/调用 ID、参数摘要、`host_epoch`、`worker_id`、`execution_epoch`。unknown 不自动重放，同 ID 查询不再次执行，迟到结果不能改写新代际或未知事实。
 
 取消受理、调用结果和真实资源退出分别结算。清理失败保留重试屏障。PTY、MCP、插件和开发服务按会话与监督器归属管理，不随页面断开、一次回复结束或 worker 空闲回收而关闭。文件 API 与审批约束各自入口；本机 shell 仍具有当前用户权限，不承诺 OS 沙箱。
 
-普通会话维护复用不运行业务循环的 validation worker；只有实际更新冻结才写入持久冻结。分支首次准备失败后，监督器通过装配时注入的 Host 只读事实核对该分支仍未准备完成，并确认历史所有者均为已退出的 validation worker，才允许重新构造分支副本。已有业务所有者的会话继续要求原存储存在，不因维护重试而重建丢失的业务状态。
+普通会话维护复用不运行业务循环的 validation worker。分支首次准备失败后，监督器通过装配时注入的 Host 只读事实核对该分支仍未准备完成，并确认历史所有者均为已退出的 validation worker，才允许重新构造分支副本。已有业务所有者的会话继续要求原存储存在，不因维护重试而重建丢失的业务状态。
 
 ## 结构与交付检查
 
@@ -75,7 +75,7 @@ backend/.venv/bin/python backend/tools/export_contracts.py --check
 
 结构检查递归扫描 Python 子包，覆盖绝对/相对导入、别名、父包初始化、重导出、函数内、TYPE_CHECKING 和可确定的动态导入。延迟导入不豁免跨域回环；进程创建、exec、生命周期操作与继承锁也受同一清单约束。检查已接入 `npm run check:workspace`，只读检查不安装环境或启动服务。
 
-第一层用轻量契约、显式请求值、私有持久化模块和装配时注入能力排除反向业务依赖。第二层用递归结构检查与独立进程导入检查拦截绕过。源码资源定位使用 `platform/resource_manifest.py`；gate、远端 daemon、模型快照、Codemode helper 与页面资源都进入源码构建身份。
+第一层用轻量契约、显式请求值、私有持久化模块和装配时注入能力排除反向业务依赖。第二层用递归结构检查与独立进程导入检查拦截绕过。源码资源定位使用 `platform/resource_manifest.py`；gate、远端 daemon、模型快照、Codemode helper 与页面资源均从当前源码定位。编译缓存指纹只决定是否重新编译，不参与运行时准入。客户端对网络断开做有限重试，契约或归属错误直接呈现；连接失败不持续占用等待状态。
 
 `backend/contracts/public-exports.json` 固定具名公开声明，防止契约搬迁后模块仍可导入、其中某个公开类型却消失。模型调用的 prompt、工具、认证与协议转换由显式请求值和模块边界约束。供应商兼容性按实际改动做临时验收或真实模型评测，不将本地替身视为真实服务证据。
 

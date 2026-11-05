@@ -12,32 +12,26 @@ def failure_reason(error: BaseException) -> str:
     return error.code if isinstance(error, BackendError) else type(error).__name__
 
 
-def supervisor_state(*, blocked: str, storage_failure: str, fence_ready: bool,
-                     draining: bool, freeze_id: str) -> Literal["blocked", "stopping", "frozen", "ready"]:
+def supervisor_state(*, blocked: str, storage_failure: str, fence_ready: bool, draining: bool) -> Literal["blocked", "stopping", "ready"]:
     if blocked or storage_failure or not fence_ready:
         return "blocked"
     if draining:
         return "stopping"
-    return "frozen" if freeze_id else "ready"
+    return "ready"
 
 
-def check_host_fence(fence: HostFence, *, build: str, host_epoch: int) -> None:
-    if fence.build_id != build:
-        raise BackendError("build_mismatch")
+def check_host_fence(fence: HostFence, *, host_epoch: int) -> None:
     if fence.host_epoch != host_epoch:
         raise BackendError("stale_host_epoch")
 
 
-def check_admission(*, storage_failure: str, blocked: str, draining: bool, fence_ready: bool,
-                    freeze_id: str, validation: bool) -> None:
+def check_admission(*, storage_failure: str, blocked: str, draining: bool, fence_ready: bool) -> None:
     if storage_failure or blocked:
         raise BackendError("execution_blocked", storage_failure or blocked, 503)
     if draining:
         raise BackendError("supervisor_stopping", status=503)
     if not fence_ready:
         raise BackendError("worker_fence_pending", status=503)
-    if freeze_id and not validation:
-        raise BackendError("supervisor_frozen", status=503)
 
 
 def resource_state(*, clean: bool, epoch_state: str,

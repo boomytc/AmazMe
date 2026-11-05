@@ -9,15 +9,9 @@ from fastapi import FastAPI
 from amazme_backend.contracts.execution import (
     Cleanup,
     Lease,
-    SupervisorHealth,
 )
 from amazme_backend.contracts.identity import HostFence, Identity
-from amazme_backend.contracts.ipc.supervisor import (
-    McpCallEnvelope,
-    McpDecisionEnvelope,
-    RetireSupervisor,
-    SubmitRemote,
-)
+from amazme_backend.contracts.ipc.supervisor import McpCallEnvelope, McpDecisionEnvelope, SubmitRemote
 from amazme_backend.contracts.mcp import McpCall
 from amazme_backend.contracts.remote import RemoteCallRequest, RemoteCallView
 from amazme_backend.execution.supervisor import Supervisor
@@ -93,8 +87,6 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
     app.post("/jobs/notices/ack")(owner.invocations.acknowledge_job_notice)
     app.post("/effects/resolve")(owner.resolve_effect)
     app.get("/health")(owner.health)
-    app.post("/freeze")(owner.freeze)
-    app.post("/thaw")(owner.thaw)
     app.post("/recover")(owner.recover)
 
     @app.post("/shutdown")
@@ -104,10 +96,5 @@ def application(owner: Supervisor, server_stop: asyncio.Event) -> FastAPI:
         finally:
             server_stop.set()
 
-    @app.post("/retire")
-    async def retire(value: RetireSupervisor) -> SupervisorHealth:
-        result = await owner.retire(value)
-        server_stop.set()
-        return result
 
     return app

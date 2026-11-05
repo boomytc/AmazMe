@@ -42,8 +42,8 @@ def answer_question(db: sqlite3.Connection, c: Changes, value: QuestionAnswer) -
         if old[0] != key:
             raise BackendError("question_answer_conflict")
         return load_request(db, old[1])
-    if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-        raise BackendError("worker_frozen")
+    if (metadata_value(db, "stopping")):
+        raise BackendError("worker_stopping")
     if metadata_value(db, "blocked"):
         raise BackendError("worker_blocked", status=503)
     try:

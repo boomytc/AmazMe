@@ -79,25 +79,6 @@ function readinessTimeout(): number | undefined {
 	return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-let stoppingBackend = false;
-async function stopBackendAndQuit(): Promise<void> {
-    if (stoppingBackend || showingDialog || lifecycle.quitting) return;
-    stoppingBackend = true;
-    try {
-        const locale = await currentLocale();
-        const answer = await ask({ type: "question", message: translate(locale, "desktop.stop.title"),
-            detail: translate(locale, "desktop.stop.detail"),
-            buttons: [translate(locale, "desktop.dialog.cancel"), translate(locale, "desktop.stop.action")], defaultId: 0, cancelId: 0 });
-        if (answer !== 1) return;
-        await shutdownHost();
-        await lifecycle.quitImmediately();
-    } catch {
-        const locale = await currentLocale();
-        await ask({ type: "error", message: translate(locale, "desktop.stop.failed"), buttons: [translate(locale, "modal.close")] });
-    }
-    finally { stoppingBackend = false; }
-}
-
 function shutdownHost(): Promise<void> {
 	if (host === undefined) return Promise.resolve();
 	return host.shutdown();
@@ -156,7 +137,6 @@ async function refreshApplicationMenu(): Promise<void> {
 		Menu.setApplicationMenu(
 			Menu.buildFromTemplate(
 				applicationMenuTemplate(process.platform, locale, {
-					stop: () => { void stopBackendAndQuit(); },
 					newSession: () => send("new-session"),
 					newWindow: () => {
 						if (hostPageUrl !== undefined) void openWindow(hostPageUrl, pythonWindow({ workspace: selectedWorkspace, fresh: true }));
@@ -186,7 +166,6 @@ async function refreshTrayMenu(): Promise<void> {
 		const pending = totalPendingApprovals();
 		tray.setToolTip(pending > 0 ? `${APP_NAME} · ${pending}` : APP_NAME);
 		tray.setContextMenu(Menu.buildFromTemplate(trayMenuTemplate(locale, {
-        stop: () => { void stopBackendAndQuit(); },
 			show: showWindow,
 			quit: () => { void requestUserQuit(); },
 		}, pending)));
@@ -401,6 +380,7 @@ lifecycle = createDesktopLifecycle<BrowserWindow>({
 		if (target.isFullScreen()) target.setFullScreen(false);
 		target.hide();
 	},
+	stopBackend: () => shutdownHost(),
 	applicationWillQuit: () => notices.applicationWillQuit(),
 	releaseQuit: () => app.quit(),
 });

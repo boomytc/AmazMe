@@ -28,8 +28,6 @@ async def save_project(
     key = hashlib.sha256(json.dumps([name, workspaces], ensure_ascii=False).encode()).hexdigest()
 
     def operation(db: sqlite3.Connection) -> ProjectView:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
         if row is not None:
             if str(row["digest"]) != key:
@@ -53,8 +51,6 @@ async def projects(self: PersistenceOwner) -> list[ProjectView]:
 async def update_project(self: PersistenceOwner, project_id: str, value: ProjectUpdate) -> ProjectView:
 
     def operation(db: sqlite3.Connection) -> ProjectView:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
         if row is None:
             raise BackendError("project_not_found", status=404)
@@ -106,8 +102,6 @@ async def product_settings(self: PersistenceOwner) -> ProductSettings:
 async def save_product_settings(self: PersistenceOwner, name: str, expected: int) -> ProductSettings:
 
     def operation(db: sqlite3.Connection) -> ProductSettings:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute("SELECT display_name,revision FROM product_settings WHERE id=1").fetchone()
         current = int(row[1]) if row else 0
         if current != expected:
@@ -127,8 +121,6 @@ async def save_preferences(
 ) -> ProductSettings:
 
     def operation(db: sqlite3.Connection) -> ProductSettings:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         current = settings_row(db.execute("SELECT * FROM product_settings WHERE id=1").fetchone())
         if current.preferences == preferences:
             return current
@@ -148,8 +140,6 @@ async def save_feedback(
 ) -> tuple[str, str, str]:
 
     def operation(db: sqlite3.Connection) -> tuple[str, str, str]:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute("SELECT digest,session,text FROM feedback WHERE id=?", (feedback_id,)).fetchone()
         if row is not None:
             if str(row[0]) != key:
@@ -179,8 +169,6 @@ async def save_answer_feedback(
     key = answer_feedback_key(session, value)
 
     def operation(db: sqlite3.Connection) -> AnswerFeedback:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute(
             "SELECT digest,payload FROM answer_feedback WHERE id=?", (value.operation_id,)
         ).fetchone()
@@ -250,8 +238,6 @@ async def check_answer_feedback_import(self: PersistenceOwner, values: list[Answ
 async def import_answer_feedback(self: PersistenceOwner, values: list[AnswerFeedback]) -> None:
 
     def operation(db: sqlite3.Connection) -> None:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         for value in values:
             if check_answer_feedback_row(db, value):
                 continue
@@ -289,8 +275,6 @@ async def begin_provider_check(
             if str(stored[0]) != key:
                 raise BackendError("provider_check_conflict")
             return (ProviderCheck.model_validate_json(stored[1]), False)
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         result = ProviderCheck(
             operation_id=value.operation_id,
             provider=value.provider,
@@ -321,8 +305,6 @@ async def finish_provider_check(self: PersistenceOwner, result: ProviderCheck) -
 async def save_share(self: PersistenceOwner, share_id: str, session_id: str, key: str, payload: str) -> str:
 
     def operation(db: sqlite3.Connection) -> str:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute("SELECT digest,session,payload FROM shares WHERE id=?", (share_id,)).fetchone()
         if row is not None:
             if str(row[0]) != key or str(row[1]) != session_id:
@@ -366,8 +348,6 @@ async def ensure_import_session(
 ) -> None:
 
     def operation(db: sqlite3.Connection) -> None:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         if (
             project_id
             and db.execute("SELECT 1 FROM projects WHERE id=? AND removed=0", (project_id,)).fetchone()

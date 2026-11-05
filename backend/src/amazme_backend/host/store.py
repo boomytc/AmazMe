@@ -12,11 +12,9 @@ from amazme_backend.contracts.execution import (
     PreparedPatch,
     ProcessLease,
     ServiceInfo,
-    WorkerInfo,
     WriteFile,
 )
 from amazme_backend.contracts.feedback import AnswerFeedback, AnswerFeedbackWrite
-from amazme_backend.contracts.host import PrepareUpdate, UpdateRecord
 from amazme_backend.contracts.ipc.host import PreparedFileWrite
 from amazme_backend.contracts.ipc.worker import WorkerActivity
 from amazme_backend.contracts.mcp import (
@@ -46,7 +44,6 @@ from amazme_backend.host.persistence import (
     schedules,
     schema,
     sessions,
-    updates,
     workspaces,
 )
 from amazme_backend.host.persistence.database import HostDatabase as Database
@@ -95,8 +92,8 @@ class HostStore:
 
         return await self.call(invoke)
 
-    async def initialize(self, instance: str, build: str, lease: ProcessLease) -> int:
-        return await schema.initialize(self, instance, build, lease)
+    async def initialize(self, instance: str, lease: ProcessLease) -> int:
+        return await schema.initialize(self, instance, lease)
 
     async def port(self, value: int | None = None) -> int:
         return await registry.port(self, value)
@@ -182,8 +179,6 @@ class HostStore:
     async def create_session(self, session_id: str, value: CreateSession) -> Session:
         return await sessions.create_session(self, session_id, value)
 
-    async def supersede_local_replacement(self, identity: str, revision: str, build: str) -> UpdateRecord:
-        return await updates.supersede_local_replacement(self, identity, revision, build)
 
     async def lookup_reused(self, session_id: str, value: CreateSession) -> Session | None:
         return await sessions.lookup_reused(self, session_id, value)
@@ -282,8 +277,6 @@ class HostStore:
     async def blocked(self) -> str:
         return await registry.blocked(self)
 
-    async def last_build(self, current: str) -> str:
-        return await registry.last_build(self, current)
 
     async def save_service(self, value: ServiceRecord) -> None:
         return await registry.save_service(self, value)
@@ -294,27 +287,10 @@ class HostStore:
     async def allow_restart(self, *, explicit: bool = False) -> None:
         return await registry.allow_restart(self, explicit=explicit)
 
-    async def active_update(self) -> UpdateRecord | None:
-        return await updates.active_update(self)
-
-    async def update(self, identity: str) -> UpdateRecord:
-        return await updates.update(self, identity)
-
-    async def begin_update(self, value: PrepareUpdate, source: str) -> UpdateRecord:
-        return await updates.begin_update(self, value, source)
-
-    async def save_update(self, value: UpdateRecord) -> UpdateRecord:
-        return await updates.save_update(self, value)
 
     async def source_hosts(self, current: str) -> list[ProcessLease]:
         return await registry.source_hosts(self, current)
 
-    @staticmethod
-    def verify_roster(previous: list[WorkerInfo], current: list[WorkerInfo]) -> None:
-        return updates.verify_roster(previous, current)
-
-    async def source_roster(self, identity: str, roster: list[WorkerInfo]) -> UpdateRecord:
-        return await updates.source_roster(self, identity, roster)
 
     @staticmethod
     def project_row(row: sqlite3.Row) -> ProjectView:

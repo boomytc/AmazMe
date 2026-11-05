@@ -658,8 +658,7 @@ export class PageRuntime {
 			if (health.identity.profile_id !== connection.identity.profile_id)
 				throw new Error("宿主身份已更换");
 			if (
-				health.identity.host_epoch !== connection.identity.host_epoch ||
-				health.identity.build_id !== connection.identity.build_id
+				health.identity.host_epoch !== connection.identity.host_epoch
 			) {
 				await this.client.connect(connection.sessionId);
 				return;
@@ -2602,8 +2601,7 @@ export class PageRuntime {
 			!this.disposed &&
 			current?.profile_id === identity.profile_id &&
 			current.instance_id === identity.instance_id &&
-			current.host_epoch === identity.host_epoch &&
-			current.build_id === identity.build_id
+			current.host_epoch === identity.host_epoch
 		);
 	}
 	private sessionModelIds(sessionId: string): string[] | null {

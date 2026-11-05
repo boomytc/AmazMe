@@ -137,7 +137,7 @@ PRAGMA user_version=2;
 
 def preflight(db: sqlite3.Connection) -> None:
     require_schema(db, SCHEMA)
-    required = {"stream_id", "revision", "host_epoch", "freeze_id", "stopping", "blocked",
+    required = {"stream_id", "revision", "host_epoch", "stopping", "blocked",
                 "driver_id", "execution_epoch"}
     if not required <= {str(r[0]) for r in db.execute("SELECT key FROM metadata")}:
         raise BackendError("storage_incomplete", status=503)
@@ -161,6 +161,6 @@ def preflight(db: sqlite3.Connection) -> None:
 def initialize(db: sqlite3.Connection) -> None:
     db.executescript(SCHEMA)
     for key, value in {"stream_id": secrets.token_hex(16), "revision": "0", "host_epoch": "0",
-                       "freeze_id": "", "stopping": "", "blocked": "", "driver_id": "", "execution_epoch": "0"}.items():
+                       "stopping": "", "blocked": "", "driver_id": "", "execution_epoch": "0"}.items():
         db.execute("INSERT OR IGNORE INTO metadata VALUES(?,?)", (key, value))
     db.execute("COMMIT")

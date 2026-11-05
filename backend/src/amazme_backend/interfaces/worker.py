@@ -10,7 +10,6 @@ from amazme_backend.contracts.ipc.supervisor import (
 from amazme_backend.contracts.ipc.worker import (
     ApprovalEnvelope,
     Cancel,
-    FreezeWorker,
     JobNoticeEnvelope,
     QuestionEnvelope,
     ResolutionEnvelope,
@@ -86,13 +85,6 @@ def application(owner: Worker) -> FastAPI:
     async def resolve(value: ResolutionEnvelope) -> Receipt:
         return await owner.resolve(value)
 
-    @app.post("/freeze")
-    async def freeze(value: FreezeWorker) -> Snapshot:
-        return await owner.freeze(value)
-
-    @app.post("/thaw")
-    async def thaw(value: FreezeWorker) -> Snapshot:
-        return await owner.thaw(value)
 
     @app.post("/stop")
     async def stop(value: StopWorker) -> Identity:

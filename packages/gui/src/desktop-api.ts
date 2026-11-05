@@ -97,7 +97,6 @@ export class PythonDesktopApi {
 			headers: {
 				Authorization: `Bearer ${this.webToken()}`,
 				"content-type": "application/json",
-				"x-amazme-build": ready.buildId,
 				"x-amazme-epoch": String(ready.hostEpoch),
 			},
 			body: JSON.stringify({

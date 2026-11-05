@@ -60,11 +60,6 @@ class ResolutionEnvelope(HostFence):
     value: EffectResolution
 
 
-class FreezeWorker(HostFence):
-    freeze_id: str
-    cancel_work: bool = False
-
-
 class WorkerActivity(Model):
     pending: int
     runnable: bool

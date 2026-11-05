@@ -408,8 +408,6 @@ class ContentOperations:
 
     async def save_memory(self, value: MemoryWrite) -> MemoryView:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         text = value.text.strip()
         if contains_secret(text, self.accounts.secrets()):
             raise BackendError("memory_secret")

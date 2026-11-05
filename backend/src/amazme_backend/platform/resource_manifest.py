@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-IDENTITY_SUFFIXES = {".py", ".html", ".js", ".css", ".json", ".mjs"}
-
 # Package-relative source resources.
 RESOURCE_PATHS = {
     "models": "assets/model_catalog.json",

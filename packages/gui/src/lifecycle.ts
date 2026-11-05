@@ -3,7 +3,7 @@ export type CloseWindowPreference = "background" | "quit";
 export interface DesktopPreferences {
 	readonly closeWindow: CloseWindowPreference;
 	readonly closeWindowPrompt: boolean;
-	/** Closing an idle window quits the desktop without a prompt. */
+	/** Closing an idle window stops the backend and quits without a prompt. */
 	readonly idleQuit: boolean;
 }
 
@@ -19,7 +19,7 @@ export interface CloseConfirmation {
 }
 
 export type LifecyclePhase = "open" | "checking" | "asking-close" | "closing" | "quitting" | "failed" | "exited";
-export type LifecycleError = "activity" | "preferences";
+export type LifecycleError = "activity" | "preferences" | "shutdown";
 
 export interface LifecyclePorts<Window> {
 	readPreferences(): Promise<DesktopPreferences>;
@@ -28,6 +28,7 @@ export interface LifecyclePorts<Window> {
 	confirmClose(target: Window): Promise<CloseConfirmation>;
 	reportError(kind: LifecycleError): Promise<boolean>;
 	hideWindow(target: Window): void;
+	stopBackend(): Promise<void>;
 	applicationWillQuit(): void;
 	releaseQuit(): void;
 }
@@ -68,9 +69,15 @@ export function createDesktopLifecycle<Window>(ports: LifecyclePorts<Window>): D
 		}
 	};
 
-	const cleanup = async (): Promise<"done"> => {
+	const cleanup = async (): Promise<"done" | "cleanup"> => {
 		phase = "quitting";
 		cleanupStarted = true;
+		try {
+			await ports.stopBackend();
+		} catch {
+			cleanupStarted = false;
+			return (await report("shutdown")) === "retry" ? "cleanup" : "done";
+		}
 		if (!quitNotified) {
 			quitNotified = true;
 			ports.applicationWillQuit();

@@ -209,7 +209,7 @@ async def run(value: EvalInput, runtime: EvalRuntime) -> dict[str, JsonValue]:
         with sqlite3.connect(session_database(runtime.profile,session.session_id).as_uri() + '?mode=ro',uri=True) as db:
             rows = db.execute('SELECT m.payload FROM messages m JOIN requests r ON r.id=m.request_id ORDER BY r.ordinal,m.ordinal').fetchall()
         events = transcript([Message.model_validate_json(row[0]) for row in rows])
-        evidence: dict[str, JsonValue] = {'build_id':runtime.ready['build_id'],'documentation':value.documentation,
+        evidence: dict[str, JsonValue] = {'host_instance':runtime.ready['instance_id'],'documentation':value.documentation,
             'plugin':plugin_view.model_dump(mode='json') if plugin_view else None}
         if value.plugin_entry and plugin_view is None:
             errors.append('eval_plugin_missing')

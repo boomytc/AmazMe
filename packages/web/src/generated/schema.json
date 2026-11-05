@@ -198,10 +198,6 @@
         "call": {
           "$ref": "#/$defs/ToolCall"
         },
-        "build_id": {
-          "title": "Build Id",
-          "type": "string"
-        },
         "proposal_digest": {
           "title": "Proposal Digest",
           "type": "string"
@@ -228,7 +224,6 @@
         "run_id",
         "call_id",
         "call",
-        "build_id",
         "proposal_digest",
         "revision",
         "state"
@@ -426,10 +421,6 @@
         "host_epoch": {
           "type": "integer",
           "title": "Host Epoch"
-        },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
         }
       },
       "additionalProperties": false,
@@ -437,8 +428,7 @@
       "required": [
         "attachment_id",
         "session_id",
-        "host_epoch",
-        "build_id"
+        "host_epoch"
       ],
       "title": "Attachment"
     },
@@ -933,10 +923,6 @@
           "type": "integer",
           "title": "Host Epoch"
         },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
-        },
         "session_id": {
           "type": "string",
           "pattern": "^[a-f0-9]{32}$",
@@ -976,7 +962,6 @@
       "type": "object",
       "required": [
         "host_epoch",
-        "build_id",
         "session_id",
         "run_id",
         "sequence",
@@ -1175,25 +1160,6 @@
         "summary"
       ],
       "title": "Compaction"
-    },
-    "CompleteUpdate": {
-      "properties": {
-        "update_id": {
-          "type": "string",
-          "title": "Update Id"
-        },
-        "expected_revision": {
-          "type": "string",
-          "title": "Expected Revision"
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "update_id",
-        "expected_revision"
-      ],
-      "title": "CompleteUpdate"
     },
     "ConfigureModel": {
       "properties": {
@@ -1618,7 +1584,6 @@
             "approval",
             "children",
             "effect",
-            "freeze",
             "compaction",
             "question"
           ],
@@ -2184,7 +2149,6 @@
           "enum": [
             "ready",
             "recovering",
-            "frozen",
             "blocked"
           ],
           "title": "State"
@@ -2193,16 +2157,6 @@
           "anyOf": [
             {
               "$ref": "#/components/schemas/SupervisorHealth"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "update": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/UpdateRecord"
             },
             {
               "type": "null"
@@ -2287,17 +2241,12 @@
         "host_epoch": {
           "type": "integer",
           "title": "Host Epoch"
-        },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
         }
       },
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "host_epoch",
-        "build_id"
+        "host_epoch"
       ],
       "title": "HostFence"
     },
@@ -2312,10 +2261,6 @@
           "type": "string",
           "title": "Protocol",
           "default": "amazme-http/1"
-        },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
         },
         "profile_id": {
           "type": "string",
@@ -2349,11 +2294,6 @@
           "title": "State",
           "default": "ready"
         },
-        "fingerprint": {
-          "type": "string",
-          "title": "Fingerprint",
-          "default": ""
-        },
         "storage_format": {
           "type": "integer",
           "const": 2,
@@ -2374,7 +2314,6 @@
       "additionalProperties": false,
       "type": "object",
       "required": [
-        "build_id",
         "profile_id",
         "instance_id",
         "pid"
@@ -5040,10 +4979,6 @@
           "type": "integer",
           "title": "Execution Epoch"
         },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
-        },
         "supervisor_id": {
           "type": "string",
           "title": "Supervisor Id",
@@ -5102,7 +5037,6 @@
         "session_id",
         "worker_id",
         "execution_epoch",
-        "build_id",
         "host_epoch",
         "call_id",
         "write"
@@ -5128,10 +5062,6 @@
         "execution_epoch": {
           "type": "integer",
           "title": "Execution Epoch"
-        },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
         },
         "supervisor_id": {
           "type": "string",
@@ -5179,38 +5109,10 @@
         "session_id",
         "worker_id",
         "execution_epoch",
-        "build_id",
         "host_epoch",
         "call_id"
       ],
       "title": "PreparePatch"
-    },
-    "PrepareUpdate": {
-      "properties": {
-        "update_id": {
-          "type": "string",
-          "maxLength": 128,
-          "minLength": 1,
-          "title": "Update Id"
-        },
-        "target_build": {
-          "type": "string",
-          "pattern": "^[a-f0-9]{64}$",
-          "title": "Target Build"
-        },
-        "cancel_work": {
-          "type": "boolean",
-          "title": "Cancel Work",
-          "default": false
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "update_id",
-        "target_build"
-      ],
-      "title": "PrepareUpdate"
     },
     "PreparedFileWrite": {
       "properties": {
@@ -5963,10 +5865,6 @@
           "type": "integer",
           "title": "Host Epoch"
         },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
-        },
         "recovery_id": {
           "type": "string",
           "maxLength": 128,
@@ -5983,7 +5881,6 @@
       "type": "object",
       "required": [
         "host_epoch",
-        "build_id",
         "recovery_id"
       ],
       "title": "Recovery"
@@ -7746,10 +7643,6 @@
           "type": "string",
           "title": "Instance Id"
         },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
-        },
         "process_lease": {
           "$ref": "#/components/schemas/ProcessLease"
         },
@@ -7774,7 +7667,6 @@
       "type": "object",
       "required": [
         "instance_id",
-        "build_id",
         "process_lease",
         "state"
       ],
@@ -7870,8 +7762,7 @@
             "absent",
             "ready",
             "blocked",
-            "stopping",
-            "frozen"
+            "stopping"
           ],
           "title": "State"
         },
@@ -8188,8 +8079,7 @@
             "recovering",
             "ready",
             "blocked",
-            "stopping",
-            "frozen"
+            "stopping"
           ],
           "title": "State",
           "type": "string"
@@ -8467,11 +8357,6 @@
         "registry_revision": {
           "type": "string",
           "title": "Registry Revision"
-        },
-        "freeze_id": {
-          "type": "string",
-          "title": "Freeze Id",
-          "default": ""
         },
         "workers": {
           "items": {
@@ -8906,79 +8791,6 @@
       ],
       "title": "UpdateModelSettings",
       "description": "Model selection never carries an API key. Credential changes use CredentialUpdate."
-    },
-    "UpdateRecord": {
-      "properties": {
-        "update_id": {
-          "type": "string",
-          "title": "Update Id"
-        },
-        "source_build": {
-          "type": "string",
-          "title": "Source Build"
-        },
-        "target_build": {
-          "type": "string",
-          "title": "Target Build"
-        },
-        "phase": {
-          "type": "string",
-          "enum": [
-            "freezing",
-            "retiring",
-            "prepared",
-            "validating",
-            "completed"
-          ],
-          "title": "Phase"
-        },
-        "revision": {
-          "type": "string",
-          "title": "Revision"
-        },
-        "cancel_work": {
-          "type": "boolean",
-          "title": "Cancel Work"
-        },
-        "error": {
-          "type": "string",
-          "title": "Error",
-          "default": ""
-        },
-        "roster": {
-          "items": {
-            "$ref": "#/components/schemas/WorkerInfo"
-          },
-          "type": "array",
-          "title": "Roster"
-        },
-        "validation": {
-          "anyOf": [
-            {
-              "$ref": "#/components/schemas/WorkerInfo"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "activated": {
-          "type": "boolean",
-          "title": "Activated",
-          "default": false
-        }
-      },
-      "additionalProperties": false,
-      "type": "object",
-      "required": [
-        "update_id",
-        "source_build",
-        "target_build",
-        "phase",
-        "revision",
-        "cancel_work"
-      ],
-      "title": "UpdateRecord"
     },
     "UsageReport": {
       "properties": {
@@ -9451,10 +9263,6 @@
           "type": "string",
           "title": "Socket"
         },
-        "build_id": {
-          "type": "string",
-          "title": "Build Id"
-        },
         "process_lease": {
           "anyOf": [
             {
@@ -9470,7 +9278,6 @@
           "enum": [
             "starting",
             "ready",
-            "frozen",
             "stopping",
             "stopped",
             "blocked",
@@ -9483,11 +9290,6 @@
           "type": "integer",
           "title": "Execution Epoch",
           "default": 0
-        },
-        "fingerprint": {
-          "type": "string",
-          "title": "Fingerprint",
-          "default": ""
         },
         "plugin_fingerprint": {
           "type": "string",
@@ -9520,8 +9322,7 @@
         "session_id",
         "worker_id",
         "pid",
-        "socket",
-        "build_id"
+        "socket"
       ],
       "title": "WorkerInfo"
     },
@@ -9883,11 +9684,6 @@
         "binding_id": {
           "default": "",
           "title": "Binding Id",
-          "type": "string"
-        },
-        "build_id": {
-          "default": "",
-          "title": "Build Id",
           "type": "string"
         },
         "resync": {

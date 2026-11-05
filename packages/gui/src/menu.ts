@@ -11,7 +11,6 @@ import type { MenuItemConstructorOptions } from "electron";
 export interface ApplicationMenuActions {
 	readonly newSession: () => void;
 	readonly newWindow: () => void;
-	readonly stop: () => void;
 	readonly settings: () => void;
 }
 
@@ -47,8 +46,6 @@ export function applicationMenuTemplate(
 					click: actions.newWindow,
 				},
 				{ label: translate(locale, "desktop.menu.settings"), click: actions.settings },
-                { type: "separator" },
-                { label: translate(locale, "desktop.stop.action"), click: actions.stop },
 			],
 		});
 	}

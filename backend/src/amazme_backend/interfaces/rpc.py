@@ -158,8 +158,6 @@ def rpc_error(identity: str, code: str) -> dict[str, object]:
     return {"jsonrpc": "2.0", "id": identity, "error": {"code": -32000, "message": code}}
 
 
-
-
 async def _workspace(owner: Host, session_id: str) -> str:
     listed = await owner.sessions.sessions()
     found = next((item for item in listed.sessions if item.session_id == session_id), None)
@@ -346,7 +344,7 @@ async def _dispatch(owner: Host, method: str, params: RpcParams) -> Model:
         session = await _bound(owner, params)
         return await owner.sessions.deliver(
             session, "cancel", params.request_id,
-            Cancel(host_epoch=0, build_id="", request_id=params.request_id))
+            Cancel(host_epoch=0, request_id=params.request_id))
     if method == "approval.decide":
         approve = _decision(params)
         if not params.approval_id or not params.expected_revision or not params.proposal_digest:

@@ -97,7 +97,7 @@ class Scheduling:
                     pending.session_id,
                     "cancel",
                     pending.request_id,
-                    Cancel(host_epoch=0, build_id="", request_id=pending.request_id),
+                    Cancel(host_epoch=0, request_id=pending.request_id),
                 )
                 receipt = await self.access.read(
                     pending.session_id, lambda store: store.get(pending.request_id)
@@ -155,8 +155,6 @@ class Scheduling:
             due = force or now - self.schedule_tick_ms >= 5000
             if due:
                 self.schedule_tick_ms = now
-            if await self.lifecycle.store.active_update():
-                return await self.list_schedules()
             self.lifecycle.profile.reload_provider()
             records = (await self.list_schedules()).schedules
             records.sort(

@@ -17,6 +17,7 @@ const ERROR_KEYS: Readonly<Record<string, MessageKey>> = {
 	timeout: "error.timeout", ETIMEDOUT: "error.timeout", ERR_TIMED_OUT: "error.timeout",
 	ECONNREFUSED: "error.connectionRefused", ERR_CONNECTION_REFUSED: "error.connectionRefused",
 	ECONNRESET: "error.connectionLost", ERR_CONNECTION_RESET: "error.connectionLost",
+	stale_stream_binding: "error.connectionLost",
 	ENOTFOUND: "error.address", ERR_NAME_NOT_RESOLVED: "error.address",
 	ERR_INTERNET_DISCONNECTED: "error.offline",
 	invalid_api_key: "error.credentials", authentication_error: "error.credentials",

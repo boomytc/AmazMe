@@ -168,12 +168,9 @@ class InvocationOperations:
                 directory.mkdir(mode=0o700, parents=True, exist_ok=False)
                 with ProcessReservation(self.owner.profile.path, "execution", instance) as reservation:
                     await self.owner.db.call(lambda db: db.execute(
-                        "INSERT INTO scopes(id,session,epoch,worker,supervisor,build,request,directory,lease,digest,phase,effect,log_expires,log_workspace,background,job_started) "
-                        "VALUES(?,?,?,?,?,?,?,?,?,?,'registered',?,?,?,?,?)",
-                        (value.call_id, value.session_id, value.execution_epoch, value.worker_id, self.owner.instance,
-                         self.owner.build, value.request_id, str(directory), reservation.lease.model_dump_json(), digest,
-                         value.effect, log_expires, str(root.resolve()), int(value.run_in_background),
-                         time.time_ns() // 1_000_000 if value.run_in_background else 0)), write=True)
+                        "INSERT INTO scopes(id,session,epoch,worker,supervisor,request,directory,lease,digest,phase,effect,log_expires,log_workspace,background,job_started) "
+                        "VALUES(?,?,?,?,?,?,?,?,?,'registered',?,?,?,?,?)",
+                        (value.call_id, value.session_id, value.execution_epoch, value.worker_id, self.owner.instance, value.request_id, str(directory), reservation.lease.model_dump_json(), digest, value.effect, log_expires, str(root.resolve()), int(value.run_in_background), time.time_ns() // 1_000_000 if value.run_in_background else 0)), write=True)
                     admitted = True
                     channel = await LocalProcess.start(self.owner.profile.path, instance, directory, reservation)
                     self.channels[value.call_id] = channel
@@ -344,7 +341,7 @@ class InvocationOperations:
         return JobList(jobs=[self.job_view(row) for row in rows[:64]], truncated=len(rows) > 64)
 
     async def job_output(self, value: JobOutputQuery) -> JobOutputView:
-        scope = await self.job_scope(JobReference(**value.model_dump(include={"host_epoch", "build_id", "session_id", "job_id"})))
+        scope = await self.job_scope(JobReference(**value.model_dump(include={"host_epoch", "session_id", "job_id"})))
         view = self.job_view(scope)
         try:
             output = read_output(Path(str(scope["directory"])), value.read_request())

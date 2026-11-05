@@ -98,7 +98,7 @@ export function closeDialogCopy(locale: Locale): CloseDialogCopy {
 	};
 }
 
-export function lifecycleErrorCopy(locale: Locale, kind: "activity" | "preferences"): QuitDialogCopy {
+export function lifecycleErrorCopy(locale: Locale, kind: "activity" | "preferences" | "shutdown"): QuitDialogCopy {
 	const prefix = kind;
 	return {
 		title: translate(locale, `desktop.lifecycle.${prefix}.title`),

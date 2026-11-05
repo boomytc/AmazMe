@@ -12,7 +12,6 @@ type SecretSource = Callable[[], Sequence[str]]
 @dataclass
 class SessionContext:
     session_id: str
-    build: str
     config: ProviderConfig
     approval_policy: str
     instance: str

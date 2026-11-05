@@ -69,7 +69,7 @@ class EvalRuntime:
         self.ready = json.loads(line)
         self.client = httpx.Client(base_url=self.ready["url"], timeout=45, trust_env=False,
                                   headers={"Authorization": "Bearer " + (self.profile / "web.token").read_text(),
-                                           "x-amazme-build": self.ready["build_id"],
+
                                            "x-amazme-epoch": str(self.ready["host_epoch"])} )
         until(lambda: self.client.get("/api/v1/bootstrap"), lambda r: r.status_code == 200)
 
@@ -77,7 +77,7 @@ class EvalRuntime:
         if self.process and self.process.poll() is None:
             if self.client is not None:
                 r = self.client.post("/control/shutdown", headers={"Authorization": "Bearer " + (self.profile / "control.token").read_text()},
-                                     json={"host_epoch": self.ready["host_epoch"], "build_id": self.ready["build_id"]})
+                                     json={"host_epoch": self.ready["host_epoch"]})
                 r.raise_for_status()
             else:
                 self.process.send_signal(signal.SIGINT)

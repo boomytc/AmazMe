@@ -9,8 +9,6 @@ async def save_memory(
 ) -> tuple[str, str, str]:
 
     def operation(db: sqlite3.Connection) -> tuple[str, str, str]:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute("SELECT workspace, text, digest FROM memories WHERE id=?", (memory_id,)).fetchone()
         if row is not None:
             if str(row[0]) != workspace or str(row[2]) != digest:

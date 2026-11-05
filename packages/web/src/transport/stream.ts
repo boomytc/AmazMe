@@ -46,7 +46,7 @@ function trim(model: Snapshot): Snapshot {
 
 /** Reject an entire malformed transaction before either the rendered state or ACK advances. */
 export function applyFrame(previous: Snapshot | undefined, frame: Stream, binding: Attachment): Snapshot {
-	if (frame.binding_id !== binding.attachment_id || frame.build_id !== binding.build_id || !frame.stream_id) throw new Error("事件绑定或协议不匹配");
+	if (frame.binding_id !== binding.attachment_id || !frame.stream_id) throw new Error("事件绑定或协议不匹配");
 	const batches = frame.batches ?? [];
 	if (frame.snapshot) {
 		const snapshot = frame.snapshot;
@@ -105,7 +105,6 @@ export function applyFrame(previous: Snapshot | undefined, frame: Stream, bindin
 			}
 			if (event.kind === "status" && event.text.startsWith("blocked:")) model.state = "blocked";
 			if (event.kind === "status" && event.text === "stopping") model.state = "stopping";
-			if (event.kind === "freeze") model.state = event.text.startsWith("thawed:") ? "ready" : "frozen";
 			if (["tool", "cleanup", "effect", "children"].includes(event.kind)) model.events.push(event);
 		}
 		model.seq = batch.seq; cursor = number;

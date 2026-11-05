@@ -45,24 +45,13 @@ async def blocked(self: PersistenceOwner) -> str:
     return await self.call(lambda db: str(db.execute("SELECT blocked FROM control WHERE id=1").fetchone()[0]))
 
 
-async def last_build(self: PersistenceOwner, current: str) -> str:
-
-    def operation(db: sqlite3.Connection) -> str:
-        row = db.execute(
-            "SELECT build FROM hosts WHERE instance!=? ORDER BY epoch DESC LIMIT 1", (current,)
-        ).fetchone()
-        return str(row[0]) if row else ""
-
-    return await self.call(operation)
-
-
 async def save_service(self: PersistenceOwner, value: ServiceRecord) -> None:
 
     def operation(db: sqlite3.Connection) -> None:
         row = db.execute("SELECT payload FROM services WHERE instance=?", (value.instance_id,)).fetchone()
         if row:
             old = ServiceRecord.model_validate_json(row[0])
-            if old.build_id != value.build_id or old.process_lease != value.process_lease:
+            if (old.process_lease != value.process_lease):
                 raise BackendError("supervisor_identity_mismatch", status=503)
             if old.state in {"stopping", "stopped"} and value.state not in (
                 {"stopped"} if old.state == "stopped" else {"stopping", "stopped"}

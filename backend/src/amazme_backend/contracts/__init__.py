@@ -59,10 +59,7 @@ from amazme_backend.contracts.feedback import AnswerFeedbackList as AnswerFeedba
 from amazme_backend.contracts.feedback import AnswerFeedbackWrite as AnswerFeedbackWrite
 from amazme_backend.contracts.feedback import FeedbackView as FeedbackView
 from amazme_backend.contracts.feedback import FeedbackWrite as FeedbackWrite
-from amazme_backend.contracts.host import CompleteUpdate as CompleteUpdate
 from amazme_backend.contracts.host import Health as Health
-from amazme_backend.contracts.host import PrepareUpdate as PrepareUpdate
-from amazme_backend.contracts.host import UpdateRecord as UpdateRecord
 from amazme_backend.contracts.identity import HostFence as HostFence
 from amazme_backend.contracts.identity import HostReady as HostReady
 from amazme_backend.contracts.identity import Identity as Identity
@@ -75,7 +72,6 @@ from amazme_backend.contracts.ipc.supervisor import CancelCode as CancelCode
 from amazme_backend.contracts.ipc.supervisor import CancelPlugin as CancelPlugin
 from amazme_backend.contracts.ipc.supervisor import ClosePlugin as ClosePlugin
 from amazme_backend.contracts.ipc.supervisor import CodeStatus as CodeStatus
-from amazme_backend.contracts.ipc.supervisor import FreezeSupervisor as FreezeSupervisor
 from amazme_backend.contracts.ipc.supervisor import McpCallEnvelope as McpCallEnvelope
 from amazme_backend.contracts.ipc.supervisor import McpCallRef as McpCallRef
 from amazme_backend.contracts.ipc.supervisor import McpDecisionEnvelope as McpDecisionEnvelope
@@ -90,7 +86,6 @@ from amazme_backend.contracts.ipc.supervisor import PluginCallEnvelope as Plugin
 from amazme_backend.contracts.ipc.supervisor import Recovery as Recovery
 from amazme_backend.contracts.ipc.supervisor import ReloadPlugin as ReloadPlugin
 from amazme_backend.contracts.ipc.supervisor import ResolveEffect as ResolveEffect
-from amazme_backend.contracts.ipc.supervisor import RetireSupervisor as RetireSupervisor
 from amazme_backend.contracts.ipc.supervisor import RunTool as RunTool
 from amazme_backend.contracts.ipc.supervisor import StopWorker as StopWorker
 from amazme_backend.contracts.ipc.supervisor import SubmitRemote as SubmitRemote
@@ -105,7 +100,6 @@ from amazme_backend.contracts.ipc.supervisor import WorkerSpec as WorkerSpec
 from amazme_backend.contracts.ipc.worker import ApprovalEnvelope as ApprovalEnvelope
 from amazme_backend.contracts.ipc.worker import Cancel as Cancel
 from amazme_backend.contracts.ipc.worker import CodeChild as CodeChild
-from amazme_backend.contracts.ipc.worker import FreezeWorker as FreezeWorker
 from amazme_backend.contracts.ipc.worker import ResolutionEnvelope as ResolutionEnvelope
 from amazme_backend.contracts.ipc.worker import Submission as Submission
 from amazme_backend.contracts.ipc.worker import WorkerActivity as WorkerActivity

@@ -64,8 +64,10 @@ function matches(value: unknown, schema: Schema): boolean {
 	}
 }
 
+export class ApiContractError extends Error {}
+
 export function parseContract<K extends keyof ApiModels>(name: K, value: unknown): ApiModels[K] {
-	if (!matches(value, definitions[name])) throw new Error(`后端响应不符合契约：${name}`);
+	if (!matches(value, definitions[name])) throw new ApiContractError(`后端响应不符合契约：${name}，请刷新页面。`);
 	return value as ApiModels[K];
 }
 
@@ -79,7 +81,7 @@ export class ApiError extends Error {
 		this.code = code;
 	}
 }
-const bindingErrors = new Set(["stale_client_binding", "stale_host_epoch", "build_mismatch", "attachment_expired"]);
+const bindingErrors = new Set(["stale_client_binding", "stale_host_epoch", "attachment_expired"]);
 export function definitive(error: unknown): boolean {
 	return error instanceof ApiError && error.status >= 400 && error.status < 500 && ![401, 408, 429].includes(error.status) && !bindingErrors.has(error.code);
 }
@@ -89,6 +91,6 @@ export function validateRequest<K extends keyof HttpOperations>(operation: K, bo
  if (spec.body && !matches(body, spec.body)) throw new Error(`请求不符合后端契约：${operation}`);
 }
 export function parseResponse<K extends keyof HttpOperations>(operation: K, value: unknown): HttpOperations[K]["response"] {
- if (!matches(value, operations[operation].response)) throw new Error(`后端响应不符合契约：${operation}`);
+ if (!matches(value, operations[operation].response)) throw new ApiContractError(`后端响应不符合契约：${operation}，请刷新页面。`);
  return value as HttpOperations[K]["response"];
 }

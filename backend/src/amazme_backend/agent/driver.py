@@ -15,7 +15,6 @@ from pydantic import JsonValue
 from amazme_backend.agent.model import stream
 from amazme_backend.agent.prompting import clock_context, job_completion_text
 from amazme_backend.ai.types import Auth
-from amazme_backend.contracts.events import Snapshot
 from amazme_backend.contracts.execution import (
     ApplyPatch,
     Command,
@@ -62,7 +61,6 @@ from amazme_backend.contracts.ipc.supervisor import (
 from amazme_backend.contracts.ipc.worker import (
     ApprovalEnvelope,
     Cancel,
-    FreezeWorker,
     JobNoticeEnvelope,
     QuestionEnvelope,
     ResolutionEnvelope,
@@ -124,7 +122,6 @@ class WebExecutor(Protocol):
 
 @dataclass(frozen=True)
 class WorkerContext:
-    build: str
     profile_id: str
     token: str
     identity: Callable[[WorkerState, int], Identity]
@@ -166,16 +163,12 @@ def command_for(call: ToolCall) -> Command:
 
 
 class Worker:
-    def __init__(self, session: str, instance: str, *, store: SessionStore,
-                 supervisor: SupervisorClient, context: WorkerContext, frozen: bool = False,
-                 validation: bool = False):
+    def __init__(self, session: str, instance: str, *, store: SessionStore, supervisor: SupervisorClient, context: WorkerContext, validation: bool = False):
         self.context, self.session, self.instance = context, session, instance
-        self.build = context.build
-        self.frozen_on_start = frozen
         self.validation = validation
         self.store = store
         self.supervisor = supervisor
-        self.owner = WorkerRequest(session_id=session, worker_id=instance, build_id=self.build)
+        self.owner = WorkerRequest(session_id=session, worker_id=instance)
         self.state: WorkerState = "recovering"
         self.current: Action = Park("startup")
         self.run_task: asyncio.Task[Observation] | None = None
@@ -202,7 +195,7 @@ class Worker:
         self.owner.storage_ready = True
         heartbeat = await self.supervisor.heartbeat(self.owner)
         self._validate_supervisor(heartbeat)
-        await self.store.fence(HostFence(host_epoch=heartbeat.host_epoch, build_id=self.build))
+        await self.store.fence(HostFence(host_epoch=heartbeat.host_epoch))
         # Even a metadata validation owner must obtain a real cleanup proof before
         # retiring old decisions or clearing a stored cleanup failure.
         initial = await self.supervisor.open_epoch(self.owner)
@@ -212,13 +205,13 @@ class Worker:
                 or cleanup.execution_epoch != initial.execution_epoch):
             raise BackendError("execution_cleanup_pending", status=503)
         if self.validation:
-            await self.store.recover(frozen=self.frozen_on_start, validation=True, initial_cleanup=cleanup)
+            await self.store.recover(validation=True, initial_cleanup=cleanup)
             snapshot = await self.store.snapshot()
             if snapshot.state == "blocked":
                 raise BackendError("worker_blocked", status=503)
             self.quiescent.set()
         else:
-            await self.store.recover(frozen=self.frozen_on_start, initial_cleanup=cleanup)
+            await self.store.recover(initial_cleanup=cleanup)
         self.state = (await self.store.activity()).state
         self.initialized = True
         if not self.validation:
@@ -226,8 +219,7 @@ class Worker:
         self.heartbeat_task = asyncio.create_task(self.heartbeat())
 
     def _validate_supervisor(self, value: Identity) -> None:
-        if (value.build_id != self.build or value.profile_id != self.context.profile_id
-                or value.role != "supervisor" or value.fingerprint != self.build):
+        if ((value.profile_id != self.context.profile_id) or (value.role != "supervisor")):
             raise BackendError("supervisor_identity_mismatch")
 
     def _business(self) -> None:
@@ -237,8 +229,7 @@ class Worker:
             raise BackendError("worker_unavailable", status=503)
 
     def _validate_lease(self, lease: Lease) -> None:
-        if (lease.session_id != self.session or lease.worker_id != self.instance or lease.build_id != self.build
-                or not lease.supervisor_id or lease.execution_epoch <= 0):
+        if ((lease.session_id != self.session) or (lease.worker_id != self.instance) or (not lease.supervisor_id) or (lease.execution_epoch <= 0)):
             raise BackendError("execution_lease_mismatch")
 
     async def heartbeat(self) -> None:
@@ -247,7 +238,7 @@ class Worker:
             try:
                 current = await asyncio.wait_for(self.supervisor.heartbeat(self.owner), 2)
                 self._validate_supervisor(current)
-                await self.store.fence(HostFence(host_epoch=current.host_epoch, build_id=self.build))
+                await self.store.fence(HostFence(host_epoch=current.host_epoch))
                 misses = 0
             except Exception as exc:
                 misses += 1
@@ -333,25 +324,10 @@ class Worker:
             raise BackendError("effect_resolution_blocked", status=503)
         return await self.store.get((await self.store.resolve(value.value, value)).request_id)
 
-    async def freeze(self, value: FreezeWorker) -> Snapshot:
-        async with self.dispatch_lock:
-            await self.store.freeze(value, value.freeze_id, cancel_work=value.cancel_work)
-            if self.validation and value.cancel_work:
-                await self.settle_validation_cancellations()
-            self.state = "frozen"
-            self.quiescent.clear()
-            self._interrupt()
-            self.wake.set()
-            if self.validation:
-                self.quiescent.set()
-        await self.quiescent.wait()
-        if (await self.store.activity()).state == "blocked":
-            raise BackendError("execution_cleanup_pending", status=503)
-        return await self.store.snapshot()
 
     async def settle_validation_cancellations(self) -> None:
         """Settle persisted decisions using historical queries and cleanup only."""
-        await self.store.recover(frozen=True)
+        await self.store.recover()
         for _ in range(4096):
             action = await self.store.advance()
             if isinstance(action, Continue):
@@ -368,13 +344,6 @@ class Worker:
                 raise BackendError("validation_recovery_pending", status=503)
         raise BackendError("validation_recovery_limit", status=503)
 
-    async def thaw(self, value: FreezeWorker) -> Snapshot:
-        await self.store.thaw(value, value.freeze_id)
-        self.state = (await self.store.activity()).state
-        if not self.validation:
-            self.quiescent.clear()
-            self.wake.set()
-        return await self.store.snapshot()
 
     async def request_stop(self, value: StopWorker) -> Identity:
         if value.worker_id != self.instance or value.session_id != self.session:
@@ -429,12 +398,12 @@ class Worker:
         return WebReturned(action, view.phase, view.error, view.result)
 
     async def _mcp_fence(self) -> HostFence:
-        return HostFence(host_epoch=await self.store.host_epoch(), build_id=self.build)
+        return HostFence(host_epoch=await self.store.host_epoch())
 
     async def _mcp_offers(self, request_id: str = ""):
         fence = await self._mcp_fence()
         state = await self.supervisor.mcp_state(McpSession(
-            host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session))
+            host_epoch=fence.host_epoch, session_id=self.session))
         loaded = set(await self.store.active_mcp_tools(request_id)) if request_id else set[str]()
         return [offer.model_copy(update={"active": offer.exposure == "direct" or offer.activation_key() in loaded})
                 for offer in self.context.mcp_catalog(state.servers)]
@@ -484,8 +453,7 @@ class Worker:
     async def _retrieve_mcp(self, action: McpRetrieval) -> McpReturned:
         args = McpToolCall.model_validate_json(action.call.arguments)
         fence = await self._mcp_fence()
-        ref = McpCallRef(host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session,
-                         server_id=args.server_id, call_id=args.call_id)
+        ref = McpCallRef(host_epoch=fence.host_epoch, session_id=self.session, server_id=args.server_id, call_id=args.call_id)
         if action.stop:
             try:
                 current = await self.supervisor.lookup_mcp_call(ref)
@@ -499,14 +467,12 @@ class Worker:
         request = McpCallRequest(call_id=args.call_id, name=args.tool, arguments=args.arguments,
                                  schema_digest=args.schema_digest, origin="model")
         current = await self.supervisor.request_mcp_call(McpCallEnvelope(
-            host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session,
-            server_id=args.server_id, call=request))
+            host_epoch=fence.host_epoch, session_id=self.session, server_id=args.server_id, call=request))
         if current.phase == "waiting_approval":
             decision = McpDecision(decision_id=self._mcp_decision_id(action.step_id), approve=True, digest=current.digest)
             try:
                 current = await self.supervisor.decide_mcp_call(McpDecisionEnvelope(
-                    host_epoch=fence.host_epoch, build_id=fence.build_id, session_id=self.session,
-                    server_id=args.server_id, call_id=args.call_id, decision=decision))
+                    host_epoch=fence.host_epoch, session_id=self.session, server_id=args.server_id, call_id=args.call_id, decision=decision))
             except BackendError as exc:
                 if exc.code != "mcp_decision_conflict":
                     raise
@@ -521,8 +487,7 @@ class Worker:
     async def _file_preparation_ready(self) -> tuple[HostReady, int]:
         ready = self.context.host_ready()
         epoch = await self.store.host_epoch()
-        if (ready.profile_id != self.context.profile_id or ready.build_id != self.build
-                or ready.fingerprint != self.build or ready.role != "host" or ready.host_epoch != epoch):
+        if ((ready.profile_id != self.context.profile_id) or (ready.role != "host") or (ready.host_epoch != epoch)):
             raise BackendError("stale_host_epoch")
         return ready, epoch
 
@@ -591,9 +556,7 @@ class Worker:
             health = await asyncio.wait_for(self.supervisor.health(), 2)
         except (OSError, BackendError, TimeoutError, ValueError):
             return
-        if (health.identity.profile_id != self.context.profile_id or health.identity.build_id != self.build
-                or health.identity.host_epoch != await self.store.host_epoch()
-                or not any(worker.worker_id == self.instance and worker.session_id == self.session for worker in health.workers)):
+        if ((health.identity.profile_id != self.context.profile_id) or (health.identity.host_epoch != await self.store.host_epoch()) or (not any(worker.worker_id == self.instance and worker.session_id == self.session for worker in health.workers))):
             return
         await self.store.refresh_effect_proofs([hold for hold in health.effects if hold.session_id == self.session])
 
@@ -661,13 +624,13 @@ class Worker:
                 # the query or wakes the wait. Completion events do not count as user input.
                 self.wake.clear()
                 interrupted = await self.store.waiting_user_input(action.request_id)
-                frozen = (await self.store.activity()).state in {"frozen", "stopping", "blocked"}
+                stopping = (await self.store.activity()).state in {"stopping", "blocked"}
                 output = await self.supervisor.job_output(query_output)
                 if interrupted:
                     output.wait_reason = "user_input"
                 elif output.job.outcome != "pending":
                     output.wait_reason = "completed"
-                elif frozen or time.monotonic() >= deadline:
+                elif stopping or time.monotonic() >= deadline:
                     output.wait_reason = "deadline"
                 else:
                     with contextlib.suppress(TimeoutError):
@@ -857,7 +820,7 @@ class Worker:
         self.wake.set()
         try:
             if self.storage_ready and not self.stop_requested:
-                fence = HostFence(build_id=self.build, host_epoch=await self.store.host_epoch())
+                fence = HostFence(host_epoch=await self.store.host_epoch())
                 await self.store.stopping(fence, cancel_work=False)
             if self.loop_task:
                 await self.loop_task

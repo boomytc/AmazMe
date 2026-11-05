@@ -109,8 +109,6 @@ def change(
         if str(previous[0]) != digest:
             raise BackendError("mcp_config_operation_conflict")
         return McpConfiguration.model_validate_json(str(previous[1]))
-    if db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]:
-        raise BackendError("update_frozen", status=503)
     if listing(db, workspace, path).revision != value.expected_revision:
         raise BackendError("mcp_config_revision")
     row = db.execute(
@@ -257,8 +255,6 @@ def reserve_reconnect(db: sqlite3.Connection, session: str, workspace: str, valu
         if (str(previous[0]), str(previous[1])) != (session, value.name):
             raise BackendError("mcp_reconnect_conflict")
         return McpOpen.model_validate_json(str(previous[2]))
-    if db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]:
-        raise BackendError("update_frozen", status=503)
     item = next(
         (item for item in effective(db, workspace) if item.name == value.name and item.settings.enabled), None
     )

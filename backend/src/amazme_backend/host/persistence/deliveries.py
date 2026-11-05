@@ -98,11 +98,6 @@ async def enqueue(
             raise BackendError("branch_preparation_pending")
         if kind in {"submit", "job_notice"} and int(row[0]):
             raise BackendError("session_archived")
-        if (
-            kind not in {"cancel", "resolve"}
-            and db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]
-        ):
-            raise BackendError("update_frozen", status=503)
         if db.execute("SELECT count(*) FROM deliveries WHERE state='pending'").fetchone()[0] >= 128:
             raise BackendError("delivery_capacity", status=429)
         configured = ""

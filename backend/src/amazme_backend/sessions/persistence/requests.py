@@ -144,7 +144,7 @@ def approval_binding(state: SessionContext, db: sqlite3.Connection, request_id: 
     context = [m.model_dump_json() for m in load_messages(db, request_id)]
     arguments: object = json.loads(normalized_call(call).arguments)
     return digest(json.dumps({"call": call.name, "arguments": arguments, "context": context,
-                              "steer": pending_steer, "policy": load_run(db, request_id).config.approval_policy or state.approval_policy, "build": state.build,
+                              "steer": pending_steer, "policy": load_run(db, request_id).config.approval_policy or state.approval_policy,
                               "run": request_id}, sort_keys=True, ensure_ascii=False))
 
 
@@ -220,7 +220,7 @@ def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, reques
     if step.approval_id:
         row = db.execute("SELECT payload FROM approvals WHERE id=?", (step.approval_id,)).fetchone()
         approval = Approval.model_validate_json(row[0]) if row else None
-    if approval and (approval.proposal_digest != binding or approval.build_id != state.build):
+    if approval and ((approval.proposal_digest != binding)):
         expire_approvals(db, c, request.request_id)
         approval = None
     if approval and approval.state == "denied":
@@ -230,9 +230,7 @@ def grant_step(state: SessionContext, db: sqlite3.Connection, c: Changes, reques
         # Consume in the same transaction that creates an execution/delegation intent.
         return True
     if approval is None or approval.state == "expired":
-        approval = Approval(approval_id=digest(step.step_id + binding + str(c.seq)), request_id=request.request_id,
-                            run_id=request.run_id, call_id=step.step_id, call=step.call, build_id=state.build,
-                            proposal_digest=binding, revision=str(c.seq), state="pending")
+        approval = Approval(approval_id=digest(step.step_id + binding + str(c.seq)), request_id=request.request_id, run_id=request.run_id, call_id=step.step_id, call=step.call, proposal_digest=binding, revision=str(c.seq), state="pending")
         step.approval_id, step.proposal_digest = approval.approval_id, binding
         save_step(db, step)
         db.execute("INSERT INTO approvals VALUES(?,?,?)", (approval.approval_id, request.request_id, approval.model_dump_json()))

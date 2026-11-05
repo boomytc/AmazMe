@@ -15,25 +15,15 @@ import httpx
 from pydantic import ValidationError
 
 from amazme_backend.bootstrap.initialization import initialize
-from amazme_backend.contracts.execution import ProcessLease
-from amazme_backend.contracts.host import Health, UpdateRecord
+from amazme_backend.contracts.host import Health
 from amazme_backend.contracts.identity import HostReady, Identity
 from amazme_backend.contracts.profiles import ProviderConfig
 from amazme_backend.contracts.workspaces import WorkspaceGrantView
-from amazme_backend.execution.processes import exited
-from amazme_backend.platform.identity import build_id
 from amazme_backend.platform.ipc import child_command
 from amazme_backend.platform.private_files import lock
 from amazme_backend.profiles.locations import local_profile
 from amazme_backend.profiles.profile import Profile, live_host_ready
-from amazme_backend.shared.errors import BackendError, ErrorBody
-
-STARTUP_MESSAGES = {
-    "local_host_restart_required": "旧后端不支持自动重启，请先退出旧后端，再运行启动脚本。",
-    "local_host_tasks_running": "后端仍有运行中的任务，请结束任务后重新启动。",
-    "local_host_retirement_pending": "正在等待旧后端退出，请稍后重新运行启动脚本。",
-    "local_source_changed": "启动期间源码发生变化，请重新运行启动脚本。",
-}
+from amazme_backend.shared.errors import BackendError
 
 
 class LocalConnection(HostReady):
@@ -87,92 +77,17 @@ def probe(profile: Profile) -> HostReady | None:
     ready = current_record
     current = live_host_ready(profile.config.profile_id, ready, identity)
     if (identity.protocol != "amazme-http/1" or identity.storage_format != 2
-            or identity.version != "0.1.0" or response.headers.get("x-amazme-local-host") != "1"):
+            or response.headers.get("x-amazme-local-host") != "1"):
         raise BackendError("host_upgrade_required")
     return current
 
 
-def settle_update(profile: Profile, ready: HostReady) -> HostReady:
-    if ready.state == "ready":
-        return ready
-    web_token = (profile.path / "web.token").read_text().strip()
-    with httpx.Client(timeout=180, trust_env=False) as client:
-        response = client.get(ready.url + "/api/v1/health", headers={"Authorization": "Bearer " + web_token})
-        if not response.is_success:
-            raise BackendError("local_host_update_failed")
-        health = Health.model_validate_json(response.content)
-        if (health.identity.profile_id, health.identity.build_id, health.identity.host_epoch) != (
-                ready.profile_id, ready.build_id, ready.host_epoch):
-            raise BackendError("local_host_identity_mismatch")
-        record = health.update
-        if record is None or record.target_build != ready.build_id or health.errors:
-            raise BackendError("host_update_required")
-
-        update_id = record.update_id
-
-        def control(path: str, body: dict[str, str] | None = None) -> UpdateRecord:
-            reply = client.post(ready.url + path, json=body,
-                                headers={"Authorization": "Bearer " + profile.token})
-            if not reply.is_success:
-                raise BackendError("local_host_update_failed")
-            updated = UpdateRecord.model_validate_json(reply.content)
-            if updated.update_id != update_id or updated.target_build != ready.build_id:
-                raise BackendError("local_host_identity_mismatch")
-            return updated
-
-        if not record.activated and record.phase not in {"validating", "completed"}:
-            record = control("/control/updates/" + record.update_id + "/resume")
-        if not record.activated:
-            if record.phase not in {"validating", "completed"}:
-                raise BackendError("local_host_update_failed")
-            record = control("/control/updates/complete", {"update_id": record.update_id,
-                                                        "expected_revision": record.revision})
-            if not record.activated:
-                raise BackendError("local_host_update_failed")
-    current = probe(profile)
-    if current is None or current.state != "ready":
-        raise BackendError("local_host_not_ready")
-    return current
-
-
-def retire_source(profile: Profile, ready: HostReady) -> None:
-    path = profile.path / "processes" / f"host-{ready.instance_id}.lock"
-    lease = ProcessLease.model_validate_json(path.read_bytes())
-    if (lease.instance_id, lease.role, lease.profile_path, lease.path) != (
-        ready.instance_id, "host", str(profile.path), str(path)
-    ):
-        raise BackendError("process_lease_owner_mismatch")
-    with httpx.Client(timeout=30, trust_env=False) as client:
-        response = client.post(
-            ready.url + "/control/restart", headers={"Authorization": "Bearer " + profile.token},
-            json={"host_epoch": ready.host_epoch, "build_id": ready.build_id})
-    if response.status_code == 404:
-        raise BackendError("local_host_restart_required", "请先停止旧后端，再通过启动脚本重新启动。")
-    if not response.is_success:
-        error = ErrorBody.model_validate_json(response.content)
-        raise BackendError(error.code, error.message, response.status_code)
-    identity = Identity.model_validate_json(response.content)
-    if (identity.profile_id, identity.instance_id, identity.host_epoch, identity.build_id, identity.state) != (
-        ready.profile_id, ready.instance_id, ready.host_epoch, ready.build_id, "stopping"
-    ):
-        raise BackendError("local_host_identity_mismatch")
-    deadline = time.monotonic() + 60
-    while not exited(lease):
-        if time.monotonic() >= deadline:
-            raise BackendError("local_host_retirement_pending")
-        time.sleep(0.05)
-
-
 def connect(profile_path: Path, workspace: Path) -> LocalConnection:
     with startup_lock(profile_path):
-        expected_build = build_id()
         if not profile_path.exists():
             initialize(profile_path, workspace, ProviderConfig(provider="faux", model="faux", base_url=""))
         profile = Profile(profile_path)
         ready = probe(profile)
-        if ready is not None and ready.build_id != expected_build:
-            retire_source(profile, ready)
-            ready = None
         if ready is None:
             # An explicit serve command can own the Host lock before publishing readiness.
             try:
@@ -203,16 +118,13 @@ def connect(profile_path: Path, workspace: Path) -> LocalConnection:
                 if time.monotonic() >= deadline:
                     raise BackendError("local_host_start_timeout")
                 time.sleep(0.1)
-        if ready.state not in {"ready", "frozen"}:
+        if ready.state != "ready":
             raise BackendError("local_host_not_ready")
-        ready = settle_update(profile, ready)
-        if ready.build_id != expected_build or build_id() != expected_build:
-            raise BackendError("local_source_changed")
         token = (profile.path / "web.token").read_text().strip()
         with httpx.Client(timeout=30, trust_env=False) as client:
             response = client.post(ready.url + "/api/v1/workspaces/select",
                                    headers={"Authorization": "Bearer " + token,
-                                            "x-amazme-build": ready.build_id,
+
                                             "x-amazme-epoch": str(ready.host_epoch)},
                                    json={"host_path": str(workspace), "name": ""})
         if not response.is_success:
@@ -253,8 +165,6 @@ def main(arguments: list[str], mode: Literal["connect", "web", "doctor"] = "conn
         # Command failures cross into Node logs; never print raw config, tokens or validation input.
         code = exc.code if isinstance(exc, BackendError) else "local_profile_invalid"
         body = {"code": code}
-        if code in STARTUP_MESSAGES:
-            body["message"] = STARTUP_MESSAGES[code]
         print(json.dumps(body, ensure_ascii=False), file=sys.stderr)
         raise SystemExit(1) from None
     if mode == "web":

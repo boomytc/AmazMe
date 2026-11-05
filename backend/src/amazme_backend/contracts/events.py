@@ -13,7 +13,7 @@ from amazme_backend.shared.model import Model
 class Event(Model):
     seq: str
     kind: Literal["accepted", "status", "preview", "message", "tool", "cleanup", "approval", "children", "effect",
-                  "freeze", "compaction", "question"]
+                  "compaction", "question"]
     request_id: str
     text: str
     message: TranscriptMessage | None = None
@@ -57,7 +57,6 @@ class Stream(Model):
     batches: list[CommitBatch] = Field(default_factory=lambda: list[CommitBatch]())
     stream_id: str = ""
     binding_id: str = ""
-    build_id: str = ""
     resync: str = ""
 
 
@@ -81,7 +80,6 @@ class StreamHello(Model):
     binding_id: str = Field(min_length=1, max_length=128)
     stream_id: str = ""
     after: str = Field(default="0", pattern=r"^(0|[1-9][0-9]{0,17})$")
-    build_id: str
 
 
 class StreamAck(Model):

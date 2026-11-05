@@ -76,11 +76,9 @@ def main() -> None:
     parser.add_argument("--instance")
     parser.add_argument("--lifetime-fd", type=int)
     parser.add_argument("--require-existing-store", action="store_true")
-    parser.add_argument("--frozen", action="store_true")
     parser.add_argument("--validation", action="store_true")
     parser.add_argument("--approval-policy", choices=["auto", "mutations", "all"], default="mutations")
     parser.add_argument("--port", type=int, default=0)
-    parser.add_argument("--expected-build")
     parser.add_argument("--expected-epoch", type=int)
     args = parser.parse_args()
     from amazme_backend.profiles.locations import local_profile
@@ -111,9 +109,7 @@ def main() -> None:
         if not args.session or not args.instance or args.lifetime_fd is None:
             parser.error("worker requires --session, --instance and --lifetime-fd")
         retain_inherited(args.lifetime_fd, profile.path, "worker", args.instance)
-        asyncio.run(serve(profile, args.session, args.instance,
-                          frozen=args.frozen, validation=args.validation,
-                          require_existing=args.require_existing_store))
+        asyncio.run(serve(profile, args.session, args.instance, validation=args.validation, require_existing=args.require_existing_store))
     elif args.mode == "pair":
         print((profile.path / "web.token").read_text().strip())
     elif args.mode == "stop":
@@ -134,12 +130,11 @@ def main() -> None:
                                    headers={"Authorization": "Bearer " + (profile.path / "web.token").read_text().strip()})
             bootstrap.raise_for_status()
             ready = live_host_ready(profile.config.profile_id, ready, Identity.model_validate_json(bootstrap.content))
-            if ((args.expected_build is not None and args.expected_build != ready.build_id)
-                    or (args.expected_epoch is not None and args.expected_epoch != ready.host_epoch)):
+            if args.expected_epoch is not None and args.expected_epoch != ready.host_epoch:
                 parser.error("stale_host_epoch")
             response = client.post(ready.url + "/control/shutdown",
                                    headers={"Authorization": "Bearer " + profile.token},
-                                   json={"host_epoch": ready.host_epoch, "build_id": ready.build_id})
+                                   json={"host_epoch": ready.host_epoch})
             response.raise_for_status()
         deadline = time.monotonic() + 180
         while not _stopped(profile):

@@ -63,6 +63,6 @@ async def serve(profile: Profile, instance: str | None = None, process_lease: Pr
                 await asyncio.gather(owner.monitor_task, return_exceptions=True)
             try:
                 if owner.registered and not stop.is_set():
-                    await owner.shutdown(HostFence(host_epoch=owner.host_epoch, build_id=owner.build))
+                    await owner.shutdown(HostFence(host_epoch=owner.host_epoch))
             finally:
                 await owner.close()

@@ -97,12 +97,10 @@ class WorkspaceOperations:
             raise BackendError("skill_read_failed") from error
 
     async def mutate_skills[T](self, session: str, operation: Callable[[Path], T]) -> T:
-        async with self.lifecycle.update_lock:
+        async with self.lifecycle.management_lock:
             self.lifecycle.admit()
             if session:
                 await self.lifecycle.require_session(session)
-            if await self.lifecycle.store.active_update():
-                raise BackendError("update_frozen", status=503)
             task = asyncio.create_task(asyncio.to_thread(operation, await self._session_root(session)))
             try:
                 return await asyncio.shield(task)
@@ -148,8 +146,6 @@ class WorkspaceOperations:
 
     async def add_workspace(self, value: WorkspaceGrantRequest) -> WorkspaceGrantView:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         if value.name in {PRIMARY, "grant"}:
             raise BackendError("invalid_workspace_name")
         validate_workspace(value.name)
@@ -161,8 +157,6 @@ class WorkspaceOperations:
 
     async def remove_workspace(self, name: str) -> None:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         if name == PRIMARY:
             raise BackendError("workspace_grant_forbidden")
         await self.lifecycle.store.remove_workspace_grant(name)
@@ -208,8 +202,6 @@ class WorkspaceOperations:
 
     async def write_workspace(self, value: FileWrite) -> FileChange:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         name, inner, root = await self._mapped_root(value.path)
         shown = client_path(name, inner)
         current = self._current_text(root, inner)
@@ -230,8 +222,6 @@ class WorkspaceOperations:
 
     async def create_checkpoint(self, value: CheckpointCreate) -> CheckpointView:
         self.lifecycle.admit()
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         name, inner = split_client_path(value.path)
         if name == "grant" or not inner or name != value.workspace:
             raise BackendError("invalid_workspace_path")
@@ -252,35 +242,20 @@ class WorkspaceOperations:
 
     async def _admit_file_preparation(self, value: PrepareFileWrite | PreparePatch) -> None:
         self.lifecycle.admit()
-        if value.host_epoch != self.lifecycle.fence.host_epoch or value.build_id != self.lifecycle.build:
+        if (value.host_epoch != self.lifecycle.fence.host_epoch):
             raise BackendError("stale_host_epoch")
-        if await self.lifecycle.store.active_update():
-            raise BackendError("update_frozen", status=503)
         service = await self.lifecycle.store.service()
         if service is None or service.state != "running" or exited(service.process_lease):
             raise BackendError("supervisor_unavailable", status=503)
         health = await self.lifecycle.supervisor.call("GET", "/health", SupervisorHealth)
         self.lifecycle.check_supervisor(health.identity, service, fenced=True)
         if (
-            health.freeze_id
-            or health.blocked
-            or health.session_errors.get(value.session_id)
-            or (health.identity.state != "ready")
-            or (health.identity.instance_id != value.supervisor_id)
+            (health.blocked) or (health.session_errors.get(value.session_id)) or (health.identity.state != "ready") or (health.identity.instance_id != value.supervisor_id)
         ):
             raise BackendError("execution_blocked", status=503)
         worker = next((w for w in health.workers if w.worker_id == value.worker_id), None)
         if (
-            worker is None
-            or worker.session_id != value.session_id
-            or worker.build_id != self.lifecycle.build
-            or (worker.host_epoch != value.host_epoch)
-            or (worker.fingerprint != self.lifecycle.build)
-            or (worker.execution_epoch != value.execution_epoch)
-            or (worker.purpose != "business")
-            or (worker.state != "ready")
-            or (worker.process_lease is None)
-            or exited(worker.process_lease)
+            (worker is None) or (worker.session_id != value.session_id) or (worker.host_epoch != value.host_epoch) or (worker.execution_epoch != value.execution_epoch) or (worker.purpose != "business") or (worker.state != "ready") or (worker.process_lease is None) or (exited(worker.process_lease))
         ):
             raise BackendError("worker_identity_mismatch", status=503)
         if not any(

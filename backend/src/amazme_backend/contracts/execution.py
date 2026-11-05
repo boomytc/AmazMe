@@ -323,7 +323,6 @@ class Lease(Model):
     session_id: str
     worker_id: str
     execution_epoch: int
-    build_id: str
     supervisor_id: str = ""
 
 
@@ -342,11 +341,9 @@ class WorkerInfo(Model):
     worker_id: str
     pid: int
     socket: str
-    build_id: str
     process_lease: ProcessLease | None = None
-    state: Literal["starting", "ready", "frozen", "stopping", "stopped", "blocked", "unknown"] = "starting"
+    state: Literal["starting", "ready", "stopping", "stopped", "blocked", "unknown"] = "starting"
     execution_epoch: int = 0
-    fingerprint: str = ""
     plugin_fingerprint: str = ""
     purpose: Literal["business", "validation"] = "business"
     host_epoch: int = 0
@@ -407,7 +404,6 @@ class SupervisorHealth(Model):
     terminals: list[TerminalView] = Field(default_factory=lambda: list[TerminalView]())
     identity: Identity
     registry_revision: str
-    freeze_id: str = ""
     workers: list[WorkerInfo]
     epochs: list[EpochHealth]
     effects: list[EffectHold] = Field(default_factory=lambda: list[EffectHold]())
@@ -419,7 +415,6 @@ class SupervisorHealth(Model):
 
 class ServiceInfo(Model):
     instance_id: str
-    build_id: str
     process_lease: ProcessLease
     state: Literal["starting", "running", "stopping", "stopped", "unknown"]
     pid: int = 0

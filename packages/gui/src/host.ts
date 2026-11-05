@@ -96,7 +96,7 @@ export function createHostConnection(options: {
             stopping ??= (async () => {
                 if (connection === undefined) return;
                 try {
-                    await run(options.executable, ["stop", "--profile", connection.profilePath, "--expected-build", connection.ready.buildId, "--expected-epoch", String(connection.ready.hostEpoch)], {
+                    await run(options.executable, ["stop", "--profile", connection.profilePath, "--expected-epoch", String(connection.ready.hostEpoch)], {
                         cwd: options.cwd, env, encoding: "utf8", timeout: 190_000, maxBuffer: 32_768,
                     });
                 } catch { throw new Error("local_host_stop_failed"); }

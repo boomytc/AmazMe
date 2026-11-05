@@ -19,11 +19,6 @@ def listing(db: sqlite3.Connection) -> PluginPackages:
     )
 
 
-def check_open(db: sqlite3.Connection) -> None:
-    if db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]:
-        raise BackendError("update_frozen", status=503)
-
-
 def existing(db: sqlite3.Connection, value: PluginPackageAdd) -> PluginPackages | None:
     row = db.execute("SELECT intent FROM plugin_packages WHERE id=?", (value.package_id,)).fetchone()
     if row is None:
@@ -34,7 +29,6 @@ def existing(db: sqlite3.Connection, value: PluginPackageAdd) -> PluginPackages 
 
 
 def add(db: sqlite3.Connection, value: PluginPackageAdd, entry: str) -> PluginPackages:
-    check_open(db)
     previous = existing(db, value)
     if previous is not None:
         return previous
@@ -54,7 +48,6 @@ def add(db: sqlite3.Connection, value: PluginPackageAdd, entry: str) -> PluginPa
 
 
 def begin_remove(db: sqlite3.Connection, package_id: str, expected_revision: int) -> PluginPackage:
-    check_open(db)
     row = db.execute("SELECT entry,phase FROM plugin_packages WHERE id=?", (package_id,)).fetchone()
     if row is None:
         raise BackendError("plugin_package_not_found", status=404)

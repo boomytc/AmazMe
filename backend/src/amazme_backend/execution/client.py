@@ -26,7 +26,6 @@ from amazme_backend.contracts.ipc.supervisor import (
     CancelPlugin,
     ClosePlugin,
     CodeStatus,
-    FreezeSupervisor,
     JobOutputQuery,
     JobReference,
     JobSession,
@@ -44,7 +43,6 @@ from amazme_backend.contracts.ipc.supervisor import (
     Recovery,
     ReloadPlugin,
     ResolveEffect,
-    RetireSupervisor,
     RunTool,
     StopWorker,
     SubmitRemote,
@@ -209,11 +207,7 @@ class SupervisorClient(Peer):
     async def health(self) -> SupervisorHealth:
         return await self.call("GET", "/health", SupervisorHealth)
 
-    async def freeze(self, value: FreezeSupervisor) -> SupervisorHealth:
-        return await self.call("POST", "/freeze", SupervisorHealth, value)
 
-    async def thaw(self, value: FreezeSupervisor) -> SupervisorHealth:
-        return await self.call("POST", "/thaw", SupervisorHealth, value)
 
     async def recover(self, value: Recovery) -> SupervisorHealth:
         return await self.call("POST", "/recover", SupervisorHealth, value)
@@ -221,8 +215,6 @@ class SupervisorClient(Peer):
     async def shutdown(self, value: HostFence) -> Identity:
         return await self.call("POST", "/shutdown", Identity, value)
 
-    async def retire(self, value: RetireSupervisor) -> SupervisorHealth:
-        return await self.call("POST", "/retire", SupervisorHealth, value)
 
     async def list_plugins(self, session_id: str = "") -> PluginList:
         query = "?" + urlencode({"session_id": session_id}) if session_id else ""

@@ -1,6 +1,6 @@
 /// <reference lib="dom" />
 import type { Attachment, HttpOperations, Identity, Snapshot } from "../generated/contracts.ts";
-import { ApiError, parseContract, parseResponse, validateRequest } from "./api.ts";
+import { ApiContractError, ApiError, parseContract, parseResponse, validateRequest } from "./api.ts";
 import { applyFrame } from "./stream.ts";
 
 type Options<K extends keyof HttpOperations> = {
@@ -35,6 +35,7 @@ export class PythonClient {
 	onStatus: (status: ConnectionStatus) => void = () => {};
 	onError: (error: unknown) => void = () => {};
 	private generation = 0;
+	private retries = 0;
 	private timer?: ReturnType<typeof setTimeout>;
 	private helloTimer?: ReturnType<typeof setTimeout>;
 	readonly origin: string;
@@ -53,7 +54,6 @@ export class PythonClient {
 		if (method !== "GET") {
 			const fence = options.connection?.identity ?? options.identity ?? this.identity;
 			if (!fence) throw new Error("请先连接后端");
-			headers["x-amazme-build"] = fence.build_id;
 			headers["x-amazme-epoch"] = String(fence.host_epoch);
 			if (options.connection?.attachment) headers["x-amazme-attachment"] = options.connection.attachment.attachment_id;
 		}
@@ -69,7 +69,6 @@ export class PythonClient {
 		const identity = await this.call("GET /api/v1/bootstrap");
 		if (identity.role !== "host" || identity.protocol !== "amazme-http/1" || !identity.host_epoch) throw new ConnectionIdentityError("后端启动身份不匹配，请重新启动。");
 		if (this.identity && this.identity.profile_id !== identity.profile_id) throw new ConnectionIdentityError("宿主已更换；请重新打开对应窗口，原操作编号仍保留。");
-		if (this.identity && this.identity.build_id !== identity.build_id) throw new ConnectionIdentityError("后端版本已更换；请刷新页面，原操作编号仍保留。");
 		this.identity = identity;
 		return identity;
 	}
@@ -84,13 +83,14 @@ export class PythonClient {
 		const connection: ClientConnection = { sessionId, identity, attachment, generation: this.generation, ready: true,
 			active: () => this.identity === identity };
 		try {
-			if (attachment.session_id !== sessionId || attachment.build_id !== identity.build_id || attachment.host_epoch !== identity.host_epoch) throw new ConnectionIdentityError("会话绑定不匹配，请重新打开窗口。");
+			if (attachment.session_id !== sessionId || attachment.host_epoch !== identity.host_epoch) throw new ConnectionIdentityError("会话绑定不匹配，请重新打开窗口。");
 			return await work(connection);
 		}
 		finally { await this.detach(connection); }
 	}
 
 	async connect(sessionId: string, resume = false): Promise<void> {
+		if (!resume) this.retries = 0;
 		const previous = this.connection;
 		const cached = resume && this.connection?.sessionId === sessionId ? this.connection.snapshot : undefined;
 		this.retire();
@@ -108,7 +108,7 @@ export class PythonClient {
 			const attachment = await this.call("POST /api/v1/sessions/{session}/attachments", { path: { session: sessionId }, identity });
 			connection.attachment = attachment;
 			if (!connection.active()) { void this.detach(connection); return; }
-			if (attachment.session_id !== sessionId || attachment.build_id !== identity.build_id || attachment.host_epoch !== identity.host_epoch) throw new ConnectionIdentityError("会话绑定不匹配，请重新打开窗口。");
+			if (attachment.session_id !== sessionId || attachment.host_epoch !== identity.host_epoch) throw new ConnectionIdentityError("会话绑定不匹配，请重新打开窗口。");
 			const url = new URL(`/api/v1/events/${encodeURIComponent(sessionId)}`, this.origin);
 			url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
 			const socket = new WebSocket(url);
@@ -116,7 +116,7 @@ export class PythonClient {
 			this.helloTimer = setTimeout(() => this.reconnect(connection), 40_000);
 			socket.onopen = () => {
 				if (!connection.active()) { socket.close(); return; }
-				socket.send(JSON.stringify({ kind: "hello", binding_id: attachment.attachment_id, build_id: identity.build_id, stream_id: cached?.stream_id ?? "", after: cached?.seq ?? "0" }));
+				socket.send(JSON.stringify({ kind: "hello", binding_id: attachment.attachment_id, stream_id: cached?.stream_id ?? "", after: cached?.seq ?? "0" }));
 			};
 			socket.onmessage = event => {
 				if (!connection.active() || this.timer) return;
@@ -125,11 +125,15 @@ export class PythonClient {
 					const frame = parseContract("Stream", JSON.parse(event.data));
 					connection.snapshot = applyFrame(connection.snapshot, frame, attachment);
 					connection.ready = true;
+					this.retries = 0;
 					clearTimeout(this.helloTimer);
 					this.onStatus("connected");
 					this.onChange();
 					socket.send(JSON.stringify({ kind: "ack", binding_id: attachment.attachment_id, stream_id: frame.stream_id, seq: connection.snapshot.seq }));
-				} catch (error) { this.onError(error); this.reconnect(connection, true); }
+				} catch (error) {
+					if (error instanceof ApiContractError) this.failed(error);
+					else { this.onError(error); this.reconnect(connection, true); }
+				}
 			};
 			socket.onclose = event => {
 				if (!connection.active()) return;
@@ -151,18 +155,11 @@ export class PythonClient {
 			};
 		} catch (error) {
 			if (generation !== this.generation) return;
-			const terminal = error instanceof ConnectionIdentityError || error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
-			if (terminal && this.connection) {
-				this.connection.ready = false;
-				this.connection.failure = error.message;
-				this.onChange();
-			}
+			const terminal = error instanceof ConnectionIdentityError || error instanceof ApiContractError || error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
+			if (terminal) { this.failed(error, sessionId); return; }
 			this.onError(error);
 			this.onStatus("disconnected");
-			if (!terminal) this.timer = setTimeout(() => {
-				this.timer = undefined;
-				if (generation === this.generation) void this.connect(sessionId, true);
-			}, 1000);
+			this.scheduleReconnect(sessionId, generation, 1000);
 		}
 	}
 
@@ -173,7 +170,32 @@ export class PythonClient {
 		clearTimeout(this.helloTimer);
 		this.onStatus("reconnecting");
 		this.onChange();
-		this.timer = setTimeout(() => { this.timer = undefined; void this.connect(connection.sessionId, true); }, 750);
+		this.scheduleReconnect(connection.sessionId, this.generation, 750);
+	}
+	private scheduleReconnect(sessionId: string, generation: number, delay: number): void {
+		if (this.retries >= 5) {
+			this.failed(new Error("连接未恢复，请检查后端后重新连接或刷新页面。"), sessionId);
+			return;
+		}
+		this.retries++;
+		this.timer = setTimeout(() => {
+			this.timer = undefined;
+			if (generation === this.generation) void this.connect(sessionId, true);
+		}, delay);
+	}
+	private failed(error: unknown, sessionId?: string): void {
+		const identity = this.identity;
+		const connection: ClientConnection | undefined = this.connection ?? (sessionId && identity ? {
+			sessionId, identity, generation: this.generation, ready: false, active: () => false,
+		} : undefined);
+		this.retire();
+		if (connection) {
+			connection.failure = error instanceof Error ? error.message : String(error);
+			this.connection = connection;
+		}
+		this.onStatus("disconnected");
+		this.onChange();
+		this.onError(error);
 	}
 	private async detach(connection: ClientConnection): Promise<void> {
 		if (!connection.attachment) return;

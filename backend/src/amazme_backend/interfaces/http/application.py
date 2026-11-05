@@ -49,7 +49,7 @@ from amazme_backend.contracts.feedback import (
     FeedbackView,
     FeedbackWrite,
 )
-from amazme_backend.contracts.host import CompleteUpdate, Health, PrepareUpdate, UpdateRecord
+from amazme_backend.contracts.host import Health
 from amazme_backend.contracts.identity import HostFence, Identity
 from amazme_backend.contracts.ipc.host import (
     CodeToolDispatch,
@@ -201,10 +201,7 @@ def application(owner: Host) -> FastAPI:
             cookie = secrets.compare_digest(request.cookies.get("amazme", ""), owner.web_token)
             valid = bearer or (cookie and (request.method in {"GET", "HEAD"} or origin == owner.origin))
             if valid and request.method not in {"GET", "HEAD"}:
-                if (request.headers.get("x-amazme-build"), request.headers.get("x-amazme-epoch")) != (
-                    owner.lifecycle.build,
-                    str(owner.lifecycle.fence.host_epoch),
-                ):
+                if request.headers.get("x-amazme-epoch") != str(owner.lifecycle.fence.host_epoch):
                     return JSONResponse(
                         {"code": "stale_client_binding", "message": "Reconnect before writing"},
                         status_code=409,
@@ -230,12 +227,6 @@ def application(owner: Host) -> FastAPI:
             return JSONResponse(
                 {"code": "unauthenticated", "message": "Authentication required"}, status_code=401
             )
-        mutating = (path.startswith(("/api/", "/control/"))
-                    and request.method not in {"GET", "HEAD", "OPTIONS"} and path != "/control/restart")
-        if mutating:
-            if owner.lifecycle.closing:
-                return JSONResponse({"code": "host_stopping", "message": "Host stopping"}, status_code=503)
-            owner.lifecycle.mutating_requests += 1
         try:
             response = await call_next(request)
         except sqlite3.Error:
@@ -245,17 +236,10 @@ def application(owner: Host) -> FastAPI:
                 status_code=503,
             )
         except httpx.TransportError:
-            if await owner.lifecycle.store.active_update():
-                return JSONResponse(
-                    {"code": "update_prepared", "message": "update_prepared"}, status_code=503
-                )
             return JSONResponse(
                 {"code": "runtime_recovering", "message": "Runtime recovering; retry the same request ID"},
                 status_code=503,
             )
-        finally:
-            if mutating:
-                owner.lifecycle.mutating_requests -= 1
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         if "content-security-policy" not in response.headers:
@@ -829,7 +813,7 @@ def application(owner: Host) -> FastAPI:
 
     @app.post("/api/v1/sessions/{session}/requests/{request_id}/cancel", status_code=202)
     async def cancel(session: str, request_id: str) -> Receipt:
-        value = Cancel(host_epoch=0, build_id="", request_id=request_id)
+        value = Cancel(host_epoch=0, request_id=request_id)
         return await owner.sessions.deliver(session, "cancel", request_id, value)
 
     @app.post("/api/v1/sessions/{session}/approvals", status_code=202)
@@ -864,21 +848,6 @@ def application(owner: Host) -> FastAPI:
             with contextlib.suppress(RuntimeError):
                 await socket.close(code=1012)
 
-    @app.post("/control/updates/prepare")
-    async def prepare(value: PrepareUpdate) -> UpdateRecord:
-        return await owner.updates.prepare_update(value)
-
-    @app.post("/control/updates/{identity}/resume")
-    async def resume(identity: str) -> UpdateRecord:
-        return await owner.updates.resume_update(identity)
-
-    @app.post("/control/updates/complete")
-    async def complete(value: CompleteUpdate) -> UpdateRecord:
-        return await owner.updates.complete_update(value)
-
-    @app.get("/control/updates/{identity}")
-    async def update(identity: str) -> UpdateRecord:
-        return await owner.lifecycle.store.update(identity)
 
     @app.post("/control/file-writes/prepare")
     async def prepare_tool_write(value: PrepareFileWrite) -> PreparedFileWrite:
@@ -902,18 +871,12 @@ def application(owner: Host) -> FastAPI:
 
     @app.post("/control/recover")
     async def recover(value: Recovery) -> Health:
-        return await owner.updates.recover(value)
+        return await owner.recover(value)
 
     @app.get("/control/desktop/activity")
     async def desktop_activity() -> TaskActivity:
         return await owner.task_activity()
 
-    @app.post("/control/restart")
-    async def restart(value: HostFence) -> Identity:
-        if value != owner.lifecycle.fence:
-            raise BackendError("stale_host_epoch")
-        await owner.retire_idle()
-        return owner.lifecycle.identity("stopping")
 
     @app.post("/control/shutdown")
     async def shutdown(value: HostFence) -> Identity:

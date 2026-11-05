@@ -50,7 +50,7 @@ class CodeOperations:
 
     async def tools(self, session_id: str) -> CodeTools:
         workspace = self.owner.queries.session_workspace(session_id)
-        servers = (await self.owner.mcp.state(McpSession(host_epoch=self.owner.host_epoch,build_id=self.owner.build,session_id=session_id))).servers
+        servers = (await self.owner.mcp.state(McpSession(host_epoch=self.owner.host_epoch, session_id=session_id))).servers
         offers = offers_from_views(servers, surface="code")
         plugins = [offer for view in (await self.owner.plugins.list(session_id)).plugins for offer in PluginOffer.from_view(view,workspace)]
         return CodeTools.model_validate({"tools":self.owner.code_tool_definitions(offers,self.owner.profile.config.provider,plugins)})
@@ -58,7 +58,7 @@ class CodeOperations:
     async def bind_tool(self, value: CodeToolDispatch) -> CodeToolBinding:
         self.owner.check_host(value)
         request_id = hashlib.sha256(f"code:{value.session_id}:{value.run_id}:{value.sequence}".encode()).hexdigest()
-        payload = json.dumps(value.model_dump(mode="json",exclude={"host_epoch","build_id","cancel"}),sort_keys=True)
+        payload = json.dumps(value.model_dump(mode="json",exclude={"host_epoch","cancel"}),sort_keys=True)
         def bind(db: sqlite3.Connection) -> CodeToolBinding:
             prior = db.execute("SELECT * FROM code_tool_calls WHERE id=?", (request_id,)).fetchone()
             if prior is not None:
@@ -85,7 +85,7 @@ class CodeOperations:
         async with self.owner.control:
             self.owner.check_host(value)
             if value.parent_request_id or value.parent_step_id:
-                await self.owner.validate_worker(WorkerRequest(session_id=value.session_id, worker_id=value.worker_id, build_id=value.build_id))
+                await self.owner.validate_worker(WorkerRequest(session_id=value.session_id, worker_id=value.worker_id))
                 if not value.parent_request_id or len(value.parent_step_id) != 64 or value.run_id != value.parent_step_id[:32]:
                     raise BackendError("codemode_parent_identity")
             if value.state_scope and (not value.parent_request_id or value.state_scope != value.parent_request_id):
@@ -97,7 +97,7 @@ class CodeOperations:
                     raise BackendError("codemode_state_invalid") from error
                 if not isinstance(initial, dict):
                     raise BackendError("codemode_state_invalid")
-            intent = value.model_dump_json(exclude={"host_epoch", "build_id", "worker_id"})
+            intent = value.model_dump_json(exclude={"host_epoch", "worker_id"})
             existing = await self.owner.db.call(lambda db: db.execute("SELECT * FROM code_runs WHERE id=?", (value.run_id,)).fetchone())
             if existing is not None:
                 if (existing["session"] != value.session_id or existing["source"] != value.source
@@ -166,7 +166,7 @@ class CodeOperations:
 
         async def invoke(request: CodeToolDispatch) -> dict[str, object]:
             ready = HostReady.model_validate_json((self.owner.profile.path / "ready.json").read_bytes())
-            if ready.host_epoch != value.host_epoch or ready.build_id != self.owner.build or ready.profile_id != self.owner.profile.config.profile_id:
+            if (ready.host_epoch != value.host_epoch) or (ready.profile_id != self.owner.profile.config.profile_id):
                 raise BackendError("stale_host_epoch")
             client = httpx.AsyncClient(base_url=ready.url,trust_env=False,timeout=10,
                 headers={"Authorization":"Bearer " + self.owner.profile.token})
@@ -202,7 +202,7 @@ class CodeOperations:
                 await client.aclose()
 
         def call_tool(message: dict[str, object]) -> dict[str, object]:
-            request = CodeToolDispatch.model_validate({"host_epoch":value.host_epoch,"build_id":self.owner.build,
+            request = CodeToolDispatch.model_validate({"host_epoch":value.host_epoch,
                 "session_id":value.session_id,"run_id":value.run_id,"sequence":int(str(message.get("id"))),
                 "name":message.get("name"),"arguments":message.get("arguments")})
             dispatched.append(request)

@@ -86,7 +86,7 @@ class McpOperations:
             self.owner.check_host(value)
             old = await self.owner.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (value.server_id,)).fetchone())
             workspace = value.workspace or (str(old["workspace"]) if old is not None else self.owner.queries.session_workspace(value.session_id))
-            launch_body = value.model_dump(exclude={"host_epoch", "build_id", "server_id"})
+            launch_body = value.model_dump(exclude={"host_epoch", "server_id"})
             launch_body["workspace"] = workspace
             launch_body["environment_commands"] = list(value.environment_commands.items())
             launch = hashlib.sha256(json.dumps(launch_body, sort_keys=True).encode()).hexdigest()
@@ -236,7 +236,7 @@ class McpOperations:
             server = await self.owner.db.call(lambda db: db.execute("SELECT * FROM mcp_servers WHERE id=?", (server_id,)).fetchone())
             if server is None or server["session"] != session_id:
                 raise BackendError("mcp_not_found", status=404)
-            digest = mcp_digest(server_id, str(server["command"]), str(server["workspace"]), self.owner.build, value.name, value.arguments)
+            digest = mcp_digest(server_id, str(server["command"]), str(server["workspace"]), value.name, value.arguments)
             existing = await self.owner.db.call(lambda db: db.execute("SELECT * FROM mcp_calls WHERE id=?", (value.call_id,)).fetchone())
             if existing is not None:
                 stored_origin = str(existing["origin"] or "manual")

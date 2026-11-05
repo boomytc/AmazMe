@@ -33,8 +33,6 @@ async def save_checkpoint(
 ) -> tuple[str, str, str, str]:
 
     def operation(db: sqlite3.Connection) -> tuple[str, str, str, str]:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         save_checkpoint_row(db, checkpoint_id, workspace, path, digest, content)
         return (checkpoint_id, workspace, path, digest)
 
@@ -73,8 +71,6 @@ async def prepare_file_write(
     request_digest = hashlib.sha256(write.model_dump_json().encode()).hexdigest()
 
     def operation(db: sqlite3.Connection) -> PreparedFileWrite:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         old = db.execute(
             "SELECT request_digest,payload FROM file_write_preparations WHERE session=? AND call=?",
             (session, call),
@@ -131,8 +127,6 @@ async def save_patch_preparation(self: PersistenceOwner, session: str, source: s
     request_digest = hashlib.sha256(source.encode()).hexdigest()
 
     def operation(db: sqlite3.Connection) -> PreparedPatch:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute("SELECT request_digest,payload FROM file_write_preparations WHERE session=? AND call=?",
                          (session, plan.call_id)).fetchone()
         if row is not None:

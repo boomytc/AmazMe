@@ -54,7 +54,6 @@ class Changes:
                                                      message=message, question=question)))
 
 
-
 def context_requests(db: sqlite3.Connection, request_id: str) -> tuple[int, list[str]]:
     row = db.execute("SELECT payload FROM requests WHERE id=?", (request_id,)).fetchone()
     if row is None:
@@ -110,8 +109,6 @@ def set_metadata_value(db: sqlite3.Connection, key: str, value: str) -> None:
 
 
 def check_fence(state: SessionContext, db: sqlite3.Connection, fence: HostFence) -> None:
-    if fence.build_id != state.build:
-        raise BackendError("build_mismatch")
     if fence.host_epoch != int(metadata_value(db, "host_epoch")):
         raise BackendError("stale_host_epoch")
 
@@ -311,7 +308,7 @@ def session_activity(db: sqlite3.Connection) -> WorkerActivity:
     resolutions = db.execute("SELECT count(*) FROM resolutions WHERE result=''").fetchone()[0]
     due = min((r.not_before_ms for r in requests if r.not_before_ms > clock.now_ms()), default=0)
     state: WorkerState = "blocked" if metadata_value(db, "blocked") else (
-        "stopping" if metadata_value(db, "stopping") else "frozen" if metadata_value(db, "freeze_id") else "ready")
+        "stopping" if metadata_value(db, "stopping") else "ready")
     runnable = state == "ready" and (resolutions > 0 or any(
         r.kind != "steer" and r.status not in {"waiting_approval", "waiting_input", "waiting_children"} and r.not_before_ms <= clock.now_ms()
         for r in requests))

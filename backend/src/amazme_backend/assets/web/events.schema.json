@@ -22,10 +22,6 @@
         "call": {
           "$ref": "#/$defs/ToolCall"
         },
-        "build_id": {
-          "title": "Build Id",
-          "type": "string"
-        },
         "proposal_digest": {
           "title": "Proposal Digest",
           "type": "string"
@@ -52,7 +48,6 @@
         "run_id",
         "call_id",
         "call",
-        "build_id",
         "proposal_digest",
         "revision",
         "state"
@@ -185,7 +180,6 @@
             "approval",
             "children",
             "effect",
-            "freeze",
             "compaction",
             "question"
           ],
@@ -524,8 +518,7 @@
             "recovering",
             "ready",
             "blocked",
-            "stopping",
-            "frozen"
+            "stopping"
           ],
           "title": "State",
           "type": "string"
@@ -737,11 +730,6 @@
     "binding_id": {
       "default": "",
       "title": "Binding Id",
-      "type": "string"
-    },
-    "build_id": {
-      "default": "",
-      "title": "Build Id",
       "type": "string"
     },
     "resync": {

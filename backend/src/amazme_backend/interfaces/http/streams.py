@@ -89,8 +89,6 @@ async def serve_stream(owner: Host, socket: WebSocket, session: str) -> None:
     incoming: asyncio.Task[str] | None = None
     try:
         hello = StreamHello.model_validate_json(await asyncio.wait_for(receive(socket), HELLO_TIMEOUT))
-        if hello.build_id != owner.lifecycle.build:
-            raise BackendError("build_mismatch")
         owner.sessions.check_attachment(hello.binding_id, session)
         if hello.binding_id in connections.bindings:
             raise BackendError("binding_in_use")
@@ -111,8 +109,7 @@ async def serve_stream(owner: Host, socket: WebSocket, session: str) -> None:
             if value.session_id != session or not value.stream_id:
                 raise BackendError("snapshot_identity_mismatch")
             sequence(value.seq)
-            return Stream(snapshot=value, stream_id=value.stream_id, binding_id=binding,
-                          build_id=owner.lifecycle.build, resync=reason)
+            return Stream(snapshot=value, stream_id=value.stream_id, binding_id=binding, resync=reason)
 
         async def replay(stream_id: str, cursor: int) -> Replay:
             check()
@@ -127,7 +124,7 @@ async def serve_stream(owner: Host, socket: WebSocket, session: str) -> None:
         if stream_id:
             value = await replay(stream_id, cursor)
             if valid_replay(value, stream_id, cursor) and value.batches:
-                frame = Stream(batches=value.batches, stream_id=stream_id, binding_id=binding, build_id=owner.lifecycle.build)
+                frame = Stream(batches=value.batches, stream_id=stream_id, binding_id=binding)
             elif not valid_replay(value, stream_id, cursor):
                 frame = await snapshot("cursor_unavailable")
         if frame is None:
@@ -168,7 +165,7 @@ async def serve_stream(owner: Host, socket: WebSocket, session: str) -> None:
             if not valid_replay(value, stream_id, cursor):
                 frame = await snapshot("cursor_unavailable")
             elif value.batches:
-                frame = Stream(batches=value.batches, stream_id=stream_id, binding_id=binding, build_id=owner.lifecycle.build)
+                frame = Stream(batches=value.batches, stream_id=stream_id, binding_id=binding)
     except WebSocketDisconnect:
         pass
     except TimeoutError:

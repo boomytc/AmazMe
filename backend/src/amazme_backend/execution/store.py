@@ -18,7 +18,6 @@ CREATE TABLE IF NOT EXISTS control(
     epoch INTEGER NOT NULL,
     revision INTEGER NOT NULL,
     fence_ready INTEGER NOT NULL,
-    freeze TEXT NOT NULL,
     blocked TEXT NOT NULL,
     owner TEXT NOT NULL
 );
@@ -34,7 +33,6 @@ CREATE TABLE IF NOT EXISTS epochs(
     epoch INTEGER NOT NULL,
     worker TEXT NOT NULL,
     supervisor TEXT NOT NULL,
-    build TEXT NOT NULL,
     state TEXT NOT NULL,
     receipt TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(session,epoch),
@@ -46,7 +44,6 @@ CREATE TABLE IF NOT EXISTS scopes(
     epoch INTEGER NOT NULL,
     worker TEXT NOT NULL,
     supervisor TEXT NOT NULL,
-    build TEXT NOT NULL,
     request TEXT NOT NULL,
     directory TEXT NOT NULL,
     lease TEXT NOT NULL,
@@ -87,10 +84,6 @@ CREATE TABLE IF NOT EXISTS recoveries(
     id TEXT PRIMARY KEY,
     session TEXT NOT NULL,
     state TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS thaws(
-    id TEXT PRIMARY KEY,
-    build TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS terminals(
     id TEXT PRIMARY KEY,
@@ -252,7 +245,7 @@ CREATE INDEX IF NOT EXISTS scope_epoch ON scopes(session,epoch);
 CREATE UNIQUE INDEX IF NOT EXISTS plugin_call_step ON plugin_calls(id,step_id);
 CREATE UNIQUE INDEX IF NOT EXISTS code_parent_step ON code_runs(id,parent_step);
 PRAGMA user_version=3;
-INSERT OR IGNORE INTO control VALUES(1,0,0,1,'','','');
+INSERT OR IGNORE INTO control VALUES(1,0,0,1,'','');
 COMMIT;
 """
 

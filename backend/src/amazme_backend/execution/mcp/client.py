@@ -120,7 +120,7 @@ class McpClient:
                 raise BackendError("mcp_message_invalid", status=503)
 
 
-def mcp_digest(server: str, command: str, workspace: str, build: str, name: str, arguments: dict[str, JsonValue]) -> str:
-    body = json.dumps({"server": server, "command": command, "workspace": workspace, "build": build,
+def mcp_digest(server: str, command: str, workspace: str, name: str, arguments: dict[str, JsonValue]) -> str:
+    body = json.dumps({"server": server, "command": command, "workspace": workspace,
                        "name": name, "arguments": arguments}, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(body.encode()).hexdigest()

@@ -79,10 +79,8 @@ async def lookup_reused(self: PersistenceOwner, session_id: str, value: CreateSe
 async def record_reuse(self: PersistenceOwner, session_id: str, value: CreateSession, target: str) -> Session | None:
     creation = creation_digest(value)
     def operation(db: sqlite3.Connection) -> Session | None:
-        control = db.execute("SELECT freeze_id,quitting FROM control WHERE id=1").fetchone()
+        control = db.execute("SELECT quitting FROM control WHERE id=1").fetchone()
         if control[0]:
-            raise BackendError("update_frozen", status=503)
-        if control[1]:
             raise BackendError("host_stopping", status=503)
         existing = reused_session(db, session_id, creation)
         if existing is not None:
@@ -108,10 +106,8 @@ async def record_reuse(self: PersistenceOwner, session_id: str, value: CreateSes
 
 def create(db: sqlite3.Connection, session_id: str, value: CreateSession) -> Session:
     creation = creation_digest(value)
-    control = db.execute("SELECT freeze_id,quitting FROM control WHERE id=1").fetchone()
-    if str(control[0]):
-        raise BackendError("update_frozen", status=503)
-    if control[1]:
+    control = db.execute("SELECT quitting FROM control WHERE id=1").fetchone()
+    if control[0]:
         raise BackendError("host_stopping", status=503)
     existing = reused_session(db, session_id, creation)
     if existing is not None:
@@ -170,7 +166,6 @@ def create(db: sqlite3.Connection, session_id: str, value: CreateSession) -> Ses
     return rows.session_row(db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone())
 
 
-
 async def create_session(self: PersistenceOwner, session_id: str, value: CreateSession) -> Session:
     return await self.transaction(lambda db: create(db, session_id, value))
 
@@ -203,8 +198,6 @@ async def create_branch(
     )
 
     def operation(db: sqlite3.Connection) -> Session:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         if db.execute("SELECT 1 FROM session_create_aliases WHERE id=?", (session_id,)).fetchone():
             raise BackendError("branch_conflict")
         if db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone():
@@ -274,8 +267,6 @@ async def exists(self: PersistenceOwner, session: str) -> bool:
 async def set_archived(self: PersistenceOwner, session_id: str, archived: bool) -> Session:
 
     def operation(db: sqlite3.Connection) -> Session:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         if (
             not archived
             and db.execute("SELECT 1 FROM session_removals WHERE session=?", (session_id,)).fetchone()
@@ -299,8 +290,6 @@ async def set_archived(self: PersistenceOwner, session_id: str, archived: bool) 
 async def rename_session(self: PersistenceOwner, session_id: str, title: str, expected: str) -> Session:
 
     def operation(db: sqlite3.Connection) -> Session:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         row = db.execute(rows.session_sql("WHERE s.id=?"), (session_id,)).fetchone()
         if row is None:
             raise BackendError("session_not_found", status=404)
@@ -315,8 +304,6 @@ async def rename_session(self: PersistenceOwner, session_id: str, title: str, ex
 async def begin_session_removal(self: PersistenceOwner, session: str) -> bool:
 
     def operation(db: sqlite3.Connection) -> bool:
-        if str(db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()[0]):
-            raise BackendError("update_frozen", status=503)
         removal = db.execute("SELECT completed FROM session_removals WHERE session=?", (session,)).fetchone()
         if removal is not None and bool(removal[0]):
             return False

@@ -11,7 +11,6 @@ CREATE TABLE IF NOT EXISTS control(
     id INTEGER PRIMARY KEY,
     epoch INTEGER NOT NULL,
     port INTEGER NOT NULL DEFAULT 0,
-    freeze_id TEXT NOT NULL DEFAULT '',
     blocked TEXT NOT NULL DEFAULT '',
     execution_initialized INTEGER NOT NULL DEFAULT 0,
     quitting INTEGER NOT NULL DEFAULT 0
@@ -19,7 +18,6 @@ CREATE TABLE IF NOT EXISTS control(
 CREATE TABLE IF NOT EXISTS hosts(
     epoch INTEGER PRIMARY KEY,
     instance TEXT UNIQUE NOT NULL,
-    build TEXT NOT NULL,
     lease TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS services(
@@ -57,11 +55,6 @@ CREATE TABLE IF NOT EXISTS deliveries(
     error_code TEXT NOT NULL DEFAULT '',
     error_status INTEGER NOT NULL DEFAULT 0,
     provider TEXT NOT NULL DEFAULT ''
-);
-CREATE TABLE IF NOT EXISTS updates(
-    ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT UNIQUE NOT NULL,
-    payload TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS restarts(
     at INTEGER NOT NULL
@@ -198,12 +191,6 @@ CREATE TABLE IF NOT EXISTS session_create_aliases(
     digest TEXT NOT NULL,
     session TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS update_supersessions(
-    update_id TEXT NOT NULL,
-    revision TEXT NOT NULL,
-    payload TEXT NOT NULL,
-    PRIMARY KEY(update_id,revision)
-);
 PRAGMA user_version=2;
 INSERT OR IGNORE INTO control(id,epoch) VALUES(1,0);
 INSERT OR IGNORE INTO plugin_package_revision(id,revision) VALUES(1,0);
@@ -214,14 +201,12 @@ COMMIT;
 
 def preflight(db: sqlite3.Connection) -> None:
     require_schema(db, SCHEMA)
-    control = db.execute("SELECT freeze_id FROM control WHERE id=1").fetchone()
-    if control is None:
+    if db.execute("SELECT 1 FROM control WHERE id=1").fetchone() is None:
         raise BackendError("storage_incomplete", status=503)
-    if control[0] and (not db.execute("SELECT 1 FROM updates WHERE id=?", (control[0],)).fetchone()):
-        raise BackendError("storage_corrupt", status=503)
 
 
-async def initialize(self: PersistenceOwner, instance: str, build: str, lease: ProcessLease) -> int:
+
+async def initialize(self: PersistenceOwner, instance: str, lease: ProcessLease) -> int:
 
     def create(db: sqlite3.Connection) -> None:
         db.executescript(SCHEMA)
@@ -235,7 +220,7 @@ async def initialize(self: PersistenceOwner, instance: str, build: str, lease: P
             )
         db.execute("UPDATE control SET epoch=epoch+1,quitting=0 WHERE id=1")
         epoch = int(db.execute("SELECT epoch FROM control WHERE id=1").fetchone()[0])
-        db.execute("INSERT INTO hosts VALUES(?,?,?,?)", (epoch, instance, build, lease.model_dump_json()))
+        db.execute("INSERT INTO hosts VALUES(?,?,?)", (epoch, instance, lease.model_dump_json()))
         return epoch
 
     return await self.transaction(begin)

@@ -50,30 +50,22 @@ class Profile:
     def worker_socket(self, session: str) -> Path:
         return self.socket("w-" + hashlib.sha256(session.encode()).hexdigest()[:16])
 
-    def identity(self, instance: str, build: str, *, role: Literal["host", "supervisor", "worker"] = "host",
-                 state: str = "ready", host_epoch: int = 0) -> Identity:
-        return Identity(build_id=build, profile_id=self.config.profile_id, instance_id=instance, pid=os.getpid(),
-                        role=role, state=state, host_epoch=host_epoch, fingerprint=build)
+    def identity(self, instance: str, *, role: Literal["host", "supervisor", "worker"] = "host", state: str = "ready", host_epoch: int = 0) -> Identity:
+        return Identity(profile_id=self.config.profile_id, instance_id=instance, pid=os.getpid(), role=role, state=state, host_epoch=host_epoch)
 
 
 def live_host_ready(profile_id: str, recorded: HostReady, identity: Identity) -> HostReady:
     """Authenticate the running instance against its published readiness record."""
-    if (recorded.profile_id != profile_id or identity.profile_id != profile_id or identity.role != "host"
-            or identity.instance_id != recorded.instance_id or identity.pid != recorded.pid
-            or identity.build_id != recorded.build_id or identity.fingerprint != identity.build_id
-            or identity.host_epoch != recorded.host_epoch):
+    if ((recorded.profile_id != profile_id) or (identity.profile_id != profile_id) or (identity.role != "host") or (identity.instance_id != recorded.instance_id) or (identity.pid != recorded.pid) or (identity.host_epoch != recorded.host_epoch)):
         raise BackendError("local_host_identity_mismatch")
     return HostReady(url=recorded.url, **identity.model_dump())
 
 
-async def wait_peer(peer: Peer, expected_build: str, timeout: float = 20,
-                    *, instance: str | None = None, profile: str | None = None) -> Identity:
+async def wait_peer(peer: Peer, timeout: float = 20, *, instance: str | None = None, profile: str | None = None) -> Identity:
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         try:
             identity = await asyncio.wait_for(peer.call("GET", "/identity", Identity), 2)
-            if identity.build_id != expected_build:
-                raise BackendError("build_mismatch")
             if identity.protocol != "amazme-http/1" or (profile and identity.profile_id != profile):
                 raise BackendError("peer_identity_mismatch")
             if instance and identity.instance_id != instance:

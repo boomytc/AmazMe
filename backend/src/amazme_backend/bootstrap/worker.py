@@ -24,7 +24,6 @@ from amazme_backend.features.memories.policy import inject_memories, relevant_me
 from amazme_backend.features.resources.service import session_resources
 from amazme_backend.host.queries import HostQueries
 from amazme_backend.interfaces.worker import application
-from amazme_backend.platform.identity import build_id
 from amazme_backend.platform.ipc import unix_listener
 from amazme_backend.platform.private_files import lock
 from amazme_backend.profiles.layout import SessionRuntimeFile, session_database
@@ -33,9 +32,7 @@ from amazme_backend.sessions.service import SessionOps, SessionStore
 from amazme_backend.shared.errors import BackendError
 
 
-def create_worker(profile: Profile, session: str, instance: str, *, frozen: bool = False,
-                  require_existing: bool = False, validation: bool = False) -> Worker:
-    build = build_id()
+def create_worker(profile: Profile, session: str, instance: str, *, require_existing: bool = False, validation: bool = False) -> Worker:
     queries = HostQueries(profile.path)
 
     def current_provider() -> ProviderConfig:
@@ -83,29 +80,15 @@ def create_worker(profile: Profile, session: str, instance: str, *, frozen: bool
         credential = AccountStore(profile.path).read().credentials.get('deepseek')
         return credential.key.get_secret_value() if config.provider == 'deepseek' and isinstance(credential, ApiKeyCredential) else ''
 
-    store = SessionStore(session_database(profile.path, session), session, build=build,
-                         config=profile.config.provider, approval_policy=profile.config.approval_policy,
-                         require_existing=require_existing, instance=instance,
-                         model_catalog=SELECTION_INDEX, expand_resources=expand, secret_source=resource_secrets)
-    context = WorkerContext(build=build, profile_id=profile.config.profile_id, token=profile.token,
-        identity=lambda state, epoch: profile.identity(instance, build, role='worker', state=state, host_epoch=epoch),
-        current_provider=current_provider, configured_model=configured_model, secrets=account_secrets,
-        contains_secret=scan, prepare_messages=prepare_messages,
-        workspace=lambda: queries.session_workspace(session),
-        host_ready=lambda: HostReady.model_validate_json((profile.path / 'ready.json').read_bytes()),
-        web_key=web_key, execute_web=execute_web, mcp_catalog=lambda views: offers_from_views(views, surface='catalog'),
-        catalog_payload=catalog_payload)
-    return Worker(session, instance, store=store,
-                  supervisor=SupervisorClient(profile.socket('supervisor'), profile.token),
-                  context=context, frozen=frozen, validation=validation)
+    store = SessionStore(session_database(profile.path, session), session, config=profile.config.provider, approval_policy=profile.config.approval_policy, require_existing=require_existing, instance=instance, model_catalog=SELECTION_INDEX, expand_resources=expand, secret_source=resource_secrets)
+    context = WorkerContext(profile_id=profile.config.profile_id, token=profile.token, identity=lambda state, epoch: profile.identity(instance, role='worker', state=state, host_epoch=epoch), current_provider=current_provider, configured_model=configured_model, secrets=account_secrets, contains_secret=scan, prepare_messages=prepare_messages, workspace=lambda: queries.session_workspace(session), host_ready=lambda: HostReady.model_validate_json((profile.path / 'ready.json').read_bytes()), web_key=web_key, execute_web=execute_web, mcp_catalog=lambda views: offers_from_views(views, surface='catalog'), catalog_payload=catalog_payload)
+    return Worker(session, instance, store=store, supervisor=SupervisorClient(profile.socket('supervisor'), profile.token), context=context, validation=validation)
 
 
-async def serve(profile: Profile, session: str, instance: str, *, frozen: bool = False,
-                require_existing: bool = False, validation: bool = False) -> None:
+async def serve(profile: Profile, session: str, instance: str, *, require_existing: bool = False, validation: bool = False) -> None:
     directory = profile.path / "sessions" / session
     with lock(directory / SessionRuntimeFile.WRITER_LOCK):
-        owner = create_worker(profile, session, instance, frozen=frozen,
-                              require_existing=require_existing, validation=validation)
+        owner = create_worker(profile, session, instance, require_existing=require_existing, validation=validation)
         try:
             await owner.initialize()
             path = profile.worker_socket(session)

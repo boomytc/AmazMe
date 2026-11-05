@@ -25,10 +25,8 @@ from amazme_backend.contracts.execution import (
 )
 from amazme_backend.contracts.identity import HostFence, Identity
 from amazme_backend.contracts.ipc.supervisor import (
-    FreezeSupervisor,
     Recovery,
     ResolveEffect,
-    RetireSupervisor,
     StopWorker,
     TaskActivity,
     TerminalSession,
@@ -52,7 +50,6 @@ from amazme_backend.execution.state import (
     supervisor_state,
 )
 from amazme_backend.execution.store import ExecutionDB
-from amazme_backend.platform.identity import build_id
 from amazme_backend.platform.ipc import Peer, child_command
 from amazme_backend.platform.private_files import lock, private_write
 from amazme_backend.profiles.layout import SessionRuntimeFile
@@ -68,7 +65,6 @@ class Supervisor:
         self.queries = queries
         self.code_tool_definitions = code_tool_definitions
         self.resolve_model_call = resolve_model_call
-        self.build = build_id()
         self.instance = instance or secrets.token_hex(16)
         self.process_lease = process_lease
         self.initialized_marker = profile.path / "execution.initialized"
@@ -76,12 +72,9 @@ class Supervisor:
             raise BackendError("unsupported_storage_format")
         self.db = ExecutionDB(profile.path / "execution.sqlite",
                               require_existing=require_existing or self.initialized_marker.exists())
-        if build_id() != self.build:
-            raise BackendError("build_changed_during_capture")
         self.registered = False
         self.host_epoch = 0
         self.fence_ready = True
-        self.freeze_id = ""
         self.blocked = ""
         self.draining = False
         self.control = asyncio.Lock()
@@ -96,19 +89,13 @@ class Supervisor:
         self.remote = RemoteOperations(self)
 
     def identity(self) -> Identity:
-        return Identity(build_id=self.build, profile_id=self.profile.config.profile_id,
-                        instance_id=self.instance, pid=os.getpid(), host_epoch=self.host_epoch,
-                        role="supervisor", fingerprint=self.build,
-                        state=supervisor_state(blocked=self.blocked, storage_failure=self.db.failed,
-                                               fence_ready=self.fence_ready, draining=self.draining, freeze_id=self.freeze_id))
+        return Identity(profile_id=self.profile.config.profile_id, instance_id=self.instance, pid=os.getpid(), host_epoch=self.host_epoch, role="supervisor", state=supervisor_state(blocked=self.blocked, storage_failure=self.db.failed, fence_ready=self.fence_ready, draining=self.draining))
 
     async def initialize(self) -> None:
         old = await self.db.initialize()
         # This is independent of Host's first ACK and precedes execution/worker side effects.
         private_write(self.initialized_marker, "3")
-        if build_id() != self.build:
-            raise BackendError("build_changed_during_capture")
-        self.host_epoch, self.freeze_id = int(old["epoch"]), str(old["freeze"])
+        self.host_epoch = int(old["epoch"])
         self.fence_ready, self.blocked = bool(old["fence_ready"]), str(old["blocked"])
         self.registered = True
         async with self.control:
@@ -142,11 +129,10 @@ class Supervisor:
         await self.db.call(lambda db: db.execute("UPDATE control SET blocked=? WHERE id=1", (reason,)), write=True)
 
     def check_host(self, fence: HostFence) -> None:
-        check_host_fence(fence, build=self.build, host_epoch=self.host_epoch)
+        check_host_fence(fence, host_epoch=self.host_epoch)
 
-    def admit(self, session: str = "", *, validation: bool = False) -> None:
-        check_admission(storage_failure=self.db.failed, blocked=self.blocked, draining=self.draining,
-                        fence_ready=self.fence_ready, freeze_id=self.freeze_id, validation=validation)
+    def admit(self, session: str = "") -> None:
+        check_admission(storage_failure=self.db.failed, blocked=self.blocked, draining=self.draining, fence_ready=self.fence_ready)
         if session:
             self.queries.session_workspace(session, active=True)
 
@@ -185,9 +171,7 @@ class Supervisor:
             result = await asyncio.wait_for(peer.call(method, path, Identity, body), 3)
         finally:
             await peer.close()
-        if (result.instance_id, result.profile_id, result.build_id, result.role, result.fingerprint) != (
-            worker.worker_id, self.profile.config.profile_id, worker.build_id, "worker", worker.build_id
-        ):
+        if (result.instance_id, result.profile_id, result.role) != (worker.worker_id, self.profile.config.profile_id, "worker"):
             raise BackendError("worker_identity_mismatch", status=503)
         return result
 
@@ -199,8 +183,6 @@ class Supervisor:
             return self.identity()
 
     async def _fence(self, value: HostFence) -> None:
-        if value.build_id != self.build:
-            raise BackendError("build_mismatch")
         if value.host_epoch < self.host_epoch:
             raise BackendError("stale_host_epoch")
         await self.db.call(lambda db: db.execute("UPDATE control SET epoch=?,fence_ready=0 WHERE id=1",
@@ -212,7 +194,7 @@ class Supervisor:
             try:
                 if worker.process_lease is None:
                     raise BackendError("process_exit_unproven", status=503)
-                if (worker.state not in {"starting", "ready", "frozen"}
+                if (worker.state not in {"starting", "ready"}
                         or exited(worker.process_lease)):
                     receipt = await self.retire_worker(worker, "recovery", failed=self._unexpected_worker_exit(worker))
                     if receipt.state != "clean" and not exited(worker.process_lease):
@@ -228,8 +210,7 @@ class Supervisor:
                     continue
                 worker.host_epoch = ack.host_epoch
                 if worker.state == "starting":
-                    worker.state = "frozen" if ack.state == "frozen" else "ready" if ack.state == "ready" else "starting"
-                worker.fingerprint = ack.fingerprint
+                    worker.state = "ready" if ack.state == "ready" else "starting"
                 await self.save_worker(worker)
             except (httpx.TransportError, TimeoutError) as error:
                 raise BackendError("worker_fence_pending", worker.worker_id, 503) from error
@@ -239,12 +220,12 @@ class Supervisor:
     async def ensure_worker(self, value: WorkerSpec) -> WorkerInfo:
         async with self.control:
             self.check_host(value)
-            self.admit(validation=value.purpose == "validation")
+            self.admit()
             live: list[WorkerInfo] = []
             for worker in await self.workers(value.session_id):
                 if worker.state == "stopped":
                     continue
-                if worker.purpose != value.purpose or worker.build_id != self.build:
+                if (worker.purpose != value.purpose):
                     raise BackendError("worker_identity_conflict")
                 if worker.process_lease is None:
                     raise BackendError("process_exit_unproven", status=503)
@@ -253,10 +234,8 @@ class Supervisor:
                     if receipt.state != "clean":
                         raise BackendError("execution_cleanup_pending", receipt.reason, 503)
                     continue
-                if worker.state not in {"starting", "ready", "frozen"}:
+                if worker.state not in {"starting", "ready"}:
                     raise BackendError("worker_retirement_pending", status=503)
-                if value.frozen and worker.state == "ready":
-                    raise BackendError("worker_not_frozen")
                 live.append(worker)
             if len(live) > 1:
                 raise BackendError("worker_identity_conflict", status=503)
@@ -289,10 +268,7 @@ class Supervisor:
                 raise BackendError("worker_still_owns_session", status=503) from error
             instance = secrets.token_hex(16)
             with ProcessReservation(self.profile.path, "worker", instance) as reservation:
-                worker = WorkerInfo(session_id=value.session_id, worker_id=instance, pid=0,
-                                    socket=str(self.profile.worker_socket(value.session_id)), build_id=self.build,
-                                    process_lease=reservation.lease, purpose=value.purpose, host_epoch=self.host_epoch,
-                                    plugin_fingerprint=await self.plugins.set_fingerprint(value.session_id))
+                worker = WorkerInfo(session_id=value.session_id, worker_id=instance, pid=0, socket=str(self.profile.worker_socket(value.session_id)), process_lease=reservation.lease, purpose=value.purpose, host_epoch=self.host_epoch, plugin_fingerprint=await self.plugins.set_fingerprint(value.session_id))
                 # This row is committed before spawn; even death before PID publication leaves an exact lease.
                 await self.db.call(lambda db: db.execute("INSERT INTO workers(worker,session,info) VALUES(?,?,?)",
                     (instance, value.session_id, worker.model_dump_json())), write=True)
@@ -301,8 +277,6 @@ class Supervisor:
                 try:
                     args = child_command("worker", "--profile", str(self.profile.path), "--session", value.session_id,
                                          "--instance", instance, "--lifetime-fd", str(reservation.fd))
-                    if value.frozen or self.freeze_id:
-                        args.append("--frozen")
                     if value.purpose == "validation":
                         args.append("--validation")
                     if requires_store:
@@ -319,8 +293,7 @@ class Supervisor:
 
     async def validate_worker(self, value: WorkerRequest) -> WorkerInfo:
         worker = await self.worker(value.worker_id)
-        if (worker.session_id != value.session_id or value.build_id != self.build or worker.build_id != self.build
-                or worker.state not in {"starting", "ready", "frozen"}):
+        if ((worker.session_id != value.session_id) or (worker.state not in {"starting", "ready"})):
             raise BackendError("stale_worker")
         if worker.process_lease is None or exited(worker.process_lease):
             raise BackendError("worker_process_exited", status=503)
@@ -333,7 +306,7 @@ class Supervisor:
             def acknowledge(db: sqlite3.Connection) -> None:
                 row = db.execute("SELECT info FROM workers WHERE worker=?", (value.worker_id,)).fetchone()
                 info = WorkerInfo.model_validate_json(str(row[0]))
-                if info.state not in {"starting", "ready", "frozen"}:
+                if info.state not in {"starting", "ready"}:
                     raise BackendError("stale_worker")
                 info.storage_ready = True
                 db.execute("UPDATE workers SET info=? WHERE worker=?", (info.model_dump_json(), info.worker_id))
@@ -349,42 +322,34 @@ class Supervisor:
     async def open_epoch(self, value: WorkerRequest) -> Lease:
         async with self.control:
             worker = await self.validate_worker(value)
-            self.admit(validation=worker.purpose == "validation")
+            self.admit()
             pending = await self._unclean_epochs(value.session_id)
             if pending:
                 row = pending[0]
-                if len(pending) == 1 and (row["worker"], row["supervisor"], row["build"], row["state"]) == (
-                    value.worker_id, self.instance, value.build_id, "open"
-                ):
+                if len(pending) == 1 and (row["worker"], row["supervisor"], row["state"]) == (value.worker_id, self.instance, "open"):
                     return Lease(**value.model_dump(exclude={"storage_ready"}),
                                  execution_epoch=int(row["epoch"]), supervisor_id=self.instance)
                 raise BackendError("execution_cleanup_pending", status=503)
-            if worker.purpose == "business" and worker.state == "frozen":
-                raise BackendError("worker_frozen")
             def opened(db: sqlite3.Connection) -> int:
                 epoch = int(db.execute("SELECT COALESCE(MAX(epoch),0)+1 FROM epochs WHERE session=?",
                                        (value.session_id,)).fetchone()[0])
-                db.execute("INSERT INTO epochs(session,epoch,worker,supervisor,build,state) VALUES(?,?,?,?,?,'open')",
-                           (value.session_id, epoch, value.worker_id, self.instance, self.build))
+                db.execute("INSERT INTO epochs(session,epoch,worker,supervisor,state) VALUES(?,?,?,?,'open')",
+                           (value.session_id, epoch, value.worker_id, self.instance))
                 worker.execution_epoch = epoch
                 self._put_worker(db, worker)
                 return epoch
             epoch = await self.db.call(opened, write=True)
-            return Lease(session_id=value.session_id, worker_id=value.worker_id, build_id=value.build_id,
-                         execution_epoch=epoch, supervisor_id=self.instance)
+            return Lease(session_id=value.session_id, worker_id=value.worker_id, execution_epoch=epoch, supervisor_id=self.instance)
 
     async def check_lease(self, value: Lease, *, admit: bool = True) -> None:
-        worker = await self.validate_worker(WorkerRequest(session_id=value.session_id, worker_id=value.worker_id,
-                                                        build_id=value.build_id))
+        await self.validate_worker(WorkerRequest(session_id=value.session_id, worker_id=value.worker_id))
         if admit:
-            self.admit(validation=worker.purpose == "validation")
+            self.admit()
         if value.supervisor_id != self.instance:
             raise BackendError("stale_supervisor")
         row = await self.db.call(lambda db: db.execute("SELECT * FROM epochs WHERE session=? AND epoch=?",
             (value.session_id, value.execution_epoch)).fetchone())
-        if row is None or (row["worker"], row["supervisor"], row["build"], row["state"]) != (
-            value.worker_id, value.supervisor_id, value.build_id, "open"
-        ):
+        if row is None or (row["worker"], row["supervisor"], row["state"]) != (value.worker_id, value.supervisor_id, "open"):
             raise BackendError("execution_epoch_closed", status=503)
 
     async def _holds(self) -> list[EffectHold]:
@@ -484,8 +449,8 @@ class Supervisor:
                 # Historical exact leases may only close/query their original epoch.
                 row = await self.db.call(lambda db: db.execute("SELECT * FROM epochs WHERE session=? AND epoch=?",
                     (session, lease.execution_epoch)).fetchone())
-                if row is None or (lease.session_id, lease.worker_id, lease.build_id, lease.supervisor_id) != (
-                    session, row["worker"], row["build"], row["supervisor"]
+                if row is None or (lease.session_id, lease.worker_id, lease.supervisor_id) != (
+                    session, row["worker"], row["supervisor"]
                 ):
                     raise BackendError("stale_execution_epoch")
                 return await self._cleanup_epoch(row)
@@ -524,7 +489,7 @@ class Supervisor:
         child = self.children.get(worker.worker_id)
         return child is None or child.returncode != 0
 
-    async def retire_worker(self, worker: WorkerInfo, reason: Literal["shutdown", "recovery", "update"], *, failed: bool = False) -> Cleanup:
+    async def retire_worker(self, worker: WorkerInfo, reason: Literal["shutdown", "recovery", "maintenance"], *, failed: bool = False) -> Cleanup:
         worker = await self.worker(worker.worker_id)
         if worker.state == "stopped":
             row = await self.db.call(lambda db: db.execute("SELECT retirement FROM workers WHERE worker=?",
@@ -545,7 +510,7 @@ class Supervisor:
         if lease is None:
             raise BackendError("process_exit_unproven", status=503)
         if not exited(lease):
-            fence = HostFence(build_id=worker.build_id, host_epoch=self.host_epoch)
+            fence = HostFence(host_epoch=self.host_epoch)
             try:
                 ack = await self.peer_identity(worker, "POST", "/fence", fence)
                 if ack.host_epoch != self.host_epoch:
@@ -577,7 +542,7 @@ class Supervisor:
         async with self.control:
             self.check_host(value)
             worker = await self.worker(value.worker_id)
-            if worker.session_id != value.session_id or worker.build_id != value.build_id:
+            if (worker.session_id != value.session_id):
                 raise BackendError("stale_worker")
             if value.execution_epoch != worker.execution_epoch:
                 raise BackendError("stale_execution_epoch")
@@ -613,7 +578,7 @@ class Supervisor:
     async def _refresh_workers(self) -> list[WorkerInfo]:
         workers = await self.workers()
         for worker in workers:
-            if worker.state not in {"starting", "ready", "frozen"}:
+            if worker.state not in {"starting", "ready"}:
                 continue
             if worker.process_lease is None or exited(worker.process_lease):
                 worker.state = "unknown"
@@ -624,9 +589,8 @@ class Supervisor:
                     if worker.state != "starting" or isinstance(error, BackendError):
                         worker.state = "unknown"
                 else:
-                    worker.fingerprint = identity.fingerprint
                     worker.host_epoch = identity.host_epoch
-                    worker.state = "frozen" if identity.state == "frozen" else "ready" if identity.state == "ready" else "starting"
+                    worker.state = "ready" if identity.state == "ready" else "starting"
             previous = await self.worker(worker.worker_id)
             worker.storage_ready |= previous.storage_ready
             if worker != previous and not self.db.failed:
@@ -678,59 +642,10 @@ class Supervisor:
                 epoch_state=("blocked" if row["outcome"] == "unknown" else "open") if row["background"] else str(row["epoch_state"]),
                 phase=str(row["phase"])),
         }) for row in scopes]
-        return SupervisorHealth(identity=self.identity(), registry_revision=revision, freeze_id=self.freeze_id,
-            workers=workers, epochs=[EpochHealth(session_id=str(r["session"]), worker_id=str(r["worker"]),
+        return SupervisorHealth(identity=self.identity(), registry_revision=revision, workers=workers, epochs=[EpochHealth(session_id=str(r["session"]), worker_id=str(r["worker"]),
                 execution_epoch=int(r["epoch"]), state=str(r["state"]),
-                cleanup=Cleanup.model_validate_json(str(r["receipt"])) if r["receipt"] else None) for r in rows],
-            effects=await self._holds(), execution="native", resources=resources, session_errors=session_errors,
-            terminals=[self.pty.view(row) for row in terminals], mcp_servers=[self.mcp.view(row) for row in mcps], blocked=blocked)
+                cleanup=Cleanup.model_validate_json(str(r["receipt"])) if r["receipt"] else None) for r in rows], effects=await self._holds(), execution="native", resources=resources, session_errors=session_errors, terminals=[self.pty.view(row) for row in terminals], mcp_servers=[self.mcp.view(row) for row in mcps], blocked=blocked)
 
-    async def freeze(self, value: FreezeSupervisor) -> SupervisorHealth:
-        async with self.control:
-            self.check_host(value)
-            if not value.freeze_id or (self.freeze_id and self.freeze_id != value.freeze_id):
-                raise BackendError("freeze_identity_mismatch")
-            await self.db.call(lambda db: db.execute("UPDATE control SET freeze=? WHERE id=1", (value.freeze_id,)), write=True)
-            self.freeze_id = value.freeze_id
-            return await self._health()
-
-    async def thaw(self, value: FreezeSupervisor) -> SupervisorHealth:
-        async with self.control:
-            self.check_host(value)
-            if not value.freeze_id:
-                raise BackendError("freeze_identity_mismatch")
-            if not self.freeze_id:
-                previous = await self.db.call(lambda db: db.execute("SELECT build FROM thaws WHERE id=?",
-                                                                     (value.freeze_id,)).fetchone())
-                if previous and previous[0] == self.build:
-                    return await self._health()
-            if self.freeze_id != value.freeze_id:
-                raise BackendError("freeze_identity_mismatch")
-            before = await self.db.call(lambda db: str(db.execute("SELECT revision FROM control WHERE id=1").fetchone()[0]))
-            if value.expected_revision and value.expected_revision != before:
-                raise BackendError("registry_revision_mismatch")
-            health = await self._health()
-            if value.expected_revision and health.registry_revision != value.expected_revision:
-                raise BackendError("registry_revision_mismatch")
-            for worker in health.workers:
-                if worker.state == "stopped":
-                    if worker.process_lease is None or not exited(worker.process_lease):
-                        raise BackendError("process_exit_unproven", status=503)
-                    with retirement_proof(self.profile, worker, removed=self.queries.session_removed):
-                        pass
-            if (health.blocked or any(e.state != "clean" for e in health.epochs)
-                    or any(resource.state != "exited" for resource in health.resources)
-                    or any(not terminal.clean for terminal in health.terminals)
-                    or any(not server.clean for server in health.mcp_servers)
-                    or any(w.state != "stopped" for w in health.workers)):
-                raise BackendError("update_health_unproven", status=503)
-            def thawed(db: sqlite3.Connection) -> None:
-                db.execute("UPDATE control SET freeze='' WHERE id=1")
-                db.execute("INSERT INTO thaws VALUES(?,?) ON CONFLICT(id) DO UPDATE SET build=excluded.build",
-                           (value.freeze_id, self.build))
-            await self.db.call(thawed, write=True)
-            self.freeze_id = ""
-            return await self._health()
 
     async def recover(self, value: Recovery) -> SupervisorHealth:
         async with self.control:
@@ -766,7 +681,7 @@ class Supervisor:
         await self._reconcile_scopes("registered_processes_stopped")
         for worker in await self.workers():
             if worker.state != "stopped":
-                result = await self.retire_worker(worker, "update")
+                result = await self.retire_worker(worker, "maintenance")
                 if result.state != "clean":
                     raise BackendError("execution_cleanup_pending", result.reason, 503)
         await self._set_blocked("")
@@ -797,7 +712,7 @@ class Supervisor:
         for worker in pending:
             lease = worker.process_lease
             if lease is not None and not exited(lease):
-                fence = HostFence(build_id=worker.build_id, host_epoch=self.host_epoch)
+                fence = HostFence(host_epoch=self.host_epoch)
                 try:
                     ack = await self.peer_identity(worker, "POST", "/fence", fence)
                     if ack.host_epoch != self.host_epoch:
@@ -822,25 +737,6 @@ class Supervisor:
             await self._set_blocked("")
             return self.identity()
 
-    async def retire(self, value: RetireSupervisor) -> SupervisorHealth:
-        async with self.control:
-            # Target Host must address this source build; cross-build business takeover remains forbidden.
-            if value.build_id != self.build or value.host_epoch < self.host_epoch:
-                raise BackendError("retire_fence_mismatch")
-            if not value.freeze_id or (self.freeze_id and self.freeze_id != value.freeze_id):
-                raise BackendError("freeze_identity_mismatch")
-            self.draining = True
-            if not self.freeze_id:
-                self.freeze_id = value.freeze_id
-                await self.db.call(lambda db: db.execute("UPDATE control SET freeze=? WHERE id=1", (self.freeze_id,)), write=True)
-            await self.db.call(lambda db: db.execute("UPDATE control SET epoch=? WHERE id=1", (value.host_epoch,)), write=True)
-            self.host_epoch = value.host_epoch
-        await self.code.stop_all()
-        async with self.control:
-            await self._shutdown(value)
-            self.fence_ready = True
-            await self.db.call(lambda db: db.execute("UPDATE control SET fence_ready=1 WHERE id=1"), write=True)
-            return await self._health()
 
     async def monitor(self) -> None:
         while True:

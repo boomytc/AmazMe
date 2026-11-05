@@ -98,7 +98,7 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
     steps = list_steps(db, request.request_id)
     for step in steps:
         if step.kind == "tool" and step.phase in {"intent", "code"} and step.call and step.call.name == "codemode":
-            stopping = bool(request.cancel_requested or request.decision or metadata_value(db, "freeze_id") or metadata_value(db, "stopping"))
+            stopping = bool((request.cancel_requested) or (request.decision) or (metadata_value(db, "stopping")))
             if step.code_poll_ms > clock.now_ms():
                 return Park("children", step.code_poll_ms)
             if not step.code_input_state:
@@ -109,11 +109,11 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
                                  start=step.phase == "intent", stop=stopping)
         if step.kind == "tool" and step.phase == "intent" and step.call and step.call.name == "plugin_tool":
             return PluginRetrieval(step.step_id, request.request_id, request.generation, step.call,
-                stop=bool(request.cancel_requested or request.decision or metadata_value(db, "freeze_id") or metadata_value(db, "stopping")))
+                stop=bool((request.cancel_requested) or (request.decision) or (metadata_value(db, "stopping"))))
         mcp_intent = step.kind == "tool" and step.phase == "intent" and step.call and step.call.name == "mcp_tool"
         if mcp_intent:
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                return Park("frozen")
+            if (metadata_value(db, "stopping")):
+                return Park("stopping")
             assert step.call is not None
             return McpRetrieval(step.step_id, request.request_id, request.generation, step.call,
                                 stop=request.cancel_requested and not request.decision)
@@ -131,8 +131,8 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
                         error=held.error or "web_transport"))
                     c.emit("tool", request.request_id, held.error or "web_transport")
                     return Continue()
-            if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
-                return Park("frozen")
+            if (metadata_value(db, "stopping")):
+                return Park("stopping")
             if request.cancel_requested and not request.decision:
                 decide_request(db, c, request, Decision(status="cancelled"))
                 return Continue()
@@ -164,10 +164,10 @@ def advance_request(state: SessionContext, db: sqlite3.Connection, c: Changes, r
         return Continue()
     if run.cleanup_required and run.lease:
         return CloseEpoch(request.request_id, run.lease)
-    if metadata_value(db, "freeze_id") or metadata_value(db, "stopping"):
+    if (metadata_value(db, "stopping")):
         if run.lease:
             return CloseEpoch(request.request_id, run.lease)
-        return Park("frozen")
+        return Park("stopping")
     if request.status in {"queued", "waiting_time"}:
         if request.not_before_ms > clock.now_ms():
             return Park("time", request.not_before_ms)
@@ -316,9 +316,7 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
         if not run.opening or run.lease:
             raise BackendError("stale_epoch_result")
         lease = observation.lease
-        if (lease.session_id != state.session_id or lease.worker_id != state.instance
-                or lease.build_id != state.build or not lease.supervisor_id
-                or lease.execution_epoch <= int(metadata_value(db, "execution_epoch"))):
+        if ((lease.session_id != state.session_id) or (lease.worker_id != state.instance) or (not lease.supervisor_id) or (lease.execution_epoch <= int(metadata_value(db, "execution_epoch")))):
             raise BackendError("execution_lease_mismatch")
         run.lease, run.opening = observation.lease, False
         set_metadata_value(db, "execution_epoch", str(observation.lease.execution_epoch))
@@ -551,9 +549,7 @@ def apply_observation(state: SessionContext, db: sqlite3.Connection, c: Changes,
         raise BackendError("stale_generation")
     if isinstance(observation, Previewed):
         preview = observation.preview
-        if (preview.generation != request.generation or preview.run_id != request.run_id
-                or preview.request_id != request.request_id or request.cancel_requested or request.decision
-                or metadata_value(db, "freeze_id") or metadata_value(db, "stopping")):
+        if ((preview.generation != request.generation) or (preview.run_id != request.run_id) or (preview.request_id != request.request_id) or (request.cancel_requested) or (request.decision) or (metadata_value(db, "stopping"))):
             raise BackendError("stale_generation")
         row = db.execute("SELECT payload FROM previews WHERE request_id=?", (request.request_id,)).fetchone()
         if row and int(Preview.model_validate_json(row[0]).preview_seq) >= int(preview.preview_seq):
