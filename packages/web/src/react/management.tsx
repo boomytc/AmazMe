@@ -1211,6 +1211,194 @@ function connectionModelReference(
 	return JSON.stringify([model.provider, model.modelId]);
 }
 
+type ConnectionProvider = ModelConnectionsLike["state"]["providers"][number];
+type ConnectionAuthentication = ModelConnectionsLike["state"]["authentication"];
+
+function ConnectionProviderCard({
+	provider,
+	authentication,
+	enabledModelIds,
+	enabledModelCount,
+	models,
+	expanded,
+	loading,
+	disabled,
+	pending,
+	locale,
+	onToggle,
+	onAction,
+}: {
+	readonly provider: ConnectionProvider;
+	readonly authentication: ConnectionAuthentication;
+	readonly enabledModelIds: readonly string[] | null;
+	readonly enabledModelCount: number;
+	readonly models: readonly ConnectionModelLike[];
+	readonly expanded: boolean;
+	readonly loading: boolean;
+	readonly disabled: boolean;
+	readonly pending: PanelPending | undefined;
+	readonly locale: Locale;
+	readonly onToggle: () => void;
+	readonly onAction: (action: PanelAction) => void;
+}) {
+	const [modelQuery, setModelQuery] = useState("");
+	useEffect(() => setModelQuery(""), [provider.id]);
+	const methods = authentication.providers.find((item) => item.id === provider.id)?.methods ?? [];
+	const canConfigure = EDITABLE_MODEL_APIS.has(provider.api) || methods.length > 0;
+	const status = connectionCopy(
+		locale,
+		!provider.configured
+			? "connections.unconfigured"
+			: provider.available
+				? "connections.configured"
+				: "connections.loginRequired",
+	);
+	const modelRows = connectionModelRows(models, enabledModelIds, modelQuery);
+	const enabledCount = models.filter((model) => isModelEnabled(model, enabledModelIds)).length;
+
+	return (
+		<section className={expanded ? "connection-card expanded" : "connection-card"}>
+			<header className="connection-card-head">
+				<button
+					type="button"
+					className="connection-card-disclosure"
+					aria-expanded={expanded}
+					onClick={onToggle}
+				>
+					<Icon name="chevron-down" className="icon connection-card-chevron" />
+					<span className="connection-card-identity">
+						<span className="connection-card-title-row">
+							<span className="connection-card-title">{provider.name}</span>
+							<span
+								className={`connection-status-dot ${provider.available ? "configured" : "missing"}`}
+								role="img"
+								aria-label={status}
+								title={status}
+							/>
+						</span>
+						<span className="connection-card-meta">
+							{status} · {connectionCopy(locale, "connections.modelCount", { count: String(provider.modelCount) })}
+						</span>
+					</span>
+				</button>
+				<div className="connection-actions">
+					<PanelButtonView
+						action={{
+							id: PROVIDER_EDIT_ACTION,
+							data: provider.id,
+							label: connectionCopy(locale, "connections.configure"),
+							weight: "line",
+							disabled: disabled || !canConfigure,
+						}}
+						pending={pending}
+						onAction={onAction}
+					/>
+					<PanelButtonView
+						action={{
+							id: PROVIDER_TEST_ACTION,
+							data: provider.id,
+							label: connectionCopy(locale, "connections.testAction"),
+							weight: "line",
+							disabled:
+								disabled ||
+								!provider.configured ||
+								loading ||
+								enabledModelCount === 0 ||
+								provider.verification.status === "checking",
+						}}
+						pending={pending}
+						onAction={onAction}
+					/>
+				</div>
+			</header>
+			{expanded && (
+				<div className="connection-card-body">
+					{provider.baseUrl.length > 0 && <p className="connection-endpoint">{provider.baseUrl}</p>}
+					{!canConfigure && (
+						<p className="connection-native">{connectionCopy(locale, "connections.native")}</p>
+					)}
+					<output
+						className={`connection-verification ${provider.verification.status}`}
+						aria-live="polite"
+					>
+						{verificationStatusText(locale, provider.verification)}
+					</output>
+					<section className="connection-models-section">
+						<header className="connection-models-head">
+							<h3 className="connection-models-title">
+								{connectionCopy(locale, "connections.models")}
+							</h3>
+							{!loading && models.length > 0 && (
+								<span className="connection-models-count">{enabledCount} / {models.length}</span>
+							)}
+						</header>
+						{loading ? (
+							<p className="connection-empty">{connectionCopy(locale, "connection.starting")}</p>
+						) : models.length === 0 ? (
+							<p className="connection-empty">{connectionCopy(locale, "connections.discover")}</p>
+						) : (
+							<>
+								<search className="connection-model-search">
+									<input
+										type="search"
+										className="connection-search-input"
+										autoComplete="off"
+										spellCheck={false}
+										placeholder={connectionCopy(locale, "connections.searchModels")}
+										aria-label={connectionCopy(locale, "connections.searchModels")}
+										value={modelQuery}
+										onChange={(event) => setModelQuery(event.currentTarget.value)}
+									/>
+								</search>
+								{modelRows.length === 0 ? (
+									<p className="connection-empty">{connectionCopy(locale, "connections.noModelMatch")}</p>
+								) : (
+									<div className="connection-model-list">
+										{modelRows.map(({ model, enabled: modelEnabled }) => {
+											const reference = connectionModelReference(model);
+											const modelPending = sameActionTarget(pending, {
+												id: MODEL_ENABLED_ACTION,
+												data: reference,
+											});
+											return (
+												<label
+													key={reference}
+													className={model.available ? "connection-model" : "connection-model is-unavailable"}
+												>
+													<input
+														type="checkbox"
+														checked={modelEnabled}
+														disabled={disabled || !model.available || modelPending}
+														aria-busy={modelPending || undefined}
+														onChange={(event) =>
+															onAction({
+																kind: "control",
+																id: MODEL_ENABLED_ACTION,
+																data: reference,
+																value: String(event.currentTarget.checked),
+															})
+														}
+													/>
+													<span className="connection-model-main">
+														<span className="connection-model-name">{model.name}</span>
+														{model.modelId !== model.name && (
+															<small className="connection-model-id">{model.modelId}</small>
+														)}
+													</span>
+												</label>
+											);
+										})}
+									</div>
+								)}
+							</>
+						)}
+					</section>
+				</div>
+			)}
+		</section>
+	);
+}
+
 function ModelConnectionsView({
 	panel,
 	connections,
@@ -1222,28 +1410,13 @@ function ModelConnectionsView({
 	readonly locale: Locale;
 	readonly onAction: (action: PanelAction) => void;
 }) {
-	const [query, setQuery] = useState("");
-	const [modelQuery, setModelQuery] = useState("");
-	useEffect(() => {
-		setModelQuery("");
-	}, [connections.selected]);
-	const normalizedQuery = query.trim().toLocaleLowerCase();
-	const configured = connections.state.providers.filter(
-		(provider) => provider.configured,
-	);
-	const visible = configured.filter(
-		(provider) =>
-			normalizedQuery.length === 0 ||
-			`${provider.name} ${provider.id}`
-				.toLocaleLowerCase()
-				.includes(normalizedQuery),
-	);
+	const [expandedProvider, setExpandedProvider] = useState(connections.selected);
+	useEffect(() => setExpandedProvider(connections.selected), [connections.selected]);
+	const configured = connections.state.providers.filter((provider) => provider.configured);
 	const addable = connections.state.providers.some(
 		(provider) =>
 			!provider.configured &&
-			(connections.state.authentication.providers.find(
-				(auth) => auth.id === provider.id,
-			)?.methods.length ?? 0) > 0,
+			(connections.state.authentication.providers.find((auth) => auth.id === provider.id)?.methods.length ?? 0) > 0,
 	);
 	const addAction: PanelButton = {
 		id: PROVIDER_EDIT_ACTION,
@@ -1251,53 +1424,39 @@ function ModelConnectionsView({
 		weight: "line",
 		disabled: connections.disabled || !addable,
 	};
+	const addPending = sameActionTarget(panel.pending, addAction);
 	const refreshAction: PanelButton = {
 		id: REFRESH_MODELS_ACTION,
 		label: connectionCopy(locale, "connections.refresh"),
 		weight: "line",
-		disabled:
-			connections.disabled || connections.state.refresh.status === "refreshing",
+		disabled: connections.disabled || connections.state.refresh.status === "refreshing",
 	};
 	const notices: PanelNotice[] = [
 		...panel.notices,
 		...(connections.state.error === null
 			? []
-			: [
-					{
-						tone: "error" as const,
-						text: connectionCopy(
-							locale,
-							connections.state.error === "synchronization"
-								? "connections.syncError"
-								: "connections.configError",
-						),
-					},
-				]),
+			: [{
+				tone: "error" as const,
+				text: connectionCopy(
+					locale,
+					connections.state.error === "synchronization" ? "connections.syncError" : "connections.configError",
+				),
+			}]),
 		...(connections.state.refresh.status === "warning"
-			? [
-					{
-						tone: "warning" as const,
-						text: connectionCopy(locale, "model.refreshWarning", {
-							providers: Object.keys(
-								connections.state.refresh.errors ?? {},
-							).join(", "),
-						}),
-					},
-				]
+			? [{
+				tone: "warning" as const,
+				text: connectionCopy(locale, "model.refreshWarning", {
+					providers: Object.keys(connections.state.refresh.errors ?? {}).join(", "),
+				}),
+			}]
 			: []),
 	];
-
 	const defaultModel = connections.state.defaults?.model;
-	const defaultReference =
-		defaultModel === undefined ? "" : connectionModelReference(defaultModel);
+	const defaultReference = defaultModel === undefined ? "" : connectionModelReference(defaultModel);
 	const options: ConnectionModelLike[] = [...connections.enabledModels];
 	if (
 		defaultModel !== undefined &&
-		!options.some(
-			(model) =>
-				model.provider === defaultModel.provider &&
-				model.modelId === defaultModel.modelId,
-		)
+		!options.some((model) => model.provider === defaultModel.provider && model.modelId === defaultModel.modelId)
 	) {
 		options.unshift({
 			...defaultModel,
@@ -1305,50 +1464,28 @@ function ModelConnectionsView({
 			available: false,
 		});
 	}
-	const providerNames = new Map(
-		connections.state.providers.map((provider) => [provider.id, provider.name]),
-	);
+	const providerNames = new Map(connections.state.providers.map((provider) => [provider.id, provider.name]));
 	const modelGroups = new Map<string, ConnectionModelLike[]>();
 	for (const model of options) {
 		const models = modelGroups.get(model.provider) ?? [];
-		if (!modelGroups.has(model.provider))
-			modelGroups.set(model.provider, models);
+		if (!modelGroups.has(model.provider)) modelGroups.set(model.provider, models);
 		models.push(model);
 	}
-	const provider = connections.state.providers.find(
-		(item) => item.id === connections.selected,
-	);
-	const authentication =
-		provider === undefined
-			? undefined
-			: connections.state.authentication.providers.find(
-					(item) => item.id === provider.id,
-				);
-	const canConfigure =
-		provider !== undefined &&
-		(EDITABLE_MODEL_APIS.has(provider.api) ||
-			(authentication?.methods.length ?? 0) > 0);
-	const enabledCount = connections.models.filter((model) =>
-		isModelEnabled(model, connections.state.enabledModelIds),
-	).length;
-	const enabledModelCount =
-		provider === undefined
-			? 0
-			: connections.enabledModels.filter(
-					(model) => model.provider === provider.id,
-				).length;
-	const modelRows = connectionModelRows(
-		connections.models,
-		connections.state.enabledModelIds,
-		modelQuery,
-	);
+	const enabledCounts = new Map<string, number>();
+	for (const model of connections.enabledModels) {
+		enabledCounts.set(model.provider, (enabledCounts.get(model.provider) ?? 0) + 1);
+	}
 
 	return (
 		<div
-			className="panel model-connections split-workspace"
+			className="panel model-connections"
 			data-panel-id={panel.id}
 		>
 			<PanelHeadActions panel={panel} locale={locale} onAction={onAction} />
+			<header className="connection-page-head">
+				<h2 className="connection-page-title">{connectionCopy(locale, "connections.title")}</h2>
+				<p className="connection-page-intro">{connectionCopy(locale, "connections.help")}</p>
+			</header>
 			<PanelNotices
 				scope={`${panel.id}:connections`}
 				locale={locale}
@@ -1417,265 +1554,47 @@ function ModelConnectionsView({
 					/>
 				</div>
 			</div>
-			<div className="connection-workspace">
-				<aside className="connection-rail">
-					<div className="connection-rail-head">
-						<search className="connection-search">
-							<input
-								type="search"
-								className="connection-search-input"
-								autoComplete="off"
-								spellCheck={false}
-								placeholder={connectionCopy(locale, "connections.search")}
-								aria-label={connectionCopy(locale, "connections.search")}
-								value={query}
-								onChange={(event) => setQuery(event.currentTarget.value)}
-							/>
-						</search>
-						<PanelButtonView
-							action={addAction}
+			<div className="connection-provider-list">
+				{configured.map((item) => {
+					const expanded = expandedProvider === item.id && connections.selected === item.id;
+					return (
+						<ConnectionProviderCard
+							key={item.id}
+							provider={item}
+							authentication={connections.state.authentication}
+							enabledModelIds={connections.state.enabledModelIds}
+							enabledModelCount={enabledCounts.get(item.id) ?? 0}
+							models={expanded ? connections.models : []}
+							expanded={expanded}
+							loading={connections.loading}
+							disabled={connections.disabled}
 							pending={panel.pending}
+							locale={locale}
+							onToggle={() => {
+								if (expandedProvider === item.id) {
+									setExpandedProvider(undefined);
+									return;
+								}
+								if (connections.selected === item.id) setExpandedProvider(item.id);
+								else onAction({ kind: "command", id: PROVIDER_SELECT_ACTION, data: item.id });
+							}}
 							onAction={onAction}
 						/>
-					</div>
-					<div className="connection-list">
-						{visible.map((item) => {
-							const selected = item.id === connections.selected;
-							return (
-								<button
-									key={item.id}
-									type="button"
-									className={
-										selected ? "connection-row selected" : "connection-row"
-									}
-									aria-pressed={selected}
-									disabled={connections.disabled}
-									onClick={() =>
-										onAction({
-											kind: "command",
-											id: PROVIDER_SELECT_ACTION,
-											data: item.id,
-										})
-									}
-								>
-									<span className="connection-row-top">
-										<span className="connection-row-name">{item.name}</span>
-										<span
-											className="connection-status-dot configured"
-											aria-hidden="true"
-										/>
-									</span>
-									<small className="connection-row-meta">
-										<span className="connection-row-state">
-											{connectionCopy(
-												locale,
-												item.available
-													? "connections.configured"
-													: "connections.loginRequired",
-											)}
-										</span>
-										<span className="connection-row-sep" aria-hidden="true">
-											{" "}
-											·{" "}
-										</span>
-										<span className="connection-row-count">
-											{connectionCopy(locale, "connections.modelCount", {
-												count: String(item.modelCount),
-											})}
-										</span>
-									</small>
-								</button>
-							);
-						})}
-						{visible.length === 0 && (
-							<p className="connection-empty">
-								{connectionCopy(
-									locale,
-									configured.length === 0
-										? "connections.empty"
-										: "connections.noMatch",
-								)}
-							</p>
-						)}
-					</div>
-				</aside>
-				<div className="connection-detail">
-					{provider === undefined ? (
-						<p className="connection-empty connection-choose">
-							{connectionCopy(locale, "connections.choose")}
-						</p>
-					) : (
-						<>
-							<section className="connection-provider">
-								<header className="connection-provider-head">
-									<div className="connection-provider-titles">
-										<div className="connection-provider-title-row">
-											<h2 className="connection-provider-name">
-												{provider.name}
-											</h2>
-											<span
-												className={`panel-badge connection-badge ${provider.available ? "configured" : "unconfigured"}`}
-											>
-												{connectionCopy(
-													locale,
-													!provider.configured
-														? "connections.unconfigured"
-														: provider.available
-															? "connections.configured"
-															: "connections.loginRequired",
-												)}
-											</span>
-										</div>
-										<p className="connection-endpoint">{provider.baseUrl}</p>
-									</div>
-									<div className="connection-actions">
-										<PanelButtonView
-											action={{
-												id: PROVIDER_EDIT_ACTION,
-												data: provider.id,
-												label: connectionCopy(locale, "connections.configure"),
-												weight:
-													!provider.configured && canConfigure
-														? "filled"
-														: "line",
-												disabled: !canConfigure,
-											}}
-											pending={panel.pending}
-											onAction={onAction}
-										/>
-										<PanelButtonView
-											action={{
-												id: PROVIDER_TEST_ACTION,
-												data: provider.id,
-												label: connectionCopy(locale, "connections.testAction"),
-												weight: "line",
-												disabled:
-													!provider.configured ||
-													connections.loading ||
-													enabledModelCount === 0 ||
-													provider.verification.status === "checking",
-											}}
-											pending={panel.pending}
-											onAction={onAction}
-										/>
-									</div>
-								</header>
-								{!canConfigure && (
-									<p className="connection-native">
-										{connectionCopy(locale, "connections.native")}
-									</p>
-								)}
-								<output
-									className={`connection-verification ${provider.verification.status}`}
-									aria-live="polite"
-								>
-									{verificationStatusText(locale, provider.verification)}
-								</output>
-							</section>
-							<section className="connection-models-section">
-								<header className="connection-models-head">
-									<h3 className="connection-models-title">
-										{connectionCopy(locale, "connections.models")}
-									</h3>
-									{!connections.loading && connections.models.length > 0 && (
-										<span className="connection-models-count">
-											{enabledCount} / {connections.models.length}
-										</span>
-									)}
-								</header>
-								{connections.loading ? (
-									<p className="connection-empty">
-										{connectionCopy(locale, "connection.starting")}
-									</p>
-								) : connections.models.length === 0 ? (
-									<p className="connection-empty">
-										{connectionCopy(locale, "connections.discover")}
-									</p>
-								) : (
-									<>
-										<search className="connection-model-search">
-											<input
-												type="search"
-												className="connection-search-input"
-												autoComplete="off"
-												spellCheck={false}
-												placeholder={connectionCopy(
-													locale,
-													"connections.searchModels",
-												)}
-												aria-label={connectionCopy(
-													locale,
-													"connections.searchModels",
-												)}
-												value={modelQuery}
-												onChange={(event) =>
-													setModelQuery(event.currentTarget.value)
-												}
-											/>
-										</search>
-										{modelRows.length === 0 ? (
-											<p className="connection-empty">
-												{connectionCopy(locale, "connections.noModelMatch")}
-											</p>
-										) : (
-											<div className="connection-model-list">
-												{modelRows.map(({ model, enabled: modelEnabled }) => {
-													const reference = connectionModelReference(model);
-													const pending = sameActionTarget(panel.pending, {
-														id: MODEL_ENABLED_ACTION,
-														data: reference,
-													});
-													return (
-														<div
-															key={reference}
-															className={
-																model.available
-																	? "connection-model"
-																	: "connection-model is-unavailable"
-															}
-														>
-															<div className="connection-model-main">
-																<label className="connection-model-label">
-																	<input
-																		type="checkbox"
-																		checked={modelEnabled}
-																		disabled={
-																			connections.disabled ||
-																			!model.available ||
-																			pending
-																		}
-																		onChange={(event) =>
-																			onAction({
-																				kind: "control",
-																				id: MODEL_ENABLED_ACTION,
-																				data: reference,
-																				value: String(
-																					event.currentTarget.checked,
-																				),
-																			})
-																		}
-																	/>
-																	<span className="connection-model-name">
-																		{model.name}
-																	</span>
-																</label>
-																{model.modelId === model.name ? null : (
-																	<small className="connection-model-id">
-																		{model.modelId}
-																	</small>
-																)}
-															</div>
-														</div>
-													);
-												})}
-											</div>
-										)}
-									</>
-								)}
-							</section>
-						</>
-					)}
-				</div>
+					);
+				})}
+				{configured.length === 0 && (
+					<p className="connection-empty">{connectionCopy(locale, "connections.empty")}</p>
+				)}
+				<button
+					type="button"
+					className={addPending ? "connection-add pending" : "connection-add"}
+					disabled={addAction.disabled === true || addPending}
+					aria-busy={addPending || undefined}
+					onClick={() => onAction({ kind: "command", id: addAction.id, data: addAction.data })}
+				>
+					<Icon name="plus" />
+					{addAction.label}
+				</button>
 			</div>
 		</div>
 	);

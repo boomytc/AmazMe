@@ -142,7 +142,7 @@ export class Providers {
 				: null,
 		};
 	}
-	connections(): ModelConnectionsLike {
+	connections(providerId = this.selectedProvider): ModelConnectionsLike {
 		const authentication = this.authentication(),
 			current = this.catalog?.current;
 		const availableProviders = new Set(
@@ -166,9 +166,9 @@ export class Providers {
 			})) ?? [];
 		const selected = authentication.providers.some(
 			(provider) =>
-				provider.id === this.selectedProvider && provider.configured,
+				provider.id === providerId && provider.configured,
 		)
-			? this.selectedProvider
+			? providerId
 			: authentication.providers.find((provider) => provider.configured)?.id;
 		const enabled = this.services.globalModels();
 		return {

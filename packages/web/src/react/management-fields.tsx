@@ -43,6 +43,7 @@ export type IconName =
 	| "info"
 	| "more"
 	| "play"
+	| "plus"
 	| "refresh"
 	| "search"
 	| "square-pen"

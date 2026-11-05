@@ -1932,7 +1932,7 @@ export class PageRuntime {
 			return;
 		}
 		if (id === PROVIDER_EDIT_ACTION) {
-			const connections = this.providers.connections(),
+			const connections = this.providers.connections(data),
 				provider = connections.state.providers.find((item) => item.id === data);
 			this.panels.modal = providerConfigurationModal(
 				this.preferences.locale,

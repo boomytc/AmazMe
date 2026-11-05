@@ -2123,16 +2123,17 @@ p {
 .model-picker-manage-icon { width: 15px; height: 15px; }
 .model-picker-manage:hover, .model-picker-manage:focus-visible { background: var(--hover); color: var(--text); }
 
-.library-open .view-body:has(> .split-workspace) {
-	--library-measure: 960px;
+.library-open .view-body:has(> .model-connections) {
+	--library-measure: 720px;
 	max-width: var(--library-measure);
 }
-.model-connections { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
-.connection-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--raised); }
-.connection-default-text { margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.model-connections { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.connection-page-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.connection-page-title { margin: 0; color: var(--text); font-size: 16px; font-weight: 500; line-height: 24px; }
+.connection-page-intro { margin: 0; color: var(--text-3); font-size: 14px; line-height: 22px; }
+.connection-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--raised); }
+.connection-default-text { margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .connection-default-controls { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
-/* Fit the selected model name instead of clipping at the generic 180px select cap; the row has
-   room, and field-sizing keeps the width tied to the current option rather than the longest one. */
 .connection-default-controls > .connection-default-select {
 	flex: 0 1 auto;
 	width: auto;
@@ -2140,64 +2141,61 @@ p {
 	max-width: min(520px, 100%);
 	field-sizing: content;
 }
-.connection-workspace { display: grid; grid-template-columns: 232px minmax(0, 1fr); align-items: start; gap: 0; padding-top: 20px; border-top: 1px solid var(--line); }
-.connection-rail { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-inline-end: 20px; }
-.connection-rail-head { display: flex; flex-direction: column; gap: 8px; }
-.connection-search { display: block; margin: 0; }
-.connection-search-input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--text); font: inherit; font-size: 13px; outline: none; transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
-.connection-search-input:hover:not(:disabled) { border-color: var(--text-3); }
-.connection-list { display: flex; flex-direction: column; gap: 2px; max-height: 62dvh; overflow-y: auto; padding-block: 2px; }
-.connection-row { display: flex; flex-direction: column; gap: 3px; width: 100%; padding: 8px 10px; background: transparent; border: 0; border-radius: var(--radius-md); color: var(--text); text-align: left; cursor: pointer; font: inherit; transition: background var(--dur-fast) var(--ease); }
-.connection-row:hover:not(:disabled) { background: var(--hover); }
-.connection-row.selected { background: var(--active); }
-.connection-row:focus-visible { outline: var(--focus-ring); outline-offset: var(--focus-ring-inset); }
-.connection-row:disabled { opacity: 0.45; cursor: default; }
-.connection-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-width: 0; }
-.connection-row-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 500; line-height: 18px; }
-.connection-status-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--line-strong); }
+.connection-provider-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+.connection-card { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--raised); }
+.connection-card-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; }
+.connection-card-disclosure { display: flex; align-items: center; gap: 8px; flex: 1 1 220px; min-width: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.connection-card-disclosure:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.connection-card-chevron { width: 14px; height: 14px; flex: 0 0 auto; color: var(--text-3); transform: rotate(-90deg); transition: transform var(--dur-fast) var(--ease); }
+.connection-card.expanded .connection-card-chevron { transform: rotate(0); }
+.connection-card-identity { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.connection-card-title-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.connection-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; line-height: 22px; }
+.connection-card-meta { color: var(--text-3); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
+.connection-status-dot { width: 7px; height: 7px; flex: 0 0 auto; border-radius: 50%; background: var(--line-strong); }
 .connection-status-dot.configured { background: var(--success); }
-.connection-row-meta { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; width: 100%; color: var(--text-3); font-size: 11px; line-height: 16px; font-variant-numeric: tabular-nums; }
-.connection-row-sep { display: none; }
-.connection-row-count { font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--text-3); }
-
-.connection-detail { display: flex; flex-direction: column; gap: 24px; min-width: 0; padding-inline-start: 24px; border-inline-start: 1px solid var(--line); }
-.connection-provider { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
-.connection-provider-head { display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; }
-.connection-provider-titles { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 220px; }
-.connection-provider-title-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
-.connection-provider-name { margin: 0; font-size: 16px; font-weight: 600; line-height: 24px; letter-spacing: -0.01em; }
-.connection-badge.configured { background: var(--accent-soft); color: var(--accent-text); }
-.connection-badge.unconfigured { background: var(--hover); color: var(--text-3); }
+.connection-status-dot.missing { background: var(--danger); }
+.connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-left: auto; }
+.connection-actions > .panel-button { height: 28px; padding: 0 10px; border-radius: var(--radius-sm); font-size: 12px; }
+.connection-card-body { display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px 16px; border-radius: var(--radius-lg); background: var(--sidebar); }
 .connection-endpoint { margin: 0; color: var(--text-3); font-family: var(--font-mono); font-size: 12px; line-height: 18px; overflow-wrap: anywhere; }
-.connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; flex: 0 0 auto; }
-.connection-native { margin: 0; color: var(--text-3); font-size: 12px; line-height: 1.5; }
+.connection-native { margin: 0; color: var(--text-3); font-size: 12px; line-height: 18px; }
 .connection-verification { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 0; color: var(--text-3); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .connection-verification::before { content: ""; width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: currentColor; opacity: 0.7; }
 .connection-verification.success { color: var(--success); }
 .connection-verification.checking { color: var(--accent-text); }
 .connection-verification.error { color: var(--danger); }
-
-.connection-models-section { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding-top: 20px; border-top: 1px solid var(--line); }
+.connection-models-section { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding-top: 12px; border-top: 1px solid var(--line); }
 .connection-models-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.connection-model-search { display: block; margin: 0 0 8px; }
-.connection-model-search .connection-search-input { width: 100%; }
-.connection-models-title { margin: 0; font-size: 13px; font-weight: 600; line-height: 20px; color: var(--text-2); }
+.connection-model-search { display: block; margin: 0; }
+.connection-search-input { width: 100%; height: 32px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--text); font: inherit; font-size: 13px; outline: none; transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease); }
+.connection-search-input:hover:not(:disabled) { border-color: var(--text-3); }
+.connection-models-title { margin: 0; color: var(--text-2); font-size: 12px; font-weight: 500; line-height: 18px; }
 .connection-models-count { color: var(--text-3); font-family: var(--font-mono); font-size: 12px; line-height: 18px; font-variant-numeric: tabular-nums; }
-.connection-model-list { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
-.connection-model { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; padding: 10px 2px; border-bottom: 1px solid var(--line); }
+.connection-model-list { display: flex; flex-direction: column; gap: 6px; }
+.connection-model { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-lg); color: var(--text); cursor: pointer; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+.connection-model:hover { background: var(--hover); }
+.connection-model:has(input:focus-visible) { outline: var(--focus-ring); outline-offset: 2px; }
+.connection-model:has(input:disabled) { cursor: default; }
 .connection-model.is-unavailable .connection-model-name { color: var(--text-3); }
-.connection-model-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 200px; }
-.connection-model-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; font-size: 13px; font-weight: 500; line-height: 20px; color: var(--text); }
-.connection-model-label input[type="checkbox"] { width: 15px; height: 15px; margin: 0; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
-.connection-model-name { min-width: 0; overflow-wrap: anywhere; }
-.connection-model-id { padding-inline-start: 23px; color: var(--text-3); font-family: var(--font-mono); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
-.connection-empty { padding: var(--space-16) 0; }
+.connection-model > input[type="checkbox"] { width: 15px; height: 15px; margin: 3px 0 0; flex: 0 0 auto; accent-color: var(--accent); cursor: pointer; }
+.connection-model > input[type="checkbox"]:disabled { cursor: default; }
+.connection-model-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.connection-model-name { min-width: 0; font-size: 13px; font-weight: 500; line-height: 20px; overflow-wrap: anywhere; }
+.connection-model-id { color: var(--text-3); font-family: var(--font-mono); font-size: 11px; line-height: 16px; overflow-wrap: anywhere; }
+.connection-empty { padding: var(--space-16) 4px; }
+.connection-add { display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; height: 44px; padding: 0 14px; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); background: transparent; color: var(--text-2); font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
+.connection-add .icon { width: 14px; height: 14px; }
+.connection-add:hover:not(:disabled) { background: var(--hover); color: var(--text); }
+.connection-add:focus-visible { outline: var(--focus-ring); outline-offset: 2px; }
+.connection-add:disabled { opacity: 0.45; cursor: default; }
+.connection-add.pending { cursor: progress; }
 
-@container panel (max-width: 640px) {
-	.connection-workspace { grid-template-columns: 1fr; gap: 20px; }
-	.connection-rail { padding-inline-end: 0; }
-	.connection-list { max-height: 28dvh; }
-	.connection-detail { padding-inline-start: 0; border-inline-start: 0; padding-top: 20px; border-top: 1px solid var(--line); }
+@container panel (max-width: 560px) {
+	.connection-overview { align-items: flex-start; }
+	.connection-default-controls { width: 100%; }
+	.connection-default-controls > .connection-default-select { flex: 1 1 auto; min-width: 0; max-width: 100%; }
+	.connection-card-body { padding: 12px; }
 }
 /* Approvals, the queued inputs and the command palette share one scrollable block: a long draft plus
    several cards cannot push the composer off the bottom of a short window. */
@@ -3632,9 +3630,8 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	--library-measure: 960px;
 }
 
-/* The settings tabs swap between form, record, and split-workspace panels. One measure for the
-   whole settings surface keeps the category column and the reading column still across tabs. */
-.library-open .library-frame[data-management-current="settings"] .view-body {
+/* Ordinary settings share one measure across tabs; provider cards keep their narrower reading column. */
+.library-open .library-frame[data-management-current="settings"] .view-body:not(:has(> .model-connections)) {
 	--library-measure: 840px;
 }
 
