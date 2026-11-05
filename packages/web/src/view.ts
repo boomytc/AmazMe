@@ -143,6 +143,8 @@ export interface ModelPicker {
 	readonly label: string;
 	/** The configured thinking level for a model that reports levels. */
 	readonly effort: string | undefined;
+	/** The attached model's context window, when the catalog publishes one. */
+	readonly context?: string;
 	readonly groups: readonly ModelGroup[];
 	readonly levels: readonly ThinkingOption[];
 	/** Explain an empty catalog or model scope. */
@@ -652,6 +654,7 @@ export function modelPicker(locale: Locale, models: ModelsStateLike | undefined,
 	return {
 		label,
 		effort: reasoned ? thinkingLevelCopy(locale, models.configuration.thinkingLevel) : undefined,
+		...(current?.contextWindow ? { context: formatTokens(current.contextWindow) } : {}),
 		groups,
 		levels: (levels ?? []).map((level) => ({
 			level,
@@ -827,6 +830,17 @@ export function formatTokens(count: number): string {
 	if (count < 1_000_000) return `${Math.round(count / 1000)}k`;
 	if (count < 10_000_000) return `${(count / 1_000_000).toFixed(1)}M`;
 	return `${Math.round(count / 1_000_000)}M`;
+}
+
+/** Context occupancy against the model's window. Missing measurements stay `?`. */
+export function statusMeter(used: number | null | undefined, contextWindow: number | null | undefined, cost: string): StatusMeter {
+	const windowKnown = contextWindow !== null && contextWindow !== undefined && contextWindow > 0;
+	const usedKnown = used !== null && used !== undefined;
+	const tokens = `${usedKnown ? formatTokens(used) : "?"} / ${windowKnown ? formatTokens(contextWindow) : "?"}`;
+	if (!usedKnown || !windowKnown) return { context: "?", tokens, cost, tone: "neutral" };
+	const ratio = used / contextWindow;
+	const tone = ratio >= 0.95 ? "error" : ratio >= 0.8 ? "warning" : "neutral";
+	return { context: `${Math.min(100, Math.round(ratio * 100))}%`, tokens, cost, tone };
 }
 
 /** The header's context, tokens, and cost. Unknown measurements stay visible as `?`. */

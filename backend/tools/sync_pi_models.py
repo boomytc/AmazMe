@@ -25,7 +25,7 @@ def main() -> None:
                 if value.get('type') != 'chat':
                     continue
                 models.append({key: value[key] for key in ['id', 'provider', 'name', 'api', 'baseUrl',
-                    'maxTokens', 'cost', 'compat', 'headers', 'input', 'reasoning', 'thinkingLevelMap'] if key in value})
+                    'maxTokens', 'contextWindow', 'cost', 'compat', 'headers', 'input', 'reasoning', 'thinkingLevelMap'] if key in value})
     if not models:
         raise SystemExit('No hydrated Pi chat model catalog found')
     target = Path(__file__).resolve().parents[1] / 'src/amazme_backend/assets/model_catalog.json'

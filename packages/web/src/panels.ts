@@ -658,6 +658,11 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 					controls: [{ id: MODEL_THINKING_ACTION, kind: "select" as const, value: picker.levels.find(level => level.selected)?.level ?? "", disabled: !available || picker.disabled,
 						options: picker.levels.map(level => ({ value: level.level, label: level.label })) }],
 				}]),
+				...(picker.context ? [{
+					id: "models:context", title: translate(locale, "model.context"),
+					hint: translate(locale, "model.contextHelp"),
+					value: picker.context,
+				}] : []),
 			], skeleton: "form", footnote: picker.refresh.status,
 		});
 	}

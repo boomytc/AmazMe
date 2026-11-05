@@ -522,6 +522,18 @@
           },
           "type": "array",
           "title": "Thinking Levels"
+        },
+        "context_window": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "exclusiveMinimum": 0.0
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Context Window"
         }
       },
       "additionalProperties": false,

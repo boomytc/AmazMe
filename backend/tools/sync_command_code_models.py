@@ -34,6 +34,7 @@ class RemoteModel(BaseModel):
     name: str = ""
     supported_endpoints: list[str]
     max_output_tokens: int = Field(default=32768, gt=0)
+    context_length: int | None = Field(default=None, gt=0)
     reasoning: bool | None = None
     modalities: Modalities | None = None
     pricing: Pricing | None = None
@@ -88,6 +89,7 @@ def main() -> None:
         models.append({
             "id": model.id, "provider": "command-code", "name": model.name or model.id,
             "api": api, "baseUrl": BASE_URL, "maxTokens": model.max_output_tokens,
+            **({} if model.context_length is None else {"contextWindow": model.context_length}),
             "reasoning": model.reasoning if model.reasoning is not None else True,
             "input": ["text", "image"] if vision else ["text"], "compat": compat,
             "cost": {key: prices[source] for key, source in (

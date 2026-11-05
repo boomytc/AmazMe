@@ -16,7 +16,7 @@ import { translate } from "../strings.ts";
 import { toolArguments } from "../tool-args.ts";
 import { gitReviewSummary, toolResultView } from "../tool-results.ts";
 import type { Typography } from "../typography.ts";
-import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, sessionCapabilities, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
+import { approvalCards, approvalIndicator, failureView, feedbackControls, modelPicker, rosterItems, runControls, sessionCapabilities, statusMeter, welcomeCard, type Attachment, type ModelsStateLike, type SessionDirectoryLike, type SubmitMode, type TranscriptBlock, type WebView } from "../view.ts";
 
 /**
  * The host writes a job notice as a status line followed by model instructions; only the status
@@ -149,7 +149,7 @@ export function pythonView(input: PresentationInput): WebView {
 	const enabledModelIds = (input.connections?.enabledModels ?? []).map(model => `${model.provider}/${model.modelId}`)
 		.filter(id => input.enabledModels === null || input.enabledModels.includes(id));
 	const models: ModelsStateLike | undefined = catalog ? { catalog: { revision: 0, enabledModelIds,
-		availableModels: catalog.models.filter(item => availableProviders.has(item.provider)).map(item => ({ provider: item.provider, modelId: item.model, name: item.label, reasoning: (item.thinking_levels?.length ?? 0) > 1 })) },
+		availableModels: catalog.models.filter(item => availableProviders.has(item.provider)).map(item => ({ provider: item.provider, modelId: item.model, name: item.label, reasoning: (item.thinking_levels?.length ?? 0) > 1, ...(item.context_window ? { contextWindow: item.context_window } : {}) })) },
 		configuration: { model: selected ? { provider: selected.provider, modelId: selected.model } : null, thinkingLevel: input.thinking }, refresh: { status: "idle" } } : undefined;
 	const levels = catalog?.models.find(item => item.provider === selected?.provider && item.model === selected.model)?.thinking_levels;
 	const pending = snapshot?.requests.filter(item => !settled.has(item.status)) ?? [];
@@ -185,7 +185,7 @@ export function pythonView(input: PresentationInput): WebView {
 		palette: commandPalette(locale, { draft: input.draft, commands: input.commands, selected: input.paletteSelection }),
 		shortcuts: shortcuts(locale, typeof navigator === "undefined" ? "" : navigator.platform),
 		dock: input.dock ?? dockView(locale, { open: false, tab: "files", cwd, workspace: undefined, conversations: undefined }),
-		meter: { context: "?", tokens: input.usage ? `${(input.usage.input_tokens ?? 0) + (input.usage.cache_read_tokens ?? 0) + (input.usage.cache_write_tokens ?? 0)} / ${input.usage.output_tokens ?? 0}` : "? / ?", cost: input.usage?.priced && input.usage.cost_micro_usd !== null && input.usage.cost_micro_usd !== undefined ? `$${(input.usage.cost_micro_usd / 1_000_000).toFixed(3)}` : "?", tone: "neutral" },
+		meter: statusMeter(input.usage?.latest_context_tokens, catalog?.models.find(item => item.provider === selected?.provider && item.model === selected.model)?.context_window, input.usage?.priced && input.usage.cost_micro_usd !== null && input.usage.cost_micro_usd !== undefined ? `$${(input.usage.cost_micro_usd / 1_000_000).toFixed(3)}` : "?"),
 	};
 }
 

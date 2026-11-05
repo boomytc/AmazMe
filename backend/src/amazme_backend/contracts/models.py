@@ -50,6 +50,7 @@ class CatalogModel(Model):
     label: str
     endpoint_editable: bool
     thinking_levels: list[ThinkingLevel] = Field(default_factory=lambda: ["off"])
+    context_window: int | None = Field(default=None, gt=0)
 
 
 class ModelSettings(Model):

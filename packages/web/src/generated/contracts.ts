@@ -104,6 +104,7 @@ export type CatalogModel = {
   "label": string;
   "endpoint_editable": boolean;
   "thinking_levels"?: Array<"off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max">;
+  "context_window"?: number | null;
 };
 
 export type CheckpointCreate = {

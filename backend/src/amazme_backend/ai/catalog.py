@@ -15,6 +15,7 @@ class PiModel(Model):
     api: ProviderApi
     base_url: str = Field(alias='baseUrl')
     max_tokens: int = Field(alias='maxTokens')
+    context_window: int | None = Field(default=None, alias='contextWindow', gt=0)
     reasoning: bool = False
     thinking_level_map: dict[str, str | None] = Field(default_factory=dict, alias='thinkingLevelMap')
 
@@ -37,6 +38,7 @@ PROVIDERS = {"command-code": ProviderDefinition(provider="command-code", name="C
 INDEX = {(model.provider, model.id): model for model in MODELS}
 CATALOG = [
     CatalogModel(provider=model.provider, model=model.id, label=f'{model.provider} · {model.name}',
-                 api=model.api, base_url=model.base_url, endpoint_editable=True, thinking_levels=model.thinking_levels()) for model in INDEX.values()]
+                 api=model.api, base_url=model.base_url, endpoint_editable=True, thinking_levels=model.thinking_levels(),
+                 context_window=model.context_window) for model in INDEX.values()]
 
 SELECTION_INDEX = {(model.provider, model.model): model for model in CATALOG}
