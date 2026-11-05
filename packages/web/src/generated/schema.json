@@ -3818,7 +3818,7 @@
           "type": "string",
           "maxLength": 128,
           "minLength": 1,
-          "pattern": "^[\\w./:@+-]+$",
+          "pattern": "^[\\w./:@~+-]+$",
           "title": "Model"
         }
       },
@@ -4079,7 +4079,7 @@
           "maxLength": 100,
           "minLength": 1,
           "title": "Title",
-          "default": "定时任务"
+          "default": "计划"
         },
         "project_id": {
           "type": "string",
@@ -7814,7 +7814,7 @@
           "type": "string",
           "maxLength": 128,
           "minLength": 1,
-          "pattern": "^[\\w./:@+-]+$",
+          "pattern": "^[\\w./:@~+-]+$",
           "title": "Model"
         },
         "session_id": {
@@ -8724,7 +8724,7 @@
           "type": "string",
           "maxLength": 128,
           "minLength": 1,
-          "pattern": "^[\\w./:@+-]+$",
+          "pattern": "^[\\w./:@~+-]+$",
           "title": "Model"
         },
         "base_url": {

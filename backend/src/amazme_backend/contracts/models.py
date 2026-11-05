@@ -19,9 +19,13 @@ TOOL_NAME_PATTERN = r"^(shell|read_file|glob|grep|git_diff|write_file|edit_file|
 ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 
+# Pi's OpenRouter latest aliases start with "~". The same rule covers catalog ids and custom ids.
+MODEL_ID_PATTERN = r"^[\w./:@~+-]+$"
+
+
 class ModelSelection(Model):
     provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
-    model: str = Field(min_length=1, max_length=128, pattern=r"^[\w./:@+-]+$")
+    model: str = Field(min_length=1, max_length=128, pattern=MODEL_ID_PATTERN)
 
 
 class ModelCallUsage(Model):
@@ -108,7 +112,7 @@ class UpdateModelSettings(Model):
 
     provider: str = Field(pattern=r"^[a-z][a-z0-9._-]{0,63}$")
     api: ProviderApi | None = None
-    model: str = Field(min_length=1, max_length=128, pattern=r"^[\w./:@+-]+$")
+    model: str = Field(min_length=1, max_length=128, pattern=MODEL_ID_PATTERN)
     base_url: str = Field(default="", max_length=300)
     max_tokens: int = Field(default=2048, ge=32, le=8192)
     proxy: str = Field(default="", max_length=300)
