@@ -26,20 +26,15 @@ def _stopped(profile: Profile) -> bool:
 
 
 def main() -> None:
-    if len(sys.argv) > 1 and sys.argv[1] == "connect":
+    if len(sys.argv) > 1 and sys.argv[1] in {"connect", "web", "doctor"}:
         from amazme_backend.bootstrap.local import main as connect_main
-        connect_main(sys.argv[2:])
+        mode = "web" if sys.argv[1] == "web" else "doctor" if sys.argv[1] == "doctor" else "connect"
+        connect_main(sys.argv[2:], mode)
         return
     if len(sys.argv) > 1 and sys.argv[1] == "migrate-profile":
         from amazme_backend.bootstrap.migration import main as migration_main
         migration_main(sys.argv[2:])
         return
-    if len(sys.argv) > 1 and sys.argv[1] == "client-outbox":
-        from amazme_backend.interfaces.client_outbox import main as outbox_main
-        raise SystemExit(outbox_main())
-    if len(sys.argv) > 1 and sys.argv[1] == "transient":
-        from amazme_backend.bootstrap.transient import main as transient_main
-        raise SystemExit(transient_main(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == "pty-gate":
         from amazme_backend.execution.pty.gate import main as pty_main
         raise SystemExit(pty_main())
@@ -76,9 +71,6 @@ def main() -> None:
             from amazme_backend.execution.services import runner as service_runner
             service_runner(arguments.profile, arguments.instance, arguments.lifetime_fd, arguments.directory, arguments.kind)
         return
-    if len(sys.argv) > 1 and sys.argv[1] == "client":
-        from amazme_backend.interfaces.cli import run_client
-        raise SystemExit(run_client(sys.argv[2:]))
     parser = argparse.ArgumentParser(prog="amazme-backend")
     parser.add_argument("mode", choices=["init", "serve", "worker", "supervisor", "stop", "pair"])
     parser.add_argument("--profile", type=Path)

@@ -5,7 +5,7 @@
 ## 当前实现
 
 - Python Host、worker 与监督器拥有账号、模型、会话 SQLite、审批、工具执行和清理。
-- Web/Electron、CLI、RPC 与 Python SDK 共用 Python 契约；TypeScript 保留客户端呈现及 QuickJS helper。
+- Web/Electron 与 Python SDK 共用 Python 契约；TypeScript 保留图形客户端及 QuickJS helper。
 - 执行直接作用于本机；应用层路径限制和审批不是操作系统沙箱。
 - MCP、PTY、插件和 Codemode 按会话与调用身份管理；未知副作用不自动重放。
 - 桌面关闭窗口和退出应用使用统一生命周期入口；偏好保存在 Python 设置中。
@@ -21,7 +21,7 @@
 | 跨端契约 | `backend/tools/export_contracts.py --check` |
 | 客户端 | 受影响 workspace 的 build，以及 `npm run typecheck` |
 | 模型评测 | `npm run eval`，显式选择模型和凭据 profile |
-| 产品自检与诊断 | 模型连接检查、会话诊断、`amazme doctor`；隔离 profile 上的源码桌面自检 |
+| 产品自检与诊断 | 模型连接检查、会话诊断、`amazme-backend doctor`；隔离 profile 上的源码桌面自检 |
 | 资源归属与残留 | `backend/tools/resource_census.py` |
 | 构建、依赖与开发资产 | `npm run check:workspace` |
 

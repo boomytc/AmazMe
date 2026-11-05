@@ -583,8 +583,6 @@
         "amazme_backend.interfaces"
       ],
       "public": [
-        "amazme_backend.interfaces.cli",
-        "amazme_backend.interfaces.client_outbox",
         "amazme_backend.interfaces.http.application",
         "amazme_backend.interfaces.rpc",
         "amazme_backend.interfaces.supervisor",
@@ -742,8 +740,6 @@
         "amazme_backend.features.resources.service",
         "amazme_backend.host.queries",
         "amazme_backend.host.service",
-        "amazme_backend.interfaces.cli",
-        "amazme_backend.interfaces.client_outbox",
         "amazme_backend.interfaces.http.application",
         "amazme_backend.interfaces.supervisor",
         "amazme_backend.interfaces.worker",
@@ -1028,10 +1024,6 @@
         "lifecycle"
       ],
       "amazme_backend.execution.remote.daemon": [
-        "spawn",
-        "lifecycle"
-      ],
-      "amazme_backend.bootstrap.transient": [
         "spawn",
         "lifecycle"
       ],

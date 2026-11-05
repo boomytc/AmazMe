@@ -34,7 +34,6 @@ syntax.jsonl
 out.jsonl
 pi-*.html
 out.html
-packages/coding-agent/binaries/
 todo.md
 plans/
 .amazme/hf-sessions/

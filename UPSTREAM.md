@@ -1,5 +1,7 @@
 # 上游对齐
 
+当前产品入口为 Web/桌面与 Python SDK；终端客户端及 stdio RPC 呈现已移除。下文涉及 CLI、TUI 和旧构建链的验收记录属于对应历史阶段，不表示当前仍维护这些入口。
+
 本页保留历史移植与验收记录；其中测试命令和脚本路径对应当时版本，已移除的设施从 Git 历史查询。当前开发入口见 [AGENTS.md](AGENTS.md)。
 
 实现来自 [Pi](https://github.com/earendil-works/pi)。最近核对基线为 `c9f4c7b9fcd0f3e6b5bbc35c7c9b6cda35580eb8`；按当前 Python 产品的职责吸收适用行为，OAuth 客户端 ID、回调和供应商请求身份保持原样。当前执行与持久化契约见 [本机方案](docs/python-backend-plan.md)，完成状态见 [任务表](docs/python-backend-completion.md)。TS 仅保留客户端、纯呈现与 QuickJS helper。

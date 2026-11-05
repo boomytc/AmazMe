@@ -1,6 +1,6 @@
 # Python SDK
 
-`amazme_backend.sdk.Client` 连接已有的本机 Python Host。CLI、Web/Electron、RPC 与 SDK 共用 Host、会话、审批、账号及副作用账本。Node 包不再导出 `createDurableSession` 或 `@amazme/coding-agent/durable`。
+`amazme_backend.sdk.Client` 连接已有的本机 Python Host。Web/Electron 与 SDK 共用 Host、会话、审批、账号及副作用账本。客户端通过 HTTP/WS 连接，SDK 不导入后端业务实现。
 
 ```python
 from pathlib import Path

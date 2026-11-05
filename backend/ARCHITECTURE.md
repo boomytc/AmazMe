@@ -2,7 +2,7 @@
 
 后端保持一个 `amazme-backend` 分发包。执行契约见[本机方案](../docs/python-backend-plan.md)，客户端职责见[依赖说明](../docs/python-backend-ts-deps.md)。业务状态与持久化由 Python 拥有。
 
-`profiles.locations` 统一解析产品根、用户资源和默认 profile。`bootstrap.local` 是所有本机客户端唯一的初始化与 start-or-attach 入口，Host 独占同一规范目录并独立于客户端寿命。本地连接入口在目标构建上完成冻结校验与激活，客户端不会把冻结状态误判为另起 Host 的理由。`bootstrap.migration` 在停写与租约退出后整体迁移业务树，保留稳定身份并重定位内部路径；事务记录未完成时禁止启动，成功后清除暂存旧目录，不保留备份。运行资源由当前后端定位，不存入产品 profile。
+`profiles.locations` 统一解析产品根、用户资源和默认 profile。`bootstrap.local` 是所有本机客户端唯一的初始化与 start-or-attach 入口，Host 独占同一规范目录并独立于客户端寿命。Web 启动直接使用 Python `web` 入口，终端只保留后台管理命令，业务自动化由 HTTP/WS 与 Python SDK 承担。本地连接入口在目标构建上完成冻结校验与激活，客户端不会把冻结状态误判为另起 Host 的理由。`bootstrap.migration` 在停写与租约退出后整体迁移业务树，保留稳定身份并重定位内部路径；事务记录未完成时禁止启动，成功后清除暂存旧目录，不保留备份。运行资源由当前后端定位，不存入产品 profile。
 
 模型目录读取和价格快照属于 `ai.pricing`；已保存单价的纯计算属于 `ai.usage`。会话统计由 `sessions.policy.usage` 对完整持久记录汇总，客户端只呈现结果。该纯闭包由结构检查约束，不能经目录读取进入文件 I/O。
 
@@ -22,7 +22,7 @@
 | `workspaces` | 工作区路径、授权目录校验与文件摘要、冲突和恢复 |
 | `features` | 资源、技能、记忆、排程、插件包、产物、工具元数据与导入导出的纯规则或文件操作 |
 | `host` | profile 代际、持久投递、客户端绑定、工作区元数据、更新及完整产品用例 |
-| `interfaces` | HTTP/WS、RPC、CLI、私有进程 API 和页面 boot；解析、认证、调用与呈现 |
+| `interfaces` | HTTP/WS、HTTP RPC、私有进程 API 和页面 boot；解析、认证、调用与呈现 |
 | `sdk` | `from amazme_backend.sdk import Client`；只连接现有 Host |
 | `bootstrap` | 命令分派与 Host、worker、Supervisor 的构造、能力注入和服务启动 |
 
@@ -30,7 +30,7 @@
 
 ```mermaid
 flowchart TD
-    Clients[Web / Electron / CLI / SDK] --> Interfaces[interfaces]
+    Clients[Web / Electron / Python SDK] --> Interfaces[interfaces]
     Interfaces --> Host[host 产品用例]
     Host --> HostDB[(Host SQLite)]
     Host -->|持久投递 / IPC| Worker[agent 会话驱动]
@@ -73,10 +73,10 @@ backend/.venv/bin/python backend/tools/export_contracts.py --check
 
 结构检查递归扫描 Python 子包，覆盖绝对/相对导入、别名、父包初始化、重导出、函数内、TYPE_CHECKING 和可确定的动态导入。延迟导入不豁免跨域回环；进程创建、exec、生命周期操作与继承锁也受同一清单约束。检查已接入 `npm run check:workspace`，只读检查不安装环境或启动服务。
 
-第一层用轻量契约、显式请求值、私有持久化模块和装配时注入能力排除反向业务依赖。第二层用递归结构检查与独立进程导入检查拦截绕过。资源定位、冻结数据和身份检查共用 `platform/resource_manifest.py`；gate、远端 daemon、模型快照、Codemode helper 与页面资源都进入冻结身份。
+第一层用轻量契约、显式请求值、私有持久化模块和装配时注入能力排除反向业务依赖。第二层用递归结构检查与独立进程导入检查拦截绕过。源码资源定位使用 `platform/resource_manifest.py`；gate、远端 daemon、模型快照、Codemode helper 与页面资源都进入源码构建身份。
 
 `backend/contracts/public-exports.json` 固定具名公开声明，防止契约搬迁后模块仍可导入、其中某个公开类型却消失。模型调用的 prompt、工具、认证与协议转换由显式请求值和模块边界约束。供应商兼容性按实际改动做临时验收或真实模型评测，不将本地替身视为真实服务证据。
 
 常规 Pyright 同时检查 `backend/examples/sdk` 的 Python 示例，使公开调用签名的迁移遗漏进入现有类型检查。
 
-实际运行、faux、真实供应商、TCC、SSH 与冻结产物各自证明对应范围。资源状态以 `backend/tools/resource_census.py` 的本次 scope 和退出码为准。
+实际运行、faux、真实供应商、TCC 与 SSH 各自证明对应范围。资源状态以 `backend/tools/resource_census.py` 的本次 scope 和退出码为准。

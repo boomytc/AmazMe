@@ -113,7 +113,7 @@ def _running(path: Path) -> bool:
             for index, argument in enumerate(arguments[:-1]):
                 if argument not in {"--profile", "--source-profile"} or Path(arguments[index + 1]).resolve() != path:
                     continue
-                if any(mode in arguments[:index] for mode in ("serve", "supervisor", "worker", "execute", "service-runner", "transient")):
+                if any(mode in arguments[:index] for mode in ("serve", "supervisor", "worker", "execute", "service-runner")):
                     return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue

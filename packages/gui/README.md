@@ -1,6 +1,6 @@
 # @amazme/gui
 
-Electron 窗口，通过本机 Python 的 `connect` 连接共享 Host，再把回环页面装进窗口。业务状态、模型、账号和会话均由 Python 拥有，桌面不依赖 `@amazme/coding-agent`。
+Electron 窗口，通过本机 Python 的 `connect` 连接共享 Host，再把回环页面装进窗口。业务状态、模型、账号和会话均由 Python 拥有。
 
 ## 启动
 

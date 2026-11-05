@@ -5,8 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
 usage() {
-	echo "用法：./start.sh [desktop|web|cli] [参数...]" >&2
-	echo "      cli 为一次性终端命令，不进入界面" >&2
+	echo "用法：./start.sh [desktop|web] [参数...]" >&2
 	echo "      ./start.sh --prepare" >&2
 }
 
@@ -28,7 +27,7 @@ fi
 
 MODE=desktop
 case "${1:-}" in
-	desktop|web|cli)
+	desktop|web)
 		MODE="$1"
 		shift
 		;;
@@ -61,11 +60,5 @@ case "$MODE" in
 			exec npm run dev:web -- "$@"
 		fi
 		exec npm run dev:web
-		;;
-	cli)
-		if [[ $# -gt 0 ]]; then
-			exec npm run dev:cli -- "$@"
-		fi
-		exec npm run dev:cli
 		;;
 esac

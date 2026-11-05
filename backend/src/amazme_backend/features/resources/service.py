@@ -1,6 +1,6 @@
 """Pi's context, skill discovery and prompt expansion, on the native filesystem.
 
-Source: packages/coding-agent/src/core/{resource-loader,skills,prompt-templates}.ts
+Pi source: coding-agent resource-loader, skills and prompt-templates modules
 in the local Pi checkout (be14d973). Resource loading never executes a skill.
 """
 

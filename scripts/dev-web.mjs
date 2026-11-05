@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { spawn, spawnSync } from "node:child_process";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -9,8 +10,12 @@ if (!process.argv.slice(2).some(arg => ["--help", "-h"].includes(arg))) {
 	if (result.error) throw result.error;
 	if (result.status !== 0) process.exit(result.status ?? 1);
 }
-const child = spawn(process.execPath, ["--import", "./packages/coding-agent/src/source-resolver.ts",
-	"./packages/coding-agent/src/cli.ts", "web", ...process.argv.slice(2)], {cwd:root, stdio:"inherit"});
+const backend = resolve(root, process.env.AMAZME_PYTHON_BACKEND || join("backend", ".venv",
+    process.platform === "win32" ? "Scripts/amazme-backend.exe" : "bin/amazme-backend"));
+const child = spawn(backend, ["web", ...process.argv.slice(2)], {
+    cwd: root, stdio: "inherit",
+    env: { ...process.env, AMAZME_NODE: process.env.AMAZME_NODE || process.execPath },
+});
 const interrupt = () => child.kill("SIGINT");
 const terminate = () => child.kill("SIGTERM");
 process.on("SIGINT", interrupt);

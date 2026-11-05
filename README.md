@@ -1,8 +1,8 @@
 # AmazMe
 
-操作用户本机环境的桌面 AI 助手，基于 Pi packages 的行为移植到 Python。Python 管理模型与账号、会话和 SQLite、审批、文件与 shell、PTY、stdio MCP、插件及工具账本；Web/Electron、CLI、RPC 和 Python SDK 共用同一 Host。
+操作用户本机环境的桌面 AI 助手，基于 Pi packages 的行为移植到 Python。Python 管理模型与账号、会话和 SQLite、审批、文件与 shell、PTY、stdio MCP、插件及工具账本；Web/Electron 与 Python SDK 共用同一 Host。
 
-产品形态只有 Web/桌面客户端。终端入口只提供一次性命令、JSON/RPC 与脚本连接，不维护交互式终端界面。
+产品形态只有 Web/桌面客户端。终端只保留启动、诊断、配对、迁移和停服等后台管理命令；程序化调用使用 HTTP/WS 或 Python SDK。
 
 当前阶段只通过仓库启动脚本使用，采用源码运行方式。启动时自动编译必要的客户端与 helper，不生成独立安装包或冻结 Python 后端，也不维护公证、发布和安装包更新流程。更新源码后先停止共享后台，再重新运行启动脚本。
 
@@ -25,10 +25,9 @@
 ```bash
 ./start.sh            # 桌面
 ./start.sh web        # 浏览器页面
-./start.sh cli        # 命令行（一次性命令）
 ```
 
-准备命令只同步依赖，不打开任何界面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。`web` 和 `cli` 之后的参数会原样转给对应入口，例如 `./start.sh cli --continue '继续上次任务'`。三种模式都会把 `AMAZME_PYTHON_BACKEND` 解析成绝对路径（默认仓库内的后端，已有覆盖时保留覆盖），不需要手动 `export`。
+准备命令只同步依赖，不打开任何界面。普通启动不重复安装；桌面源码、资源、构建配置、构建脚本或已安装依赖变化时才重新构建所需的 workspace，然后使用仓库内的 Python 后端打开 Electron。`web` 之后的参数直接传给 Python，例如 `./start.sh web --workspace /absolute/project`。两种模式都会把 `AMAZME_PYTHON_BACKEND` 解析成绝对路径（默认仓库内的后端，已有覆盖时保留覆盖），不需要手动 `export`。
 
 需要打开其他项目时，使用 `AMAZME_GUI_CWD=/absolute/project ./start.sh`，或用 `AMAZME_GUI_SESSION=会话ID` 指定已有会话。
 
@@ -38,7 +37,7 @@
 2. 检测连接，勾选要启用的模型。
 3. 在「新聊天默认模型」中选择默认值。输入区的模型选择器只修改当前会话，不改写新聊天的默认值。
 
-Web、Desktop 和 CLI 默认共用 `~/.amazme/agent/python-host`。Host 按需启动并在客户端退出后继续运行。关闭桌面窗口时可隐藏窗口或退出桌面；菜单和托盘的「停止后台并退出」才会停止任务并断开所有客户端。更多窗口行为见 [桌面说明](packages/gui/README.md)。
+Web 和 Desktop 默认共用 `~/.amazme/agent/python-host`。Host 按需启动并在客户端退出后继续运行。关闭桌面窗口时可隐藏窗口或退出桌面；菜单和托盘的「停止后台并退出」才会停止任务并断开所有客户端。更多窗口行为见 [桌面说明](packages/gui/README.md)。
 
 ### 统一数据目录与迁移
 
@@ -62,109 +61,47 @@ backend/.venv/bin/amazme-backend migrate-profile --source-profile "$HOME/Library
 
 两个入口都调用 Python 的 `connect`，并发启动只产生一个 Host。构建切换后的冻结校验和激活也由这个入口完成，只有正在运行的目标构建可以激活；校验失败时保持冻结。旧 Host 缺少共享连接能力时返回 `host_upgrade_required`；停止旧后端后再启动新版，不会另建一份数据。源码工具的 Node 由启动器显式传入。
 
-### 手动准备与其他客户端
-
-一键桌面不需要先执行全量构建。需要 CLI、RPC 或手动分步操作时，在仓库根目录执行：
-
-```bash
-uv sync --project backend --frozen
-npm install --ignore-scripts
-npm run build:offline
-export AMAZME_PYTHON_BACKEND=backend/.venv/bin/amazme-backend
-```
-
-`AMAZME_PYTHON_BACKEND` 用于 CLI 和 Web 找到后端，`./start.sh` 的三种模式都会自动处理。继续在仓库根目录操作时可直接使用这个相对路径；离开仓库目录运行 CLI 时，应改成对应入口的绝对路径。新开终端也需要重新设置该变量。
-
-构建使用仓库中的 Python 模型快照，不联网刷新；只有需要同步上游模型数据时，才显式指定 Pi 源码：
-
-```bash
-npm run sync:pi-models -- --source /absolute/pi/packages/ai/src/providers/data
-```
-
-### 命令行与一次性命令
-
-在仓库根目录运行时，`./start.sh cli` 直接从源码运行 CLI，参数会原样转给入口，例如 `./start.sh cli --print '说明当前项目的启动入口'`。
-
-也可以直接使用构建后的 Node 入口：
-
-```bash
-node packages/coding-agent/dist/bundle/cli.js --print '说明当前项目的启动入口'
-```
-
-无参数运行时输出帮助；提交问题默认按一次性命令执行，输出结果后退出。非 TTY 调用可以只从 stdin 读取问题。
-
-终端入口按启动目录选择工作区，会复用仍存活的本机 Host，没有时才启动新的 Host。`--workspace NAME` 选择已登记工作区，`--continue` 继续最近的非归档会话（仍需同时给出问题），`--session ID` 在指定会话上提交问题；`workspaces list` 可查看登记目录。
-
-如果希望使用短命令，可在仓库根目录执行一次：
-
-```bash
-npm link --workspace @amazme/coding-agent --ignore-scripts
-```
-
-之后可将完整 Node 入口替换为 `amazme`。首次配置和常用操作示例：
-
-```bash
-amazme models
-amazme auth login --provider openai-codex
-amazme auth login --provider openai --method api-key
-amazme doctor
-amazme --continue '继续上次任务'
-```
-
-`auth login` 用于完成账号登录，`models` 查看模型目录，`doctor` 检查 Host 健康状态。API Key 也可通过隐藏输入录入，不必写进命令。更多会话、技能、图片和推理参数见 [CLI 说明](packages/coding-agent/README.md)。
-
-普通持久会话在一次性命令结束后，不会因释放客户端绑定而取消已接纳的工作。`--no-session` 是临时会话，退出时按清理证明关闭其拥有的后端并清除已结算历史。
-
 ### 浏览器页面
 
 在仓库根目录执行：
 
 ```bash
 ./start.sh web
+./start.sh web --workspace /absolute/project
 ```
 
-等价于 `npm run dev:web`。该命令构建 Web 依赖、启动或复用本机 Host，并输出窗口链接；在浏览器中打开终端给出的地址即可，默认以仓库目录作为工作区。需要其他项目时，可从该项目目录运行 CLI 的 `web`，此时 Node 和后端入口应使用绝对路径。
+启动脚本编译 Web 依赖后直接运行 Python 的 `web` 命令，在后台启动或复用 Host，并输出包含工作区身份的窗口链接。用浏览器打开该链接即可；关闭页面不停止后台任务。启动时不创建额外的空会话，页面按原有选择恢复会话。
 
-只需要 Host 根地址而不需要窗口链接时，使用 `server` 替代 `web`。关闭网页或释放客户端绑定不会取消已经接纳的工作。
+### 后台管理与 Python SDK
 
-### 已有 Host、独立服务、RPC 与 SDK
-
-普通桌面和 Web 使用不需要提前手动启动服务。只有需要连接已有 Host、独立管理服务，或使用 RPC/Python SDK 时，才需要以下方式。
-
-已有初始化的 profile 时，在仓库根目录启动服务：
+普通桌面和 Web 使用不需要手动启动服务。后台管理命令使用项目虚拟环境：
 
 ```bash
-backend/.venv/bin/python -m amazme_backend serve --profile /absolute/profile
+backend/.venv/bin/amazme-backend doctor
+backend/.venv/bin/amazme-backend stop
 ```
 
-保持该终端运行，直接用浏览器打开服务输出的本机 URL，无需配对。
-CLI、SDK 等客户端连接指定 Host 时，在另一个终端取得连接令牌：
+`doctor` 只检查已有 Host，不启动新后台；健康时退出码为 0，未就绪或不可用时为非零。`stop` 停止该 profile 的 Host 及所属服务，会影响所有连接它的客户端；重复停服安全。显式 `--profile /absolute/profile` 可选择其他业务目录。桌面也可使用菜单或托盘的「停止后台并退出」。
+
+`connect --workspace /absolute/project` 返回供桌面使用的本机连接信息，其中包含私有连接令牌，不要把输出用于公开日志。`web` 只输出窗口链接，不包含令牌。新 profile 的 `init`、前台 `serve` 和迁移方式见 [Python 后端说明](backend/README.md)。
+
+Python SDK 通过 Host URL 和连接令牌访问同一业务接口：
 
 ```bash
-backend/.venv/bin/python -m amazme_backend pair --profile /absolute/profile
+backend/.venv/bin/amazme-backend pair --profile /absolute/profile
 ```
 
-然后用 Host 地址和令牌连接。以打印 Web 页面地址为例：
+配对码属于本机凭据，不要提交到仓库或放进分享链接。SDK 用法和示例见 [后端 SDK 文档](backend/docs/sdk.md)。不维护独立 Node CLI、JSON 行输出或 stdio RPC 客户端。
+
+编译使用仓库中的模型快照，不联网刷新；需要同步上游模型数据时，显式指定 Pi 源码：
 
 ```bash
-node packages/coding-agent/dist/bundle/cli.js web --python-url http://127.0.0.1:PORT --python-token '配对码'
+npm run sync:pi-models -- --source /absolute/pi/packages/ai/src/providers/data
 ```
-
-`--python-url` 和 `--python-token` 必须同时提供，同样适用于一次性命令及 `models`、`auth`、`doctor` 等命令。配对码属于本机凭据，不要提交到仓库或放进分享链接。新 profile 的初始化方式见 [Python 后端说明](backend/README.md)。
-
-RPC 客户端使用 `--mode rpc`，通道说明见 [RPC 入口](packages/coding-agent/docs/rpc.md)；Python SDK 使用 Host URL 和配对码连接，说明与示例见 [后端 SDK 文档](backend/docs/sdk.md)。
-
-独立服务需要停止时，在另一个终端执行：
-
-```bash
-backend/.venv/bin/python -m amazme_backend stop --profile /absolute/profile
-```
-
-`stop` 会停止该 profile 的 Host 及所属服务，所有连接它的客户端都会受影响。桌面端可使用菜单或托盘的「停止后台并退出」；普通退出桌面会保留共享后台。
 
 ## 客户端与工具
 
-Electron 加载 Python 提供的页面；Web、CLI、RPC 与 SDK 共用 Host、会话、账号和副作用账本。
+Electron 加载 Python 提供的页面；Web、桌面与 Python SDK 共用 Host、会话、账号和副作用账本。
 SSH 使用系统 OpenSSH 和明确的主机密钥接纳，需要用户自己的账号，不以固定场景探针冒充产品实现。
 
 Python factory 注册会话插件工具和命令，Codemode 通过现有 QuickJS helper 调用这些工具。
@@ -184,7 +121,7 @@ curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash
 
 应用安装到 `/Applications/KimiCU.app` 后，打开 KimiCU，按其界面授予辅助功能和屏幕录制权限。
 
-在 AmazMe 中执行 `amazme mcp add-kimi-cu`（或在侧栏「插件 → MCP 服务 → 添加 MCP 服务」中填写），保存全局 stdio MCP 配置：服务器名 `kimi-cu`，`enabled` 为 `true`，`exposure` 为 `direct`，`command` 为 `/Applications/KimiCU.app/Contents/MacOS/kimi-cu`，`args` 为 `["mcp", "-s", "user"]`。
+在侧栏「插件 → MCP 服务 → 添加 MCP 服务」中保存全局 stdio MCP 配置：服务器名 `kimi-cu`，`enabled` 为 `true`，`exposure` 为 `direct`，`command` 为 `/Applications/KimiCU.app/Contents/MacOS/kimi-cu`，`args` 为 `["mcp", "-s", "user"]`。
 
 ## 开发与文档
 
@@ -193,7 +130,6 @@ curl -fsSL https://cdn.kimi.com/kimi-computer-use/latest/setup_macos.sh | bash
 | 唯一现行契约 | [Python 本机方案](docs/python-backend-plan.md) |
 | 实施状态与证据 | [完成台账](docs/python-backend-completion.md) |
 | SDK 与 Python 插件 | [后端 SDK 文档](backend/docs/sdk.md) |
-| RPC 入口 | [RPC 文档](packages/coding-agent/docs/rpc.md) |
 | Electron 与本地构建 | [桌面说明](packages/gui/README.md) |
 | QuickJS helper | [Codemode](packages/codemode/README.md) |
 | 上游移植依据 | [UPSTREAM](UPSTREAM.md) |

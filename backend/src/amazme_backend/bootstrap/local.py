@@ -8,7 +8,8 @@ import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import IO
+from typing import IO, Literal
+from urllib.parse import urlencode
 
 import httpx
 from pydantic import ValidationError
@@ -23,6 +24,12 @@ from amazme_backend.platform.private_files import lock
 from amazme_backend.profiles.locations import local_profile
 from amazme_backend.profiles.profile import Profile, live_host_ready
 from amazme_backend.shared.errors import BackendError
+
+
+class LocalConnection(HostReady):
+    profile_path: str
+    web_token: str
+    workspace: str
 
 
 @contextmanager
@@ -72,8 +79,6 @@ def probe(profile: Profile) -> HostReady | None:
     if (identity.protocol != "amazme-http/1" or identity.storage_format != 2
             or identity.version != "0.1.0" or response.headers.get("x-amazme-local-host") != "1"):
         raise BackendError("host_upgrade_required")
-    if identity.state not in {"ready", "frozen"}:
-        raise BackendError("local_host_not_ready")
     return current
 
 
@@ -120,18 +125,15 @@ def settle_update(profile: Profile, ready: HostReady) -> HostReady:
     return current
 
 
-def connect(profile_path: Path, workspace: Path, *, source: Path | None = None,
-            provider: ProviderConfig | None = None, no_start: bool = False) -> dict[str, object]:
+def connect(profile_path: Path, workspace: Path) -> LocalConnection:
     with startup_lock(profile_path):
         if (profile_path.parent / ".profile-migration.json").exists():
             raise BackendError("profile_migration_incomplete")
         if (profile_path / "MIGRATED.json").exists():
             raise BackendError("profile_migrated")
         if not profile_path.exists():
-            initialize(profile_path, workspace, provider or ProviderConfig(provider="faux", model="faux", base_url=""), source=source)
+            initialize(profile_path, workspace, ProviderConfig(provider="faux", model="faux", base_url=""))
         profile = Profile(profile_path)
-        if no_start:
-            return {"profile_path": str(profile.path)}
         ready = probe(profile)
         if ready is None:
             # A legacy launcher may be starting without our startup lock. Never kill or replace it.
@@ -163,6 +165,8 @@ def connect(profile_path: Path, workspace: Path, *, source: Path | None = None,
                 if time.monotonic() >= deadline:
                     raise BackendError("local_host_start_timeout")
                 time.sleep(0.1)
+        if ready.state not in {"ready", "frozen"}:
+            raise BackendError("local_host_not_ready")
         ready = settle_update(profile, ready)
         token = (profile.path / "web.token").read_text().strip()
         with httpx.Client(timeout=30, trust_env=False) as client:
@@ -174,30 +178,47 @@ def connect(profile_path: Path, workspace: Path, *, source: Path | None = None,
         if not response.is_success:
             raise BackendError("workspace_select_failed")
         selected = WorkspaceGrantView.model_validate_json(response.content)
-        return {**ready.model_dump(mode="json"), "profile_path": str(profile.path),
-                "web_token": token, "workspace": selected.name}
+        return LocalConnection(**ready.model_dump(), profile_path=str(profile.path),
+                               web_token=token, workspace=selected.name)
 
 
-def main(arguments: list[str]) -> None:
-    parser = argparse.ArgumentParser(prog="amazme-backend connect")
+def doctor(profile_path: Path) -> Health:
+    profile = Profile(profile_path)
+    ready = probe(profile)
+    if ready is None:
+        raise BackendError("local_host_unavailable")
+    with httpx.Client(timeout=30, trust_env=False) as client:
+        response = client.get(ready.url + "/api/v1/health", headers={
+            "Authorization": "Bearer " + (profile.path / "web.token").read_text().strip()})
+        response.raise_for_status()
+        health = Health.model_validate_json(response.content)
+    live_host_ready(profile.config.profile_id, ready, health.identity)
+    return health
+
+
+def main(arguments: list[str], mode: Literal["connect", "web", "doctor"] = "connect") -> None:
+    parser = argparse.ArgumentParser(prog="amazme-backend " + mode)
     parser.add_argument("--profile", type=Path)
-    parser.add_argument("--workspace", type=Path, default=Path.cwd())
-    parser.add_argument("--source-profile", type=Path)
-    parser.add_argument("--provider-config", type=Path)
-    parser.add_argument("--no-start", action="store_true")
+    if mode != "doctor":
+        parser.add_argument("--workspace", type=Path, default=Path.cwd())
     args = parser.parse_args(arguments)
     os.umask(0o077)
     try:
-        provider = ProviderConfig.model_validate_json(args.provider_config.read_bytes()) if args.provider_config else None
+        if mode == "doctor":
+            health = doctor(local_profile(args.profile))
+            print(health.model_dump_json())
+            raise SystemExit(0 if health.state == "ready" and not health.errors else 1)
         if args.profile is None and not any(os.environ.get(key) for key in ("AMAZME_PROFILE", "AMAZME_HOME", "AMAZME_CODING_AGENT_DIR")):
             legacy = Path.home() / "Library/Application Support/AmazMe/python-profile"
             if (legacy / "config.json").exists():
                 raise BackendError("profile_migration_required")
-        result = connect(local_profile(args.profile), args.workspace.resolve(strict=True), source=args.source_profile,
-                         provider=provider, no_start=args.no_start)
+        result = connect(local_profile(args.profile), args.workspace.resolve(strict=True))
     except (BackendError, OSError, ValueError, httpx.HTTPError) as exc:
         # Command failures cross into Node logs; never print raw config, tokens or validation input.
         code = exc.code if isinstance(exc, BackendError) else "local_profile_invalid"
         print(json.dumps({"code": code}), file=sys.stderr)
         raise SystemExit(1) from None
-    print(json.dumps(result))
+    if mode == "web":
+        print(result.url + "/?" + urlencode({"host": result.profile_id, "workspace": result.workspace}))
+    else:
+        print(result.model_dump_json())

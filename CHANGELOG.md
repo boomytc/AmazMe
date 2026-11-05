@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+- 移除 TypeScript 终端客户端、JSON/stdio RPC 呈现及专用构建链。Web 启动直接调用 Python，终端仅保留后台管理，Web/桌面和 Python SDK 继续共用 HTTP/WS 与持久状态。
+
 - 当前阶段统一使用启动脚本运行源码；桌面直接启动本机 Electron，移除独立应用、冻结后端、签名公证、Release 与安装包更新流程，保留运行所需编译和类型检查。
 - 模型目录在解析边界明确字典类型，修复 Python 严格类型检查中的未知键值类型，保持推理等级映射不变。
 

@@ -16,23 +16,22 @@ Python SDK 入口是 `amazme_backend.sdk.Client`，说明见 [SDK](docs/sdk.md)�
 
 `ask_user_question` 可提出 1–3 个问题，每题支持至多 8 个选项、单选、多选和自由输入。问题进入会话的 `waiting_input` 状态，不申请执行许可；用户的回答也不批准其他工具。Web 的推荐项只预选，必须显式提交；跳过会形成明确结果并提示模型不要重复提问。取消后拒绝晚到回答。无执行资源的待答请求树在普通停机时保留，重开后更新问题代次，用户重新连接后可继续回答；显式取消仍结束请求。
 
-Python CLI 用 `client questions --session ID` 查看，用 `client answer --session ID --value '<QuestionAnswer JSON>'` 回答或跳过；RPC 为 `question.answer`，其 `question_answer` 参数是同一 DTO。回答必须携带稳定 `decision_id`、`question_id`、`request_id`、`proposal_digest`、`generation`、`kind` 和 `answers`；`kind="skipped"` 时 `answers=[]`。同编号同内容查询原决定，不得用原编号改答案。等待回答的非交互调用退出码为 2。
+Web 与 Python SDK 使用同一结构化提问契约，回答和跳过都携带稳定 `decision_id`、问题身份及提案摘要；同编号同内容查询原决定，不得用原编号改答案。
 
-本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。用户可以连接服务、
-选择工具、填写 JSON 参数并审批调用。已连接服务的工具目录也会交给模型；模型提出的调用走会话审批，
-不能调用 Host 的用户审批接口代替决定，批准后的结果进入后续模型上下文。
+本机 shell、文件、审批、检查点、PTY 和 stdio MCP 服务已接通 Web。用户可以连接服务、选择工具、填写 JSON 参数并审批调用。已连接服务的工具目录也会交给模型；模型提出的调用走会话审批，不能调用 Host 的用户审批接口代替决定，批准后的结果进入后续模型上下文。
+
 动态目录刷新及媒体回传已有定向检查；HTTP/OAuth 等其他 MCP 传输不属于当前 stdio 主路径。
 普通 shell 不用于声明长驻服务；开发服务器可在会话终端运行，
 关闭页面不会停止终端，使用「关闭终端」或停止后端结束它。监督器失联后不自动重启命令。
-终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 装载这份页面；窗口关闭按桌面偏好处理，普通退出只关闭桌面，显式「停止后台并退出」才停止共享后端。网页、print/JSON CLI、`--mode rpc` 和 Python SDK 在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
-`amazme-backend client submit` 返回终态或待审批项，待审批退出码为 2，并给出原提案编号；退出释放本次 attachment。
-`client request --session ID --request-id ID` 查询原回执。`client decide` 必须单独给出「批准」或「拒绝」；请求审批还需 `--approval-id ID`，MCP 则指向原调用。
-重试只核对原提案，不能批准后续工具；已经结算的决定只返回原请求状态。提交文本里的「批准」不是决定。
+终端协议窗口保持 32 KiB，监督器按已读输出归还信用。重连记录最多 256 KiB，页面解释光标、换行和清屏；直接按键与表单共用输入账本，接收输入不等于命令成功。Electron 装载这份页面；窗口关闭按桌面偏好处理，普通退出只关闭桌面，显式「停止后台并退出」才停止共享后端。网页和 Python SDK 在同一会话上等待显式批准，并能操作终端、文件、检查点和本机 MCP；离开、松开绑定或进程退出不关闭这些服务。
+审批绑定明确提案和稳定决定 ID；未知回执查询原请求，不因客户端断开重新执行。
 模型选择请求不携带密钥。更换或清除密钥走单独入口；过期代际不会覆盖新密钥，响应里也不出现密钥。
 内置供应商 Command Code 共用一个 API key，默认使用「自动（按模型）」协议：依据公开目录的 `supported_endpoints`，Claude 走 Anthropic Messages、GPT 优先走 OpenAI Responses，其余兼容模型走 Chat Completions。配置、切换默认模型及重启均保留自动模式；如需固定协议，可在供应商配置中修改。目录随程序提供，启动不联网刷新；维护时运行 `npm run sync:command-code-models`，来源与接口说明见 [Command Code Provider](https://commandcode.ai/docs/provider)。目录未提供的价格保持未知。
 MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
 
-本地 Web、Desktop 和 CLI 共用 `connect --workspace /absolute/project`。它在规范 profile 的启动锁内完成初始化、探活和 detached 启动，再校验 Host 能力、身份与工作区。普通客户端退出不会关闭 Host。默认目录和旧数据迁移见[根说明](../README.md#统一数据目录与迁移)。
+本地 Web 和 Desktop 共用 `connect --workspace /absolute/project`。它在规范 profile 的启动锁内完成初始化、探活和 detached 启动，再校验 Host 能力、身份与工作区。普通客户端退出不会关闭 Host。默认目录和旧数据迁移见[根说明](../README.md#统一数据目录与迁移)。
+
+`web --workspace /absolute/project` 直接输出本机窗口链接；`doctor [--profile /absolute/profile]` 查询已有 Host 的健康状态，既不初始化 profile，也不启动服务。`connect` 的私有 JSON 输出仅供桌面连接使用。`stop`、`pair`、`init`、`serve` 和 `migrate-profile` 保留为后台管理入口。业务操作使用 HTTP/WS 和 Python SDK，不维护终端会话客户端。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、
 `api_key`）；不要把该 JSON 放入仓库。`init` 复制配置后，原临时文件可删除。
@@ -43,7 +42,7 @@ backend/.venv/bin/python -m amazme_backend serve --profile /absolute/new-profile
 ```
 
 `serve` 输出回环 URL，浏览器直接打开即可，无需配对。页面自动设置本机连接 Cookie。
-CLI、SDK 等客户端的连接令牌用 `pair --profile /absolute/new-profile` 取得；
+Python SDK 的连接令牌用 `pair --profile /absolute/new-profile` 取得；
 退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
 默认修改操作需要审批。执行环境保留 PATH/HOME 等工具查找变量，不继承模型密钥和控制令牌。
 

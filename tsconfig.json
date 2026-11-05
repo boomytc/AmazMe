@@ -23,15 +23,6 @@
 			"@amazme/codemode/worker": [
 				"./packages/codemode/src/runtime/worker.ts"
 			],
-			"@amazme/coding-agent": [
-				"./packages/coding-agent/src/index.ts"
-			],
-			"@amazme/coding-agent/config": [
-				"./packages/coding-agent/src/config.ts"
-			],
-			"@amazme/coding-agent/rpc-entry": [
-				"./packages/coding-agent/src/rpc-entry.ts"
-			],
 			"@amazme/web": [
 				"./packages/web/dist/index.d.ts"
 			],
@@ -46,9 +37,6 @@
 			],
 			"@amazme/web/typography": [
 				"./packages/web/src/typography.ts"
-			],
-			"typebox": [
-				"./node_modules/typebox"
 			],
 			"@amazme/web/errors": [
 				"./packages/web/src/errors.ts"
