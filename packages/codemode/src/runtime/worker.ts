@@ -5,10 +5,7 @@
  * times out, or is aborted; the worker exists so that a spinning script never
  * blocks the host thread.
  *
- * Importing this module starts the worker. Hosts that bundle their code (for
- * example a Bun compiled executable) add a file that imports
- * `@amazme/codemode/worker` as a separate entrypoint and pass its URL
- * or embedded-module string specifier as `workerUrl`.
+ * Importing this module starts the worker.
  */
 import { parentPort, workerData } from "node:worker_threads";
 import { isHostToWorkerMessage, type WorkerData, type WorkerToHostMessage } from "./protocol.ts";

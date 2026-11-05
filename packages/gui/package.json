@@ -21,10 +21,5 @@
 	},
 	"engines": {
 		"node": ">=22.19.0"
-	},
-	"files": [
-		"dist",
-		"assets",
-		"README.md"
-	]
+	}
 }

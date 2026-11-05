@@ -15,8 +15,7 @@ const modules = new Map<string, Promise<CodemodeWasmModule>>();
 
 /**
  * Read and compile the QuickJS wasm once per path. `path` defaults to the file in the installed
- * `quickjs-wasi` package; pass it when that file lives elsewhere, for example embedded in a Bun
- * compiled executable. A failed load is retried on the next call.
+ * `quickjs-wasi` dependency. A failed load is retried on the next call.
  */
 export function loadQuickJSWasm(path?: string): Promise<CodemodeWasmModule> {
 	const resolved = path ?? createRequire(import.meta.url).resolve("quickjs-wasi/quickjs.wasm");

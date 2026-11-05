@@ -1,6 +1,6 @@
 # @amazme/gui
 
-Electron 窗口，通过本机 Python 的 `connect` 连接共享 Host，再把回环页面装进窗口。业务状态、模型、账号和会话均由 Python 拥有。
+供个人本机使用的 Electron 窗口，通过本机 Python 的 `connect` 连接共享 Host，再把回环页面装进窗口。业务状态、模型、账号和会话均由 Python 拥有。
 
 ## 启动
 
@@ -19,11 +19,11 @@ Electron 窗口，通过本机 Python 的 `connect` 连接共享 Host，再把�
 
 ## 数据与生命周期
 
-业务 profile 默认是 `~/.amazme/agent/python-host`，与 Web、CLI 共用。Electron `userData` 默认是 `~/.amazme/desktop`。`AMAZME_GUI_USER_DATA_DIR` 只覆盖壳数据；隔离运行还须设置 `AMAZME_HOME` 或 `AMAZME_PROFILE`。旧业务数据迁移见[根目录说明](../../README.md#统一数据目录与迁移)。
+业务 profile 默认是 `~/.amazme/agent/python-host`，与 Web 共用。Electron `userData` 默认是 `~/.amazme/desktop`。`AMAZME_GUI_USER_DATA_DIR` 只覆盖壳数据；隔离运行还须设置 `AMAZME_HOME` 或 `AMAZME_PROFILE`。数据目录见[根目录说明](../../README.md#数据目录)。不读取或迁移旧目录。
 
 点击关闭按钮时，默认空闲就退出桌面，有任务时按设置选择隐藏窗口或退出桌面。两种行为都保留共享 Host 和任务，`Cmd/Ctrl+Q` 也只退出桌面。菜单和托盘的「停止后台并退出」会提示所有客户端都将断开，再正常停止 Host 及其服务。失败时保留桌面供重试。
 
-窗口、菜单与快捷键由同一生命周期状态机协调。Host 独占锁和 Python 连接入口协调所有启动者，普通退出不以“谁启动进程”决定后台寿命。界面语言读取共享 Host 的产品设置；Host 不可用时，才读取 agent/settings.json 的旧语言兜底。
+窗口、菜单与快捷键由同一生命周期状态机协调。Host 独占锁和 Python 连接入口协调所有启动者，普通退出不以“谁启动进程”决定后台寿命。界面语言读取共享 Host 的产品设置；Host 不可用时使用系统语言。
 
 ## 桌面界面
 

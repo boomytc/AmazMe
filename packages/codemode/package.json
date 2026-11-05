@@ -1,5 +1,6 @@
 {
 	"name": "@amazme/codemode",
+	"private": true,
 	"version": "0.1.0",
 	"description": "Sandboxed JavaScript execution where the only capability is calling injected tools",
 	"type": "module",
@@ -20,50 +21,16 @@
 			"source": "./src/source.ts",
 			"types": "./dist/source.d.ts",
 			"import": "./dist/source.js"
-		},
-		"./portable": {
-			"source": "./src/portable.ts",
-			"types": "./dist/portable.d.ts",
-			"import": "./dist/portable.js"
-		},
-		"./cloudflare": {
-			"source": "./src/cloudflare.ts",
-			"types": "./dist/cloudflare.d.ts",
-			"import": "./dist/cloudflare.js"
-		},
-		"./worker": {
-			"source": "./src/runtime/worker.ts",
-			"types": "./dist/runtime/worker.d.ts",
-			"import": "./dist/runtime/worker.js"
 		}
 	},
-	"files": [
-		"dist",
-		"README.md"
-	],
 	"scripts": {
 		"clean": "node ../../scripts/locked-workspace-task.mjs @amazme/codemode clean",
 		"clean:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && node ../../scripts/package-files.mjs clean dist",
 		"build": "node ../../scripts/locked-workspace-task.mjs @amazme/codemode build",
-		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && tsc -p tsconfig.build.json",
-		"prepublishOnly": "npm run clean && npm run build"
+		"build:unlocked": "python3 ../../backend/tools/workspace_lock.py --require && node ../../scripts/package-files.mjs clean dist && tsc -p tsconfig.build.json"
 	},
-	"keywords": [
-		"amazme",
-		"codemode",
-		"sandbox",
-		"quickjs",
-		"wasm",
-		"cloudflare",
-		"durable-objects"
-	],
 	"author": "Earendil Works",
 	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi.git",
-		"directory": "packages/codemode"
-	},
 	"engines": {
 		"node": ">=22.19.0"
 	},

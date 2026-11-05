@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field
 
 from amazme_backend.contracts.models import ModelSelection
 from amazme_backend.shared.model import Model
@@ -54,28 +54,6 @@ class ScheduleInput(Model):
     grace_minutes: int = Field(default=10, ge=0, le=10080)
     timeout_seconds: int = Field(default=600, ge=1, le=86400)
     expected_generation: int = Field(default=0, ge=0)
-
-    @model_validator(mode="before")
-    @classmethod
-    def legacy_target(cls, value: object) -> object:
-        if not isinstance(value, dict):
-            return value
-        data = dict(cast(dict[object, object], value))
-        if "session_id" not in data:
-            return data
-        session_id = data.pop("session_id")
-        if "target" in data:
-            raise ValueError("Use one schedule target")
-        data["target"] = {"kind": "session", "session_id": session_id}
-        pending, history = data.get("pending"), data.get("history")
-        if isinstance(pending, dict):
-            data["pending"] = {"session_id": session_id, **cast(dict[object, object], pending)}
-        if isinstance(history, list):
-            data["history"] = [
-                {"session_id": session_id, **cast(dict[object, object], item)} if isinstance(item, dict) else item
-                for item in cast(list[object], history)
-            ]
-        return data
 
 
 class ScheduleRun(Model):

@@ -1,6 +1,5 @@
 node_modules
 dist/
-dist-release/
 .artifacts/
 *.log
 .DS_Store
@@ -36,9 +35,4 @@ pi-*.html
 out.html
 todo.md
 plans/
-.amazme/hf-sessions/
-.amazme/hf-sessions-backup/
 collect.sh
-
-# Preserve ignored local data from the retired issue tool.
-scripts/issues/data/

@@ -31,10 +31,6 @@ def main() -> None:
         mode = "web" if sys.argv[1] == "web" else "doctor" if sys.argv[1] == "doctor" else "connect"
         connect_main(sys.argv[2:], mode)
         return
-    if len(sys.argv) > 1 and sys.argv[1] == "migrate-profile":
-        from amazme_backend.bootstrap.migration import main as migration_main
-        migration_main(sys.argv[2:])
-        return
     if len(sys.argv) > 1 and sys.argv[1] == "pty-gate":
         from amazme_backend.execution.pty.gate import main as pty_main
         raise SystemExit(pty_main())

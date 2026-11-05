@@ -18,7 +18,7 @@ from amazme_backend.contracts.code import CodeCall, CodeImage, CodeText, CodeVie
 from amazme_backend.execution.native import read_report, tool_environment
 from amazme_backend.execution.processes import ProcessReservation, exited
 from amazme_backend.platform.ipc import child_command
-from amazme_backend.platform.resources import package_resource, resource_root
+from amazme_backend.platform.resources import package_resource
 from amazme_backend.shared.errors import BackendError
 
 HELPER = package_resource("codemode_helper")
@@ -72,14 +72,13 @@ def _finish(outcome: CodemodeOutcome, code: int | None, cancel: threading.Event 
     return outcome
 
 
-def bundled_node() -> Path:
-    """Use the Node runtime selected by the source launcher."""
-    source_node = os.environ.get("AMAZME_NODE")
-    root = resource_root().resolve()
-    candidate = Path(source_node) if source_node else root / "node" / "bin" / "node"
-    if not candidate.is_absolute() or candidate.is_symlink() or not candidate.is_file() or not os.access(candidate, os.X_OK):
+def source_node() -> Path:
+    """Use only the Node runtime selected by the source launcher."""
+    configured = os.environ.get("AMAZME_NODE")
+    if not configured:
         raise BackendError("codemode_runtime_missing", status=503)
-    if not source_node and not candidate.resolve().is_relative_to(root):
+    candidate = Path(configured)
+    if not candidate.is_absolute() or candidate.is_symlink() or not candidate.is_file() or not os.access(candidate, os.X_OK):
         raise BackendError("codemode_runtime_missing", status=503)
     return candidate
 
@@ -89,7 +88,7 @@ def run_codemode(source: str, state: dict[str, object], *, profile: Path, run_id
                  timeout_ms: int = DEFAULT_TIMEOUT_MS, cancel: threading.Event | None = None) -> CodemodeOutcome:
     if len(source) > SOURCE_LIMIT:
         raise BackendError("codemode_source_limit")
-    bundled_node()
+    source_node()
     if not HELPER.is_file():
         raise BackendError("codemode_runtime_missing", status=503)
     instance = "code-" + run_id

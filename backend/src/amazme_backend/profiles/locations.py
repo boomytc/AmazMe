@@ -8,7 +8,7 @@ def product_home() -> Path:
 
 
 def agent_directory() -> Path:
-    configured = os.environ.get("AMAZME_CODING_AGENT_DIR")
+    configured = os.environ.get("AMAZME_AGENT_DIR")
     return Path(configured).expanduser().resolve() if configured else product_home() / "agent"
 
 

@@ -20,12 +20,6 @@ from amazme_backend.shared.errors import BackendError
 class Profile:
     def __init__(self, path: Path):
         self.path = path.resolve(strict=True)
-        if (self.path.parent / ".profile-migration.json").exists():
-            raise BackendError("profile_migration_incomplete")
-        if (self.path / "RETIRED.json").exists():
-            raise BackendError("profile_retired")
-        if (self.path / "MIGRATED.json").exists():
-            raise BackendError("profile_migrated")
         self.config = ProfileConfig.model_validate_json((self.path / "config.json").read_bytes())
         self.token = (self.path / "control.token").read_text().strip()
         key = hashlib.sha256(str(self.path).encode()).hexdigest()[:16]

@@ -42,24 +42,6 @@ function sourceFiles(directory) {
 }
 
 /**
- * Whether a source file is a process entry, judged from declarations and syntax alone. A process
- * executes an entry directly and no module imports it, so only an entry may suspend its own
- * evaluation. Published bin targets map back from their build output to their source.
- */
-function declaredEntry(pkg, file) {
-	if (readFileSync(file, "utf8").startsWith("#!")) return true;
-	const bin = pkg.manifest.bin;
-	const targets = typeof bin === "string" ? [bin] : Object.values(bin ?? {});
-	return targets.some((target) => {
-		const sourcePath = String(target)
-			.replace(/^\.\//, "")
-			.replace(/^dist\//, "src/")
-			.replace(/\.js$/, ".ts");
-		return resolve(pkg.directory, sourcePath) === file;
-	});
-}
-
-/**
  * Positions where the module suspends evaluation: an `await`, `for await`, or `await using` whose
  * nearest enclosing function body is the module itself. Top-level if, block, try, loop, switch, and
  * export initializers all count as module scope; function, method, accessor, constructor, and
@@ -122,10 +104,14 @@ export function checkDependencyVersions(repoRoot, packages = workspacePackages(r
 export function checkProductVersions(repoRoot, packages = workspacePackages(repoRoot)) {
 	const manifest = join(repoRoot, "package.json");
 	if (!existsSync(manifest)) return [];
-	const version = JSON.parse(readFileSync(manifest, "utf8")).version;
+	const product = JSON.parse(readFileSync(manifest, "utf8"));
+	const version = product.version;
 	if (typeof version !== "string") return [];
 	const failures = [];
+	if (product.private !== true) failures.push("package.json: personal-use workspace must be private");
 	for (const [name, pkg] of packages) {
+		if (pkg.manifest.private !== true)
+			failures.push(`${name}: personal-use workspace must be private`);
 		if (pkg.manifest.version !== version)
 			failures.push(`${name}: product version must match root ${version}, found ${pkg.manifest.version}`);
 	}
@@ -135,57 +121,6 @@ export function checkProductVersions(repoRoot, packages = workspacePackages(repo
 		const backendVersion = project?.match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 		if (backendVersion !== version)
 			failures.push(`backend/pyproject.toml: product version must match root ${version}, found ${backendVersion}`);
-	}
-	return failures;
-}
-
-const changelogSections = ["Breaking Changes", "Added", "Changed", "Fixed", "Removed"];
-
-/**
- * Package changelogs open with `# Changelog` and `## [Unreleased]`, date every release, and keep the
- * unreleased and newest release sections to the shared `###` headings in their fixed order.
- * Older sections are history and stay as written.
- */
-export function checkChangelogs(repoRoot) {
-	const failures = [];
-	const packagesDirectory = join(repoRoot, "packages");
-	if (!existsSync(packagesDirectory)) return failures;
-	for (const entry of readdirSync(packagesDirectory, { withFileTypes: true })) {
-		const file = join(packagesDirectory, entry.name, "CHANGELOG.md");
-		if (!entry.isDirectory() || !existsSync(file)) continue;
-		const location = relative(repoRoot, file);
-		const lines = readFileSync(file, "utf8").split("\n");
-		if (lines[0] !== "# Changelog") failures.push(`${location}: first line must be "# Changelog"`);
-		const releases = [];
-		lines.forEach((line, index) => {
-			if (!line.startsWith("## ")) return;
-			if (releases.length === 0 && line !== "## [Unreleased]")
-				failures.push(`${location}:${index + 1}: first section must be "## [Unreleased]", found "${line}"`);
-			else if (releases.length > 0 && !/^## \[\d+\.\d+\.\d+\] - \d{4}-\d{2}-\d{2}$/.test(line))
-				failures.push(`${location}:${index + 1}: release heading must read "## [x.y.z] - YYYY-MM-DD", found "${line}"`);
-			releases.push(index);
-		});
-		for (const start of releases.slice(0, 2)) {
-			const end = releases.find((index) => index > start) ?? lines.length;
-			let previous = -1;
-			for (let index = start + 1; index < end; index++) {
-				if (!lines[index].startsWith("### ")) continue;
-				const name = lines[index].slice(4);
-				const order = changelogSections.indexOf(name);
-				if (order === -1)
-					failures.push(
-						`${location}:${index + 1}: section must be one of ${changelogSections.join(", ")}, found "${name}"`,
-					);
-				else if (order <= previous)
-					failures.push(
-						`${location}:${index + 1}: "${name}" is repeated or out of order (${changelogSections.join(", ")})`,
-					);
-				else previous = order;
-				const next = lines.slice(index + 1, end).find((line) => line.trim() !== "");
-				if (next === undefined || next.startsWith("#"))
-					failures.push(`${location}:${index + 1}: "${name}" has no entries`);
-			}
-		}
 	}
 	return failures;
 }
@@ -410,7 +345,6 @@ export function checkSourceContracts(repoRoot) {
 		...checkDevelopmentAssets(root),
 		...checkDependencyVersions(root, packages),
 		...checkProductVersions(root, packages),
-		...checkChangelogs(root),
 		...checkBuildConfigs(root),
 		...checkTempDirUsage(root),
 		...checkVersionLiterals(root),
@@ -488,7 +422,7 @@ export function checkSourceContracts(repoRoot) {
 						failures.push(`${location}: published source imports a build-excluded module: ${value}`);
 					return;
 				}
-				if (value.startsWith("/") || value.startsWith("cloudflare:") || isBuiltin(value)) return;
+				if (value.startsWith("/") || isBuiltin(value)) return;
 				const name = value
 					.split("/")
 					.slice(0, value.startsWith("@") ? 2 : 1)
@@ -536,7 +470,7 @@ export function checkSourceContracts(repoRoot) {
 			};
 			visit(source);
 			const awaits = moduleScopeAwaits(source);
-			if (awaits.length > 0 && !declaredEntry(pkg, file)) {
+			if (awaits.length > 0 && !readFileSync(file, "utf8").startsWith("#!")) {
 				for (const position of awaits) {
 					const { line } = source.getLineAndCharacterOfPosition(position);
 					failures.push(
@@ -596,7 +530,7 @@ function workspaceResolver(packages, external) {
 	};
 }
 
-/** Public lean entries and the shipped page must remain browser-safe and within their source graph budgets. */
+/** Local helper and browser page entries keep their source graph budgets; browser entries must not import Node. */
 export async function checkEntryContracts(repoRoot) {
 	const root = resolve(repoRoot);
 	const packages = workspacePackages(root);
@@ -606,18 +540,7 @@ export async function checkEntryContracts(repoRoot) {
 		{
 			entry: "packages/codemode/src/index.ts",
 			maxFiles: 12,
-			forbid: ["packages/codemode/src/cloudflare.ts"],
 		},
-		...["portable", "cloudflare"].map((name) => ({
-			entry: `packages/codemode/src/${name}.ts`,
-			maxFiles: name === "portable" ? 8 : 9,
-			forbid: [
-				"packages/codemode/src/index.ts",
-				"packages/codemode/src/runtime/host.ts",
-				"packages/codemode/src/runtime/worker.ts",
-				"packages/codemode/src/wasm.ts",
-			],
-		})),
 	]) {
 		const result = await build({
 			entryPoints: [join(root, budget.entry)],
@@ -634,17 +557,12 @@ export async function checkEntryContracts(repoRoot) {
 		measurements.push(`${budget.entry}: ${inputs.length}/${budget.maxFiles} source modules`);
 		if (inputs.length > budget.maxFiles)
 			failures.push(`${budget.entry}: source graph ${inputs.length} exceeds ${budget.maxFiles}`);
-		for (const path of inputs)
-			if (budget.forbid.some((forbidden) => path.startsWith(forbidden)))
-				failures.push(`${budget.entry}: forbidden runtime import ${path}`);
 	}
 	const lightweightWebEntries = ["errors", "locale", "strings", "typography"].map(name => `packages/web/src/${name}.ts`);
 	for (const entry of [
 		...lightweightWebEntries,
 		"packages/web/src/index.ts",
 		"packages/web/src/page.ts",
-		"packages/codemode/src/portable.ts",
-		"packages/codemode/src/cloudflare.ts",
 	]) {
 		try {
 			const result = await build({
@@ -653,8 +571,6 @@ export async function checkEntryContracts(repoRoot) {
 				bundle: true,
 				write: false,
 				platform: "browser",
-				// Wrangler supplies these two modules, but still reject all Node dependencies in Workers entries.
-				external: entry.endsWith("/cloudflare.ts") ? ["cloudflare:workers", "quickjs-wasi/quickjs.wasm"] : [],
 				format: "esm",
 				...(entry === "packages/web/src/page.ts" ? { jsx: "automatic" } : {}),
 				metafile: true,
@@ -692,6 +608,6 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
 	if (failures.length + entries.failures.length > 0) process.exitCode = 1;
 	else
 		console.log(
-			"Workspace imports, runtime dependencies, direction, browser entries, changelogs, build configs, development assets, source temp dirs, and version literals passed.",
+			"Workspace imports, runtime dependencies, direction, browser entries, private workspaces, build configs, development assets, source temp dirs, and version literals passed.",
 		);
 }

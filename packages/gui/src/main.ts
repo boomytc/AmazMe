@@ -14,7 +14,7 @@ import {
 	type Event as ElectronEvent,
 	type MessageBoxOptions,
 } from "electron";
-import { desktopLocale, readDesktopDocumentLanguage, readDesktopLocalePreference } from "./locale.ts";
+import { desktopLocale, readDesktopDocumentLanguage } from "./locale.ts";
 import { closeDialogCopy, hostFailureCopy, lifecycleErrorCopy, renderDialogRecovery, renderFailureCopy, type HostFailure, type RenderFailure } from "./dialogs.ts";
 import { createHostConnection, type HostStartupFailure, type HostSupervisor } from "./host.ts";
 import { PythonDesktopApi } from "./desktop-api.ts";
@@ -36,7 +36,7 @@ const TRAY_ICON = fileURLToPath(new URL("../assets/tray-icon.png", import.meta.u
 app.setName(APP_NAME);
 const SMOKE = process.env.AMAZME_GUI_SMOKE === "1";
 app.setPath("userData", desktopDataDirectory(process.env));
-if (SMOKE && !process.env.AMAZME_PROFILE && !process.env.AMAZME_CODING_AGENT_DIR && !process.env.AMAZME_HOME) throw new Error("desktop smoke requires an isolated profile");
+if (SMOKE && !process.env.AMAZME_PROFILE && !process.env.AMAZME_AGENT_DIR && !process.env.AMAZME_HOME) throw new Error("desktop smoke requires an isolated profile");
 
 const SMOKE_EXPRESSION = `({
 	title: document.title,
@@ -107,7 +107,7 @@ async function currentLocale() {
 	const preferred = app.getPreferredSystemLanguages();
 	const system = app.getLocale();
 	const languages = preferred.length > 0 ? preferred : system.length > 0 ? [system] : [];
-	const preference = await desktopApi.localePreference().catch(() => readDesktopLocalePreference(hostWorkingDirectory(process.env, process.cwd()), process.env));
+    const preference = await desktopApi.localePreference().catch(() => undefined);
 	const current = liveWindow();
 	let documentLanguage: unknown;
 	// Constant read from the owned page, not a new renderer capability or arbitrary IPC execution.

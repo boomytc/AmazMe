@@ -4,7 +4,7 @@
  * The host owns everything the script must not influence: the tool table, call records, output,
  * the deadline, the caller's abort signal, and the decoding of what the VM reports. The VM itself
  * runs somewhere a {@link VmLauncher} decides: a worker thread (`CodemodeSandbox`), the calling
- * thread (`InlineCodemodeSandbox`), or another isolate reached over RPC (`RemoteCodemodeSandbox`).
+ * thread (`InlineCodemodeSandbox`).
  * The two sides only exchange the messages in `protocol.ts`, so the launchers differ in transport
  * and termination, not in behavior.
  *
@@ -15,11 +15,10 @@
  *    returned its channel are queued and flushed when it arrives.
  * 3. The first terminal event wins: `done`, `crash`, a launcher failure, the deadline, or an abort.
  *    `finish()` aborts pending tool calls, asks the channel to stop, and resolves the result once
- *    that request completes. A worker or remote VM may exit later. Later events are ignored.
+ *    that request completes. A worker may exit later. Later events are ignored.
  *
  * The launcher, not this class, is responsible for actually stopping a running VM: a worker is
- * terminated, an in-thread VM is interrupted and disposed, and a remote VM is told to stop at its
- * next exchange.
+ * terminated; an in-thread VM is interrupted and disposed.
  */
 import { toCodemodeIdentifier } from "../identifier.ts";
 import type {

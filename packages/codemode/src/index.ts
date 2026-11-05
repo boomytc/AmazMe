@@ -22,17 +22,6 @@ export {
 	MAX_STORE_VALUE_CHARS,
 } from "./runtime/prelude-source.ts";
 export {
-	type CodemodeRemote,
-	type CodemodeRemoteExchange,
-	type CodemodeRemoteMessage,
-	type CodemodeRemoteReply,
-	type CodemodeRemoteRequest,
-	type CodemodeServeOptions,
-	RemoteCodemodeSandbox,
-	type RemoteCodemodeSandboxOptions,
-	serveCodemodeRemote,
-} from "./runtime/remote.ts";
-export {
 	CODEMODE_OPTIONS_PREFIX,
 	CODEMODE_SOURCE_GRAMMAR,
 	CodemodeSourceError,

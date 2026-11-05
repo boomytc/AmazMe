@@ -6,11 +6,6 @@
 	"sideEffects": [
 		"**/*.css"
 	],
-	"files": [
-		"dist",
-		"README.md",
-		"LICENSE"
-	],
 	"description": "AmazMe desktop and web client presentation for the Python backend",
 	"exports": {
 		".": {

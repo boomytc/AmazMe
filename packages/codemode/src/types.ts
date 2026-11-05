@@ -61,7 +61,7 @@ export type CodemodeErrorKind =
 	| "script"
 	/**
 	 * The overall deadline expired, or a VM on the calling thread used up its interrupt budget.
-	 * The execution ended and the VM was asked to stop; a worker or remote VM may still be computing.
+	 * The execution ended and the VM was asked to stop; a worker may still be computing.
 	 */
 	| "timeout"
 	/** The caller's signal fired or the sandbox was closed. The execution ended and the VM was asked to stop. */
@@ -135,15 +135,11 @@ export interface CodemodeSandboxBaseOptions {
 export interface CodemodeSandboxOptions extends CodemodeSandboxBaseOptions {
 	/**
 	 * Compiled `quickjs-wasi/quickjs.wasm`, usually from {@link loadQuickJSWasm}. Default:
-	 * `loadQuickJSWasm()`, the file in the installed `quickjs-wasi` package. Pass it when that file
-	 * is not on disk, for example in a Bun compiled executable.
+	 * `loadQuickJSWasm()`, the file in the installed `quickjs-wasi` dependency.
 	 */
 	wasm?: CodemodeWasmModule | Promise<CodemodeWasmModule>;
 	/**
-	 * Worker entry that imports `@amazme/codemode/worker`. Default: this package's own
-	 * worker file. Pass it when this package is bundled, since the default is resolved relative to
-	 * the module that creates the sandbox. Bun compiled executables require the relative string
-	 * specifier of an embedded build entrypoint; other hosts usually use a URL.
+	 * Worker entry URL or path. Defaults to this workspace's own worker file.
 	 */
 	workerUrl?: string | URL;
 	/**

@@ -4,7 +4,13 @@
 		"outDir": "./dist",
 		"rootDir": "./src"
 	},
-	"include": ["src/**/*.ts"],
-	"files": ["src/cloudflare-modules.d.ts"],
-	"exclude": ["node_modules", "dist", "**/*.d.ts", "src/**/*.d.ts"]
+	"include": [
+		"src/**/*.ts"
+	],
+	"exclude": [
+		"node_modules",
+		"dist",
+		"**/*.d.ts",
+		"src/**/*.d.ts"
+	]
 }

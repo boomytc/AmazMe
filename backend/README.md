@@ -29,9 +29,9 @@ Web 与 Python SDK 使用同一结构化提问契约，回答和跳过都携带�
 内置供应商 Command Code 共用一个 API key，默认使用「自动（按模型）」协议：依据公开目录的 `supported_endpoints`，Claude 走 Anthropic Messages、GPT 优先走 OpenAI Responses，其余兼容模型走 Chat Completions。配置、切换默认模型及重启均保留自动模式；如需固定协议，可在供应商配置中修改。目录随程序提供，启动不联网刷新；维护时运行 `npm run sync:command-code-models`，来源与接口说明见 [Command Code Provider](https://commandcode.ai/docs/provider)。目录未提供的价格保持未知。
 MCP 服务同样归属会话；停止服务后，未取得结果的调用保持 `unknown`，不能自动重试。
 
-本地 Web 和 Desktop 共用 `connect --workspace /absolute/project`。它在规范 profile 的启动锁内完成初始化、探活和 detached 启动，再校验 Host 能力、身份与工作区。普通客户端退出不会关闭 Host。默认目录和旧数据迁移见[根说明](../README.md#统一数据目录与迁移)。
+本地 Web 和 Desktop 共用 `connect --workspace /absolute/project`。它在规范 profile 的启动锁内完成初始化、探活和 detached 启动，再校验 Host 能力、身份与工作区。普通客户端退出不会关闭 Host。默认目录见[根说明](../README.md#数据目录)。仅使用当前格式，不迁移旧内容。
 
-`web --workspace /absolute/project` 直接输出本机窗口链接；`doctor [--profile /absolute/profile]` 查询已有 Host 的健康状态，既不初始化 profile，也不启动服务。`connect` 的私有 JSON 输出仅供桌面连接使用。`stop`、`pair`、`init`、`serve` 和 `migrate-profile` 保留为后台管理入口。业务操作使用 HTTP/WS 和 Python SDK，不维护终端会话客户端。
+`web --workspace /absolute/project` 直接输出本机窗口链接；`doctor [--profile /absolute/profile]` 查询已有 Host 的健康状态，既不初始化 profile，也不启动服务。`connect` 的私有 JSON 输出仅供桌面连接使用。`stop`、`pair`、`init` 和 `serve` 保留为后台管理入口。业务操作使用 HTTP/WS 和 Python SDK，不维护终端会话客户端。
 
 首次启动使用新的 profile、实际项目目录和权限为 0600 的供应商 JSON（`provider`、`model`、
 `api_key`）；不要把该 JSON 放入仓库。`init` 复制配置后，原临时文件可删除。
@@ -41,6 +41,7 @@ backend/.venv/bin/python -m amazme_backend init --profile /absolute/new-profile 
 backend/.venv/bin/python -m amazme_backend serve --profile /absolute/new-profile
 ```
 
+直接使用 `serve` 时，须通过 `AMAZME_NODE` 指定本机 Node 可执行文件的绝对路径，供 Codemode helper 使用；`./start.sh` 已自动设置。
 `serve` 输出回环 URL，浏览器直接打开即可，无需配对。页面自动设置本机连接 Cookie。
 Python SDK 的连接令牌用 `pair --profile /absolute/new-profile` 取得；
 退出用 `stop --profile /absolute/new-profile`，均通过同一模块命令运行。
@@ -62,6 +63,6 @@ backend/.venv/bin/python backend/tools/export_contracts.py --check
 行为改动使用独立 profile 对受影响的实际入口做有限验收；临时脚本、样本和报告在完成后清理，不保留常驻测试套件。模型评测由 `npm run eval` 显式运行，说明见 [evals](../packages/evals/README.md)。产品连接检查、会话诊断、资源普查继续保留。
 
 用新隔离 profile 验收，不读取、迁移或删除用户历史库。禁止恢复 VM 链路、运行 prepare_runtime/bootstrap_resources，
-以及任何安装包或冻结后端构建。当前阶段仅通过启动脚本运行源码。
+以及任何安装包或冻结后端构建。产品仅供个人通过启动脚本运行源码，不分发或打包。
 历史 VM 安装命令与报告保留在 Git 历史，不能用于当前本机验收。
 当前候选、提交和证据见 [完成台账](../docs/python-backend-completion.md)；执行约束见 [实施入口](../docs/python-backend-native-next.md)。

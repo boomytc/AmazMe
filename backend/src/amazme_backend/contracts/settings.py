@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 
 from amazme_backend.shared.model import Model
 
@@ -24,13 +24,6 @@ class InterfacePreferences(Model):
     textSize: int = Field(default=15, ge=10, le=22)
     codeSize: int = Field(default=13, ge=10, le=16)
     terminalSize: int = Field(default=12, ge=10, le=20)
-
-    @model_validator(mode="before")
-    @classmethod
-    def discard_welcome_preference(cls, value: object) -> object:
-        if isinstance(value, dict) and "showWelcome" in value:
-            return {key: item for key, item in value.items() if key != "showWelcome"}
-        return value
 
     @field_validator("textFont", "codeFont", "terminalFont")
     @classmethod

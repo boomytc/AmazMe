@@ -1,6 +1,6 @@
 # 开发约定
 
-当前产品由 Python 后端与 TypeScript 客户端组成，行为移植依据来自 Pi。产品形态只有 Web/桌面客户端；终端只保留启动与后台管理命令，程序化调用通过 HTTP/WS 和 Python SDK。模块职责见 `backend/ARCHITECTURE.md`，客户端依赖见 `docs/python-backend-ts-deps.md`。产品名、包作用域和命令是 AmazMe。依赖只向下。
+当前产品面向个人本机使用，由 Python 后端与 TypeScript 客户端组成，行为移植依据来自 Pi。产品形态只有 Web/桌面客户端；终端只保留启动与后台管理命令，程序化调用通过 HTTP/WS 和 Python SDK。模块职责见 `backend/ARCHITECTURE.md`，客户端依赖见 `docs/python-backend-ts-deps.md`。产品名、包作用域和命令是 AmazMe。依赖只向下。
 
 ## 对话
 
@@ -59,9 +59,10 @@ npm run typecheck
 
 ## 启动与交付
 
-- 当前阶段只通过 `./start.sh` 启动桌面，`./start.sh web` 启动 Web；`./start.sh --prepare` 准备本机依赖。
+- 仅通过 `./start.sh` 启动桌面，`./start.sh web` 启动 Web；`./start.sh --prepare` 准备本机依赖。
 - 保留运行必需的 TypeScript、页面和 helper 编译，以及类型、依赖和资源检查。启动脚本按源码与产物指纹自动编译所需 workspace。
-- 不生成独立应用、DMG 或冻结 Python 后端，不复制或签名 Electron 应用缓存，不执行公证、标签、GitHub Release 或安装包更新。仓库不维护这些流程。
+- 产品仅供个人源码运行，不分发、不打包，不生成独立应用、DMG 或冻结 Python 后端，不复制或签名 Electron 应用缓存，不执行公证、标签、GitHub Release 或安装包更新。
+- 不维护旧内容迁移、退休字段或旧入口兼容。
 - 版本仍记录在 `package.json` 和 `CHANGELOG.md`。不新增 `.github/workflows`。
 
 ## 分支

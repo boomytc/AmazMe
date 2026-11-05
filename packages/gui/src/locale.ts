@@ -1,7 +1,3 @@
-import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import { CONFIG_DIR_NAME, ENV_AGENT_DIR, expandTildePath } from "./agent-paths.ts";
 import { matchLocale, resolveLocale } from "@amazme/web/locale";
 import type { Locale } from "@amazme/web/locale";
 
@@ -23,19 +19,4 @@ export async function readDesktopDocumentLanguage(read: () => Promise<unknown>, 
 		]);
 	} catch { return undefined; }
 	finally { if (timer !== undefined) clearTimeout(timer); }
-}
-
-async function storedLocale(path: string): Promise<string | undefined> {
-	try {
-		const value: unknown = JSON.parse(await readFile(path, "utf8"));
-		if (typeof value !== "object" || value === null || !("locale" in value)) return undefined;
-		return typeof value.locale === "string" ? value.locale : "auto";
-	} catch { return undefined; }
-}
-
-/** Interface locale is global-only, just like SettingsManager.getLocalePreference. No credentials are loaded. */
-export async function readDesktopLocalePreference(cwd: string, env: NodeJS.ProcessEnv): Promise<string | undefined> {
-	const configured = env[ENV_AGENT_DIR] || join(env.AMAZME_HOME ? expandTildePath(env.AMAZME_HOME) : join(homedir(), CONFIG_DIR_NAME), "agent");
-	const agent = resolve(cwd, expandTildePath(configured));
-	return storedLocale(join(agent, "settings.json"));
 }

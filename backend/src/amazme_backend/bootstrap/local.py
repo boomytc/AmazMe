@@ -127,16 +127,12 @@ def settle_update(profile: Profile, ready: HostReady) -> HostReady:
 
 def connect(profile_path: Path, workspace: Path) -> LocalConnection:
     with startup_lock(profile_path):
-        if (profile_path.parent / ".profile-migration.json").exists():
-            raise BackendError("profile_migration_incomplete")
-        if (profile_path / "MIGRATED.json").exists():
-            raise BackendError("profile_migrated")
         if not profile_path.exists():
             initialize(profile_path, workspace, ProviderConfig(provider="faux", model="faux", base_url=""))
         profile = Profile(profile_path)
         ready = probe(profile)
         if ready is None:
-            # A legacy launcher may be starting without our startup lock. Never kill or replace it.
+            # An explicit serve command can own the Host lock before publishing readiness.
             try:
                 with lock(profile.path / "host.lock"):
                     available = True
@@ -208,10 +204,6 @@ def main(arguments: list[str], mode: Literal["connect", "web", "doctor"] = "conn
             health = doctor(local_profile(args.profile))
             print(health.model_dump_json())
             raise SystemExit(0 if health.state == "ready" and not health.errors else 1)
-        if args.profile is None and not any(os.environ.get(key) for key in ("AMAZME_PROFILE", "AMAZME_HOME", "AMAZME_CODING_AGENT_DIR")):
-            legacy = Path.home() / "Library/Application Support/AmazMe/python-profile"
-            if (legacy / "config.json").exists():
-                raise BackendError("profile_migration_required")
         result = connect(local_profile(args.profile), args.workspace.resolve(strict=True))
     except (BackendError, OSError, ValueError, httpx.HTTPError) as exc:
         # Command failures cross into Node logs; never print raw config, tokens or validation input.

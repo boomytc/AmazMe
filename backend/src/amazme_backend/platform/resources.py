@@ -15,7 +15,3 @@ def package_resource(name: str) -> Path:
 
 def frontend_directory() -> Path:
     return package_root().parents[2] / "packages/web/dist/page"
-
-
-def resource_root() -> Path:
-    return package_root().parents[1] / "resources"

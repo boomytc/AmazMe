@@ -5,7 +5,7 @@ import { CodemodeSandboxBase, errorMessage, type VmLauncher } from "./execution.
 import type { WorkerData } from "./protocol.ts";
 
 function defaultWorkerUrl(): URL {
-	// `.ts` when running from source (tests, tsx), `.js` from the published dist.
+	// `.ts` when running source directly, `.js` after local compilation.
 	return new URL(import.meta.url.endsWith(".ts") ? "./worker.ts" : "./worker.js", import.meta.url);
 }
 
@@ -83,8 +83,7 @@ function workerLauncher(options: CodemodeSandboxOptions): VmLauncher {
  * Runs JavaScript in a QuickJS VM (a separate wasm instance) inside a worker thread. The worker
  * keeps script execution off the host thread: QuickJS runs synchronously, so a spinning script on
  * the host thread would block its event loop. Requires `node:worker_threads` (Node or Bun); see
- * `InlineCodemodeSandbox` and `RemoteCodemodeSandbox` in `@amazme/codemode/portable`
- * for other runtimes.
+ * `InlineCodemodeSandbox` for execution inside the Python-owned helper process.
  */
 export class CodemodeSandbox extends CodemodeSandboxBase {
 	constructor(options: CodemodeSandboxOptions = {}) {
