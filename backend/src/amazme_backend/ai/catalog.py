@@ -45,7 +45,10 @@ _MODELBEST = ProviderDefinition(provider="modelbest", name="ModelBest",
 MODELS = [model for resource in ('models', 'command_code_models') for model in _load(resource)]
 MODELS.append(PiModel(id="MiniCPM-V-4.7-35B-A3B", name="MiniCPM-V-4.7-35B-A3B",
     provider=_MODELBEST.provider, api="openai-completions", baseUrl=_MODELBEST.base_url,
-    contextWindow=256000, maxTokens=0, input=["text", "image"]))
+    contextWindow=256000, maxTokens=0, input=["text", "image"], reasoning=True,
+    thinkingLevelMap={"minimal": None, "low": None, "medium": None, "high": "high"},
+    compat={"thinkingFormat": "chat-template", "supportsReasoningEffort": False,
+            "chatTemplateKwargs": {"enable_thinking": {"$var": "thinking.enabled"}}}))
 PROVIDERS = {"command-code": ProviderDefinition(provider="command-code", name="Command Code",
     base_url="https://api.commandcode.ai/provider/v1", api=None), _MODELBEST.provider: _MODELBEST}
 INDEX = {(model.provider, model.id): model for model in MODELS}

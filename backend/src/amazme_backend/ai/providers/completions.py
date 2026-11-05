@@ -164,7 +164,8 @@ async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
                     for choice in chunk.choices:
                         details = read_reasoning_details(choice.delta)
                         signature.extend(details)
-                        if details or _model_extra(choice.delta).get("reasoning_content"):
+                        extra = _model_extra(choice.delta)
+                        if details or extra.get("reasoning_content") or extra.get("reasoning"):
                             yield PROGRESS
                         if choice.delta.content:
                             text += choice.delta.content
@@ -188,6 +189,8 @@ async def stream(config: ModelSpec, request: ModelRequest, auth: Auth,
                             finished = True
         if not finished:
             raise BackendError("model_stream_interrupted")
+        if not text.strip() and not calls:
+            raise BackendError("model_incomplete", "模型未返回正文或工具调用。")
         parsed: list[ModelToolCall] = []
         for index in sorted(calls):
             pending_call = calls[index]
