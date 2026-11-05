@@ -13,7 +13,6 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { createPortal } from "react-dom";
 import { RUN_STOP_ACTION, SUBMIT_MODE_ACTION } from "../actions.ts";
 import type { Locale } from "../locale.ts";
 import type { PanelButton } from "../panels.ts";
@@ -529,8 +528,12 @@ function PermissionPicker({
 	const trigger = useRef<HTMLButtonElement>(null);
 	const menu = useRef<HTMLDivElement>(null);
 	const policy = view.approvalPolicy ?? "mutations";
-	const selected =
-		PERMISSIONS.find((option) => option.value === policy) ?? PERMISSIONS[1];
+	const selectedIndex = Math.max(
+		0,
+		PERMISSIONS.findIndex((option) => option.value === policy),
+	);
+	const selected = PERMISSIONS[selectedIndex] ?? PERMISSIONS[1]!;
+	const [focused, setFocused] = useState(selectedIndex);
 	const disabled =
 		view.readOnly === true ||
 		view.connecting === true ||
@@ -551,7 +554,67 @@ function PermissionPicker({
 		document.addEventListener("pointerdown", close);
 		return () => document.removeEventListener("pointerdown", close);
 	}, [open]);
+	/* Escape belongs to the window while the menu is open, even if focus wandered off its rows. */
+	useEffect(() => {
+		if (!open) return;
+		const escape = (event: globalThis.KeyboardEvent) => {
+			if (
+				event.key !== "Escape" ||
+				event.isComposing ||
+				event.defaultPrevented ||
+				document.querySelector("dialog[open]") !== null
+			)
+				return;
+			event.preventDefault();
+			setOpen(false);
+			trigger.current?.focus({ preventScroll: true });
+		};
+		document.addEventListener("keydown", escape);
+		return () => document.removeEventListener("keydown", escape);
+	}, [open]);
+	/* The selected row is the menu's initial focus and the only row in the tab order. */
+	useLayoutEffect(() => {
+		if (!open) return;
+		setFocused(selectedIndex);
+		menu.current
+			?.querySelectorAll<HTMLButtonElement>(".permission-option")
+			[selectedIndex]?.focus({ preventScroll: true });
+	}, [open, selectedIndex]);
 	useAnchoredPopover(open, trigger, menu, "top-start");
+
+	const move = (event: KeyboardEvent<HTMLDivElement>) => {
+		if (event.nativeEvent.isComposing) return;
+		const options = [
+			...(menu.current?.querySelectorAll<HTMLButtonElement>(
+				".permission-option",
+			) ?? []),
+		];
+		if (options.length === 0) return;
+		const index = options.findIndex((option) => option === document.activeElement);
+		const next =
+			event.key === "ArrowDown"
+				? index < 0
+					? 0
+					: (index + 1) % options.length
+				: event.key === "ArrowUp"
+					? index < 0
+						? options.length - 1
+						: (index - 1 + options.length) % options.length
+					: event.key === "Home"
+						? 0
+						: event.key === "End"
+							? options.length - 1
+							: undefined;
+		if (next === undefined) return;
+		event.preventDefault();
+		setFocused(next);
+		options[next]?.focus({ preventScroll: true });
+	};
+	const choose = (option: PermissionOption) => {
+		setOpen(false);
+		actions.onSelectPermission(option.value);
+		trigger.current?.focus({ preventScroll: true });
+	};
 
 	return (
 		<div ref={root} className="permission-control">
@@ -561,8 +624,9 @@ function PermissionPicker({
 				className="permission-trigger"
 				data-policy={policy}
 				disabled={disabled}
-				aria-haspopup="dialog"
+				aria-haspopup="menu"
 				aria-expanded={open}
+				aria-controls={open ? "permission-menu" : undefined}
 				aria-label={`${translate(view.locale, "permission.heading")}: ${translate(view.locale, selected.label)}`}
 				title={translate(view.locale, "permission.scope")}
 				onClick={() => setOpen((value) => !value)}
@@ -571,52 +635,41 @@ function PermissionPicker({
 				{translate(view.locale, selected.label)}
 				<Icon name="chevron-down" />
 			</button>
-			{open
-				? createPortal(
-						<div
-							ref={menu}
-							className="permission-menu"
-							role="dialog"
-							aria-label={translate(view.locale, "permission.heading")}
-							onKeyDown={(event) => {
-								if (event.key !== "Escape") return;
-								event.preventDefault();
-								setOpen(false);
-								trigger.current?.focus({ preventScroll: true });
-							}}
+			{open ? (
+				<div
+					ref={menu}
+					id="permission-menu"
+					className="permission-menu"
+					role="menu"
+					aria-label={translate(view.locale, "permission.heading")}
+					onKeyDown={move}
+				>
+					{PERMISSIONS.map((option, index) => (
+						<button
+							type="button"
+							className="permission-option"
+							data-policy={option.value}
+							role="menuitemradio"
+							aria-checked={option.value === policy}
+							tabIndex={index === focused ? 0 : -1}
+							key={option.value}
+							onFocus={() => setFocused(index)}
+							onClick={() => choose(option)}
 						>
-							<div role="menu">
-								{PERMISSIONS.map((option) => (
-									<button
-										type="button"
-										className="permission-option"
-										data-policy={option.value}
-										role="menuitemradio"
-										aria-checked={option.value === policy}
-										key={option.value}
-										onClick={() => {
-											setOpen(false);
-											actions.onSelectPermission(option.value);
-											trigger.current?.focus({ preventScroll: true });
-										}}
-									>
-										<Icon name={option.icon} />
-										<span className="permission-copy">
-											<span className="permission-label">
-												{translate(view.locale, option.label)}
-											</span>
-											<span className="permission-description">
-												{translate(view.locale, option.description)}
-											</span>
-										</span>
-										<Icon name="check" className="icon permission-check" />
-									</button>
-								))}
-							</div>
-						</div>,
-						document.body,
-					)
-				: null}
+							<Icon name={option.icon} />
+							<span className="permission-copy">
+								<span className="permission-label">
+									{translate(view.locale, option.label)}
+								</span>
+								<span className="permission-description">
+									{translate(view.locale, option.description)}
+								</span>
+							</span>
+							<Icon name="check" className="icon permission-check" />
+						</button>
+					))}
+				</div>
+			) : null}
 		</div>
 	);
 }

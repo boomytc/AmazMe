@@ -1,8 +1,14 @@
 import { PageRuntime } from "./app/page-runtime.ts";
 import { applyDesktopChrome } from "./desktop.ts";
+import { errorMessageCopy } from "./errors.ts";
 import { mountPresentation } from "./react/mount.tsx";
 import { Presentation } from "./react/state.ts";
 import { isRecord } from "./transport/api.ts";
+
+/** The language the document already announced; boot copy has no settings round-trip. */
+function bootLocale(): "zh" | "en" {
+	return document.documentElement.lang === "en" ? "en" : "zh";
+}
 
 let page: PageRuntime | undefined;
 function startWindow(): void {
@@ -23,12 +29,11 @@ function startWindow(): void {
 	const runtime = new PageRuntime(presentation);
 	page = runtime;
 	mountPresentation(presentation, container);
-	void runtime.start().catch((error) =>
-		presentation.showToast(
-			error instanceof Error ? error.message : String(error),
-			"error",
-		),
-	);
+	void runtime.start().catch((error) => {
+		const message = error instanceof Error ? error.message : String(error);
+		/* Startup is the page's own failure: it stays until the reader dismisses it. */
+		presentation.showToast(errorMessageCopy(bootLocale(), message), "error", true);
+	});
 }
 window.addEventListener("pagehide", () => {
 	page?.dispose();

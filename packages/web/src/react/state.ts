@@ -53,6 +53,7 @@ export type ShellView = Pick<
 	| "lane"
 	| "readOnly"
 	| "connecting"
+	| "connectionIssue"
 	| "sessionDraft"
 > & {
 	readonly emptyTranscript: boolean;
@@ -75,14 +76,16 @@ function fields<T extends object>(
 
 export interface ConnectionNotice {
 	readonly text: string | ((locale: WebView["locale"]) => string);
-	readonly state: "connecting" | "connected" | "disconnected";
+	/** `unavailable` never promises a live session: the host answered but this window cannot attach. */
+	readonly state: "connecting" | "connected" | "unavailable" | "disconnected";
 }
 
-/** One transient message awaiting its top-right card. */
+/** One message awaiting its top-right card. Persistent cards wait for a dismissal. */
 export interface ToastMessage {
 	readonly id: number;
 	readonly text: string;
 	readonly tone: ToastTone;
+	readonly persistent: boolean;
 }
 
 /** At most five cards stand at once; an identical message reuses its card instead of stacking. */
@@ -109,6 +112,8 @@ export class Presentation implements PageRenderer {
 			"run",
 			"lane",
 			"readOnly",
+			"connecting",
+			"connectionIssue",
 			"sessionDraft",
 			"emptyTranscript",
 			"pageTitle",
@@ -254,20 +259,52 @@ export class Presentation implements PageRenderer {
 		stage(this.composer, view);
 		for (const notify of notifications) notify();
 	}
-	showToast(text: string, tone: ToastTone = "info"): void {
+	showToast(text: string, tone: ToastTone = "info", persistent = false): void {
 		if (this.disposed || text.trim().length === 0) return;
 		const current = this.toasts.getSnapshot();
 		/* A repeating identical diagnostic keeps the standing card and its original clock. */
-		if (current.some((item) => item.text === text && item.tone === tone)) return;
+		const standing = current.find((item) => item.text === text && item.tone === tone);
+		if (standing !== undefined) {
+			if (persistent && !standing.persistent)
+				this.toasts.publish(
+					current.map((item) =>
+						item.id === standing.id ? { ...item, persistent: true } : item,
+					),
+				);
+			return;
+		}
 		this.toastId += 1;
-		this.toasts.publish([
-			{ id: this.toastId, text, tone },
+		const next: ToastMessage[] = [
+			{ id: this.toastId, text, tone, persistent },
 			...current,
-		].slice(0, MAX_TOASTS));
+		];
+		/* Overflow retires an expiring card first; a wall of failures is never dropped silently
+		   while a transient notice still has a clock. Only an all-persistent stack loses its oldest. */
+		if (next.length > MAX_TOASTS) {
+			let retire = next.length - 1;
+			for (let index = next.length - 1; index >= 0; index -= 1) {
+				if (next[index]!.persistent) continue;
+				retire = index;
+				break;
+			}
+			next.splice(retire, 1);
+		}
+		this.toasts.publish(next);
 	}
 	dismissToast(id: number): void {
 		const current = this.toasts.getSnapshot();
 		const remaining = current.filter((item) => item.id !== id);
+		if (remaining.length !== current.length) this.toasts.publish(remaining);
+	}
+	/**
+	 * Recovery clears standing failures; informational cards keep their clocks. Deliberately blunt:
+	 * a later failure posts again, and one clear per recovery beats tracking which card came from
+	 * the connection that just recovered.
+	 */
+	clearErrorToasts(): void {
+		if (this.disposed) return;
+		const current = this.toasts.getSnapshot();
+		const remaining = current.filter((item) => item.tone !== "error");
 		if (remaining.length !== current.length) this.toasts.publish(remaining);
 	}
 	setConnectionState(

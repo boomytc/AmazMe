@@ -143,7 +143,6 @@ export function ManagementNavigation({
 	const searching = query.trim().length > 0;
 	return (
 		<aside className="library-nav">
-			<p className="library-nav-label">{translate(locale, "panel.settings.title")}</p>
 			<SearchField
 				id="management-section-search"
 				locale={locale}
@@ -668,25 +667,23 @@ function PanelGroupView({
 			data-group-id={group.id}
 			data-skeleton={group.skeleton}
 		>
-			{(!hideHeading || showActions) && (
+			{!hideHeading && (
 				<header className="panel-group-head">
-					{!hideHeading && (
-						<div className="panel-group-titles">
-							{group.title.length > 0 && (
-								<h2 className="panel-group-title">
-									{group.title}
-									{group.hint === undefined ? null : (
-										<Hint text={group.hint} locale={locale} />
-									)}
-								</h2>
-							)}
-							{group.description !== undefined && (
-								<p className="panel-group-desc">
-									<SensitiveText text={group.description} locale={locale} />
-								</p>
-							)}
-						</div>
-					)}
+					<div className="panel-group-titles">
+						{group.title.length > 0 && (
+							<h2 className="panel-group-title" aria-label={group.title}>
+								{group.title}
+								{group.hint === undefined ? null : (
+									<Hint text={group.hint} locale={locale} />
+								)}
+							</h2>
+						)}
+						{group.description !== undefined && (
+							<p className="panel-group-desc">
+								<SensitiveText text={group.description} locale={locale} />
+							</p>
+						)}
+					</div>
 					{showActions && (
 						<div className="panel-actions">
 							{group.actions?.map((action) => (
@@ -733,17 +730,7 @@ function PanelGroupView({
 			>
 				{group.rows.length === 0 && group.empty !== undefined ? (
 					<p className="panel-empty" data-cause={group.empty.cause}>
-						<Icon
-							name={group.empty.cause === "no-match"
-								? "search"
-								: group.empty.cause === "done"
-									? "check"
-									: group.empty.cause === "failed" || group.empty.cause === "unavailable"
-										? "info"
-										: "folder"}
-							className="icon panel-empty-icon"
-						/>
-						<span>{group.empty.text}</span>
+						{group.empty.text}
 					</p>
 				) : (
 					group.rows.map((row) => (
@@ -847,28 +834,40 @@ function PanelInputView({
 	);
 }
 
+/**
+ * The management page head. The titlebar already names the destination (插件/技能/自动化/设置), so a
+ * top-level page renders no head at all; a settings category renders its own title because the
+ * titlebar only names the enclosing settings view. Static guidance sits behind the title's info
+ * control, while a description line is reserved for live facts.
+ */
 function PanelHeadActions({
 	panel,
 	locale,
 	onAction,
 	heading,
+	actions = panel.actions,
 }: {
 	readonly panel: PanelSpec;
 	readonly locale: Locale;
 	readonly onAction: (action: PanelAction) => void;
 	readonly heading?: PanelGroup;
+	readonly actions?: readonly PanelButton[];
 }) {
 	const title = heading?.title ?? panel.title;
-	const description = heading === undefined
-		? panel.description
-		: heading.description ?? heading.hint;
+	const hint = heading?.hint;
+	const description = heading?.description;
 	return (
 		<header className="panel-head">
 			<div className="panel-titles">
 				{title.length === 0 ? null : (
-					<h1 className="panel-title">
-						<SensitiveText text={title} locale={locale} />
-					</h1>
+					<div className="panel-title-row">
+						<h1 className="panel-title" aria-label={title}>
+							<SensitiveText text={title} locale={locale} />
+						</h1>
+						{hint === undefined || hint.length === 0 ? null : (
+							<Hint text={hint} locale={locale} />
+						)}
+					</div>
 				)}
 				{description === undefined || description.length === 0 ? null : (
 					<p className="panel-desc">
@@ -876,9 +875,9 @@ function PanelHeadActions({
 					</p>
 				)}
 			</div>
-			{(panel.actions?.length ?? 0) === 0 ? null : (
+			{(actions?.length ?? 0) === 0 ? null : (
 				<div className="panel-actions">
-					{panel.actions?.map((action) => (
+					{actions?.map((action) => (
 						<PanelButtonView
 							key={`${action.id}\u0000${action.data ?? ""}`}
 							action={action}
@@ -937,12 +936,19 @@ function PanelSurface({
 	}
 	return (
 		<div className="panel" data-panel-id={panel.id}>
-			<PanelHeadActions
-				panel={panel}
-				heading={panel.id === SETTINGS_VIEW ? groups[0] : undefined}
-				locale={locale}
-				onAction={onAction}
-			/>
+			{panel.id === SETTINGS_VIEW && groups.length > 0 ? (
+				<PanelHeadActions
+					panel={panel}
+					heading={groups[0]}
+					actions={groups[0]?.actions ?? panel.actions}
+					locale={locale}
+					onAction={onAction}
+				/>
+			) : (
+				/* The titlebar is the visible page title; the hidden H1 keeps one page-level heading
+				   for assistive navigation on the top-level destinations. */
+				<h1 className="sr-only">{panel.title}</h1>
+			)}
 			<PanelNotices scope={panel.id} locale={locale} notices={panel.notices} />
 			{panel.inputs?.map((input) => (
 				<PanelInputView
@@ -1461,9 +1467,16 @@ function ModelConnectionsView({
 		defaultModel !== undefined &&
 		!options.some((model) => model.provider === defaultModel.provider && model.modelId === defaultModel.modelId)
 	) {
+		/* The saved default can be disabled after it was chosen. Keep it visible, but prefer the
+		   catalogue's display name over the raw provider/model identifier. */
+		const known = connections.models.find(
+			(model) =>
+				model.provider === defaultModel.provider &&
+				model.modelId === defaultModel.modelId,
+		);
 		options.unshift({
 			...defaultModel,
-			name: `${defaultModel.provider}/${defaultModel.modelId}`,
+			name: known?.name ?? `${defaultModel.provider}/${defaultModel.modelId}`,
 			available: false,
 		});
 	}
@@ -1716,6 +1729,7 @@ function ModalFieldView({
 				<input
 					type="checkbox"
 					className="modal-check"
+					aria-label={field.label}
 					checked={value === "true"}
 					disabled={disabled || field.readOnly === true}
 					onChange={(event) => onChange(String(event.currentTarget.checked))}
@@ -1752,6 +1766,7 @@ function ModalFieldView({
 				</span>
 				<select
 					className="modal-input"
+					aria-label={field.label}
 					value={value}
 					disabled={disabled || field.readOnly === true}
 					onChange={(event) => onChange(event.currentTarget.value)}
@@ -1773,6 +1788,7 @@ function ModalFieldView({
 				</span>
 				<textarea
 					className={`modal-textarea${field.id === "content" || field.id === "entry" ? " code" : ""}`}
+					aria-label={field.label}
 					value={value}
 					placeholder={field.placeholder}
 					readOnly={field.readOnly === true}
@@ -1790,6 +1806,7 @@ function ModalFieldView({
 				</label>
 				<PasswordField
 					id={field.id}
+					label={field.label}
 					locale={locale}
 					value={value}
 					placeholder={field.placeholder}
@@ -1944,7 +1961,11 @@ function ModalContent({
 		>
 			<header className="modal-head">
 				<div className="modal-titles">
-					<h2 id="management-modal-title" className="modal-title">
+					<h2
+						id="management-modal-title"
+						className="modal-title"
+						aria-label={modal.title}
+					>
 						{modal.title}
 						{modal.hint === undefined ? null : (
 							<Hint text={modal.hint} locale={locale} />

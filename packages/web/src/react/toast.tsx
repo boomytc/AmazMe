@@ -35,6 +35,8 @@ export function ToastLayer({
 		(list: readonly ToastMessage[]) => {
 			if (hovering.current) return;
 			for (const toast of list) {
+				/* A failure the reader must act on stays until it is dismissed. */
+				if (toast.persistent) continue;
 				if (timers.current.has(toast.id)) continue;
 				timers.current.set(
 					toast.id,
@@ -54,6 +56,14 @@ export function ToastLayer({
 	}, [clearTimers]);
 	useEffect(() => {
 		startTimers(toasts);
+		for (const toast of toasts) {
+			if (!toast.persistent) continue;
+			/* A transient card upgraded in place loses its old expiry. */
+			const timer = timers.current.get(toast.id);
+			if (timer === undefined) continue;
+			clearTimeout(timer);
+			timers.current.delete(toast.id);
+		}
 		for (const id of [...timers.current.keys()]) {
 			if (toasts.some((toast) => toast.id === id)) continue;
 			clearTimeout(timers.current.get(id));
@@ -62,11 +72,12 @@ export function ToastLayer({
 	}, [toasts, startTimers]);
 	useEffect(() => clearTimers, [clearTimers]);
 	if (toasts.length === 0) return null;
+	const locale = presentation.view?.locale ?? "en";
 	return (
 		<div
 			className="toast-layer"
 			role="region"
-			aria-label={translate(presentation.view?.locale ?? "en", "toast.region")}
+			aria-label={translate(locale, "toast.region")}
 			/* A card can appear under a resting pointer, so movement inside the layer also holds it. */
 			onPointerMove={hold}
 			onPointerEnter={hold}
@@ -78,10 +89,28 @@ export function ToastLayer({
 			{toasts.map((toast) => (
 				<p
 					key={toast.id}
-					className={`toast-card ${toast.tone}`}
+					className={`toast-card ${toast.tone}${toast.persistent ? " persistent" : ""}`}
 					role={toast.tone === "error" ? "alert" : "status"}
 				>
-					{toast.text}
+					<span className="toast-text">{toast.text}</span>
+					{toast.persistent ? (
+						<button
+							type="button"
+							className="toast-close icon-button icon-button--mini"
+							aria-label={translate(locale, "toast.dismiss")}
+							title={translate(locale, "toast.dismiss")}
+							onClick={() => presentation.dismissToast(toast.id)}
+						>
+							<svg
+								className="icon"
+								viewBox="0 0 24 24"
+								aria-hidden="true"
+								focusable="false"
+							>
+								<use href="#i-x" />
+							</svg>
+						</button>
+					) : null}
 				</p>
 			))}
 		</div>

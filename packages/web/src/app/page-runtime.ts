@@ -3,6 +3,7 @@ import * as A from "../actions.ts";
 import { type CommandLike, parseCommandLine } from "../commands.ts";
 import { desktopBridge } from "../desktop.ts";
 import { dockView, isDockTabId, parseWorkspaceAction } from "../dock.ts";
+import { errorMessageCopy } from "../errors.ts";
 import type {
 	AnswerFeedbackList,
 	GitDiff,
@@ -70,6 +71,8 @@ const connectedCopy = (locale: Locale): string =>
 	translate(locale, "connection.stateConnected");
 const connectingCopy = (locale: Locale): string =>
 	translate(locale, "connection.connecting");
+const unavailableCopy = (locale: Locale): string =>
+	translate(locale, "connection.stateUnavailable");
 const disconnectedCopy = (locale: Locale): string =>
 	translate(locale, "connection.stateDisconnected");
 
@@ -130,6 +133,8 @@ export class PageRuntime {
 	private permissionWrites = new Map<string, Promise<void>>();
 	private confirmedPermissions = new Map<string, ApprovalPolicy>();
 	private ready = false;
+	/* The last brand state, so one recovery clears failures once instead of on every stream frame. */
+	private connectionNotice?: "connecting" | "connected" | "unavailable" | "disconnected";
 	/* The terminal state whose change already reached the toast layer, so one transition speaks once. */
 	private terminalNoticeKey = "";
 	private healthTimer?: ReturnType<typeof setTimeout>;
@@ -269,18 +274,25 @@ export class PageRuntime {
 		);
 		this.preferences.applyPreferences(preferences);
 		this.client.onStatus = (status) => {
-			this.renderer.setConnectionState(
+			const state =
 				status === "connected"
-					? connectedCopy
-					: status === "disconnected"
-						? disconnectedCopy
-						: connectingCopy,
-				status === "connected"
-					? "connected"
-					: status === "disconnected"
-						? "disconnected"
-						: "connecting",
-			);
+					? ("connected" as const)
+					: status === "unavailable"
+						? ("unavailable" as const)
+						: status === "disconnected"
+							? ("disconnected" as const)
+							: ("connecting" as const);
+			const recovered = state === "connected" && this.connectionNotice !== "connected";
+			this.connectionNotice = state;
+			/* A recovered connection retires the failures it left on screen; info cards keep clocks. */
+			if (recovered) this.renderer.clearErrorToasts();
+			if (state === "connected")
+				this.renderer.setConnectionState(connectedCopy, "connected");
+			else if (state === "unavailable")
+				this.renderer.setConnectionState(unavailableCopy, "unavailable");
+			else if (state === "disconnected")
+				this.renderer.setConnectionState(disconnectedCopy, "disconnected");
+			else this.renderer.setConnectionState(connectingCopy, "connecting");
 		};
 		this.client.onError = (error) => this.error(error);
 		this.client.onChange = () => {
@@ -441,7 +453,15 @@ export class PageRuntime {
 	}
 	private error(error: unknown): void {
 		const message = error instanceof Error ? error.message : String(error);
-		this.renderer.showToast(message, "error");
+		/* A failure the reader can act on stays until dismissed. A pending-connection notice is a
+		   transient condition with its own retry surface (session screen or titlebar), so it keeps
+		   the timed card instead of stacking sticky copies. */
+		const transient = message === "请等待会话连接完成";
+		this.renderer.showToast(
+			errorMessageCopy(this.preferences.locale, message),
+			"error",
+			!transient,
+		);
 		this.render();
 	}
 	private requireConnection(): ClientConnection {
@@ -3057,7 +3077,13 @@ export class PageRuntime {
 						}
 					: dock,
 		});
-		if (pendingError) this.renderer.showToast(pendingError, "error");
+		/* The ledger unreadable silently disables the composer, so the reason stays on screen. */
+		if (pendingError)
+			this.renderer.showToast(
+				errorMessageCopy(this.preferences.locale, pendingError),
+				"error",
+				true,
+			);
 	}
 	dispose(): void {
 		if (this.disposed) return;

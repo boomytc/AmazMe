@@ -28,23 +28,29 @@ type BreadcrumbSlot =
 	| { readonly kind: "gap"; readonly from: number; readonly to: number };
 
 interface BreadcrumbPlan {
-	/** Label width allowed for each level; 0 means the level folds to its icon. */
+	/** Label width allowed for each level; 0 means the level is folded into the ellipsis. */
 	readonly widths: readonly number[];
 	/** Levels between `from` and `to` hide behind one ellipsis. `to` is exclusive. */
 	readonly gap: { readonly from: number; readonly to: number } | null;
+	/** Named levels kept after the ellipsis. Two when there is room, one at the narrowest sizes. */
+	readonly trailing: number;
 }
 
 /** The fixed trail pieces, in CSS pixels. They match the rules in page.css. */
 const SEPARATOR = 14;
+/** The 2px flex gap between two adjacent items in `.file-breadcrumbs-track`. */
+const SLOT_GAP = 2;
 const MIN_LABEL = 16;
 const GAP_WIDTH = 22;
 const SAFETY = 4;
 
 /**
  * The dock's path trail. A long path folds in place instead of wrapping: everything fits, the whole
- * trail shows; the middle does not fit, the root and the last two folders keep their names; even
- * those do not fit, the middle folds behind one ellipsis and the remaining three keep names. Hovering
- * or focusing a level stretches its label to its natural width without moving the rest of the trail.
+ * trail shows; the middle does not fit, it folds behind one visible ellipsis while the root and the
+ * last two folders keep their names; in the narrowest panel only the current folder keeps a name
+ * after the ellipsis. A level never degrades into a bare folder glyph without that marker.
+ * Hovering or focusing a level stretches its label to its natural width without moving the rest of
+ * the trail.
  */
 export function Breadcrumbs({
 	levels,
@@ -108,8 +114,8 @@ export function Breadcrumbs({
 
 	const plan = useMemo(() => planTrail(metrics, available), [metrics, available]);
 	const slots = useMemo(
-		() => buildSlots(levels.length, plan.gap),
-		[levels.length, plan.gap],
+		() => buildSlots(levels.length, plan.gap, plan.trailing),
+		[levels.length, plan.gap, plan.trailing],
 	);
 	const expanded = hovered ?? focused;
 
@@ -230,15 +236,13 @@ function BreadcrumbSlotView({
 		);
 	if (slot.kind === "gap") {
 		const hidden = levels.slice(slot.from, slot.to);
+		const hiddenLabel = hidden.map((level) => level.label).join(" / ");
 		return (
 			<>
 				{separator}
-				<span
-					className="file-path-gap"
-					aria-hidden="true"
-					title={hidden.map((level) => level.label).join(" / ")}
-				>
-					…
+				<span className="file-path-gap" title={hiddenLabel}>
+					<span aria-hidden="true">…</span>
+					<span className="sr-only">{hiddenLabel}</span>
 				</span>
 			</>
 		);
@@ -312,18 +316,20 @@ function FolderGlyph(): ReactElement {
 function buildSlots(
 	count: number,
 	gap: BreadcrumbPlan["gap"],
+	trailing: number,
 ): readonly BreadcrumbSlot[] {
 	if (gap === null)
 		return Array.from({ length: count }, (_, index) => ({
 			kind: "level",
 			index,
 		}));
+	const keep = Math.max(1, Math.min(trailing, count - 2));
 	return [
 		{ kind: "level", index: 0 },
-		{ kind: "gap", from: gap.from, to: gap.to },
+		{ kind: "gap", from: gap.from, to: count - keep },
 		...Array.from(
-			{ length: Math.max(0, Math.min(2, count - 1)) },
-			(_, offset): BreadcrumbSlot => ({ kind: "level", index: count - 2 + offset }),
+			{ length: keep },
+			(_, offset): BreadcrumbSlot => ({ kind: "level", index: count - keep + offset }),
 		),
 	];
 }
@@ -349,39 +355,61 @@ function planTrail(
 ): BreadcrumbPlan {
 	const labels = metrics.map((metric) => metric.label);
 	const count = metrics.length;
-	if (count === 0) return { widths: [], gap: null };
+	if (count === 0) return { widths: [], gap: null, trailing: 2 };
 	const usable = available - SAFETY;
-	if (usable <= 0) return { widths: labels, gap: null };
+	if (usable <= 0) return { widths: labels, gap: null, trailing: 2 };
 
 	const bases = metrics.map((metric) => Math.max(0, metric.crumb - metric.label));
+	/* Every level after the first is preceded by a separator item, and every adjacent pair of
+	   items is spaced by SLOT_GAP: 2×(count−1) gaps around count−1 separators. */
 	const base =
 		bases.reduce((sum, width) => sum + width, 0) +
-		Math.max(0, count - 1) * SEPARATOR;
+		Math.max(0, count - 1) * (SEPARATOR + 2 * SLOT_GAP);
 	const natural = labels.reduce((sum, width) => sum + width, 0);
-	if (base + natural <= usable) return { widths: labels, gap: null };
+	if (base + natural <= usable) return { widths: labels, gap: null, trailing: 2 };
 
 	const fixed = [...new Set([0, count - 2, count - 1])].filter(
 		(index) => index >= 0 && index < count,
 	);
 	const budget = usable - base;
-	const fixedNatural = fixed.reduce((sum, index) => sum + (labels[index] ?? 0), 0);
-	if (budget >= fixedNatural) {
-		const widths = labels.map(() => 0);
-		for (const index of fixed) widths[index] = labels[index] ?? 0;
-		return { widths, gap: null };
-	}
-	if (count <= 3) return { widths: shareLabels(labels, fixed, budget), gap: null };
+	if (count <= 3)
+		return { widths: shareLabels(labels, fixed, budget), gap: null, trailing: 2 };
 
-	const visible = buildSlots(count, { from: 1, to: count - 2 }).flatMap((slot) =>
-		slot.kind === "level" ? [slot.index] : [],
-	);
-	const visibleBase = visible.reduce((sum, index) => sum + (bases[index] ?? 0), 0);
-	const compactBudget =
-		usable - visibleBase - visible.length * SEPARATOR - GAP_WIDTH;
-	return {
-		widths: shareLabels(labels, visible, compactBudget),
-		gap: { from: 1, to: count - 2 },
+	/* A level that loses its label must not degrade into a bare folder glyph: whenever the trail
+	   has to make room, the middle folds behind one visible ellipsis and the root plus the last two
+	   levels keep their names. At the narrowest sizes even that does not fit, so only the current
+	   level keeps a name after the ellipsis. The full path of the folded levels stays available
+	   through the marker's title and screen-reader text. */
+	const compact = (trailing: number): BreadcrumbPlan => {
+		const gap = { from: 1, to: Math.max(1, count - trailing) };
+		const visible = buildSlots(count, gap, trailing).flatMap((slot) =>
+			slot.kind === "level" ? [slot.index] : [],
+		);
+		const visibleBase = visible.reduce((sum, index) => sum + (bases[index] ?? 0), 0);
+		const compactBudget =
+			usable -
+			visibleBase -
+			visible.length * (SEPARATOR + 2 * SLOT_GAP) -
+			GAP_WIDTH;
+		return {
+			widths: shareLabels(labels, visible, compactBudget),
+			gap,
+			trailing,
+		};
 	};
+	const wide = compact(2);
+	const fits = (plan: BreadcrumbPlan): boolean => {
+		const slots = buildSlots(count, plan.gap, plan.trailing);
+		let total = Math.max(0, slots.length - 1) * (SEPARATOR + 2 * SLOT_GAP);
+		for (const slot of slots) {
+			if (slot.kind === "gap") total += GAP_WIDTH;
+			else
+				total +=
+					(bases[slot.index] ?? 0) + (plan.widths[slot.index] ?? 0);
+		}
+		return total <= usable;
+	};
+	return fits(wide) ? wide : compact(1);
 }
 
 function shareLabels(
@@ -398,7 +426,12 @@ function shareLabels(
 		left -= width;
 	}
 	for (const index of order) {
-		const extra = Math.min((labels[index] ?? 0) - (widths[index] ?? 0), left);
+		/* A negative remainder means even the minimum labels overflow; never shrink a label below
+		   its floor here, the trail plan folds another level instead. */
+		const extra = Math.max(
+			0,
+			Math.min((labels[index] ?? 0) - (widths[index] ?? 0), left),
+		);
 		widths[index] = (widths[index] ?? 0) + extra;
 		left -= extra;
 	}

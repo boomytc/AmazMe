@@ -23,6 +23,38 @@ const ERROR_KEYS: Readonly<Record<string, MessageKey>> = {
 	invalid_api_key: "error.credentials", authentication_error: "error.credentials",
 	rate_limit_exceeded: "error.rateLimit", context_length_exceeded: "error.contextLimit",
 	insufficient_quota: "error.quota", model_not_found: "error.modelUnavailable",
+	/* Session and host lifecycle codes: the host answered, but this window cannot attach or the
+	   worker is still coming up. They reach the unavailable screen and the toast layer as codes. */
+	startup_timeout: "error.sessionStartTimeout",
+	supervisor_startup_timeout: "error.sessionStartTimeout",
+	local_host_start_timeout: "error.sessionStartTimeout",
+	stream_timeout: "error.connectionLost",
+	supervisor_startup_failed: "error.sessionStartFailed",
+	local_host_start_failed: "error.sessionStartFailed",
+	local_host_unavailable: "error.sessionStartFailed",
+	worker_unavailable: "error.sessionStartFailed",
+	worker_process_exited: "error.sessionStartFailed",
+	local_host_not_ready: "error.hostStarting",
+	worker_restart_budget_exhausted: "error.sessionRestartExhausted",
+	worker_blocked: "error.sessionBlocked",
+	worker_busy: "error.sessionBusy",
+	local_host_busy: "error.sessionBusy",
+	execution_cleanup_pending: "error.cleanupPending",
+	worker_retirement_pending: "error.cleanupPending",
+	worker_retirement_unproven: "error.cleanupPending",
+	worker_fence_pending: "error.cleanupPending",
+	runtime_recovering: "error.runtimeRecovering",
+	host_stopping: "error.runtimeRecovering",
+	worker_stopping: "error.runtimeRecovering",
+	worker_identity_mismatch: "error.runtimeRecovering",
+	worker_identity_conflict: "error.runtimeRecovering",
+	worker_still_owns_session: "error.runtimeRecovering",
+	supervisor_retirement_pending: "error.runtimeRecovering",
+	attachment_capacity: "error.attachmentCapacity",
+	worker_capacity: "error.attachmentCapacity",
+	stale_client_binding: "error.staleBinding",
+	connection_not_restored: "error.connectionNotRestored",
+	host_upgrade_required: "error.unsupported",
 };
 
 /** Known codes have page copy; unknown provider and extension messages remain useful as written. */
@@ -30,11 +62,18 @@ export function errorCodeCopy(locale: Locale, code: string): string | undefined 
 	return Object.hasOwn(ERROR_KEYS, code) ? translate(locale, ERROR_KEYS[code]!) : undefined;
 }
 
+/** Lifecycle codes we did not enumerate still read as prose, never as the wire name. */
+const LIFECYCLE_CODE = /^(?:supervisor|worker|local_host|host)_[a-z0-9_]+$/u;
+
 /** Only recognize error envelopes. Never rewrite commands, file contents, or ordinary tool output. */
 export function errorMessageCopy(locale: Locale, message: string): string {
 	const bare = errorCodeCopy(locale, message);
 	if (bare !== undefined) return bare;
+	if (LIFECYCLE_CODE.test(message)) return translate(locale, "error.runtimeRecovering");
 	if (["Request was aborted", "Operation aborted", "Command aborted"].includes(message)) return translate(locale, "error.stopped");
+	/* A failed local fetch reaches the page as a transport TypeError, not an error envelope. The
+	   host is the same-machine service, so read it as an interrupted service connection. */
+	if (/^(?:Failed to fetch|NetworkError when attempting to fetch resource\.|Load failed|fetch failed|network error)$/iu.test(message.trim())) return translate(locale, "error.connectionLost");
 	if (message === "No model is configured") return translate(locale, "error.noModel");
 	if (message === "no credentials") return translate(locale, "error.credentials");
 	if (message === "Read the existing file before replacing it") return translate(locale, "error.readFirst");

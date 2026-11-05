@@ -29,6 +29,19 @@ function isXterm(value: unknown): value is Xterm {
 		["open", "write", "reset", "resize", "focus", "dispose", "onData"].every(name => typeof value[name] === "function");
 }
 
+/** The host accepts a terminal grid of cols 1–200 and rows 1–80; the page asks for the safe range. */
+const MIN_COLS = 2;
+const MIN_ROWS = 2;
+const MAX_COLS = 200;
+const MAX_ROWS = 80;
+/** A glyph cell narrower than this means the screen geometry is not stable yet, not a real grid. */
+const MIN_CELL = 2;
+
+function clampGrid(value: number, minimum: number, maximum: number): number {
+	if (!Number.isFinite(value)) return minimum;
+	return Math.min(maximum, Math.max(minimum, Math.floor(value)));
+}
+
 /** xterm owns keyboard, paste, IME and control keys. The page owns transport and the input ledger. */
 export function createPtySurface(report: { data(id: string, data: string): void; resize(id: string, cols: number, rows: number): void; error(error: unknown): void }) {
 	const element = document.createElement("div");
@@ -36,16 +49,39 @@ export function createPtySurface(report: { data(id: string, data: string): void;
 	let current: PtyPresentation | undefined, terminal: Xterm | undefined;
 	let renderedSeq = 0, initialized = false, requestedSize = "", generation = 0;
 	let updates = Promise.resolve();
+	/* The last panel size a fit() saw. While the dock animates, the panel already has the new width
+	   but xterm has not resized its screen yet, so the computed grid would be wrong; defer one frame
+	   and only report a size that held still. */
+	let lastSize = "", pendingFit = 0;
+	const scheduleFit = () => {
+		if (pendingFit !== 0) return;
+		pendingFit = requestAnimationFrame(() => {
+			pendingFit = 0;
+			fit();
+		});
+	};
 	const fit = () => {
-		if (!terminal || !current || !element.isConnected || element.clientWidth === 0) return;
+		if (!terminal || !current || !element.isConnected) return;
+		const width = element.clientWidth, height = element.clientHeight;
+		if (width <= 0 || height <= 0) return;
 		const screen = element.querySelector<HTMLElement>(".xterm-screen");
 		if (!screen) return;
 		const bounds = screen.getBoundingClientRect();
+		if (!(bounds.width > 0) || !(bounds.height > 0)) return;
+		if (!(terminal.cols > 0) || !(terminal.rows > 0)) return;
 		const cellWidth = bounds.width / terminal.cols, cellHeight = bounds.height / terminal.rows;
-		if (cellWidth <= 0 || cellHeight <= 0) return;
+		if (!Number.isFinite(cellWidth) || !Number.isFinite(cellHeight) || cellWidth < MIN_CELL || cellHeight < MIN_CELL) return;
+		const sizeKey = `${width}:${height}`;
+		if (sizeKey !== lastSize) {
+			lastSize = sizeKey;
+			scheduleFit();
+			return;
+		}
 		const style = getComputedStyle(element);
-		const cols = Math.max(2, Math.floor((element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) / cellWidth));
-		const rows = Math.max(2, Math.floor((element.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)) / cellHeight));
+		const paddingX = (Number.parseFloat(style.paddingLeft) || 0) + (Number.parseFloat(style.paddingRight) || 0);
+		const paddingY = (Number.parseFloat(style.paddingTop) || 0) + (Number.parseFloat(style.paddingBottom) || 0);
+		const cols = clampGrid((width - paddingX) / cellWidth, MIN_COLS, MAX_COLS);
+		const rows = clampGrid((height - paddingY) / cellHeight, MIN_ROWS, MAX_ROWS);
 		const key = `${cols}:${rows}`;
 		if (requestedSize === key || (cols === current.cols && rows === current.rows)) return;
 		requestedSize = key; report.resize(current.id, cols, rows);
@@ -56,7 +92,7 @@ export function createPtySurface(report: { data(id: string, data: string): void;
 		element,
 		update(view: PtyPresentation): void {
 			if (current?.id !== view.id) {
-				generation++; terminal?.dispose(); terminal = undefined; element.replaceChildren(); renderedSeq = 0; initialized = false; requestedSize = "";
+				generation++; terminal?.dispose(); terminal = undefined; element.replaceChildren(); renderedSeq = 0; initialized = false; requestedSize = ""; lastSize = "";
 				updates = Promise.resolve();
 			}
 			current = view;
@@ -88,6 +124,6 @@ export function createPtySurface(report: { data(id: string, data: string): void;
 			updates = updates.then(render, render).catch(error => { if (token === generation) report.error(error); });
 		},
 		focus(): void { terminal?.focus(); },
-		dispose(): void { generation++; observer?.disconnect(); terminal?.dispose(); terminal = undefined; },
+		dispose(): void { generation++; observer?.disconnect(); if (pendingFit !== 0) cancelAnimationFrame(pendingFit); pendingFit = 0; terminal?.dispose(); terminal = undefined; },
 	};
 }

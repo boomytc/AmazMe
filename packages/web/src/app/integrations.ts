@@ -451,7 +451,6 @@ export class Integrations {
 			this.services.panels.modal = P.addPackageModal(this.services.locale());
 			this.services.panels.modal = {
 				...this.services.panels.modal,
-				description: "选择 Python 插件入口文件，或含 extension.py 的目录。",
 				fields: this.services.panels.modal.fields.map((field) =>
 					field.id === "path"
 						? {
@@ -459,7 +458,6 @@ export class Integrations {
 								value: raw
 									? parseContract("PluginPackageAdd", JSON.parse(raw)).entry
 									: "",
-								placeholder: "/path/to/extension.py",
 							}
 						: field,
 				),

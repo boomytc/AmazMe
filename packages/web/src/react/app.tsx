@@ -35,7 +35,7 @@ import { rosterGroups, sessionMenuItems, windowTitle } from "../view.ts";
 import { Composer, Transcript } from "./chat.tsx";
 import { Dock } from "./dock.tsx";
 import { Management, ManagementModal } from "./management.tsx";
-import type { Presentation, ShellView } from "./state.ts";
+import type { ConnectionNotice, Presentation, ShellView } from "./state.ts";
 import { ToastLayer } from "./toast.tsx";
 
 export function Icon({ name }: { readonly name: string }) {
@@ -492,16 +492,24 @@ function Titlebar({
 	actions,
 	collapsed,
 	toggle,
+	connectionState,
 }: {
 	readonly view: ShellView;
 	readonly actions: PageRenderer;
 	readonly collapsed: boolean;
 	readonly toggle: () => void;
+	readonly connectionState: ConnectionNotice["state"];
 }) {
 	const copy = (key: Parameters<typeof translate>[1]) =>
 		translate(view.locale, key);
 	const management = view.panel.current !== CHAT_VIEW;
 	const attached = Boolean(view.attachedId) || view.connecting === true;
+	/* The conversation keeps its own reconnect card; a management page needs the same way back. */
+	const reconnectSession =
+		management &&
+		(connectionState === "unavailable" || connectionState === "disconnected")
+			? view.connectionIssue?.sessionId
+			: undefined;
 	const title = management
 		? view.pageTitle
 		: (view.sessionLabel ?? copy("header.noSession"));
@@ -545,6 +553,23 @@ function Titlebar({
 				</div>
 			</div>
 			<div className="titlebar-trailing">
+				{reconnectSession === undefined ? null : (
+					<button
+						className="titlebar-action"
+						type="button"
+						aria-label={copy("connection.retry")}
+						title={copy("connection.retry")}
+						onClick={() =>
+							actions.onPanelAction({
+								kind: "command",
+								id: A.SESSION_RECONNECT_ACTION,
+								data: reconnectSession,
+							})
+						}
+					>
+						<Icon name="refresh" />
+					</button>
+				)}
 				{management || !attached ? null : (
 					<>
 						{/* The in-conversation search follows this column's context, not the window. */}
@@ -638,6 +663,32 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			setDockPresentation((current) => current === "fullscreen" ? "push" : "fullscreen");
 		});
 	}, [animateDock]);
+	/* The dock's focus rule belongs to the panel's opening, not to the opener: a shortcut opens it
+	   while focus stays on the page, so the selected tab is focused here as well. Retried for a few
+	   frames because the panel only becomes focusable once its reveal has painted. */
+	const focusDockTab = useCallback(() => {
+		let frames = 0;
+		const focus = (): void => {
+			if (!document.body.classList.contains("dock-open")) {
+				if (frames++ < 4) requestAnimationFrame(focus);
+				return;
+			}
+			const tab =
+				document.querySelector<HTMLElement>(".dock-chips .dock-tab.active") ??
+				document.querySelector<HTMLElement>(".dock-tab.active");
+			if (tab !== null) {
+				tab.focus({ preventScroll: true });
+				if (document.activeElement === tab) return;
+			}
+			if (frames++ < 4) requestAnimationFrame(focus);
+		};
+		requestAnimationFrame(focus);
+	}, []);
+	/* The dock's narrow-window auto-collapse is a temporary loan of the sidebar: the state before
+	   the loan is restored when the panel closes unless the reader toggled the sidebar meanwhile. */
+	const dockLoanedSidebar = useRef(false);
+	const sidebarLoanWasOpen = useRef(false);
+	const sidebarToggledManually = useRef(false);
 	const typography = view?.typography,
 		pageTitle = view?.pageTitle,
 		pendingCount = view?.approvalIndicator?.count ?? 0,
@@ -647,6 +698,12 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 		modelManagement =
 			currentPanel === SETTINGS_VIEW &&
 			view?.panel.settingsSection?.id === "settings:models";
+	/* A manual sidebar toggle while the dock holds the auto-collapsed track wins over the restore. */
+	const toggleSidebar = useCallback(() => {
+		if (dockLoanedSidebar.current && dockOpen)
+			sidebarToggledManually.current = true;
+		setCollapsed((current) => !current);
+	}, [dockOpen]);
 	/* Layout effect: typography and the window title land before the frame paints. */
 	useLayoutEffect(() => {
 		if (!typography) return;
@@ -662,7 +719,21 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 	useLayoutEffect(() => {
 		const body = document.body;
 		const narrowOpening = dockOpen && !body.classList.contains("dock-open") && window.innerWidth < 1280;
-		if (narrowOpening) setCollapsed(true);
+		if (narrowOpening) {
+			/* Remember what the sidebar was before the panel borrows the room. */
+			if (!dockLoanedSidebar.current) {
+				dockLoanedSidebar.current = true;
+				sidebarLoanWasOpen.current = !collapsed;
+				sidebarToggledManually.current = false;
+			}
+			if (!collapsed) setCollapsed(true);
+		} else if (!dockOpen && dockLoanedSidebar.current) {
+			if (sidebarLoanWasOpen.current && !sidebarToggledManually.current)
+				setCollapsed(false);
+			dockLoanedSidebar.current = false;
+			sidebarLoanWasOpen.current = false;
+			sidebarToggledManually.current = false;
+		}
 		if (currentPanel !== CHAT_VIEW) stopDockMotion();
 		body.classList.toggle("library-open", currentPanel !== CHAT_VIEW);
 		body.classList.toggle("sidebar-collapsed", collapsed || narrowOpening);
@@ -749,7 +820,11 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				(id !== A.RUN_STOP_ACTION || presentation.view?.busy === true)
 			) {
 				event.preventDefault();
+				const dockWasOpen = presentation.view?.dock.open === true;
 				presentation.onShortcut(id);
+				/* The keyboard path opens the panel without a focused opener, so the panel's own
+				   focus rule is requested from the page as well. */
+				if (id === A.DOCK_TOGGLE_ACTION && !dockWasOpen) focusDockTab();
 			}
 		};
 		document.addEventListener("keydown", key);
@@ -757,7 +832,7 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 			removeMenu?.();
 			document.removeEventListener("keydown", key);
 		};
-	}, [presentation, toggleDockFullscreen]);
+	}, [presentation, toggleDockFullscreen, focusDockTab]);
 	if (!view) return <p className="empty-state">AmazMe</p>;
 	const copy = (key: Parameters<typeof translate>[1]) =>
 		translate(view.locale, key);
@@ -779,7 +854,8 @@ export function App({ presentation }: { readonly presentation: Presentation }) {
 				view={view}
 				actions={presentation}
 				collapsed={collapsed}
-				toggle={() => setCollapsed(!collapsed)}
+				toggle={toggleSidebar}
+				connectionState={connection.state}
 			/>
 			<nav className="app-rail" aria-label={copy("nav.primary")}>
 				<button

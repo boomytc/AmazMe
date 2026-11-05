@@ -98,7 +98,7 @@ export function providerConfigurationModal(locale: Locale, provider?: ModelConne
 	const ordered = [...methods].sort((left, right) => credentialOrder(left.type) - credentialOrder(right.type));
 	const methodLabel = (type: "api_key" | "oauth") => copy(type === "api_key" ? "connections.apiKey" : "connections.signIn");
 	const onlyLogin = !editable && ordered.length > 0 && ordered.every(method => method.type === "oauth");
-	return { id: PROVIDER_EDIT_MODAL, data: provider.id, title: copy("connections.configure"), submit: copy(onlyLogin ? "auth.continue" : "modal.save"),
+	return { id: PROVIDER_EDIT_MODAL, data: provider.id, title: translate(locale, "connections.configureTitle", { name: provider.name || provider.id }), submit: copy(onlyLogin ? "auth.continue" : "modal.save"),
 		...(provider.configured ? { actions: [{ id: PROVIDER_LOGOUT_ACTION, data: provider.id, label: copy("connections.delete"), weight: "line" as const, danger: true, placement: "start" as const }] } : {}),
 		fields: [
 		...(editable ? [

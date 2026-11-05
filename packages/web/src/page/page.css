@@ -27,6 +27,14 @@
 	initial-value: 300px;
 }
 
+/* The sidebar hands its track back and forth on the same curve as the dock, so opening a panel in
+   a narrow window slides the reading column instead of jumping it. */
+@property --sidebar-track {
+	syntax: "<length>";
+	inherits: true;
+	initial-value: 268px;
+}
+
 :root {
 	--rail-width: 56px;
 	--sidebar-width: 268px;
@@ -74,7 +82,7 @@ body {
 	line-height: 1.6;
 	-webkit-font-smoothing: antialiased;
 	text-rendering: optimizeLegibility;
-	transition: --dock-reveal var(--dur-slow) var(--ease-in-out);
+	transition: --dock-reveal var(--dur-slow) var(--ease-in-out), --sidebar-track var(--dur-slow) var(--ease-in-out);
 }
 
 /* The entry failed before the application could paint. No parallel application or hidden reload loop. */
@@ -134,12 +142,15 @@ body.library-open {
 body.library-open {
 	--dock-track: 0px;
 	background: var(--window);
+	/* Entering or leaving the management window swaps the page shell; the tracks must not animate. */
+	transition: none;
 }
 
 body.library-open .titlebar,
 body.library-open .app-rail {
 	background: var(--window);
 	border-color: transparent;
+	box-shadow: none;
 }
 
 body.library-open .center {
@@ -304,6 +315,11 @@ p {
 
 .rail-brand[data-state="disconnected"] .connection-dot {
 	background: var(--danger);
+}
+
+/* The host answered but this conversation's runtime is not up; the product is not offline. */
+.rail-brand[data-state="unavailable"] .connection-dot {
+	background: var(--warn);
 }
 
 .connection-tooltip {
@@ -767,6 +783,9 @@ p {
 }
 .session-menu-item:is(:hover, :focus-visible),
 .dock-tab-menu-item:is(:hover, :focus-visible) { background: var(--hover); }
+/* A checked row already owns a tab; the current tab is marked separately so the two states never
+   share one glyph. */
+.dock-tab-menu-item[aria-current="true"] { background: var(--active); color: var(--text); }
 .session-menu-item.danger {
 	color: var(--danger);
 	border-top: 1px solid var(--line);
@@ -816,7 +835,9 @@ p {
 	min-width: 0;
 	height: var(--titlebar-height);
 	padding: 0 var(--space-14) 0 var(--space-12);
-	border-bottom: 1px solid var(--line);
+	/* A hairline that does not consume the row's content box, so controls share the 48px midline
+	   with the dock's tab strip. */
+	box-shadow: inset 0 -1px 0 var(--line);
 	-webkit-app-region: drag;
 	user-select: none;
 }
@@ -2126,7 +2147,7 @@ p {
 .model-picker-manage:hover, .model-picker-manage:focus-visible { background: var(--hover); color: var(--text); }
 
 .model-connections { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.model-connections .panel-head { margin-bottom: 4px; }
+.model-connections .panel-head { margin-bottom: 12px; }
 .connection-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--raised); }
 .connection-default-text { margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .connection-default-controls { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
@@ -3609,12 +3630,22 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 
 .library-open .view-body {
 	max-width: none;
-	padding: 0 32px 48px;
+	padding: 24px 32px 48px;
 }
 
+/* The management workspace keeps one stable, centred frame. The reading measure inside it follows
+   the content form: record lists 960, settings forms 840, provider cards 720. */
 .library-open .view-body > .panel {
 	width: 100%;
-	max-width: 1120px;
+	max-width: 960px;
+}
+
+.library-frame[data-management-current="settings"] .view-body > .panel {
+	max-width: 840px;
+}
+
+.library-frame[data-management-current="settings"] .view-body > .panel.model-connections {
+	max-width: 720px;
 }
 
 .library-frame {
@@ -3622,6 +3653,8 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	align-items: stretch;
 	justify-content: flex-start;
 	width: 100%;
+	max-width: 1184px;
+	margin-inline: auto;
 	min-height: 100%;
 	container: library / inline-size;
 }
@@ -3635,14 +3668,6 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	min-width: 0;
 	padding: 20px 12px;
 	border-right: 1px solid var(--line);
-}
-
-.library-nav-label {
-	margin: 0 10px 10px;
-	color: var(--text-3);
-	font-size: 11px;
-	font-weight: 500;
-	line-height: 16px;
 }
 
 .library-nav[hidden] { display: none; }
@@ -3684,14 +3709,24 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 
 .library-open .panel-head {
 	align-items: center;
-	padding: 24px 0 20px;
+	padding: 0 0 20px;
 	border-bottom: 1px solid var(--line);
 }
 
 .panel-titles { min-width: 0; }
 
+.panel-title-row {
+	display: flex;
+	align-items: center;
+	gap: 2px;
+	min-width: 0;
+}
+
 .panel-head > .panel-actions { padding-top: 2px; }
 .library-open .panel-head > .panel-actions { padding-top: 0; }
+/* The category head is one 30px title line; its text actions use the same height so a page with
+   actions (configuration & diagnostics) does not push the content down two pixels. */
+.library-open .panel-head > .panel-actions .panel-button { height: 30px; }
 
 .panel-title {
 	margin: 0;
@@ -3927,6 +3962,8 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 .panel-group-head:focus-within .hint,
 .panel-title:hover .hint,
 .panel-title:focus-within .hint,
+.panel-title-row:hover .hint,
+.panel-title-row:focus-within .hint,
 .dock-panel-head:hover .hint,
 .dock-panel-head:focus-within .hint,
 .modal-title:hover .hint,
@@ -4187,35 +4224,10 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	max-width: 560px;
 }
 
-.library-open .panel-rows:has(> .panel-empty:only-child) {
-	display: grid;
-	place-items: center;
-	min-height: 220px;
-	max-width: none;
-	border: 1px solid var(--line);
-	background: var(--raised);
-}
-
 .panel-rows > .panel-empty:only-child {
 	padding: 32px 24px;
 	text-align: center;
-	line-height: 1.6;
-}
-
-.library-open .panel-rows > .panel-empty:only-child {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 12px;
-	padding: 40px 24px;
-	color: var(--text-2);
-}
-
-.panel-empty-icon {
-	width: 24px;
-	height: 24px;
-	color: var(--text-3);
-	stroke-width: 1.5;
+	line-height: 20px;
 }
 
 .panel-footnote {
@@ -4753,14 +4765,10 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 		flex-wrap: wrap;
 	}
 
-	.model-select {
-		grid-area: 1 / 2;
+	.composer-model-control {
+		grid-area: 1 / 2 / auto / 5;
 		justify-self: end;
-		max-width: min(100%, 220px);
-	}
-
-	.thinking-select {
-		grid-area: 1 / 3;
+		max-width: min(100%, 280px);
 	}
 
 	.submit-modes {
@@ -4916,7 +4924,24 @@ body.startup-failed > #amazme-root { display: contents; }
 	width: min(360px, calc(100vw - 32px));
 }
 
+/* Keep page messages over the conversation column instead of the dock's own controls. The
+   fullscreen panel covers the window as a focused mode, so cards stay above it there. */
+body.dock-open:not(:has(.dock[data-presentation="fullscreen"])) .toast-layer {
+	right: calc(var(--dock-track) + var(--space-16));
+}
+
+/* The management card's head carries its page actions at the top right; keep messages clear of
+   them by anchoring the layer to the card's bottom-right corner instead. */
+body.library-open .toast-layer {
+	top: auto;
+	right: var(--space-16);
+	bottom: calc(var(--space-16) + var(--space-8));
+}
+
 .toast-card {
+	display: flex;
+	align-items: flex-start;
+	gap: var(--space-8);
 	margin: 0;
 	padding: 10px var(--space-14);
 	border-radius: var(--radius-md);
@@ -4929,9 +4954,20 @@ body.startup-failed > #amazme-root { display: contents; }
 	animation: toast-in var(--dur-fast) var(--ease);
 }
 
+.toast-text { flex: 1 1 auto; min-width: 0; }
+
+/* A failure stays until the reader dismisses it; success and status cards retire themselves. */
+.toast-close {
+	flex: none;
+	margin: -2px -4px 0 0;
+}
+
+/* The alert tint carries the meaning for sighted readers; the text keeps the normal ink so it stays
+   readable on the soft red even in the light theme. */
 .toast-card.error {
 	background: var(--danger-soft);
-	color: var(--danger);
+	color: var(--text);
+	box-shadow: inset 3px 0 0 var(--danger), var(--shadow-popover);
 }
 
 @keyframes toast-in {

@@ -23,7 +23,20 @@ export interface ClientConnection {
 	active(): boolean;
 }
 
-export type ConnectionStatus = "connecting" | "connected" | "reconnecting" | "disconnected";
+/**
+ * `unavailable` is not a host outage: the host answered with a policy/status error (for example a
+ * session worker that cannot start), so retrying the whole window would hide a live host.
+ */
+export type ConnectionStatus =
+	| "connecting"
+	| "connected"
+	| "reconnecting"
+	| "unavailable"
+	| "disconnected";
+
+/** Host policy closes that describe the session runtime, not the host transport itself. */
+const SESSION_CLOSE_REASON =
+	/^(?:startup_timeout|supervisor_|worker_|local_host_|execution_cleanup_pending|attachment_capacity|stream_timeout|cursor_unavailable|stream_frame_too_large)/u;
 
 class ConnectionIdentityError extends Error {}
 
@@ -36,6 +49,8 @@ export class PythonClient {
 	onError: (error: unknown) => void = () => {};
 	private generation = 0;
 	private retries = 0;
+	/** The last failure came from the host's own answer, not from a broken transport. */
+	private unavailable = false;
 	private timer?: ReturnType<typeof setTimeout>;
 	private helloTimer?: ReturnType<typeof setTimeout>;
 	readonly origin: string;
@@ -126,6 +141,7 @@ export class PythonClient {
 					connection.snapshot = applyFrame(connection.snapshot, frame, attachment);
 					connection.ready = true;
 					this.retries = 0;
+					this.unavailable = false;
 					clearTimeout(this.helloTimer);
 					this.onStatus("connected");
 					this.onChange();
@@ -140,11 +156,17 @@ export class PythonClient {
 				const reason = event.reason.trim();
 				if (event.code === 1008 || event.code === 1009) {
 					// The host refuses this stream with a policy error (for example an exhausted
-					// worker restart budget). Retrying would loop forever and hide the reason.
+					// worker restart budget). Retrying would loop forever and hide the reason. A
+					// session-level reason leaves the host answering (`unavailable`); a transport
+					// or shutdown reason means the host connection itself is gone (`disconnected`).
+					const sessionLevel =
+						event.code === 1009 ||
+						SESSION_CLOSE_REASON.test(reason);
 					clearTimeout(this.helloTimer);
 					clearTimeout(this.timer);
 					this.timer = undefined;
-					this.onStatus("disconnected");
+					this.unavailable = sessionLevel;
+					this.onStatus(sessionLevel ? "unavailable" : "disconnected");
 					connection.ready = false;
 					connection.failure = reason || `WebSocket ${event.code}`;
 					this.onChange();
@@ -156,9 +178,15 @@ export class PythonClient {
 		} catch (error) {
 			if (generation !== this.generation) return;
 			const terminal = error instanceof ConnectionIdentityError || error instanceof ApiContractError || error instanceof ApiError && [401, 403, 404, 410].includes(error.status);
-			if (terminal) { this.failed(error, sessionId); return; }
+			if (terminal) {
+				this.unavailable = false;
+				this.failed(error, sessionId);
+				return;
+			}
 			this.onError(error);
-			this.onStatus("disconnected");
+			/* An HTTP answer (5xx session start) means the host is up but the session is not. */
+			this.unavailable = error instanceof ApiError;
+			this.onStatus(this.unavailable ? "unavailable" : "disconnected");
 			this.scheduleReconnect(sessionId, generation, 1000);
 		}
 	}
@@ -168,13 +196,15 @@ export class PythonClient {
 		connection.ready = false;
 		if (fresh) connection.snapshot = undefined;
 		clearTimeout(this.helloTimer);
+		this.unavailable = false;
 		this.onStatus("reconnecting");
 		this.onChange();
 		this.scheduleReconnect(connection.sessionId, this.generation, 750);
 	}
 	private scheduleReconnect(sessionId: string, generation: number, delay: number): void {
 		if (this.retries >= 5) {
-			this.failed(new Error("连接未恢复，请检查后端后重新连接或刷新页面。"), sessionId);
+			/* A code, not prose: the presentation localizes it for the unavailable screen and toast. */
+			this.failed(new Error("connection_not_restored"), sessionId);
 			return;
 		}
 		this.retries++;
@@ -193,7 +223,7 @@ export class PythonClient {
 			connection.failure = error instanceof Error ? error.message : String(error);
 			this.connection = connection;
 		}
-		this.onStatus("disconnected");
+		this.onStatus(this.unavailable ? "unavailable" : "disconnected");
 		this.onChange();
 		this.onError(error);
 	}

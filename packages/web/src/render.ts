@@ -17,7 +17,11 @@ export interface WindowApp {
 
 /** Host diagnostics may be literal; connection status copy follows the current locale. */
 type ConnectionText = string | ((locale: Locale) => string);
-type ConnectionState = "connecting" | "connected" | "disconnected";
+/**
+ * `unavailable` means the host still answers but this window cannot attach to its session (for
+ * example a policy close while the worker starts); network and identity failures are `disconnected`.
+ */
+type ConnectionState = "connecting" | "connected" | "unavailable" | "disconnected";
 
 /** A transient message's weight in the top-right toast layer. */
 export type ToastTone = "info" | "error";
@@ -29,10 +33,17 @@ export interface PageRenderer {
 	onTerminalResize?: (id: string, cols: number, rows: number) => void;
 	render(view: WebView): void;
 	/**
-	 * Post a transient message in the window's top-right layer. It never occupies page layout, and a
-	 * repeated text reuses the standing card instead of stacking or restarting its clock.
+	 * Post a message in the window's top-right layer. It never occupies page layout, and a repeated
+	 * text reuses the standing card instead of stacking or restarting its clock. Transient cards
+	 * retire after 2.5s; `persistent` cards wait for the reader to dismiss them.
 	 */
-	showToast(text: string, tone?: ToastTone): void;
+	showToast(text: string, tone?: ToastTone, persistent?: boolean): void;
+	/**
+	 * Retire standing error cards once the connection recovers; informational cards keep their
+	 * clocks. The accepted trade-off is one clear per recovery: a later failure posts again, so the
+	 * page does not try to remember which card belonged to the connection that just recovered.
+	 */
+	clearErrorToasts(): void;
 	/** Show connectivity on the brand mark. */
 	setConnectionState(text: ConnectionText, state: ConnectionState): void;
 	/** Handlers the page entry fills in once it can drive the host. */

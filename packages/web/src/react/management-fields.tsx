@@ -1189,6 +1189,8 @@ export function MultiselectField({
 
 export interface PasswordFieldProps {
 	readonly id?: string;
+	/** The field label, kept as the input's accessible name instead of the label's hint markup. */
+	readonly label?: string;
 	readonly locale: Locale;
 	readonly value: string;
 	readonly placeholder?: string;
@@ -1201,6 +1203,7 @@ export interface PasswordFieldProps {
 
 export function PasswordField({
 	id,
+	label,
 	locale,
 	value,
 	placeholder,
@@ -1217,6 +1220,7 @@ export function PasswordField({
 				id={id}
 				type={shown ? "text" : "password"}
 				className="modal-input"
+				aria-label={label}
 				value={value}
 				placeholder={placeholder}
 				readOnly={readOnly}

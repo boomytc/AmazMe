@@ -1208,7 +1208,7 @@ function PanelGroupView({
 				<header className="panel-group-head">
 					<div className="panel-group-titles">
 						{group.title.length === 0 ? null : (
-							<h2 className="panel-group-title">
+							<h2 className="panel-group-title" aria-label={group.title}>
 								{group.title}
 								{group.hint === undefined ? null : (
 									<Hint text={group.hint} locale={locale} />
@@ -1725,7 +1725,10 @@ function DockPtySurface({
 }
 
 interface DockTabMenuProps {
+	/** Every tool the menu offers. */
 	readonly tabs: readonly DockTab[];
+	/** The tools that already own a tab; the menu checks these, not only the selected one. */
+	readonly openTabs: readonly DockTabId[];
 	readonly active: DockTabId | undefined;
 	readonly locale: Locale;
 	readonly onOpenTab: (id: DockTabId) => void;
@@ -1733,9 +1736,11 @@ interface DockTabMenuProps {
 
 /**
  * The strip's plus opens the tool list: picking a tool opens its tab, and a tool that is already
- * open is selected instead. No empty picker tab is created in between.
+ * open is selected instead. No empty picker tab is created in between. A checked row means the
+ * tool already has a tab; the selected tab is marked separately with `aria-current` so the two
+ * states never share one glyph.
  */
-function DockTabMenu({ tabs, active, locale, onOpenTab }: DockTabMenuProps) {
+function DockTabMenu({ tabs, openTabs, active, locale, onOpenTab }: DockTabMenuProps) {
 	const [open, setOpen] = useState(false);
 	const trigger = useRef<HTMLButtonElement>(null);
 	const menu = useRef<HTMLDivElement>(null);
@@ -1782,6 +1787,7 @@ function DockTabMenu({ tabs, active, locale, onOpenTab }: DockTabMenuProps) {
 		const step = event.key === "ArrowDown" ? 1 : -1;
 		items[(index + step + items.length) % items.length]?.focus();
 	};
+	const opened = new Set<DockTabId>(openTabs);
 	return (
 		<span className="dock-add-tab-wrap">
 			<button
@@ -1822,6 +1828,7 @@ function DockTabMenu({ tabs, active, locale, onOpenTab }: DockTabMenuProps) {
 									type="button"
 									role="menuitem"
 									className="dock-tab-menu-item"
+									aria-current={tab.id === active ? "true" : undefined}
 									onClick={() => {
 										close();
 										onOpenTab(tab.id);
@@ -1829,7 +1836,7 @@ function DockTabMenu({ tabs, active, locale, onOpenTab }: DockTabMenuProps) {
 								>
 									<Icon name={DOCK_ICONS[tab.id]} className="icon" />
 									<span>{tab.label}</span>
-									{tab.id === active ? (
+									{opened.has(tab.id) ? (
 										<Icon name="check" className="icon dock-tab-menu-check" />
 									) : null}
 								</button>
@@ -1964,14 +1971,14 @@ export function Dock({
 	   conversation header's expand button instead of leaving it on hidden content. A panel mounted
 	   while open does not steal focus from the page. This runs after paint because the panel is
 	   still visibility:hidden while its opening commit's layout effects run (the frame owns that
-	   class), and a hidden element cannot take focus. */
+	   class), and a hidden element cannot take focus. The selected chip is retried for a few frames
+	   so every opener (header button, Cmd/Ctrl+Alt+M, panel toggle) ends on the same tab instead of
+	   leaving focus on the body when the reveal paints a frame late. */
 	useEffect(() => {
 		if (previousOpen.current === view.open) return;
 		previousOpen.current = view.open;
-		if (view.open) {
-			if (active === undefined) return;
-			tabs.current.get(active)?.focus({ preventScroll: true });
-		} else if (restoreFocus.current) {
+		if (!view.open) {
+			if (!restoreFocus.current) return;
 			restoreFocus.current = false;
 			if (
 				document.activeElement === document.body ||
@@ -1980,7 +1987,25 @@ export function Dock({
 				document
 					.querySelector<HTMLElement>("[data-dock-expand]")
 					?.focus({ preventScroll: true });
+			return;
 		}
+		let frames = 0;
+		let cancelled = false;
+		const focusSelected = (): void => {
+			if (cancelled) return;
+			const node = active === undefined ? undefined : tabs.current.get(active);
+			if (node === undefined) {
+				if (frames++ < 4) requestAnimationFrame(focusSelected);
+				return;
+			}
+			node.focus({ preventScroll: true });
+			if (document.activeElement !== node && frames++ < 4)
+				requestAnimationFrame(focusSelected);
+		};
+		focusSelected();
+		return () => {
+			cancelled = true;
+		};
 	}, [view.open, active]);
 	const startResize = (event: ReactPointerEvent<HTMLDivElement>): void => {
 		const element = dock.current;
@@ -2175,7 +2200,11 @@ export function Dock({
 									aria-selected={tab.active}
 									aria-controls="dock-body"
 									tabIndex={tab.active ? 0 : -1}
-									title={tab.label}
+									title={
+										tab.id === "terminal"
+											? translate(locale, "dock.terminalTabTitle")
+											: tab.label
+									}
 									data-tab={tab.id}
 									onClick={() => {
 										onAction({
@@ -2216,6 +2245,7 @@ export function Dock({
 				</div>
 				<DockTabMenu
 					tabs={view.availableTabs}
+					openTabs={view.tabs.map((tab) => tab.id)}
 					active={active}
 					locale={locale}
 					onOpenTab={openTab}
