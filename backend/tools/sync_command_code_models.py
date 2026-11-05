@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from amazme_backend.ai.official_thinking import align_command_code_models
 from amazme_backend.contracts.models import ModelSelection, ProviderApi
 
 MODELS_URL = "https://api.commandcode.ai/provider/v1/models"
@@ -98,6 +99,7 @@ def main() -> None:
         })
     if not models:
         raise ValueError("No supported Command Code chat models; keeping the existing snapshot")
+    align_command_code_models(models)
     target = Path(__file__).resolve().parents[1] / "src/amazme_backend/assets/command_code_models.json"
     target.write_text(json.dumps(sorted(models, key=lambda item: str(item["id"])), ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({"models": len(models), "protocols": dict(Counter(str(model["api"]) for model in models)), "skipped": skipped}))

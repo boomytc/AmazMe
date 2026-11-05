@@ -85,7 +85,9 @@
     ],
     "compat": {
       "supportsDeveloperRole": false,
-      "maxTokensField": "max_tokens"
+      "maxTokensField": "max_tokens",
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "qwen"
     },
     "cost": {}
   },
@@ -121,7 +123,9 @@
     ],
     "compat": {
       "supportsDeveloperRole": false,
-      "maxTokensField": "max_tokens"
+      "maxTokensField": "max_tokens",
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "qwen"
     },
     "cost": {}
   },
@@ -139,7 +143,9 @@
     ],
     "compat": {
       "supportsDeveloperRole": false,
-      "maxTokensField": "max_tokens"
+      "maxTokensField": "max_tokens",
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "qwen"
     },
     "cost": {}
   },
@@ -177,7 +183,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": null,
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "Qwen/Qwen3.8-Max",
@@ -195,7 +210,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": null,
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "Qwen/Qwen3.8-Max-0902",
@@ -267,7 +291,12 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-fable-5-1",
@@ -285,7 +314,12 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-haiku-4-5-20251001",
@@ -316,8 +350,18 @@
       "text",
       "image"
     ],
-    "compat": {},
-    "cost": {}
+    "compat": {
+      "forceAdaptiveThinking": true
+    },
+    "cost": {},
+    "thinkingLevelMap": {
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-opus-4-7",
@@ -335,7 +379,11 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-opus-4-8",
@@ -353,7 +401,11 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-opus-5",
@@ -371,7 +423,11 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-opus-5-5",
@@ -389,7 +445,16 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-sonnet-4-6",
@@ -407,7 +472,10 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "max": "max"
+    }
   },
   {
     "id": "claude-sonnet-5",
@@ -425,7 +493,11 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "claude-sonnet-5-5",
@@ -443,7 +515,16 @@
     "compat": {
       "forceAdaptiveThinking": true
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "deepseek/deepseek-v4-flash",
@@ -515,7 +596,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": null,
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "deepseek/deepseek-v4.1-flash",
@@ -533,7 +623,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": "low",
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "deepseek/deepseek-v4.1-flash-fast",
@@ -551,7 +650,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": "low",
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "google/gemini-3.1-flash-lite",
@@ -570,7 +678,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "google/gemini-3.5-flash",
@@ -589,7 +706,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "google/gemini-3.5-flash-lite",
@@ -608,7 +734,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "google/gemini-3.6-flash",
@@ -627,7 +762,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "google/gemini-3.7-flash",
@@ -646,7 +790,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "google/gemini-3.8-flash",
@@ -665,7 +818,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "google/gemini-4-argon",
@@ -684,7 +846,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "gpt-5.3-codex",
@@ -700,7 +871,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "gpt-5.4",
@@ -716,7 +896,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "gpt-5.4-mini",
@@ -732,7 +921,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "gpt-5.5",
@@ -748,7 +946,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "gpt-5.6-luna",
@@ -764,7 +971,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "gpt-5.6-sol",
@@ -780,7 +996,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "gpt-5.6-terra",
@@ -796,7 +1021,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "gpt-6-astra",
@@ -812,7 +1046,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "gpt-6-luna",
@@ -828,7 +1071,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "gpt-6-sol",
@@ -844,7 +1096,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "gpt-6.1-sol",
@@ -860,7 +1121,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "gpt-6.1-terra",
@@ -876,7 +1146,16 @@
       "image"
     ],
     "compat": {},
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "none",
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "inclusionai/ling-3.1-flash",
@@ -947,7 +1226,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "meta/muse-spark-1.2",
@@ -965,7 +1253,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "meta/muse-spark-1.2-contributor",
@@ -983,7 +1280,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "meta/muse-spark-1.3",
@@ -1001,7 +1307,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "meta/muse-spark-1.3-contributor",
@@ -1019,7 +1334,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "meta/muse-spark-open",
@@ -1055,7 +1379,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "minimax/minimax-m3.1-flash",
@@ -1073,7 +1406,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
   },
   {
     "id": "mistral/mistral-large-4",
@@ -1125,7 +1467,9 @@
     ],
     "compat": {
       "supportsDeveloperRole": false,
-      "maxTokensField": "max_tokens"
+      "maxTokensField": "max_tokens",
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "deepseek"
     },
     "cost": {}
   },
@@ -1143,9 +1487,14 @@
     ],
     "compat": {
       "supportsDeveloperRole": false,
-      "maxTokensField": "max_tokens"
+      "maxTokensField": "max_tokens",
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "deepseek"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null
+    }
   },
   {
     "id": "moonshotai/Kimi-K2.7-Code-Highspeed",
@@ -1161,9 +1510,14 @@
     ],
     "compat": {
       "supportsDeveloperRole": false,
-      "maxTokensField": "max_tokens"
+      "maxTokensField": "max_tokens",
+      "supportsReasoningEffort": false,
+      "thinkingFormat": "deepseek"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null
+    }
   },
   {
     "id": "moonshotai/Kimi-K3",
@@ -1181,7 +1535,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "moonshotai/Kimi-K3.1-Pro",
@@ -1199,7 +1562,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -1215,7 +1587,8 @@
     ],
     "compat": {
       "supportsDeveloperRole": false,
-      "maxTokensField": "max_tokens"
+      "maxTokensField": "max_tokens",
+      "supportsReasoningEffort": false
     },
     "cost": {}
   },
@@ -1468,7 +1841,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "xai/grok-4.6",
@@ -1486,7 +1868,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "xai/grok-4.7",
@@ -1504,7 +1895,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": null
+    }
   },
   {
     "id": "xiaomi/mimo-v2.6-flash",
@@ -1522,7 +1922,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": null,
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "xiaomi/mimo-v2.6-pro",
@@ -1540,7 +1949,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": null,
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "xiaomi/mimo-v2.6-pro-ultraspeed",
@@ -1558,7 +1976,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": null,
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": null
+    }
   },
   {
     "id": "z-ai/glm-5.3-flash",
@@ -1576,7 +2003,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "z-ai/glm-5.3-flashx",
@@ -1648,7 +2084,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": null,
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "zai-org/GLM-5.2-Fast",
@@ -1666,7 +2111,16 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": "off",
+      "minimal": null,
+      "low": null,
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   },
   {
     "id": "zai-org/GLM-5.3",
@@ -1684,6 +2138,15 @@
       "supportsDeveloperRole": false,
       "maxTokensField": "max_tokens"
     },
-    "cost": {}
+    "cost": {},
+    "thinkingLevelMap": {
+      "off": null,
+      "minimal": null,
+      "low": "low",
+      "medium": null,
+      "high": "high",
+      "xhigh": null,
+      "max": "max"
+    }
   }
 ]

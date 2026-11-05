@@ -1,8 +1,10 @@
 """Packaged model metadata from Pi and provider catalogs; the runtime never imports TS business code."""
 
+import json
 
 from pydantic import Field, JsonValue, TypeAdapter
 
+from amazme_backend.ai.official_thinking import align_command_code_models
 from amazme_backend.contracts.models import CatalogModel, ProviderApi, ProviderDefinition, ThinkingLevel
 from amazme_backend.platform.resources import package_resource
 from amazme_backend.shared.model import Model
@@ -31,8 +33,14 @@ class PiModel(Model):
     input: list[str] = Field(default_factory=lambda: ['text'])
 
 
-MODELS = [model for resource in ('models', 'command_code_models')
-    for model in TypeAdapter(list[PiModel]).validate_json(package_resource(resource).read_bytes())]
+def _load(resource: str) -> list[PiModel]:
+    records = json.loads(package_resource(resource).read_bytes())
+    if resource == 'command_code_models':
+        align_command_code_models(records)
+    return TypeAdapter(list[PiModel]).validate_python(records)
+
+
+MODELS = [model for resource in ('models', 'command_code_models') for model in _load(resource)]
 PROVIDERS = {"command-code": ProviderDefinition(provider="command-code", name="Command Code",
     base_url="https://api.commandcode.ai/provider/v1", api=None)}
 INDEX = {(model.provider, model.id): model for model in MODELS}
