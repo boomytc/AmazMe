@@ -1,5 +1,6 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPopover } from "./anchored-popover.ts";
 import type { Locale } from "../locale.ts";
 import { translate } from "../strings.ts";
 import { Icon, SensitiveText } from "./management-fields.tsx";
@@ -17,7 +18,6 @@ export function Hint({
 	readonly locale: Locale;
 }) {
 	const [open, setOpen] = useState(false);
-	const [position, setPosition] = useState({ left: 8, top: 8 });
 	const descriptionId = `hint-${useId().replaceAll(":", "")}`;
 	const trigger = useRef<HTMLButtonElement>(null);
 	const card = useRef<HTMLDivElement>(null);
@@ -55,23 +55,7 @@ export function Hint({
 		document.addEventListener("keydown", onKey);
 		return () => document.removeEventListener("keydown", onKey);
 	}, [open]);
-	useLayoutEffect(() => {
-		if (!open) return;
-		const anchor = trigger.current?.getBoundingClientRect();
-		const element = card.current;
-		if (anchor === undefined || element === null) return;
-		const width = element.offsetWidth;
-		const height = element.offsetHeight;
-		const left = Math.min(
-			Math.max(8, anchor.left),
-			window.innerWidth - width - 8,
-		);
-		const below = anchor.bottom + 6;
-		const above = anchor.top - height - 6;
-		const top =
-			below + height <= window.innerHeight - 8 || above < 8 ? below : above;
-		setPosition({ left: Math.round(left), top: Math.round(top) });
-	}, [open]);
+	useAnchoredPopover(open, trigger, card, "bottom-start");
 
 	return (
 		<span className="hint">
@@ -108,7 +92,6 @@ export function Hint({
 							ref={card}
 							className="hint-card"
 							role="tooltip"
-							style={position}
 							onPointerEnter={show}
 							onPointerLeave={scheduleClose}
 							onBlur={(event) => {

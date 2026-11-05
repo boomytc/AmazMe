@@ -1,5 +1,4 @@
 import type {
-	CSSProperties,
 	KeyboardEvent as ReactKeyboardEvent,
 	ReactNode,
 	PointerEvent as ReactPointerEvent,
@@ -9,11 +8,11 @@ import {
 	useCallback,
 	useEffect,
 	useId,
-	useLayoutEffect,
 	useRef,
 	useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPopover } from "./anchored-popover.ts";
 import { credentialRanges } from "../credentials.ts";
 import type { DirectoryListing } from "../directories.ts";
 import type { Locale } from "../locale.ts";
@@ -599,7 +598,6 @@ export function PanelRowMenu({
 	onAction,
 }: PanelRowMenuProps) {
 	const [open, setOpen] = useState(false);
-	const [position, setPosition] = useState<CSSProperties>({ left: 8, top: 8 });
 	const triggerRef = useRef<HTMLButtonElement>(null);
 	const menuRef = useRef<HTMLDivElement>(null);
 	const menuId = useId();
@@ -614,19 +612,7 @@ export function PanelRowMenu({
 		}
 	}, []);
 
-	useLayoutEffect(() => {
-		if (!open || triggerRef.current === null) return;
-		const rect = triggerRef.current.getBoundingClientRect();
-		const width = menuRef.current?.offsetWidth ?? 212;
-		const height = menuRef.current?.offsetHeight ?? 0;
-		setPosition({
-			left: Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)),
-			top: Math.max(
-				8,
-				Math.min(rect.bottom + 4, window.innerHeight - height - 8),
-			),
-		});
-	}, [open]);
+	useAnchoredPopover(open, triggerRef, menuRef, "bottom-end");
 
 	useEffect(() => {
 		if (!open) return;
@@ -643,16 +629,16 @@ export function PanelRowMenu({
 				return;
 			setOpen(false);
 		};
-		const onScrollOrResize = (): void => setOpen(false);
+		const onScroll = (event: Event): void => {
+			if (event.target instanceof Node && !menuRef.current?.contains(event.target)) close(false);
+		};
 		document.addEventListener("pointerdown", onPointerDown, true);
-		window.addEventListener("resize", onScrollOrResize);
-		window.addEventListener("scroll", onScrollOrResize, true);
+		window.addEventListener("scroll", onScroll, true);
 		return () => {
 			document.removeEventListener("pointerdown", onPointerDown, true);
-			window.removeEventListener("resize", onScrollOrResize);
-			window.removeEventListener("scroll", onScrollOrResize, true);
+			window.removeEventListener("scroll", onScroll, true);
 		};
-	}, [open]);
+	}, [close, open]);
 
 	const onMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
 		if (event.key === "Escape") {
@@ -709,7 +695,6 @@ export function PanelRowMenu({
 						ref={menuRef}
 						id={menuId}
 						className="session-menu"
-						style={position}
 						role="menu"
 						aria-label={menu.label}
 						onKeyDown={onMenuKeyDown}

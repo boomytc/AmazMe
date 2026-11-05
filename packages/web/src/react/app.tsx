@@ -9,6 +9,7 @@ import {
 	useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPopover } from "./anchored-popover.ts";
 import * as A from "../actions.ts";
 import type { DockPresentation } from "../app/dock-preferences.ts";
 import {
@@ -61,23 +62,9 @@ function RosterMenu({
 	readonly run: (id: string) => void;
 }) {
 	const [open, setOpen] = useState(false);
-	const [position, setPosition] = useState({ left: 8, top: 8 });
 	const trigger = useRef<HTMLButtonElement>(null),
 		menu = useRef<HTMLDivElement>(null);
-	useLayoutEffect(() => {
-		if (!open || !trigger.current) return;
-		const box = trigger.current.getBoundingClientRect();
-		setPosition({
-			left: Math.max(8, Math.min(box.left, window.innerWidth - 220)),
-			top: Math.max(
-				8,
-				Math.min(
-					box.bottom + 4,
-					window.innerHeight - (menu.current?.offsetHeight ?? 0) - 8,
-				),
-			),
-		});
-	}, [open]);
+	useAnchoredPopover(open, trigger, menu, "bottom-start");
 	useEffect(() => {
 		if (!open) return;
 		menu.current
@@ -125,7 +112,6 @@ function RosterMenu({
 			{open &&
 				createPortal(
 					<div
-						style={position}
 						className="session-menu"
 						role="menu"
 						aria-label={label}

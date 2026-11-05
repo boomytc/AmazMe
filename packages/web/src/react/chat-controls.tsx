@@ -14,7 +14,7 @@ import { translate } from "../strings.ts";
 import { USAGE_ACTION } from "../usage.ts";
 import type { ModelOption } from "../view.ts";
 import type { ComposerView } from "./chat.tsx";
-import { useComposerPopover } from "./composer-popover.ts";
+import { useAnchoredPopover } from "./anchored-popover.ts";
 
 const RECENT_KEY = "amazme.recent-models";
 const RECENT_STORED = 6;
@@ -192,7 +192,7 @@ function ModelPicker({
 		};
 	}, [open]);
 
-	useComposerPopover(open, trigger, dialog, "top-end");
+	useAnchoredPopover(open, trigger, dialog, "top-end");
 
 	const choose = (option: ModelOption) => {
 		const key = optionKey(option);
@@ -479,7 +479,7 @@ export function ComposerStatusMeter({
 		},
 		[],
 	);
-	useComposerPopover(open && known && view.attachedId !== undefined, trigger, detail, "top");
+	useAnchoredPopover(open && known && view.attachedId !== undefined, trigger, detail, "top");
 
 	if (view.attachedId === undefined || !known) return null;
 	return (

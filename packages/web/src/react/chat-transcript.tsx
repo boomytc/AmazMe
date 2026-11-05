@@ -13,6 +13,7 @@ import {
 	useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPopover } from "./anchored-popover.ts";
 import {
 	DOCK_TAB_ACTION,
 	HISTORY_MORE_ACTION,
@@ -1241,9 +1242,11 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 	const requestedSearch = useRef<string | undefined>(undefined);
 	const [quote, setQuote] = useState<{
 		readonly text: string;
-		readonly left: number;
-		readonly top: number;
+		readonly range: Range;
 	}>();
+	const quoteButton = useRef<HTMLButtonElement>(null);
+	const selectionAnchor = useMemo(() => ({ current: quote?.range ?? null }), [quote]);
+	useAnchoredPopover(quote !== undefined, selectionAnchor, quoteButton, "bottom");
 	const openSearch = useCallback(() => {
 		const firstOpen = !searchOpenRef.current;
 		if (firstOpen) {
@@ -1400,16 +1403,7 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 				hide();
 				return;
 			}
-			const left = Math.min(
-				window.innerWidth - 128,
-				Math.max(8, rect.left + rect.width / 2 - 52),
-			);
-			const below = rect.bottom + 8;
-			const top =
-				below + 36 <= window.innerHeight - 8
-					? below
-					: Math.max(8, rect.top - 40);
-			setQuote({ text, left, top });
+			setQuote({ text, range: range.cloneRange() });
 		};
 		const schedule = () => {
 			if (timer !== undefined) window.clearTimeout(timer);
@@ -1420,7 +1414,6 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 		};
 		document.addEventListener("selectionchange", schedule);
 		document.addEventListener("mouseup", schedule);
-		document.addEventListener("keyup", schedule);
 		document.addEventListener("keydown", onKey);
 		window.addEventListener("scroll", hide, true);
 		window.addEventListener("resize", hide);
@@ -1428,7 +1421,6 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 			if (timer !== undefined) window.clearTimeout(timer);
 			document.removeEventListener("selectionchange", schedule);
 			document.removeEventListener("mouseup", schedule);
-			document.removeEventListener("keyup", schedule);
 			document.removeEventListener("keydown", onKey);
 			window.removeEventListener("scroll", hide, true);
 			window.removeEventListener("resize", hide);
@@ -1726,7 +1718,7 @@ export function ChatTranscript({ view, actions }: TranscriptProps) {
 				<button
 					type="button"
 					className="quote-action"
-					style={{ left: quote.left, top: quote.top }}
+					ref={quoteButton}
 					onMouseDown={(event) => event.preventDefault()}
 					onClick={quoteSelection}
 				>

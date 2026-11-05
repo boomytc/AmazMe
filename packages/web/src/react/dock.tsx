@@ -13,6 +13,7 @@ import {
 	useState,
 } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPopover } from "./anchored-popover.ts";
 import { DOCK_TAB_ACTION, DOCK_TAB_CLOSE_ACTION, DOCK_TOGGLE_ACTION, WORKSPACE_OPEN_ACTION } from "../actions.ts";
 import { readDockWidth, storeDockWidth } from "../app/dock-preferences.ts";
 import type { DockTab, DockTabId, DockView } from "../dock.ts";
@@ -1736,19 +1737,9 @@ interface DockTabMenuProps {
  */
 function DockTabMenu({ tabs, active, locale, onOpenTab }: DockTabMenuProps) {
 	const [open, setOpen] = useState(false);
-	const [position, setPosition] = useState({ left: 8, top: 8 });
 	const trigger = useRef<HTMLButtonElement>(null);
 	const menu = useRef<HTMLDivElement>(null);
-	useLayoutEffect(() => {
-		if (!open) return;
-		const box = trigger.current?.getBoundingClientRect();
-		if (box === undefined) return;
-		const height = menu.current?.offsetHeight ?? 0;
-		const left = Math.min(Math.max(8, box.left - 4), window.innerWidth - 220);
-		const below = box.bottom + 6;
-		const top = Math.max(8, Math.min(below, window.innerHeight - height - 8));
-		setPosition({ left: Math.round(left), top: Math.round(top) });
-	}, [open]);
+	useAnchoredPopover(open, trigger, menu, "bottom-end");
 	useEffect(() => {
 		if (!open) return;
 		const closeOutside = (event: MouseEvent): void => {
@@ -1817,7 +1808,6 @@ function DockTabMenu({ tabs, active, locale, onOpenTab }: DockTabMenuProps) {
 							className="dock-tab-menu"
 							role="menu"
 							aria-label={label}
-							style={position}
 							onKeyDown={(event) => {
 								moveItem(event);
 								if (event.key !== "Escape" || event.nativeEvent.isComposing)

@@ -1,18 +1,19 @@
 import { autoUpdate, computePosition, flip, offset, shift, size } from "@floating-ui/dom";
+import type { Placement, ReferenceElement } from "@floating-ui/dom";
 import { useLayoutEffect } from "react";
 import type { RefObject } from "react";
 
-export function useComposerPopover(
+export function useAnchoredPopover(
 	open: boolean,
-	trigger: RefObject<HTMLElement | null>,
+	trigger: RefObject<ReferenceElement | null>,
 	panel: RefObject<HTMLElement | null>,
-	placement: "top-start" | "top" | "top-end",
+	placement: Placement,
 ) {
 	useLayoutEffect(() => {
 		const anchor = trigger.current;
 		const node = panel.current;
 		if (!open || !anchor || !node) return;
-		// These panels paint in the top layer or the body, outside the scrolling dock.
+		// Fixed panels use the viewport even when their trigger sits in a scrolling pane.
 		const viewport = { boundary: [], padding: 8 };
 		let revision = 0;
 		const stop = autoUpdate(anchor, node, () => {

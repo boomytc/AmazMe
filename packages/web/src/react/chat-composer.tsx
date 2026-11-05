@@ -32,7 +32,7 @@ import {
 	ComposerModelControls,
 	ComposerStatusMeter,
 } from "./chat-controls.tsx";
-import { useComposerPopover } from "./composer-popover.ts";
+import { useAnchoredPopover } from "./anchored-popover.ts";
 import { CredentialText } from "./chat-credential.tsx";
 import { Hint } from "./hint.tsx";
 import { QuestionForm } from "./questions.tsx";
@@ -365,16 +365,13 @@ function ProjectPicker({ view, actions }: ProjectPickerProps) {
 		const node = dialog.current;
 		if (!open || node === null || node.open) return;
 		node.showModal();
-		const rect = trigger.current?.getBoundingClientRect();
-		if (rect !== undefined) {
-			node.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - node.offsetWidth - 8))}px`;
-			node.style.top = `${Math.max(8, rect.top - node.offsetHeight - 8)}px`;
-		}
 		search.current?.focus();
 		return () => {
 			if (node.open) node.close();
 		};
 	}, [open]);
+
+	useAnchoredPopover(open, trigger, dialog, "top-start");
 
 	if (context === undefined) return null;
 
@@ -554,7 +551,7 @@ function PermissionPicker({
 		document.addEventListener("pointerdown", close);
 		return () => document.removeEventListener("pointerdown", close);
 	}, [open]);
-	useComposerPopover(open, trigger, menu, "top-start");
+	useAnchoredPopover(open, trigger, menu, "top-start");
 
 	return (
 		<div ref={root} className="permission-control">
