@@ -143,6 +143,7 @@ export function ManagementNavigation({
 	const searching = query.trim().length > 0;
 	return (
 		<aside className="library-nav">
+			<p className="library-nav-label">{translate(locale, "panel.settings.title")}</p>
 			<SearchField
 				id="management-section-search"
 				locale={locale}
@@ -732,7 +733,17 @@ function PanelGroupView({
 			>
 				{group.rows.length === 0 && group.empty !== undefined ? (
 					<p className="panel-empty" data-cause={group.empty.cause}>
-						{group.empty.text}
+						<Icon
+							name={group.empty.cause === "no-match"
+								? "search"
+								: group.empty.cause === "done"
+									? "check"
+									: group.empty.cause === "failed" || group.empty.cause === "unavailable"
+										? "info"
+										: "folder"}
+							className="icon panel-empty-icon"
+						/>
+						<span>{group.empty.text}</span>
 					</p>
 				) : (
 					group.rows.map((row) => (
@@ -840,31 +851,44 @@ function PanelHeadActions({
 	panel,
 	locale,
 	onAction,
+	heading,
 }: {
 	readonly panel: PanelSpec;
 	readonly locale: Locale;
 	readonly onAction: (action: PanelAction) => void;
+	readonly heading?: PanelGroup;
 }) {
+	const title = heading?.title ?? panel.title;
+	const description = heading === undefined
+		? panel.description
+		: heading.description ?? heading.hint;
 	return (
-		<>
-			<h1 className="sr-only">
-				<SensitiveText text={panel.title} locale={locale} />
-			</h1>
+		<header className="panel-head">
+			<div className="panel-titles">
+				{title.length === 0 ? null : (
+					<h1 className="panel-title">
+						<SensitiveText text={title} locale={locale} />
+					</h1>
+				)}
+				{description === undefined || description.length === 0 ? null : (
+					<p className="panel-desc">
+						<SensitiveText text={description} locale={locale} />
+					</p>
+				)}
+			</div>
 			{(panel.actions?.length ?? 0) === 0 ? null : (
-				<header className="panel-head">
-					<div className="panel-actions">
-						{panel.actions?.map((action) => (
-							<PanelButtonView
-								key={`${action.id}\u0000${action.data ?? ""}`}
-								action={action}
-								pending={panel.pending}
-								onAction={onAction}
-							/>
-						))}
-					</div>
-				</header>
+				<div className="panel-actions">
+					{panel.actions?.map((action) => (
+						<PanelButtonView
+							key={`${action.id}\u0000${action.data ?? ""}`}
+							action={action}
+							pending={panel.pending}
+							onAction={onAction}
+						/>
+					))}
+				</div>
 			)}
-		</>
+		</header>
 	);
 }
 
@@ -904,6 +928,7 @@ function PanelSurface({
 		return (
 			<ModelConnectionsView
 				panel={panel}
+				heading={groups[0]}
 				connections={modelConnections}
 				locale={locale}
 				onAction={onAction}
@@ -912,7 +937,12 @@ function PanelSurface({
 	}
 	return (
 		<div className="panel" data-panel-id={panel.id}>
-			<PanelHeadActions panel={panel} locale={locale} onAction={onAction} />
+			<PanelHeadActions
+				panel={panel}
+				heading={panel.id === SETTINGS_VIEW ? groups[0] : undefined}
+				locale={locale}
+				onAction={onAction}
+			/>
 			<PanelNotices scope={panel.id} locale={locale} notices={panel.notices} />
 			{panel.inputs?.map((input) => (
 				<PanelInputView
@@ -1372,11 +1402,13 @@ function ConnectionProviderCard({
 
 function ModelConnectionsView({
 	panel,
+	heading,
 	connections,
 	locale,
 	onAction,
 }: {
 	readonly panel: PanelSpec;
+	readonly heading?: PanelGroup;
 	readonly connections: ModelConnectionsLike;
 	readonly locale: Locale;
 	readonly onAction: (action: PanelAction) => void;
@@ -1452,11 +1484,7 @@ function ModelConnectionsView({
 			className="panel model-connections"
 			data-panel-id={panel.id}
 		>
-			<PanelHeadActions panel={panel} locale={locale} onAction={onAction} />
-			<header className="connection-page-head">
-				<h2 className="connection-page-title">{connectionCopy(locale, "connections.title")}</h2>
-				<p className="connection-page-intro">{connectionCopy(locale, "connections.help")}</p>
-			</header>
+			<PanelHeadActions panel={panel} heading={heading} locale={locale} onAction={onAction} />
 			<PanelNotices
 				scope={`${panel.id}:connections`}
 				locale={locale}

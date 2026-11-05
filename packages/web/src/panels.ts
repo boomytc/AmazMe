@@ -212,7 +212,7 @@ export interface PanelSpec {
 	/** The panel's own id; the management views use `PanelId`, the dock uses its tabs. */
 	readonly id: string;
 	readonly title: string;
-	/** A live fact about the panel. The management head is the titlebar, so only states show here. */
+	/** Guidance shown under the panel's visible management title. */
 	readonly description?: string;
 	/** Page-level actions, shown beside the title. */
 	readonly actions?: readonly PanelButton[];
@@ -740,6 +740,7 @@ export function settingsPanel(locale: Locale, input: SettingsPanelInput): PanelS
 	return {
 		id: "settings",
 		title,
+		description: translate(locale, "panel.settings.description"),
 		notices: state.errors.map((error) => {
 			const scope = settingScopeCopy(locale, error.scope);
 			const message = errorMessageCopy(locale, error.message);
@@ -831,6 +832,7 @@ export function skillsPanel(locale: Locale, input: SkillsPanelInput): PanelSpec 
 	return {
 		id: "skills",
 		title,
+		description: translate(locale, "panel.skills.description"),
 		notices: state.diagnostics.map((diagnostic) => ({
 			tone: "error" as const,
 			text: `${diagnostic.path === undefined ? "" : `${diagnostic.path}: `}${diagnostic.message}`,
@@ -905,6 +907,7 @@ export function pluginsPanel(locale: Locale, input: PluginsPanelInput): PanelSpe
 	return {
 		id: "plugins",
 		title,
+		description: translate(locale, "panel.plugins.description"),
 		notices: [...new Set(runtime === undefined ? state.mcp.errors : (runtime?.errors ?? []))].map((error) => ({
 			tone: "error" as const,
 			text: error,
@@ -1076,6 +1079,7 @@ export function automationPanel(locale: Locale, input: AutomationPanelInput): Pa
 	return {
 		id: AUTOMATION_VIEW,
 		title,
+		description: translate(locale, "panel.automation.description"),
 		notices: [
 			...(state.problem ? [{ tone: "error" as const, text: state.problem }] : []),
 		],

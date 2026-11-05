@@ -133,6 +133,23 @@ body.library-open {
 
 body.library-open {
 	--dock-track: 0px;
+	background: var(--window);
+}
+
+body.library-open .titlebar,
+body.library-open .app-rail {
+	background: var(--window);
+	border-color: transparent;
+}
+
+body.library-open .center {
+	padding: 0 8px 8px;
+}
+
+body.library-open .view {
+	border: 1px solid var(--line);
+	border-radius: var(--radius-xl);
+	background: var(--raised);
 }
 
 body.library-open .sidebar,
@@ -2108,14 +2125,8 @@ p {
 .model-picker-manage-icon { width: 15px; height: 15px; }
 .model-picker-manage:hover, .model-picker-manage:focus-visible { background: var(--hover); color: var(--text); }
 
-.library-open .view-body:has(> .model-connections) {
-	--library-measure: 720px;
-	max-width: var(--library-measure);
-}
 .model-connections { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
-.connection-page-head { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-.connection-page-title { margin: 0; color: var(--text); font-size: 16px; font-weight: 500; line-height: 24px; }
-.connection-page-intro { margin: 0; color: var(--text-3); font-size: 14px; line-height: 22px; }
+.model-connections .panel-head { margin-bottom: 4px; }
 .connection-overview { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px 16px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-xl); background: var(--raised); }
 .connection-default-text { margin: 0; min-width: 0; color: var(--text-2); font-size: 13px; line-height: 20px; overflow-wrap: anywhere; }
 .connection-default-controls { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 0 1 auto; }
@@ -3597,65 +3608,63 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 }
 
 .library-open .view-body {
-	--library-measure: 840px;
-	max-width: var(--library-measure);
-	padding-top: 0;
+	max-width: none;
+	padding: 0 32px 48px;
 }
 
-.library-open .view-body:has(.panel-group[data-skeleton="form"]) {
-	--library-measure: 720px;
-}
-
-/* Record surfaces use the wider column: a row carries a title, a live fact line, and a value, so the
-   reading measure follows the widest list instead of leaving the right half of a wide window empty. */
-.library-open .library-frame:not([data-management-current="settings"]) .view-body:has(.panel-group[data-skeleton="records"]) {
-	--library-measure: 960px;
-}
-
-/* Ordinary settings share one measure across tabs; provider cards keep their narrower reading column. */
-.library-open .library-frame[data-management-current="settings"] .view-body:not(:has(> .model-connections)) {
-	--library-measure: 840px;
+.library-open .view-body > .panel {
+	width: 100%;
+	max-width: 1120px;
 }
 
 .library-frame {
-	/* LightUI gutter, then the cap correction: the first line sits on the inset, not on the viewport edge.
-	   The category column and the reading measure stay one block and that block is centred. */
-	--inset: 24px;
 	display: flex;
-	align-items: flex-start;
-	justify-content: center;
-	gap: 28px;
+	align-items: stretch;
+	justify-content: flex-start;
 	width: 100%;
-	padding-top: calc(var(--inset) - (1lh - 1cap) / 2);
+	min-height: 100%;
 	container: library / inline-size;
-}
-
-@supports not (padding-top: 1cap) {
-	.library-frame { padding-top: 16px; }
 }
 
 .library-nav {
 	position: sticky;
-	top: 16px;
-	max-height: calc(100dvh - 80px);
+	top: 0;
+	max-height: calc(100dvh - 58px);
 	overflow-y: auto;
-	flex: 0 0 220px;
+	flex: 0 0 208px;
 	min-width: 0;
-	padding-top: 0;
+	padding: 20px 12px;
+	border-right: 1px solid var(--line);
+}
+
+.library-nav-label {
+	margin: 0 10px 10px;
+	color: var(--text-3);
+	font-size: 11px;
+	font-weight: 500;
+	line-height: 16px;
 }
 
 .library-nav[hidden] { display: none; }
 
 .library-frame > .view-body {
-	flex: 0 1 var(--library-measure, 840px);
+	flex: 1 1 auto;
 	width: auto;
 	min-width: 0;
 	margin: 0;
 }
 
 @container library (max-width: 640px) {
-	.library-frame { flex-direction: column; justify-content: flex-start; align-items: center; gap: 0; }
-	.library-nav { flex-basis: auto; width: 100%; padding-top: 0; border-bottom: 1px solid var(--line); }
+	.library-frame { flex-direction: column; }
+	.library-nav {
+		position: static;
+		flex-basis: auto;
+		width: 100%;
+		max-height: none;
+		padding: 16px;
+		border-right: 0;
+		border-bottom: 1px solid var(--line);
+	}
 	.library-frame > .view-body { width: 100%; }
 }
 
@@ -3673,9 +3682,16 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	margin-bottom: var(--space-24);
 }
 
+.library-open .panel-head {
+	align-items: center;
+	padding: 24px 0 20px;
+	border-bottom: 1px solid var(--line);
+}
+
 .panel-titles { min-width: 0; }
 
 .panel-head > .panel-actions { padding-top: 2px; }
+.library-open .panel-head > .panel-actions { padding-top: 0; }
 
 .panel-title {
 	margin: 0;
@@ -3748,7 +3764,6 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	line-height: 1.5;
 }
 
-/* A settings card: one rounded surface, one hairline between its rows. */
 .panel-rows {
 	overflow: hidden;
 	border-radius: var(--radius-xl);
@@ -3760,6 +3775,13 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	border-radius: 0;
 	background: transparent;
 	box-shadow: none;
+}
+
+/* Management forms and records share one rounded surface and one hairline between rows. */
+.library-open .panel-group[data-skeleton="form"] .panel-rows {
+	border-radius: var(--radius-xl);
+	background: var(--raised);
+	box-shadow: var(--shadow-card);
 }
 
 .panel-group[data-skeleton="form"]:has(> .panel-group-head) {
@@ -4162,14 +4184,38 @@ nav.file-breadcrumbs .file-crumb.current .icon { color: var(--text-2); }
 	border: 1px dashed var(--line-strong);
 	background: transparent;
 	box-shadow: none;
-	/* An empty group says one line; the dashed box hugs it instead of stretching to the list width. */
 	max-width: 560px;
+}
+
+.library-open .panel-rows:has(> .panel-empty:only-child) {
+	display: grid;
+	place-items: center;
+	min-height: 220px;
+	max-width: none;
+	border: 1px solid var(--line);
+	background: var(--raised);
 }
 
 .panel-rows > .panel-empty:only-child {
 	padding: 32px 24px;
 	text-align: center;
 	line-height: 1.6;
+}
+
+.library-open .panel-rows > .panel-empty:only-child {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 12px;
+	padding: 40px 24px;
+	color: var(--text-2);
+}
+
+.panel-empty-icon {
+	width: 24px;
+	height: 24px;
+	color: var(--text-3);
+	stroke-width: 1.5;
 }
 
 .panel-footnote {

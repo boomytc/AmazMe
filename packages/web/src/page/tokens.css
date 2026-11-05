@@ -41,8 +41,9 @@
 	--focus-ring-offset: 2px;
 	--focus-ring-inset: -2px;
 
-	/* Surfaces: the canvas, the sidebar one step off it, raised cards and popovers, the user's bubble. */
+	/* Surfaces: the canvas, the management window, the sidebar, raised cards and popovers, the user's bubble. */
 	--canvas: #ffffff;
+	--window: #e8e8ea;
 	--sidebar: #f7f7f5;
 	--raised: #ffffff;
 	--bubble: #f1f1ef;
@@ -148,6 +149,7 @@
 	color-scheme: dark;
 
 	--canvas: #212121;
+	--window: #111111;
 	--sidebar: #171717;
 	--raised: #2f2f2f;
 	--bubble: #2f2f2f;
